@@ -1,9 +1,14 @@
 import "server-only";
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import type { Conn } from "@/lib/db";
 import { member, organization, user } from "@/lib/db/auth-schema";
 import { decodeCursor, encodeCursor, type Cursor } from "@/lib/data/cursor";
+import { acquireOwnerDemoteLock } from "@/lib/db/raw/acquire-owner-demote-lock";
+import {
+  previewTeamCascade,
+  type TeamCascadePreview,
+} from "@/lib/db/raw/preview-team-cascade";
 
 /**
  * Fetch a page of teams the caller belongs to, with org metadata, member
@@ -176,4 +181,140 @@ export async function lookupUserNames(
     .from(user)
     .where(inArray(user.id, userIds));
   return new Map(rows.map((u) => [u.id, u.name]));
+}
+
+/**
+ * Read the caller's role string for a given organization.
+ *
+ * @param userId - Verified user id.
+ * @param organizationId - UUID of the organization.
+ * @returns Role string, or null when the user has no membership row in the org.
+ */
+export async function findMemberRole(
+  userId: string,
+  organizationId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(
+      and(
+        eq(member.userId, userId),
+        eq(member.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  return row?.role ?? null;
+}
+
+/** Resolved team-scope: the org row + the caller's role from the membership JOIN. */
+export type TeamMembershipRow = {
+  /** The authorized organization row. */
+  organization: typeof organization.$inferSelect;
+  /** Caller's `member.role` string from the same JOIN. */
+  memberRole: string;
+};
+
+/**
+ * Membership-gated team lookup. Returns null when the team doesn't exist
+ * or the user is not a member of it.
+ *
+ * @param userId - Verified user id.
+ * @param teamId - UUID of the team to authorize.
+ * @returns Access row or null.
+ */
+export async function findTeamMembership(
+  userId: string,
+  teamId: string,
+): Promise<TeamMembershipRow | null> {
+  const [row] = await db
+    .select({
+      organization: getTableColumns(organization),
+      memberRole: member.role,
+    })
+    .from(organization)
+    .innerJoin(
+      member,
+      and(
+        eq(member.organizationId, organization.id),
+        eq(member.userId, userId),
+      ),
+    )
+    .where(eq(organization.id, teamId))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Outcome of a guarded member-demote attempt. */
+export type DemoteOutcome =
+  | { kind: "ok" }
+  | { kind: "fail"; code: "not_found" | "forbidden" | "cannot_leave_only_owner" }
+  | { kind: "callback_error"; err: unknown };
+
+/**
+ * Atomically demote (or otherwise change the role of) a member, holding the
+ * per-org owner-demote advisory lock so concurrent demotes serialize. The
+ * actual role change is performed by the supplied `demote` callback — which
+ * lets actions thread Better Auth's `updateMemberRole` through the lock
+ * without `lib/data/` taking a dep on `auth.api`.
+ *
+ * The callback runs inside the transaction window but on its own connection
+ * (BA's adapter is autocommit), so it doesn't deadlock against the lock —
+ * the lock simply serializes other actions waiting on the same gate.
+ *
+ * @param input - Target team, member id, and role change parameters.
+ * @param input.organizationId - UUID of the team.
+ * @param input.memberId - UUID of the member row.
+ * @param input.role - New role ("owner" | "admin" | "member").
+ * @param input.roleIncludesOwner - Predicate the caller uses to detect "owner" in the raw role string.
+ * @param demote - Callback that performs the actual role change (typically auth.api.updateMemberRole).
+ * @returns Outcome discriminating success, validation failures, and callback errors.
+ */
+export async function demoteMemberWithGuard(
+  input: {
+    organizationId: string;
+    memberId: string;
+    role: "member" | "admin" | "owner";
+    roleIncludesOwner: (role: string) => boolean;
+  },
+  demote: () => Promise<void>,
+): Promise<DemoteOutcome> {
+  return db.transaction(async (tx) => {
+    await acquireOwnerDemoteLock(tx, input.organizationId);
+
+    const latest = await findMemberByIdTx(tx, input.memberId);
+    if (!latest) return { kind: "fail", code: "not_found" };
+    if (latest.organizationId !== input.organizationId) {
+      return { kind: "fail", code: "forbidden" };
+    }
+
+    const targetIsOwner = input.roleIncludesOwner(latest.role);
+    const newIsOwner = input.role === "owner";
+    if (targetIsOwner && !newIsOwner) {
+      const owners = await listMemberRolesTx(tx, latest.organizationId);
+      const ownerCount = owners.filter((m) => input.roleIncludesOwner(m.role)).length;
+      if (ownerCount <= 1) return { kind: "fail", code: "cannot_leave_only_owner" };
+    }
+
+    try {
+      await demote();
+      return { kind: "ok" };
+    } catch (err) {
+      return { kind: "callback_error", err };
+    }
+  });
+}
+
+/**
+ * Snapshot the project + task counts that a team-delete cascade will wipe.
+ * Thin wrapper around the raw helper so callers in the action ring don't
+ * need to thread a `Conn` themselves.
+ *
+ * @param organizationId - UUID of the team.
+ * @returns Project and task counts.
+ */
+export async function previewTeamDelete(
+  organizationId: string,
+): Promise<TeamCascadePreview> {
+  return previewTeamCascade(db, organizationId);
 }

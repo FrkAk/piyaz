@@ -4,7 +4,7 @@ import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as authSchema from "@/lib/db/auth-schema";
 import { authDb } from "@/lib/db/connection";
-import { clearOrgMembershipArtifacts } from "@/lib/auth/membership-cleanup";
+import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIds } from "@/lib/data/membership";
 

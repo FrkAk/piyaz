@@ -7,17 +7,12 @@ const tsConfig = require("eslint-config-next/typescript");
 const importPlugin = require("eslint-plugin-import");
 
 // Files permitted to import directly from @/lib/db.
-// Permanent: data layer, driver internals, security gates,
-// Better-Auth wiring, and the action-coordination tx in lib/actions/team.ts.
+// Permanent: data layer, driver internals, Better-Auth wiring,
+// drizzle-kit config, and test code.
 const DB_IMPORT_ALLOWLIST = [
   "lib/data/**/*.{ts,tsx}",
   "lib/db/**/*.{ts,tsx}",
   "lib/auth.ts",
-  "lib/auth/authorization.ts",
-  "lib/auth/membership-cleanup.ts",
-  "lib/auth/active-role.ts",
-  "lib/auth/membership.ts",
-  "lib/actions/team.ts",
   "drizzle.config.ts",
   "tests/**/*.{ts,tsx}",
 ];

@@ -1,12 +1,10 @@
 "use server";
 
 import { headers } from "next/headers";
-import { acquireOwnerDemoteLock } from "@/lib/db/raw/acquire-owner-demote-lock";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/session";
-import { clearOrgMembershipArtifacts } from "@/lib/auth/membership-cleanup";
+import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 import { isOrgAdmin, isOrgOwner } from "@/lib/auth/org-permissions";
 import {
   mapBetterAuthError,
@@ -14,11 +12,10 @@ import {
   teamFail,
   type TeamActionResult,
 } from "@/lib/actions/team-errors";
-import { previewTeamCascade } from "@/lib/db/raw/preview-team-cascade";
 import {
+  demoteMemberWithGuard,
   findMemberById,
-  findMemberByIdTx,
-  listMemberRolesTx,
+  previewTeamDelete,
 } from "@/lib/data/membership";
 import {
   RESERVED_SLUGS,
@@ -339,27 +336,14 @@ export async function updateMemberRoleAction(input: {
   if (preRead.organizationId !== parsed.data.organizationId) return teamFail("forbidden");
 
   const reqHeaders = await headers();
-  type Outcome =
-    | { kind: "ok" }
-    | { kind: "fail"; code: "not_found" | "forbidden" | "cannot_leave_only_owner" }
-    | { kind: "ba_error"; err: unknown };
-
-  const outcome: Outcome = await db.transaction(async (tx) => {
-    await acquireOwnerDemoteLock(tx, parsed.data.organizationId);
-
-    const latest = await findMemberByIdTx(tx, parsed.data.memberId);
-    if (!latest) return { kind: "fail", code: "not_found" };
-    if (latest.organizationId !== parsed.data.organizationId) return { kind: "fail", code: "forbidden" };
-
-    const targetIsOwner = roleIncludesOwner(latest.role);
-    const newIsOwner = parsed.data.role === "owner";
-    if (targetIsOwner && !newIsOwner) {
-      const owners = await listMemberRolesTx(tx, latest.organizationId);
-      const ownerCount = owners.filter((m) => roleIncludesOwner(m.role)).length;
-      if (ownerCount <= 1) return { kind: "fail", code: "cannot_leave_only_owner" };
-    }
-
-    try {
+  const outcome = await demoteMemberWithGuard(
+    {
+      organizationId: parsed.data.organizationId,
+      memberId: parsed.data.memberId,
+      role: parsed.data.role,
+      roleIncludesOwner,
+    },
+    async () => {
       await auth.api.updateMemberRole({
         body: {
           memberId: parsed.data.memberId,
@@ -368,11 +352,8 @@ export async function updateMemberRoleAction(input: {
         },
         headers: reqHeaders,
       });
-      return { kind: "ok" };
-    } catch (err) {
-      return { kind: "ba_error", err };
-    }
-  });
+    },
+  );
 
   if (outcome.kind === "ok") return { ok: true };
   if (outcome.kind === "fail") return teamFail(outcome.code);
@@ -613,7 +594,7 @@ export async function previewTeamDeleteAction(input: {
   if (!(await isOrgOwner(parsed.data.organizationId))) return teamFail("forbidden");
 
   try {
-    const data = await previewTeamCascade(db, parsed.data.organizationId);
+    const data = await previewTeamDelete(parsed.data.organizationId);
     return { ok: true, data };
   } catch (err) {
     console.error("previewTeamDeleteAction failed", err);
