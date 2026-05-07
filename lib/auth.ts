@@ -7,6 +7,7 @@ import { authDb } from "@/lib/db/connection";
 import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIds } from "@/lib/data/membership";
+import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 
 /**
  * Better Auth server instance.
@@ -53,14 +54,26 @@ export const auth = betterAuth({
       ac,
       roles: { owner, admin, member: memberRole },
       organizationHooks: {
+        afterAddMember: async ({ member: added, organization: org }) => {
+          await grantOrgAccess(added.userId, org.id);
+        },
+        afterAcceptInvitation: async ({ member: added, organization: org }) => {
+          await grantOrgAccess(added.userId, org.id);
+        },
         afterRemoveMember: async ({ member: removed, organization: org }) => {
-          await clearOrgMembershipArtifacts(removed.userId, org.id);
+          await Promise.all([
+            clearOrgMembershipArtifacts(removed.userId, org.id),
+            revokeOrgAccess(removed.userId, org.id),
+          ]);
         },
         beforeDeleteOrganization: async ({ organization: org }) => {
           const userIds = await findOrgMemberUserIds(org.id);
-          await Promise.all(
-            userIds.map((userId) => clearOrgMembershipArtifacts(userId, org.id)),
-          );
+          await Promise.all([
+            ...userIds.map((userId) =>
+              clearOrgMembershipArtifacts(userId, org.id),
+            ),
+            ...userIds.map((userId) => revokeOrgAccess(userId, org.id)),
+          ]);
         },
       },
     }),

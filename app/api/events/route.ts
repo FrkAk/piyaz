@@ -11,8 +11,19 @@ import { error } from "@/lib/api/response";
  * channel. `task:<id>` subscriptions are registered lazily by the
  * `GET /api/task/[id]` route on each task fetch with a 10 minute TTL.
  *
+ * A per-user concurrent connection cap (`Broker.MAX_CONNECTIONS_PER_USER`)
+ * bounds DoS exposure — without it a single authenticated user can open
+ * unbounded EventSource streams. The check has a small TOCTOU window
+ * between this read and the in-`start` `attach`; with cap=20 the worst
+ * case is one extra connection, which is acceptable.
+ *
+ * Subscriptions are registered inside the stream's `start` callback (after
+ * `attach`) so dispatches racing with the function return don't yield a
+ * subscriber-without-connection.
+ *
  * @param req - Incoming request — only the abort signal is consumed.
- * @returns 200 with `text/event-stream` or 401 when unauthenticated.
+ * @returns 200 with `text/event-stream`, 401 when unauthenticated, or 429
+ *   when the user is at the per-user connection cap.
  */
 export async function GET(req: Request): Promise<Response> {
   let ctx;
@@ -23,12 +34,21 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const userId = ctx.userId;
-  const projectIds = await listAccessibleProjectIds(ctx);
 
-  for (const id of projectIds) {
-    broker.register(userId, `project:${id}`);
+  if (broker.isAtConnectionLimit(userId)) {
+    return new Response(
+      JSON.stringify({ error: "Too many concurrent connections" }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": "5",
+        },
+      },
+    );
   }
-  broker.register(userId, `project-list:${userId}`);
+
+  const projectIds = await listAccessibleProjectIds(ctx);
 
   const stream = new ReadableStream({
     start(controller) {
@@ -50,7 +70,17 @@ export async function GET(req: Request): Promise<Response> {
         },
       };
 
+      // Order matters: attach BEFORE register so any dispatch that fires
+      // while we're still wiring up sees a non-empty connection set for
+      // this user. Otherwise the `subscribers()` lookup yields the user
+      // but `conns.get(userId)` returns undefined and the event is
+      // silently dropped for that tab.
       broker.attach(userId, conn);
+      for (const id of projectIds) {
+        broker.register(userId, `project:${id}`);
+      }
+      broker.register(userId, `project-list:${userId}`);
+
       conn.send(`: hello\n\n`);
 
       const heartbeat = setInterval(() => {

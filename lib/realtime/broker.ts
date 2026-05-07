@@ -20,6 +20,15 @@ export interface Connection {
 }
 
 /**
+ * Hard cap on concurrent SSE connections per authenticated user. Bounds the
+ * DoS surface: without this, a single account could open unbounded
+ * EventSource streams (each holding a heartbeat timer + ReadableStream
+ * controller + sub map entry). Power multi-tab users typically hold 5-10
+ * connections; 20 leaves headroom while still capping abuse.
+ */
+export const MAX_CONNECTIONS_PER_USER = 20;
+
+/**
  * Per-user in-memory pub/sub for the realtime layer. Two maps — `subs` from
  * `userId → Map<resourceKey, expiresAt | null>` and `conns` from
  * `userId → Set<Connection>`. Resource subscription expiry is lazy-cleaned on
@@ -72,6 +81,31 @@ class Broker {
       this.conns.set(userId, set);
     }
     set.add(conn);
+  }
+
+  /**
+   * Whether the user already holds the maximum allowed concurrent
+   * connections. Callers should reject new SSE streams with 429 when this
+   * returns true so a single account can't exhaust process resources.
+   *
+   * @param userId - Caller user id.
+   * @returns True when adding another connection would exceed the cap.
+   */
+  isAtConnectionLimit(userId: string): boolean {
+    const current = this.conns.get(userId)?.size ?? 0;
+    return current >= MAX_CONNECTIONS_PER_USER;
+  }
+
+  /**
+   * Whether the user currently holds at least one SSE connection. Used by
+   * realtime emit helpers to skip subscription bookkeeping for offline users
+   * (the next SSE connect will hydrate the sub map from scratch anyway).
+   *
+   * @param userId - Caller user id.
+   * @returns True when at least one connection is attached.
+   */
+  hasConnections(userId: string): boolean {
+    return (this.conns.get(userId)?.size ?? 0) > 0;
   }
 
   /**

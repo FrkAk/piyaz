@@ -1,6 +1,6 @@
 import { getTaskFull } from '@/lib/data/task';
 import { getAuthContext } from '@/lib/auth/context';
-import { ForbiddenError } from '@/lib/auth/authorization';
+import { ForbiddenError, assertTaskAccess } from '@/lib/auth/authorization';
 import { conditionalRespond } from '@/lib/api/conditional';
 import { broker } from '@/lib/realtime/broker';
 import { error } from '@/lib/api/response';
@@ -16,11 +16,13 @@ const TASK_SUBSCRIPTION_TTL_MS = 10 * 60_000;
  * acceptanceCriteria / executionRecord — the workspace fetches them
  * lazily through this endpoint when a task is selected.
  *
- * `Last-Modified` is the row's `updatedAt`. The row must be loaded to
- * obtain the validator, so a 304 here only saves JSON serialization +
- * wire bytes — not the keyed lookup. The conditional contract is
- * primarily here for the upcoming TanStack Query integration; the
- * current client does not yet send `If-Modified-Since` for this route.
+ * `Last-Modified` is the row's `updatedAt`. HEAD short-circuits on
+ * {@link assertTaskAccess} (one query, validates UUID + scopes by
+ * membership) instead of the heavier {@link getTaskFull} which adds a
+ * project-identifier lookup for `taskRef` — HEAD doesn't return a body so
+ * the taskRef isn't needed. Broker subscription registration is also
+ * skipped on HEAD because HEAD is a cache probe, not a "user is viewing"
+ * signal.
  *
  * @param req - Incoming request.
  * @param taskId - Task UUID from the route params.
@@ -35,6 +37,10 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   }
 
   try {
+    if (req.method === 'HEAD') {
+      const task = await assertTaskAccess(taskId, ctx);
+      return conditionalRespond(req, null, task.updatedAt);
+    }
     const task = await getTaskFull(ctx, taskId);
     broker.register(ctx.userId, `task:${taskId}`, TASK_SUBSCRIPTION_TTL_MS);
     return conditionalRespond(req, task, task.updatedAt);

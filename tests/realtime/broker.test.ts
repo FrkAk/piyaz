@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, mock } from "bun:test";
-import { broker } from "@/lib/realtime/broker";
+import { broker, MAX_CONNECTIONS_PER_USER } from "@/lib/realtime/broker";
 
 beforeEach(() => {
   broker._resetForTests();
@@ -80,4 +80,31 @@ test("unregister drops a single subscription without affecting others", () => {
   broker.unregister("u1", "task:t1");
   expect([...broker.subscribers("project:p1")]).toEqual(["u1"]);
   expect([...broker.subscribers("task:t1")]).toEqual([]);
+});
+
+test("hasConnections — false before attach, true after, false after last detach", () => {
+  expect(broker.hasConnections("u1")).toBe(false);
+  const c1 = fakeConn();
+  broker.attach("u1", c1);
+  expect(broker.hasConnections("u1")).toBe(true);
+  broker.detach("u1", c1);
+  expect(broker.hasConnections("u1")).toBe(false);
+});
+
+test("isAtConnectionLimit — flips at the cap, stays true past it", () => {
+  expect(broker.isAtConnectionLimit("u1")).toBe(false);
+  for (let i = 0; i < MAX_CONNECTIONS_PER_USER - 1; i++) {
+    broker.attach("u1", fakeConn());
+  }
+  expect(broker.isAtConnectionLimit("u1")).toBe(false);
+  broker.attach("u1", fakeConn());
+  expect(broker.isAtConnectionLimit("u1")).toBe(true);
+});
+
+test("isAtConnectionLimit — scoped per user", () => {
+  for (let i = 0; i < MAX_CONNECTIONS_PER_USER; i++) {
+    broker.attach("u1", fakeConn());
+  }
+  expect(broker.isAtConnectionLimit("u1")).toBe(true);
+  expect(broker.isAtConnectionLimit("u2")).toBe(false);
 });

@@ -67,24 +67,48 @@ export function emitEdgeMutation(
 }
 
 /**
+ * Dispatch a `project-list` event to a single user. Used by the
+ * membership-change helpers in `lib/realtime/access.ts` so a kicked / added
+ * user's home grid refreshes without waiting for focus refetch.
+ *
+ * @param userId - Recipient user id.
+ * @param orgId - Organization that triggered the list change.
+ */
+export function emitProjectListForUser(userId: string, orgId: string): void {
+  broker.dispatch(`project-list:${userId}`, {
+    kind: "project-list",
+    orgId,
+  } satisfies RealtimeEvent);
+}
+
+/**
  * Emit a project-list event to every member of an organization. Used for
  * project create/delete so home grids update without a full refetch loop.
+ * Realtime delivery failures (e.g. transient DB blip on member lookup) are
+ * logged and swallowed — emit is a non-essential side effect of the API
+ * mutation that already committed.
  *
  * @param orgId - Organization id.
  */
 export async function emitProjectListEvent(orgId: string): Promise<void> {
-  const userIds = await findOrgMemberUserIds(orgId);
-  for (const userId of userIds) {
-    broker.dispatch(`project-list:${userId}`, {
-      kind: "project-list",
-      orgId,
-    } satisfies RealtimeEvent);
+  try {
+    const userIds = await findOrgMemberUserIds(orgId);
+    for (const userId of userIds) {
+      broker.dispatch(`project-list:${userId}`, {
+        kind: "project-list",
+        orgId,
+      } satisfies RealtimeEvent);
+    }
+  } catch (err) {
+    console.error("[realtime] emitProjectListEvent failed:", err);
   }
 }
 
 /**
  * Emit a `project-deleted` event so workspace tabs viewing the project can
  * redirect, plus a project-list event to refresh every member's home grid.
+ * Failures are logged and swallowed for the same reason as
+ * {@link emitProjectListEvent} — the project deletion already committed.
  *
  * @param projectId - Project that was deleted.
  * @param orgId - Owning organization id.
@@ -93,9 +117,13 @@ export async function emitProjectDeleted(
   projectId: string,
   orgId: string,
 ): Promise<void> {
-  broker.dispatch(`project:${projectId}`, {
-    kind: "project-deleted",
-    projectId,
-  } satisfies RealtimeEvent);
-  await emitProjectListEvent(orgId);
+  try {
+    broker.dispatch(`project:${projectId}`, {
+      kind: "project-deleted",
+      projectId,
+    } satisfies RealtimeEvent);
+    await emitProjectListEvent(orgId);
+  } catch (err) {
+    console.error("[realtime] emitProjectDeleted failed:", err);
+  }
 }

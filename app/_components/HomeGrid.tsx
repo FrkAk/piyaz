@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ProjectCard } from "@/components/home/ProjectCard";
 import { NewProjectButton } from "@/components/home/NewProjectButton";
@@ -32,11 +32,7 @@ interface HomeGridProps {
  */
 export function HomeGrid({ teams }: HomeGridProps) {
   const qc = useQueryClient();
-  const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
-  void router;
-  void pathname;
 
   const { data: projects = [] } = useQuery({
     queryKey: projectKeys.list(),

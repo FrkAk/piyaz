@@ -228,6 +228,26 @@ export async function getProjectListMaxUpdatedAt(
 }
 
 /**
+ * Project ids belonging to a single organization. Org-scoped — no per-user
+ * filtering — meant for trusted server-side bookkeeping inside the
+ * org-membership hooks where the caller has already established the scope
+ * (see `lib/realtime/access.ts`). Do NOT expose this through any route or
+ * server action that takes user-supplied input.
+ *
+ * @param organizationId - Organization UUID.
+ * @returns Project ids in that org.
+ */
+export async function listOrgProjectIds(
+  organizationId: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.organizationId, organizationId));
+  return rows.map((r) => r.id);
+}
+
+/**
  * Project ids the caller can access via team membership. Lightweight
  * companion to {@link listProjectsSlim} — no pagination, no decoration —
  * intended for the realtime broker's bulk-subscription registration on

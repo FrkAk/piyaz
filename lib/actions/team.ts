@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
 import { requireSession } from "@/lib/auth/session";
 import { clearOrgMembershipArtifacts } from "@/lib/data/account";
+import { revokeOrgAccess } from "@/lib/realtime/access";
 import { isOrgAdmin, isOrgOwner } from "@/lib/auth/org-permissions";
 import {
   mapBetterAuthError,
@@ -369,9 +370,15 @@ export async function leaveTeamAction(input: {
 
   // Cleanup is best-effort. The user is already out of the org;
   // surfacing a 500 here would be confusing and offer no recovery
-  // path. Stale OAuth tokens linger until cron / next prune.
+  // path. Stale OAuth tokens linger until cron / next prune. Realtime
+  // access revocation is paired here because BA's `leaveOrganization`
+  // does NOT fire `afterRemoveMember` — without this call, broker subs
+  // and the home-grid project list stay stale until SSE reconnects.
   try {
-    await clearOrgMembershipArtifacts(userId, parsed.data.organizationId);
+    await Promise.all([
+      clearOrgMembershipArtifacts(userId, parsed.data.organizationId),
+      revokeOrgAccess(userId, parsed.data.organizationId),
+    ]);
   } catch (err) {
     console.error("leaveTeamAction cleanup failed", {
       err,
