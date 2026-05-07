@@ -1030,24 +1030,42 @@ export async function updateTask(
 
 /**
  * Delete a task and remove all referencing edges.
+ *
+ * Bumps the parent project's `updated_at` after the deletion so the
+ * conditional-GET validator (`max(updated_at)` across project + tasks +
+ * edges) strictly increases. Without this, deleting the most-recently
+ * touched task would shrink the validator and produce a spurious 304 on
+ * the next graph fetch — the UI would never see the deletion land. The
+ * three writes run in a single transaction so concurrent readers either
+ * see the pre- or post-delete state, never an in-between.
+ *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task to delete.
  * @returns Deletion summary.
  */
 export async function deleteTask(ctx: AuthContext, taskId: string) {
-  await assertTaskAccess(taskId, ctx);
+  const task = await assertTaskAccess(taskId, ctx);
 
-  const deletedEdges = await db
-    .delete(taskEdges)
-    .where(
-      or(
-        eq(taskEdges.sourceTaskId, taskId),
-        eq(taskEdges.targetTaskId, taskId),
-      ),
-    )
-    .returning({ id: taskEdges.id });
+  const deletedEdges = await db.transaction(async (tx) => {
+    const removed = await tx
+      .delete(taskEdges)
+      .where(
+        or(
+          eq(taskEdges.sourceTaskId, taskId),
+          eq(taskEdges.targetTaskId, taskId),
+        ),
+      )
+      .returning({ id: taskEdges.id });
 
-  await db.delete(tasks).where(eq(tasks.id, taskId));
+    await tx.delete(tasks).where(eq(tasks.id, taskId));
+
+    await tx
+      .update(projects)
+      .set({ updatedAt: new Date() })
+      .where(eq(projects.id, task.projectId));
+
+    return removed;
+  });
 
   notifyChange();
   return {

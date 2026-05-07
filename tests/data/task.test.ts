@@ -3,7 +3,8 @@ import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { getConnectionString } from "@/tests/setup/container";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { createTask, updateTask, searchTasksPaged, getTaskSlim, getTaskFull } from "@/lib/data/task";
+import { createTask, deleteTask, updateTask, searchTasksPaged, getTaskSlim, getTaskFull } from "@/lib/data/task";
+import { getProjectMaxUpdatedAt } from "@/lib/data/project";
 import { makeAuthContext } from "@/lib/auth/context";
 
 afterEach(async () => {
@@ -131,4 +132,25 @@ test("getTaskFull returns the full row with composed taskRef", async () => {
   expect(t.taskRef).toMatch(/^[A-Za-z0-9]+-\d+$/);
   expect(Array.isArray(t.history)).toBe(true);
   expect(Array.isArray(t.acceptanceCriteria)).toBe(true);
+});
+
+test("deleteTask keeps the conditional-GET validator monotonic", async () => {
+  // Regression guard: deleting the most-recently-touched task previously
+  // shrank `max(updated_at)` across project + tasks + edges, which made
+  // the workspace graph endpoint return 304 with the stale cached body.
+  // `deleteTask` now bumps `projects.updated_at` so the validator never
+  // moves backward when the doomed task held the project's max.
+  const f = await seedUserOrgProject("delete-monotonic");
+  const ctx = makeAuthContext(f.userId);
+
+  const created = await createTask(ctx, { projectId: f.projectId, title: "doomed" });
+  // Allow Postgres `now()` to advance past the seed project's `updated_at`
+  // so the doomed task strictly holds the project-wide validator.
+  await new Promise((r) => setTimeout(r, 50));
+
+  const before = await getProjectMaxUpdatedAt(ctx, f.projectId);
+  await deleteTask(ctx, created.id);
+  const after = await getProjectMaxUpdatedAt(ctx, f.projectId);
+
+  expect(after.getTime()).toBeGreaterThanOrEqual(before.getTime());
 });
