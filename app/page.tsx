@@ -1,4 +1,4 @@
-import { getProjectList, type ProjectListEntry } from '@/lib/graph/queries';
+import { listProjectsSlim, type ProjectListEntry } from '@/lib/graph/queries';
 import { listUserTeamsAction, type TeamView } from '@/lib/actions/team-list';
 import { requireMembership } from '@/lib/auth/membership';
 import { roleHasProjectPermission } from '@/lib/auth/permissions';
@@ -47,7 +47,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   await requireMembership();
 
   const [projects, teamsResult, params] = await Promise.all([
-    getProjectList(),
+    listProjectsSlim(),
     listUserTeamsAction(),
     searchParams,
   ]);

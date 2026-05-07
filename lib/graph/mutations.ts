@@ -1,19 +1,31 @@
 "use server";
 
 import { getAuthContext } from "@/lib/auth/context";
-import * as core from "@/lib/graph/_core/mutations";
+import {
+  updateProject as coreUpdateProject,
+  renameProjectIdentifier as coreRenameProjectIdentifier,
+  renameCategory as coreRenameCategory,
+  deleteCategory as coreDeleteCategory,
+} from "@/lib/data/project";
+import type { ProjectUpdate } from "@/lib/data/project";
+import {
+  createTask as coreCreateTask,
+  updateTask as coreUpdateTask,
+  deleteTask as coreDeleteTask,
+} from "@/lib/data/task";
+import type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
+import {
+  createEdge as coreCreateEdge,
+  removeEdge as coreRemoveEdge,
+} from "@/lib/data/edge";
 import type { Identifier } from "@/lib/graph/identifier";
 import type { NewTaskEdge } from "@/lib/db/schema";
 
-export type {
-  CreateProjectInput,
-  ProjectUpdate,
-  CreateTaskInput,
-  TaskUpdate,
-} from "@/lib/graph/_core/mutations";
+export type { CreateProjectInput, ProjectUpdate } from "@/lib/data/project";
+export type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
 
 // Wrappers exist on demand for client-component callers. MCP and route
-// handlers import lib/graph/_core/mutations directly with their own ctx.
+// handlers import lib/data/* directly with their own ctx.
 
 /**
  * Server action wrapper — update a project's fields.
@@ -23,10 +35,10 @@ export type {
  */
 export async function updateProject(
   projectId: string,
-  changes: core.ProjectUpdate,
+  changes: ProjectUpdate,
 ) {
   const ctx = await getAuthContext();
-  return core.updateProject(ctx, projectId, changes);
+  return coreUpdateProject(ctx, projectId, changes);
 }
 
 /**
@@ -40,7 +52,7 @@ export async function renameProjectIdentifier(
   identifier: Identifier,
 ) {
   const ctx = await getAuthContext();
-  return core.renameProjectIdentifier(ctx, projectId, identifier);
+  return coreRenameProjectIdentifier(ctx, projectId, identifier);
 }
 
 /**
@@ -48,9 +60,9 @@ export async function renameProjectIdentifier(
  * @param data - Task fields. sequenceNumber is assigned internally.
  * @returns Task summary with composed taskRef.
  */
-export async function createTask(data: core.CreateTaskInput) {
+export async function createTask(data: CreateTaskInput) {
   const ctx = await getAuthContext();
-  return core.createTask(ctx, data);
+  return coreCreateTask(ctx, data);
 }
 
 /**
@@ -62,11 +74,11 @@ export async function createTask(data: core.CreateTaskInput) {
  */
 export async function updateTask(
   taskId: string,
-  changes: core.TaskUpdate,
+  changes: TaskUpdate,
   overwriteArrays = false,
 ) {
   const ctx = await getAuthContext();
-  return core.updateTask(ctx, taskId, changes, overwriteArrays);
+  return coreUpdateTask(ctx, taskId, changes, overwriteArrays);
 }
 
 /**
@@ -76,7 +88,7 @@ export async function updateTask(
  */
 export async function deleteTask(taskId: string) {
   const ctx = await getAuthContext();
-  return core.deleteTask(ctx, taskId);
+  return coreDeleteTask(ctx, taskId);
 }
 
 /**
@@ -86,7 +98,7 @@ export async function deleteTask(taskId: string) {
  */
 export async function createEdge(data: Omit<NewTaskEdge, "id">) {
   const ctx = await getAuthContext();
-  return core.createEdge(ctx, data);
+  return coreCreateEdge(ctx, data);
 }
 
 /**
@@ -95,7 +107,7 @@ export async function createEdge(data: Omit<NewTaskEdge, "id">) {
  */
 export async function removeEdge(edgeId: string) {
   const ctx = await getAuthContext();
-  return core.removeEdge(ctx, edgeId);
+  return coreRemoveEdge(ctx, edgeId);
 }
 
 /**
@@ -110,7 +122,7 @@ export async function renameCategory(
   newName: string,
 ) {
   const ctx = await getAuthContext();
-  return core.renameCategory(ctx, projectId, oldName, newName);
+  return coreRenameCategory(ctx, projectId, oldName, newName);
 }
 
 /**
@@ -120,5 +132,5 @@ export async function renameCategory(
  */
 export async function deleteCategory(projectId: string, categoryName: string) {
   const ctx = await getAuthContext();
-  return core.deleteCategory(ctx, projectId, categoryName);
+  return coreDeleteCategory(ctx, projectId, categoryName);
 }

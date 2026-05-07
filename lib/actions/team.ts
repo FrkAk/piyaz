@@ -1,15 +1,10 @@
 "use server";
 
 import { headers } from "next/headers";
-import { eq } from "drizzle-orm";
-import { sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
-import { projects, tasks } from "@/lib/db/schema";
-import { member } from "@/lib/db/auth-schema";
 import { requireSession } from "@/lib/auth/session";
-import { clearOrgMembershipArtifacts } from "@/lib/auth/membership-cleanup";
+import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 import { isOrgAdmin, isOrgOwner } from "@/lib/auth/org-permissions";
 import {
   mapBetterAuthError,
@@ -17,6 +12,12 @@ import {
   teamFail,
   type TeamActionResult,
 } from "@/lib/actions/team-errors";
+import {
+  demoteMemberWithGuard,
+  findMemberById,
+  previewTeamDelete,
+} from "@/lib/data/membership";
+import { parseMemberRoles } from "@/lib/auth/permissions";
 import {
   RESERVED_SLUGS,
   SLUG_MAX,
@@ -103,56 +104,9 @@ const deleteTeamSchema = z.object({
   organizationId: uuidSchema,
 });
 
-/**
- * Parse a Better Auth `member.role` value and return the set of role
- * names it carries. BA 1.6.x stores roles as a comma-separated string
- * (`"owner"`, `"owner,admin"`); a future serializer change to a JSON
- * array (`'["owner","admin"]'`) is tolerated by attempting JSON parse
- * first and falling back to the comma split. Whitespace and empty
- * fragments are stripped.
- *
- * Pinned against `better-auth@1.6.x crud-members.mjs:255`.
- *
- * @param role - Raw `member.role` string from the DB.
- * @returns Lowercased role names present on the member.
- */
-function parseMemberRoles(role: string): string[] {
-  const trimmed = role.trim();
-  if (trimmed.startsWith("[")) {
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        return parsed
-          .filter((v): v is string => typeof v === "string")
-          .map((v) => v.trim())
-          .filter((v) => v.length > 0);
-      }
-    } catch {
-      // fall through to comma split
-    }
-  }
-  return trimmed
-    .split(",")
-    .map((v) => v.trim())
-    .filter((v) => v.length > 0);
-}
-
 /** Convenience: does `role` carry the `owner` grant? */
 function roleIncludesOwner(role: string): boolean {
   return parseMemberRoles(role).includes("owner");
-}
-
-/**
- * Advisory-lock key serializing concurrent owner-role mutations within a
- * single team. Demotes for a single team serialize on this lock so the
- * last-owner guard cannot race; demotes against different teams proceed
- * in parallel because the lock is per-org.
- *
- * @param organizationId - UUID of the team being mutated.
- * @returns SQL fragment producing the int8 lock key for `pg_advisory_xact_lock`.
- */
-function ownerLockKey(organizationId: string) {
-  return sql`hashtext(${`mymir:team-owners:${organizationId}`})`;
 }
 
 /**
@@ -344,43 +298,19 @@ export async function updateMemberRoleAction(input: {
 
   if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
 
-  const [preRead] = await db
-    .select({ organizationId: member.organizationId })
-    .from(member)
-    .where(eq(member.id, parsed.data.memberId))
-    .limit(1);
+  const preRead = await findMemberById(parsed.data.memberId);
   if (!preRead) return teamFail("not_found");
   if (preRead.organizationId !== parsed.data.organizationId) return teamFail("forbidden");
 
   const reqHeaders = await headers();
-  type Outcome =
-    | { kind: "ok" }
-    | { kind: "fail"; code: "not_found" | "forbidden" | "cannot_leave_only_owner" }
-    | { kind: "ba_error"; err: unknown };
-
-  const outcome: Outcome = await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${ownerLockKey(parsed.data.organizationId)})`);
-
-    const [latest] = await tx
-      .select({ role: member.role, organizationId: member.organizationId })
-      .from(member)
-      .where(eq(member.id, parsed.data.memberId))
-      .limit(1);
-    if (!latest) return { kind: "fail", code: "not_found" };
-    if (latest.organizationId !== parsed.data.organizationId) return { kind: "fail", code: "forbidden" };
-
-    const targetIsOwner = roleIncludesOwner(latest.role);
-    const newIsOwner = parsed.data.role === "owner";
-    if (targetIsOwner && !newIsOwner) {
-      const owners = await tx
-        .select({ role: member.role })
-        .from(member)
-        .where(eq(member.organizationId, latest.organizationId));
-      const ownerCount = owners.filter((m) => roleIncludesOwner(m.role)).length;
-      if (ownerCount <= 1) return { kind: "fail", code: "cannot_leave_only_owner" };
-    }
-
-    try {
+  const outcome = await demoteMemberWithGuard(
+    {
+      organizationId: parsed.data.organizationId,
+      memberId: parsed.data.memberId,
+      role: parsed.data.role,
+      roleIncludesOwner,
+    },
+    async () => {
       await auth.api.updateMemberRole({
         body: {
           memberId: parsed.data.memberId,
@@ -389,11 +319,8 @@ export async function updateMemberRoleAction(input: {
         },
         headers: reqHeaders,
       });
-      return { kind: "ok" };
-    } catch (err) {
-      return { kind: "ba_error", err };
-    }
-  });
+    },
+  );
 
   if (outcome.kind === "ok") return { ok: true };
   if (outcome.kind === "fail") return teamFail(outcome.code);
@@ -634,22 +561,8 @@ export async function previewTeamDeleteAction(input: {
   if (!(await isOrgOwner(parsed.data.organizationId))) return teamFail("forbidden");
 
   try {
-    const orgId = parsed.data.organizationId;
-    const rows = (await db.execute(sql`
-      SELECT
-        (SELECT count(*)::int FROM ${projects} WHERE ${projects.organizationId} = ${orgId}) AS project_count,
-        (SELECT count(*)::int FROM ${tasks}
-           INNER JOIN ${projects} ON ${tasks.projectId} = ${projects.id}
-           WHERE ${projects.organizationId} = ${orgId}) AS task_count
-    `)) as unknown as { project_count: number; task_count: number }[];
-    const row = rows[0];
-    return {
-      ok: true,
-      data: {
-        projectCount: Number(row?.project_count ?? 0),
-        taskCount: Number(row?.task_count ?? 0),
-      },
-    };
+    const data = await previewTeamDelete(parsed.data.organizationId);
+    return { ok: true, data };
   } catch (err) {
     console.error("previewTeamDeleteAction failed", err);
     return teamFail("unknown");

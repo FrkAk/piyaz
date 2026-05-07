@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { getProject } from '@/lib/graph/queries';
+import { getProjectFull } from '@/lib/graph/queries';
 import { requireMembership } from '@/lib/auth/membership';
 import { ForbiddenError } from '@/lib/auth/authorization';
 import { roleHasProjectPermission } from '@/lib/auth/permissions';
@@ -23,9 +23,9 @@ export default async function ProjectLayout({ children, params }: LayoutProps) {
   await requireMembership();
   const { projectId } = await params;
 
-  let project: Awaited<ReturnType<typeof getProject>>;
+  let project: Awaited<ReturnType<typeof getProjectFull>>;
   try {
-    project = await getProject(projectId);
+    project = await getProjectFull(projectId);
   } catch (err) {
     if (err instanceof ForbiddenError) notFound();
     throw err;

@@ -1,23 +1,16 @@
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import * as schema from "./schema";
-
-let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
+import { appDb } from "./connection";
 
 /**
- * Lazily initialized Drizzle ORM client.
- * Works with any PostgreSQL instance (local or Neon).
- * Defers connection until first use so builds succeed without DATABASE_URL.
+ * Application Drizzle client.
+ *
+ * @see ./connection.ts for driver selection and lazy-init details.
  */
-export const db = new Proxy(
-  {} as ReturnType<typeof drizzle<typeof schema>>,
-  {
-    get(_target, prop, receiver) {
-      if (!_db) {
-        const client = postgres(process.env.DATABASE_URL!);
-        _db = drizzle(client, { schema });
-      }
-      return Reflect.get(_db, prop, receiver);
-    },
-  },
-);
+export const db = appDb;
+
+/**
+ * A drizzle client or a transaction handle. Re-exported here so the
+ * `lib/data/` ring imports both `db` and `Conn` from a single module.
+ *
+ * @see ./raw.ts for the canonical definition.
+ */
+export type { Conn } from "./raw";

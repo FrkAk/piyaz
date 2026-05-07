@@ -1,17 +1,15 @@
 "use server";
 
 import { getAuthContext } from "@/lib/auth/context";
-import * as core from "@/lib/graph/_core/queries";
+import {
+  getProjectFull as coreGetProjectFull,
+  listProjectsSlim as coreListProjectsSlim,
+} from "@/lib/data/project";
 
-export type {
-  TaskSlim,
-  ProjectTag,
-  TaskState,
-  SearchResult,
-  DetailedEdge,
-  ProjectListEntry,
-  ProjectListOrganization,
-} from "@/lib/graph/_core/queries";
+export type { TaskSlim, TaskState, SearchResult } from "@/lib/data/task";
+export type { DetailedEdge } from "@/lib/data/edge";
+export type { ProjectTag } from "@/lib/data/project";
+export type { ProjectListEntry, ProjectListOrganization } from "@/lib/data/views";
 
 /**
  * Server action wrapper — fetches a project with tasks and edges. The
@@ -20,9 +18,9 @@ export type {
  * @param projectId - UUID of the project.
  * @returns Project with flat tasks and edges.
  */
-export async function getProject(projectId: string) {
+export async function getProjectFull(projectId: string) {
   const ctx = await getAuthContext();
-  return core.getProject(ctx, projectId);
+  return coreGetProjectFull(ctx, projectId);
 }
 
 /**
@@ -31,7 +29,8 @@ export async function getProject(projectId: string) {
  * and progress stats.
  * @returns Array of projects ordered by `updatedAt` descending.
  */
-export async function getProjectList() {
+export async function listProjectsSlim() {
   const ctx = await getAuthContext();
-  return core.getProjectList(ctx);
+  const { rows } = await coreListProjectsSlim(ctx);
+  return rows;
 }

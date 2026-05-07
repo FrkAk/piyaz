@@ -1,14 +1,21 @@
 "use server";
 
 import { headers } from "next/headers";
-import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
-import { teamInviteCodes } from "@/lib/db/team-schema";
 import { requireSession } from "@/lib/auth/session";
 import { isOrgAdmin } from "@/lib/auth/org-permissions";
 import { generateInviteCode, INVITE_CODE_PATTERN } from "@/lib/auth/invite-code";
+import {
+  createTeamInviteCode,
+  diagnoseTeamInviteCode,
+  findTeamInviteCode,
+  type InviteCodeRow,
+  releaseInviteCodeSlot,
+  reserveInviteCodeSlot,
+  revokeTeamInviteCode,
+  rotateTeamInviteCode,
+} from "@/lib/data/team-invite-code";
 import {
   mapBetterAuthError,
   TEAM_ACTION_MESSAGES,
@@ -122,7 +129,7 @@ async function resolveAdminContext(
 }
 
 /** Project a row to the public metadata shape. */
-function toMetadata(row: typeof teamInviteCodes.$inferSelect): InviteCodeMetadata {
+function toMetadata(row: InviteCodeRow): InviteCodeMetadata {
   return {
     code: row.code,
     defaultRole: row.defaultRole,
@@ -163,30 +170,19 @@ export async function getOrCreateTeamInviteCodeAction(input: {
   if (!authResult.ok) return authResult;
   const { userId } = authResult;
 
-  const [existing] = await db
-    .select()
-    .from(teamInviteCodes)
-    .where(eq(teamInviteCodes.organizationId, orgId))
-    .limit(1);
+  const existing = await findTeamInviteCode(orgId);
   if (existing) return { ok: true, data: toMetadata(existing) };
 
   try {
-    const [created] = await db
-      .insert(teamInviteCodes)
-      .values({
-        organizationId: orgId,
-        code: generateInviteCode(),
-        createdBy: userId,
-      })
-      .returning();
+    const created = await createTeamInviteCode({
+      organizationId: orgId,
+      code: generateInviteCode(),
+      createdBy: userId,
+    });
     return { ok: true, data: toMetadata(created) };
   } catch (err) {
     if ((err as { code?: string } | null)?.code === "23505") {
-      const [row] = await db
-        .select()
-        .from(teamInviteCodes)
-        .where(eq(teamInviteCodes.organizationId, orgId))
-        .limit(1);
+      const row = await findTeamInviteCode(orgId);
       if (row) return { ok: true, data: toMetadata(row) };
     }
     console.error("getOrCreateTeamInviteCodeAction failed", err);
@@ -223,43 +219,28 @@ export async function regenerateTeamInviteCodeAction(input: {
   if (!authResult.ok) return authResult;
   const { userId } = authResult;
 
-  const [updated] = await db
-    .update(teamInviteCodes)
-    .set({
-      code: generateInviteCode(),
-      useCount: 0,
-      revokedAt: null,
-      updatedAt: sql`NOW()`,
-    })
-    .where(eq(teamInviteCodes.organizationId, orgId))
-    .returning();
+  const updated = await rotateTeamInviteCode({
+    organizationId: orgId,
+    newCode: generateInviteCode(),
+  });
   if (updated) return { ok: true, data: toMetadata(updated) };
 
   try {
-    const [created] = await db
-      .insert(teamInviteCodes)
-      .values({
-        organizationId: orgId,
-        code: generateInviteCode(),
-        createdBy: userId,
-      })
-      .returning();
+    const created = await createTeamInviteCode({
+      organizationId: orgId,
+      code: generateInviteCode(),
+      createdBy: userId,
+    });
     return { ok: true, data: toMetadata(created) };
   } catch (err) {
     // 23505 here is almost always the org_id UNIQUE — a concurrent
     // first-rotate just landed a row. Retry as UPDATE with a freshly
     // generated code so a (vanishingly rare) code collision can't loop.
     if ((err as { code?: string } | null)?.code === "23505") {
-      const [retried] = await db
-        .update(teamInviteCodes)
-        .set({
-          code: generateInviteCode(),
-          useCount: 0,
-          revokedAt: null,
-          updatedAt: sql`NOW()`,
-        })
-        .where(eq(teamInviteCodes.organizationId, orgId))
-        .returning();
+      const retried = await rotateTeamInviteCode({
+        organizationId: orgId,
+        newCode: generateInviteCode(),
+      });
       if (retried) return { ok: true, data: toMetadata(retried) };
     }
     console.error("regenerateTeamInviteCodeAction failed", err);
@@ -296,43 +277,11 @@ export async function revokeTeamInviteCodeAction(input: {
   const authResult = await resolveAdminContext(orgId);
   if (!authResult.ok) return authResult;
 
-  const [updated] = await db
-    .update(teamInviteCodes)
-    .set({ revokedAt: sql`NOW()`, updatedAt: sql`NOW()` })
-    .where(eq(teamInviteCodes.organizationId, orgId))
-    .returning();
+  const updated = await revokeTeamInviteCode(orgId);
   if (!updated) {
     return { ok: false, code: "not_found", message: NOT_FOUND_MSG };
   }
   return { ok: true, data: toMetadata(updated) };
-}
-
-/**
- * Best-effort lookup for ops triage when an invite code is rejected. The
- * cause is logged but NEVER returned to the user — anti-enumeration.
- */
-async function diagnoseInvalidCode(
-  code: string,
-): Promise<"not_found" | "revoked" | "expired" | "exhausted" | "unknown"> {
-  try {
-    const [row] = await db
-      .select({
-        revokedAt: teamInviteCodes.revokedAt,
-        expiresAt: teamInviteCodes.expiresAt,
-        maxUses: teamInviteCodes.maxUses,
-        useCount: teamInviteCodes.useCount,
-      })
-      .from(teamInviteCodes)
-      .where(eq(teamInviteCodes.code, code))
-      .limit(1);
-    if (!row) return "not_found";
-    if (row.revokedAt) return "revoked";
-    if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return "expired";
-    if (row.maxUses !== null && row.useCount >= row.maxUses) return "exhausted";
-    return "unknown";
-  } catch {
-    return "unknown";
-  }
 }
 
 /**
@@ -389,37 +338,13 @@ export async function joinTeamByCodeAction(input: {
   }
   const { code } = parsed.data;
 
-  const [reserved] = await db
-    .update(teamInviteCodes)
-    .set({
-      useCount: sql`${teamInviteCodes.useCount} + 1`,
-      updatedAt: sql`NOW()`,
-    })
-    .where(
-      and(
-        eq(teamInviteCodes.code, code),
-        isNull(teamInviteCodes.revokedAt),
-        or(
-          isNull(teamInviteCodes.expiresAt),
-          gt(teamInviteCodes.expiresAt, sql`NOW()`),
-        ),
-        or(
-          isNull(teamInviteCodes.maxUses),
-          lt(teamInviteCodes.useCount, teamInviteCodes.maxUses),
-        ),
-      ),
-    )
-    .returning({
-      id: teamInviteCodes.id,
-      orgId: teamInviteCodes.organizationId,
-      defaultRole: teamInviteCodes.defaultRole,
-    });
+  const reserved = await reserveInviteCodeSlot(code);
 
   if (!reserved) {
     // Fire-and-forget: keeping the diagnostic SELECT off the response
     // path prevents its latency from leaking whether the code matched a
     // row (timing side-channel on top of anti-enumeration).
-    void diagnoseInvalidCode(code).then(
+    void diagnoseTeamInviteCode(code).then(
       (cause) => console.warn("joinTeamByCode rejected", { cause }),
       (err) =>
         console.warn("joinTeamByCode rejected (diagnose failed)", { err }),
@@ -443,13 +368,7 @@ export async function joinTeamByCodeAction(input: {
       headers: reqHeaders,
     });
   } catch (err) {
-    await db
-      .update(teamInviteCodes)
-      .set({
-        useCount: sql`GREATEST(${teamInviteCodes.useCount} - 1, 0)`,
-        updatedAt: sql`NOW()`,
-      })
-      .where(eq(teamInviteCodes.id, reserved.id));
+    await releaseInviteCodeSlot(reserved.id);
 
     const mapped = mapBetterAuthError(err);
     if (mapped === "already_member") {

@@ -9,7 +9,7 @@ import {
   updateProject,
   type ProjectUpdate,
 } from '@/lib/graph/mutations';
-import { deleteProject as deleteProjectCore } from '@/lib/graph/_core/mutations';
+import { deleteProject as deleteProjectCore } from '@/lib/data/project';
 import { ProjectNotFoundError } from '@/lib/graph/errors';
 import { getAuthContext } from '@/lib/auth/context';
 import {

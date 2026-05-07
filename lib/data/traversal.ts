@@ -3,9 +3,11 @@ import "server-only";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { tasks, projects, taskEdges } from "@/lib/db/schema";
+import { fetchDependencyChain } from "@/lib/db/raw/fetch-dependency-chain";
+import { fetchDownstream } from "@/lib/db/raw/fetch-downstream";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
-import { deriveTaskStates } from "@/lib/graph/_core/queries";
+import { deriveTaskStates } from "@/lib/data/task";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccess,
@@ -68,42 +70,7 @@ export async function getDependencyChain(
   projectId: string,
   maxDepth = 10,
 ): Promise<DependencyNode[]> {
-  const rows = await db.execute<{
-    id: string;
-    depth: number;
-  }>(sql`
-    WITH RECURSIVE dep_chain AS (
-      SELECT
-        e.target_task_id AS id,
-        1 AS depth
-      FROM ${taskEdges} e
-      INNER JOIN ${tasks} t ON t.id = e.target_task_id
-      WHERE e.source_task_id = ${taskId}
-        AND e.edge_type = 'depends_on'
-        AND t.project_id = ${projectId}
-
-      UNION ALL
-
-      SELECT
-        e.target_task_id AS id,
-        dc.depth + 1 AS depth
-      FROM ${taskEdges} e
-      INNER JOIN dep_chain dc ON e.source_task_id = dc.id
-      INNER JOIN ${tasks} t ON t.id = e.target_task_id
-      WHERE e.edge_type = 'depends_on'
-        AND t.project_id = ${projectId}
-        AND dc.depth < ${maxDepth}
-    )
-    SELECT DISTINCT id, MIN(depth) AS depth
-    FROM dep_chain
-    GROUP BY id
-    ORDER BY depth ASC
-  `);
-
-  return (rows as unknown as { id: string; depth: number }[]).map((row) => ({
-    id: row.id,
-    depth: Number(row.depth),
-  }));
+  return fetchDependencyChain(db, taskId, projectId, maxDepth);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,41 +154,7 @@ export async function getDownstream(
   const rootTask = await assertTaskAccess(taskId, ctx);
   const projectId = rootTask.projectId;
 
-  const rows = await db.execute<{
-    id: string;
-    depth: number;
-  }>(sql`
-    WITH RECURSIVE downstream AS (
-      SELECT
-        e.source_task_id AS id,
-        1 AS depth
-      FROM ${taskEdges} e
-      INNER JOIN ${tasks} t ON t.id = e.source_task_id
-      WHERE e.target_task_id = ${taskId}
-        AND e.edge_type = 'depends_on'
-        AND t.project_id = ${projectId}
-
-      UNION ALL
-
-      SELECT
-        e.source_task_id AS id,
-        ds.depth + 1 AS depth
-      FROM ${taskEdges} e
-      INNER JOIN downstream ds ON e.target_task_id = ds.id
-      INNER JOIN ${tasks} t ON t.id = e.source_task_id
-      WHERE e.edge_type = 'depends_on'
-        AND t.project_id = ${projectId}
-        AND ds.depth < ${maxDepth}
-    )
-    SELECT DISTINCT id, MIN(depth) AS depth
-    FROM downstream
-    GROUP BY id
-    ORDER BY depth ASC
-  `);
-
-  const raw = (rows as unknown as { id: string; depth: number }[]).map(
-    (row) => ({ id: row.id, depth: Number(row.depth) }),
-  );
+  const raw = await fetchDownstream(db, taskId, projectId, maxDepth);
   if (raw.length === 0) return [];
 
   const ids = raw.map((r) => r.id);

@@ -1,17 +1,16 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { tasks, projects } from "@/lib/db/schema";
 import {
   getDependencyChain,
   getDownstream,
-} from "@/lib/graph/_core/traversal";
+} from "@/lib/data/traversal";
 import {
+  fetchDependencyTasks,
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
-} from "@/lib/graph/_core/queries";
+} from "@/lib/data/task";
+import { getProjectIdentifier } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
@@ -34,18 +33,15 @@ export async function buildAgentContext(
 ): Promise<string> {
   const task = await assertTaskAccess(taskId, ctx);
 
-  const [project] = await db
-    .select({ identifier: projects.identifier })
-    .from(projects)
-    .where(eq(projects.id, task.projectId));
-  if (!project) {
+  const identifier = await getProjectIdentifier(task.projectId);
+  if (!identifier) {
     console.error("Task has no joinable project", {
       taskId: task.id,
       projectId: task.projectId,
     });
   }
-  const taskRef = project
-    ? composeTaskRef(asIdentifier(project.identifier), task.sequenceNumber)
+  const taskRef = identifier
+    ? composeTaskRef(asIdentifier(identifier), task.sequenceNumber)
     : "";
 
   const tags = (task.tags as string[] | null) ?? [];
@@ -80,31 +76,11 @@ export async function buildAgentContext(
     const prereqLines: string[] = [];
     const execLines: string[] = [];
 
-    const depIds = deps.map((d) => d.id);
-    const depTasks = await db
-      .select({
-        id: tasks.id,
-        title: tasks.title,
-        status: tasks.status,
-        executionRecord: tasks.executionRecord,
-        sequenceNumber: tasks.sequenceNumber,
-        identifier: projects.identifier,
-      })
-      .from(tasks)
-      .innerJoin(projects, eq(tasks.projectId, projects.id))
-      .where(
-        sql`${tasks.id} IN ${depIds} AND ${tasks.projectId} = ${task.projectId}`,
-      );
-
-    const depMap = new Map(
-      depTasks.map((dt) => [
-        dt.id,
-        {
-          ...dt,
-          taskRef: composeTaskRef(asIdentifier(dt.identifier), dt.sequenceNumber),
-        },
-      ]),
+    const depTasks = await fetchDependencyTasks(
+      task.projectId,
+      deps.map((d) => d.id),
     );
+    const depMap = new Map(depTasks.map((dt) => [dt.id, dt]));
 
     for (const dep of deps) {
       const info = depMap.get(dep.id);

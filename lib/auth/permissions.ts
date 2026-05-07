@@ -51,10 +51,46 @@ const ROLES = { owner, admin, member } as const;
 export type ProjectAction = (typeof projectActions)[number];
 
 /**
- * Synchronous permission check against a Better Auth role string. BA stores
- * multi-role memberships as a comma-separated string in `member.role`, so
- * the input is split before evaluation; the caller passes if any sub-role
- * holds every requested action.
+ * Parse a Better Auth `member.role` value into the set of role names it
+ * carries. BA 1.6.x stores roles as a comma-separated string (`"owner"`,
+ * `"owner,admin"`); a future serializer change to a JSON array
+ * (`'["owner","admin"]'`) is tolerated by attempting JSON parse first and
+ * falling back to the comma split. Whitespace and empty fragments are
+ * stripped.
+ *
+ * Pinned against `better-auth@1.6.x crud-members.mjs:255`. Used by both
+ * the project-permission check ({@link roleHasProjectPermission}) and the
+ * last-owner guard in `lib/actions/team.ts`, so a serializer change can't
+ * silently flip either site open.
+ *
+ * @param role - Raw `member.role` string from the DB.
+ * @returns Role names present on the member.
+ */
+export function parseMemberRoles(role: string): string[] {
+  const trimmed = role.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((v): v is string => typeof v === "string")
+          .map((v) => v.trim())
+          .filter((v) => v.length > 0);
+      }
+    } catch {
+      // fall through to comma split
+    }
+  }
+  return trimmed
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
+}
+
+/**
+ * Synchronous permission check against a Better Auth role string. Roles
+ * are parsed via {@link parseMemberRoles}; the caller passes if any
+ * sub-role holds every requested action.
  *
  * Uses `Role.authorize()` (no DB hit) so callers can chain this onto an
  * existing JOIN that already loaded `member.role`.
@@ -67,11 +103,7 @@ export function roleHasProjectPermission(
   role: string,
   actions: readonly ProjectAction[],
 ): boolean {
-  const parts = role
-    .split(",")
-    .map((r) => r.trim())
-    .filter(Boolean);
-  for (const r of parts) {
+  for (const r of parseMemberRoles(role)) {
     const def = ROLES[r as keyof typeof ROLES];
     if (!def) {
       console.warn(

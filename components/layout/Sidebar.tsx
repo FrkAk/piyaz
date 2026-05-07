@@ -31,7 +31,7 @@ export interface SidebarUser {
   image?: string | null;
 }
 
-/** Slim project shape the sidebar needs — fed by AppShell from `getProjectList()`. */
+/** Slim project shape the sidebar needs — fed by AppShell from `listProjectsSlim()`. */
 export interface SidebarProject {
   /** Project UUID — used for the active-row highlight + deep link. */
   id: string;
@@ -426,7 +426,7 @@ function NavItem({ icon, label, disabledHint }: NavItemProps) {
 interface ProjectGroup {
   /** Team metadata, or `null` for projects whose team isn't on the caller's list. */
   team: SidebarTeam | null;
-  /** Projects belonging to this team, in the order returned by `getProjectList()`. */
+  /** Projects belonging to this team, in the order returned by `listProjectsSlim()`. */
   projects: SidebarProject[];
 }
 
@@ -437,7 +437,7 @@ interface ProjectGroup {
  * collects projects whose team is missing (defensive — should not happen
  * in practice).
  *
- * @param projects - Sidebar projects from `getProjectList()`.
+ * @param projects - Sidebar projects from `listProjectsSlim()`.
  * @param teams - Teams from `listUserTeamsAction()`.
  * @returns Groups in stable display order.
  */

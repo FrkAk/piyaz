@@ -1,22 +1,42 @@
 'use server';
 
-import { count, desc, eq, inArray } from 'drizzle-orm';
-import { db } from '@/lib/db';
-import { member, organization } from '@/lib/db/auth-schema';
 import { requireSession } from '@/lib/auth/session';
 import { teamFail, type TeamActionResult } from '@/lib/actions/team-errors';
 import { mapTeamViews, type TeamView } from '@/lib/actions/team-list-map';
+import { listMembershipsWithCounts } from '@/lib/data/membership';
+import type { Cursor } from '@/lib/data/cursor';
 
 export type { TeamView } from '@/lib/actions/team-list-map';
 
+/** Paginated team list result. */
+export type ListTeamsResult = {
+  rows: TeamView[];
+  nextCursor: Cursor | null;
+};
+
 /**
- * List every team the caller is a member of, decorated with their role
- * and the team's total member count. Sorted by creation order (newest
- * first) so freshly-created teams surface at the top.
+ * List every team the caller is a member of (up to 100), decorated with
+ * their role and total member count. Returns a flat array for backward
+ * compatibility — use {@link listUserTeamsPagedAction} for cursor-based access.
  *
- * @returns Discriminated result; `data` is the list of teams.
+ * @returns Discriminated result; `data` is the team list.
  */
 export async function listUserTeamsAction(): Promise<TeamActionResult<TeamView[]>> {
+  const result = await listUserTeamsPagedAction({ limit: 100 });
+  if (!result.ok) return result;
+  return { ok: true, data: result.data.rows };
+}
+
+/**
+ * Paginated version of {@link listUserTeamsAction}. Returns a page of teams
+ * plus a cursor for the next slice.
+ *
+ * @param input - Optional limit and cursor.
+ * @returns Discriminated result; `data` contains rows and nextCursor.
+ */
+export async function listUserTeamsPagedAction(
+  input: { limit?: number; cursor?: string | null } = {},
+): Promise<TeamActionResult<ListTeamsResult>> {
   let userId: string;
   try {
     const session = await requireSession();
@@ -26,39 +46,13 @@ export async function listUserTeamsAction(): Promise<TeamActionResult<TeamView[]
   }
 
   try {
-    const memberships = await db
-      .select({
-        organizationId: organization.id,
-        name: organization.name,
-        slug: organization.slug,
-        organizationCreatedAt: organization.createdAt,
-        membershipCreatedAt: member.createdAt,
-        role: member.role,
-      })
-      .from(member)
-      .innerJoin(organization, eq(organization.id, member.organizationId))
-      .where(eq(member.userId, userId))
-      .orderBy(desc(organization.createdAt));
-
-    if (memberships.length === 0) return { ok: true, data: [] };
-
-    const orgIds = memberships.map((m) => m.organizationId);
-    const counts = await db
-      .select({
-        organizationId: member.organizationId,
-        memberCount: count(member.id).as('member_count'),
-      })
-      .from(member)
-      .where(inArray(member.organizationId, orgIds))
-      .groupBy(member.organizationId);
-
-    const countByOrg = new Map(counts.map((c) => [c.organizationId, Number(c.memberCount)]));
-
-    const data = mapTeamViews(memberships, countByOrg);
-
-    return { ok: true, data };
+    const { memberships, countByOrg, nextCursor } = await listMembershipsWithCounts(userId, {
+      limit: input.limit,
+      cursor: input.cursor,
+    });
+    return { ok: true, data: { rows: mapTeamViews(memberships, countByOrg), nextCursor } };
   } catch (err) {
-    console.error('listUserTeamsAction failed', err);
+    console.error('listUserTeamsPagedAction failed', err);
     return teamFail('unknown');
   }
 }

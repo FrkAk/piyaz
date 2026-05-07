@@ -1,11 +1,10 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { tasks, projects } from "@/lib/db/schema";
 import type { AcceptanceCriterion } from "@/lib/types";
-import { getAncestors } from "@/lib/graph/_core/traversal";
-import { getTaskEdgesDetailed } from "@/lib/graph/_core/queries";
+import { getAncestors } from "@/lib/data/traversal";
+import { getTaskEdgesDetailed } from "@/lib/data/edge";
+import { getProjectIdentifier } from "@/lib/data/project";
+import { fetchSiblingTasks } from "@/lib/data/task";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
@@ -46,25 +45,21 @@ export async function buildWorkingContext(
   const task = await assertTaskAccess(taskId, ctx);
   const projectId = task.projectId;
 
-  const [projectRow, ancestors, detailedEdges, siblings] = await Promise.all([
-    db
-      .select({ identifier: projects.identifier })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .then((r) => r[0]),
+  const [identifier, ancestors, detailedEdges, siblings] = await Promise.all([
+    getProjectIdentifier(projectId),
     getAncestors(taskId),
     getTaskEdgesDetailed(ctx, taskId),
-    fetchSiblings(taskId, projectId),
+    fetchSiblingTasks(projectId, taskId),
   ]);
 
-  if (!projectRow) {
+  if (!identifier) {
     console.error("Task has no joinable project", {
       taskId: task.id,
       projectId: task.projectId,
     });
   }
-  const taskRef = projectRow
-    ? composeTaskRef(asIdentifier(projectRow.identifier), task.sequenceNumber)
+  const taskRef = identifier
+    ? composeTaskRef(asIdentifier(identifier), task.sequenceNumber)
     : "";
 
   const edges = detailedEdges.map((e) => ({
@@ -208,31 +203,4 @@ function formatSiblingsSection(siblings: WorkingContext["siblings"]): string {
     lines.push(`- \`${s.taskRef}\` "${s.title}" (${s.status})`);
   }
   return lines.join("\n");
-}
-
-/**
- * Fetch other tasks in the same project (siblings). Internal helper —
- * caller asserted access on the parent task.
- * @param taskId - UUID of the current task.
- * @param projectId - UUID of the project.
- * @returns Array of siblings with id, title, and status.
- */
-async function fetchSiblings(taskId: string, projectId: string) {
-  const rows = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      sequenceNumber: tasks.sequenceNumber,
-      identifier: projects.identifier,
-    })
-    .from(tasks)
-    .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(sql`${tasks.projectId} = ${projectId} AND ${tasks.id} != ${taskId}`);
-  return rows.map((r) => ({
-    id: r.id,
-    taskRef: composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber),
-    title: r.title,
-    status: r.status,
-  }));
 }

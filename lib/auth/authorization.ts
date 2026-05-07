@@ -1,15 +1,12 @@
 import "server-only";
 
-import { and, eq, getTableColumns } from "drizzle-orm";
-import { db } from "@/lib/db";
-import {
-  projects,
-  tasks,
-  type Project,
-  type Task,
-} from "@/lib/db/schema";
-import { member } from "@/lib/db/auth-schema";
+import type { Task } from "@/lib/db/schema";
 import type { AuthContext } from "@/lib/auth/context";
+import {
+  findProjectAccess,
+  findTaskAccess,
+  type ProjectAccessRow,
+} from "@/lib/data/access";
 import {
   roleHasProjectPermission,
   type ProjectAction,
@@ -82,14 +79,7 @@ export class InsufficientRoleError extends ForbiddenError {
 }
 
 /** Result of a successful {@link assertProjectAccess} call. */
-export type ProjectAccess = {
-  /** The authorized project row. */
-  project: Project;
-  /** Caller's `member.role` string from the same JOIN. Reused by callers
-   * that need a follow-up capability check (e.g. "can rename") without
-   * issuing a second `member` lookup. */
-  memberRole: string;
-};
+export type ProjectAccess = ProjectAccessRow;
 
 /**
  * Verify the caller can access the project and return its row plus the
@@ -127,29 +117,15 @@ export async function assertProjectAccess(
   if (!isUuid(projectId)) {
     throw new ForbiddenError("Forbidden", "project", projectId);
   }
-  const [row] = await db
-    .select({
-      project: getTableColumns(projects),
-      memberRole: member.role,
-    })
-    .from(projects)
-    .innerJoin(
-      member,
-      and(
-        eq(member.organizationId, projects.organizationId),
-        eq(member.userId, ctx.userId),
-      ),
-    )
-    .where(eq(projects.id, projectId))
-    .limit(1);
-  if (!row) throw new ForbiddenError("Forbidden", "project", projectId);
+  const access = await findProjectAccess(ctx.userId, projectId);
+  if (!access) throw new ForbiddenError("Forbidden", "project", projectId);
   if (
     required &&
-    !roleHasProjectPermission(row.memberRole, required.project)
+    !roleHasProjectPermission(access.memberRole, required.project)
   ) {
     throw new InsufficientRoleError(required.project, "project", projectId);
   }
-  return { project: row.project, memberRole: row.memberRole };
+  return access;
 }
 
 /**
@@ -170,19 +146,7 @@ export async function assertTaskAccess(
   if (!isUuid(taskId)) {
     throw new ForbiddenError("Forbidden", "task", taskId);
   }
-  const [row] = await db
-    .select(getTableColumns(tasks))
-    .from(tasks)
-    .innerJoin(projects, eq(projects.id, tasks.projectId))
-    .innerJoin(
-      member,
-      and(
-        eq(member.organizationId, projects.organizationId),
-        eq(member.userId, ctx.userId),
-      ),
-    )
-    .where(eq(tasks.id, taskId))
-    .limit(1);
-  if (!row) throw new ForbiddenError("Forbidden", "task", taskId);
-  return row;
+  const task = await findTaskAccess(ctx.userId, taskId);
+  if (!task) throw new ForbiddenError("Forbidden", "task", taskId);
+  return task;
 }

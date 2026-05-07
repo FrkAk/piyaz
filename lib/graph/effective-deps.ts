@@ -1,8 +1,7 @@
 import "server-only";
 
-import { eq, and, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { tasks, taskEdges } from "@/lib/db/schema";
+import { listTasksForGraph } from "@/lib/data/task";
+import { listDependsOnEdges } from "@/lib/data/edge";
 
 /** Slim active-task info used by graph analyzers. */
 export type ActiveTaskInfo = {
@@ -46,16 +45,7 @@ export type EffectiveDepGraph = {
 export async function buildEffectiveDepGraph(
   projectId: string,
 ): Promise<EffectiveDepGraph> {
-  const allTasks = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      sequenceNumber: tasks.sequenceNumber,
-      tags: tasks.tags,
-    })
-    .from(tasks)
-    .where(eq(tasks.projectId, projectId));
+  const allTasks = await listTasksForGraph(projectId);
 
   const activeTasks = new Map<string, ActiveTaskInfo>();
   const taskStatus = new Map<string, string>();
@@ -81,18 +71,7 @@ export async function buildEffectiveDepGraph(
   }
 
   const taskIds = allTasks.map((t) => t.id);
-  const dependsOnEdges = await db
-    .select({
-      sourceTaskId: taskEdges.sourceTaskId,
-      targetTaskId: taskEdges.targetTaskId,
-    })
-    .from(taskEdges)
-    .where(
-      and(
-        sql`${taskEdges.sourceTaskId} IN ${taskIds}`,
-        eq(taskEdges.edgeType, "depends_on"),
-      ),
-    );
+  const dependsOnEdges = await listDependsOnEdges(taskIds);
 
   const adj = new Map<string, string[]>();
   for (const e of dependsOnEdges) {

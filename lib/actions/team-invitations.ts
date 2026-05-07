@@ -1,11 +1,8 @@
 'use server';
 
 import { headers } from 'next/headers';
-import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod/v4';
 import { auth } from '@/lib/auth';
-import { db } from '@/lib/db';
-import { invitation, user } from '@/lib/db/auth-schema';
 import { requireSession } from '@/lib/auth/session';
 import { isOrgAdmin } from '@/lib/auth/org-permissions';
 import {
@@ -19,6 +16,8 @@ import {
   type BetterAuthInvitationRow,
   type InvitationView,
 } from '@/lib/actions/team-invitations-map';
+import { findInvitationOrgId } from '@/lib/data/invitation';
+import { lookupUserNames } from '@/lib/data/membership';
 
 const cancelSchema = z.object({
   invitationId: z.uuid(),
@@ -85,11 +84,7 @@ export async function listPendingInvitationsAction(input: {
   if (pending.length === 0) return { ok: true, data: [] };
 
   const inviterIds = Array.from(new Set(pending.map((row) => row.inviterId)));
-  const inviters = await db
-    .select({ id: user.id, name: user.name })
-    .from(user)
-    .where(inArray(user.id, inviterIds));
-  const nameById = new Map(inviters.map((u) => [u.id, u.name]));
+  const nameById = await lookupUserNames(inviterIds);
 
   const data = pending
     .map((row) =>
@@ -127,14 +122,9 @@ export async function cancelInvitationAction(input: {
   const parsed = parseOrFail(cancelSchema, input);
   if (!parsed.ok) return parsed;
 
-  const [row] = await db
-    .select({ organizationId: invitation.organizationId })
-    .from(invitation)
-    .where(eq(invitation.id, parsed.data.invitationId))
-    .limit(1);
-  if (!row) return teamFail('not_found');
-
-  if (!(await isOrgAdmin(row.organizationId))) return teamFail('forbidden');
+  const orgId = await findInvitationOrgId(parsed.data.invitationId);
+  if (!orgId) return teamFail('not_found');
+  if (!(await isOrgAdmin(orgId))) return teamFail('forbidden');
 
   try {
     await auth.api.cancelInvitation({

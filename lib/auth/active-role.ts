@@ -1,8 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { member } from "@/lib/db/auth-schema";
+import { findMemberRole } from "@/lib/data/membership";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   roleHasProjectPermission,
@@ -22,17 +20,7 @@ export async function getMemberRole(
   ctx: AuthContext,
   organizationId: string,
 ): Promise<string | null> {
-  const [row] = await db
-    .select({ role: member.role })
-    .from(member)
-    .where(
-      and(
-        eq(member.userId, ctx.userId),
-        eq(member.organizationId, organizationId),
-      ),
-    )
-    .limit(1);
-  return row?.role ?? null;
+  return findMemberRole(ctx.userId, organizationId);
 }
 
 /**

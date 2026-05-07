@@ -53,10 +53,11 @@ Spin up Postgres and push the schema:
 bun run db:setup
 ```
 
-Start the dev server and open [localhost:3000](http://localhost:3000):
+Build and start the server and open [localhost:3000](http://localhost:3000):
 
 ```bash
-bun run dev
+bun run build
+bun run start
 ```
 
 Mymir ships as four standalone plugin/extension dirs, one per supported CLI under `plugins/<cli>/`. With the dev server running, install the one that matches your tool.
@@ -202,14 +203,6 @@ Graph mode overlays the context network so you can see how tasks, decisions, and
 Zoom out and the full graph renders your entire context network. Clusters, bottlenecks, and orphaned work become obvious at a glance.
 
 ![Full graph](assets/graphonlyview_light.png)
-
----
-
-## How is it going
-
-69 of 106 tasks done. We are almost there.
-
-![Progress](assets/progress.png)
 
 ---
 

@@ -1,10 +1,8 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
 import type { EdgeType, AcceptanceCriterion, Decision } from "@/lib/types";
-import { getTaskEdgesDetailed } from "@/lib/graph/_core/queries";
+import { getTaskEdgesDetailed } from "@/lib/data/edge";
+import { getProjectHeader } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import type { AuthContext } from "@/lib/auth/context";
 import { assertTaskAccess } from "@/lib/auth/authorization";
@@ -48,10 +46,7 @@ export async function buildSummaryContext(
 ): Promise<SummaryContext> {
   const task = await assertTaskAccess(taskId, ctx);
 
-  const [project] = await db
-    .select({ title: projects.title, identifier: projects.identifier })
-    .from(projects)
-    .where(eq(projects.id, task.projectId));
+  const project = await getProjectHeader(task.projectId);
   if (!project) {
     console.error("Task has no joinable project", {
       taskId: task.id,
@@ -107,4 +102,3 @@ function buildEdgeCount(edges: EdgeDetail[]): Record<EdgeType, number> {
   }
   return counts;
 }
-

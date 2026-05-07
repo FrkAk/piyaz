@@ -1,4 +1,4 @@
-import { getProject } from '@/lib/graph/_core/queries';
+import { getProjectFull } from '@/lib/data/project';
 import { getAuthContext } from '@/lib/auth/context';
 import { ForbiddenError } from '@/lib/auth/authorization';
 import { ok, error } from '@/lib/api/response';
@@ -22,7 +22,7 @@ export async function GET(
 
   try {
     const { projectId } = await params;
-    const graph = await getProject(ctx, projectId);
+    const graph = await getProjectFull(ctx, projectId);
 
     if (!graph) {
       return error('Project not found', 404);

@@ -1,15 +1,14 @@
 import "server-only";
 
-import { eq, asc, sql, or } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { tasks, taskEdges } from "@/lib/db/schema";
 import type { EdgeType } from "@/lib/types";
 import {
   asIdentifier,
   composeTaskRef,
   enrichWithTaskRef,
 } from "@/lib/graph/identifier";
-import { getProjectTags } from "@/lib/graph/_core/queries";
+import { getProjectTags } from "@/lib/data/project";
+import { listProjectTasks } from "@/lib/data/task";
+import { fetchEdgesForTaskIds } from "@/lib/data/edge";
 import { compress } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
 import { assertProjectAccess } from "@/lib/auth/authorization";
@@ -66,11 +65,7 @@ export async function buildProjectOverview(
 ): Promise<ProjectOverview> {
   const { project } = await assertProjectAccess(projectId, ctx);
 
-  const allTasks = await db
-    .select()
-    .from(tasks)
-    .where(eq(tasks.projectId, projectId))
-    .orderBy(asc(tasks.order));
+  const allTasks = await listProjectTasks(projectId);
 
   const projectTags = await getProjectTags(ctx, projectId);
 
@@ -108,15 +103,7 @@ export async function buildProjectOverview(
       });
     }
 
-    const rawEdges = await db
-      .select()
-      .from(taskEdges)
-      .where(
-        or(
-          sql`${taskEdges.sourceTaskId} IN ${taskIds}`,
-          sql`${taskEdges.targetTaskId} IN ${taskIds}`,
-        ),
-      );
+    const rawEdges = await fetchEdgesForTaskIds(taskIds);
 
     edges = rawEdges.map((e) => {
       const source = infoMap.get(e.sourceTaskId);

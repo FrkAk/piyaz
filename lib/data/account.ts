@@ -1,5 +1,4 @@
 import "server-only";
-
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
@@ -11,7 +10,8 @@ import {
 
 /**
  * Wipe every artifact that referenced (userId, orgId) so a removed member
- * cannot keep operating with stale credentials.
+ * cannot keep operating with stale credentials. All four writes commit
+ * together — concurrent readers see either the pre- or post-state.
  *
  * Called from:
  * - `organizationHooks.afterRemoveMember` (admin removes another member)
@@ -19,11 +19,6 @@ import {
  *   fire any organization hook, so the call site must invoke cleanup itself)
  * - `organizationHooks.beforeDeleteOrganization` (per-member loop before
  *   the org row is deleted; member rows then cascade)
- *
- * Order matters here: NULL the session's `activeOrganizationId` pointer
- * before deleting tokens so any BA-internal route that still reads the
- * column (e.g. for a "last viewed org" hint) doesn't observe a value
- * pointing at a team the user just lost access to.
  *
  * @param userId - Owner of the artifacts to remove.
  * @param orgId - Organization the artifacts pointed at.

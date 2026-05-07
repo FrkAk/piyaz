@@ -3,18 +3,15 @@
  * Used by shared handlers so both web AI SDK and MCP get identical output.
  */
 
-import type {
-  SearchResult,
-  DetailedEdge,
-  TaskSlim,
-} from "@/lib/graph/_core/queries";
+import type { SearchResult, TaskSlim } from "@/lib/data/task";
+import type { DetailedEdge } from "@/lib/data/edge";
 import type {
   ReadyTask,
   PlannableTask,
   BlockedTask,
   CriticalPathTask,
   DownstreamNode,
-} from "@/lib/graph/_core/traversal";
+} from "@/lib/data/traversal";
 import type { ProjectOverview } from "@/lib/context/_core/overview";
 import type { SummaryContext } from "@/lib/context/_core/summary";
 

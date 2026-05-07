@@ -1,8 +1,6 @@
 import { redirect } from "next/navigation";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/session";
-import { member } from "@/lib/db/auth-schema";
+import { userHasAnyMembership } from "@/lib/data/membership";
 import { AuthBrand } from "@/components/auth/AuthBrand";
 import { OnboardingForm } from "./OnboardingForm";
 
@@ -23,13 +21,7 @@ export const dynamic = "force-dynamic";
 export default async function OnboardingTeamPage() {
   const session = await requireSession();
 
-  const [existing] = await db
-    .select({ id: member.id })
-    .from(member)
-    .where(eq(member.userId, session.user.id))
-    .limit(1);
-
-  if (existing) redirect("/");
+  if (await userHasAnyMembership(session.user.id)) redirect("/");
 
   return (
     <div className="flex min-h-[100dvh] items-center justify-center px-4 py-12">

@@ -1,10 +1,12 @@
 import "server-only";
 
 import { redirect } from "next/navigation";
-import { and, eq, getTableColumns } from "drizzle-orm";
-import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth/session";
-import { member, organization } from "@/lib/db/auth-schema";
+import {
+  findTeamMembership,
+  userHasAnyMembership,
+  type TeamMembershipRow,
+} from "@/lib/data/membership";
 import type { AuthContext } from "@/lib/auth/context";
 import { ForbiddenError, isUuid } from "@/lib/auth/authorization";
 
@@ -18,26 +20,13 @@ import { ForbiddenError, isUuid } from "@/lib/auth/authorization";
  */
 export async function requireMembership(): Promise<void> {
   const session = await requireSession();
-
-  const [existing] = await db
-    .select({ id: member.id })
-    .from(member)
-    .where(eq(member.userId, session.user.id))
-    .limit(1);
-
-  if (!existing) {
+  if (!(await userHasAnyMembership(session.user.id))) {
     redirect("/onboarding/team");
   }
 }
 
 /** Resolved team-scope for a per-team admin route. */
-export type TeamMembership = {
-  /** The authorized organization row. */
-  organization: typeof organization.$inferSelect;
-  /** Caller's `member.role` string from the same JOIN. Reused for capability
-   *  checks (e.g. owner-only delete) without a second `member` lookup. */
-  memberRole: string;
-};
+export type TeamMembership = TeamMembershipRow;
 
 /**
  * Verify the caller is a member of the target team and return the org row
@@ -66,21 +55,7 @@ export async function requireTeamMembership(
     });
     throw new ForbiddenError("Forbidden");
   }
-  const [row] = await db
-    .select({
-      organization: getTableColumns(organization),
-      memberRole: member.role,
-    })
-    .from(organization)
-    .innerJoin(
-      member,
-      and(
-        eq(member.organizationId, organization.id),
-        eq(member.userId, ctx.userId),
-      ),
-    )
-    .where(eq(organization.id, teamId))
-    .limit(1);
-  if (!row) throw new ForbiddenError("Forbidden");
-  return { organization: row.organization, memberRole: row.memberRole };
+  const access = await findTeamMembership(ctx.userId, teamId);
+  if (!access) throw new ForbiddenError("Forbidden");
+  return access;
 }

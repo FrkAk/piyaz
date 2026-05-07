@@ -1,17 +1,16 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { tasks, projects } from "@/lib/db/schema";
 import {
   getDependencyChain,
   getDownstream,
-} from "@/lib/graph/_core/traversal";
+} from "@/lib/data/traversal";
 import {
+  fetchDependencyTasks,
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
-} from "@/lib/graph/_core/queries";
+} from "@/lib/data/task";
+import { getProjectHeader } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
@@ -35,15 +34,7 @@ export async function buildPlanningContext(
 ): Promise<string> {
   const task = await assertTaskAccess(taskId, ctx);
 
-  const [project] = await db
-    .select({
-      title: projects.title,
-      description: projects.description,
-      identifier: projects.identifier,
-    })
-    .from(projects)
-    .where(eq(projects.id, task.projectId));
-
+  const project = await getProjectHeader(task.projectId);
   if (!project) {
     console.error("Task has no joinable project", {
       taskId: task.id,
@@ -93,31 +84,11 @@ export async function buildPlanningContext(
     const prereqLines: string[] = [];
     const execLines: string[] = [];
 
-    const depIds = deps.map((d) => d.id);
-    const depTasks = await db
-      .select({
-        id: tasks.id,
-        title: tasks.title,
-        status: tasks.status,
-        executionRecord: tasks.executionRecord,
-        sequenceNumber: tasks.sequenceNumber,
-        identifier: projects.identifier,
-      })
-      .from(tasks)
-      .innerJoin(projects, eq(tasks.projectId, projects.id))
-      .where(
-        sql`${tasks.id} IN ${depIds} AND ${tasks.projectId} = ${task.projectId}`,
-      );
-
-    const depMap = new Map(
-      depTasks.map((dt) => [
-        dt.id,
-        {
-          ...dt,
-          taskRef: composeTaskRef(asIdentifier(dt.identifier), dt.sequenceNumber),
-        },
-      ]),
+    const depTasks = await fetchDependencyTasks(
+      task.projectId,
+      deps.map((d) => d.id),
     );
+    const depMap = new Map(depTasks.map((dt) => [dt.id, dt]));
 
     for (const dep of deps) {
       const info = depMap.get(dep.id);

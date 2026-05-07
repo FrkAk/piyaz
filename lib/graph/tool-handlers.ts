@@ -8,26 +8,27 @@ import {
   createProject,
   updateProject,
   renameProjectIdentifier,
+  listProjectsSlim,
+  listUserTeams,
+  getProjectTags,
+} from "@/lib/data/project";
+import {
   createTask,
   updateTask,
   deleteTask,
   deleteTaskPreview,
   reorderTask,
+  searchTasks,
+  getProjectTasksSlim,
+} from "@/lib/data/task";
+import {
   createEdge,
   updateEdge,
   removeEdge,
-} from "@/lib/graph/_core/mutations";
-import {
-  getProjectList,
-  listUserTeams,
-  searchTasks,
-  getProjectTasksSlim,
   getTaskEdgesDetailed,
-  getProjectTags,
-  fetchTask,
   findEdgeByNodes,
-} from "@/lib/graph/_core/queries";
-import type { TaskState } from "@/lib/graph/_core/queries";
+} from "@/lib/data/edge";
+import type { TaskState } from "@/lib/data/task";
 import { buildProjectOverview } from "@/lib/context/_core/overview";
 import { buildSummaryContext } from "@/lib/context/_core/summary";
 import {
@@ -42,10 +43,11 @@ import {
   getDownstream,
   getCriticalPath,
   getPlannableTasks,
-} from "@/lib/graph/_core/traversal";
+} from "@/lib/data/traversal";
 import type { EdgeType, Decision } from "@/lib/types";
 import { parseIdentifier } from "@/lib/graph/identifier";
-import type { ProjectUpdate, TaskUpdate } from "@/lib/graph/_core/mutations";
+import type { ProjectUpdate } from "@/lib/data/project";
+import type { TaskUpdate } from "@/lib/data/task";
 import type { Project } from "@/lib/db/schema";
 import {
   MultiTeamAmbiguityError,
@@ -68,6 +70,7 @@ import type { AuthContext } from "@/lib/auth/context";
 import {
   ForbiddenError,
   InsufficientRoleError,
+  assertTaskAccess,
 } from "@/lib/auth/authorization";
 
 /**
@@ -445,7 +448,7 @@ export async function handleProject(
   try {
     switch (p.action) {
       case "list":
-        return ok(await getProjectList(ctx));
+        return ok((await listProjectsSlim(ctx)).rows);
       case "teams":
         return ok(await listUserTeams(ctx));
       case "create": {
@@ -576,7 +579,7 @@ export async function handleTask(
           createHints.push(...tagVariantHints(p.tags, preExistingTags));
         }
         if (p.status === "done") {
-          const persisted = await fetchTask(ctx, task.id);
+          const persisted = await assertTaskAccess(task.id, ctx);
           if (persisted) {
             createHints.push(
               ...doneStatusHints(
@@ -597,7 +600,7 @@ export async function handleTask(
           }
         }
         if (p.status === "cancelled") {
-          const persisted = await fetchTask(ctx, task.id);
+          const persisted = await assertTaskAccess(task.id, ctx);
           if (persisted) {
             createHints.push(
               ...cancelledStatusHints(
@@ -639,7 +642,7 @@ export async function handleTask(
         let preExistingTags: string[] = [];
         let priorStatus: string | undefined;
         if (p.tags && p.tags.length > 0) {
-          const existing = await fetchTask(ctx, p.taskId);
+          const existing = await assertTaskAccess(p.taskId, ctx);
           if (existing) {
             preExistingTags = (
               await getProjectTags(ctx, existing.projectId)
@@ -648,7 +651,7 @@ export async function handleTask(
           }
         }
         if (p.status !== undefined && priorStatus === undefined) {
-          const existing = await fetchTask(ctx, p.taskId);
+          const existing = await assertTaskAccess(p.taskId, ctx);
           if (existing) priorStatus = existing.status;
         }
         const changes: TaskUpdate = {};
@@ -905,9 +908,9 @@ export async function handleContext(
       case "working": {
         if (!p.projectId)
           return fail("projectId required for working depth");
-        // fetchTask asserts task access; the projectId comparison protects
+        // assertTaskAccess gates on membership; the projectId comparison protects
         // against passing a different project's UUID alongside our own task.
-        const task = await fetchTask(ctx, p.taskId);
+        const task = await assertTaskAccess(p.taskId, ctx);
         if (task.projectId !== p.projectId) {
           return fail(
             `Task '${p.taskId}' belongs to project '${task.projectId}', not '${p.projectId}'. ` +

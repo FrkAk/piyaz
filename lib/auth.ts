@@ -2,22 +2,11 @@ import { betterAuth } from "better-auth";
 import { organization, jwt } from "better-auth/plugins";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import { eq } from "drizzle-orm";
 import * as authSchema from "@/lib/db/auth-schema";
-import { member } from "@/lib/db/auth-schema";
-import { clearOrgMembershipArtifacts } from "@/lib/auth/membership-cleanup";
+import { authDb } from "@/lib/db/connection";
+import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
-
-/**
- * Auth DB connection. Uses the same DATABASE_URL as the app.
- * Table names are schema-qualified via pgSchema("neon_auth") in
- * auth-schema.ts, so no search_path override is needed.
- * This works correctly with Neon's connection pooler (PgBouncer).
- */
-const authSql = postgres(process.env.DATABASE_URL!);
-const authDb = drizzle(authSql, { schema: authSchema });
+import { findOrgMemberUserIds } from "@/lib/data/membership";
 
 /**
  * Better Auth server instance.
@@ -68,12 +57,9 @@ export const auth = betterAuth({
           await clearOrgMembershipArtifacts(removed.userId, org.id);
         },
         beforeDeleteOrganization: async ({ organization: org }) => {
-          const rows = await authDb
-            .select({ userId: member.userId })
-            .from(member)
-            .where(eq(member.organizationId, org.id));
+          const userIds = await findOrgMemberUserIds(org.id);
           await Promise.all(
-            rows.map((r) => clearOrgMembershipArtifacts(r.userId, org.id)),
+            userIds.map((userId) => clearOrgMembershipArtifacts(userId, org.id)),
           );
         },
       },
