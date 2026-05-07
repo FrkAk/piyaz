@@ -15,6 +15,7 @@ import { projects, tasks, taskEdges } from "@/lib/db/schema";
 import { member, organization } from "@/lib/db/auth-schema";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
 import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
+import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
 import type { HistoryEntry } from "@/lib/types";
 import {
@@ -46,13 +47,12 @@ import {
   assertProjectAccess,
   isUuid,
 } from "@/lib/auth/authorization";
-import { dbEvents } from "@/lib/events";
+import {
+  emitProjectDeleted,
+  emitProjectEvent,
+  emitProjectListEvent,
+} from "@/lib/realtime/events";
 import { decodeCursor, encodeCursor, type Cursor } from "@/lib/data/cursor";
-
-/** Emit a change event to all connected SSE clients via the in-memory event bus. */
-function notifyChange() {
-  dbEvents.emit("change", "*");
-}
 
 /**
  * Build a timestamped history entry.
@@ -210,6 +210,46 @@ export async function getProjectMaxUpdatedAt(
     );
   }
   return max;
+}
+
+/**
+ * Latest `updated_at` across every project the caller can access plus every
+ * task and edge in those projects. Used by `GET /api/projects` as the
+ * conditional-GET validator on the home-grid list.
+ *
+ * @param ctx - Resolved auth context.
+ * @returns Latest timestamp, or epoch-0 when the user has no accessible
+ *   projects.
+ */
+export async function getProjectListMaxUpdatedAt(
+  ctx: AuthContext,
+): Promise<Date> {
+  return getProjectListMaxUpdatedAtRaw(db, ctx.userId);
+}
+
+/**
+ * Project ids the caller can access via team membership. Lightweight
+ * companion to {@link listProjectsSlim} — no pagination, no decoration —
+ * intended for the realtime broker's bulk-subscription registration on
+ * SSE connect.
+ *
+ * @param ctx - Resolved auth context.
+ * @returns Project ids across every team the caller belongs to.
+ */
+export async function listAccessibleProjectIds(
+  ctx: AuthContext,
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .innerJoin(
+      member,
+      and(
+        eq(member.organizationId, projects.organizationId),
+        eq(member.userId, ctx.userId),
+      ),
+    );
+  return rows.map((r) => r.id);
 }
 
 /**
@@ -662,7 +702,7 @@ export async function createProject(
       .returning();
     return row;
   });
-  notifyChange();
+  await emitProjectListEvent(targetOrgId);
   return project;
 }
 
@@ -733,7 +773,7 @@ export async function updateProject(
     .set({ ...safe, updatedAt: new Date() })
     .where(eq(projects.id, projectId))
     .returning();
-  notifyChange();
+  emitProjectEvent(projectId);
   return updated;
 }
 
@@ -745,9 +785,11 @@ export async function updateProject(
  * @param projectId - UUID of the project to delete.
  */
 export async function deleteProject(ctx: AuthContext, projectId: string) {
-  await assertProjectAccess(projectId, ctx, { project: ["delete"] });
+  const { project } = await assertProjectAccess(projectId, ctx, {
+    project: ["delete"],
+  });
   await db.delete(projects).where(eq(projects.id, projectId));
-  notifyChange();
+  await emitProjectDeleted(projectId, project.organizationId);
 }
 
 /**
@@ -785,7 +827,7 @@ export async function renameProjectIdentifier(
     if (!row) throw new ProjectNotFoundError(projectId);
     return row;
   });
-  notifyChange();
+  emitProjectEvent(projectId);
   return updated;
 }
 
@@ -830,7 +872,7 @@ export async function renameCategory(
         and(eq(tasks.projectId, projectId), eq(tasks.category, oldName)),
       );
   });
-  notifyChange();
+  emitProjectEvent(projectId);
 }
 
 /**
@@ -868,5 +910,5 @@ export async function deleteCategory(
         and(eq(tasks.projectId, projectId), eq(tasks.category, categoryName)),
       );
   });
-  notifyChange();
+  emitProjectEvent(projectId);
 }

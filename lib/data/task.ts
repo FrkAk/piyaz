@@ -26,12 +26,7 @@ import {
   type Cursor,
 } from "@/lib/data/cursor";
 import type { TaskFull, TaskSlim } from "@/lib/data/views";
-import { dbEvents } from "@/lib/events";
-
-/** Emit a change event to all connected SSE clients via the in-memory event bus. */
-function notifyChange() {
-  dbEvents.emit("change", "*");
-}
+import { emitProjectEvent, emitTaskEvent } from "@/lib/realtime/events";
 
 /**
  * Build a timestamped history entry.
@@ -844,7 +839,7 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
     };
   });
 
-  notifyChange();
+  emitTaskEvent(result.projectId, result.id);
   return result;
 }
 
@@ -1020,7 +1015,7 @@ export async function updateTask(
     return row;
   });
 
-  notifyChange();
+  emitTaskEvent(updated.projectId, taskId);
   return updated;
 }
 
@@ -1067,7 +1062,7 @@ export async function deleteTask(ctx: AuthContext, taskId: string) {
     return removed;
   });
 
-  notifyChange();
+  emitTaskEvent(task.projectId, taskId);
   return {
     deleted: { id: taskId },
     edgesRemoved: deletedEdges.length,
@@ -1154,6 +1149,6 @@ export async function reorderTask(
     .where(eq(tasks.id, taskId))
     .returning();
 
-  notifyChange();
+  emitProjectEvent(task.projectId);
   return updated;
 }

@@ -3,6 +3,7 @@
 import { getAuthContext } from "@/lib/auth/context";
 import {
   getProjectChrome as coreGetProjectChrome,
+  getProjectGraphSlim as coreGetProjectGraphSlim,
   listProjectsSlim as coreListProjectsSlim,
 } from "@/lib/data/project";
 
@@ -11,6 +12,7 @@ export type { DetailedEdge } from "@/lib/data/edge";
 export type { ProjectTag } from "@/lib/data/project";
 export type {
   ProjectChrome,
+  ProjectGraphSlim,
   ProjectListEntry,
   ProjectListOrganization,
 } from "@/lib/data/views";
@@ -38,4 +40,17 @@ export async function listProjectsSlim() {
   const ctx = await getAuthContext();
   const { rows } = await coreListProjectsSlim(ctx);
   return rows;
+}
+
+/**
+ * Server action wrapper — fetches the slim graph for a project (project
+ * chrome fields, slim task rows, full edges). Membership-gated; cross-team
+ * probes raise a `ForbiddenError`.
+ *
+ * @param projectId - UUID of the project.
+ * @returns Slim project graph for the workspace canvas + list.
+ */
+export async function getProjectGraphSlim(projectId: string) {
+  const ctx = await getAuthContext();
+  return coreGetProjectGraphSlim(ctx, projectId);
 }

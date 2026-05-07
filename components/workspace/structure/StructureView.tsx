@@ -3,13 +3,16 @@
 import { motion, AnimatePresence } from 'motion/react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { createTask, deleteTask } from '@/lib/graph/mutations';
 import { useUndo, UndoButton } from '@/hooks/useUndo';
 import { isPlannable, isReady, buildStatusMap } from '@/lib/ui/taskState';
 import { IconSearch, IconTrash, IconX } from '@/components/shared/icons';
 import type { Task, TaskEdge } from '@/lib/db/schema';
-import type { TaskGraphSlim } from '@/lib/data/views';
+import type { TaskGraphSlim, TaskFull } from '@/lib/data/views';
 import type { TaskStatus } from '@/lib/types';
+import { taskKeys } from '@/lib/query/keys';
+import { fetchTaskBody } from '@/lib/query/queries';
 import { TaskRow } from './TaskRow';
 import { TaskGroup, type TaskGroupKey } from './TaskGroup';
 import type { GroupKey, SortKey } from './FilterBar';
@@ -404,6 +407,8 @@ export function StructureView({
     keyboard: { panelSelector: '[data-panel="navigator"]' },
   });
 
+  const queryClient = useQueryClient();
+
   // Prefetch the heavy task body when the inline confirm dialog opens. The
   // user's confirmation pause hides the round-trip so `handleDelete` can
   // resolve the cached promise instead of blocking on a fresh fetch.
@@ -413,18 +418,26 @@ export function StructureView({
     if (pendingDeleteBodyRef.current.has(id)) return;
     pendingDeleteBodyRef.current.set(
       id,
-      fetch(`/api/task/${id}`)
-        .then((r) => (r.ok ? (r.json() as Promise<Task>) : null))
+      queryClient
+        .fetchQuery({
+          queryKey: taskKeys.detail(projectId, id),
+          queryFn: fetchTaskBody(queryClient, projectId, id),
+        })
+        .then((data) => (data as Task | undefined) ?? null)
         .catch(() => null),
     );
-  }, [confirmDelete]);
+  }, [confirmDelete, queryClient, projectId]);
 
   const handleDelete = useCallback(async (taskId: string) => {
     const slim = tasks.find((t) => t.id === taskId);
     const bodyPromise =
       pendingDeleteBodyRef.current.get(taskId) ??
-      fetch(`/api/task/${taskId}`)
-        .then((r) => (r.ok ? (r.json() as Promise<Task>) : null))
+      queryClient
+        .fetchQuery({
+          queryKey: taskKeys.detail(projectId, taskId),
+          queryFn: fetchTaskBody(queryClient, projectId, taskId),
+        })
+        .then((data) => (data as TaskFull | undefined) ?? null)
         .catch(() => null);
     // Await the GET before firing the DELETE so the server reads the
     // pre-deletion state — a parallel `Promise.all` could let the DELETE
@@ -435,7 +448,7 @@ export function StructureView({
     await deleteTask(taskId);
     setConfirmDelete(null);
     onGraphChange?.();
-  }, [tasks, pushUndo, onGraphChange]);
+  }, [tasks, pushUndo, onGraphChange, queryClient, projectId]);
 
   const totalActiveFilters = activeStatuses.size + activeCategories.size + activeTags.size + (search.trim() ? 1 : 0);
 

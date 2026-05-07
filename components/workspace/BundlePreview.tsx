@@ -2,12 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Markdown } from '@/components/shared/Markdown';
 import { MonoId } from '@/components/shared/MonoId';
 import { StatusGlyph } from '@/components/shared/StatusGlyph';
 import { CopyButton } from '@/components/shared/CopyButton';
 import { IconBundle, IconChevronRight } from '@/components/shared/icons';
 import type { AcceptanceCriterion, Decision, TaskStatus } from '@/lib/types';
+import { taskKeys } from '@/lib/query/keys';
+import { fetchTaskContext } from '@/lib/query/queries';
 
 /** Resolved bundle stage — adds derived `plannable` and `ready` sub-stages. */
 type BundleStage = 'draft' | 'plannable' | 'planned' | 'ready' | 'in_progress' | 'done' | 'cancelled';
@@ -103,6 +106,10 @@ interface BundleNeighbor {
 }
 
 interface BundlePreviewProps {
+  /** Task UUID — used by the lazy bundle fetch. */
+  taskId: string;
+  /** Project UUID — used by the lazy bundle fetch's query key. */
+  projectId: string;
   /** Task status — drives the section shape. */
   status: TaskStatus;
   /** Whether the task is derived-ready (planned + all deps done). */
@@ -127,8 +134,6 @@ interface BundlePreviewProps {
   files: string[];
   /** Execution record markdown. */
   executionRecord: string | null;
-  /** Pre-built bundle markdown for each `lib/context` shape — drives the MD toggle. */
-  bundles: { agent: string; planning: string; working: string };
   /** Click a neighbor row to navigate to that task. */
   onSelectTask?: (taskId: string) => void;
 }
@@ -194,10 +199,11 @@ function sectionWeight(id: SectionId, props: BundlePreviewProps): number {
  */
 export function BundlePreview(props: BundlePreviewProps) {
   const {
+    taskId,
+    projectId,
     status,
     isReady,
     isPlannable,
-    bundles,
     executionRecord,
     onSelectTask,
   } = props;
@@ -206,14 +212,21 @@ export function BundlePreview(props: BundlePreviewProps) {
   const sectionIds = SHAPE_BY_STAGE[stage];
   const bundleName = BUNDLE_NAME[stage];
 
+  const [expanded, setExpanded] = useState<Set<SectionId>>(() => new Set<SectionId>([sectionIds[0]]));
+  const [showRaw, setShowRaw] = useState(false);
+
+  const qc = useQueryClient();
+  const { data: bundles, isFetching: bundlesFetching } = useQuery({
+    queryKey: taskKeys.context(projectId, taskId),
+    queryFn: fetchTaskContext(qc, projectId, taskId),
+    enabled: showRaw,
+  });
+
   const rawText = useMemo(() => {
     const source = BUNDLE_SOURCE[stage];
     if (source === 'execution') return executionRecord ?? '';
-    return bundles[source] ?? '';
+    return bundles?.[source] ?? '';
   }, [stage, bundles, executionRecord]);
-
-  const [expanded, setExpanded] = useState<Set<SectionId>>(() => new Set<SectionId>([sectionIds[0]]));
-  const [showRaw, setShowRaw] = useState(false);
 
   const weights = useMemo(() => {
     const out = {} as Record<SectionId, number>;
@@ -278,7 +291,11 @@ export function BundlePreview(props: BundlePreviewProps) {
             <CopyButton text={rawText} label="Copy" />
           </div>
           <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed text-text-secondary">
-            {rawText.trim().length > 0 ? rawText : '// bundle empty — add a description and prerequisites'}
+            {bundlesFetching && !rawText
+              ? '// loading bundle…'
+              : rawText.trim().length > 0
+                ? rawText
+                : '// bundle empty — add a description and prerequisites'}
           </pre>
         </div>
       ) : (

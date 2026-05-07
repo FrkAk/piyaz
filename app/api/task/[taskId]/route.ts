@@ -2,7 +2,11 @@ import { getTaskFull } from '@/lib/data/task';
 import { getAuthContext } from '@/lib/auth/context';
 import { ForbiddenError } from '@/lib/auth/authorization';
 import { conditionalRespond } from '@/lib/api/conditional';
+import { broker } from '@/lib/realtime/broker';
 import { error } from '@/lib/api/response';
+
+/** TTL for fetch-implicit task subscriptions — 10 minutes. */
+const TASK_SUBSCRIPTION_TTL_MS = 10 * 60_000;
 
 /**
  * Conditional handler for `GET` and `HEAD` on a single task.
@@ -32,6 +36,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
 
   try {
     const task = await getTaskFull(ctx, taskId);
+    broker.register(ctx.userId, `task:${taskId}`, TASK_SUBSCRIPTION_TTL_MS);
     return conditionalRespond(req, task, task.updatedAt);
   } catch (err) {
     if (err instanceof ForbiddenError) {

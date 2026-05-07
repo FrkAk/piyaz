@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
 import { MotionProvider } from "@/components/layout/MotionProvider";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
+import { QueryProvider } from "@/components/providers/QueryProvider";
+import { RealtimeBridge } from "@/components/providers/RealtimeBridge";
 import { SessionProvider } from "@/components/providers/SessionProvider";
 import "./globals.css";
 
@@ -42,9 +44,12 @@ export default async function RootLayout({
       </head>
       <body>
         <ThemeProvider initialTheme={theme}>
-          <SessionProvider>
-            <MotionProvider>{children}</MotionProvider>
-          </SessionProvider>
+          <QueryProvider>
+            <SessionProvider>
+              <RealtimeBridge />
+              <MotionProvider>{children}</MotionProvider>
+            </SessionProvider>
+          </QueryProvider>
         </ThemeProvider>
       </body>
     </html>

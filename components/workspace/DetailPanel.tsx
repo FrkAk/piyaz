@@ -19,8 +19,6 @@ interface DetailPanelProps {
   allEdges: TaskEdge[];
   /** All tasks in the project (slim) — feeds the bundle preview's ready/plannable derivation. */
   allTasks: TaskGraphSlim[];
-  /** Pre-built bundle markdown — agent, planning, and working in one map. */
-  bundles: { agent: string; planning: string; working: string };
   /** Map of task IDs to title/status/taskRef. */
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   /** Whether the property rail drawer is open. */
@@ -57,7 +55,6 @@ export function DetailPanel({
   edges,
   allEdges,
   allTasks,
-  bundles,
   taskMap,
   drawerOpen,
   onToggleDrawer,
@@ -78,7 +75,6 @@ export function DetailPanel({
         allEdges={allEdges}
         edges={edges}
         allTasks={allTasks}
-        bundles={bundles}
         taskMap={taskMap}
         drawerOpen={drawerOpen}
         onToggleDrawer={onToggleDrawer}

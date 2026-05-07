@@ -2,13 +2,14 @@
 
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { motion } from 'motion/react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { TeamChip } from '@/components/shared/TeamChip';
 import { ProjectStatusModal, type CliManagedStatus } from '@/components/home/ProjectStatusModal';
 import { IconMore, IconTrash } from '@/components/shared/icons';
 import { projectColor } from '@/lib/ui/project-color';
 import { deleteProjectAction } from '@/lib/actions/project';
+import { projectKeys } from '@/lib/query/keys';
 
 interface ProjectCardProps {
   /** @param id - Project ID. */
@@ -71,11 +72,23 @@ export function ProjectCard({
   canDelete,
   team,
 }: ProjectCardProps) {
-  const router = useRouter();
+  const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteProjectAction(id),
+    onSuccess: (result) => {
+      if (result.ok) {
+        qc.invalidateQueries({ queryKey: projectKeys.list() });
+        return;
+      }
+      setDeleteError(result.message);
+      setConfirming(false);
+    },
+  });
   const opensWorkspace = status === 'active' || status === 'archived';
   const activeTotal = Math.max(totalTasks - cancelledTasks, 0);
   const percent = activeTotal > 0 ? Math.round((tasksDone / activeTotal) * 100) : 0;
@@ -83,24 +96,21 @@ export function ProjectCard({
   const color = projectColor(identifier);
   const initial = (identifier[0] ?? title[0] ?? '?').toUpperCase();
 
-  /** Two-step delete: first click arms confirmation; second runs the server action. */
-  const handleDelete = useCallback(async (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!confirming) {
-      setConfirming(true);
-      setMenuOpen(false);
-      setDeleteError(null);
-      return;
-    }
-    const result = await deleteProjectAction(id);
-    if (result.ok) {
-      router.refresh();
-      return;
-    }
-    setDeleteError(result.message);
-    setConfirming(false);
-  }, [confirming, id, router]);
+  /** Two-step delete: first click arms confirmation; second runs the server action via useMutation. */
+  const handleDelete = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!confirming) {
+        setConfirming(true);
+        setMenuOpen(false);
+        setDeleteError(null);
+        return;
+      }
+      deleteMutation.mutate();
+    },
+    [confirming, deleteMutation],
+  );
 
   /** Cancel the delete confirm without firing the action. */
   const handleCancelDelete = useCallback((e: React.MouseEvent) => {

@@ -49,13 +49,13 @@ export function WorkspaceHeader({
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   /**
-   * Refresh server layout data and notify the workspace page of the update.
+   * Refresh the server-rendered project layout (chrome). The workspace
+   * page reacts to graph + task changes via Query invalidations driven by
+   * the realtime SSE bridge — only the chrome layout still needs an
+   * explicit refresh because it's outside the Query cache.
    */
   const handleUpdated = (): void => {
     router.refresh();
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('mymir:project-updated', { detail: { projectId } }));
-    }
   };
 
   return (

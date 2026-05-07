@@ -30,8 +30,6 @@ interface DetailViewProps {
   edges: TaskEdge[];
   /** All tasks in the project (slim) — feeds the status map for ready/plannable derivation. */
   allTasks: TaskGraphSlim[];
-  /** Pre-built bundles — agent / planning / working markdown strings. */
-  bundles: { agent: string; planning: string; working: string };
   /** Map of task IDs to title/status/taskRef. */
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   /** Whether the property rail drawer is open (1024–1279px / mobile). */
@@ -61,11 +59,11 @@ interface DetailViewProps {
 export function DetailView({
   taskId,
   task,
+  projectId,
   projectName,
   allEdges,
   edges,
   allTasks,
-  bundles,
   taskMap,
   drawerOpen,
   onToggleDrawer,
@@ -129,6 +127,8 @@ export function DetailView({
           <section className="mb-7">
             <SectionHeader label="Context bundle preview" badge={<BundleStageBadge status={task.status} isReady={ready} isPlannable={plannable} />} />
             <BundlePreview
+              taskId={taskId}
+              projectId={projectId}
               status={task.status}
               isReady={ready}
               isPlannable={plannable}
@@ -141,7 +141,6 @@ export function DetailView({
               decisions={task.decisions ?? []}
               files={Array.from(new Set((task.files as string[] | null) ?? []))}
               executionRecord={task.executionRecord}
-              bundles={bundles}
               onSelectTask={onSelectNode}
             />
           </section>

@@ -19,12 +19,7 @@ import {
   assertTaskAccess,
   isUuid,
 } from "@/lib/auth/authorization";
-import { dbEvents } from "@/lib/events";
-
-/** Emit a change event to all connected SSE clients via the in-memory event bus. */
-function notifyChange() {
-  dbEvents.emit("change", "*");
-}
+import { emitEdgeMutation } from "@/lib/realtime/events";
 
 /**
  * Build a timestamped history entry.
@@ -310,7 +305,7 @@ export async function createEdge(
     appendTaskHistory(data.targetTaskId, historyEntry),
   ]);
 
-  notifyChange();
+  emitEdgeMutation(sourceTask.projectId, data.sourceTaskId, data.targetTaskId);
   return {
     id: edge.id,
     sourceTaskId: edge.sourceTaskId,
@@ -338,15 +333,16 @@ async function loadAuthorizedEdge(edgeId: string, ctx: AuthContext) {
     .from(taskEdges)
     .where(eq(taskEdges.id, edgeId));
   if (!edge) throw new ForbiddenError("Forbidden", "edge", edgeId);
+  let sourceTask;
   try {
-    await assertTaskAccess(edge.sourceTaskId, ctx);
+    sourceTask = await assertTaskAccess(edge.sourceTaskId, ctx);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       throw new ForbiddenError("Forbidden", "edge", edgeId);
     }
     throw err;
   }
-  return edge;
+  return { edge, projectId: sourceTask.projectId };
 }
 
 /**
@@ -362,7 +358,7 @@ export async function updateEdge(
   edgeId: string,
   updates: { edgeType?: EdgeType; note?: string },
 ) {
-  const existing = await loadAuthorizedEdge(edgeId, ctx);
+  const { edge: existing, projectId } = await loadAuthorizedEdge(edgeId, ctx);
 
   if (typeof updates.note === "string" && updates.note.trim()) {
     updates = {
@@ -425,7 +421,7 @@ export async function updateEdge(
     appendTaskHistory(existing.targetTaskId, historyEntry),
   ]);
 
-  notifyChange();
+  emitEdgeMutation(projectId, existing.sourceTaskId, existing.targetTaskId);
   return {
     id: updated.id,
     sourceTaskId: updated.sourceTaskId,
@@ -441,7 +437,7 @@ export async function updateEdge(
  * @param edgeId - UUID of the edge to delete.
  */
 export async function removeEdge(ctx: AuthContext, edgeId: string) {
-  const edge = await loadAuthorizedEdge(edgeId, ctx);
+  const { edge, projectId } = await loadAuthorizedEdge(edgeId, ctx);
 
   await db.delete(taskEdges).where(eq(taskEdges.id, edgeId));
 
@@ -456,5 +452,5 @@ export async function removeEdge(ctx: AuthContext, edgeId: string) {
     appendTaskHistory(edge.sourceTaskId, historyEntry),
     appendTaskHistory(edge.targetTaskId, historyEntry),
   ]);
-  notifyChange();
+  emitEdgeMutation(projectId, edge.sourceTaskId, edge.targetTaskId);
 }

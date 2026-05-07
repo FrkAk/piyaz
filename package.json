@@ -27,6 +27,8 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@neondatabase/serverless": "^1.0.0",
     "@tailwindcss/postcss": "^4.2.2",
+    "@tanstack/react-query": "^5.90",
+    "@tanstack/react-query-devtools": "^5.90",
     "@types/d3-quadtree": "^3.0.6",
     "better-auth": "^1.6.1",
     "d3-force": "^3.0.0",

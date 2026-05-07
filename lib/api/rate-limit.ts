@@ -38,12 +38,13 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
   { pattern: "/api/*",   max: 100, window: 60, keyStrategy: "session" },
 ];
 
-/** SSE path pattern — excluded from request rate limiting (uses connection limiter). */
-const SSE_PATTERN = /^\/api\/project\/[^/]+\/events$/;
+/** SSE path pattern — excluded from request rate limiting (single per-user
+ * stream, throughput is broker-bound rather than request-rate-bound). */
+const SSE_PATTERN = /^\/api\/events$/;
 
 /**
  * Find the first matching rate limit rule for a pathname.
- * SSE paths are excluded (handled by the connection limiter).
+ * SSE paths are excluded (single long-lived stream per user).
  * @param pathname - URL pathname to match against rules.
  * @returns The first matching rule, or null if no match.
  */
