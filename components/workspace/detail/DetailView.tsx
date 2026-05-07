@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import type { Task, TaskEdge } from '@/lib/db/schema';
+import type { TaskGraphSlim } from '@/lib/data/views';
 import type { TaskStatus } from '@/lib/types';
 import { isPlannable, isReady, buildStatusMap } from '@/lib/ui/taskState';
 import { BundlePreview } from '@/components/workspace/BundlePreview';
@@ -27,8 +28,8 @@ interface DetailViewProps {
   allEdges: TaskEdge[];
   /** Edges connected to this task. */
   edges: TaskEdge[];
-  /** All tasks in the project — used to derive bundle neighbors and ready state. */
-  allTasks: (Task & { taskRef: string })[];
+  /** All tasks in the project (slim) — feeds the status map for ready/plannable derivation. */
+  allTasks: TaskGraphSlim[];
   /** Pre-built bundles — agent / planning / working markdown strings. */
   bundles: { agent: string; planning: string; working: string };
   /** Map of task IDs to title/status/taskRef. */
@@ -76,7 +77,20 @@ export function DetailView({
 }: DetailViewProps) {
   const statusMap = useMemo(() => buildStatusMap(allTasks), [allTasks]);
   const ready = useMemo(() => isReady(task, statusMap, allEdges), [task, statusMap, allEdges]);
-  const plannable = useMemo(() => isPlannable(task, statusMap, allEdges), [task, statusMap, allEdges]);
+  const plannable = useMemo(
+    () =>
+      isPlannable(
+        {
+          id: task.id,
+          status: task.status,
+          hasDescription: !!task.description?.trim(),
+          hasCriteria: (task.acceptanceCriteria ?? []).length > 0,
+        },
+        statusMap,
+        allEdges,
+      ),
+    [task, statusMap, allEdges],
+  );
 
   const prerequisites = useMemo(() => buildPrerequisites(taskId, allEdges, taskMap), [taskId, allEdges, taskMap]);
   const neighbors = useMemo(() => buildNeighbors(taskId, allEdges, taskMap), [taskId, allEdges, taskMap]);

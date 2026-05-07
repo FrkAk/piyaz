@@ -5,7 +5,8 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { ViewTabs } from '@/components/shared/ViewTabs';
 import { IconGraph, IconList } from '@/components/shared/icons';
-import type { Task, TaskEdge } from '@/lib/db/schema';
+import type { TaskEdge } from '@/lib/db/schema';
+import type { TaskGraphSlim } from '@/lib/data/views';
 import { MiniTaskRail } from './MiniTaskRail';
 import { GraphHoverCard } from './GraphHoverCard';
 import { EdgeFilterPills, edgeFilterToHidden, type EdgeFilterValue } from './EdgeFilterPills';
@@ -21,8 +22,8 @@ const ForceGraph = dynamic(
 const DETAIL_OVERLAY_WIDTH = 760;
 
 interface WorkspaceGraphViewProps {
-  /** @param tasks - Project tasks (already enriched with `taskRef`). */
-  tasks: (Task & { taskRef: string })[];
+  /** @param tasks - Project tasks (slim, already enriched with `taskRef`). */
+  tasks: TaskGraphSlim[];
   /** @param edges - Project edges. */
   edges: TaskEdge[];
   /** @param selectedNodeId - Currently selected task id. */

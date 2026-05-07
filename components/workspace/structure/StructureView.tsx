@@ -8,6 +8,7 @@ import { useUndo, UndoButton } from '@/hooks/useUndo';
 import { isPlannable, isReady, buildStatusMap } from '@/lib/ui/taskState';
 import { IconSearch, IconTrash, IconX } from '@/components/shared/icons';
 import type { Task, TaskEdge } from '@/lib/db/schema';
+import type { TaskGraphSlim } from '@/lib/data/views';
 import type { TaskStatus } from '@/lib/types';
 import { TaskRow } from './TaskRow';
 import { TaskGroup, type TaskGroupKey } from './TaskGroup';
@@ -29,7 +30,7 @@ const GROUP_ORDER: readonly TaskGroupKey[] = [
   'cancelled',
 ];
 
-type TaskWithRef = Task & { taskRef: string };
+type TaskWithRef = TaskGraphSlim;
 
 /** Discriminated union describing a group section's identity and label source. */
 type GroupSection =
@@ -403,8 +404,12 @@ export function StructureView({
   });
 
   const handleDelete = useCallback(async (taskId: string) => {
-    const data = tasks.find((t) => t.id === taskId);
-    if (data) pushUndo({ title: data.title, taskData: data });
+    const slim = tasks.find((t) => t.id === taskId);
+    if (slim) {
+      const res = await fetch(`/api/task/${taskId}`);
+      const full = res.ok ? ((await res.json()) as Task) : null;
+      if (full) pushUndo({ title: slim.title, taskData: full });
+    }
     await deleteTask(taskId);
     setConfirmDelete(null);
     onGraphChange?.();

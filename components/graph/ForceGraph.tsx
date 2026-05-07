@@ -2,7 +2,8 @@
 
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import { quadtree } from "d3-quadtree";
-import type { Task, TaskEdge } from "@/lib/db/schema";
+import type { TaskEdge } from "@/lib/db/schema";
+import type { TaskGraphSlim } from "@/lib/data/views";
 import type { EdgeType } from "@/lib/types";
 import { useForceSimulation } from "./useForceSimulation";
 import { GraphControls } from "./GraphControls";
@@ -26,8 +27,8 @@ import {
 
 /** Props for the ForceGraph component. */
 interface ForceGraphProps {
-  /** @param tasks - Task records (augmented with taskRef) to visualize. */
-  tasks: (Task & { taskRef: string })[];
+  /** @param tasks - Slim task records (augmented with taskRef) to visualize. */
+  tasks: TaskGraphSlim[];
   /** @param edges - TaskEdge records defining relationships. */
   edges: TaskEdge[];
   /** @param selectedNodeId - Currently selected node ID, or null. */

@@ -1,18 +1,31 @@
-import { getProjectFull } from '@/lib/data/project';
+import {
+  getProjectGraphSlim,
+  getProjectMaxUpdatedAt,
+} from '@/lib/data/project';
 import { getAuthContext } from '@/lib/auth/context';
 import { ForbiddenError } from '@/lib/auth/authorization';
-import { ok, error } from '@/lib/api/response';
+import { conditionalRespond } from '@/lib/api/conditional';
+import { error } from '@/lib/api/response';
 
 /**
- * GET handler for fetching the full project graph.
- * @param _req - Incoming request (unused).
- * @param params - Route params with projectId.
- * @returns JSON response with full project graph, 401, 403, or 404.
+ * Conditional handler for `GET` and `HEAD` on the project slim graph.
+ *
+ * Resolves `max(updated_at)` first via a single GREATEST query so a 304
+ * short-circuit (or a HEAD) avoids the heavier slim-graph fetch. Returns
+ * `200 application/json` with the slim graph payload when the client has
+ * no cached validator or its `If-Modified-Since` is older than the
+ * resource's max timestamp; otherwise `304` with the `Last-Modified`
+ * header echoed.
+ *
+ * Heavy task fields (`description`, `implementationPlan`, `decisions`,
+ * `acceptanceCriteria`, `executionRecord`, `files`, `history`) are
+ * deliberately omitted — fetch them per-task via `GET /api/task/[id]`.
+ *
+ * @param req - Incoming request.
+ * @param projectId - Project UUID from the route params.
+ * @returns 200, 304, 401, 404, or 500.
  */
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ projectId: string }> },
-) {
+async function handle(req: Request, projectId: string): Promise<Response> {
   let ctx;
   try {
     ctx = await getAuthContext();
@@ -21,14 +34,24 @@ export async function GET(
   }
 
   try {
-    const { projectId } = await params;
-    const graph = await getProjectFull(ctx, projectId);
+    const max = await getProjectMaxUpdatedAt(ctx, projectId);
 
-    if (!graph) {
-      return error('Project not found', 404);
+    const ifModifiedSince = req.headers.get('if-modified-since');
+    if (ifModifiedSince) {
+      const since = new Date(ifModifiedSince).getTime();
+      if (
+        Number.isFinite(since) &&
+        Math.floor(max.getTime() / 1000) <= Math.floor(since / 1000)
+      ) {
+        return conditionalRespond(req, null, max);
+      }
+    }
+    if (req.method === 'HEAD') {
+      return conditionalRespond(req, null, max);
     }
 
-    return ok(graph);
+    const body = await getProjectGraphSlim(ctx, projectId);
+    return conditionalRespond(req, body, max);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return error('Project not found', 404);
@@ -36,4 +59,32 @@ export async function GET(
     console.error('[graph] error:', err);
     return error(err instanceof Error ? err.message : 'Internal error', 500);
   }
+}
+
+/**
+ * GET handler — returns the slim project graph.
+ * @param req - Incoming request.
+ * @param params - Route params with projectId.
+ * @returns JSON or conditional response.
+ */
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ projectId: string }> },
+) {
+  const { projectId } = await params;
+  return handle(req, projectId);
+}
+
+/**
+ * HEAD handler — same auth + 304 logic as GET, never returns a body.
+ * @param req - Incoming request.
+ * @param params - Route params with projectId.
+ * @returns Empty response with `Last-Modified` header.
+ */
+export async function HEAD(
+  req: Request,
+  { params }: { params: Promise<{ projectId: string }> },
+) {
+  const { projectId } = await params;
+  return handle(req, projectId);
 }

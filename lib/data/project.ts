@@ -15,8 +15,22 @@ import { projects, tasks, taskEdges } from "@/lib/db/schema";
 import { member, organization } from "@/lib/db/auth-schema";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
 import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
+import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
 import type { HistoryEntry } from "@/lib/types";
-import { deriveIdentifier, type Identifier } from "@/lib/graph/identifier";
+import {
+  asIdentifier,
+  deriveIdentifier,
+  enrichWithTaskRef,
+  type Identifier,
+} from "@/lib/graph/identifier";
+import type {
+  ProjectChrome,
+  ProjectGraphSlim,
+  ProjectListEntry,
+  ProjectSlim,
+  ProjectTaskStats,
+  TaskGraphSlim,
+} from "@/lib/data/views";
 import {
   IdentifierAllocationError,
   MultiTeamAmbiguityError,
@@ -33,7 +47,6 @@ import {
   isUuid,
 } from "@/lib/auth/authorization";
 import { dbEvents } from "@/lib/events";
-import type { ProjectFull, ProjectSlim, ProjectListEntry } from "@/lib/data/views";
 import { decodeCursor, encodeCursor, type Cursor } from "@/lib/data/cursor";
 
 /** Emit a change event to all connected SSE clients via the in-memory event bus. */
@@ -61,48 +74,142 @@ function makeHistoryEntry(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch a project with its tasks, edges, and owning team, scoped to the
- * caller's memberships. The organization is projected from the same JOIN
- * inside `assertProjectAccess` — no separate round-trip.
+ * Slim graph payload for the workspace canvas + task list. Drops the heavy
+ * task fields (description, plan, decisions, criteria, executionRecord)
+ * that only the per-task detail surface needs — those are fetched lazily
+ * via `GET /api/task/[id]`.
+ *
+ * Two column-projected selects run under `Promise.all`; the edges select
+ * uses a subquery over `tasks.project_id` so it can fire concurrently with
+ * the tasks select on different pool connections.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @returns Project with flat tasks, edges, owning team metadata, and the caller's role.
- * @throws ForbiddenError when the project is cross-team.
+ * @returns Slim project metadata + slim tasks + slim edges.
+ * @throws ForbiddenError on missing or cross-team project.
  */
-export async function getProjectFull(
+export async function getProjectGraphSlim(
   ctx: AuthContext,
   projectId: string,
-): Promise<ProjectFull> {
-  const { project, memberRole, organization: org } = await assertProjectAccess(projectId, ctx);
+): Promise<ProjectGraphSlim> {
+  const { project } = await assertProjectAccess(projectId, ctx);
 
-  const projectTasks = await db
-    .select()
+  const tasksQ = db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      category: tasks.category,
+      tags: tasks.tags,
+      order: tasks.order,
+      updatedAt: tasks.updatedAt,
+      sequenceNumber: tasks.sequenceNumber,
+      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+      hasCriteria: sql<boolean>`jsonb_array_length(${tasks.acceptanceCriteria}) > 0`,
+    })
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.order));
 
-  const taskIds = projectTasks.map((t) => t.id);
-  let edges: (typeof taskEdges.$inferSelect)[] = [];
-  if (taskIds.length > 0) {
-    edges = await db
-      .select()
-      .from(taskEdges)
-      .where(
-        or(
-          sql`${taskEdges.sourceTaskId} IN ${taskIds}`,
-          sql`${taskEdges.targetTaskId} IN ${taskIds}`,
-        ),
-      );
-  }
+  const edgesQ = db
+    .select()
+    .from(taskEdges)
+    .where(
+      or(
+        sql`${taskEdges.sourceTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
+        sql`${taskEdges.targetTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
+      ),
+    );
+
+  const [taskRows, edges] = await Promise.all([tasksQ, edgesQ]);
+  const enriched = enrichWithTaskRef(taskRows, asIdentifier(project.identifier));
+  const slimTasks: TaskGraphSlim[] = enriched.map((t) => ({
+    id: t.id,
+    taskRef: t.taskRef,
+    title: t.title,
+    status: t.status,
+    category: t.category,
+    tags: t.tags,
+    order: t.order,
+    updatedAt: t.updatedAt,
+    hasDescription: t.hasDescription,
+    hasCriteria: t.hasCriteria,
+  }));
 
   return {
-    ...project,
-    tasks: projectTasks,
+    project: {
+      id: project.id,
+      identifier: project.identifier,
+      title: project.title,
+      status: project.status,
+      updatedAt: project.updatedAt,
+      categories: project.categories,
+    },
+    tasks: slimTasks,
     edges,
-    memberRole,
-    organization: org,
   };
+}
+
+/**
+ * Chrome data for the workspace layout (TopBar + settings modal). Returns
+ * the project header fields plus the caller's role, owning team, and a
+ * total task count — fetched in two queries (`assertProjectAccess` JOIN
+ * plus a single `COUNT(*)`).
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @returns Chrome view of the project.
+ * @throws ForbiddenError on missing or cross-team project.
+ */
+export async function getProjectChrome(
+  ctx: AuthContext,
+  projectId: string,
+): Promise<ProjectChrome> {
+  const { project, memberRole, organization: org } = await assertProjectAccess(
+    projectId,
+    ctx,
+  );
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(tasks)
+    .where(eq(tasks.projectId, projectId));
+
+  return {
+    id: project.id,
+    title: project.title,
+    description: project.description,
+    identifier: project.identifier,
+    status: project.status,
+    categories: project.categories,
+    organization: org,
+    memberRole,
+    taskCount: count,
+  };
+}
+
+/**
+ * Latest `updated_at` across the project, its tasks, and its edges. Used
+ * by the conditional-GET path on the workspace graph endpoint to short-
+ * circuit the heavy slim-graph read on a 304 response.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @returns The latest timestamp.
+ * @throws ForbiddenError on missing or cross-team project.
+ */
+export async function getProjectMaxUpdatedAt(
+  ctx: AuthContext,
+  projectId: string,
+): Promise<Date> {
+  await assertProjectAccess(projectId, ctx);
+  const max = await getProjectMaxUpdatedAtRaw(db, projectId);
+  if (!max) {
+    throw new Error(
+      `getProjectMaxUpdatedAt: project ${projectId} disappeared after access check`,
+    );
+  }
+  return max;
 }
 
 /**
@@ -341,30 +448,40 @@ export async function listProjectsSlim(
   if (trimmed.length === 0) return { rows: [], nextCursor: null };
 
   const projectIds = trimmed.map((p) => p.project.id);
-  const allTasks = await db
-    .select({ status: tasks.status, projectId: tasks.projectId })
+  const counts = await db
+    .select({
+      projectId: tasks.projectId,
+      status: tasks.status,
+      count: sql<number>`count(*)::int`.as("count"),
+    })
     .from(tasks)
-    .where(sql`${tasks.projectId} IN ${projectIds}`);
+    .where(sql`${tasks.projectId} IN ${projectIds}`)
+    .groupBy(tasks.projectId, tasks.status);
 
-  const tasksByProject = new Map<string, { status: string }[]>();
-  for (const t of allTasks) {
-    const list = tasksByProject.get(t.projectId) ?? [];
-    list.push({ status: t.status });
-    tasksByProject.set(t.projectId, list);
+  const statsByProject = new Map<string, ProjectTaskStats>();
+  for (const c of counts) {
+    const stats = statsByProject.get(c.projectId) ?? {
+      total: 0,
+      done: 0,
+      inProgress: 0,
+      cancelled: 0,
+    };
+    stats.total += c.count;
+    if (c.status === "done") stats.done = c.count;
+    else if (c.status === "in_progress") stats.inProgress = c.count;
+    else if (c.status === "cancelled") stats.cancelled = c.count;
+    statsByProject.set(c.projectId, stats);
   }
 
   const rows: ProjectListEntry[] = trimmed.map(
     ({ project, organization: org, memberRole }) => {
-      const projTasks = tasksByProject.get(project.id) ?? [];
-      const cancelled = projTasks.filter((t) => t.status === "cancelled").length;
-      const taskStats = {
-        total: projTasks.length,
-        done: projTasks.filter((t) => t.status === "done").length,
-        inProgress: projTasks.filter((t) => t.status === "in_progress").length,
-        cancelled,
+      const taskStats = statsByProject.get(project.id) ?? {
+        total: 0,
+        done: 0,
+        inProgress: 0,
+        cancelled: 0,
       };
-      const denominator = taskStats.total - cancelled;
-
+      const denominator = taskStats.total - taskStats.cancelled;
       return {
         ...project,
         organization: org,

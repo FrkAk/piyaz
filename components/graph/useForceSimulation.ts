@@ -8,12 +8,13 @@ import {
 } from "d3-force";
 import type { Simulation } from "d3-force";
 import { useEffect, useEffectEvent, useRef, useState, useCallback, useMemo } from "react";
-import type { Task, TaskEdge } from "@/lib/db/schema";
+import type { TaskEdge } from "@/lib/db/schema";
+import type { TaskGraphSlim } from "@/lib/data/views";
 import type { GraphNode, GraphLink } from "./graphConstants";
 import { getNodeSize, buildLinkCounts } from "./graphConstants";
 
-/** Task record augmented with its composed taskRef for graph rendering. */
-type GraphTask = Task & { taskRef: string };
+/** Slim task record used for graph rendering — heavy fields are not needed. */
+type GraphTask = TaskGraphSlim;
 
 // ---------------------------------------------------------------------------
 // Link distance per edge type

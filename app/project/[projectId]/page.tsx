@@ -11,27 +11,9 @@ import { PropRailDrawer } from '@/components/workspace/detail/PropRailDrawer';
 import { WorkspaceGraphView } from '@/components/workspace/graph/WorkspaceGraphView';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useRefreshOnFocus } from '@/hooks/useRefreshOnFocus';
-import type { Task, TaskEdge } from '@/lib/db/schema';
-import { asIdentifier, enrichWithTaskRef, type TaskWithRef } from '@/lib/graph/identifier';
+import type { ProjectGraphSlim, TaskFull } from '@/lib/data/views';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { dedupedFetch } from '@/lib/fetch-dedupe';
-
-interface ProjectGraph {
-  /** Project UUID. */
-  id: string;
-  /** Project title — fed to the breadcrumb. */
-  title: string;
-  /** Project identifier (e.g. `MYMR`). */
-  identifier: string;
-  /** Project's last-update timestamp. */
-  updatedAt: string;
-  /** Categories. */
-  categories: string[];
-  /** Tasks with composed taskRef. */
-  tasks: TaskWithRef<Task>[];
-  /** Edges. */
-  edges: TaskEdge[];
-}
 
 /** Workspace view identifier — mirrors the navigator's FilterBar value. */
 type WorkspaceView = 'structure' | 'graph';
@@ -40,25 +22,14 @@ type WorkspaceView = 'structure' | 'graph';
  * Compute the latest updatedAt across project, tasks, and edges so we can
  * skip a re-render when the SSE refresh produces no actual change.
  *
- * @param graph - The project graph.
+ * @param graph - The slim project graph.
  * @returns ISO timestamp string of the most recent update.
  */
-function getMaxUpdatedAt(graph: ProjectGraph): string {
-  let max = graph.updatedAt ?? '';
+function getMaxUpdatedAt(graph: ProjectGraphSlim): string {
+  let max = String(graph.project.updatedAt ?? '');
   for (const t of graph.tasks) if (String(t.updatedAt) > max) max = String(t.updatedAt);
   for (const e of graph.edges) if (String(e.updatedAt) > max) max = String(e.updatedAt);
   return max;
-}
-
-/**
- * Enrich raw graph tasks with composed `taskRef` from project identifier.
- *
- * @param graph - Raw graph as returned by the API.
- * @returns Graph with each task carrying its taskRef.
- */
-function enrichGraph(graph: ProjectGraph): ProjectGraph {
-  const tasks = enrichWithTaskRef(graph.tasks, asIdentifier(graph.identifier));
-  return { ...graph, tasks };
 }
 
 /**
@@ -89,13 +60,29 @@ function readView(raw: string | null): WorkspaceView {
 }
 
 /**
+ * Fetch the slim project graph via the deduped fetch cache.
+ *
+ * @param projectId - Project UUID.
+ * @returns Parsed slim graph or null on failure.
+ */
+async function fetchProjectGraph(projectId: string): Promise<ProjectGraphSlim | null> {
+  return dedupedFetch<ProjectGraphSlim | null>(`graph:${projectId}`, () =>
+    fetch(`/api/project/${projectId}/graph`).then((r) => (r.ok ? r.json() : null)),
+  );
+}
+
+/**
  * Workspace page — three-column layout above 1280px (navigator | detail |
  * property rail), two columns + drawer below 1280px, mobile toggle below
  * 1024px. In graph mode the navigator slot is replaced with the
  * `WorkspaceGraphView` (rail + canvas); detail and property rail behave
  * identically once a task is selected so operators get the same task
- * workspace either way. All real-time wiring is inherited from the previous
- * shell: SSE refresh + tab focus refetch + `mymir:project-updated` event.
+ * workspace either way.
+ *
+ * The slim project graph powers the canvas/list. The selected task's
+ * heavy fields (description, plan, criteria, decisions, executionRecord,
+ * files, history) come from a per-task lazy fetch so the recurring graph
+ * refresh stays small.
  *
  * @returns Client-rendered workspace page.
  */
@@ -106,8 +93,9 @@ export default function WorkspacePage() {
   const searchParams = useSearchParams();
   const view = readView(searchParams.get('view'));
 
-  const [graph, setGraph] = useState<ProjectGraph | null>(null);
+  const [graph, setGraph] = useState<ProjectGraphSlim | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskFull, setSelectedTaskFull] = useState<TaskFull | null>(null);
   const [taskContext, setTaskContext] = useState<{ agent: string; planning: string; working: string }>({ agent: '', planning: '', working: '' });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [navigatorClosed, setNavigatorClosed] = useState(false);
@@ -115,35 +103,58 @@ export default function WorkspacePage() {
   const isXl = useMediaQuery('(min-width: 1280px)', true);
 
   const refreshGraph = useCallback(async () => {
-    const data = await dedupedFetch<ProjectGraph | null>(`graph:${projectId}`, () =>
-      fetch(`/api/project/${projectId}/graph`).then((r) => (r.ok ? r.json() : null)),
-    );
+    const data = await fetchProjectGraph(projectId);
     if (!data) return;
-    const enriched = enrichGraph(data);
-    const maxUpdated = getMaxUpdatedAt(enriched);
+    const maxUpdated = getMaxUpdatedAt(data);
     if (maxUpdated !== lastModifiedRef.current) {
       lastModifiedRef.current = maxUpdated;
-      setGraph(enriched);
+      setGraph(data);
     }
   }, [projectId]);
 
   useEffect(() => {
     let cancelled = false;
-    dedupedFetch<ProjectGraph | null>(`graph:${projectId}`, () =>
-      fetch(`/api/project/${projectId}/graph`).then((r) => (r.ok ? r.json() : null)),
-    ).then((data) => {
+    fetchProjectGraph(projectId).then((data) => {
       if (cancelled || !data) return;
-      const enriched = enrichGraph(data);
-      const maxUpdated = getMaxUpdatedAt(enriched);
+      const maxUpdated = getMaxUpdatedAt(data);
       if (maxUpdated !== lastModifiedRef.current) {
         lastModifiedRef.current = maxUpdated;
-        setGraph(enriched);
+        setGraph(data);
       }
     });
     return () => { cancelled = true; };
   }, [projectId]);
 
-  useRefreshOnFocus(refreshGraph, `/api/project/${projectId}/events`);
+  // Fetch the selected task's full body (description, plan, criteria,
+  // decisions, executionRecord, files, history) on selection. The slim
+  // graph deliberately omits these so the recurring refresh stays small.
+  // The previous body is cleared in the render-phase reset block below
+  // so the cleared state is visible to the loader before the fetch lands.
+  useEffect(() => {
+    if (!selectedTaskId) return;
+    let cancelled = false;
+    fetch(`/api/task/${selectedTaskId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: TaskFull | null) => {
+        if (!cancelled && data) setSelectedTaskFull(data);
+      })
+      .catch((err) => { if (!cancelled) console.error('[workspace] task fetch failed:', err); });
+    return () => { cancelled = true; };
+  }, [selectedTaskId]);
+
+  const refreshSelectedTask = useCallback(async () => {
+    if (!selectedTaskId) return;
+    const data = await fetch(`/api/task/${selectedTaskId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    if (data) setSelectedTaskFull(data);
+  }, [selectedTaskId]);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshGraph(), refreshSelectedTask()]);
+  }, [refreshGraph, refreshSelectedTask]);
+
+  useRefreshOnFocus(refreshAll, `/api/project/${projectId}/events`);
 
   useEffect(() => {
     const handler = (e: Event): void => {
@@ -151,16 +162,19 @@ export default function WorkspacePage() {
       const detail = e.detail;
       if (!detail?.projectId || detail.projectId === projectId) {
         lastModifiedRef.current = '';
-        refreshGraph();
+        refreshAll();
       }
     };
     window.addEventListener('mymir:project-updated', handler);
     return () => window.removeEventListener('mymir:project-updated', handler);
-  }, [projectId, refreshGraph]);
+  }, [projectId, refreshAll]);
 
   const [prevSelectedTaskId, setPrevSelectedTaskId] = useState<string | null>(null);
   if (selectedTaskId !== prevSelectedTaskId) {
     setPrevSelectedTaskId(selectedTaskId);
+    // Clear the previous task body so the detail column shows the loading
+    // state until the new task's lazy fetch resolves.
+    setSelectedTaskFull(null);
     if (!selectedTaskId) {
       setTaskContext({ agent: '', planning: '', working: '' });
       setDrawerOpen(false);
@@ -241,7 +255,7 @@ export default function WorkspacePage() {
   const projectTags = useMemo(() => {
     if (!graph) return [] as string[];
     const set = new Set<string>();
-    for (const t of graph.tasks) for (const tag of (t.tags as string[] | null) ?? []) set.add(tag);
+    for (const t of graph.tasks) for (const tag of t.tags ?? []) set.add(tag);
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [graph]);
 
@@ -253,7 +267,7 @@ export default function WorkspacePage() {
     );
   }
 
-  const selectedTask = selectedTaskId
+  const selectedTaskSlim = selectedTaskId
     ? graph.tasks.find((t) => t.id === selectedTaskId) ?? null
     : null;
 
@@ -265,7 +279,7 @@ export default function WorkspacePage() {
     <NavigatorPanel
       tasks={graph.tasks}
       edges={graph.edges}
-      categories={graph.categories}
+      categories={graph.project.categories}
       projectId={projectId}
       selectedNodeId={selectedTaskId}
       onSelectNode={handleSelectNode}
@@ -273,47 +287,51 @@ export default function WorkspacePage() {
     />
   );
 
-  const showNavigatorToggle = view === 'structure' && isXl && Boolean(selectedTask);
-  const detail = selectedTask ? (
-    <DetailPanel
-      taskId={selectedTaskId!}
-      projectId={projectId}
-      task={selectedTask}
-      parentName={graph.title}
-      edges={taskEdges}
-      allEdges={graph.edges}
-      allTasks={graph.tasks}
-      bundles={taskContext}
-      taskMap={taskMap}
-      drawerOpen={drawerOpen}
-      onToggleDrawer={() => setDrawerOpen((v) => !v)}
-      onClose={handleClose}
-      onSelectNode={handleSelectNode}
-      onGraphChange={refreshGraph}
-      navigatorClosed={showNavigatorToggle ? navigatorClosed : undefined}
-      onToggleNavigator={
-        showNavigatorToggle ? () => setNavigatorClosed((v) => !v) : undefined
-      }
-    />
+  const showNavigatorToggle = view === 'structure' && isXl && Boolean(selectedTaskSlim);
+  const detail = selectedTaskSlim ? (
+    selectedTaskFull && selectedTaskFull.id === selectedTaskId ? (
+      <DetailPanel
+        taskId={selectedTaskId!}
+        projectId={projectId}
+        task={selectedTaskFull}
+        parentName={graph.project.title}
+        edges={taskEdges}
+        allEdges={graph.edges}
+        allTasks={graph.tasks}
+        bundles={taskContext}
+        taskMap={taskMap}
+        drawerOpen={drawerOpen}
+        onToggleDrawer={() => setDrawerOpen((v) => !v)}
+        onClose={handleClose}
+        onSelectNode={handleSelectNode}
+        onGraphChange={refreshAll}
+        navigatorClosed={showNavigatorToggle ? navigatorClosed : undefined}
+        onToggleNavigator={
+          showNavigatorToggle ? () => setNavigatorClosed((v) => !v) : undefined
+        }
+      />
+    ) : (
+      <DetailLoading />
+    )
   ) : (
     <EmptyDetail />
   );
 
-  const propRail = selectedTask ? (
+  const propRail = selectedTaskSlim && selectedTaskFull && selectedTaskFull.id === selectedTaskId ? (
     <PropRail
       taskId={selectedTaskId!}
-      status={selectedTask.status}
-      category={selectedTask.category}
-      categories={graph.categories}
-      tags={(selectedTask.tags as string[] | null) ?? []}
+      status={selectedTaskFull.status}
+      category={selectedTaskFull.category}
+      categories={graph.project.categories}
+      tags={selectedTaskFull.tags ?? []}
       projectTags={projectTags}
       edges={taskEdges}
       taskMap={taskMap}
-      files={Array.from(new Set((selectedTask.files as string[] | null) ?? []))}
-      projectIdentifier={graph.identifier}
-      projectName={graph.title}
+      files={Array.from(new Set(selectedTaskFull.files ?? []))}
+      projectIdentifier={graph.project.identifier}
+      projectName={graph.project.title}
       onSelectNode={handleSelectNode}
-      onGraphChange={refreshGraph}
+      onGraphChange={refreshAll}
     />
   ) : null;
 
@@ -322,7 +340,7 @@ export default function WorkspacePage() {
   // on top of the canvas (no layout reflow). Below xl `handleSelectNode`
   // already routes the click through structure mode, so the overlay is xl-only.
   if (view === 'graph') {
-    const showOverlay = isXl && Boolean(selectedTask);
+    const showOverlay = isXl && Boolean(selectedTaskSlim);
     return (
       <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
         <div className="flex min-w-0 flex-1 flex-col">
@@ -380,7 +398,7 @@ export default function WorkspacePage() {
         left={navigator}
         right={detail}
       />
-      <PropRailDrawer open={drawerOpen && !!selectedTask} onClose={() => setDrawerOpen(false)}>
+      <PropRailDrawer open={drawerOpen && !!selectedTaskSlim} onClose={() => setDrawerOpen(false)}>
         {propRail}
       </PropRailDrawer>
     </>
@@ -400,6 +418,20 @@ function EmptyDetail() {
       <p className="mt-1 max-w-sm text-xs text-text-muted">
         Pick a task from the navigator to view and edit its details.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Loading placeholder shown while the per-task body is fetched after
+ * selecting a task. Keeps the column reserved so the layout doesn't jump.
+ *
+ * @returns Centred spinner.
+ */
+function DetailLoading() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <LoadingSpinner />
     </div>
   );
 }

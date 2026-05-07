@@ -2,6 +2,7 @@
 
 import { DetailView } from './detail/DetailView';
 import type { Task, TaskEdge } from '@/lib/db/schema';
+import type { TaskGraphSlim } from '@/lib/data/views';
 
 interface DetailPanelProps {
   /** Task UUID. */
@@ -16,8 +17,8 @@ interface DetailPanelProps {
   edges: TaskEdge[];
   /** All edges in the project — used by the bundle preview to derive neighbors. */
   allEdges: TaskEdge[];
-  /** All tasks in the project. */
-  allTasks: (Task & { taskRef: string })[];
+  /** All tasks in the project (slim) — feeds the bundle preview's ready/plannable derivation. */
+  allTasks: TaskGraphSlim[];
   /** Pre-built bundle markdown — agent, planning, and working in one map. */
   bundles: { agent: string; planning: string; working: string };
   /** Map of task IDs to title/status/taskRef. */

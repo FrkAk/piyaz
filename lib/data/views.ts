@@ -1,4 +1,3 @@
-import "server-only";
 import type { Project, Task, TaskEdge } from "@/lib/db/schema";
 
 /**
@@ -28,12 +27,41 @@ export type ProjectListEntry = Project & {
   progress: number;
 };
 
-/** Project + tasks + edges + owning team — what the project page consumes. */
-export type ProjectFull = Project & {
-  tasks: Task[];
+/** Slim task entry returned by the project graph payload. */
+export type TaskGraphSlim = Pick<
+  Task,
+  "id" | "title" | "status" | "category" | "tags" | "order" | "updatedAt"
+> & {
+  taskRef: string;
+  /** True when `description` is non-empty after trimming whitespace. */
+  hasDescription: boolean;
+  /** True when `acceptanceCriteria` has at least one entry. */
+  hasCriteria: boolean;
+};
+
+/** Slim project graph for the workspace canvas + list. Edges are returned
+ * in full (they have no heavy fields), tasks are slim. */
+export type ProjectGraphSlim = {
+  project: Pick<
+    Project,
+    "id" | "identifier" | "title" | "status" | "updatedAt" | "categories"
+  >;
+  tasks: TaskGraphSlim[];
   edges: TaskEdge[];
-  memberRole: string;
+};
+
+/**
+ * Chrome-only project view for the workspace layout (TopBar / settings).
+ * Includes the fields the layout renders plus a `taskCount` so it can
+ * surface progress without pulling the slim graph.
+ */
+export type ProjectChrome = Pick<
+  Project,
+  "id" | "title" | "description" | "identifier" | "status" | "categories"
+> & {
   organization: ProjectListOrganization;
+  memberRole: string;
+  taskCount: number;
 };
 
 /** Slim view of a project for list/search surfaces. */

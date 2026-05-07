@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { getProjectFull } from '@/lib/graph/queries';
+import { getProjectChrome } from '@/lib/graph/queries';
 import { requireMembership } from '@/lib/auth/membership';
 import { ForbiddenError } from '@/lib/auth/authorization';
 import { roleHasProjectPermission } from '@/lib/auth/permissions';
@@ -23,9 +23,9 @@ export default async function ProjectLayout({ children, params }: LayoutProps) {
   await requireMembership();
   const { projectId } = await params;
 
-  let project: Awaited<ReturnType<typeof getProjectFull>>;
+  let project: Awaited<ReturnType<typeof getProjectChrome>>;
   try {
-    project = await getProjectFull(projectId);
+    project = await getProjectChrome(projectId);
   } catch (err) {
     if (err instanceof ForbiddenError) notFound();
     throw err;
@@ -36,7 +36,6 @@ export default async function ProjectLayout({ children, params }: LayoutProps) {
   }
 
   const canRename = roleHasProjectPermission(project.memberRole, ['rename']);
-  const taskCount = project.tasks.length;
 
   return (
     <AppShell>
@@ -48,7 +47,7 @@ export default async function ProjectLayout({ children, params }: LayoutProps) {
         status={project.status}
         categories={project.categories}
         team={{ id: project.organization.id, name: project.organization.name }}
-        taskCount={taskCount}
+        taskCount={project.taskCount}
         canRename={canRename}
       />
       <div className="flex min-h-0 flex-1 flex-col">

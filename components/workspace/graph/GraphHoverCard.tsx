@@ -3,11 +3,11 @@
 import { StatusGlyph } from '@/components/shared/StatusGlyph';
 import { MonoId } from '@/components/shared/MonoId';
 import { IconArrowRight } from '@/components/shared/icons';
-import type { Task } from '@/lib/db/schema';
+import type { TaskGraphSlim } from '@/lib/data/views';
 
 interface GraphHoverCardProps {
   /** @param task - Hovered task. */
-  task: Task & { taskRef: string };
+  task: TaskGraphSlim;
   /** @param upstreamCount - Count of incoming edges (shown as `↑N`). */
   upstreamCount: number;
   /** @param downstreamCount - Count of outgoing edges (shown as `↓N`). */

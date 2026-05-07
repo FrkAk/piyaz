@@ -4,11 +4,12 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
 import { FilterBar, type GroupKey, type SortKey, type WorkspaceView } from './structure/FilterBar';
 import { StructureView } from './structure/StructureView';
-import type { Task, TaskEdge } from '@/lib/db/schema';
+import type { TaskEdge } from '@/lib/db/schema';
+import type { TaskGraphSlim } from '@/lib/data/views';
 
 interface NavigatorPanelProps {
-  /** All project tasks, augmented with composed `taskRef`. */
-  tasks: (Task & { taskRef: string })[];
+  /** All project tasks (slim, augmented with composed `taskRef`). */
+  tasks: TaskGraphSlim[];
   /** All project edges. */
   edges: TaskEdge[];
   /** Project-level categories. */

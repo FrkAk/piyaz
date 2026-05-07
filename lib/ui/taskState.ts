@@ -1,4 +1,22 @@
-import type { Task, TaskEdge } from "@/lib/db/schema";
+import type { TaskEdge } from "@/lib/db/schema";
+
+/**
+ * Minimum shape needed to evaluate {@link isPlannable}. Mirrors the slim
+ * graph payload so callers can pass either a full {@link Task} (after
+ * deriving the two flags) or a `TaskGraphSlim` row directly.
+ */
+export type PlannableInput = {
+  id: string;
+  status: string;
+  hasDescription: boolean;
+  hasCriteria: boolean;
+};
+
+/** Minimum shape needed to evaluate {@link isReady}. */
+export type ReadyInput = {
+  id: string;
+  status: string;
+};
 
 /**
  * Walk forward from a task through depends_on edges, treating cancelled tasks
@@ -42,36 +60,33 @@ function walkEffectiveDeps(
  * Check if a draft task has enough content to be planned and is not blocked.
  * Mirrors server-side deriveTaskState logic (queries.ts) using effective deps —
  * cancelled tasks are transparent (passable but not satisfying).
- * @param task - The task to check.
+ * @param task - Task with `hasDescription` / `hasCriteria` flags resolved.
  * @param statusMap - Pre-built map of task ID to status.
  * @param edges - All edges in the project.
  * @returns True if the task is draft, all effective deps are done, with description and criteria.
  */
 export function isPlannable(
-  task: Task,
+  task: PlannableInput,
   statusMap: Map<string, string>,
   edges: TaskEdge[],
 ): boolean {
   if (task.status !== "draft") return false;
   const effectiveDeps = walkEffectiveDeps(task.id, statusMap, edges);
   if (!effectiveDeps.every((id) => statusMap.get(id) === "done")) return false;
-  if (!task.description?.trim()) return false;
-  const criteria = task.acceptanceCriteria as
-    | { id: string; text: string; checked: boolean }[]
-    | null;
-  return !!criteria && criteria.length > 0;
+  if (!task.hasDescription) return false;
+  return task.hasCriteria;
 }
 
 /**
  * Check if a planned task has all dependencies satisfied via the effective
  * dependency graph. Cancelled tasks are transparent.
- * @param task - The task to check.
+ * @param task - Task with `id` and `status`.
  * @param statusMap - Pre-built map of task ID to status.
  * @param edges - All edges in the project.
  * @returns True if the task is planned and every effective dep is done.
  */
 export function isReady(
-  task: Task,
+  task: ReadyInput,
   statusMap: Map<string, string>,
   edges: TaskEdge[],
 ): boolean {
@@ -85,6 +100,6 @@ export function isReady(
  * @param tasks - All tasks in the project.
  * @returns Map of task ID to status string.
  */
-export function buildStatusMap(tasks: Task[]): Map<string, string> {
+export function buildStatusMap(tasks: ReadonlyArray<{ id: string; status: string }>): Map<string, string> {
   return new Map(tasks.map((t) => [t.id, t.status]));
 }

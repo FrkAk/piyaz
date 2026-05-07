@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { StatusGlyph } from '@/components/shared/StatusGlyph';
 import { MonoId } from '@/components/shared/MonoId';
 import { IconPanelLeft } from '@/components/shared/icons';
-import type { Task } from '@/lib/db/schema';
+import type { TaskGraphSlim } from '@/lib/data/views';
 
 /** localStorage key for the collapsed-state preference. */
 const RAIL_STORAGE_KEY = 'mymir:graph-rail-collapsed';
@@ -16,7 +16,7 @@ const RAIL_WIDTH_COLLAPSED = 40;
 
 interface MiniTaskRailProps {
   /** @param tasks - Tasks visible in the rail (already filtered upstream). */
-  tasks: (Task & { taskRef: string })[];
+  tasks: TaskGraphSlim[];
   /** @param selectedNodeId - Currently selected task id. */
   selectedNodeId: string | null;
   /** @param hoveredId - Hovered task id (rail-driven; mirrored on canvas). */
