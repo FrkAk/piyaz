@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "postbuild": "cp -rT public .next/standalone/public && cp -rT .next/static .next/standalone/.next/static",
+    "start": "HOSTNAME=127.0.0.1 node --env-file-if-exists=.env.local .next/standalone/server.js",
     "test": "bun test",
     "test:db": "bun test tests/db tests/data tests/auth",
     "lint": "eslint .",

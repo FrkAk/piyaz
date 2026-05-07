@@ -53,10 +53,11 @@ Spin up Postgres and push the schema:
 bun run db:setup
 ```
 
-Start the dev server and open [localhost:3000](http://localhost:3000):
+Build and start the server and open [localhost:3000](http://localhost:3000):
 
 ```bash
-bun run dev
+bun run build
+bun run start
 ```
 
 Mymir ships as four standalone plugin/extension dirs, one per supported CLI under `plugins/<cli>/`. With the dev server running, install the one that matches your tool.
