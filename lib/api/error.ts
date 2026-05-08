@@ -1,22 +1,21 @@
 import { error } from "@/lib/api/response";
 
 /**
- * Whether internal errors should be returned to the client verbatim. Off
- * by default — in production we never want to leak SQL fragments, bound
- * parameters, or internal stack traces. The `NODE_ENV === "production"`
- * guard is a defense-in-depth tripwire: even if the env var is set in a
- * production deploy by accident, verbose mode is physically impossible.
- * Flip via `MYMIR_API_VERBOSE_ERRORS=1` in `.env.local` when actively
- * debugging a 500 in dev.
+ * Whether internal errors should be returned to the client verbatim.
+ * Whitelist semantics: verbose ONLY when `NODE_ENV === "development"`
+ * (i.e. running `bun run dev` locally). Every other value — production,
+ * test, staging, undefined, typos, future Next.js rename — falls through
+ * to the generic "Internal error" body. Fail-safe by default: a silent
+ * env-var change can never start leaking SQL fragments, bound parameters,
+ * or stack traces.
  *
- * Read at call time so tests can mutate `process.env` between cases without
- * re-importing the module.
+ * Read at call time so tests can mutate `process.env.NODE_ENV` between
+ * cases without re-importing the module.
  *
- * @returns True when the env var is set to `"1"`.
+ * @returns True only when `NODE_ENV === "development"`.
  */
 function isVerboseErrors(): boolean {
-  if (process.env.NODE_ENV === "production") return false;
-  return process.env.MYMIR_API_VERBOSE_ERRORS === "1";
+  return process.env.NODE_ENV === "development";
 }
 
 /**
@@ -24,11 +23,11 @@ function isVerboseErrors(): boolean {
  * server-side with a route-scoped label so failures are visible in the
  * dev terminal / production logs even when the response body is generic.
  *
- * In default mode the response body is `{ error: "Internal error" }` —
- * intentionally opaque so untrusted callers can't enumerate schema names,
- * SQL structure, or auth ids that show up in driver-level errors. Set
- * `MYMIR_API_VERBOSE_ERRORS=1` to forward the raw `err.message` to the
- * client; only use this in dev when chasing a specific 500.
+ * Outside `NODE_ENV === "development"` the response body is
+ * `{ error: "Internal error" }` — intentionally opaque so untrusted
+ * callers can't enumerate schema names, SQL structure, or auth ids that
+ * show up in driver-level errors. In `bun run dev` the raw `err.message`
+ * is forwarded to the client to speed local debugging.
  *
  * @param label - Route-scoped tag (e.g. `"projects"`, `"task-context"`).
  * @param err - The thrown error.

@@ -1,26 +1,43 @@
 import { test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { internalError } from "@/lib/api/error";
 
-const ENV_KEY = "MYMIR_API_VERBOSE_ERRORS";
+const originalNodeEnv = process.env.NODE_ENV;
 const originalConsoleError = console.error;
 let consoleSpy: ReturnType<typeof mock>;
 
+function setNodeEnv(value: string | undefined): void {
+  Object.defineProperty(process.env, "NODE_ENV", {
+    value,
+    configurable: true,
+  });
+}
+
 beforeEach(() => {
-  delete process.env[ENV_KEY];
   consoleSpy = mock(() => {});
   console.error = consoleSpy;
 });
 
 afterEach(() => {
-  delete process.env[ENV_KEY];
+  setNodeEnv(originalNodeEnv);
   console.error = originalConsoleError;
 });
 
-test("default mode returns generic 'Internal error' body and never leaks the cause", async () => {
+test("development NODE_ENV forwards the raw message — local debug aid", async () => {
+  setNodeEnv("development");
+  const err = new Error("Failed query: detailed cause");
+  const res = internalError("graph", err);
+
+  expect(res.status).toBe(500);
+  const body = (await res.json()) as { error: string };
+  expect(body.error).toBe("Failed query: detailed cause");
+});
+
+test("production NODE_ENV returns generic 'Internal error' body and never leaks the cause", async () => {
   // Regression: PR #65's routes echoed `err.message` from drizzle's
   // 'Failed query' verbatim, which carries the SQL plus bound params
-  // (including the authenticated user's id). The default-mode response
+  // (including the authenticated user's id). The production response
   // body must not include any substring from a leaked drizzle error.
+  setNodeEnv("production");
   const err = new Error(
     "Failed query: SELECT * FROM users WHERE user_id = 'abac41e5-uuid-leak'\nparams: abac41e5-uuid-leak",
   );
@@ -35,7 +52,8 @@ test("default mode returns generic 'Internal error' body and never leaks the cau
   expect(body.error).not.toContain("params");
 });
 
-test("default mode logs the original error so server-side debugging stays possible", async () => {
+test("production NODE_ENV logs the original error so server-side debugging stays possible", async () => {
+  setNodeEnv("production");
   const err = new Error("real cause for the log");
   internalError("task-context", err);
 
@@ -45,25 +63,31 @@ test("default mode logs the original error so server-side debugging stays possib
   expect(call[1]).toBe(err);
 });
 
-test("VERBOSE mode forwards the raw message — opt-in debug aid only", async () => {
-  process.env[ENV_KEY] = "1";
-  const err = new Error("Failed query: detailed cause");
-  const res = internalError("graph", err);
-
-  expect(res.status).toBe(500);
-  const body = (await res.json()) as { error: string };
-  expect(body.error).toBe("Failed query: detailed cause");
-});
-
-test("VERBOSE flag must be exactly '1' — anything else stays generic", async () => {
-  process.env[ENV_KEY] = "true"; // common typo
-  const err = new Error("should not leak");
+test("test NODE_ENV stays generic — only development is verbose", async () => {
+  setNodeEnv("test");
+  const err = new Error("test-mode message must not leak");
   const res = internalError("projects", err);
   const body = (await res.json()) as { error: string };
   expect(body.error).toBe("Internal error");
 });
 
-test("non-Error thrown values still produce a generic response with the label logged", async () => {
+test("unknown NODE_ENV (e.g. 'staging', typos, undefined) stays generic — fail-safe default", async () => {
+  // Whitelist guard: anything other than the literal `"development"` —
+  // including future Next.js renames or operator typos — must NOT enable
+  // verbose mode. Defending against silent value changes.
+  for (const value of ["staging", "DEVELOPMENT", "dev", "production ", undefined]) {
+    setNodeEnv(value);
+    const res = internalError(
+      "projects",
+      new Error("must-not-leak in mode=" + String(value)),
+    );
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Internal error");
+  }
+});
+
+test("non-Error thrown values produce a generic response even in development", async () => {
+  setNodeEnv("development");
   const res = internalError("task", "some-string-thrown");
   expect(res.status).toBe(500);
   const body = (await res.json()) as { error: string };
@@ -73,37 +97,4 @@ test("non-Error thrown values still produce a generic response with the label lo
   const call = consoleSpy.mock.calls[0]!;
   expect(call[0]).toBe("[task] error:");
   expect(call[1]).toBe("some-string-thrown");
-});
-
-test("VERBOSE mode with non-Error throw still returns generic — only Error.message is forwarded", async () => {
-  process.env[ENV_KEY] = "1";
-  const res = internalError("task", { weird: "object" });
-  const body = (await res.json()) as { error: string };
-  expect(body.error).toBe("Internal error");
-});
-
-test("production NODE_ENV pins verbose to generic even with MYMIR_API_VERBOSE_ERRORS=1", async () => {
-  // Defense-in-depth: an operator who accidentally ships
-  // MYMIR_API_VERBOSE_ERRORS=1 to production must not leak SQL fragments,
-  // bound params, or internal stack traces through 500 response bodies.
-  // The env-var check is the documented contract; the NODE_ENV tripwire
-  // makes verbose mode physically impossible in prod.
-  const originalNodeEnv = process.env.NODE_ENV;
-  process.env[ENV_KEY] = "1";
-  Object.defineProperty(process.env, "NODE_ENV", {
-    value: "production",
-    configurable: true,
-  });
-  try {
-    const err = new Error("Failed query: should never reach the client");
-    const res = internalError("projects", err);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("Internal error");
-    expect(body.error).not.toContain("Failed query");
-  } finally {
-    Object.defineProperty(process.env, "NODE_ENV", {
-      value: originalNodeEnv,
-      configurable: true,
-    });
-  }
 });
