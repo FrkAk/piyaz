@@ -586,38 +586,38 @@ function translateError(e: unknown): ToolResult {
 /** Tool descriptions shared between MCP and web app. */
 export const DESCRIPTIONS = {
   mymir_project:
-    "Projects + teams across every membership the caller has. " +
+    "List, create, and update projects, plus enumerate team memberships. Spans every team the caller belongs to; no server-side session state, so pass projectId explicitly on every downstream call. " +
     "list=projects with task counts, progress, team metadata; skips teams with zero projects. " +
     "teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. " +
-    "select=confirm working project; pass returned projectId on every subsequent call (no server-side session state). " +
+    "select=confirm working project; pass returned projectId on every subsequent call. " +
     "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline; auto-resolves single-team). " +
     "update=title, description, status, categories, or identifier. Renaming identifier cascades every taskRef and breaks external references (PR titles, docs, commits).",
   mymir_task:
-    "Tasks. Lifecycle: draft → planned → in_progress → done. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
+    "Create, update, delete, or reorder tasks. Lifecycle: draft → planned → in_progress → done. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
     "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, all four tag dimensions (work-type, cross-cutting, tech, priority), one project category. " +
-    "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files) APPEND by default; overwriteArrays=true REPLACES them — destructive, no undo except history. Confirm with the user before using. " +
+    "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files) APPEND by default; overwriteArrays=true REPLACES them. Destructive, no undo except history; confirm with the user before using. " +
     "delete: preview=true (default) shows impact; preview=false executes. Prefer status='cancelled' for abandoned scope so the rationale is preserved. " +
     "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run mymir_analyze type='downstream' to propagate.",
   mymir_edge:
-    "Dependency edges. depends_on=source needs target's output (target must be done first). relates_to=informational link, neither blocks the other. Litmus test: removing the target makes the source impossible → depends_on; just makes it harder → relates_to. " +
-    "create: edge note REQUIRED and substantive — notes propagate to downstream agent context; placeholders ('needed', 'depends') are rejected. Write it as a brief to the developer about to start the source task. " +
+    "Create, update, or remove dependency edges between tasks. depends_on=source needs target's output (target must be done first). relates_to=informational link, neither blocks the other. Litmus test: removing the target makes the source impossible → depends_on; just makes it harder → relates_to. " +
+    "create: edge note REQUIRED and substantive; notes propagate to downstream agent context, and placeholders ('needed', 'depends') are rejected. Write it as a brief to the developer about to start the source task. " +
     "update: change edgeType or note by edgeId. " +
     "remove: by edgeId OR by sourceTaskId+targetTaskId+edgeType. " +
     "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with mymir_query type='edges'.",
   mymir_query:
-    "Find and browse. Pick the slim tool first; reserve overview for unfamiliar projects. " +
+    "Search and browse project data. Pick the slim tool first; reserve overview for unfamiliar projects. " +
     "search=tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass tags=[...] for exact tag match (OR-within); combine with `query` to AND-narrow. Single-result responses include a state hint pointing to the right next call. " +
     "list=every task in the project (slim, ordered by position). " +
     "edges=relationships on one task (connected title, status, direction, note). " +
     "overview=full project structure: every task, every edge, full tag vocab, progress. VERY HEAVY. Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session.",
   mymir_context:
-    "Task context at varying depth. ALWAYS fetch context before reasoning about a task; pick the lightest depth that answers the question. " +
+    "Retrieve task context at varying depth. ALWAYS fetch context before reasoning about a task; pick the lightest depth that answers the question. " +
     "summary=quick (status, edge counts) for status checks. " +
     "working=detailed (criteria, decisions, 1-hop edges, siblings) for refinement and review. " +
     "agent=multi-hop dependency chains with upstream execution records (~4-8K tokens); fetch BEFORE coding. " +
     "planning=spec-focused (project description, prereqs, acceptance criteria, downstream specs); fetch BEFORE writing the implementation plan.",
   mymir_analyze:
-    "Dependency-graph analysis. All variants slim. Lead with these for status, prioritization, 'what's next', 'what's stuck'. " +
+    "Analyze the project dependency graph. All variants slim; lead with these for status, prioritization, 'what's next', 'what's stuck'. " +
     "critical_path=longest dep chain (project bottleneck, minimum duration). Lead with this on continue / resume / 'guide me forward'; the most important type for prioritization. " +
     "ready=tasks with all deps done. Pick from `ready ∩ critical_path` for the highest-impact unblocked work. " +
     "plannable=draft tasks with description + criteria, ready for planning. Fall back here when nothing is ready to code. " +
