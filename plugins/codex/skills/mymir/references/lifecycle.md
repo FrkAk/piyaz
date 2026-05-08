@@ -67,6 +67,8 @@ Before transitioning a task to `done` or `cancelled`:
 
 `executionRecord`, `decisions`, `files`, `acceptanceCriteria`. The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
 
+For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+
 ### 2.3. Open a PR if the work changed code
 
 If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Mymir-only refinement):

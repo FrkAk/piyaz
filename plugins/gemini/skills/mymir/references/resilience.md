@@ -190,3 +190,62 @@ Do not power through. The user invoked you to produce quality work, not to resta
 - Recovery is automatic: resume mode runs at every session start, reads local file first, falls back to project description.
 
 The conversation can compact, the session can crash, the agent can lose track. Mymir state plus the local working file are the source of truth. Read from them, write to them, and trust them over your own memory.
+
+---
+
+## 9. Server vs agent-enforced rules
+
+Some Mymir conventions are validated by the server; others depend on agent discipline. Knowing which is which prevents the agent from assuming a safety net that does not exist.
+
+**Server-enforced** (the server rejects or warns):
+
+- Cycle creation in the dependency graph (rejected with a clean error).
+- Self-edges (rejected).
+- Duplicate edges (rejected with `Duplicate edge: an identical edge already exists.`).
+- Cancellation transparency: dependents stay blocked through cancelled deps' own unsatisfied prereqs.
+- Identifier uniqueness per team (rejected on collision).
+- Identifier rename cascades all task refs (with a warning hint).
+- Delete preview-by-default with `_hints` instructing the second call.
+
+**Agent-enforced** (no server safety net; quality decay risk):
+
+- Tag taxonomy: kebab-case, all four dimensions present, no codebase-area tags.
+- Description length / quality: 2 to 4 sentences, no single-sentence descriptions.
+- Acceptance criteria: 2 to 4 binary items, no "works correctly" filler.
+- Edge note quality: substantive, no "needed" / "depends" placeholders.
+- Lifecycle monotonicity: `draft → planned → in_progress → done`. The server does not block direct draft → done jumps.
+- `mymir_query type='overview'` frequency: at most once per session. Skill discipline only.
+- `overwriteArrays=true` confirmation: the server does NOT warn when the new array is shorter than the existing array. Confirm with the user before passing it.
+
+When in doubt, treat any rule that lives in `references/artifacts.md` or `references/lifecycle.md` as agent-enforced unless this section says otherwise.
+
+---
+
+## 10. Transport / auth errors are not retryable in-session
+
+If a Mymir tool call returns one of these, **stop and surface to the user**:
+
+- `requires re-authorization`, `token expired`, 401 / 403 from the MCP transport.
+- 5xx from the server.
+- Network errors (connection refused, timeout, DNS failure).
+
+These mean the host's authentication or the connection itself is broken. The agent cannot self-heal: the user (or the host UI) has to re-authenticate or re-establish the connection. The correct response is:
+
+1. Stop. Do not retry the same call. Do not silently proceed to the next step assuming the prior write succeeded.
+2. Do not fabricate the downstream artifacts that would have followed a successful call. The Iron Law (`conventions.md` §1) applies: you cannot cite what you do not have.
+3. Surface the failure to the user with the exact error text and the last completed step ("Mymir auth expired after creating BAT-12. Re-authenticate and I will resume from BAT-13.").
+4. Wait for confirmation that the connection is restored before resuming.
+
+A session that silently retries a 401 in a loop wastes tokens and produces nothing. A session that fabricates the rest of the workflow on the assumption the call succeeded produces actively misleading state.
+
+---
+
+## 11. Headless / non-interactive runs
+
+The ask_user tool requires a user attached to the session. Codex `exec`, Claude Agent SDK without a `canUseTool` callback, Gemini policy-deny contexts, and CI environments all reject or hang on the call. When you detect headless mode (tool errors with "no input available", "policy denied", or equivalent), do NOT loop or fabricate a default silently:
+
+1. Pick the safest, most reversible default for the decision at hand.
+2. Record both the question you would have asked and the default you chose in the task's `executionRecord` (or the local working file if you are pre-task).
+3. Surface the assumption in the next interactive turn so the user can override.
+
+Headless mode is not a license to skip pushback. If a decision genuinely cannot be defaulted (auth provider, deployment target, primary data store), stop and emit a structured error rather than guessing.

@@ -4,6 +4,43 @@
  */
 
 /**
+ * Closed-vocabulary work-type tags (one per task) per `artifacts.md` §2.
+ */
+export const WORK_TYPE_TAGS: ReadonlySet<string> = new Set([
+  "bug",
+  "feature",
+  "refactor",
+  "docs",
+  "test",
+  "chore",
+  "perf",
+]);
+
+/**
+ * Closed-vocabulary priority tags (one per task) per `artifacts.md` §2.
+ */
+export const PRIORITY_TAGS: ReadonlySet<string> = new Set([
+  "release-blocker",
+  "core",
+  "normal",
+  "backlog",
+]);
+
+/**
+ * Identify the closed-vocabulary dimension a tag belongs to, if any.
+ * Returns null for open-vocabulary dimensions (cross-cutting concern, tech).
+ *
+ * @param tag - Lowercased tag to classify.
+ * @returns "work-type", "priority", or null.
+ */
+function closedDimension(tag: string): "work-type" | "priority" | null {
+  const lower = tag.toLowerCase();
+  if (WORK_TYPE_TAGS.has(lower)) return "work-type";
+  if (PRIORITY_TAGS.has(lower)) return "priority";
+  return null;
+}
+
+/**
  * Trim each tag and drop empty entries.
  * @param tags - Raw tag strings (may be undefined).
  * @returns Trimmed, non-empty tag list.
@@ -61,8 +98,17 @@ export function levenshtein(a: string, b: string): number {
 export function findVariant(proposed: string, existing: string[]): string | null {
   const nProposed = normalizeTag(proposed);
   if (nProposed.length === 0) return null;
+  const proposedDim = closedDimension(proposed);
   for (const e of existing) {
     if (e === proposed) return null;
+    const existingDim = closedDimension(e);
+    if (
+      proposedDim !== null &&
+      existingDim !== null &&
+      proposedDim !== existingDim
+    ) {
+      continue;
+    }
     const nE = normalizeTag(e);
     if (nE === nProposed) return e;
     if (

@@ -330,6 +330,7 @@ Defaults that match the actual architecture of common project shapes. Adapt to w
 - **ML / data platform** (production ML systems with training and serving): `data-pipeline`, `training`, `inference`, `evaluation`, `serving`.
 - **Data warehouse / analytics engineering** (dbt project, SQL marts, transformations): `sources`, `staging`, `marts`, `metrics`, `tests`, `docs`. Add `pipelines` if Airflow/Dagster orchestration is its own surface; `seeds` if reference data has a meaningful footprint.
 - **Business analyst / BI** (dashboards, reports, ad-hoc analysis, stakeholder deliverables): `requirements-intake`, `analysis`, `dashboards`, `metrics`, `data-quality`, `documentation`. Add `stakeholders` if recurring stakeholder reviews are first-class; `playbooks` if reusable analysis templates are part of the deliverable. Note: `requirements-intake` here is a product surface (BRDs, stakeholder asks tracked as artifacts), not the forbidden process-phase `requirements`.
+- **Mixed dbt-shop + BI delivery** (a dbt rebuild that ships into stakeholder-owned BI dashboards — common when Finance / Sales / Marketing trust degrades and the fix is one source of truth fed into existing tools): merge the two vocabularies. Common landing: `sources`, `staging`, `marts`, `metrics`, `dashboards`, `data-quality`, `governance`. Pick `tests` over `data-quality` if testing has its own surface; `documentation` over `governance` if change-management is light.
 - **Agentic system / app** (an LLM loop with tools and memory; new normal as of 2026): `core` (agent loop, planner, orchestration), `tools` (function calling, MCP, capability adapters), `memory` (context, state, long-term storage), `models` (LLM client, routing, caching), `evals` (scenarios, regression harness), `safety` (guardrails, output validation). Add `ui` if there is a chat or dashboard surface; `prompts` if prompt engineering is its own discipline.
 - **Multi-agent system** (orchestrator + worker agents, tools shared): `orchestration` (planner, scheduler, routing), `agents` (worker agent definitions), `tools`, `memory`, `models`, `evals`, `safety`.
 - **Financial / quant**: `models`, `pricing`, `risk`, `reporting`, `data`, `ui`.
@@ -343,7 +344,7 @@ Defaults that match the actual architecture of common project shapes. Adapt to w
 
 **1 to 4 hours per task.** A coding agent should complete one in a single session.
 
-The numbers below are **starting counts from decompose or onboarding**, not caps. Real projects accumulate tasks as work materializes; teams add tasks every day. The job of the decompose / onboarding agent is to seed enough structure to start, not to enumerate every task that will ever exist.
+> **Starting count is not a cap.** The numbers below are seed values for decompose / onboarding, not enumeration of every task that will ever exist. Real projects accumulate tasks as work materializes; teams add tasks every day. When a parent agent or a test rig caps the task count below the table's range, honor the cap and document the deviation in your transcript or local working file.
 
 | Project size | Starting task count |
 |---|---|

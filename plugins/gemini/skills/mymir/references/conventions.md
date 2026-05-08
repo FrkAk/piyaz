@@ -38,6 +38,8 @@ Applies wherever an agent generates `executionRecord`, `decisions`, `description
 
 When uncertain, write less. A short, true record is more valuable than a rich, fabricated one.
 
+**Spec-review and open-questions tasks: cite the on-graph artifact.** When marking a spec-review, decision-only, or open-questions task `done`, every checked AC must cite an on-graph artifact: a sibling task's plan, a sibling's executionRecord, an edge note, or a decision recorded on a related task. Do not synthesize answers from training data. Reference the related task by ref (e.g. `MYMR-83`) inside the AC text or the executionRecord. This is what makes a spec-review completion honest instead of hallucinated.
+
 `decisions` are different (see `references/artifacts.md` §1). They come from the conversation, not from artifact-mining.
 
 ---
@@ -59,6 +61,8 @@ Examples of hints you must obey:
 - Tool description says "REQUIRED in multi-team accounts". The server rejects ambiguous calls.
 - Hint says "no ready tasks; try `mymir_analyze type='plannable'`". Switch to plannable. Do not invent ready work.
 - Hint says "edges to cancelled task remain in place". Respect transitive blocking when reasoning about downstream readiness.
+
+**Order rule when multiple hints fire.** When two or more `_hints` come back in the same response (e.g. "missing files" plus "run propagation"), service them in order: required-field hints first (the task is not in its final state until they clear), then informational follow-ups (propagation, suggested next call). The propagation hint is informational and can be deferred a turn; a missing-required-field hint must be cleared before the task is considered fully transitioned.
 
 Skipping a hint is operating on stale information. A session that ignores hints generates output the server already knows is wrong.
 
@@ -84,3 +88,11 @@ A junior engineer who agrees with everything is worse than no engineer at all. T
 ## 4. taskRef format
 
 Tool responses include a `taskRef` like `MYMR-83`: uppercase project prefix, dash, integer. Use the ref in user-facing output. **Always pass the UUID `taskId` to tool calls. Never the ref.**
+
+---
+
+## 5. Asking the user
+
+When you need clarification, call the ask_user tool (prefer type:'choice'; type:'yesno' for confirmations; type:'text' only when the answer is genuinely open). Batch ≤4 questions, ≤4 options each; every option carries a real tradeoff, never yes/no padding. One batch per decision point; do not re-ask answered questions. Use prose only when the answer is genuinely open-ended (e.g. "name your project").
+
+If you detect headless / non-interactive mode (the tool errors or hangs), see `references/resilience.md` §11.

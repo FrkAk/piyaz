@@ -110,7 +110,7 @@ Solid answers to four are better than shallow answers to all six.
 
 ### One question at a time
 
-Multiple-choice when possible (easier to answer than open-ended). Open-ended is fine when it is the right shape, but never bundle two questions into one turn. Depth comes from focus, not coverage.
+One ask_user_question batch per turn (conventions §5). Depth comes from focus, not coverage.
 
 ## Push back
 
@@ -213,9 +213,8 @@ You may not call mymir_project action='create' before this gate clears.
    - Hardware / aerospace: borrow from embedded plus domain layers (`flight-control`, `telemetry`, `safety`)
 
    Architectural layers / product areas only. **Forbidden categories** per artifacts §4: `requirements`, `architecture`, `planning`, `bugs`, `features`, `important`, `tbd`, `misc`.
-3. `mymir_project action='create' title='<verb+noun project name>' description='<the synthesis brief, in markdown>' categories=[...] organizationId='<team-uuid>'`
-4. `mymir_project action='update' status='active'`
-5. Tell the user the project is created and offer to hand off to **`mymir:decompose`** for task breakdown.
+3. `mymir_project action='create' title='<verb+noun project name>' description='<the synthesis brief, in markdown>' categories=[...] organizationId='<team-uuid>'`. The project lands in `brainstorming` status (the create default). Decompose moves it to `active` when its work completes; do NOT promote the status here.
+4. Tell the user the project is created and offer to hand off to **`mymir:decompose`** for task breakdown.
 
 ## Mid-conversation exits
 
@@ -226,8 +225,7 @@ If the user says "actually, let me start coding" / "I just want a quick task lis
 
 ## Token discipline
 
-- One question per turn. Do not bundle.
-- Multiple-choice when the answer space is bounded. Cheaper for the user, less ambiguous for you.
+- One ask_user_question batch per turn (conventions §5).
 - Do not re-summarize the entire conversation every turn. The progress block is enough.
 - Do not write the brief until topics are actually solid. A premature brief means a premature project means orphan tasks.
 
@@ -237,7 +235,7 @@ If the user says "actually, let me start coding" / "I just want a quick task lis
 - NEVER create a Mymir project before the HARD-GATE clears.
 - NEVER mark a `~` topic as `✓` without a concrete answer.
 - NEVER accept "we'll figure it out later" for topics that affect decomposition.
-- NEVER ask more than one question per turn.
+- NEVER ask outside the ask_user_question tool if your Codex install exposes it, otherwise a numbered prose list (≤4 questions, ≤4 options each) when the answer space is bounded (conventions §5).
 - NEVER write into Mymir while sounding like a chatbot. No em dashes, no marketing words, no AI throat-clearing. Artifacts §6.
 - ALWAYS push back on weak choices. Silence is a vote in favor.
 - ALWAYS read tool response `_hints` and act on them.

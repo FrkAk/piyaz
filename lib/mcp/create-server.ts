@@ -32,6 +32,33 @@ function err(message: string) {
 }
 
 /**
+ * Sanitised MCP error emitter for tool catch blocks. Mirrors the frontend
+ * `internalError` helper in `lib/api/error.ts`: logs the original error
+ * server-side with a tool-scoped label so failures stay debuggable, but
+ * returns an opaque `Internal error` body so untrusted callers can't read
+ * driver-level SQL fragments, bound parameters, or schema names that show
+ * up in a raw Postgres exception.
+ *
+ * Domain errors thrown deliberately by handlers should reach the client
+ * via the `ToolResult.ok = false` path through `toMcp`, not through this
+ * catch. This helper exists to neutralise unexpected throws (e.g. a unique
+ * constraint violation that bubbles up from Drizzle without a wrapper).
+ *
+ * Set `MYMIR_API_VERBOSE_ERRORS=1` in `.env.local` to forward the raw
+ * `err.message` to the MCP client when chasing a specific failure in dev.
+ *
+ * @param label - Tool name (e.g. `"mymir_project"`).
+ * @param e - The thrown error.
+ * @returns MCP error response.
+ */
+function mcpError(label: string, e: unknown) {
+  console.error(`[mcp:${label}] error:`, e);
+  const verbose = process.env.MYMIR_API_VERBOSE_ERRORS === "1";
+  const message = verbose && e instanceof Error ? e.message : "Internal error";
+  return err(message);
+}
+
+/**
  * Convert a ToolResult to MCP response format.
  * Handles string results (context depths) as raw text.
  * @param result - Tool handler result.
@@ -53,7 +80,7 @@ This file documents the canonical flows the skill expects the server to cover: s
 The caller's account spans every membership. There is no 'active' team. Read tools span every team you belong to; writes name \`organizationId\` or auto-resolve when the account has exactly one membership.
 - \`mymir_project action='list'\`: projects with team metadata. Skips teams with zero projects, so pair with \`teams\` for the full set.
 - \`mymir_project action='teams'\`: every membership (id, name, slug, role, projectCount). Includes empty teams. Run before \`create\`, when \`list\` is empty, or when the user names a team \`list\` did not surface.
-- Cross-team probes (an id you do not own) return 404-shaped. Only trust ids returned by list, teams, search, or context.
+- Out-of-team probes (an id from a team you do not belong to) return 404-shaped. Within-team-other-project reads succeed by design; every team member can read all projects in their teams. Only trust ids returned by list, teams, search, or context.
 
 ## Session start
 1. \`mymir_project action='list'\`.
@@ -151,7 +178,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
       description: DESCRIPTIONS.mymir_project,
       inputSchema: z.object({
         action: z.enum(["list", "teams", "create", "select", "update"])
-          .describe("list=projects across every team you belong to (skips empty teams). teams=every membership (id, name, slug, role, projectCount) — call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields."),
+          .describe("list=projects across every team you belong to (skips empty teams). teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields."),
         projectId: z.uuid().optional()
           .describe("Project UUID. Required for select and update."),
         title: z.string().optional()
@@ -163,9 +190,9 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         categories: z.array(z.string()).optional()
           .describe("Task categories for this project (e.g. ['backend', 'frontend', 'mcp']). Drives drawer grouping in the UI."),
         identifier: identifierSchema.optional()
-          .describe("Project prefix for task refs (e.g. 'MYM' yields MYM-1, MYM-2, …). 2-12 chars, uppercase alphanumeric, unique per team. Auto-derived from title on create when omitted. On update: renames every existing task ref — external references (PR titles, docs) no longer resolve."),
+          .describe("Project prefix for task refs (e.g. 'MYM' yields MYM-1, MYM-2, ...). 2-12 chars, uppercase alphanumeric, unique per team. Auto-derived from title on create when omitted. On update: renames every existing task ref; external references (PR titles, docs) no longer resolve."),
         organizationId: z.uuid().optional()
-          .describe("Target team UUID for create. REQUIRED when you're a member of more than one team — the create is rejected with the team list inline otherwise. Auto-resolved when you belong to exactly one team. Membership is verified server-side; non-member targets return 'forbidden'."),
+          .describe("Target team UUID for create. REQUIRED when you're a member of more than one team; the create is rejected with the team list inline otherwise. Auto-resolved when you belong to exactly one team. Membership is verified server-side; non-member targets return 'forbidden'."),
       }),
       annotations: {
         title: "Manage Project",
@@ -179,7 +206,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
       try {
         if (params.action === "select") {
           if (!params.projectId) return err("projectId required for select. Call mymir_project action='list' first to enumerate your projects.");
-          return json({ selected: params.projectId, _hints: ["Stateless mode — pass this projectId explicitly on every subsequent call."] });
+          return json({ selected: params.projectId, _hints: ["Stateless mode. Pass this projectId explicitly on every subsequent call."] });
         }
         const { action, ...rest } = params;
         const result = await handleProject(
@@ -188,7 +215,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         );
         return toMcp(result);
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e));
+        return mcpError("mymir_project", e);
       }
     },
   );
@@ -209,7 +236,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         description: z.string().optional()
           .describe("2-4 sentences: what to build, why it matters, key technical approach. Required for create."),
         status: z.enum(["draft", "planned", "in_progress", "done", "cancelled"]).optional()
-          .describe("Lifecycle: draft → planned → in_progress → done. cancelled = terminal abandoned work; populate executionRecord with rationale. Cancelled deps are transparent — dependents stay blocked through the cancelled task's own unsatisfied deps. Excluded from progress and critical path."),
+          .describe("Lifecycle: draft → planned → in_progress → done. cancelled = terminal abandoned work; populate executionRecord with rationale. Cancelled deps are transparent: dependents stay blocked through the cancelled task's own unsatisfied deps. Excluded from progress and critical path."),
         acceptanceCriteria: z.array(
           z.union([
             z.string(),
@@ -218,7 +245,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         ).optional()
           .describe("2-4 testable done conditions. Pass strings for new criteria, or objects with {text, checked} to set check state on existing rows."),
         decisions: z.array(z.string()).optional()
-          .describe("Technical choices and constraints — one-liner per decision (CHOICE + WHY)."),
+          .describe("Technical choices and constraints. One-liner per decision (CHOICE + WHY)."),
         tags: z.array(z.string()).optional()
           .describe("Kebab-case. Every task carries: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched), exactly 1 priority (release-blocker/core/normal/backlog). Do NOT tag codebase area (use category) or status. Run mymir_query type='overview' before coining new tags."),
         category: z.string().optional()
@@ -249,7 +276,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleTask(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e));
+        return mcpError("mymir_task", e);
       }
     },
   );
@@ -270,7 +297,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         edgeType: z.enum(["depends_on", "relates_to"]).optional()
           .describe("depends_on = source needs target done first. relates_to = informational link, neither blocks the other. Required for create."),
         note: z.string().optional()
-          .describe("Why this relationship exists — propagates to agent context for downstream tasks. Strongly recommended on create."),
+          .describe("Why this relationship exists. Propagates to agent context for downstream tasks. Strongly recommended on create."),
       }),
       annotations: {
         title: "Manage Edge",
@@ -285,7 +312,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleEdge(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e));
+        return mcpError("mymir_edge", e);
       }
     },
   );
@@ -319,7 +346,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleQuery(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e));
+        return mcpError("mymir_query", e);
       }
     },
   );
@@ -348,7 +375,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleContext(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e));
+        return mcpError("mymir_context", e);
       }
     },
   );
@@ -378,7 +405,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleAnalyze(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return err(e instanceof Error ? e.message : String(e));
+        return mcpError("mymir_analyze", e);
       }
     },
   );

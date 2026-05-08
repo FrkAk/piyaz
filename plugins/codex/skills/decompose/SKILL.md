@@ -217,6 +217,8 @@ Before creating any tasks, persist the approved plan in two places. Both steps a
 
 ### Step B: write the local working file (in-session, faster, richer)
 
+If your working directory is sandboxed or write-restricted (CI runs, plugin test rigs, agents dispatched into a specific worker subfolder), `.mymir/` may not be writable. Fall back to whatever directory IS writable in your sandbox and reference the chosen path inside the `## Decomposition Plan` block you appended in Step A so resume mode can find it. If no local writes are possible at all, skip Step B and rely on Step A's project-description plan for resilience — note the limitation in your transcript so a future session knows progress is not durable across compaction.
+
 1. `Bash`: `mkdir -p .mymir && grep -qxF '.mymir/' .gitignore 2>/dev/null || echo '.mymir/' >> .gitignore`.
 2. `Write` `.mymir/decompose-<projectIdentifier>.md` with:
    ```markdown

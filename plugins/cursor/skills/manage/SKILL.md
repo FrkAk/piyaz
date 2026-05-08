@@ -48,7 +48,11 @@ You were invoked because the user wants something more than a status check: a st
 ## Session setup
 
 1. `mymir_project action='list'` then `action='select'`. Note `projectId`. Pass it on every subsequent call (no server-side session state).
-2. `mymir_query type='overview'` once. Big picture, current tag vocabulary, current categories, recent activity. **Heavy call; cache the output and do not refetch in this session.**
+2. `mymir_query type='overview'` once — UNLESS:
+   - The dispatching context supplied a recent overview snapshot (path passed in your prompt). Read that file instead.
+   - You were invoked **immediately after decompose in the same conversation** and the freshly-decomposed graph is already in context. Skip the fetch and document the deviation in your transcript.
+
+   Otherwise: big picture, current tag vocabulary, current categories, recent activity. **Heavy call; cache the output and do not refetch in this session.**
 3. `mymir_analyze type='ready'`, `type='blocked'`, `type='critical_path'`, `type='plannable'`. Slim, all four. Get the lay of the land before saying anything.
 
 Now you have the picture. Do not rush. The user expects depth.
@@ -127,6 +131,8 @@ This is what makes Mymir intelligent. Skipping it makes Mymir useless.
 4. Create / update / remove edges as needed. Meaningful notes (artifacts §3).
 5. If decisions affect downstream tasks, update their descriptions or ACs.
 
+**Concurrent-write guidance.** When parallel workers (multiple agents, sister manage / lifecycle workers, dispatched coding agents) operate on the same project, edge creates can race. The server's `Duplicate edge: an identical edge already exists.` rejection is itself the hint: treat it as success, then `mymir_query type='edges'` to verify the existing note is acceptable. Do not re-attempt the create. If the existing note is weaker than yours, `mymir_edge action='update'` to improve it.
+
 **Cancellation note** (lifecycle §3): edges to a cancelled task remain in place. Cancellation is transitive-aware. Ask: is there a replacement? If yes, rewire dependents. If the scope is genuinely abandoned, dependents may need to be cancelled too or re-scoped.
 
 **Example:** Task "Set up auth" completes with decision "Using JWT with Redis refresh tokens":
@@ -148,19 +154,33 @@ The user wants a CTO sitting down with the project. Spend tokens here. The strat
 3. **Stale edges.** Sample a handful of high-degree tasks via `mymir_query type='edges'`. Look for empty notes, outdated decisions, dependencies that no longer hold. Fix them with `mymir_edge action='update'` or `action='remove'`.
 4. **Category drift.** Compare the project's current categories against artifacts §4:
    - Are there more than 8? Recommend consolidation.
-   - Are any in the forbidden list (`requirements`, `architecture`, `planning`, `bugs`, `features`, `important`, `tbd`, `misc`, `open-questions`)? Surface them and propose better mappings.
+   - Are any in the forbidden list (`requirements`, `architecture`, `planning`, `bugs`, `features`, `important`, `tbd`, `misc`, `open-questions`)? List the forbidden categories present, the tasks under each, and a one-line proposed remap per task (e.g. "ORAS-1 from `requirements` → `io`; ORAS-3 from `requirements` → `domain`"). Do NOT execute the remap without user confirmation; it touches every task in the category and is not auto-reversible.
    - Are any process-phase or work-type categories that should be tags or removed?
    - Do the categories actually match the project's architectural shape per the project-type guidance (artifacts §4)?
 5. **Tag drift.** Check the tag vocabulary in overview against the four-dimension rule (artifacts §2):
    - Is every task carrying all four dimensions?
    - Is the work-type vocabulary cleanly closed (`bug`, `feature`, `refactor`, `docs`, `test`, `chore`, `perf`)?
-   - Is the priority dimension carrying signal? If 80%+ of tasks are `release-blocker` or `core`, the dimension is dead.
+   - Is the priority dimension carrying signal? Compute the share of `release-blocker` over total non-cancelled tasks. If above 80%, the dimension is dead. Run `mymir_analyze type='critical_path'` and recommend re-tagging only the critical-path tasks as `release-blocker`; everything else moves to `core` or `normal`. Surface the concrete remap (which tasks change tag, from what to what), not "consider rebalancing".
    - Are there codebase-area tags (which should be `category`'s job)?
    - Recommend tag consolidation, remapping, or pruning.
 6. **Coverage gaps.** Anything missing from the project that should be there? Common omissions: no testing tasks, no security task, no observability / monitoring work, no CI configuration, no docs task. Surface these.
 7. **Priority calibration.** Is everything `core` or everything `release-blocker`? That carries no signal. Push back on the user. The critical path defines what actually blocks; everything else is `normal` or `backlog`.
 8. **Description and AC quality spot-check.** Pick 3 to 5 random tasks via `mymir_query type='search'`. Read their descriptions and ACs. Are descriptions 2 to 4 sentences? Are ACs binary? Surface drift if you find single-sentence descriptions or "works correctly" ACs.
 9. **Recommendations.** Present as a ranked list with severity. Top 3 fixes the user should make this week. Each one should be specific and actionable, not "consider improving X".
+
+### H. Orphan audit
+
+Tasks with zero edges are invisible to `mymir_analyze type='ready'` and `type='blocked'`. They appear in `plannable` but never gain context from neighbors. Run periodically (default: as part of every strategic review).
+
+1. `mymir_analyze type='plannable'` for the candidate pool.
+2. For each candidate that does NOT show up in any `mymir_analyze type='blocked'` reasoning AND is not on the `critical_path`, run `mymir_query type='edges' taskId=<id>`.
+3. Tasks with zero edges are orphans. For each, decide:
+   - **Wire to a related task** (the most common outcome). The orphan is usually a spec or use-case task that was created without its impl/spec link. Add a `relates_to` edge with a substantive note.
+   - **Fold into another task** if the scope overlaps an existing one.
+   - **Cancel** if the work is genuinely no longer needed.
+4. Run § F (propagate) after each fix.
+
+Orphans accumulate. Catching them early keeps the dependency graph honest.
 
 ## Other workflows
 

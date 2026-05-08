@@ -55,9 +55,9 @@ export function Modal({ open, onClose, title, children, maxWidth = 'md' }: Modal
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
             transition={{ duration: 0.18, ease: [0.25, 0.46, 0.45, 0.94] }}
-            className={`relative w-full ${MAX_WIDTH_CLASS[maxWidth]} rounded-[10px] border border-border bg-surface shadow-[var(--shadow-float)]`}
+            className={`relative flex max-h-[calc(100vh-2rem)] w-full flex-col ${MAX_WIDTH_CLASS[maxWidth]} rounded-[10px] border border-border bg-surface shadow-[var(--shadow-float)]`}
           >
-            <header className="flex items-center justify-between border-b border-border px-5 py-3">
+            <header className="flex flex-shrink-0 items-center justify-between border-b border-border px-5 py-3">
               <h2 id={titleId} className="text-sm font-semibold text-text-primary">
                 {title}
               </h2>
@@ -74,7 +74,7 @@ export function Modal({ open, onClose, title, children, maxWidth = 'md' }: Modal
                 </svg>
               </motion.button>
             </header>
-            <div className="p-5">{children}</div>
+            <div className="overflow-y-auto p-5">{children}</div>
           </motion.div>
         </motion.div>
       )}
