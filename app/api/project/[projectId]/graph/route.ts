@@ -4,7 +4,7 @@ import {
 } from '@/lib/data/project';
 import { getAuthContext } from '@/lib/auth/context';
 import { ForbiddenError } from '@/lib/auth/authorization';
-import { conditionalRespond, isNotModified } from '@/lib/api/conditional';
+import { conditionalRespond, etagMatches } from '@/lib/api/conditional';
 import { internalError } from '@/lib/api/error';
 import { error } from '@/lib/api/response';
 
@@ -37,7 +37,7 @@ async function handle(req: Request, projectId: string): Promise<Response> {
   try {
     const max = await getProjectMaxUpdatedAt(ctx, projectId);
 
-    if (req.method === 'HEAD' || isNotModified(req, max)) {
+    if (req.method === 'HEAD' || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);
     }
 

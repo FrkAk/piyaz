@@ -1,7 +1,8 @@
-import { getTaskFull } from '@/lib/data/task';
 import { getAuthContext } from '@/lib/auth/context';
 import { ForbiddenError, assertTaskAccess } from '@/lib/auth/authorization';
-import { conditionalRespond } from '@/lib/api/conditional';
+import { conditionalRespond, etagMatches } from '@/lib/api/conditional';
+import { getProjectIdentifier } from '@/lib/data/project';
+import { asIdentifier, composeTaskRef } from '@/lib/graph/identifier';
 import { broker } from '@/lib/realtime/broker';
 import { internalError } from '@/lib/api/error';
 import { error } from '@/lib/api/response';
@@ -17,13 +18,12 @@ const TASK_SUBSCRIPTION_TTL_MS = 10 * 60_000;
  * acceptanceCriteria / executionRecord — the workspace fetches them
  * lazily through this endpoint when a task is selected.
  *
- * `Last-Modified` is the row's `updatedAt`. HEAD short-circuits on
- * {@link assertTaskAccess} (one query, validates UUID + scopes by
- * membership) instead of the heavier {@link getTaskFull} which adds a
- * project-identifier lookup for `taskRef` — HEAD doesn't return a body so
- * the taskRef isn't needed. Broker subscription registration is also
- * skipped on HEAD because HEAD is a cache probe, not a "user is viewing"
- * signal.
+ * Auth + validator (`assertTaskAccess`) runs first so a 304 short-circuit
+ * skips the second `projects.identifier` round-trip that the response
+ * body needs for `taskRef`. Without that ordering every 304 still hits
+ * the DB twice — for resources users re-select frequently this is the
+ * common case. Broker subscription registration is also skipped on
+ * HEAD/304 because both are cache probes, not "user is viewing" signals.
  *
  * @param req - Incoming request.
  * @param taskId - Task UUID from the route params.
@@ -38,13 +38,25 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   }
 
   try {
-    if (req.method === 'HEAD') {
-      const task = await assertTaskAccess(taskId, ctx);
+    const task = await assertTaskAccess(taskId, ctx);
+
+    if (req.method === 'HEAD' || etagMatches(req, task.updatedAt)) {
       return conditionalRespond(req, null, task.updatedAt);
     }
-    const task = await getTaskFull(ctx, taskId);
+
+    const identifier = await getProjectIdentifier(task.projectId);
+    if (!identifier) {
+      throw new Error(
+        `Task ${task.id} references missing project ${task.projectId}`,
+      );
+    }
+    const taskRef = composeTaskRef(
+      asIdentifier(identifier),
+      task.sequenceNumber,
+    );
+
     broker.register(ctx.userId, `task:${taskId}`, TASK_SUBSCRIPTION_TTL_MS);
-    return conditionalRespond(req, task, task.updatedAt);
+    return conditionalRespond(req, { ...task, taskRef }, task.updatedAt);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return error('Task not found', 404);
@@ -71,7 +83,7 @@ export async function GET(
  * HEAD handler — same auth + 304 logic as GET, never returns a body.
  * @param req - Incoming request.
  * @param params - Route params with taskId.
- * @returns Empty response with `Last-Modified` header.
+ * @returns Empty response with `ETag` header.
  */
 export async function HEAD(
   req: Request,

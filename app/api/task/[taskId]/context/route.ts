@@ -8,7 +8,7 @@ import {
   buildWorkingContext,
   formatWorkingContext,
 } from "@/lib/context/_core/working";
-import { conditionalRespond, isNotModified } from "@/lib/api/conditional";
+import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 
@@ -40,7 +40,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
     const task = await getTaskFull(ctx, taskId);
     const max = await getProjectMaxUpdatedAt(ctx, task.projectId);
 
-    if (req.method === "HEAD" || isNotModified(req, max)) {
+    if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);
     }
 

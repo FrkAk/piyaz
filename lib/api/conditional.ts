@@ -1,54 +1,67 @@
 /**
- * Compare a request's `If-Modified-Since` validator against a server-side
- * `lastModified`. HTTP-date headers carry one-second resolution while
- * Postgres `timestamptz` carries microseconds, so both sides are floored
- * to whole seconds — a round-trip through `toUTCString()` would otherwise
- * produce spurious 200s on otherwise-fresh resources.
+ * Build a strong ETag from a millisecond-precision timestamp. ETag uses
+ * exact-string comparison so the same-second mutation window that
+ * `Last-Modified`/`If-Modified-Since` collapses (HTTP-date is 1-second
+ * resolution) is preserved end-to-end. Format: a quoted base-10 ms count
+ * — opaque to clients, deterministic per resource state.
+ *
+ * @param updatedAt - Server-side max `updatedAt` for the resource.
+ * @returns Quoted ETag value suitable for the `ETag` response header.
+ */
+export function makeEtag(updatedAt: Date): string {
+  return `"${updatedAt.getTime()}"`;
+}
+
+/**
+ * Whether the request's `If-None-Match` validator matches the supplied
+ * ETag. Strong byte-exact comparison per RFC 7232 §2.3.2 — we don't
+ * emit weak ETags so the weak-comparison branch is never exercised.
+ * Comma-separated lists (`If-None-Match: "a", "b"`) and the wildcard
+ * `*` are both supported.
  *
  * @param req - Incoming request (Web Request or NextRequest).
- * @param lastModified - Server-side max `updatedAt` for the resource.
- * @returns True when the client's cached validator is at or after
- *   `lastModified` (i.e. the response can be a 304); false otherwise.
+ * @param updatedAt - Server-side max `updatedAt` for the resource.
+ * @returns True when any client-supplied validator matches the resource's
+ *   current ETag (i.e. the response can be a 304); false otherwise.
  */
-export function isNotModified(req: Request, lastModified: Date): boolean {
-  const ifModifiedSince = req.headers.get("if-modified-since");
-  if (!ifModifiedSince) return false;
-  const since = new Date(ifModifiedSince).getTime();
-  if (!Number.isFinite(since)) return false;
-  return Math.floor(lastModified.getTime() / 1000) <= Math.floor(since / 1000);
+export function etagMatches(req: Request, updatedAt: Date): boolean {
+  const inm = req.headers.get("if-none-match");
+  if (!inm) return false;
+  if (inm.trim() === "*") return true;
+  const etag = makeEtag(updatedAt);
+  return inm.split(",").some((part) => part.trim() === etag);
 }
 
 /**
  * Shared response headers — `private` keeps the payload off shared caches,
  * `no-cache` instructs the browser to always revalidate with the server
- * (an `If-Modified-Since` request) before reusing the cached response.
+ * (an `If-None-Match` request) before reusing the cached response.
  * Together they make the conditional-GET contract explicit instead of
  * relying on browser heuristic freshness.
  */
 const CACHE_HEADERS = { "Cache-Control": "private, no-cache" } as const;
 
 /**
- * Build a 200 / 304 response based on `If-Modified-Since` semantics
- * (RFC 7232). Sets `Last-Modified` and `Cache-Control` on every response
- * so the client can cache the validator and present it on the next
- * request.
+ * Build a 200 / 304 response based on `If-None-Match` semantics
+ * (RFC 7232). Sets `ETag` on every response so the client can cache the
+ * validator and present it on the next request.
  *
  * @param req - Incoming request (Web Request or NextRequest).
  * @param body - Response body for the 200 path. Pass `null` for HEAD.
- * @param lastModified - Server-side max `updatedAt` for the resource.
- * @returns 304 with no body when {@link isNotModified} is true; otherwise
+ * @param updatedAt - Server-side max `updatedAt` for the resource.
+ * @returns 304 with no body when {@link etagMatches} is true; otherwise
  *   200 with the body. HEAD always returns a null body regardless of the
  *   200/304 branch.
  */
 export function conditionalRespond<T>(
   req: Request,
   body: T,
-  lastModified: Date,
+  updatedAt: Date,
 ): Response {
-  const lm = lastModified.toUTCString();
-  const baseHeaders = { "Last-Modified": lm, ...CACHE_HEADERS };
+  const etag = makeEtag(updatedAt);
+  const baseHeaders = { ETag: etag, ...CACHE_HEADERS };
 
-  if (isNotModified(req, lastModified)) {
+  if (etagMatches(req, updatedAt)) {
     return new Response(null, { status: 304, headers: baseHeaders });
   }
 

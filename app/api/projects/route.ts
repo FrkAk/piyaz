@@ -3,7 +3,7 @@ import {
   getProjectListMaxUpdatedAt,
   listProjectsSlim,
 } from "@/lib/data/project";
-import { conditionalRespond, isNotModified } from "@/lib/api/conditional";
+import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 
@@ -27,7 +27,7 @@ async function handle(req: Request): Promise<Response> {
   try {
     const max = await getProjectListMaxUpdatedAt(ctx);
 
-    if (req.method === "HEAD" || isNotModified(req, max)) {
+    if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);
     }
 
