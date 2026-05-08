@@ -45,69 +45,97 @@ function toMcp(result: ToolResult) {
   return json(result.data);
 }
 
-const INSTRUCTIONS = [
-  "Mymir is a persistent context network for coding projects. Tracks tasks, dependencies, decisions, and execution records across sessions.",
-  "",
-  "## Multi-Team Awareness",
-  "Account spans every membership. No 'active' team. Read tools span all teams; writes name `organizationId` or auto-resolve when there's only one membership.",
-  "- `mymir_project action='teams'` → every membership (id, name, slug, role, projectCount). Canonical team-discovery call. Includes empty teams.",
-  "- `mymir_project action='list'` → projects with `organization.id`/`name`. Skips teams with zero projects — pair with `teams` for the full set.",
-  "- Cross-team probes (an id you don't own) return 404-shaped. Only trust ids returned by list/teams/search/context.",
-  "",
-  "## Session Start",
-  "1. `mymir_project action='list'` → projects across every team you belong to.",
-  "2. `mymir_project action='teams'` → every membership (run when `list` is empty, before `create`, or when the user mentions a team you haven't seen).",
-  "3. `mymir_project action='select' projectId='...'` → confirm the working project. Pass projectId on every subsequent call.",
-  "4. No server-side session state.",
-  "",
-  "## Find Work",
-  "- `mymir_analyze type='ready'` → unblocked tasks (pick from these first).",
-  "- If none ready: `mymir_analyze type='plannable'` → draft tasks ready for planning.",
-  "- `mymir_analyze type='critical_path'` → prioritize tasks on the bottleneck chain.",
-  "",
-  "## Implement a Task",
-  "1. Claim: `mymir_task action='update' taskId='...' status='in_progress'` (prevents double-assignment).",
-  "2. Get context: `mymir_context taskId='...' depth='agent'` (multi-hop deps + execution records).",
-  "3. Do the work.",
-  "4. Record: `mymir_task action='update' taskId='...' status='done'` with ALL of:",
-  "   - `executionRecord`: 3-5 sentences on what was built (function names, file paths, endpoints).",
-  "   - `decisions`: one-liner per technical choice (CHOICE + WHY).",
-  "   - `files`: every file created or modified.",
-  "   These feed downstream tasks — skipping them breaks the context chain.",
-  "",
-  "## Plan a Draft Task",
-  "1. `mymir_context taskId='...' depth='planning'` → spec, prerequisites, related work.",
-  "2. Write detailed plan (file paths, line numbers, specific changes, verification steps).",
-  "3. `mymir_task action='update' taskId='...' implementationPlan='<full plan>' status='planned'`.",
-  "",
-  "## Create a Project",
-  "1. `mymir_project action='teams'` → every membership with role + projectCount (covers empty teams `list` misses).",
-  "2. Multi-team account + user didn't pick → ASK BEFORE CREATING. Server rejects ambiguous creates with the team list inline; don't default.",
-  "3. `mymir_project action='create' title='...' description='...' organizationId='<team-uuid>'` (omit `organizationId` only when single-team).",
-  "4. Then run the create-a-task workflow to populate the project.",
-  "",
-  "## Create a Task",
-  "1. `mymir_task action='create' projectId='...' title='<verb+noun>' description='<2-4 sentences>' acceptanceCriteria=[...] tags=[...]`.",
-  "2. `mymir_edge action='create' sourceTaskId='...' targetTaskId='...' edgeType='depends_on|relates_to' note='<why>'` to wire dependencies.",
-  "3. `mymir_query type='edges' taskId='...'` to verify edges look correct.",
-  "",
-  "## Edges (Dependencies & Relationships)",
-  "Edges drive ready/blocked analysis, critical path, and agent context propagation.",
-  "- `depends_on`: source CANNOT start without target done first (source needs target's code, APIs, or decisions).",
-  "- `relates_to`: tasks share context but neither blocks the other.",
-  "- When in doubt: removing target makes source impossible → depends_on. Just harder → relates_to.",
-  "- Always include a `note` explaining WHY the relationship exists — notes propagate to downstream agent context.",
-  "- After completing a task: `mymir_query type='edges'` + `mymir_analyze type='downstream'` → check whether downstream descriptions, edge notes, or dependencies need updating based on decisions made.",
-  "",
-  "## Hints & Errors",
-  "Tool responses may include `_hints` with contextual guidance — always read and follow them. Errors are token-dense and self-correcting: when an action is rejected, the message names the next tool to call (often with the team or task list inline). Re-read the error and act on it before falling back to asking the user for help.",
-  "",
-  "## Full Workflows",
-  "Invoke `/mymir` skill for: dispatching to multiple agents, propagating changes through the graph, resuming sessions, refining tasks, and complex dependency management.",
-  "",
-  "## Remote Mode",
-  "This is a stateless HTTP endpoint. No session state is persisted server-side. The `select` action on `mymir_project` returns a confirmation but does not set server state — always pass projectId explicitly on subsequent calls.",
-].join("\n");
+const INSTRUCTIONS = `Mymir is an agentic project management server for software projects. It tracks tasks, dependencies, decisions, and execution records across sessions and teammates so coding agents and engineers can hand work to each other. Stateless HTTP endpoint with no server-side session state; pass \`projectId\` explicitly on every call.
+
+This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the four-dimension tag taxonomy, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`mymir\` skill on your platform (Claude Code, Codex, Cursor, Gemini) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
+
+## Multi-team awareness
+The caller's account spans every membership. There is no 'active' team. Read tools span every team you belong to; writes name \`organizationId\` or auto-resolve when the account has exactly one membership.
+- \`mymir_project action='list'\`: projects with team metadata. Skips teams with zero projects, so pair with \`teams\` for the full set.
+- \`mymir_project action='teams'\`: every membership (id, name, slug, role, projectCount). Includes empty teams. Run before \`create\`, when \`list\` is empty, or when the user names a team \`list\` did not surface.
+- Cross-team probes (an id you do not own) return 404-shaped. Only trust ids returned by list, teams, search, or context.
+
+## Session start
+1. \`mymir_project action='list'\`.
+2. \`mymir_project action='teams'\` if \`list\` was empty or the user names a team it missed.
+3. \`mymir_project action='select' projectId='...'\` to confirm. Pass \`projectId\` on every subsequent call.
+
+## Find work
+Lead with \`mymir_analyze\`. All variants are slim.
+- \`critical_path\`: longest dependency chain, the project bottleneck. Most important for prioritization. Lead with this on continue / resume / "what should I work on".
+- \`ready\`: tasks with all dependencies done. Pick from the intersection of \`ready\` and \`critical_path\`.
+- \`plannable\`: draft tasks with description plus criteria, ready for planning when nothing is ready to code.
+- \`blocked\`: tasks waiting on unfinished dependencies, with blocker detail.
+
+\`mymir_query type='overview'\` is very heavy (every task, every edge, full tag vocab). Reserve it for unfamiliar projects or strategic review; do not run on routine status questions.
+
+## Refine a task
+1. \`mymir_context taskId='...' depth='working'\` for current state, edges, siblings.
+2. Before proposing changes, explore. Search related tasks (\`mymir_query type='search'\` by tag or title fragment), read current docs for any framework or library the task touches, check the actual codebase for what already exists. No speculation. If you don't know, look; if you can't find it, ask. Refining on assumptions is how vague tasks survive review.
+3. Improve description, acceptance criteria, decisions, dependencies. Push back on vagueness; rewrite single-sentence descriptions and "works correctly" ACs before saving.
+4. \`mymir_task action='update'\`. The default appends to array fields; \`overwriteArrays=true\` REPLACES them and is destructive. Confirm with the user before using it.
+5. Propagate per the Propagate section if decisions changed.
+
+## Implement a task
+0. If the task is \`draft\`, plan it first (see Plan a draft task).
+1. Claim. \`mymir_task action='update' status='in_progress'\`. Prevents two agents grabbing the same task.
+2. Context. \`mymir_context taskId='...' depth='agent'\`. Multi-hop dependencies, upstream execution records, acceptance criteria.
+3. Understand before doing. Read the description, the executionRecords from upstream tasks, and the relevant code. Reason about what could go wrong. Ask if anything is unclear. Then implement. Rushing here produces work that misses the actual requirement.
+4. Build the work.
+5. Mark done via the Completion Protocol below. The \`done\` update carries:
+   - \`executionRecord\`: 3 to 5 sentences with concrete file paths, function names, endpoints. Description is scope; executionRecord is HOW it was built.
+   - \`decisions\`: one line per technical choice. Format: CHOICE plus WHY.
+   - \`files\`: every path created or modified.
+   - \`acceptanceCriteria\`: pass each item as \`{text, checked: true|false}\`. Evaluate against the work; do not auto-check everything.
+   Do not pass \`overwriteArrays=true\` unless replacing the arrays is the intent and the user has confirmed.
+6. Propagate per the Propagate section.
+
+## Plan a draft task
+1. \`mymir_context taskId='...' depth='planning'\` for project description, prerequisites, downstream specs.
+2. Write the implementation plan. Search the codebase for what already exists, read up-to-date docs for any new dependency, clarify open questions with the user, reason through edge cases. File paths, line numbers, specific changes, verification steps. No speculation.
+3. \`mymir_task action='update' implementationPlan='<full markdown>' status='planned'\`. Save the complete unabridged plan. Do not summarize.
+
+## Completion Protocol
+Run before transitioning a task to \`done\` or \`cancelled\`.
+
+1. Detect mode by transcript.
+   - Dispatched: your context shows a parent agent invoked you. Mark done directly with the full payload and return a one-sentence summary to the parent. Do not ask.
+   - Direct: invoked by the user in a normal session. Ask "Ready to mark this done?" with a one-sentence \`executionRecord\` preview. Wait for explicit confirmation.
+   - Uncertain: default to asking. A spurious confirmation is cheap; an unauthorized status change is expensive.
+
+2. Populate required fields. \`executionRecord\`, \`decisions\`, \`files\`, \`acceptanceCriteria\`. The server returns \`_hints\` for any missing fields; re-call with the additions before continuing. For \`cancelled\`: \`executionRecord\` carries the rationale (why abandoned, what was tried) and \`decisions\` records anything learned.
+
+3. Open a PR if the work changed code. Detect a template at \`.github/PULL_REQUEST_TEMPLATE.md\`, \`.github/pull_request_template.md\`, \`.github/PULL_REQUEST_TEMPLATE/<name>.md\`, or \`docs/pull_request_template.md\`. If a template exists, fill it; map task fields onto template sections only where they fit, and leave a section blank rather than invent content. Common mappings:
+   - Linked issue / linked task: include the \`taskRef\` in \`[BRACKETS]\` (e.g. \`[MYMR-83]\`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference related tasks elsewhere as plain links (no brackets). Add \`Closes #N\` on its own line if a GitHub issue is being resolved.
+   - Summary: 2 to 3 sentences from \`executionRecord\`.
+   - Test plan / verification: the checked \`acceptanceCriteria\` items.
+   - Decisions or notes-for-reviewer: relevant entries from \`decisions\`.
+   If no template exists, use a concise default with Summary (containing the bracketed task reference and an optional \`Closes #N\` line), Type of change, Testing, and Notes for reviewer. Always concise; empty optional sections beat fabricated content.
+
+4. Skip the PR for these task types: research / investigation (no code change), decision-only, pure-Mymir refinement (no repo changes), tasks the user explicitly said "no PR" on. When in doubt, ask before opening.
+
+## Propagate after every change
+After any status change or significant refinement:
+1. \`mymir_query type='edges'\` on the changed task to see current relationships.
+2. \`mymir_analyze type='downstream'\` to enumerate dependents.
+3. For each downstream task evaluate: do edge notes need updating to reflect new decisions; are there NEW relationships revealed by this change; are there STALE relationships that no longer hold; do downstream descriptions need updating based on the decisions made.
+4. Create, update, or remove edges as needed.
+
+For cancellations: edges to a cancelled task remain in place because cancellation is transitive-aware (dependents stay blocked through the cancelled task's own unsatisfied prereqs). Ask whether there is a replacement. If yes, rewire dependents to the replacement. If no, dependents may need to be cancelled too or re-scoped to no longer require the cancelled work.
+
+Skipping propagation is how dependency graphs go stale. Stale graphs make Mymir useless.
+
+## Tool descriptions and \`_hints\` are runtime instructions
+Every tool injects two things into your context: the parameter schema before the call, and a \`_hints\` array in the response. These are not optional commentary. They are server-side rules and state you cannot see otherwise, and they override any prior plan you had. Read on every tool call; act on them before continuing. Skipping a hint is operating on stale information. Errors are token dense and self correcting; the message often names the next call with the team or task list inline. Re-read errors and act on them before falling back to asking the user.
+
+## Iron Law of grounding
+Never write what you cannot cite or do not know. Applies wherever an agent generates \`executionRecord\`, \`decisions\`, \`description\`, or \`files\`. When uncertain, write less; a short true record is more valuable than a rich fabricated one. The full quality bar for titles, descriptions, ACs, tag dimensions, categories, edge notes, and markdown tone lives in the skill's \`artifacts.md\`.
+
+## Mutation safety
+Update array fields (\`decisions\`, \`acceptanceCriteria\`, \`files\`) APPEND by default. Pass \`overwriteArrays=true\` only when replacing is the intent and the user has confirmed. \`mymir_task action='delete'\` defaults to \`preview=true\`; show impact, get explicit confirmation, then \`preview=false\`. For abandoned scope prefer \`status='cancelled'\` with rationale in \`executionRecord\` over deletion; edges to cancelled tasks remain in place and cancellation is transitive-aware.
+
+## Remote mode
+This is a stateless HTTP endpoint. No session state is persisted server-side. The \`select\` action on \`mymir_project\` returns a confirmation but does not set server state. Always pass \`projectId\` explicitly on every subsequent call.`;
 
 /**
  * Register all 6 Mymir tools on a server instance, bound to the caller's
@@ -371,7 +399,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "mymir", version: "1.4.0" },
+    { name: "mymir", version: "1.5.0" },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);

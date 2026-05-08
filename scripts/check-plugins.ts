@@ -31,6 +31,42 @@ const shared: SharedGroup[] = [
     ],
   },
   {
+    name: "skills/mymir/references/conventions.md",
+    canonical: "plugins/claude-code/skills/mymir/references/conventions.md",
+    copies: [
+      "plugins/codex/skills/mymir/references/conventions.md",
+      "plugins/gemini/skills/mymir/references/conventions.md",
+      "plugins/cursor/skills/mymir/references/conventions.md",
+    ],
+  },
+  {
+    name: "skills/mymir/references/artifacts.md",
+    canonical: "plugins/claude-code/skills/mymir/references/artifacts.md",
+    copies: [
+      "plugins/codex/skills/mymir/references/artifacts.md",
+      "plugins/gemini/skills/mymir/references/artifacts.md",
+      "plugins/cursor/skills/mymir/references/artifacts.md",
+    ],
+  },
+  {
+    name: "skills/mymir/references/lifecycle.md",
+    canonical: "plugins/claude-code/skills/mymir/references/lifecycle.md",
+    copies: [
+      "plugins/codex/skills/mymir/references/lifecycle.md",
+      "plugins/gemini/skills/mymir/references/lifecycle.md",
+      "plugins/cursor/skills/mymir/references/lifecycle.md",
+    ],
+  },
+  {
+    name: "skills/mymir/references/resilience.md",
+    canonical: "plugins/claude-code/skills/mymir/references/resilience.md",
+    copies: [
+      "plugins/codex/skills/mymir/references/resilience.md",
+      "plugins/gemini/skills/mymir/references/resilience.md",
+      "plugins/cursor/skills/mymir/references/resilience.md",
+    ],
+  },
+  {
     name: "brainstorm (agent + skill)",
     canonical: "plugins/claude-code/agents/brainstorm.md",
     copies: [
