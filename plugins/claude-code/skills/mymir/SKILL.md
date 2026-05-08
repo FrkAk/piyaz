@@ -1,16 +1,15 @@
 ---
 name: mymir
 description: >
-  Use when the user is working with a coding or data project (any domain: web,
-  mobile, game, simulation, embedded, ML, agentic systems, financial, security,
-  library, CLI, hardware, or data and analytics work like SQL warehouses, dbt
-  projects, BI dashboards, metric layers, and ad-hoc analyses): describing a
-  new idea, importing or working in an existing repo or workspace, asking what
-  to work on / what's next / what's blocked / where they left off; reporting
-  completion or decisions; planning, decomposing, or dispatching work;
-  resuming after a break.
-  Do not invoke for: one-off coding questions, debugging, file editing, generic
-  todos, single-task reminders, scheduling.
+  Use when the user wants to plan, decompose, track, or resume a multi-task
+  project: scoping a new idea, importing or onboarding an existing repo or
+  workspace, asking what to work on / what's next / what's blocked / where
+  they left off, reporting task completion, dispatching work in parallel, or
+  planning a draft task. Also when the user mentions Mymir by name (e.g.
+  "mymir, do X") or references a task by its ref (e.g. MYMR-83, RZE-153,
+  ORAS-42). Works for any project domain (code or data). Do not invoke for:
+  one-off coding questions, single-file edits, debugging a specific error,
+  generic todos, or scheduling.
 ---
 
 # Mymir: Agentic Project Management for Software Projects

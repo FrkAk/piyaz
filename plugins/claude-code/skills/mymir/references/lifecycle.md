@@ -137,6 +137,12 @@ When in doubt, ask the user before opening.
 
 ## 3. Propagate after every change (Iron Law)
 
+```
+A change that does not propagate did not happen.
+```
+
+The graph is Mymir's value. Skip once and it lies: ready tasks that aren't ready, blockers pointing at shipped work, every future session picking the wrong next step.
+
 After any status change or significant refinement:
 
 1. `mymir_query type='edges'` on the changed task. Current relationships.

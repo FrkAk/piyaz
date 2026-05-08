@@ -55,8 +55,9 @@ digraph onboarding {
     "Phase 3: Decomposition proposal\n(NO WRITES)" [shape=box];
     "HARD-GATE: user approves\nfeature inventory?" [shape=diamond];
     "Phase 4: Create tasks + edges" [shape=box];
-    "Phase 5: Programmatic verification + summary" [shape=box];
-    "Project status='active'" [shape=doublecircle];
+    "Phase 5: Programmatic verification + summary\n(status='active')" [shape=box];
+    "Phase 6: Housekeeping (offer cleanup)" [shape=box];
+    "Project active + clean" [shape=doublecircle];
     "STOP: route to manage" [shape=box];
     "STOP: route to brainstorm" [shape=box];
     "ASK user (1/2/3)" [shape=box];
@@ -74,8 +75,9 @@ digraph onboarding {
     "Phase 3: Decomposition proposal\n(NO WRITES)" -> "HARD-GATE: user approves\nfeature inventory?";
     "HARD-GATE: user approves\nfeature inventory?" -> "Phase 3: Decomposition proposal\n(NO WRITES)" [label="changes requested"];
     "HARD-GATE: user approves\nfeature inventory?" -> "Phase 4: Create tasks + edges" [label="explicit yes"];
-    "Phase 4: Create tasks + edges" -> "Phase 5: Programmatic verification + summary";
-    "Phase 5: Programmatic verification + summary" -> "Project status='active'";
+    "Phase 4: Create tasks + edges" -> "Phase 5: Programmatic verification + summary\n(status='active')";
+    "Phase 5: Programmatic verification + summary\n(status='active')" -> "Phase 6: Housekeeping (offer cleanup)";
+    "Phase 6: Housekeeping (offer cleanup)" -> "Project active + clean";
 }
 ```
 
@@ -195,6 +197,8 @@ If any of these is uncertain, keep reading. Do not move on with hand-waved answe
 ## Phase 3: Decomposition Proposal (NO WRITES, gate phase)
 
 Present a markdown proposal. Use the project's actual feature shape, not a templated list.
+
+**Count discipline.** Enumerate the lists first, then write the headers. Three headers carry counts: `done (shipped, N tasks)`, `draft (visible unfinished, N tasks)`, and `Proposed edges (M)`. Each count must match the bullets directly below it when the user sees the proposal. If you find another item while drafting, append it AND update the header in the same edit. Do not present a proposal where any header disagrees with its list.
 
 ```markdown
 **Project metadata:** title, description, categories.
@@ -425,6 +429,47 @@ If any check fails, fix and re-run. Then `mymir_project action='update' status='
 
 ---
 
+## Phase 6: Housekeeping
+
+The project is `'active'` and the user has the summary. Two scaffolding artifacts remain from the resilience setup: the appended `## Onboarding Proposal (approved <date>)` block in the project description (Phase 3 Step A), and the local working file `.mymir/onboarding-<projectIdentifier>.md` (Phase 3 Step B). Both served their purpose during the run; once the task graph is the source of truth, leaving them in place makes the project look mid-decompose.
+
+**Offer cleanup. Do not auto-clean.** A user may want to keep the proposal as an audit trail or the working file for forensic review. Ask, do not assume.
+
+```
+Ask the user (one prompt, two items):
+
+  "Project is active. Two cleanup items left over from the run:
+   1. Refresh the project description. Right now it still has the
+      `## Onboarding Proposal (approved <date>)` block appended; the task
+      graph already holds the structural truth. I can replace it with a
+      tight 3-5 sentence synthesis.
+   2. Delete the working file `.mymir/onboarding-<projectIdentifier>.md`.
+   OK to do both, one, or neither?"
+```
+
+### Step 1: Refresh the project description
+
+If the user approves:
+
+1. Compose a tight 3-5 sentence synthesis of what the project actually is now (purpose, how it is built, key constraints, primary domain). The task graph holds the structural truth; the description is the project-level elevator pitch.
+2. Show the proposed text to the user. Confirm before writing.
+3. `mymir_project action='update' description='<new synthesis>'`. The description field is a scalar replace, so this drops the appended `## Onboarding Proposal` block entirely.
+
+If the user declines this step, leave the description as-is and note in the closing message that the proposal block is still appended.
+
+### Step 2: Delete the local working file
+
+If the user approves: delete `.mymir/onboarding-<projectIdentifier>.md`, then remove `.mymir/` itself only if it is now empty. Do not force the directory removal — if another agent has a working file there (an in-flight decompose run, for example), leave the directory in place.
+
+If the user declines, leave the file in place.
+
+### When to skip the offer entirely
+
+- A compaction signal fires inside Phase 6 itself. Surface the leftovers explicitly so the next session knows they exist; do not silently truncate.
+- Your sandbox cannot delete files (write-restricted, non-POSIX shell with no equivalent, or otherwise). Surface the limitation and ask the user to clean up the working file manually. Step 1 (description refresh) is unaffected — it's an MCP tool call.
+
+---
+
 ## Heuristics
 
 ### Feature vs scaffolding
@@ -483,12 +528,14 @@ Resume mode: re-fetch `mymir_query type='list'`, re-read project description (wh
 
 - ALWAYS read `skills/mymir/references/conventions.md` at session start, and re-read mid-session before Phase 4 writes.
 - ALWAYS run the Phase 0 match check correctly: distinguish status `'active'` (stop) from status `'brainstorming'` (resume mode).
+- ALWAYS finalize the Phase 3 task enumeration before writing the proposal headers; the header counts (`N tasks`, `M edges`) must match the bullets when the user sees the proposal. Drift between header and list signals careless drafting and breaks the gate.
 - ALWAYS persist the approved proposal to the project description after the HARD-GATE clears, before Phase 4 (resilience).
 - ALWAYS dedupe via the known-titles set before each `mymir_task action='create'` (resilience).
 - ALWAYS run a quality checkpoint after every 5 done-task creates (resilience).
 - ALWAYS define `match` formally (Step 3 above): case-insensitive whole-word.
 - ALWAYS ask on monorepo detection. Never default.
 - ALWAYS run the Iron Law check in Phase 5. The self-audit alternative is theatre.
+- ALWAYS offer Phase 6 housekeeping after Phase 5: refresh the project description (drops the `## Onboarding Proposal` block) and delete `.mymir/onboarding-<projectIdentifier>.md`. **Auto-cleanup is forbidden; require explicit user confirmation per item.** The user may keep either or both.
 - NEVER fabricate an executionRecord, decision, or file path.
 - NEVER create tasks before the Phase 3 HARD-GATE clears.
 - NEVER use `status='in_progress'`. Partial work is `draft`.

@@ -188,7 +188,7 @@ Every task, in every status, must carry tags across all four dimensions. Reuse e
 
 **Do NOT tag:**
 
-- Codebase area: that is `category`'s job.
+- Codebase area: that's `category`'s job. **Test: would this name plausibly be a category in some other project shape?** `render-loop`, `effect-system`, `auth`, `payments`, `inference`, `marts`, `flight-control`, `hal-drivers` all answer YES. They're subsystems / product areas, even if your project's category list happens to omit them. Tags are axes the project does not shape itself around: quality attributes (`security`, `a11y`, `perf`, `reliability`, `observability`, `dx`, `compliance`, `safety`, `i18n`) and multi-category feature clusters (`onboarding-flow`, `agent-loop`, `mission-planning`, `live-replay`). If a candidate tag names a subsystem, surface it as a category proposal at the gate or use the existing category. Coining an area-shaped tag because the categories lack a good slot is a category-list bug, not a tag.
 - Task status: that is `status`'s job.
 - Generic adjectives like "important", "main", "primary".
 
@@ -287,6 +287,7 @@ You are choosing the architectural layers / product areas / subsystems of a sing
 
 - 4 to 8 categories per project.
 - Architectural layer / product area / subsystem only. Not process phases (`requirements`, `planning`, `review`). Not work types (`bugs`, `features` are tags, not categories). Not priorities.
+- **Test: would this be a tag in some other project shape?** If yes, it's cross-cutting, not a category. Quality attributes (`security`, `perf`, `a11y`, `reliability`, `observability`, `dx`, `compliance`, `safety`) and multi-category feature clusters (`onboarding-flow`, `agent-loop`, `flight-control`, `inference-pipeline`, `dashboard-refresh`) belong in the tag dimension. Categories are subsystems the project shapes itself around: directories, build targets, layers a developer thinks about separately. §2 and §4 are mirrors. A name passes one test, not both.
 - Nouns. `data` not `data-modeling`. `ui` not `ui-work`.
 - Pick once at creation. Mid-project additions miscategorize earlier tasks. Resist.
 - Decompose and onboarding agents must surface their proposed categories at the gate. No silent application.
