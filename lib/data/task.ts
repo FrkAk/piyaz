@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, gt, gte, ilike, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { projects, tasks, taskEdges, type NewTask } from "@/lib/db/schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
@@ -26,7 +26,7 @@ import {
   type Cursor,
 } from "@/lib/data/cursor";
 import type { TaskFull, TaskSlim } from "@/lib/data/views";
-import { emitProjectEvent, emitTaskEvent } from "@/lib/realtime/events";
+import { emitTaskEvent } from "@/lib/realtime/events";
 
 /**
  * Build a timestamped history entry.
@@ -1098,57 +1098,3 @@ export async function deleteTaskPreview(ctx: AuthContext, taskId: string) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Reorder task
-// ---------------------------------------------------------------------------
-
-/**
- * Update a task's order and shift siblings to make room.
- * @param ctx - Resolved auth context.
- * @param taskId - UUID of the task to reorder.
- * @param newOrder - The desired order position.
- * @returns The updated task row.
- */
-export async function reorderTask(
-  ctx: AuthContext,
-  taskId: string,
-  newOrder: number,
-) {
-  const task = await assertTaskAccess(taskId, ctx);
-
-  const oldOrder = task.order;
-  if (oldOrder === newOrder) return task;
-
-  if (newOrder > oldOrder) {
-    await db
-      .update(tasks)
-      .set({ order: sql`${tasks.order} - 1` })
-      .where(
-        and(
-          eq(tasks.projectId, task.projectId),
-          gt(tasks.order, oldOrder),
-          sql`${tasks.order} <= ${newOrder}`,
-        ),
-      );
-  } else {
-    await db
-      .update(tasks)
-      .set({ order: sql`${tasks.order} + 1` })
-      .where(
-        and(
-          eq(tasks.projectId, task.projectId),
-          gte(tasks.order, newOrder),
-          lt(tasks.order, oldOrder),
-        ),
-      );
-  }
-
-  const [updated] = await db
-    .update(tasks)
-    .set({ order: newOrder, updatedAt: new Date() })
-    .where(eq(tasks.id, taskId))
-    .returning();
-
-  emitProjectEvent(task.projectId);
-  return updated;
-}

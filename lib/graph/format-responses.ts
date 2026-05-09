@@ -14,6 +14,7 @@ import type {
 } from "@/lib/data/traversal";
 import type { ProjectOverview } from "@/lib/context/_core/overview";
 import type { SummaryContext } from "@/lib/context/_core/summary";
+import type { ProjectMeta } from "@/lib/data/views";
 
 const STATUS_ORDER = ["in_progress", "planned", "draft", "done", "cancelled"] as const;
 
@@ -134,6 +135,32 @@ export function formatDetailedEdges(edges: DetailedEdge[]): string {
     if (e.note) line += ` \u2014 ${e.note}`;
     parts.push(line);
   }
+  return parts.join("\n");
+}
+
+/**
+ * Format slim project metadata: header, progress, categories, tag vocab
+ * (with counts), description. No task list, no edges. Lightweight
+ * counterpart to {@link formatOverview} for agent orientation.
+ *
+ * @param meta - ProjectMeta from getProjectMeta.
+ * @returns Formatted markdown.
+ */
+export function formatProjectMeta(meta: ProjectMeta): string {
+  const denominator = meta.taskStats.total - meta.taskStats.cancelled;
+  const parts: string[] = [
+    `# \`${meta.identifier}\` "${meta.title}" [${meta.status}]`,
+    `Progress: ${meta.taskStats.done}/${denominator} done (${meta.progress}%) | ${meta.taskStats.inProgress} in_progress | ${meta.taskStats.cancelled} cancelled`,
+  ];
+  if (meta.categories.length > 0)
+    parts.push(`Categories: ${meta.categories.join(", ")}`);
+  if (meta.tagVocabulary.length > 0) {
+    const tagLine = meta.tagVocabulary
+      .map((t) => `${t.tag} (${t.count})`)
+      .join(", ");
+    parts.push(`Tags: ${tagLine}`);
+  }
+  if (meta.description) parts.push(`\n${meta.description}`);
   return parts.join("\n");
 }
 

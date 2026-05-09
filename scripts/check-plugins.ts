@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 
@@ -20,6 +20,37 @@ interface FieldSync {
   copies: FieldTarget[];
 }
 
+interface PlatformSubs {
+  pathPrefix: string;
+  subs: Record<string, string>;
+}
+
+const platformSubs: PlatformSubs[] = [
+  {
+    pathPrefix: "plugins/codex/",
+    subs: {
+      "the AskUserQuestion tool":
+        "the ask_user_question tool if your Codex install exposes it, otherwise a numbered prose list (≤4 questions, ≤4 options each)",
+      AskUserQuestion: "ask_user_question",
+    },
+  },
+  {
+    pathPrefix: "plugins/gemini/",
+    subs: {
+      "the AskUserQuestion tool":
+        "the ask_user tool (prefer type:'choice'; type:'yesno' for confirmations; type:'text' only when the answer is genuinely open)",
+      AskUserQuestion: "ask_user",
+    },
+  },
+  {
+    pathPrefix: "plugins/cursor/",
+    subs: {
+      "the AskUserQuestion tool": "the ask question tool",
+      AskUserQuestion: "ask question tool",
+    },
+  },
+];
+
 const shared: SharedGroup[] = [
   {
     name: "skills/mymir/SKILL.md",
@@ -28,6 +59,42 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/mymir/SKILL.md",
       "plugins/gemini/skills/mymir/SKILL.md",
       "plugins/cursor/skills/mymir/SKILL.md",
+    ],
+  },
+  {
+    name: "skills/mymir/references/conventions.md",
+    canonical: "plugins/claude-code/skills/mymir/references/conventions.md",
+    copies: [
+      "plugins/codex/skills/mymir/references/conventions.md",
+      "plugins/gemini/skills/mymir/references/conventions.md",
+      "plugins/cursor/skills/mymir/references/conventions.md",
+    ],
+  },
+  {
+    name: "skills/mymir/references/artifacts.md",
+    canonical: "plugins/claude-code/skills/mymir/references/artifacts.md",
+    copies: [
+      "plugins/codex/skills/mymir/references/artifacts.md",
+      "plugins/gemini/skills/mymir/references/artifacts.md",
+      "plugins/cursor/skills/mymir/references/artifacts.md",
+    ],
+  },
+  {
+    name: "skills/mymir/references/lifecycle.md",
+    canonical: "plugins/claude-code/skills/mymir/references/lifecycle.md",
+    copies: [
+      "plugins/codex/skills/mymir/references/lifecycle.md",
+      "plugins/gemini/skills/mymir/references/lifecycle.md",
+      "plugins/cursor/skills/mymir/references/lifecycle.md",
+    ],
+  },
+  {
+    name: "skills/mymir/references/resilience.md",
+    canonical: "plugins/claude-code/skills/mymir/references/resilience.md",
+    copies: [
+      "plugins/codex/skills/mymir/references/resilience.md",
+      "plugins/gemini/skills/mymir/references/resilience.md",
+      "plugins/cursor/skills/mymir/references/resilience.md",
     ],
   },
   {
@@ -101,6 +168,56 @@ function hashFile(path: string): string {
 }
 
 /**
+ * Computes the SHA-256 hex digest of a UTF-8 string.
+ * @param content - String to hash.
+ * @returns Lowercase hex hash string.
+ */
+function hashContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Removes a single mapping field from a markdown file's leading YAML frontmatter
+ * (the first `---...---` block). Lines outside the frontmatter are never touched.
+ * No-op when the file lacks frontmatter or the field is not present.
+ * @param content - Markdown content as UTF-8 string.
+ * @param field - Frontmatter field name to remove (matched as `${field}:` line prefix).
+ * @returns Content with the matching field line removed.
+ */
+function stripFrontmatterField(content: string, field: string): string {
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!fmMatch) return content;
+  const fmBody = fmMatch[1];
+  const newFmBody = fmBody
+    .split("\n")
+    .filter((line) => !line.startsWith(`${field}:`))
+    .join("\n");
+  if (newFmBody === fmBody) return content;
+  return content.replace(fmMatch[0], `---\n${newFmBody}\n---\n`);
+}
+
+/**
+ * Renders canonical content for a specific copy path by applying platform-specific
+ * substitutions, then stripping the Claude-Code-only `model` frontmatter field. The
+ * first matching `pathPrefix` wins; copies whose path matches no platform are
+ * returned unchanged. Substitutions run in `subs` insertion order, so longer
+ * overlapping patterns must be declared first to avoid being shadowed by a shorter
+ * one (e.g. `"the AskUserQuestion tool"` before `"AskUserQuestion"`).
+ * @param content - Canonical content as UTF-8 string.
+ * @param copyPath - Destination path used to select the substitution table.
+ * @returns Content with platform substitutions applied and `model:` stripped.
+ */
+function render(content: string, copyPath: string): string {
+  const platform = platformSubs.find((p) => copyPath.startsWith(p.pathPrefix));
+  if (!platform) return content;
+  const substituted = Object.entries(platform.subs).reduce(
+    (acc, [from, to]) => acc.replaceAll(from, to),
+    content,
+  );
+  return stripFrontmatterField(substituted, "model");
+}
+
+/**
  * Reads a nested JSON field by key path.
  * @param obj - Root object.
  * @param keys - Ordered list of property names to descend.
@@ -136,13 +253,16 @@ for (const group of shared) {
     failures++;
     continue;
   }
-  const canonicalHash = hashFile(group.canonical);
+  const canonicalContent = readFileSync(group.canonical, "utf8");
 
   for (const copy of group.copies) {
+    const renderedContent = render(canonicalContent, copy);
+    const renderedHash = hashContent(renderedContent);
+
     if (!existsSync(copy)) {
       if (fix) {
         mkdirSync(dirname(copy), { recursive: true });
-        copyFileSync(group.canonical, copy);
+        writeFileSync(copy, renderedContent);
         console.log(`[created] ${copy}`);
         changes++;
       } else {
@@ -152,14 +272,14 @@ for (const group of shared) {
       continue;
     }
     const copyHash = hashFile(copy);
-    if (copyHash !== canonicalHash) {
+    if (copyHash !== renderedHash) {
       if (fix) {
-        copyFileSync(group.canonical, copy);
+        writeFileSync(copy, renderedContent);
         console.log(`[synced]  ${copy}`);
         changes++;
       } else {
         console.error(`[drift]   ${group.name}`);
-        console.error(`    ${canonicalHash.slice(0, 8)}  ${group.canonical}`);
+        console.error(`    ${renderedHash.slice(0, 8)}  ${group.canonical} (rendered for ${copy})`);
         console.error(`    ${copyHash.slice(0, 8)}  ${copy}`);
         failures++;
       }

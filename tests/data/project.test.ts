@@ -9,7 +9,9 @@ import {
   getProjectChrome,
   getProjectMaxUpdatedAt,
   getProjectListMaxUpdatedAt,
+  getProjectMeta,
   listProjectsSlim,
+  listProjectsForMcp,
 } from "@/lib/data/project";
 import { makeAuthContext } from "@/lib/auth/context";
 
@@ -119,6 +121,74 @@ test("getProjectChrome returns header fields plus task count", async () => {
     "taskCount",
     "title",
   ]);
+});
+
+test("getProjectMeta returns header + tag vocabulary + status-grouped stats", async () => {
+  const f = await seedUserOrgProject("meta");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "status", "tags") VALUES
+        (${f.projectId}, 'A', 1, 'done',        '["feature","core"]'),
+        (${f.projectId}, 'B', 2, 'done',        '["feature","release-blocker"]'),
+        (${f.projectId}, 'C', 3, 'in_progress', '["bug","core"]'),
+        (${f.projectId}, 'D', 4, 'planned',     '["refactor","normal"]'),
+        (${f.projectId}, 'E', 5, 'cancelled',   '["chore","backlog"]')
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const m = await getProjectMeta(ctx, f.projectId);
+
+  expect(m.id).toBe(f.projectId);
+  expect(Object.keys(m).sort()).toEqual([
+    "categories",
+    "description",
+    "id",
+    "identifier",
+    "progress",
+    "status",
+    "tagVocabulary",
+    "taskStats",
+    "title",
+  ]);
+
+  expect(m.taskStats).toEqual({
+    total: 5,
+    done: 2,
+    inProgress: 1,
+    cancelled: 1,
+  });
+  // 2 done out of (5 total - 1 cancelled) = 50%
+  expect(m.progress).toBe(50);
+
+  const tagMap = new Map(m.tagVocabulary.map((t) => [t.tag, t.count]));
+  expect(tagMap.get("feature")).toBe(2);
+  expect(tagMap.get("core")).toBe(2);
+  expect(tagMap.get("bug")).toBe(1);
+  expect(tagMap.get("refactor")).toBe(1);
+  // Sorted by count desc, tie-broken alphabetically
+  const counts = m.tagVocabulary.map((t) => t.count);
+  expect(counts).toEqual([...counts].sort((a, b) => b - a));
+});
+
+test("getProjectMeta on an empty project reports zero stats and empty vocab", async () => {
+  const f = await seedUserOrgProject("meta-empty");
+  const ctx = makeAuthContext(f.userId);
+
+  const m = await getProjectMeta(ctx, f.projectId);
+
+  expect(m.taskStats).toEqual({
+    total: 0,
+    done: 0,
+    inProgress: 0,
+    cancelled: 0,
+  });
+  expect(m.progress).toBe(0);
+  expect(m.tagVocabulary).toEqual([]);
 });
 
 test("getProjectMaxUpdatedAt returns the latest updated_at across project + tasks + edges", async () => {
@@ -266,4 +336,92 @@ test("listProjectsSlim caps limit at 100", async () => {
   const ctx = makeAuthContext(f.userId);
   const page = await listProjectsSlim(ctx, { limit: 500 });
   expect(page.rows.length).toBeLessThanOrEqual(100);
+});
+
+test("listProjectsForMcp returns the slim agent shape without description, history, categories, or timestamps", async () => {
+  const f = await seedUserOrgProject("mcp-shape");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  try {
+    await sqlc`
+      UPDATE projects
+      SET description = ${"x".repeat(5000)}
+      WHERE id = ${f.projectId}
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listProjectsForMcp(ctx);
+  const row = rows.find((r) => r.id === f.projectId);
+  expect(row).toBeDefined();
+  expect(Object.keys(row!).sort()).toEqual([
+    "id",
+    "identifier",
+    "memberRole",
+    "organization",
+    "organizationId",
+    "progress",
+    "status",
+    "taskStats",
+    "title",
+  ]);
+  expect(Object.keys(row!.organization).sort()).toEqual(["id", "name", "slug"]);
+});
+
+test("listProjectsForMcp aggregates task stats and progress like listProjectsSlim", async () => {
+  const f = await seedUserOrgProject("mcp-counts");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  try {
+    let seq = 1;
+    for (let i = 0; i < 3; i++) {
+      await sqlc`
+        INSERT INTO tasks ("project_id", "title", "sequence_number", "status")
+        VALUES (${f.projectId}, ${"D" + i}, ${seq++}, 'done')
+      `;
+    }
+    for (let i = 0; i < 2; i++) {
+      await sqlc`
+        INSERT INTO tasks ("project_id", "title", "sequence_number", "status")
+        VALUES (${f.projectId}, ${"P" + i}, ${seq++}, 'in_progress')
+      `;
+    }
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "status")
+      VALUES (${f.projectId}, 'X', ${seq++}, 'cancelled')
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listProjectsForMcp(ctx);
+  const row = rows.find((r) => r.id === f.projectId);
+  expect(row?.taskStats).toEqual({ total: 6, done: 3, inProgress: 2, cancelled: 1 });
+  expect(row?.progress).toBe(60);
+});
+
+test("listProjectsForMcp skips teams with zero projects", async () => {
+  const f = await seedUserOrgProject("mcp-empty-team");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  try {
+    const [emptyOrg] = await sqlc<{ id: string }[]>`
+      INSERT INTO neon_auth."organization" ("name", "slug", "createdAt")
+      VALUES ('Empty Team Mcp', 'empty-team-mcp', now())
+      RETURNING id
+    `;
+    await sqlc`
+      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      VALUES (${emptyOrg.id}, ${f.userId}, 'owner', now())
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listProjectsForMcp(ctx);
+  expect(rows.find((r) => r.organization.name === "Empty Team Mcp")).toBeUndefined();
 });

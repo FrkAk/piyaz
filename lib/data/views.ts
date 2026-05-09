@@ -27,6 +27,22 @@ export type ProjectListEntry = Project & {
   progress: number;
 };
 
+/**
+ * Slim project entry returned by `listProjectsForMcp` — the agent-facing
+ * shape for `mymir_project action='list'`. Strips description, history,
+ * categories, and timestamps to keep the payload tight; agents fetch the
+ * description and tag vocabulary on demand via `mymir_query type='meta'`.
+ */
+export type ProjectListEntryMcp = Pick<
+  Project,
+  "id" | "organizationId" | "title" | "identifier" | "status"
+> & {
+  organization: ProjectListOrganization;
+  memberRole: string;
+  taskStats: ProjectTaskStats;
+  progress: number;
+};
+
 /** Slim task entry returned by the project graph payload. */
 export type TaskGraphSlim = Pick<
   Task,
@@ -62,6 +78,21 @@ export type ProjectChrome = Pick<
   organization: ProjectListOrganization;
   memberRole: string;
   taskCount: number;
+};
+
+/**
+ * Slim project metadata view for agent orientation. Header fields plus tag
+ * vocabulary, status-grouped task counts, and progress percent. Designed as
+ * the lightweight alternative to the full project overview when the agent
+ * only needs categories, tag vocab, or progress.
+ */
+export type ProjectMeta = Pick<
+  Project,
+  "id" | "identifier" | "title" | "description" | "status" | "categories"
+> & {
+  tagVocabulary: { tag: string; count: number }[];
+  taskStats: ProjectTaskStats;
+  progress: number;
 };
 
 /** Slim view of a project for list/search surfaces. */

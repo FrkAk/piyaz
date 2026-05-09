@@ -1,23 +1,27 @@
 /**
  * Tool handlers for the 6 Mymir tools, called by the MCP server.
  * Business logic lives in lib/graph/_core/* and lib/context/_core/*;
- * handlers do validation, authorization, and routing.
+ * handlers do validation, authorization, routing, and runtime steering
+ * (token-dense fail messages and `_hints` arrays that point the agent
+ * at the next correct call). The skill files under
+ * `plugins/<host>/skills/mymir/` are the doctrine; this file's prose
+ * is steering, not duplication.
  */
 
 import {
   createProject,
   updateProject,
   renameProjectIdentifier,
-  listProjectsSlim,
+  listProjectsForMcp,
   listUserTeams,
   getProjectTags,
+  getProjectMeta,
 } from "@/lib/data/project";
 import {
   createTask,
   updateTask,
   deleteTask,
   deleteTaskPreview,
-  reorderTask,
   searchTasks,
   getProjectTasksSlim,
 } from "@/lib/data/task";
@@ -59,13 +63,19 @@ import {
   formatTaskList,
   formatDetailedEdges,
   formatOverview,
+  formatProjectMeta,
   formatReadyTasks,
   formatBlockedTasks,
   formatDownstream,
   formatCriticalPath,
   formatPlannableTasks,
 } from "./format-responses";
-import { findVariant, normalizeTags } from "./tag-similarity";
+import {
+  PRIORITY_TAGS,
+  WORK_TYPE_TAGS,
+  findVariant,
+  normalizeTags,
+} from "./tag-similarity";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   ForbiddenError,
@@ -85,9 +95,199 @@ function tagVariantHints(proposed: string[], existing: string[]): string[] {
     const variant = findVariant(tag, existing);
     if (variant)
       hints.push(
-        `Tag "${tag}" looks like a variant of existing "${variant}" — reuse or confirm.`,
+        `Tag "${tag}" looks like a variant of existing "${variant}". Reuse the existing tag, or confirm a deliberate split.`,
       );
   }
+  return hints;
+}
+
+const KEBAB_CASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/**
+ * Build hints for tag-taxonomy violations. Kebab-case is structural and
+ * universal. The work-type and priority dimension checks are heuristic:
+ * the server matches against the canonical English closed vocabulary
+ * documented in `references/artifacts.md` §2, but Mymir runs across
+ * projects authored in any language. When the canonical match misses,
+ * the hint refers the agent to the reference rather than enumerating
+ * English values inline, so localized tag sets are not penalized.
+ *
+ * Open-vocabulary dimensions (cross-cutting concern, tech) cannot be
+ * checked server-side without false positives and are left to agent
+ * discipline.
+ *
+ * @param tags - Proposed tag list (already normalized for whitespace).
+ * @returns Hint strings; empty array when the tag set passes all checks.
+ */
+function tagTaxonomyHints(tags: string[]): string[] {
+  const hints: string[] = [];
+  const malformed = tags.filter((t) => !KEBAB_CASE_RE.test(t));
+  if (malformed.length > 0) {
+    hints.push(
+      `Tags must be kebab-case (lowercase, digits, hyphens). Re-tag: ${malformed
+        .map((t) => `"${t}"`)
+        .join(", ")}.`,
+    );
+  }
+  const lowered = tags.map((t) => t.toLowerCase());
+  const missing: string[] = [];
+  if (!lowered.some((t) => WORK_TYPE_TAGS.has(t))) missing.push("work-type");
+  if (!lowered.some((t) => PRIORITY_TAGS.has(t))) missing.push("priority");
+  if (missing.length > 0) {
+    hints.push(
+      `Could not detect ${missing.join(" + ")} dimension tag${
+        missing.length > 1 ? "s" : ""
+      } from the canonical vocabulary. Every task carries all four dimensions (work-type, cross-cutting concern, tech, priority); see artifacts §2 for the canonical closed-vocabulary terms. Projects authored in other languages may use equivalent localized tags — in that case this hint is heuristic, verify the dimensions are present in your project's idiom and ignore.`,
+    );
+  }
+  return hints;
+}
+
+/**
+ * Hint when description is a single sentence. Per `references/artifacts.md`
+ * §1: "Single-sentence descriptions are rejected." No upper bound: the
+ * skill rule is "no fluff, not no length"; length policing is left to
+ * agent discipline.
+ *
+ * Sentence counting strips backtick code spans first so file paths and
+ * version numbers inside code syntax don't pad the count.
+ *
+ * @param description - Proposed description string.
+ * @returns Hints; empty when description is multi-sentence or absent.
+ */
+function descriptionSizeHints(description: string | undefined): string[] {
+  if (!description) return [];
+  const trimmed = description.trim();
+  if (!trimmed) return [];
+  const stripped = trimmed.replace(/`[^`]*`/g, " ");
+  const terminators = stripped.match(/[.!?](?:\s|$)/g)?.length ?? 0;
+  if (terminators <= 1) {
+    return [
+      "Description is a single sentence. Single-sentence descriptions are rejected (artifacts §1). Expand to 2-4 sentences covering what + why + how it fits, up to 6-8 for genuinely complex tasks.",
+    ];
+  }
+  return [];
+}
+
+/**
+ * Hints for acceptance-criteria size drift. Per `references/artifacts.md`
+ * §1: 2-4 binary items. Single-AC tasks are rejected; >4 usually means
+ * the task is two tasks. Both surface the band rule; only the agent can
+ * judge whether a particular task is the legitimate exception.
+ *
+ * @param criteria - Proposed acceptance-criteria array.
+ * @returns Hints; empty when count is in band or array is absent.
+ */
+function acQualityHints(criteria: unknown[] | undefined): string[] {
+  if (!Array.isArray(criteria)) return [];
+  const hints: string[] = [];
+  if (criteria.length === 1) {
+    hints.push(
+      "Single-AC tasks are rejected (artifacts §1). 2-4 binary items is the band. A one-AC list is usually under-scoped or a vague catch-all; split it.",
+    );
+  } else if (criteria.length > 4) {
+    hints.push(
+      `acceptanceCriteria has ${criteria.length} items. The 2-4 band is deliberate (artifacts §1); past 4, the task is usually two tasks. Consider splitting.`,
+    );
+  }
+  return hints;
+}
+
+/**
+ * Hint when status='draft' carries fields lifecycle §1 forbids.
+ * `executionRecord` implies the task shipped; `implementationPlan` is the
+ * artifact that transitions draft → planned, so writing it without the
+ * status change leaves the task in an incomplete state.
+ *
+ * @param status - Proposed status (skip when not draft).
+ * @param payload - Fields from this request.
+ * @returns Hints; empty when status is not draft or fields are absent.
+ */
+function draftFieldHints(
+  status: string | undefined,
+  payload: { executionRecord?: string; implementationPlan?: string },
+): string[] {
+  if (status !== "draft") return [];
+  const hints: string[] = [];
+  if (payload.executionRecord) {
+    hints.push(
+      "Draft tasks must not carry executionRecord (lifecycle §1). That field implies the task shipped. If the work is done, set status='done' and follow the Completion Protocol; if you're capturing a plan, use implementationPlan with status='planned'.",
+    );
+  }
+  if (payload.implementationPlan) {
+    hints.push(
+      "implementationPlan with status='draft' is incomplete (lifecycle §1). Saving an unabridged plan transitions the task to planned; pass implementationPlan together with status='planned'.",
+    );
+  }
+  return hints;
+}
+
+/**
+ * Build a hint when a status transition skips intermediate states
+ * (e.g. draft → done, draft → in_progress, planned → done). The lifecycle
+ * is `draft → planned → in_progress → done`; cancelled is reachable from
+ * any non-terminal and is handled by `terminalReversalHints`.
+ *
+ * @param priorStatus - The task's status before the update.
+ * @param nextStatus - The status the caller is transitioning to.
+ * @returns Hint strings; empty when the transition is monotonic.
+ */
+function statusJumpHints(priorStatus: string, nextStatus: string): string[] {
+  const order = ["draft", "planned", "in_progress", "done"];
+  const priorIdx = order.indexOf(priorStatus);
+  const nextIdx = order.indexOf(nextStatus);
+  if (priorIdx === -1 || nextIdx === -1) return [];
+  if (nextIdx > priorIdx + 1) {
+    const skipped = order.slice(priorIdx + 1, nextIdx).join(" → ");
+    return [
+      `Status jumped ${priorStatus} → ${nextStatus}, skipping ${skipped} (lifecycle §1). If this is an intentional back-fill of completed work, ensure implementationPlan and executionRecord both reflect what shipped; otherwise transition through the missing states.`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * Build hints when `overwriteArrays=true` shrinks an array field. The
+ * server has no undo for the overwritten content; the only recovery is
+ * reading the prior values from the task's `history` entries. Per
+ * `references/resilience.md` §9, `overwriteArrays` is agent-discipline:
+ * this hint surfaces silent destructive ops the agent might not have
+ * realized happened.
+ *
+ * @param payload - Array fields supplied by the caller (post-cast).
+ * @param prior - Prior values from the row before the update.
+ * @returns One hint per shrunk field.
+ */
+function overwriteShrinkHints(
+  payload: {
+    acceptanceCriteria?: unknown[];
+    decisions?: unknown[];
+    files?: string[];
+  },
+  prior: {
+    acceptanceCriteria?: unknown[] | null;
+    decisions?: unknown[] | null;
+    files?: string[] | null;
+  },
+): string[] {
+  const hints: string[] = [];
+  const check = (
+    name: string,
+    next?: unknown[],
+    before?: unknown[] | null,
+  ): void => {
+    if (!next || !before) return;
+    if (next.length < before.length) {
+      hints.push(
+        `overwriteArrays=true replaced ${name} (${before.length} → ${next.length}, ${
+          before.length - next.length
+        } lost). The lost entries cannot be recovered — the task history is an audit log of which fields changed, not a snapshot of prior values. Confirm with the user before continuing.`,
+      );
+    }
+  };
+  check("acceptanceCriteria", payload.acceptanceCriteria, prior.acceptanceCriteria);
+  check("decisions", payload.decisions, prior.decisions);
+  check("files", payload.files, prior.files);
   return hints;
 }
 
@@ -116,7 +316,9 @@ function terminalReversalHints(
 }
 
 /**
- * Build hints when a task is cancelled.
+ * Build hints when a task is cancelled. Required-field hints fire first
+ * (rationale + decisions per lifecycle §1); the propagation hint is
+ * informational and lifecycle §3 rules apply.
  * @param payload - Fields supplied by the caller in this request.
  * @param persisted - Row state after the mutation.
  * @returns Hint strings for missing rationale and downstream propagation.
@@ -134,26 +336,30 @@ function cancelledStatusHints(
   const hints: string[] = [];
   if (!payload.executionRecord && !persisted.executionRecord) {
     hints.push(
-      "Missing cancellation rationale. Add it to executionRecord — record why this was abandoned and any approaches already tried, so downstream tasks (and future revisits) understand the decision.",
+      "Missing cancellation rationale (lifecycle §1). Add it to executionRecord: why abandoned + what approaches were tried, so downstream tasks (and future revisits) understand the decision.",
     );
   }
   if (!payload.decisions && (!persisted.decisions || persisted.decisions.length === 0)) {
     hints.push(
-      "Missing decisions. Record any technical choices made before cancelling (CHOICE + WHY) — preserves what was learned for future revisits.",
+      "Missing decisions. Record technical choices made before cancelling (CHOICE + WHY); preserves what was learned for any future revisit.",
     );
   }
   hints.push(
-    "Cancelled is transparent in the dep graph: dependents stay blocked through this task's own unsatisfied deps. Run mymir_analyze type='downstream' to see dependents — if a replacement task should take this one's place, rewire their edges to it.",
+    "Cancellation is transparent in the dep graph: dependents stay blocked through this task's own unsatisfied prereqs (lifecycle §3). Run mymir_analyze type='downstream' and decide deliberately: is there a replacement task? If yes, rewire dependents to it. If not, dependents may need cancelling or re-scoping. Do not decide silently.",
   );
   return hints;
 }
 
 /**
  * Build completion-protocol hints when a task transitions to or is created
- * in the `done` state.
+ * in the `done` state. Required-field hints come first (executionRecord,
+ * decisions, files, AC evaluation per lifecycle §1); the PR-opening hint
+ * fires when the work touched files (lifecycle §2 step 3); the
+ * propagation hint is informational (lifecycle §3).
  * @param payload - Fields supplied by the caller in this request.
  * @param persisted - Row state after the mutation.
- * @returns Hint strings for missing execution metadata and unchecked criteria.
+ * @returns Hint strings for missing execution metadata, PR-opening, and
+ *   downstream propagation.
  */
 function doneStatusHints(
   payload: {
@@ -171,22 +377,19 @@ function doneStatusHints(
   const hints: string[] = [];
   if (!payload.executionRecord && !persisted.executionRecord) {
     hints.push(
-      "Missing executionRecord. Add it — downstream tasks depend on this for context.",
+      "Missing executionRecord (lifecycle §1). Add 3-5 sentences on HOW it was built: function names, file paths, endpoints. Distinct from description (scope). Downstream tasks depend on this for context.",
     );
   }
   if (!payload.decisions && (!persisted.decisions || persisted.decisions.length === 0)) {
     hints.push(
-      "Missing decisions. Record technical choices (CHOICE + WHY) — downstream tasks need them.",
+      "Missing decisions (lifecycle §1). Record technical choices (CHOICE + WHY); downstream tasks need them.",
     );
   }
   if (!payload.files && (!persisted.files || persisted.files.length === 0)) {
     hints.push(
-      "Missing files. Record every path touched during implementation (empty only if the task genuinely touched no files).",
+      "Missing files (lifecycle §1). Record every path created or modified. For pure spec-review / docs / decision-only tasks that touched no repo files, pass files=[] explicitly so this hint clears.",
     );
   }
-  hints.push(
-    "Run mymir_analyze type='downstream' to propagate changes and update any edges made stale by this completion.",
-  );
   const criteria = persisted.acceptanceCriteria;
   if (
     persisted.executionRecord &&
@@ -195,9 +398,18 @@ function doneStatusHints(
     criteria.every((c) => !c.checked)
   ) {
     hints.push(
-      "Acceptance criteria are all unchecked. Evaluate each against your executionRecord and re-submit with acceptanceCriteria updated (checked: true/false).",
+      "Acceptance criteria are all unchecked. Evaluate each against your executionRecord and re-submit with acceptanceCriteria=[{text, checked: true|false}, ...]. Do not auto-check everything.",
     );
   }
+  const persistedFiles = payload.files ?? persisted.files ?? [];
+  if (persistedFiles.length > 0) {
+    hints.push(
+      "Code change shipped. Open a PR per Completion Protocol (lifecycle §2 step 3): detect a template (.github/PULL_REQUEST_TEMPLATE.md and variants); fill it concisely from executionRecord and ACs; use [taskRef] bracket form for the ONE primary task this PR builds (triggers Mymir PR-status tracking). Skip for research / decision-only / Mymir-only refinements.",
+    );
+  }
+  hints.push(
+    "Run mymir_analyze type='downstream' to propagate (lifecycle §3): update edge notes, retire stale edges, surface new dependencies revealed by this completion.",
+  );
   return hints;
 }
 
@@ -220,20 +432,32 @@ function fail(msg: string): ToolResult {
   return { ok: false, error: msg };
 }
 
+/**
+ * Per-state next-call hints fired on a single search hit. Every actionable
+ * state opens with a confirmation gate: the agent recommends, the user (or
+ * leader agent in dispatched mode) decides. Auto-claiming a ready task,
+ * auto-promoting a draft, or auto-taking-over an in_progress is forbidden.
+ * The gate matches the skill's "recommend → user picks → act" workflow
+ * and the Completion Protocol's mode-detection rule (lifecycle §2).
+ *
+ * Read-only states (`done`, `cancelled`) skip the upfront gate but still
+ * defer the next-task decision to the user/leader after propagation.
+ * `blocked` is informational; nothing to claim.
+ */
 const STATE_HINTS: Record<TaskState, string> = {
   plannable:
-    "Task is plannable. Fetch context with depth='planning' to write an implementation plan.",
+    "Plannable. Recommend this task to the user (direct mode) or return to the orchestrator (dispatched mode); wait for explicit pick before acting. After confirmation: write the implementation plan, then status='planned'. Fetch depth='planning' (project description, upstream executionRecords, downstream specs). Before writing: search the codebase for what already exists, read current docs for any new dependency, reason through edge cases. No speculation. Save the unabridged plan; do not summarize.",
   ready:
-    "Task is ready to implement. Fetch context with depth='agent' to get implementation context.",
+    "Ready. Recommend this task to the user (direct mode) or return to the orchestrator (dispatched mode); wait for explicit pick before claiming. After confirmation: status='in_progress' to claim, then fetch depth='agent' (multi-hop deps, upstream executionRecords, files, downstream specs); read the relevant code; refer to current docs; reason through edge cases. Understand before doing.",
   blocked:
-    "Task is blocked by dependencies. Fetch context with depth='working' to see what's blocking it.",
+    "Blocked. Cannot advance until upstream deps complete. Run mymir_analyze type='blocked' for blocker details, or fetch depth='summary' for this task's edges. Surface the choices to the user/leader: pick a different ready task, or unblock by completing a dep. Do not pick silently.",
   in_progress:
-    "Task is claimed (in progress). Fetch context with depth='working' to review — avoid duplicating work.",
-  done: "Task is complete. Fetch context with depth='working' to review what was built.",
+    "Claimed (one worker per task; lifecycle §1). Take-over is not automatic: confirm with the user (direct mode) or orchestrator (dispatched mode) that the prior worker has gone away before resuming. After confirmation: fetch depth='agent', read prior notes plus upstream executionRecords. To finish: populate executionRecord, decisions, files, evaluate every AC (do not auto-check), open a PR if files changed, then follow the Completion Protocol (lifecycle §2).",
+  done: "Terminal. Fetch depth='agent' for the full executionRecord, decisions, and files (depth='working' renders ACs/decisions/edges but not executionRecord or files; depth='summary' is just the header + edges). Then mymir_analyze type='downstream' to propagate decisions onto dependents (edge notes, descriptions, new edges, stale edges). After propagation, ask the user/leader what's next; do not auto-proceed to another task.",
   cancelled:
-    "Task is cancelled (terminal). Fetch context with depth='working' to review the rationale.",
+    "Terminal (abandoned). Fetch depth='agent' for the cancellation rationale (lives in executionRecord) and decisions; depth='working' renders decisions but not the rationale. Edges remain in place; cancellation is transparent (dependents stay blocked through this task's own unsatisfied deps; lifecycle §3). Ask the user/leader: is there a replacement? If yes, rewire dependents to it. If not, dependents may need cancelling or re-scoping. Do not decide silently.",
   draft:
-    "Task is a draft (needs description/criteria before planning). Fetch context with depth='working'.",
+    "Draft. Not ready to plan. Recommend refinement to the user (direct mode) or orchestrator (dispatched mode); wait for confirmation before editing. After confirmation: fetch depth='working' and tighten description to 2-4 sentences with 2-4 binary acceptance criteria. Before refining, explore: search related tasks, read current docs, check the codebase. Push back on vagueness; rewrite single-sentence descriptions and 'works correctly' ACs. Once description and ACs are present, the task becomes plannable.",
 };
 
 /**
@@ -250,6 +474,25 @@ function stateHint(state: TaskState): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Detect a Postgres unique-constraint violation on a thrown driver error.
+ *
+ * postgres-js attaches the SQLSTATE on `code`; `23505` is unique-violation.
+ * Used to map otherwise-leaky driver errors to a clean conflict message
+ * before they reach the catch-all that would otherwise echo the raw query.
+ *
+ * @param e - Caught error.
+ * @returns True when `e` carries `code === "23505"`.
+ */
+function isUniqueViolation(e: unknown): boolean {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    "code" in e &&
+    (e as { code: unknown }).code === "23505"
+  );
+}
+
+/**
  * Translate a thrown error to a token-dense, agent-correcting tool failure.
  *
  * Each branch carries a recovery path the agent can execute on its own:
@@ -259,6 +502,14 @@ function stateHint(state: TaskState): string {
  * - MultiTeamAmbiguity: include the team list inline so the agent can
  *   present choices to the user without an extra round trip.
  * - NoTeamMembership: send the user to the web app to create or join.
+ * - Postgres unique-violation: clean conflict message; never leak the
+ *   raw query, parameter values, or column list to the client.
+ *
+ * Anything else falls through to the opaque catch-all: logged server-side
+ * with full context, returned to the client as `Internal error`. Verbose
+ * `err.message` forwarding is whitelist-gated to `NODE_ENV === "development"`
+ * (i.e. `bun run dev`); every other env value falls through to generic so
+ * a silent env change can't start leaking driver internals.
  *
  * The data-layer assertions tag ForbiddenError with `resource`/`resourceId`,
  * so this layer never re-queries the database.
@@ -274,7 +525,7 @@ function translateError(e: unknown): ToolResult {
   if (e instanceof MultiTeamAmbiguityError) {
     const list = e.teams.map((t) => `${t.name} (${t.id})`).join(", ");
     return fail(
-      `organizationId required: multi-team account. Teams: ${list}. Ask the user which team, then retry with organizationId='<uuid>'. (mymir_project action='teams' returns the same list anytime, with role + projectCount.)`,
+      `organizationId required: multi-team account. Teams: ${list}. Ask the user which team, then retry with organizationId='<uuid>'. mymir_project action='teams' returns the same list anytime, with role + projectCount.`,
     );
   }
   if (e instanceof NoTeamMembershipError) {
@@ -307,54 +558,73 @@ function translateError(e: unknown): ToolResult {
         );
     }
   }
-  return fail(e instanceof Error ? e.message : String(e));
+  if (isUniqueViolation(e)) {
+    const constraint =
+      (e as { constraint_name?: string }).constraint_name ?? "";
+    if (constraint.includes("identifier")) {
+      return fail(
+        "Project identifier already in use in this team. Pick a different one (2-12 chars, uppercase alphanumeric).",
+      );
+    }
+    return fail("Conflict: a record with that value already exists.");
+  }
+  console.error("[graph:tool-handlers] unhandled error:", e);
+  const verbose = process.env.NODE_ENV === "development";
+  return fail(verbose && e instanceof Error ? e.message : "Internal error");
 }
 
 // ---------------------------------------------------------------------------
 // Shared descriptions (MCP tools are ground truth)
+//
+// Tool descriptions are loaded on every agent turn — every word is paid
+// N×turns. Each line below earns its place: purpose, per-action steering,
+// a critical limitation or rule, the next-call cue. Doctrine (tag
+// taxonomy, AC quality, category vocab, full lifecycle table, persona)
+// lives in the skill's reference files; the server steers the agent
+// toward the right rule rather than restating it.
 // ---------------------------------------------------------------------------
 
 /** Tool descriptions shared between MCP and web app. */
 export const DESCRIPTIONS = {
   mymir_project:
-    "Projects + teams across every membership the caller has. " +
-    "list=projects with task counts, progress, team metadata (skips empty teams). " +
-    "teams=every membership (id, name, slug, role, projectCount) — call before create or when list misses a team. " +
-    "create=new project (REQUIRES organizationId in multi-team accounts; auto-resolves for single-team; rejected with team list inline otherwise). " +
-    "select=confirm working project (returns projectId — pass it on every subsequent call; stateless server). " +
-    "update=change title, description, status, categories, or identifier.",
+    "List, create, and update projects, plus enumerate team memberships. Spans every team the caller belongs to; no server-side session state, so pass projectId explicitly on every downstream call. " +
+    "list=projects (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via mymir_query type='meta'. " +
+    "teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. " +
+    "select=confirm working project; pass returned projectId on every subsequent call. " +
+    "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline; auto-resolves single-team). " +
+    "update=title, description, status, categories, or identifier. Renaming identifier cascades every taskRef and breaks external references (PR titles, docs, commits).",
   mymir_task:
-    "Create, update, delete, or reorder tasks. " +
-    "Status lifecycle: draft → planned → in_progress → done. " +
-    "cancelled is terminal abandoned work with transparent deps — populate executionRecord with rationale; dependents stay blocked through the cancelled task's own unsatisfied prereqs. " +
-    "Before marking done, follow the skill's Completion Protocol. " +
-    "delete: preview=true (default) shows impact without deleting; set preview=false to execute. " +
-    "update: pass only changed fields. Array fields (decisions, acceptanceCriteria, files) APPEND by default — set overwriteArrays=true to replace.",
+    "Create, update, or delete tasks. Lifecycle: draft → planned → in_progress → done. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
+    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, all four tag dimensions (work-type, cross-cutting, tech, priority), one project category. After create: search precedents/coordinators by verb+noun+surface, wire mymir_edge, verify with mymir_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
+    "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files) APPEND by default; overwriteArrays=true REPLACES them. Destructive, NO undo (history is an audit log); confirm with user first. " +
+    "delete: preview=true (default) shows impact; preview=false executes. Prefer status='cancelled' for abandoned scope so the rationale is preserved. " +
+    "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run mymir_analyze type='downstream' to propagate.",
   mymir_edge:
-    "Manage dependency edges between tasks. " +
-    "create=link two tasks (depends_on = source blocks on target; relates_to = informational). " +
-    "update=change edgeType or note by edgeId. " +
-    "remove=delete by edgeId OR by sourceTaskId+targetTaskId+edgeType. " +
-    "Server rejects self-edges, duplicates, and cycles.",
+    "Create, update, or remove dependency edges between tasks. depends_on=source needs target's output (target must be done first). relates_to=informational link, neither blocks the other. Litmus test: removing the target makes the source impossible → depends_on; just makes it harder → relates_to. " +
+    "create: edge note REQUIRED and substantive; notes propagate to downstream agent context, and placeholders ('needed', 'depends') are rejected. Write it as a brief to the developer about to start the source task. " +
+    "update: change edgeType or note by edgeId. " +
+    "remove: by edgeId OR by sourceTaskId+targetTaskId+edgeType. " +
+    "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with mymir_query type='edges'.",
   mymir_query:
-    "Search and browse project data. " +
-    "search=find tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass `tags` to filter by exact tag (OR-within); combine with `query` to narrow. " +
-    "list=all tasks ordered by position. " +
-    "edges=relationships on a task (connected title, status, direction, note). " +
-    "overview=full project structure (tasks, deps, progress, tag vocab).",
+    "Search and browse project data. Pick the slim tool first; reserve overview for unfamiliar projects. " +
+    "search=tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass tags=[...] for exact tag match (OR-within); combine with `query` to AND-narrow. Single-result responses include a state hint pointing to the right next call. " +
+    "list=every task in the project (slim, ordered by position). " +
+    "edges=relationships on one task (connected title, status, direction, note). " +
+    "meta=slim project metadata: header, description, status, categories, tag vocabulary (with usage counts), progress + status counts. No task list, no edges. Use this to look up categories before setting one, or the tag vocabulary before coining new tags. " +
+    "overview=full project structure: every task, every edge, full tag vocab, progress. VERY HEAVY. Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session. For just categories or tag vocab, use meta.",
   mymir_context:
-    "Retrieve task context at varying depth. ALWAYS fetch context before reasoning about a task. " +
-    "summary=quick (title, status, edge counts). " +
-    "working=detailed (criteria, decisions, 1-hop edges, siblings). " +
-    "agent=multi-hop dependency chains with execution records (coding context, ~4-8K tokens). " +
-    "planning=spec-focused (project description, prereqs, acceptance criteria, downstream specs).",
+    "Retrieve task context at varying depth. ALWAYS fetch context before reasoning about a task; pick the lightest depth that answers the question. " +
+    "summary=task header + description + counts (criteria, decisions, plan flag, edge counts) + full 1-hop edges WITH notes. The lightest depth that still carries edge notes; folds in what `mymir_query type='edges'` would give. " +
+    "working=detailed (criteria, decisions, 1-hop edges, siblings) for refinement and review. " +
+    "agent=multi-hop dependency chains with upstream execution records (~4-8K tokens); fetch BEFORE coding. " +
+    "planning=spec-focused (project description, prereqs, acceptance criteria, downstream specs); fetch BEFORE writing the implementation plan.",
   mymir_analyze:
-    "Analyze the project dependency graph. " +
-    "ready=tasks with all deps done — pick from these first. " +
-    "plannable=draft tasks ready for planning when nothing is ready to code. " +
+    "Analyze the project dependency graph. All variants slim; lead with these for status, prioritization, 'what's next', 'what's stuck'. " +
+    "critical_path=longest dep chain (project bottleneck, minimum duration). Lead with this on continue / resume / 'guide me forward'; the most important type for prioritization. " +
+    "ready=planned tasks with all effective deps done (only `status='planned'` reaches this state; drafts with satisfied deps surface as `plannable`, not `ready`). Pick from `ready ∩ critical_path` for the highest-impact unblocked work. " +
+    "plannable=draft tasks with description + criteria, ready for planning. Fall back here when nothing is ready to code. " +
     "blocked=tasks waiting on unfinished deps with blocker details. " +
-    "downstream=transitive dependents of a task — impact analysis before changes. " +
-    "critical_path=longest dep chain — the bottleneck to prioritize.",
+    "downstream=transitive dependents of one task; impact analysis before status change, refinement, or cancellation.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -380,7 +650,7 @@ export type ProjectParams = {
 
 /** Params for mymir_task. */
 export type TaskParams = {
-  action: "create" | "update" | "delete" | "reorder";
+  action: "create" | "update" | "delete";
   projectId?: string;
   taskId?: string;
   title?: string;
@@ -393,7 +663,6 @@ export type TaskParams = {
   files?: string[];
   implementationPlan?: string;
   executionRecord?: string;
-  order?: number;
   preview?: boolean;
   overwriteArrays?: boolean;
 };
@@ -410,7 +679,7 @@ export type EdgeParams = {
 
 /** Params for mymir_query. */
 export type QueryParams = {
-  type: "search" | "list" | "edges" | "overview";
+  type: "search" | "list" | "edges" | "meta" | "overview";
   projectId?: string;
   query?: string;
   tags?: string[];
@@ -448,11 +717,14 @@ export async function handleProject(
   try {
     switch (p.action) {
       case "list":
-        return ok((await listProjectsSlim(ctx)).rows);
+        return ok(await listProjectsForMcp(ctx));
       case "teams":
         return ok(await listUserTeams(ctx));
       case "create": {
-        if (!p.title) return fail("title required for create (2-5 words, verb-noun preferred)");
+        if (!p.title)
+          return fail(
+            "title required for create. 2-5 words, verb-noun preferred (e.g. 'Track team habits').",
+          );
         let parsedIdentifier;
         if (p.identifier !== undefined) {
           const parsed = parseIdentifier(p.identifier);
@@ -476,7 +748,7 @@ export async function handleProject(
         return ok(createHints.length > 0 ? { ...project, _hints: createHints } : project);
       }
       case "update": {
-        if (!p.projectId) return fail("projectId required for update");
+        if (!p.projectId) return fail("projectId required for update. Run mymir_project action='list' to find it.");
         if (
           p.title === undefined &&
           p.description === undefined &&
@@ -535,11 +807,15 @@ export async function handleTask(
   try {
     switch (p.action) {
       case "create": {
-        if (!p.projectId) return fail("projectId required for create");
-        if (!p.title) return fail("title required for create");
+        if (!p.projectId)
+          return fail("projectId required for create. Run mymir_project action='list' or 'select' first.");
+        if (!p.title)
+          return fail(
+            "title required for create. Verb+noun, imperative (e.g. 'Implement JWT auth', not 'Auth'). Artifacts §1.",
+          );
         if (!p.description)
           return fail(
-            "description required for create (2-4 sentences: what, why, how)",
+            "description required for create. 2-4 sentences covering what + why + how it fits; up to 6-8 for genuinely complex tasks. Single-sentence descriptions are rejected. Artifacts §1.",
           );
         const preExistingTags =
           p.tags && p.tags.length > 0
@@ -550,7 +826,6 @@ export async function handleTask(
           title: p.title,
           description: p.description,
           status: p.status,
-          order: p.order ?? 0,
           acceptanceCriteria: (p.acceptanceCriteria ?? []) as unknown as {
             id: string;
             text: string;
@@ -564,20 +839,20 @@ export async function handleTask(
           decisions: p.decisions as unknown as Decision[],
         });
         const createHints: string[] = [];
-        createHints.push("No edges. Add dependencies with mymir_edge.");
-        if (!p.category) {
-          createHints.push(
-            "No category. Use mymir_project to see project categories, then set one with mymir_task action='update'.",
-          );
-        }
-        if (!p.acceptanceCriteria || p.acceptanceCriteria.length === 0) {
-          createHints.push(
-            "No acceptance criteria. Add testable done conditions with mymir_task action='update'.",
-          );
-        }
+        // Required-field-shaped hints first (artifact-quality violations on input)
         if (p.tags && p.tags.length > 0) {
           createHints.push(...tagVariantHints(p.tags, preExistingTags));
+          createHints.push(...tagTaxonomyHints(p.tags));
         }
+        createHints.push(...descriptionSizeHints(p.description));
+        createHints.push(...acQualityHints(p.acceptanceCriteria));
+        createHints.push(
+          ...draftFieldHints(p.status ?? "draft", {
+            executionRecord: p.executionRecord,
+            implementationPlan: p.implementationPlan,
+          }),
+        );
+        // Status-driven completion-protocol hints
         if (p.status === "done") {
           const persisted = await assertTaskAccess(task.id, ctx);
           if (persisted) {
@@ -616,6 +891,20 @@ export async function handleTask(
             );
           }
         }
+        // Informational follow-ups
+        if (!p.acceptanceCriteria || p.acceptanceCriteria.length === 0) {
+          createHints.push(
+            "No acceptance criteria. Add 2-4 binary done-conditions with mymir_task action='update'. Artifacts §1.",
+          );
+        }
+        if (!p.category) {
+          createHints.push(
+            "No category. Run mymir_query type='meta' to see this project's categories, then set one with mymir_task action='update'.",
+          );
+        }
+        createHints.push(
+          "No edges yet. Bare tasks orphan from critical_path, downstream, depth='agent' propagation. Search precedents/coordinators by verb + noun + surface; wire mymir_edge with substantive notes; verify with mymir_query type='edges'.",
+        );
         return ok({ ...task, _hints: createHints });
       }
       case "update": {
@@ -641,18 +930,31 @@ export async function handleTask(
         }
         let preExistingTags: string[] = [];
         let priorStatus: string | undefined;
-        if (p.tags && p.tags.length > 0) {
+        let priorAcceptanceCriteria: unknown[] | null | undefined;
+        let priorDecisions: unknown[] | null | undefined;
+        let priorFiles: string[] | null | undefined;
+        const willOverwriteShrinkable =
+          !!p.overwriteArrays &&
+          (p.acceptanceCriteria !== undefined ||
+            p.decisions !== undefined ||
+            p.files !== undefined);
+        const needsExisting =
+          (p.tags !== undefined && p.tags.length > 0) ||
+          p.status !== undefined ||
+          willOverwriteShrinkable;
+        if (needsExisting) {
           const existing = await assertTaskAccess(p.taskId, ctx);
           if (existing) {
-            preExistingTags = (
-              await getProjectTags(ctx, existing.projectId)
-            ).map((t) => t.tag);
+            if (p.tags && p.tags.length > 0) {
+              preExistingTags = (
+                await getProjectTags(ctx, existing.projectId)
+              ).map((t) => t.tag);
+            }
             priorStatus = existing.status;
+            priorAcceptanceCriteria = existing.acceptanceCriteria as unknown[] | null;
+            priorDecisions = existing.decisions as unknown[] | null;
+            priorFiles = existing.files as string[] | null;
           }
-        }
-        if (p.status !== undefined && priorStatus === undefined) {
-          const existing = await assertTaskAccess(p.taskId, ctx);
-          if (existing) priorStatus = existing.status;
         }
         const changes: TaskUpdate = {};
         if (p.title !== undefined) changes.title = p.title;
@@ -669,21 +971,49 @@ export async function handleTask(
         if (p.executionRecord !== undefined)
           changes.executionRecord = p.executionRecord;
         const result = await updateTask(ctx, p.taskId, changes, !!p.overwriteArrays);
+
         const updateHints: string[] = [];
+        // Required-field-shaped hints first
+        if (willOverwriteShrinkable) {
+          updateHints.push(
+            ...overwriteShrinkHints(
+              {
+                acceptanceCriteria: p.acceptanceCriteria as unknown[] | undefined,
+                decisions: p.decisions as unknown[] | undefined,
+                files: p.files,
+              },
+              {
+                acceptanceCriteria: priorAcceptanceCriteria,
+                decisions: priorDecisions,
+                files: priorFiles,
+              },
+            ),
+          );
+        }
         if (p.tags && p.tags.length > 0) {
           updateHints.push(...tagVariantHints(p.tags, preExistingTags));
+          updateHints.push(...tagTaxonomyHints(p.tags));
         }
+        updateHints.push(...descriptionSizeHints(p.description));
+        updateHints.push(...acQualityHints(p.acceptanceCriteria));
+        updateHints.push(
+          ...draftFieldHints(p.status, {
+            executionRecord: p.executionRecord,
+            implementationPlan: p.implementationPlan,
+          }),
+        );
+        // Status-transition steering
         if (p.status === "planned") {
           updateHints.push(
-            "Task planned. Claim with status='in_progress' when ready to implement.",
+            "Planned. Plan saved. Task surfaces in mymir_analyze type='ready' once depends_on chain reaches done. To claim: status='in_progress'.",
           );
         }
         if (p.status === "in_progress") {
           updateHints.push(
-            "Run mymir_context depth='agent' to get implementation context before starting.",
+            "Claimed (one worker per task; lifecycle §1). Run mymir_context depth='agent' for multi-hop deps and upstream executionRecords before starting.",
           );
           updateHints.push(
-            "Before marking done: confirm with the user (single-agent mode) or return to the orchestrator (dispatched mode). See Completion Protocol in the skill.",
+            "Before marking done: confirm with the user (direct mode) or return one-sentence summary to the orchestrator (dispatched mode). Completion Protocol (lifecycle §2).",
           );
         }
         if (p.status === "done") {
@@ -724,27 +1054,27 @@ export async function handleTask(
           priorStatus !== p.status
         ) {
           updateHints.push(...terminalReversalHints(priorStatus, p.status));
+          updateHints.push(...statusJumpHints(priorStatus, p.status));
         }
         return ok(
           updateHints.length > 0 ? { ...result, _hints: updateHints } : result,
         );
       }
       case "delete": {
-        if (!p.taskId) return fail("taskId required for delete");
+        if (!p.taskId)
+          return fail(
+            "taskId required for delete. Use mymir_query type='search' to find it.",
+          );
         if (p.preview !== false) {
           const result = await deleteTaskPreview(ctx, p.taskId);
           return ok({
             ...result,
-            _hints: ["Preview only. Run again with preview=false to delete."],
+            _hints: [
+              "Preview only. For abandoned scope, prefer status='cancelled' (preserves rationale + transitive dep semantics). To actually delete (only when the task is noise: accidental, duplicate, never had content), re-run with preview=false.",
+            ],
           });
         }
         return ok(await deleteTask(ctx, p.taskId));
-      }
-      case "reorder": {
-        if (!p.taskId) return fail("taskId required for reorder");
-        if (p.order === undefined)
-          return fail("order required for reorder (0-based position)");
-        return ok(await reorderTask(ctx, p.taskId, p.order));
       }
     }
   } catch (e) {
@@ -766,24 +1096,24 @@ export async function handleEdge(
     switch (p.action) {
       case "create": {
         if (!p.sourceTaskId || !p.targetTaskId)
-          return fail("sourceTaskId and targetTaskId required for create");
+          return fail(
+            "sourceTaskId and targetTaskId required for create. Use mymir_query type='search' to find task IDs.",
+          );
         if (!p.edgeType)
           return fail(
-            "edgeType required for create (depends_on or relates_to)",
+            "edgeType required for create. depends_on=source needs target's output (target must be done first); relates_to=informational link, neither blocks. Litmus: removing the target makes source impossible → depends_on; just makes it harder → relates_to. Artifacts §3.",
+          );
+        if (!p.note || !p.note.trim())
+          return fail(
+            "note required for create. Edge notes propagate to downstream agent context; placeholders ('needed', 'depends', 'related') are forbidden (artifacts §3). Write it as a brief to the developer about to start the source task: what specifically does this task get from the target?",
           );
         const edge = await createEdge(ctx, {
           sourceTaskId: p.sourceTaskId,
           targetTaskId: p.targetTaskId,
           edgeType: p.edgeType as EdgeType,
-          note: p.note ?? "",
+          note: p.note,
         });
-        const edgeHints: string[] = [];
-        if (!p.note) {
-          edgeHints.push(
-            "Missing edge note. Add one — notes propagate to downstream agent context.",
-          );
-        }
-        return ok(edgeHints.length > 0 ? { ...edge, _hints: edgeHints } : edge);
+        return ok(edge);
       }
       case "update": {
         if (!p.edgeId)
@@ -792,8 +1122,7 @@ export async function handleEdge(
           );
         if (p.edgeType === undefined && p.note === undefined)
           return fail(
-            "update requires at least one of: edgeType, note. " +
-              "To remove the edge, use action='remove'.",
+            "update requires at least one of: edgeType, note. To remove the edge, use action='remove'.",
           );
         return ok(
           await updateEdge(ctx, p.edgeId, {
@@ -816,16 +1145,14 @@ export async function handleEdge(
           );
           if (!edge) {
             return fail(
-              `No matching edge for ${p.sourceTaskId} -[${p.edgeType}]-> ${p.targetTaskId}. ` +
-                `Use mymir_query type='edges' to list current edges.`,
+              `No matching edge for ${p.sourceTaskId} -[${p.edgeType}]-> ${p.targetTaskId}. Use mymir_query type='edges' to list current edges on either task.`,
             );
           }
           await removeEdge(ctx, edge.id);
           return ok({ removed: edge.id });
         }
         return fail(
-          "Provide edgeId OR sourceTaskId+targetTaskId+edgeType. " +
-            "Use mymir_query type='edges' to find edge details.",
+          "Provide edgeId OR sourceTaskId+targetTaskId+edgeType. Use mymir_query type='edges' to find edge details.",
         );
       }
     }
@@ -847,11 +1174,11 @@ export async function handleQuery(
   try {
     switch (p.type) {
       case "search": {
-        if (!p.projectId) return fail("projectId required for search");
+        if (!p.projectId) return fail("projectId required for search. Run mymir_project action='list' first.");
         const hasQuery = (p.query?.trim() ?? "").length > 0;
         const tagFilter = normalizeTags(p.tags);
         if (!hasQuery && tagFilter.length === 0) {
-          return fail("query or tags required for search");
+          return fail("query or tags required for search. Pass `query` (taskRef, title or tag substring) or `tags=[...]` (exact tag, OR-within).");
         }
 
         const variantHints =
@@ -869,7 +1196,7 @@ export async function handleQuery(
         return ok(formatSearchResults(results, hint));
       }
       case "list": {
-        if (!p.projectId) return fail("projectId required for list");
+        if (!p.projectId) return fail("projectId required for list. Run mymir_project action='list' first.");
         return ok(formatTaskList(await getProjectTasksSlim(ctx, p.projectId)));
       }
       case "edges": {
@@ -879,8 +1206,12 @@ export async function handleQuery(
           );
         return ok(formatDetailedEdges(await getTaskEdgesDetailed(ctx, p.taskId)));
       }
+      case "meta": {
+        if (!p.projectId) return fail("projectId required for meta. Run mymir_project action='list' first.");
+        return ok(formatProjectMeta(await getProjectMeta(ctx, p.projectId)));
+      }
       case "overview": {
-        if (!p.projectId) return fail("projectId required for overview");
+        if (!p.projectId) return fail("projectId required for overview. Run mymir_project action='list' first.");
         const overview = await buildProjectOverview(ctx, p.projectId);
         return ok(overview ? formatOverview(overview) : "Project not found.");
       }
@@ -907,14 +1238,13 @@ export async function handleContext(
         return ok(formatSummary(await buildSummaryContext(ctx, p.taskId)));
       case "working": {
         if (!p.projectId)
-          return fail("projectId required for working depth");
+          return fail("projectId required for working depth. Run mymir_project action='list' or pass the projectId you already have.");
         // assertTaskAccess gates on membership; the projectId comparison protects
         // against passing a different project's UUID alongside our own task.
         const task = await assertTaskAccess(p.taskId, ctx);
         if (task.projectId !== p.projectId) {
           return fail(
-            `Task '${p.taskId}' belongs to project '${task.projectId}', not '${p.projectId}'. ` +
-              `Run mymir_query type='search' to find the correct projectId.`,
+            `Task '${p.taskId}' belongs to project '${task.projectId}', not '${p.projectId}'. Run mymir_query type='search' to find the correct projectId.`,
           );
         }
         const result = await buildWorkingContext(ctx, p.taskId);
@@ -943,11 +1273,11 @@ export async function handleAnalyze(
   try {
     switch (p.type) {
       case "ready": {
-        if (!p.projectId) return fail("projectId required for ready");
+        if (!p.projectId) return fail("projectId required for ready. Run mymir_project action='list' first.");
         return ok(formatReadyTasks(await getReadyTasks(ctx, p.projectId)));
       }
       case "blocked": {
-        if (!p.projectId) return fail("projectId required for blocked");
+        if (!p.projectId) return fail("projectId required for blocked. Run mymir_project action='list' first.");
         return ok(formatBlockedTasks(await getBlockedTasks(ctx, p.projectId)));
       }
       case "downstream": {
@@ -958,11 +1288,11 @@ export async function handleAnalyze(
         return ok(formatDownstream(await getDownstream(ctx, p.taskId)));
       }
       case "critical_path": {
-        if (!p.projectId) return fail("projectId required for critical_path");
+        if (!p.projectId) return fail("projectId required for critical_path. Run mymir_project action='list' first.");
         return ok(formatCriticalPath(await getCriticalPath(ctx, p.projectId)));
       }
       case "plannable": {
-        if (!p.projectId) return fail("projectId required for plannable");
+        if (!p.projectId) return fail("projectId required for plannable. Run mymir_project action='list' first.");
         return ok(
           formatPlannableTasks(await getPlannableTasks(ctx, p.projectId)),
         );
