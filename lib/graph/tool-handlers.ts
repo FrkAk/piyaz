@@ -12,7 +12,7 @@ import {
   createProject,
   updateProject,
   renameProjectIdentifier,
-  listProjectsSlim,
+  listProjectsForMcp,
   listUserTeams,
   getProjectTags,
   getProjectMeta,
@@ -588,7 +588,7 @@ function translateError(e: unknown): ToolResult {
 export const DESCRIPTIONS = {
   mymir_project:
     "List, create, and update projects, plus enumerate team memberships. Spans every team the caller belongs to; no server-side session state, so pass projectId explicitly on every downstream call. " +
-    "list=projects with task counts, progress, team metadata; skips teams with zero projects. " +
+    "list=projects (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via mymir_query type='meta'. " +
     "teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. " +
     "select=confirm working project; pass returned projectId on every subsequent call. " +
     "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline; auto-resolves single-team). " +
@@ -717,7 +717,7 @@ export async function handleProject(
   try {
     switch (p.action) {
       case "list":
-        return ok((await listProjectsSlim(ctx)).rows);
+        return ok(await listProjectsForMcp(ctx));
       case "teams":
         return ok(await listUserTeams(ctx));
       case "create": {

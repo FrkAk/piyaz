@@ -28,6 +28,7 @@ import type {
   ProjectChrome,
   ProjectGraphSlim,
   ProjectListEntry,
+  ProjectListEntryMcp,
   ProjectMeta,
   ProjectSlim,
   ProjectTaskStats,
@@ -620,6 +621,102 @@ export async function listProjectsSlim(
   );
 
   return { rows, nextCursor };
+}
+
+/**
+ * Lean project list for the MCP `mymir_project action='list'` tool. Selects
+ * only the columns the agent skill consumes (id, organizationId, title,
+ * identifier, status) plus the team chip and rolled-up task counts, and
+ * skips the heavy `description`, `history`, `categories`, and timestamp
+ * columns at the SQL projection so wire bytes are saved off the Postgres
+ * round-trip — not just trimmed in JS. Agents fetch description and tag
+ * vocabulary on demand via `mymir_query type='meta'`.
+ *
+ * No pagination; returns every project the caller can see, ordered by
+ * `updatedAt DESC, id DESC` to match `listProjectsSlim`.
+ *
+ * @param ctx - Resolved auth context.
+ * @returns Slim project entries with team metadata and task stats.
+ */
+export async function listProjectsForMcp(
+  ctx: AuthContext,
+): Promise<ProjectListEntryMcp[]> {
+  const rawRows = await db
+    .select({
+      id: projects.id,
+      organizationId: projects.organizationId,
+      title: projects.title,
+      identifier: projects.identifier,
+      status: projects.status,
+      organization: {
+        id: organization.id,
+        name: organization.name,
+        slug: organization.slug,
+      },
+      memberRole: member.role,
+    })
+    .from(projects)
+    .innerJoin(
+      member,
+      and(
+        eq(member.organizationId, projects.organizationId),
+        eq(member.userId, ctx.userId),
+      ),
+    )
+    .innerJoin(organization, eq(organization.id, projects.organizationId))
+    .orderBy(desc(projects.updatedAt), desc(projects.id));
+
+  if (rawRows.length === 0) return [];
+
+  const projectIds = rawRows.map((r) => r.id);
+  const counts = await db
+    .select({
+      projectId: tasks.projectId,
+      status: tasks.status,
+      count: sql<number>`count(*)::int`.as("count"),
+    })
+    .from(tasks)
+    .where(sql`${tasks.projectId} IN ${projectIds}`)
+    .groupBy(tasks.projectId, tasks.status);
+
+  const statsByProject = new Map<string, ProjectTaskStats>();
+  for (const c of counts) {
+    const stats = statsByProject.get(c.projectId) ?? {
+      total: 0,
+      done: 0,
+      inProgress: 0,
+      cancelled: 0,
+    };
+    stats.total += c.count;
+    if (c.status === "done") stats.done = c.count;
+    else if (c.status === "in_progress") stats.inProgress = c.count;
+    else if (c.status === "cancelled") stats.cancelled = c.count;
+    statsByProject.set(c.projectId, stats);
+  }
+
+  return rawRows.map((row) => {
+    const taskStats = statsByProject.get(row.id) ?? {
+      total: 0,
+      done: 0,
+      inProgress: 0,
+      cancelled: 0,
+    };
+    const denominator = taskStats.total - taskStats.cancelled;
+    return {
+      id: row.id,
+      organizationId: row.organizationId,
+      title: row.title,
+      identifier: row.identifier,
+      status: row.status,
+      organization: row.organization,
+      memberRole: row.memberRole,
+      taskStats,
+      progress:
+        denominator > 0
+          ? Math.round((taskStats.done / denominator) * 100)
+          : 0,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

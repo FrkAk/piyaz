@@ -27,6 +27,22 @@ export type ProjectListEntry = Project & {
   progress: number;
 };
 
+/**
+ * Slim project entry returned by `listProjectsForMcp` — the agent-facing
+ * shape for `mymir_project action='list'`. Strips description, history,
+ * categories, and timestamps to keep the payload tight; agents fetch the
+ * description and tag vocabulary on demand via `mymir_query type='meta'`.
+ */
+export type ProjectListEntryMcp = Pick<
+  Project,
+  "id" | "organizationId" | "title" | "identifier" | "status"
+> & {
+  organization: ProjectListOrganization;
+  memberRole: string;
+  taskStats: ProjectTaskStats;
+  progress: number;
+};
+
 /** Slim task entry returned by the project graph payload. */
 export type TaskGraphSlim = Pick<
   Task,

@@ -187,7 +187,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
       description: DESCRIPTIONS.mymir_project,
       inputSchema: z.object({
         action: z.enum(["list", "teams", "create", "select", "update"])
-          .describe("list=projects across every team you belong to (skips empty teams). teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields."),
+          .describe("list=projects across every team you belong to (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via mymir_query type='meta'. teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields."),
         projectId: z.uuid().optional()
           .describe("Project UUID. Required for select and update."),
         title: z.string().optional()

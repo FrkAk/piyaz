@@ -11,6 +11,7 @@ import {
   getProjectListMaxUpdatedAt,
   getProjectMeta,
   listProjectsSlim,
+  listProjectsForMcp,
 } from "@/lib/data/project";
 import { makeAuthContext } from "@/lib/auth/context";
 
@@ -335,4 +336,92 @@ test("listProjectsSlim caps limit at 100", async () => {
   const ctx = makeAuthContext(f.userId);
   const page = await listProjectsSlim(ctx, { limit: 500 });
   expect(page.rows.length).toBeLessThanOrEqual(100);
+});
+
+test("listProjectsForMcp returns the slim agent shape without description, history, categories, or timestamps", async () => {
+  const f = await seedUserOrgProject("mcp-shape");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  try {
+    await sqlc`
+      UPDATE projects
+      SET description = ${"x".repeat(5000)}
+      WHERE id = ${f.projectId}
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listProjectsForMcp(ctx);
+  const row = rows.find((r) => r.id === f.projectId);
+  expect(row).toBeDefined();
+  expect(Object.keys(row!).sort()).toEqual([
+    "id",
+    "identifier",
+    "memberRole",
+    "organization",
+    "organizationId",
+    "progress",
+    "status",
+    "taskStats",
+    "title",
+  ]);
+  expect(Object.keys(row!.organization).sort()).toEqual(["id", "name", "slug"]);
+});
+
+test("listProjectsForMcp aggregates task stats and progress like listProjectsSlim", async () => {
+  const f = await seedUserOrgProject("mcp-counts");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  try {
+    let seq = 1;
+    for (let i = 0; i < 3; i++) {
+      await sqlc`
+        INSERT INTO tasks ("project_id", "title", "sequence_number", "status")
+        VALUES (${f.projectId}, ${"D" + i}, ${seq++}, 'done')
+      `;
+    }
+    for (let i = 0; i < 2; i++) {
+      await sqlc`
+        INSERT INTO tasks ("project_id", "title", "sequence_number", "status")
+        VALUES (${f.projectId}, ${"P" + i}, ${seq++}, 'in_progress')
+      `;
+    }
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "status")
+      VALUES (${f.projectId}, 'X', ${seq++}, 'cancelled')
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listProjectsForMcp(ctx);
+  const row = rows.find((r) => r.id === f.projectId);
+  expect(row?.taskStats).toEqual({ total: 6, done: 3, inProgress: 2, cancelled: 1 });
+  expect(row?.progress).toBe(60);
+});
+
+test("listProjectsForMcp skips teams with zero projects", async () => {
+  const f = await seedUserOrgProject("mcp-empty-team");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  try {
+    const [emptyOrg] = await sqlc<{ id: string }[]>`
+      INSERT INTO neon_auth."organization" ("name", "slug", "createdAt")
+      VALUES ('Empty Team Mcp', 'empty-team-mcp', now())
+      RETURNING id
+    `;
+    await sqlc`
+      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      VALUES (${emptyOrg.id}, ${f.userId}, 'owner', now())
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listProjectsForMcp(ctx);
+  expect(rows.find((r) => r.organization.name === "Empty Team Mcp")).toBeUndefined();
 });
