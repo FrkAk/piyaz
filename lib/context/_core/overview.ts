@@ -7,7 +7,10 @@ import {
   enrichWithTaskRef,
 } from "@/lib/graph/identifier";
 import { getProjectTags } from "@/lib/data/project";
-import { listProjectTasks, fetchAssigneesByTask } from "@/lib/data/task";
+import {
+  listProjectTasks,
+  fetchAssigneesByTaskUnchecked,
+} from "@/lib/data/task";
 import { fetchEdgesForTaskIds } from "@/lib/data/edge";
 import { compress } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
@@ -73,7 +76,7 @@ export async function buildProjectOverview(
   const projectTags = await getProjectTags(ctx, projectId);
 
   const identifier = asIdentifier(project.identifier);
-  const assigneesByTask = await fetchAssigneesByTask(
+  const assigneesByTask = await fetchAssigneesByTaskUnchecked(
     allTasks.map((t) => t.id),
   );
   const taskSummaries: TaskSummary[] = enrichWithTaskRef(

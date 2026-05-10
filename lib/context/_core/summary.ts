@@ -8,7 +8,7 @@ import type {
   Estimate,
 } from "@/lib/types";
 import { getTaskEdgesDetailed } from "@/lib/data/edge";
-import { fetchAssignees } from "@/lib/data/task";
+import { fetchAssigneesUnchecked } from "@/lib/data/task";
 import { getProjectHeader } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import type { AuthContext } from "@/lib/auth/context";
@@ -66,7 +66,7 @@ export async function buildSummaryContext(
 
   const [detailedEdges, assignees] = await Promise.all([
     getTaskEdgesDetailed(ctx, taskId),
-    fetchAssignees(taskId),
+    fetchAssigneesUnchecked(taskId),
   ]);
 
   const edges: EdgeDetail[] = detailedEdges.map((e) => ({

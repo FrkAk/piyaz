@@ -9,7 +9,7 @@ import {
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
-  fetchAssignees,
+  fetchAssigneesUnchecked,
 } from "@/lib/data/task";
 import { getProjectIdentifier } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
@@ -75,7 +75,7 @@ export async function buildAgentContext(
     // getDownstream is public — caller already asserted; pass ctx through
     getDownstream(ctx, taskId, 2),
     fetchEdgeNotesBySource(task.projectId, taskId),
-    fetchAssignees(taskId),
+    fetchAssigneesUnchecked(taskId),
   ]);
 
   if (deps.length > 0) {

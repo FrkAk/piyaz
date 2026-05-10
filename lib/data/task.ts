@@ -102,20 +102,25 @@ export async function getTaskFull(
     );
   }
   const taskRef = composeTaskRef(asIdentifier(proj.identifier), task.sequenceNumber);
-  const assignees = await fetchAssignees(taskId);
+  const assignees = await fetchAssigneesUnchecked(taskId);
 
   return { ...task, taskRef, assignees };
 }
 
 /**
  * Fetch the assignee projection (userId + name + email) for a task,
- * joined to `neon_auth.user` and ordered by name. Internal helper —
- * caller must have already asserted task access.
+ * joined to `neon_auth.user` and ordered by name.
+ *
+ * UNCHECKED: this function performs NO authorization. The caller is
+ * responsible for asserting task access (`assertTaskAccess`) before
+ * invoking. Calling without an upstream check leaks assignee identity
+ * cross-team. The `Unchecked` suffix is the contract — do not strip
+ * it when wrapping or re-exporting.
  *
  * @param taskId - UUID of the task.
  * @returns Ordered array of assignee refs (empty when nobody is assigned).
  */
-async function fetchAssignees(taskId: string): Promise<AssigneeRef[]> {
+async function fetchAssigneesUnchecked(taskId: string): Promise<AssigneeRef[]> {
   return db
     .select({
       userId: taskAssignees.userId,
@@ -129,14 +134,20 @@ async function fetchAssignees(taskId: string): Promise<AssigneeRef[]> {
 }
 
 /**
- * Fetch assignee projections for a batch of task ids. Internal helper —
- * caller asserted access on the parent. Returns a map keyed by taskId for
- * easy zipping with a parallel task list.
+ * Fetch assignee projections for a batch of task ids. Returns a map
+ * keyed by taskId for easy zipping with a parallel task list.
+ *
+ * UNCHECKED: this function performs NO authorization. The caller is
+ * responsible for asserting access on every supplied taskId (typically
+ * via `assertProjectAccess` on the parent project) before invoking.
+ * Calling without an upstream check leaks assignee identity cross-team.
+ * The `Unchecked` suffix is the contract — do not strip it when
+ * wrapping or re-exporting.
  *
  * @param taskIds - UUIDs to fetch assignees for.
  * @returns Map of taskId -> AssigneeRef[]; missing tasks omitted.
  */
-async function fetchAssigneesByTask(
+async function fetchAssigneesByTaskUnchecked(
   taskIds: string[],
 ): Promise<Map<string, AssigneeRef[]>> {
   const result = new Map<string, AssigneeRef[]>();
@@ -160,7 +171,27 @@ async function fetchAssigneesByTask(
   return result;
 }
 
-export { fetchAssignees, fetchAssigneesByTask };
+export { fetchAssigneesUnchecked, fetchAssigneesByTaskUnchecked };
+
+/**
+ * Build the `(task_id, count)` subquery for assignee counts. Callers
+ * LEFT JOIN it against `tasks` and read `COALESCE(sq.count, 0)` instead
+ * of issuing a correlated subquery per row. Postgres can index-only-scan
+ * the GROUP BY off the `(task_id, user_id)` PK leading column.
+ *
+ * Each call returns a fresh subquery with the same alias; do not use
+ * twice in one query.
+ */
+export function assigneeCountSubquery() {
+  return db
+    .select({
+      taskId: taskAssignees.taskId,
+      count: sql<number>`COUNT(*)::int`.as("count"),
+    })
+    .from(taskAssignees)
+    .groupBy(taskAssignees.taskId)
+    .as("assignee_counts");
+}
 
 /**
  * Fetch the slim task view for listing surfaces.
@@ -233,6 +264,7 @@ export async function getProjectTasksSlim(
 ): Promise<TaskSlim[]> {
   const { project } = await assertProjectAccess(projectId, ctx);
 
+  const ac = assigneeCountSubquery();
   const rows = await db
     .select({
       id: tasks.id,
@@ -244,9 +276,10 @@ export async function getProjectTasksSlim(
       estimate: tasks.estimate,
       order: tasks.order,
       sequenceNumber: tasks.sequenceNumber,
-      assigneeCount: sql<number>`(SELECT COUNT(*)::int FROM ${taskAssignees} WHERE ${taskAssignees.taskId} = ${tasks.id})`,
+      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
     })
     .from(tasks)
+    .leftJoin(ac, eq(ac.taskId, tasks.id))
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.order));
 
@@ -421,6 +454,7 @@ export async function searchTasks(
     );
   }
 
+  const ac = assigneeCountSubquery();
   const matchingTasks = await db
     .select({
       id: tasks.id,
@@ -434,9 +468,10 @@ export async function searchTasks(
       acceptanceCriteria: tasks.acceptanceCriteria,
       sequenceNumber: tasks.sequenceNumber,
       order: tasks.order,
-      assigneeCount: sql<number>`(SELECT COUNT(*)::int FROM ${taskAssignees} WHERE ${taskAssignees.taskId} = ${tasks.id})`,
+      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
     })
     .from(tasks)
+    .leftJoin(ac, eq(ac.taskId, tasks.id))
     .where(and(...clauses));
 
   if (trimmedQuery.length > 0) {
@@ -548,6 +583,7 @@ export async function searchTasksPaged(
             OR (${tasks.order} = ${after.order} AND ${tasks.id} < ${after.id}))`
     : sql`TRUE`;
 
+  const ac = assigneeCountSubquery();
   const matchingTasks = await db
     .select({
       id: tasks.id,
@@ -561,9 +597,10 @@ export async function searchTasksPaged(
       acceptanceCriteria: tasks.acceptanceCriteria,
       sequenceNumber: tasks.sequenceNumber,
       order: tasks.order,
-      assigneeCount: sql<number>`(SELECT COUNT(*)::int FROM ${taskAssignees} WHERE ${taskAssignees.taskId} = ${tasks.id})`,
+      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
     })
     .from(tasks)
+    .leftJoin(ac, eq(ac.taskId, tasks.id))
     .where(and(...clauses, cursorClause))
     .orderBy(desc(tasks.order), desc(tasks.id))
     .limit(limit + 1);
@@ -1099,8 +1136,7 @@ export async function updateTask(
   }
   // assigneeIds writes the junction table, not the tasks row. Pull it
   // out so the typed `tx.update(tasks).set(...)` does not see an
-  // unknown column. The history entry below still records the field
-  // in its description because `Object.keys(changes)` runs before this.
+  // unknown column.
   const assigneeIds =
     "assigneeIds" in changes ? (changes.assigneeIds as string[]) : undefined;
   delete changes.assigneeIds;

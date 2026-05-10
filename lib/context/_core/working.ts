@@ -4,7 +4,7 @@ import type { AcceptanceCriterion } from "@/lib/types";
 import { getAncestors } from "@/lib/data/traversal";
 import { getTaskEdgesDetailed } from "@/lib/data/edge";
 import { getProjectIdentifier } from "@/lib/data/project";
-import { fetchSiblingTasks, fetchAssignees } from "@/lib/data/task";
+import { fetchSiblingTasks, fetchAssigneesUnchecked } from "@/lib/data/task";
 import type { AssigneeRef } from "@/lib/data/views";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria } from "@/lib/context/format";
@@ -53,7 +53,7 @@ export async function buildWorkingContext(
       getAncestors(taskId),
       getTaskEdgesDetailed(ctx, taskId),
       fetchSiblingTasks(projectId, taskId),
-      fetchAssignees(taskId),
+      fetchAssigneesUnchecked(taskId),
     ]);
 
   if (!identifier) {
