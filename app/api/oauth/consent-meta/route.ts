@@ -1,6 +1,7 @@
 import "server-only";
 import { headers } from "next/headers";
 import { type NextRequest } from "next/server";
+import { APIError } from "better-auth/api";
 import { auth } from "@/lib/auth";
 import { userHasConsentedTo } from "@/lib/data/oauth-session";
 import { getAuthContext } from "@/lib/auth/context";
@@ -36,7 +37,8 @@ type ConsentMeta = {
  *
  * @param request - Incoming GET with `?client_id=<id>`.
  * @returns Metadata JSON, 400 on missing param, 401 on no session,
- *   404 when the client is unknown / disabled.
+ *   404 when the client is unknown / disabled, 500 on infrastructure
+ *   failure (BA / DB unreachable).
  */
 export async function GET(request: NextRequest): Promise<Response> {
   const clientId = request.nextUrl.searchParams.get("client_id");
@@ -50,14 +52,18 @@ export async function GET(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const client = await auth.api
-      .getOAuthClientPublic({
+    let client;
+    try {
+      client = await auth.api.getOAuthClientPublic({
         query: { client_id: clientId },
         headers: await headers(),
-      })
-      .catch(() => null);
-
-    if (!client) return error("Client not found", 404);
+      });
+    } catch (err) {
+      if (err instanceof APIError && err.status === "NOT_FOUND") {
+        return error("Client not found", 404);
+      }
+      throw err;
+    }
 
     const previouslyConsented = await userHasConsentedTo(ctx.userId, clientId);
 

@@ -4,35 +4,32 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
+import { evaluateRedirect, safeLinkHost } from "@/lib/auth/safe-redirect";
 
 /**
- * Read the deployment host on the client without breaking hydration. The
- * server has no `window`, so the server snapshot is `null` and the
- * post-hydration re-render fills in the real host.
+ * Hydration-safe deployment-host snapshot for `useSyncExternalStore`.
+ *
+ * The redirect-safety check needs `window.location.host` to recognize a
+ * same-host redirect_uri, but referencing `window` during SSR throws. We
+ * solve it the canonical React 18+ way: the server snapshot returns
+ * `null` (fail-closed → redirect renders as unverified), and the client
+ * snapshot fills in the real host after hydration. No subscription is
+ * needed because the deployment host doesn't change during the page's
+ * lifetime — `subscribeNoop` satisfies the API without doing work.
+ *
+ * Note: this produces a brief content shift on first paint where a
+ * same-host redirect_uri flips from "unverified" to "verified" once
+ * hydration runs. That's the correct fail-closed trade-off.
  */
 function subscribeNoop(): () => void {
   return () => {};
 }
 function getOwnHostClient(): string | null {
-  return window.location.host;
+  return typeof window === "undefined" ? null : window.location.host;
 }
 function getOwnHostServer(): string | null {
   return null;
 }
-
-/**
- * Hosts trusted as redirect targets without warning the user. Localhost
- * variants cover the dev experience for MCP CLIs that round-trip a code
- * through a loopback listener.
- */
-const SAFE_REDIRECT_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-/**
- * Custom URL schemes used by legitimate MCP CLIs that round-trip the
- * authorization code through the operating system's URL handler instead of
- * a loopback HTTP server.
- */
-const SAFE_REDIRECT_SCHEMES = new Set(["vscode:", "cursor:", "claude:"]);
 
 type ConsentMeta = {
   client_id: string;
@@ -45,45 +42,35 @@ type ConsentMeta = {
 };
 
 /**
- * Result of evaluating the OAuth `redirect_uri` against the safe-redirect
- * allowlist. Carries the user-facing host string so the page renders the
- * same value in both the "Redirecting to" row and the warning banner.
- */
-type RedirectEvaluation = {
-  safe: boolean;
-  display: string;
-};
-
-/**
- * Decide whether a `redirect_uri` is on the safe-redirect allowlist and
- * compute the user-facing host label. An `ownHost` of `null` (SSR) treats
- * the deployment host as unknown so the same-host fast path falls through
- * to the hostname allowlist check.
+ * One DCR metadata link rendered with its destination host appended.
  *
- * @param redirectUri - The `redirect_uri` from the signed authorize query.
- * @param ownHost - The deployment host or `null` when not yet hydrated.
- * @returns Verdict + display string. Unparseable URIs fail closed.
+ * The href is attacker-controlled (anyone can DCR a client with any
+ * `client_uri` / `tos_uri` / `policy_uri`), so the user must see the
+ * destination host before clicking. Unparseable or non-http(s) URLs
+ * render nothing — fail-closed against `javascript:` / `data:` smuggling.
+ *
+ * @param label - Visible link label (Website / Terms / Privacy).
+ * @param href - Raw URL from the DCR metadata field.
  */
-function evaluateRedirect(
-  redirectUri: string | null,
-  ownHost: string | null,
-): RedirectEvaluation {
-  if (!redirectUri) return { safe: false, display: "(missing)" };
-  let parsed: URL;
-  try {
-    parsed = new URL(redirectUri);
-  } catch {
-    return { safe: false, display: redirectUri };
-  }
-  if (SAFE_REDIRECT_SCHEMES.has(parsed.protocol)) {
-    return { safe: true, display: redirectUri };
-  }
-  const host = parsed.host;
-  const hostname = parsed.hostname;
-  if (SAFE_REDIRECT_HOSTS.has(hostname) || (ownHost && host === ownHost)) {
-    return { safe: true, display: host };
-  }
-  return { safe: false, display: host || redirectUri };
+function MetadataLink({
+  label,
+  href,
+}: {
+  label: string;
+  href: string;
+}): React.ReactNode {
+  const host = safeLinkHost(href);
+  if (!host) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent hover:underline"
+    >
+      {label} ({host})
+    </a>
+  );
 }
 
 /**
@@ -94,6 +81,14 @@ function evaluateRedirect(
  * Renders an identity-aware view: brand-normalized client name, the host of
  * the actual redirect_uri, a first-time / unsafe-redirect warning banner,
  * and the raw client_id demoted to a muted footnote.
+ *
+ * Trust model: `formatOAuthClientName` collapses brand-suffixed names
+ * (e.g. `Claude Code (plugin:evil)` → `Claude Code`) for legibility, so
+ * the consent header is NOT a trust statement about the client. The
+ * `isFirstTime` warning is the only signal that fires on a never-seen
+ * client; once the user approves, repeat visits no longer distinguish
+ * spoofed clients from the originals visually. Long-term mitigation is
+ * software statements (RFC 7591 §2.3) — tracked as MYMR-199.
  *
  * @returns Consent form with approve/deny buttons.
  */
@@ -203,6 +198,25 @@ export default function ConsentPage() {
     );
   }
 
+  if (missingClientId) {
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center px-4">
+        <div className="w-full max-w-sm space-y-4 text-center">
+          <h1 className="text-xl font-semibold text-text-primary">
+            Authorize access
+          </h1>
+          <div
+            className="rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
+            role="alert"
+          >
+            {metaError}
+          </div>
+          <p className="text-sm text-text-muted">You can close this tab.</p>
+        </div>
+      </div>
+    );
+  }
+
   const brandName = meta ? formatOAuthClientName(meta.client_name) : "";
   const initial = brandName.charAt(0).toUpperCase() || "?";
 
@@ -219,7 +233,7 @@ export default function ConsentPage() {
     warnings.push(`Redirecting to an unverified destination: ${redirect.display}.`);
   }
 
-  const approveDisabled = submitting || (!meta && !metaError);
+  const approveDisabled = submitting || !meta;
 
   return (
     <div className="flex min-h-[100dvh] items-center justify-center px-4">
@@ -260,34 +274,13 @@ export default function ConsentPage() {
           {meta && (meta.client_uri || meta.tos_uri || meta.policy_uri) && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 px-1 text-xs">
               {meta.client_uri && (
-                <a
-                  href={meta.client_uri}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent hover:underline"
-                >
-                  Website
-                </a>
+                <MetadataLink label="Website" href={meta.client_uri} />
               )}
               {meta.tos_uri && (
-                <a
-                  href={meta.tos_uri}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent hover:underline"
-                >
-                  Terms
-                </a>
+                <MetadataLink label="Terms" href={meta.tos_uri} />
               )}
               {meta.policy_uri && (
-                <a
-                  href={meta.policy_uri}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent hover:underline"
-                >
-                  Privacy
-                </a>
+                <MetadataLink label="Privacy" href={meta.policy_uri} />
               )}
             </div>
           )}
