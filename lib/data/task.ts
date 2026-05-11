@@ -2,9 +2,22 @@ import "server-only";
 
 import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { projects, tasks, taskEdges, type NewTask } from "@/lib/db/schema";
+import {
+  projects,
+  tasks,
+  taskEdges,
+  taskAssignees,
+  type NewTask,
+} from "@/lib/db/schema";
+import { user, member } from "@/lib/db/auth-schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
-import type { Decision, HistoryEntry, TaskStatus } from "@/lib/types";
+import type {
+  Decision,
+  HistoryEntry,
+  TaskStatus,
+  Priority,
+  Estimate,
+} from "@/lib/types";
 import {
   asIdentifier,
   composeTaskRef,
@@ -25,7 +38,7 @@ import {
   encodeOrderCursor,
   type Cursor,
 } from "@/lib/data/cursor";
-import type { TaskFull, TaskSlim } from "@/lib/data/views";
+import type { AssigneeRef, TaskFull, TaskSlim } from "@/lib/data/views";
 import { emitTaskEvent } from "@/lib/realtime/events";
 
 /**
@@ -89,8 +102,93 @@ export async function getTaskFull(
     );
   }
   const taskRef = composeTaskRef(asIdentifier(proj.identifier), task.sequenceNumber);
+  const assignees = await fetchAssigneesUnchecked(taskId);
 
-  return { ...task, taskRef };
+  return { ...task, taskRef, assignees };
+}
+
+/**
+ * Fetch the assignee projection (userId + name + email) for a task,
+ * joined to `neon_auth.user` and ordered by name.
+ *
+ * UNCHECKED: this function performs NO authorization. The caller is
+ * responsible for asserting task access (`assertTaskAccess`) before
+ * invoking. Calling without an upstream check leaks assignee identity
+ * cross-team. The `Unchecked` suffix is the contract — do not strip
+ * it when wrapping or re-exporting.
+ *
+ * @param taskId - UUID of the task.
+ * @returns Ordered array of assignee refs (empty when nobody is assigned).
+ */
+export async function fetchAssigneesUnchecked(taskId: string): Promise<AssigneeRef[]> {
+  return db
+    .select({
+      userId: taskAssignees.userId,
+      name: user.name,
+      email: user.email,
+    })
+    .from(taskAssignees)
+    .innerJoin(user, eq(user.id, taskAssignees.userId))
+    .where(eq(taskAssignees.taskId, taskId))
+    .orderBy(asc(user.name));
+}
+
+/**
+ * Fetch assignee projections for a batch of task ids. Returns a map
+ * keyed by taskId for easy zipping with a parallel task list.
+ *
+ * UNCHECKED: this function performs NO authorization. The caller is
+ * responsible for asserting access on every supplied taskId (typically
+ * via `assertProjectAccess` on the parent project) before invoking.
+ * Calling without an upstream check leaks assignee identity cross-team.
+ * The `Unchecked` suffix is the contract — do not strip it when
+ * wrapping or re-exporting.
+ *
+ * @param taskIds - UUIDs to fetch assignees for.
+ * @returns Map of taskId -> AssigneeRef[]; missing tasks omitted.
+ */
+export async function fetchAssigneesByTaskUnchecked(
+  taskIds: string[],
+): Promise<Map<string, AssigneeRef[]>> {
+  const result = new Map<string, AssigneeRef[]>();
+  if (taskIds.length === 0) return result;
+  const rows = await db
+    .select({
+      taskId: taskAssignees.taskId,
+      userId: taskAssignees.userId,
+      name: user.name,
+      email: user.email,
+    })
+    .from(taskAssignees)
+    .innerJoin(user, eq(user.id, taskAssignees.userId))
+    .where(sql`${taskAssignees.taskId} IN ${taskIds}`)
+    .orderBy(asc(user.name));
+  for (const r of rows) {
+    const list = result.get(r.taskId) ?? [];
+    list.push({ userId: r.userId, name: r.name, email: r.email });
+    result.set(r.taskId, list);
+  }
+  return result;
+}
+
+/**
+ * Build the `(task_id, count)` subquery for assignee counts. Callers
+ * LEFT JOIN it against `tasks` and read `COALESCE(sq.count, 0)` instead
+ * of issuing a correlated subquery per row. Postgres can index-only-scan
+ * the GROUP BY off the `(task_id, user_id)` PK leading column.
+ *
+ * Each call returns a fresh subquery with the same alias; do not use
+ * twice in one query.
+ */
+export function assigneeCountSubquery() {
+  return db
+    .select({
+      taskId: taskAssignees.taskId,
+      count: sql<number>`COUNT(*)::int`.as("count"),
+    })
+    .from(taskAssignees)
+    .groupBy(taskAssignees.taskId)
+    .as("assignee_counts");
 }
 
 /**
@@ -112,6 +210,9 @@ export async function getTaskSlim(
     status: full.status,
     tags: full.tags,
     category: full.category,
+    priority: full.priority,
+    estimate: full.estimate,
+    assigneeCount: full.assignees.length,
     order: full.order,
   };
 }
@@ -161,6 +262,7 @@ export async function getProjectTasksSlim(
 ): Promise<TaskSlim[]> {
   const { project } = await assertProjectAccess(projectId, ctx);
 
+  const ac = assigneeCountSubquery();
   const rows = await db
     .select({
       id: tasks.id,
@@ -168,10 +270,14 @@ export async function getProjectTasksSlim(
       status: tasks.status,
       tags: tasks.tags,
       category: tasks.category,
+      priority: tasks.priority,
+      estimate: tasks.estimate,
       order: tasks.order,
       sequenceNumber: tasks.sequenceNumber,
+      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
     })
     .from(tasks)
+    .leftJoin(ac, eq(ac.taskId, tasks.id))
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.order));
 
@@ -182,6 +288,9 @@ export async function getProjectTasksSlim(
     status: t.status,
     tags: t.tags,
     category: t.category,
+    priority: t.priority,
+    estimate: t.estimate,
+    assigneeCount: t.assigneeCount,
     order: t.order,
   }));
 }
@@ -333,6 +442,9 @@ export type SearchResult = {
   state: TaskState;
   tags: string[];
   category: string | null;
+  priority: Priority | null;
+  estimate: Estimate | null;
+  assigneeCount: number;
 };
 
 /** Match a full taskRef like "MYMR-83" (case-insensitive). */
@@ -380,6 +492,7 @@ export async function searchTasks(
     );
   }
 
+  const ac = assigneeCountSubquery();
   const matchingTasks = await db
     .select({
       id: tasks.id,
@@ -387,12 +500,16 @@ export async function searchTasks(
       status: tasks.status,
       tags: tasks.tags,
       category: tasks.category,
+      priority: tasks.priority,
+      estimate: tasks.estimate,
       description: tasks.description,
       acceptanceCriteria: tasks.acceptanceCriteria,
       sequenceNumber: tasks.sequenceNumber,
       order: tasks.order,
+      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
     })
     .from(tasks)
+    .leftJoin(ac, eq(ac.taskId, tasks.id))
     .where(and(...clauses));
 
   if (trimmedQuery.length > 0) {
@@ -434,6 +551,9 @@ export async function searchTasks(
     state: stateMap.get(t.id) ?? "draft",
     tags: t.tags,
     category: t.category,
+    priority: t.priority,
+    estimate: t.estimate,
+    assigneeCount: t.assigneeCount,
   }));
 }
 
@@ -501,6 +621,7 @@ export async function searchTasksPaged(
             OR (${tasks.order} = ${after.order} AND ${tasks.id} < ${after.id}))`
     : sql`TRUE`;
 
+  const ac = assigneeCountSubquery();
   const matchingTasks = await db
     .select({
       id: tasks.id,
@@ -508,12 +629,16 @@ export async function searchTasksPaged(
       status: tasks.status,
       tags: tasks.tags,
       category: tasks.category,
+      priority: tasks.priority,
+      estimate: tasks.estimate,
       description: tasks.description,
       acceptanceCriteria: tasks.acceptanceCriteria,
       sequenceNumber: tasks.sequenceNumber,
       order: tasks.order,
+      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
     })
     .from(tasks)
+    .leftJoin(ac, eq(ac.taskId, tasks.id))
     .where(and(...clauses, cursorClause))
     .orderBy(desc(tasks.order), desc(tasks.id))
     .limit(limit + 1);
@@ -538,6 +663,9 @@ export async function searchTasksPaged(
     state: stateMap.get(t.id) ?? ("draft" as const),
     tags: t.tags,
     category: t.category,
+    priority: t.priority,
+    estimate: t.estimate,
+    assigneeCount: t.assigneeCount,
   }));
 
   return { rows, nextCursor };
@@ -769,7 +897,93 @@ export async function listTasksForGraph(projectId: string) {
 // ---------------------------------------------------------------------------
 
 /** Input for createTask — sequenceNumber is always computed internally. */
-export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber">;
+export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
+  /**
+   * Optional initial assignee user ids. Each must be a member of the
+   * project's owning team; the data layer rejects non-members. Order
+   * within the array is not preserved (the junction has no ordering
+   * column).
+   */
+  assigneeIds?: string[];
+};
+
+/**
+ * Verify every supplied user id is a member of the given project's
+ * owning team. Run inside the same transaction as the assignee write
+ * so a concurrent membership revoke cannot slip past.
+ *
+ * @param tx - Drizzle transaction handle.
+ * @param projectId - UUID of the project the task belongs to.
+ * @param userIds - Caller-supplied assignee ids.
+ * @throws ForbiddenError naming the first non-member id.
+ */
+async function assertAssigneesInTeam(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  projectId: string,
+  userIds: string[],
+): Promise<void> {
+  if (userIds.length === 0) return;
+  const [proj] = await tx
+    .select({ organizationId: projects.organizationId })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!proj) throw new ProjectNotFoundError(projectId);
+  const dedup = [...new Set(userIds)];
+  const rows = await tx
+    .select({ userId: member.userId })
+    .from(member)
+    .where(
+      and(
+        eq(member.organizationId, proj.organizationId),
+        sql`${member.userId} IN ${dedup}`,
+      ),
+    );
+  const found = new Set(rows.map((r) => r.userId));
+  const missing = dedup.find((id) => !found.has(id));
+  if (missing) {
+    throw new ForbiddenError(
+      `User '${missing}' is not a member of the task's team.`,
+      "team",
+      missing,
+    );
+  }
+}
+
+/**
+ * Materialize assignee state for a task. `replace` deletes existing
+ * rows and inserts the supplied set; `append` adds the supplied ids
+ * without touching existing rows (no-op duplicates via
+ * `onConflictDoNothing`). Caller must have already verified team
+ * membership for the supplied ids.
+ *
+ * @param tx - Drizzle transaction handle.
+ * @param taskId - UUID of the task.
+ * @param incoming - Caller-supplied user ids.
+ * @param mode - `append` (default) or `replace`.
+ */
+async function setTaskAssignees(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  taskId: string,
+  incoming: string[],
+  mode: "append" | "replace",
+): Promise<void> {
+  const dedup = [...new Set(incoming)];
+  if (mode === "replace") {
+    await tx.delete(taskAssignees).where(eq(taskAssignees.taskId, taskId));
+    if (dedup.length > 0) {
+      await tx
+        .insert(taskAssignees)
+        .values(dedup.map((userId) => ({ taskId, userId })));
+    }
+    return;
+  }
+  if (dedup.length === 0) return;
+  await tx
+    .insert(taskAssignees)
+    .values(dedup.map((userId) => ({ taskId, userId })))
+    .onConflictDoNothing();
+}
 
 /**
  * Insert a new task under a project the caller has access to. The
@@ -829,14 +1043,19 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
 
   data = await formatTaskMarkdownFields(data);
 
+  // assigneeIds is not a column on `tasks`; strip before the typed insert
+  // so the row spread does not poison the values clause. The junction
+  // write happens later inside the same transaction.
+  const { assigneeIds, ...taskFields } = data;
+
   const result = await db.transaction(async (tx) => {
-    await acquireProjectLock(tx, data.projectId);
+    await acquireProjectLock(tx, taskFields.projectId);
 
     const [proj] = await tx
       .select({ identifier: projects.identifier })
       .from(projects)
-      .where(eq(projects.id, data.projectId));
-    if (!proj) throw new ProjectNotFoundError(data.projectId);
+      .where(eq(projects.id, taskFields.projectId));
+    if (!proj) throw new ProjectNotFoundError(taskFields.projectId);
 
     const [maxRow] = await tx
       .select({
@@ -844,30 +1063,35 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
         maxSeq: sql<number>`COALESCE(MAX(${tasks.sequenceNumber}), 0)`,
       })
       .from(tasks)
-      .where(eq(tasks.projectId, data.projectId));
+      .where(eq(tasks.projectId, taskFields.projectId));
 
     const sequenceNumber = (maxRow?.maxSeq ?? 0) + 1;
     const order =
-      data.order === undefined || data.order === 0
+      taskFields.order === undefined || taskFields.order === 0
         ? (maxRow?.maxOrder ?? -1) + 1
-        : data.order;
+        : taskFields.order;
 
     const [task] = await tx
       .insert(tasks)
       .values({
-        ...data,
+        ...taskFields,
         order,
         sequenceNumber,
         history: [
           makeHistoryEntry({
             type: "created",
             label: "Task created",
-            description: `Task "${data.title}" created.`,
+            description: `Task "${taskFields.title}" created.`,
             actor: "ai",
           }),
         ],
       })
       .returning();
+
+    if (assigneeIds && assigneeIds.length > 0) {
+      await assertAssigneesInTeam(tx, taskFields.projectId, assigneeIds);
+      await setTaskAssignees(tx, task.id, assigneeIds, "replace");
+    }
 
     return {
       id: task.id,
@@ -913,6 +1137,8 @@ export type TaskUpdate = {
   description?: string;
   status?: TaskStatus;
   category?: string | null;
+  priority?: Priority | null;
+  estimate?: Estimate | null;
   order?: number;
   executionRecord?: string | null;
   implementationPlan?: string | null;
@@ -920,6 +1146,7 @@ export type TaskUpdate = {
   files?: string[];
   decisions?: unknown[];
   acceptanceCriteria?: unknown[];
+  assigneeIds?: string[];
 };
 
 /**
@@ -945,6 +1172,21 @@ export async function updateTask(
   for (const key of PROTECTED_TASK_FIELDS) {
     if (key in changes) delete changes[key];
   }
+  // assigneeIds writes the junction table, not the tasks row. Pull it
+  // out so the typed `tx.update(tasks).set(...)` does not see an
+  // unknown column. Empty array in append mode is a definitional no-op
+  // (matches decisions/files merge semantics: empty incoming ↦
+  // unchanged), so normalize to `undefined` and skip both the junction
+  // write and the history-description entry below.
+  const rawAssigneeIds =
+    "assigneeIds" in changes ? (changes.assigneeIds as string[]) : undefined;
+  delete changes.assigneeIds;
+  const assigneeIds =
+    rawAssigneeIds !== undefined &&
+    rawAssigneeIds.length === 0 &&
+    !overwriteArrays
+      ? undefined
+      : rawAssigneeIds;
 
   if (Array.isArray(changes.acceptanceCriteria)) {
     changes.acceptanceCriteria = (
@@ -984,6 +1226,7 @@ export async function updateTask(
 
   changes = await formatTaskMarkdownFields(changes);
 
+  let wasNoOp = false;
   const updated = await db.transaction(async (tx) => {
     // Re-read the row under FOR UPDATE so the merge sees the committed
     // state from any concurrent updateTask. Without the lock, two callers
@@ -996,6 +1239,16 @@ export async function updateTask(
       .where(eq(tasks.id, taskId))
       .for("update");
     if (!current) throw new ForbiddenError("Forbidden", "task", taskId);
+
+    // After normalization above, an `assigneeIds: []` in default-append
+    // mode collapses to `assigneeIds === undefined`. If that was the
+    // only field on the call AND nothing else needs writing, the call
+    // is a pure no-op: skip the tasks-row bump, the empty history
+    // entry, and the downstream realtime emit.
+    if (Object.keys(changes).length === 0 && assigneeIds === undefined) {
+      wasNoOp = true;
+      return current;
+    }
 
     if (!overwriteArrays) {
       if (Array.isArray(changes.decisions)) {
@@ -1034,12 +1287,16 @@ export async function updateTask(
 
     const isStatusChange =
       "status" in changes && current.status !== changes.status;
+    const fieldList = [
+      ...Object.keys(changes),
+      ...(assigneeIds !== undefined ? ["assigneeIds"] : []),
+    ];
     const entry = makeHistoryEntry({
       type: isStatusChange ? "status_change" : "refined",
       label: isStatusChange
         ? `Status: ${current.status} → ${changes.status}`
         : "Task updated",
-      description: `Updated task fields: ${Object.keys(changes).join(", ")}.`,
+      description: `Updated task fields: ${fieldList.join(", ")}.`,
       actor: "ai",
     });
 
@@ -1052,10 +1309,20 @@ export async function updateTask(
       })
       .where(eq(tasks.id, taskId))
       .returning();
+
+    if (assigneeIds !== undefined) {
+      await assertAssigneesInTeam(tx, current.projectId, assigneeIds);
+      await setTaskAssignees(
+        tx,
+        taskId,
+        assigneeIds,
+        overwriteArrays ? "replace" : "append",
+      );
+    }
     return row;
   });
 
-  emitTaskEvent(updated.projectId, taskId);
+  if (!wasNoOp) emitTaskEvent(updated.projectId, taskId);
   return updated;
 }
 

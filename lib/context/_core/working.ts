@@ -4,7 +4,8 @@ import type { AcceptanceCriterion } from "@/lib/types";
 import { getAncestors } from "@/lib/data/traversal";
 import { getTaskEdgesDetailed } from "@/lib/data/edge";
 import { getProjectIdentifier } from "@/lib/data/project";
-import { fetchSiblingTasks } from "@/lib/data/task";
+import { fetchSiblingTasks, fetchAssigneesUnchecked } from "@/lib/data/task";
+import type { AssigneeRef } from "@/lib/data/views";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
@@ -25,6 +26,7 @@ type WorkingContext = {
     note: string;
   }[];
   siblings: { id: string; taskRef: string; title: string; status: string }[];
+  assignees: AssigneeRef[];
 };
 
 /**
@@ -45,12 +47,14 @@ export async function buildWorkingContext(
   const task = await assertTaskAccess(taskId, ctx);
   const projectId = task.projectId;
 
-  const [identifier, ancestors, detailedEdges, siblings] = await Promise.all([
-    getProjectIdentifier(projectId),
-    getAncestors(taskId),
-    getTaskEdgesDetailed(ctx, taskId),
-    fetchSiblingTasks(projectId, taskId),
-  ]);
+  const [identifier, ancestors, detailedEdges, siblings, assignees] =
+    await Promise.all([
+      getProjectIdentifier(projectId),
+      getAncestors(taskId),
+      getTaskEdgesDetailed(ctx, taskId),
+      fetchSiblingTasks(projectId, taskId),
+      fetchAssigneesUnchecked(taskId),
+    ]);
 
   if (!identifier) {
     console.error("Task has no joinable project", {
@@ -78,6 +82,7 @@ export async function buildWorkingContext(
     ancestors,
     edges,
     siblings,
+    assignees,
   };
 }
 
@@ -100,6 +105,9 @@ export async function formatWorkingContext(
 
   if (description) parts.push(`\n## Description\n${description}`);
 
+  const meta = formatMetaSection(node, ctx.assignees);
+  if (meta) parts.push(meta);
+
   const tags = formatTagsSection(node);
   if (tags) parts.push(tags);
 
@@ -119,6 +127,32 @@ export async function formatWorkingContext(
   if (siblings) parts.push(siblings);
 
   return parts.join("\n");
+}
+
+/**
+ * Format the meta section: priority, estimate, assignees. Each line is
+ * suppressed when the corresponding field is unset, so a task with no
+ * meta drops the section entirely.
+ *
+ * @param node - Raw task row.
+ * @param assignees - Resolved assignee projection.
+ * @returns Formatted meta section or empty string.
+ */
+function formatMetaSection(
+  node: Record<string, unknown>,
+  assignees: AssigneeRef[],
+): string {
+  const lines: string[] = [];
+  const priority = (node.priority as string | null) ?? null;
+  const estimate = (node.estimate as number | null) ?? null;
+  if (priority) lines.push(`- Priority: \`${priority}\``);
+  if (estimate) lines.push(`- Estimate: ${estimate} pts`);
+  if (assignees.length > 0) {
+    const names = assignees.map((a) => a.name).join(", ");
+    lines.push(`- Assignees: ${names}`);
+  }
+  if (lines.length === 0) return "";
+  return "\n## Meta\n" + lines.join("\n");
 }
 
 /**

@@ -328,7 +328,7 @@ This is the single most reliable defense against compaction. If the conversation
 - **files**: globbed from the subsystem directory, repo-relative. **Must be paths that actually exist** (you will verify in Phase 5).
 - **acceptanceCriteria**: 2 to 4 binary criteria, each marked `{text, checked: true}` since shipped.
 - **category**: one of the project categories.
-- **tags**: all four dimensions. Default priority for shipped work is `core` unless a critical capability is partial (then `release-blocker`).
+- **tags**: all three dimensions (work-type, cross-cutting, tech). Set `priority` as a first-class field; default for shipped work is `core` unless a critical capability is partial (then `release-blocker`).
 - **status** = `'done'`.
 - **DO NOT pass `overwriteArrays=true`**. Append is the safe default. Onboarding is creating tasks, not updating existing ones; overwrite is irrelevant here.
 
@@ -338,7 +338,7 @@ This is the single most reliable defense against compaction. If the conversation
 - **description**: 2 to 4 sentences. WHAT needs building, WHY it is needed, HOW it fits the existing architecture. Same onboarding rule as above: written as if planning the work fresh.
 - **acceptanceCriteria**: 2 to 4 binary, testable criteria, marked `{text, checked: false}`.
 - **category**: one of the project categories.
-- **tags**: all four dimensions.
+- **tags**: all three dimensions (work-type, cross-cutting, tech). Set `priority` as a first-class field.
 - **status** = `'draft'`.
 
 **Draft tasks MUST NOT have an `executionRecord`.** That field implies the task shipped. Leave it out.
@@ -370,7 +370,7 @@ After every 5 done-task creates, pause and self-audit. Onboarding is higher-stak
    - decisions: grounded in manifest, README, or commit-keyword grep? If ungrounded, REMOVE the decision (better short than fabricated).
    - files: paths exist (you will run the Iron Law check in Phase 5, but a quick spot-check now catches obvious drift)?
    - ACs: 2 to 4 binary, all checked since shipped?
-   - Tags: all four dimensions?
+   - Tags: all three dimensions (work-type, cross-cutting, tech)? Priority field set?
 3. Fix any failures via `mymir_task action='update'` BEFORE creating more tasks.
 
 Catching a fabricated `executionRecord` at task 5 is a 30-second fix. Catching it at task 25 means a Phase 5 Iron Law check that fails on 5 tasks, plus rewrites.
@@ -411,7 +411,7 @@ If any named symbol is not found in the repo, fix the executionRecord (remove th
 - [ ] **Parallelism**: not everything is a single chain.
 - [ ] **Criteria quality**: every AC is binary; every task has 2 to 4 ACs (never 1).
 - [ ] **Description depth**: every description is 2 to 4 sentences (rewrite single-sentence descriptions).
-- [ ] **Tag completeness**: every task has all four tag dimensions.
+- [ ] **Tag completeness**: every task has all three tag dimensions (work-type, cross-cutting, tech) and a `priority` field set.
 - [ ] **Category sanity**: 4 to 8 categories, all architectural / product-area, none from the forbidden list.
 - [ ] **Grounding**: Iron Law check above passed (no `MISSING:` paths, named symbols verified).
 

@@ -24,6 +24,7 @@ import {
   deleteTaskPreview,
   searchTasks,
   getProjectTasksSlim,
+  fetchAssigneesUnchecked,
 } from "@/lib/data/task";
 import {
   createEdge,
@@ -71,11 +72,11 @@ import {
   formatPlannableTasks,
 } from "./format-responses";
 import {
-  PRIORITY_TAGS,
   WORK_TYPE_TAGS,
   findVariant,
   normalizeTags,
 } from "./tag-similarity";
+import type { Priority, Estimate } from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   ForbiddenError,
@@ -105,16 +106,16 @@ const KEBAB_CASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /**
  * Build hints for tag-taxonomy violations. Kebab-case is structural and
- * universal. The work-type and priority dimension checks are heuristic:
- * the server matches against the canonical English closed vocabulary
- * documented in `references/artifacts.md` §2, but Mymir runs across
- * projects authored in any language. When the canonical match misses,
- * the hint refers the agent to the reference rather than enumerating
- * English values inline, so localized tag sets are not penalized.
+ * universal. The work-type dimension check is heuristic: the server
+ * matches against the canonical English closed vocabulary documented in
+ * `references/artifacts.md` §2, but Mymir runs across projects authored
+ * in any language. When the canonical match misses, the hint refers the
+ * agent to the reference rather than enumerating English values inline,
+ * so localized tag sets are not penalized.
  *
- * Open-vocabulary dimensions (cross-cutting concern, tech) cannot be
- * checked server-side without false positives and are left to agent
- * discipline.
+ * Open-vocabulary dimensions (cross-cutting concern,
+ * tech) cannot be checked server-side without false positives and are
+ * left to agent discipline.
  *
  * @param tags - Proposed tag list (already normalized for whitespace).
  * @returns Hint strings; empty array when the tag set passes all checks.
@@ -130,14 +131,9 @@ function tagTaxonomyHints(tags: string[]): string[] {
     );
   }
   const lowered = tags.map((t) => t.toLowerCase());
-  const missing: string[] = [];
-  if (!lowered.some((t) => WORK_TYPE_TAGS.has(t))) missing.push("work-type");
-  if (!lowered.some((t) => PRIORITY_TAGS.has(t))) missing.push("priority");
-  if (missing.length > 0) {
+  if (!lowered.some((t) => WORK_TYPE_TAGS.has(t))) {
     hints.push(
-      `Could not detect ${missing.join(" + ")} dimension tag${
-        missing.length > 1 ? "s" : ""
-      } from the canonical vocabulary. Every task carries all four dimensions (work-type, cross-cutting concern, tech, priority); see artifacts §2 for the canonical closed-vocabulary terms. Projects authored in other languages may use equivalent localized tags — in that case this hint is heuristic, verify the dimensions are present in your project's idiom and ignore.`,
+      `Could not detect work-type dimension tag from the canonical vocabulary. Every task carries three tag dimensions (work-type, cross-cutting concern, tech) plus the priority field; see artifacts §2 for the canonical closed-vocabulary terms. Projects authored in other languages may use equivalent localized tags; in that case this hint is heuristic, verify the dimension is present in your project's idiom and ignore.`,
     );
   }
   return hints;
@@ -263,11 +259,13 @@ function overwriteShrinkHints(
     acceptanceCriteria?: unknown[];
     decisions?: unknown[];
     files?: string[];
+    assigneeIds?: string[];
   },
   prior: {
     acceptanceCriteria?: unknown[] | null;
     decisions?: unknown[] | null;
     files?: string[] | null;
+    assigneeIds?: string[] | null;
   },
 ): string[] {
   const hints: string[] = [];
@@ -288,6 +286,7 @@ function overwriteShrinkHints(
   check("acceptanceCriteria", payload.acceptanceCriteria, prior.acceptanceCriteria);
   check("decisions", payload.decisions, prior.decisions);
   check("files", payload.files, prior.files);
+  check("assigneeIds", payload.assigneeIds, prior.assigneeIds);
   return hints;
 }
 
@@ -595,8 +594,8 @@ export const DESCRIPTIONS = {
     "update=title, description, status, categories, or identifier. Renaming identifier cascades every taskRef and breaks external references (PR titles, docs, commits).",
   mymir_task:
     "Create, update, or delete tasks. Lifecycle: draft → planned → in_progress → done. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
-    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, all four tag dimensions (work-type, cross-cutting, tech, priority), one project category. After create: search precedents/coordinators by verb+noun+surface, wire mymir_edge, verify with mymir_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
-    "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files) APPEND by default; overwriteArrays=true REPLACES them. Destructive, NO undo (history is an audit log); confirm with user first. " +
+    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, three tag dimensions (work-type, cross-cutting, tech), one project category. priority, estimate, and assigneeIds are first-class fields, not tags: priority (release-blocker / core / normal / backlog), estimate (Fibonacci story points 1/2/3/5/8/13), assigneeIds (array of team-member user UUIDs). After create: search precedents/coordinators by verb+noun+surface, wire mymir_edge, verify with mymir_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
+    "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files, assigneeIds) APPEND by default; overwriteArrays=true REPLACES them. Destructive, NO undo (history is an audit log); confirm with user first. " +
     "delete: preview=true (default) shows impact; preview=false executes. Prefer status='cancelled' for abandoned scope so the rationale is preserved. " +
     "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run mymir_analyze type='downstream' to propagate.",
   mymir_edge:
@@ -660,6 +659,9 @@ export type TaskParams = {
   decisions?: unknown[];
   tags?: string[];
   category?: string;
+  priority?: Priority;
+  estimate?: Estimate;
+  assigneeIds?: string[];
   files?: string[];
   implementationPlan?: string;
   executionRecord?: string;
@@ -833,6 +835,9 @@ export async function handleTask(
           }[],
           tags: p.tags,
           category: p.category,
+          priority: p.priority,
+          estimate: p.estimate,
+          assigneeIds: p.assigneeIds,
           files: p.files,
           implementationPlan: p.implementationPlan,
           executionRecord: p.executionRecord,
@@ -920,12 +925,15 @@ export async function handleTask(
           p.decisions === undefined &&
           p.tags === undefined &&
           p.category === undefined &&
+          p.priority === undefined &&
+          p.estimate === undefined &&
+          p.assigneeIds === undefined &&
           p.files === undefined &&
           p.implementationPlan === undefined &&
           p.executionRecord === undefined
         ) {
           return fail(
-            "update requires at least one of: title, description, status, acceptanceCriteria, decisions, tags, category, files, implementationPlan, executionRecord.",
+            "update requires at least one of: title, description, status, acceptanceCriteria, decisions, tags, category, priority, estimate, assigneeIds, files, implementationPlan, executionRecord.",
           );
         }
         let preExistingTags: string[] = [];
@@ -933,11 +941,13 @@ export async function handleTask(
         let priorAcceptanceCriteria: unknown[] | null | undefined;
         let priorDecisions: unknown[] | null | undefined;
         let priorFiles: string[] | null | undefined;
+        let priorAssigneeIds: string[] | null | undefined;
         const willOverwriteShrinkable =
           !!p.overwriteArrays &&
           (p.acceptanceCriteria !== undefined ||
             p.decisions !== undefined ||
-            p.files !== undefined);
+            p.files !== undefined ||
+            p.assigneeIds !== undefined);
         const needsExisting =
           (p.tags !== undefined && p.tags.length > 0) ||
           p.status !== undefined ||
@@ -954,6 +964,11 @@ export async function handleTask(
             priorAcceptanceCriteria = existing.acceptanceCriteria as unknown[] | null;
             priorDecisions = existing.decisions as unknown[] | null;
             priorFiles = existing.files as string[] | null;
+            if (p.assigneeIds !== undefined && !!p.overwriteArrays) {
+              priorAssigneeIds = (
+                await fetchAssigneesUnchecked(p.taskId)
+              ).map((a) => a.userId);
+            }
           }
         }
         const changes: TaskUpdate = {};
@@ -965,6 +980,9 @@ export async function handleTask(
         if (p.decisions !== undefined) changes.decisions = p.decisions;
         if (p.tags !== undefined) changes.tags = p.tags;
         if (p.category !== undefined) changes.category = p.category;
+        if (p.priority !== undefined) changes.priority = p.priority;
+        if (p.estimate !== undefined) changes.estimate = p.estimate;
+        if (p.assigneeIds !== undefined) changes.assigneeIds = p.assigneeIds;
         if (p.files !== undefined) changes.files = p.files;
         if (p.implementationPlan !== undefined)
           changes.implementationPlan = p.implementationPlan;
@@ -981,11 +999,13 @@ export async function handleTask(
                 acceptanceCriteria: p.acceptanceCriteria as unknown[] | undefined,
                 decisions: p.decisions as unknown[] | undefined,
                 files: p.files,
+                assigneeIds: p.assigneeIds,
               },
               {
                 acceptanceCriteria: priorAcceptanceCriteria,
                 decisions: priorDecisions,
                 files: priorFiles,
+                assigneeIds: priorAssigneeIds,
               },
             ),
           );

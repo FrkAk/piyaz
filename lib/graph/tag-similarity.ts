@@ -17,26 +17,15 @@ export const WORK_TYPE_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Closed-vocabulary priority tags (one per task) per `artifacts.md` §2.
- */
-export const PRIORITY_TAGS: ReadonlySet<string> = new Set([
-  "release-blocker",
-  "core",
-  "normal",
-  "backlog",
-]);
-
-/**
  * Identify the closed-vocabulary dimension a tag belongs to, if any.
  * Returns null for open-vocabulary dimensions (cross-cutting concern, tech).
  *
  * @param tag - Lowercased tag to classify.
- * @returns "work-type", "priority", or null.
+ * @returns "work-type" or null.
  */
-function closedDimension(tag: string): "work-type" | "priority" | null {
+function closedDimension(tag: string): "work-type" | null {
   const lower = tag.toLowerCase();
   if (WORK_TYPE_TAGS.has(lower)) return "work-type";
-  if (PRIORITY_TAGS.has(lower)) return "priority";
   return null;
 }
 

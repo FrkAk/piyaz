@@ -277,7 +277,10 @@ After every 5 to 10 task creates, update `.mymir/decompose-<projectIdentifier>.m
    - **description**: 2 to 4 sentences. Cover what + why + how it fits. Per artifacts §1, include a solution sketch if you have one.
    - **acceptanceCriteria**: 2 to 4 binary criteria. A reviewer answers YES or NO without ambiguity.
    - **category**: one of the project categories.
-   - **tags**: all four dimensions: 1 work type, ≥1 cross-cutting concern, ≤2 tech, 1 priority. Artifacts §2.
+   - **tags**: three dimensions: 1 work type, ≥1 cross-cutting concern, ≤2 tech. Artifacts §2.
+   - **priority**: one of `release-blocker`, `core`, `normal`, `backlog`. Pick deliberately; the dimension carries no signal when everything is `core`.
+   - **estimate** (optional): Fibonacci story points (`1`, `2`, `3`, `5`, `8`, `13`). Sets scope expectation for the planner. Tasks larger than `13` should be split (§5).
+   - **assigneeIds** (optional): array of team-member user UUIDs. Server rejects non-members.
    - **files**: leave empty `[]`. Drafts predate implementation; the agent shipping the task fills `files` at `done`. Speculation here violates artifacts §1.
    - **status** = `'draft'`. The manage agent or coding agent promotes to `'planned'` after writing the implementation plan.
    - **DO NOT pass `overwriteArrays=true`**. Append is the safe default. Overwrite is destructive and only relevant on `update`, not `create`.
@@ -287,7 +290,7 @@ After every 5 to 10 task creates, update `.mymir/decompose-<projectIdentifier>.m
 - [ ] Title is verb plus noun and specific (not "Auth", not "User stuff")
 - [ ] Description is 2 to 4 sentences
 - [ ] AC list has 2 to 4 items, each binary
-- [ ] All four tag dimensions present
+- [ ] All three tag dimensions present (work-type, cross-cutting, tech) and a `priority` field is set
 - [ ] Category matches one of the project categories (no `requirements`, `planning`, `bugs`, etc)
 - [ ] Granularity is 1 to 4 hours of work
 - [ ] Title is not in the known-titles set (idempotency, resilience)
@@ -302,7 +305,7 @@ After every 10 task creates, pause and self-audit. Quality decay is the second-m
 2. Pick the last 3 tasks you created. For each, score against the bar above:
    - Description: 2 to 4 sentences? Single-sentence is a REJECT; rewrite via `mymir_task action='update'`.
    - ACs: 2 to 4 binary? Single or vague ("works correctly", "is complete") is a REJECT; rewrite.
-   - Tags: all four dimensions? Missing dimensions is a REJECT; fix.
+   - Tags: all three dimensions present (work-type, cross-cutting, tech)? Missing dimensions is a REJECT; fix. Priority field set? Missing priority is a REJECT; fix.
    - Category: matches a project category, not a forbidden one (`requirements`, `bugs`, etc)? Wrong is a REJECT; fix.
 3. Only after the audit passes, continue creating tasks.
 
@@ -422,7 +425,7 @@ Run through this checklist mentally. If anything fails, fix it (update or delete
 - [ ] **Parallelism**: not everything is a single chain (suggests false dependencies if so).
 - [ ] **Criteria quality**: every AC is binary; every task has 2 to 4 ACs (never 1).
 - [ ] **Description depth**: every description is 2 to 4 sentences (rewrite single-sentence descriptions).
-- [ ] **Tag completeness**: every task has all four tag dimensions.
+- [ ] **Tag completeness**: every task has all three tag dimensions (work-type, cross-cutting, tech) and a `priority` field set.
 - [ ] **Category sanity**: 4 to 8 categories, all architectural / product-area, none from the forbidden list.
 
 Then `mymir_project action='update' status='active'`.

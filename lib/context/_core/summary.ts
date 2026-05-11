@@ -1,7 +1,14 @@
 import "server-only";
 
-import type { EdgeType, AcceptanceCriterion, Decision } from "@/lib/types";
+import type {
+  EdgeType,
+  AcceptanceCriterion,
+  Decision,
+  Priority,
+  Estimate,
+} from "@/lib/types";
 import { getTaskEdgesDetailed } from "@/lib/data/edge";
+import { fetchAssigneesUnchecked } from "@/lib/data/task";
 import { getProjectHeader } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import type { AuthContext } from "@/lib/auth/context";
@@ -25,12 +32,15 @@ export type SummaryContext = {
     title: string;
     status: string;
     description: string;
+    priority: Priority | null;
+    estimate: Estimate | null;
   };
   parent: { title: string; type: "project" } | null;
   edgeCount: Record<EdgeType, number>;
   edges: EdgeDetail[];
   acceptanceCriteriaCount: number;
   decisionsCount: number;
+  assigneeCount: number;
   hasImplementationPlan: boolean;
 };
 
@@ -54,7 +64,10 @@ export async function buildSummaryContext(
     });
   }
 
-  const detailedEdges = await getTaskEdgesDetailed(ctx, taskId);
+  const [detailedEdges, assignees] = await Promise.all([
+    getTaskEdgesDetailed(ctx, taskId),
+    fetchAssigneesUnchecked(taskId),
+  ]);
 
   const edges: EdgeDetail[] = detailedEdges.map((e) => ({
     edgeType: e.edgeType,
@@ -76,6 +89,8 @@ export async function buildSummaryContext(
       title: task.title,
       status: task.status,
       description: task.description,
+      priority: task.priority,
+      estimate: task.estimate,
     },
     parent: project ? { title: project.title, type: "project" } : null,
     edgeCount,
@@ -83,6 +98,7 @@ export async function buildSummaryContext(
     acceptanceCriteriaCount: (task.acceptanceCriteria as AcceptanceCriterion[])
       .length,
     decisionsCount: (task.decisions as Decision[]).length,
+    assigneeCount: assignees.length,
     hasImplementationPlan: !!task.implementationPlan,
   };
 }

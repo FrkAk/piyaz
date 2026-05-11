@@ -42,6 +42,8 @@ export async function buildPlanningContext(
     });
   }
   const tags = (task.tags as string[] | null) ?? [];
+  const priority = task.priority as string | null;
+  const estimate = task.estimate as number | null;
   const taskRef = project
     ? composeTaskRef(asIdentifier(project.identifier), task.sequenceNumber)
     : "";
@@ -52,6 +54,8 @@ export async function buildPlanningContext(
   if (tags.length > 0) {
     headerLines.push(`Tags: ${tags.map((t) => `\`${t}\``).join(", ")}`);
   }
+  if (priority) headerLines.push(`Priority: \`${priority}\``);
+  if (estimate) headerLines.push(`Estimate: ${estimate} pts`);
 
   const parts: string[] = [headerLines.join("\n")];
 

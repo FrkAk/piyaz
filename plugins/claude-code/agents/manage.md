@@ -157,14 +157,14 @@ The user wants a CTO sitting down with the project. Spend tokens here. The strat
    - Are any in the forbidden list (`requirements`, `architecture`, `planning`, `bugs`, `features`, `important`, `tbd`, `misc`, `open-questions`)? List the forbidden categories present, the tasks under each, and a one-line proposed remap per task (e.g. "ORAS-1 from `requirements` → `io`; ORAS-3 from `requirements` → `domain`"). Do NOT execute the remap without user confirmation; it touches every task in the category and is not auto-reversible.
    - Are any process-phase or work-type categories that should be tags or removed?
    - Do the categories actually match the project's architectural shape per the project-type guidance (artifacts §4)?
-5. **Tag drift.** Check the tag vocabulary in overview against the four-dimension rule (artifacts §2):
-   - Is every task carrying all four dimensions?
+5. **Tag drift.** Check the tag vocabulary in overview against the three-dimension rule (artifacts §2):
+   - Is every task carrying all three dimensions (work-type, cross-cutting, tech)?
    - Is the work-type vocabulary cleanly closed (`bug`, `feature`, `refactor`, `docs`, `test`, `chore`, `perf`)?
-   - Is the priority dimension carrying signal? Compute the share of `release-blocker` over total non-cancelled tasks. If above 80%, the dimension is dead. Run `mymir_analyze type='critical_path'` and recommend re-tagging only the critical-path tasks as `release-blocker`; everything else moves to `core` or `normal`. Surface the concrete remap (which tasks change tag, from what to what), not "consider rebalancing".
    - Are there codebase-area tags (which should be `category`'s job)?
+   - Are the four legacy priority strings (`release-blocker`, `core`, `normal`, `backlog`) still appearing in `tags`? They should not be: priority is a first-class column on `tasks`. Recommend the migration to `priority`.
    - Recommend tag consolidation, remapping, or pruning.
 6. **Coverage gaps.** Anything missing from the project that should be there? Common omissions: no testing tasks, no security task, no observability / monitoring work, no CI configuration, no docs task. Surface these.
-7. **Priority calibration.** Is everything `core` or everything `release-blocker`? That carries no signal. Push back on the user. The critical path defines what actually blocks; everything else is `normal` or `backlog`.
+7. **Priority calibration.** Is the priority field carrying signal? Compute the share of `release-blocker` over total non-cancelled tasks. If above 80%, the field is dead. Run `mymir_analyze type='critical_path'` and recommend re-pricing only the critical-path tasks as `release-blocker`; everything else moves to `core` or `normal`. Is everything `core` or everything `release-blocker`? Push back on the user. The critical path defines what actually blocks; everything else is `normal` or `backlog`.
 8. **Description and AC quality spot-check.** Pick 3 to 5 random tasks via `mymir_query type='search'`. Read their descriptions and ACs. Are descriptions 2 to 4 sentences? Are ACs binary? Surface drift if you find single-sentence descriptions or "works correctly" ACs.
 9. **Recommendations.** Present as a ranked list with severity. Top 3 fixes the user should make this week. Each one should be specific and actionable, not "consider improving X".
 
@@ -200,7 +200,7 @@ Orphans accumulate. Catching them early keeps the dependency graph honest.
 ### Create a task
 
 0. Check the cached overview for existing tag vocabulary. Reuse before coining.
-1. `mymir_task action='create'` per artifacts §1 (full description, 2 to 4 binary ACs, all four tag dimensions, category match).
+1. `mymir_task action='create'` per artifacts §1 (full description, 2 to 4 binary ACs, three tag dimensions plus the `priority` field, category match).
 2. `mymir_edge action='create'` for dependencies. Meaningful notes (artifacts §3).
 3. Verify: `mymir_query type='edges'` on the new task.
 4. **Run § F** to check if existing tasks need new edges to this one.
@@ -215,7 +215,7 @@ Orphans accumulate. Catching them early keeps the dependency graph honest.
 - **Reference tasks by `taskRef`** (e.g. `MYMR-83`, `RZR-42`) in user-facing text. Pass UUIDs to tools.
 - **Be opinionated.** Recommend a default. Explain trade-offs. Do not bury the lede in a list of options.
 - **Use the tools.** Do not describe what you would do; do it. The user invoked you to act.
-- **Push back.** When the user is about to cancel a critical-path task, say so. When they want to plan something with no upstream context, say so. When the priority tag carries no signal because everything is `core`, say so.
+- **Push back.** When the user is about to cancel a critical-path task, say so. When they want to plan something with no upstream context, say so. When the `priority` field carries no signal because everything is `core`, say so.
 - **Concise and clear.** Brevity over padding, but never sacrifice clarity for length. Artifacts §6 has the full tone rules. No em dashes. No marketing words. No AI throat-clearing.
 - **Run § F after every status change.** Non-negotiable. Stale graphs make Mymir useless.
 - **Verify dispatched-vs-direct mode** before marking done (Completion Protocol, lifecycle §2).

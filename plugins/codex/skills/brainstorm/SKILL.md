@@ -97,14 +97,14 @@ Solid answers to four are better than shallow answers to all six.
 | 2 | Key features | 3 to 5 capabilities, each concrete enough to test. Must-have vs nice-to-have, opinionated. |
 | 3 | User flow | Walk through the primary flow step by step (not edge cases). What the user sees first; what they get back. A designer could sketch wireframes from this. |
 | 4 | Technical direction | Stack, key data entities and relationships, external integrations. Push back on weak choices. |
-| 5 | Phasing and priorities | Full vision, not cut down. Priority tiers (`release-blocker`, `core`, `normal`, `backlog`) that decompose will translate to tags. |
+| 5 | Phasing and priorities | Full vision, not cut down. Priority tiers (`release-blocker`, `core`, `normal`, `backlog`) that decompose will set on each task's `priority` field. |
 | 6 | Naming | 2 or 3 candidates after you understand the project, not before. |
 
 ### Adapt to the user
 
 - **Detailed spec dump:** parse it, list what is covered and what is missing, ask only about the gaps. Do not re-ask answered questions. Challenge anything contradictory or unrealistic.
 - **Vague answers:** ask focused questions with concrete examples. "It should be easy to use" becomes "Walk me through the first 30 seconds the user spends in the app".
-- **Ambitious vision:** embrace it. Plan the full project. Help them see natural phases (foundations first, core features next, polish last). Decompose will tag tasks by priority so the build order is explicit.
+- **Ambitious vision:** embrace it. Plan the full project. Help them see natural phases (foundations first, core features next, polish last). Decompose will set the `priority` field on each task so the build order is explicit.
 - **User is stuck:** offer 2 or 3 named approaches with trade-offs. Lead with your recommendation.
 
 ### One question at a time
@@ -166,7 +166,7 @@ When all six topics are `✓` (or four are `✓` and two are explicitly deferred
 
 **Target user:** <specific user, not "everyone">
 
-**Features (priority-tagged):**
+**Features (priority-marked):**
 - `release-blocker` <feature>: <one-line scope>
 - `core` <feature>: <one-line scope>
 - `normal` <feature>: <one-line scope>

@@ -175,29 +175,32 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ---
 
-## 2. Tag dimensions (mandatory four)
+## 2. Tag dimensions and first-class fields
 
-Every task, in every status, must carry tags across all four dimensions. Reuse existing tags from `mymir_query type='overview'` before coining new ones.
+Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `mymir_query type='overview'` before coining new ones.
 
 | Dimension | Count | Vocabulary |
 |---|---|---|
 | **Work type** | exactly 1 | `bug`, `feature`, `refactor`, `docs`, `test`, `chore`, `perf` |
 | **Cross-cutting concern** | ≥1 | quality attribute (`security`, `a11y`, `dx`, `perf`, `reliability`, `observability`, `i18n`, `compliance`, `safety`) or feature cluster spanning multiple categories (web: `onboarding-flow`, `live-replay`; aerospace: `flight-control`, `mission-planning`; agentic: `agent-loop`, `eval-harness`; ML: `inference-pipeline`, `data-drift`; financial: `risk-engine`, `pricing-model`) |
 | **Tech** | at most 2 | most important stack pieces the task touches; pull from manifest deps |
-| **Priority** | exactly 1 | `release-blocker`, `core`, `normal`, `backlog` |
+
+### First-class fields (priority, estimate, assignees)
+
+These are top-level columns on every task, set via `mymir_task` parameters of the same name. They are NOT tags.
+
+- **`priority`** (one of `release-blocker`, `core`, `normal`, `backlog`). Required-on-create-by-convention: pick deliberately. Defaults: onboarding (shipped features) lands at `core`; decompose picks per task and avoids `core` everywhere or `release-blocker` everywhere (the dimension carries no signal then). A 30-task project usually has 3 to 6 release-blockers and the rest split between `core`, `normal`, and `backlog`.
+- **`estimate`** (Fibonacci story points: `1`, `2`, `3`, `5`, `8`, `13`). Optional. `1` is trivial, `2` and `3` are routine, `5` is nontrivial, `8` and `13` are risky or multi-day. If a task feels larger than `13`, split it (§5).
+- **`assigneeIds`** (array of team-member user UUIDs). Optional. Declares ownership / intent, not concurrent execution; the single-worker `in_progress` invariant still holds. Each id must be a member of the project's owning team (the server rejects non-members at write time).
 
 **Do NOT tag:**
 
+- Priority: that is the `priority` field's job; the four old priority strings (`release-blocker`, `core`, `normal`, `backlog`) are no longer accepted as tags.
 - Codebase area: that's `category`'s job. **Test: would this name plausibly be a category in some other project shape?** `render-loop`, `effect-system`, `auth`, `payments`, `inference`, `marts`, `flight-control`, `hal-drivers` all answer YES. They're subsystems / product areas, even if your project's category list happens to omit them. Tags are axes the project does not shape itself around: quality attributes (`security`, `a11y`, `perf`, `reliability`, `observability`, `dx`, `compliance`, `safety`, `i18n`) and multi-category feature clusters (`onboarding-flow`, `agent-loop`, `mission-planning`, `live-replay`). If a candidate tag names a subsystem, surface it as a category proposal at the gate or use the existing category. Coining an area-shaped tag because the categories lack a good slot is a category-list bug, not a tag.
 - Task status: that is `status`'s job.
 - Generic adjectives like "important", "main", "primary".
 
-**Honoring user-specified tags:** if the user explicitly tagged something, preserve their tags. Add the missing dimensions if any of the four are absent.
-
-**Priority defaults:**
-
-- Onboarding (shipped features): default to `core`. Use `release-blocker` only when a critical capability is partial.
-- Decompose (new tasks): pick deliberately. If you tag everything `core` or everything `release-blocker`, the dimension carries no signal. A 30-task project usually has 3 to 6 release-blockers, the rest split between `core`, `normal`, and `backlog`.
+**Honoring user-specified tags:** if the user explicitly tagged something, preserve their tags. Add the missing dimensions if any of the three are absent.
 
 **Tech tag examples by domain:**
 
@@ -296,7 +299,7 @@ You are choosing the architectural layers / product areas / subsystems of a sing
 
 - `requirements`, `architecture`, `planning`, `review`, `refinement`: process phases, not subsystems.
 - `bugs`, `features`, `improvements`: work types. Use the `tags` work-type dimension.
-- `important`, `critical`, `priority`: use priority tags.
+- `important`, `critical`, `priority`: use the `priority` field.
 - `frontend-work`, `backend-stuff`: drop the suffix.
 - `open-questions`, `tbd`, `misc`: resolve them with proper tasks, do not give them a drawer.
 

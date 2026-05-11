@@ -107,9 +107,12 @@ test("getTaskSlim returns the slim shape", async () => {
   const t = await getTaskSlim(ctx, created.id);
 
   expect(Object.keys(t).sort()).toEqual([
+    "assigneeCount",
     "category",
+    "estimate",
     "id",
     "order",
+    "priority",
     "status",
     "tags",
     "taskRef",
@@ -153,4 +156,92 @@ test("deleteTask keeps the conditional-GET validator monotonic", async () => {
   const after = await getProjectMaxUpdatedAt(ctx, f.projectId);
 
   expect(after.getTime()).toBeGreaterThanOrEqual(before.getTime());
+});
+
+test("createTask with assigneeIds rejects non-team-member users", async () => {
+  const f = await seedUserOrgProject("assignee-reject");
+  const ctx = makeAuthContext(f.userId);
+
+  // A user who exists but is NOT a member of f's organization.
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  let strangerId: string;
+  try {
+    const [u] = await sqlc<{ id: string }[]>`
+      INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      VALUES ('Stranger', 'stranger@test.local', true, now())
+      RETURNING id
+    `;
+    strangerId = u.id;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  await expect(
+    createTask(ctx, {
+      projectId: f.projectId,
+      title: "T",
+      assigneeIds: [strangerId],
+    }),
+  ).rejects.toThrow(/not a member/);
+});
+
+test("updateTask appends assigneeIds by default and replaces with overwriteArrays", async () => {
+  const f = await seedUserOrgProject("assignee-modes");
+  const ctx = makeAuthContext(f.userId);
+
+  // Add a second member to the same org.
+  const sqlc = postgres(getConnectionString(), { max: 1 });
+  let secondId: string;
+  try {
+    const [u] = await sqlc<{ id: string }[]>`
+      INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      VALUES ('Second', 'second@test.local', true, now())
+      RETURNING id
+    `;
+    secondId = u.id;
+    await sqlc`
+      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      VALUES (${f.organizationId}, ${secondId}, 'member', now())
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    assigneeIds: [f.userId],
+  });
+
+  // Default append: adding `secondId` keeps `f.userId`.
+  await updateTask(ctx, task.id, { assigneeIds: [secondId] });
+  let full = await getTaskFull(ctx, task.id);
+  let ids = full.assignees.map((a) => a.userId).sort();
+  expect(ids).toEqual([f.userId, secondId].sort());
+
+  // overwriteArrays=true REPLACES.
+  await updateTask(ctx, task.id, { assigneeIds: [secondId] }, true);
+  full = await getTaskFull(ctx, task.id);
+  ids = full.assignees.map((a) => a.userId);
+  expect(ids).toEqual([secondId]);
+
+  // overwriteArrays=true with empty array clears all.
+  await updateTask(ctx, task.id, { assigneeIds: [] }, true);
+  full = await getTaskFull(ctx, task.id);
+  expect(full.assignees).toEqual([]);
+});
+
+test("createTask with priority and estimate persists both fields", async () => {
+  const f = await seedUserOrgProject("priority-estimate");
+  const ctx = makeAuthContext(f.userId);
+
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    priority: "release-blocker",
+    estimate: 8,
+  });
+  const full = await getTaskFull(ctx, task.id);
+  expect(full.priority).toBe("release-blocker");
+  expect(full.estimate).toBe(8);
 });

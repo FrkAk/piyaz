@@ -159,7 +159,7 @@ The audit:
 2. Pick the last 3 tasks you created. For each, score:
    - Description: 2 to 4 sentences? If single-sentence, REWRITE.
    - ACs: 2 to 4 binary criteria? If single or vague, REWRITE.
-   - Tags: all four dimensions present? If any missing, FIX.
+   - Tags: all three dimensions (work-type, cross-cutting, tech) present? If any missing, FIX. Priority lives in the `priority` field, not in `tags`.
    - Category: matches a project category, not a forbidden one? If wrong, FIX.
 3. If any of those need fixing, run `mymir_task action='update'` BEFORE creating more.
 
@@ -209,7 +209,7 @@ Some Mymir conventions are validated by the server; others depend on agent disci
 
 **Agent-enforced** (no server safety net; quality decay risk):
 
-- Tag taxonomy: kebab-case, all four dimensions present, no codebase-area tags.
+- Tag taxonomy: kebab-case, all three dimensions (work-type, cross-cutting, tech) present, no codebase-area tags, no priority strings (priority lives in the `priority` field).
 - Description length / quality: 2 to 4 sentences, no single-sentence descriptions.
 - Acceptance criteria: 2 to 4 binary items, no "works correctly" filler.
 - Edge note quality: substantive, no "needed" / "depends" placeholders.

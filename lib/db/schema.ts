@@ -8,8 +8,9 @@ import {
   index,
   unique,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
-import { organization } from "@/lib/db/auth-schema";
+import { organization, user } from "@/lib/db/auth-schema";
 import type {
   ProjectStatus,
   TaskStatus,
@@ -17,6 +18,8 @@ import type {
   Decision,
   HistoryEntry,
   AcceptanceCriterion,
+  Priority,
+  Estimate,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +76,8 @@ export const tasks = pgTable(
     implementationPlan: text("implementation_plan"),
     executionRecord: text("execution_record"),
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    priority: text("priority").$type<Priority>(),
+    estimate: integer("estimate").$type<Estimate>(),
     files: jsonb("files").$type<string[]>().notNull().default([]),
     history: jsonb("history").$type<HistoryEntry[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -115,6 +120,30 @@ export const taskEdges = pgTable(
 
 export type TaskEdge = typeof taskEdges.$inferSelect;
 export type NewTaskEdge = typeof taskEdges.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Task Assignees (junction table; many-to-many tasks ↔ users)
+// ---------------------------------------------------------------------------
+
+export const taskAssignees = pgTable(
+  "task_assignees",
+  {
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.taskId, t.userId] }),
+    index("task_assignees_user_id_idx").on(t.userId),
+  ],
+);
+
+export type TaskAssignee = typeof taskAssignees.$inferSelect;
+export type NewTaskAssignee = typeof taskAssignees.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Team Invite Codes (separate file, re-exported here for drizzle-kit)

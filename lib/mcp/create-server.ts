@@ -77,7 +77,7 @@ function toMcp(result: ToolResult) {
 
 const INSTRUCTIONS = `Mymir is an agentic project management server for software projects. It tracks tasks, dependencies, decisions, and execution records across sessions and teammates so coding agents and engineers can hand work to each other. Stateless HTTP endpoint with no server-side session state; pass \`projectId\` explicitly on every call.
 
-This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the four-dimension tag taxonomy, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`mymir\` skill on your platform (Claude Code, Codex, Cursor, Gemini) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
+This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the three-dimension tag taxonomy plus the first-class \`priority\` / \`estimate\` / \`assigneeIds\` fields, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`mymir\` skill on your platform (Claude Code, Codex, Cursor, Gemini) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
 
 ## Multi-team awareness
 The caller's account spans every membership. There is no 'active' team. Read tools span every team you belong to; writes name \`organizationId\` or auto-resolve when the account has exactly one membership.
@@ -256,9 +256,15 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         decisions: z.array(z.string()).optional()
           .describe("Technical choices and constraints. One-liner per decision (CHOICE + WHY)."),
         tags: z.array(z.string()).optional()
-          .describe("Kebab-case. Every task carries: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched), exactly 1 priority (release-blocker/core/normal/backlog). Do NOT tag codebase area (use category) or status. Run mymir_query type='meta' before coining new tags."),
+          .describe("Kebab-case. Every task carries three tag dimensions: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched). Priority is the `priority` field, not a tag. Do NOT tag codebase area (use category) or status. Run mymir_query type='meta' before coining new tags."),
         category: z.string().optional()
           .describe("Architectural layer / subsystem this task belongs to (exactly one). Reuse a project category; do not silently coin mid-task. The project's 4-8 categories are set on creation or via decompose/onboarding gates. Run mymir_query type='meta' to see them. Artifacts §4."),
+        priority: z.enum(["release-blocker", "core", "normal", "backlog"]).optional()
+          .describe("Priority of the task. release-blocker: cannot ship without; core: central to the release; normal: routine; backlog: deprioritized."),
+        estimate: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(5), z.literal(8), z.literal(13)]).optional()
+          .describe("Fibonacci story-point estimate. 1 = trivial, 2/3 = routine, 5 = nontrivial, 8/13 = risky or multi-day. If a task feels >13, split it (artifacts §5)."),
+        assigneeIds: z.array(z.uuid()).optional()
+          .describe("User UUIDs to assign to this task. Each must be a member of the project's owning team; non-members are rejected. The single-worker `in_progress` invariant still applies; assignees declare ownership / intent, not concurrent claim. APPENDS by default on update; `overwriteArrays=true` REPLACES the full set."),
         files: z.array(z.string()).optional()
           .describe("Repo-relative paths created or modified (no leading slash, no absolute). Pass `files=[]` when nothing was touched (unscaffolded repo, research/spec-review/decision-only); never invent paths."),
         implementationPlan: z.string().optional()
@@ -433,7 +439,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "mymir", version: "1.5.0" },
+    { name: "mymir", version: "1.6.0" },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);

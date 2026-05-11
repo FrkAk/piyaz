@@ -1,5 +1,17 @@
 import type { Project, Task, TaskEdge } from "@/lib/db/schema";
 import type { TaskState } from "@/lib/data/task";
+import type { Priority, Estimate } from "@/lib/types";
+
+/**
+ * Lightweight assignee projection used by surfaces that render
+ * the people assigned to a task. Source: `task_assignees` joined
+ * to `neon_auth.user`.
+ */
+export type AssigneeRef = {
+  userId: string;
+  name: string;
+  email: string;
+};
 
 /**
  * Slim view of the project's owning team — only the fields the home grid
@@ -47,7 +59,15 @@ export type ProjectListEntryMcp = Pick<
 /** Slim task entry returned by the project graph payload. */
 export type TaskGraphSlim = Pick<
   Task,
-  "id" | "title" | "status" | "category" | "tags" | "order" | "updatedAt"
+  | "id"
+  | "title"
+  | "status"
+  | "category"
+  | "tags"
+  | "priority"
+  | "estimate"
+  | "order"
+  | "updatedAt"
 > & {
   taskRef: string;
   /** True when `description` is non-empty after trimming whitespace. */
@@ -63,6 +83,8 @@ export type TaskGraphSlim = Pick<
    * derivations is exactly what this projection eliminates.
    */
   state: TaskState;
+  /** Number of users assigned to this task. */
+  assigneeCount: number;
 };
 
 /** Slim project graph for the workspace canvas + list. Edges are returned
@@ -123,8 +145,14 @@ export type TaskSlim = {
   status: string;
   tags: string[];
   category: string | null;
+  priority: Priority | null;
+  estimate: Estimate | null;
+  assigneeCount: number;
   order: number;
 };
 
-/** Full task row + the composed `taskRef` for project page detail surfaces. */
-export type TaskFull = Task & { taskRef: string };
+/** Full task row + the composed `taskRef` and assignees for project page detail surfaces. */
+export type TaskFull = Task & {
+  taskRef: string;
+  assignees: AssigneeRef[];
+};

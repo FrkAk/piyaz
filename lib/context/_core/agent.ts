@@ -9,6 +9,7 @@ import {
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
+  fetchAssigneesUnchecked,
 } from "@/lib/data/task";
 import { getProjectIdentifier } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
@@ -47,6 +48,8 @@ export async function buildAgentContext(
   const tags = (task.tags as string[] | null) ?? [];
   const files = (task.files as string[] | null) ?? [];
   const status = task.status as string;
+  const priority = task.priority as string | null;
+  const estimate = task.estimate as number | null;
 
   const headerLines: string[] = [
     `# ${taskRef ? `\`${taskRef}\` ` : ""}${task.title}`,
@@ -54,6 +57,8 @@ export async function buildAgentContext(
   if (tags.length > 0) {
     headerLines.push(`Tags: ${tags.map((t) => `\`${t}\``).join(", ")}`);
   }
+  if (priority) headerLines.push(`Priority: \`${priority}\``);
+  if (estimate) headerLines.push(`Estimate: ${estimate} pts`);
   headerLines.push("");
   headerLines.push(task.description);
 
@@ -65,11 +70,12 @@ export async function buildAgentContext(
     );
   }
 
-  const [deps, downstream, upstreamEdgeNotes] = await Promise.all([
+  const [deps, downstream, upstreamEdgeNotes, assignees] = await Promise.all([
     getDependencyChain(taskId, task.projectId, 2),
     // getDownstream is public — caller already asserted; pass ctx through
     getDownstream(ctx, taskId, 2),
     fetchEdgeNotesBySource(task.projectId, taskId),
+    fetchAssigneesUnchecked(taskId),
   ]);
 
   if (deps.length > 0) {
@@ -122,6 +128,14 @@ export async function buildAgentContext(
   if (files.length > 0) {
     parts.push(
       section("Files") + "\n" + files.map((f) => `- ${f}`).join("\n"),
+    );
+  }
+
+  if (assignees.length > 0) {
+    parts.push(
+      section("Assignees") +
+        "\n" +
+        assignees.map((a) => `- ${a.name} <${a.email}>`).join("\n"),
     );
   }
 

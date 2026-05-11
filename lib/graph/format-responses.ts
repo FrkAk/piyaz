@@ -20,12 +20,26 @@ const STATUS_ORDER = ["in_progress", "planned", "draft", "done", "cancelled"] as
 
 /**
  * Format a task as a compact single line.
- * @param t - Task with id, title, status, and optional tags/category.
+ * @param t - Task with id, title, status, and optional tags/category/priority/estimate/assignees.
  * @returns Formatted line string.
  */
-function taskLine(t: { id: string; taskRef: string; title: string; status: string; tags?: string[]; category?: string | null }): string {
+function taskLine(t: {
+  id: string;
+  taskRef: string;
+  title: string;
+  status: string;
+  tags?: string[];
+  category?: string | null;
+  priority?: string | null;
+  estimate?: number | null;
+  assigneeCount?: number;
+}): string {
   let line = `- \`${t.taskRef}\` "${t.title}" [${t.status}] \`${t.id}\``;
   if (t.category) line += ` | ${t.category}`;
+  if (t.priority) line += ` | ${t.priority}`;
+  if (t.estimate) line += ` | ${t.estimate}pts`;
+  if (t.assigneeCount && t.assigneeCount > 0)
+    line += ` | ${t.assigneeCount} assigned`;
   if (t.tags && t.tags.length > 0) line += `  tags: ${t.tags.join(", ")}`;
   return line;
 }
@@ -70,6 +84,9 @@ export function formatSummary(ctx: SummaryContext): string {
   if (ctx.edgeCount.depends_on > 0) stats.push(`${ctx.edgeCount.depends_on} depends_on`);
   if (ctx.edgeCount.relates_to > 0) stats.push(`${ctx.edgeCount.relates_to} relates_to`);
   stats.push(`${ctx.acceptanceCriteriaCount} criteria`, `${ctx.decisionsCount} decisions`);
+  if (ctx.node.priority) stats.push(`priority: ${ctx.node.priority}`);
+  if (ctx.node.estimate) stats.push(`${ctx.node.estimate}pts`);
+  if (ctx.assigneeCount > 0) stats.push(`${ctx.assigneeCount} assigned`);
   if (ctx.hasImplementationPlan) stats.push("has plan");
   parts.push(`\n${stats.join(" | ")}`);
 
@@ -99,6 +116,10 @@ export function formatSearchResults(results: SearchResult[], hint?: string): str
   for (const r of results) {
     let line = `- \`${r.taskRef}\` "${r.title}" [${r.status}|${r.state}] \`${r.id}\``;
     if (r.category) line += ` | ${r.category}`;
+    if (r.priority) line += ` | ${r.priority}`;
+    if (r.estimate) line += ` | ${r.estimate}pts`;
+    if (r.assigneeCount && r.assigneeCount > 0)
+      line += ` | ${r.assigneeCount} assigned`;
     if (r.tags.length > 0) line += `  tags: ${r.tags.join(", ")}`;
     parts.push(line);
   }
@@ -183,6 +204,10 @@ export function formatOverview(overview: ProjectOverview): string {
     parts.push(renderGrouped(overview.tasks, (t) => {
       let line = `- \`${t.taskRef}\` "${t.title}" \`${t.id}\``;
       if (t.category) line += ` | ${t.category}`;
+      if (t.priority) line += ` | ${t.priority}`;
+      if (t.estimate) line += ` | ${t.estimate}pts`;
+      if (t.assigneeCount && t.assigneeCount > 0)
+        line += ` | ${t.assigneeCount} assigned`;
       return line;
     }));
   }
