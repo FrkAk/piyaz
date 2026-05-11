@@ -1,11 +1,11 @@
 import "server-only";
 import { headers } from "next/headers";
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { APIError } from "better-auth/api";
 import { auth } from "@/lib/auth";
 import { userHasConsentedTo } from "@/lib/data/oauth-session";
 import { getAuthContext } from "@/lib/auth/context";
-import { error, ok } from "@/lib/api/response";
+import { error } from "@/lib/api/response";
 import { internalError } from "@/lib/api/error";
 
 /**
@@ -76,7 +76,10 @@ export async function GET(request: NextRequest): Promise<Response> {
       policy_uri: client.policy_uri,
       isFirstTime: !previouslyConsented,
     };
-    return ok(meta);
+    return NextResponse.json(meta, {
+      status: 200,
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (err) {
     return internalError("consent-meta", err);
   }

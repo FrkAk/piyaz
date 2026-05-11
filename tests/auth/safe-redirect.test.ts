@@ -74,9 +74,9 @@ test("evaluateRedirect: lookalike hostname does not match localhost via substrin
 });
 
 test("evaluateRedirect: hostname prefix attack on 127.0.0.1 does not match", () => {
-  expect(evaluateRedirect("http://127.0.0.1.evil.com/cb", null).safe).toBe(
-    false,
-  );
+  const result = evaluateRedirect("http://127.0.0.1.evil.com/cb", null);
+  expect(result.safe).toBe(false);
+  expect(result.display).toBe("127.0.0.1.evil.com");
 });
 
 test("safeLinkHost: returns host for https URL", () => {
