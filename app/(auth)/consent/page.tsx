@@ -5,6 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
 import { evaluateRedirect, safeLinkHost } from "@/lib/auth/safe-redirect";
+import { Avatar } from "@/components/shared/Avatar";
+import { Button } from "@/components/shared/Button";
+import { MonoId } from "@/components/shared/MonoId";
+import { LoadingSpinner } from "@/components/shared/LoadingSpinner";
 
 /**
  * Hydration-safe deployment-host snapshot for `useSyncExternalStore`.
@@ -41,6 +45,11 @@ type ConsentMeta = {
   isFirstTime: boolean;
 };
 
+/** Shared utility classes for the in-card section header — mirrors the
+ *  workspace detail convention (see `RelationshipsSection.tsx`). */
+const SECTION_LABEL =
+  "font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted";
+
 /**
  * One DCR metadata link rendered with its destination host appended.
  *
@@ -66,10 +75,35 @@ function MetadataLink({
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-accent hover:underline"
+      className="rounded-sm text-accent outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-0"
     >
       {label} ({host})
     </a>
+  );
+}
+
+/** Centered single-message panel used for the missing-clientId and
+ *  fetch-error branches. Keeps the destructive Approve action off the
+ *  screen when there's nothing legitimate to approve. */
+function ConsentErrorPanel({ message }: { message: string }): React.ReactNode {
+  return (
+    <div className="flex min-h-dvh items-center justify-center px-4">
+      <div className="w-full max-w-sm space-y-4 text-center">
+        <h1
+          className="text-[22px] font-semibold text-text-primary"
+          style={{ letterSpacing: "-0.005em", lineHeight: 1.2 }}
+        >
+          Authorize access
+        </h1>
+        <div
+          className="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
+          role="alert"
+        >
+          {message}
+        </div>
+        <p className="text-sm text-text-muted">You can close this tab.</p>
+      </div>
+    </div>
   );
 }
 
@@ -80,7 +114,7 @@ function MetadataLink({
  *
  * Renders an identity-aware view: brand-normalized client name, the host of
  * the actual redirect_uri, a first-time / unsafe-redirect warning banner,
- * and the raw client_id demoted to a muted footnote.
+ * and the raw client_id demoted to a copyable mono footnote.
  *
  * Trust model: `formatOAuthClientName` collapses brand-suffixed names
  * (e.g. `Claude Code (plugin:evil)` → `Claude Code`) for legibility, so
@@ -89,6 +123,11 @@ function MetadataLink({
  * client; once the user approves, repeat visits no longer distinguish
  * spoofed clients from the originals visually. Long-term mitigation is
  * software statements (RFC 7591 §2.3) — tracked as MYMR-199.
+ *
+ * `logo_uri` is intentionally NOT rendered. Displaying an
+ * attacker-controlled image is a separate UX upgrade requiring
+ * `referrerPolicy="no-referrer"` + a CSP `img-src` review + layout-shift
+ * safety; until that lands, the avatar shows the brand initial.
  *
  * @returns Consent form with approve/deny buttons.
  */
@@ -103,11 +142,6 @@ export default function ConsentPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
-
-  const missingClientId = !clientId;
-  const metaError = missingClientId
-    ? "Missing client_id in the authorization request."
-    : fetchError;
 
   useEffect(() => {
     if (!clientId) return;
@@ -184,9 +218,12 @@ export default function ConsentPage() {
 
   if (done) {
     return (
-      <div className="flex min-h-[100dvh] items-center justify-center px-4">
+      <div className="flex min-h-dvh items-center justify-center px-4">
         <div className="w-full max-w-sm space-y-4 text-center">
-          <h1 className="text-xl font-semibold text-text-primary">
+          <h1
+            className="text-[22px] font-semibold text-text-primary"
+            style={{ letterSpacing: "-0.005em", lineHeight: 1.2 }}
+          >
             Authorization sent
           </h1>
           <p className="text-sm text-text-muted">
@@ -198,80 +235,66 @@ export default function ConsentPage() {
     );
   }
 
-  if (missingClientId) {
+  if (!clientId) {
     return (
-      <div className="flex min-h-[100dvh] items-center justify-center px-4">
-        <div className="w-full max-w-sm space-y-4 text-center">
-          <h1 className="text-xl font-semibold text-text-primary">
-            Authorize access
-          </h1>
-          <div
-            className="rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
-            role="alert"
-          >
-            {metaError}
-          </div>
-          <p className="text-sm text-text-muted">You can close this tab.</p>
-        </div>
+      <ConsentErrorPanel message="Missing client_id in the authorization request." />
+    );
+  }
+
+  if (fetchError) {
+    return <ConsentErrorPanel message={fetchError} />;
+  }
+
+  if (!meta) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center px-4">
+        <LoadingSpinner label="Loading application details" />
       </div>
     );
   }
 
-  const brandName = meta ? formatOAuthClientName(meta.client_name) : "";
-  const initial = brandName.charAt(0).toUpperCase() || "?";
+  const brandName = formatOAuthClientName(meta.client_name);
 
   const warnings: string[] = [];
-  if (meta) {
-    if (!meta.logo_uri || !meta.client_uri) {
-      warnings.push("This app has not published a website or logo.");
-    }
-    if (meta.isFirstTime) {
-      warnings.push("This is the first time you are approving this app.");
-    }
+  if (!meta.client_uri) {
+    warnings.push("This app has not published a website.");
+  }
+  if (meta.isFirstTime) {
+    warnings.push("This is the first time you are approving this app.");
   }
   if (!redirect.safe) {
-    warnings.push(`Redirecting to an unverified destination: ${redirect.display}.`);
+    warnings.push(
+      `Redirecting to an unverified destination: ${redirect.display}.`,
+    );
   }
 
-  const approveDisabled = submitting || !meta;
-
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center px-4">
+    <div className="flex min-h-dvh items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="flex flex-col items-center gap-3">
-          <div
-            aria-hidden
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/15 text-base font-semibold text-accent"
-          >
-            {initial}
-          </div>
+          <Avatar name={brandName} size={56} />
           <div className="space-y-1 text-center">
-            <h1 className="text-xl font-semibold text-text-primary">
-              {meta ? brandName : metaError ? "Authorize access" : "…"}
+            <h1
+              className="text-[22px] font-semibold text-text-primary"
+              style={{ letterSpacing: "-0.005em", lineHeight: 1.2 }}
+            >
+              {brandName}
             </h1>
             <p className="text-sm text-text-muted">
-              wants to access your Mymir account.
+              wants to access your mymir account.
             </p>
           </div>
         </div>
 
-        {metaError && (
-          <div className="rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger" role="alert">
-            {metaError}
-          </div>
-        )}
-
         <div className="space-y-3">
-          <div className="rounded-md border border-border-strong bg-surface p-3">
-            <p className="text-xs font-medium text-text-secondary">
-              Redirecting to
-            </p>
-            <p className="text-sm font-mono text-text-primary break-all">
+          <div className="rounded-lg border border-border-strong bg-surface p-3">
+            <p className={SECTION_LABEL}>Redirecting to</p>
+            <p className="mt-1.5 break-all font-mono text-sm text-text-primary">
               {redirect.display}
             </p>
           </div>
 
-          {meta && (meta.client_uri || meta.tos_uri || meta.policy_uri) && (
+          {(meta.client_uri || meta.tos_uri || meta.policy_uri) && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 px-1 text-xs">
               {meta.client_uri && (
                 <MetadataLink label="Website" href={meta.client_uri} />
@@ -286,15 +309,13 @@ export default function ConsentPage() {
           )}
 
           {scopes.length > 0 && (
-            <div className="rounded-md border border-border-strong bg-surface p-3 space-y-2">
-              <p className="text-xs font-medium text-text-secondary">
-                Requested permissions
-              </p>
+            <div className="space-y-2 rounded-lg border border-border-strong bg-surface p-3">
+              <p className={SECTION_LABEL}>Requested permissions</p>
               <ul className="space-y-1">
                 {scopes.map((s) => (
                   <li
                     key={s}
-                    className="text-sm text-text-primary flex items-center gap-2"
+                    className="flex items-center gap-2 text-sm text-text-primary"
                   >
                     <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                     {s}
@@ -306,14 +327,14 @@ export default function ConsentPage() {
 
           {warnings.length > 0 && (
             <div
-              className="rounded-md border border-progress/25 bg-progress/10 p-3 text-xs text-progress space-y-1"
+              className="space-y-1 rounded-lg border border-progress/25 bg-progress/10 p-3 text-xs text-progress"
               role="alert"
             >
               {warnings.map((w) => (
                 <p key={w}>{w}</p>
               ))}
               <p className="text-text-muted">
-                Verify it is the one you started signing into.
+                Confirm this matches where you started.
               </p>
             </div>
           )}
@@ -325,37 +346,29 @@ export default function ConsentPage() {
           )}
 
           <div className="flex gap-3">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="lg"
+              fullWidth
               disabled={submitting}
               onClick={() => handleConsent(false)}
-              className="flex-1 rounded-md border border-border-strong bg-surface px-4 py-2 text-sm font-medium text-text-primary transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Deny
-            </button>
-            <button
-              type="button"
-              disabled={approveDisabled}
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              isLoading={submitting}
               onClick={() => handleConsent(true)}
-              className="flex-1 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {submitting ? (
-                <span className="flex items-center justify-center gap-1">
-                  <span className="loading-dot h-1.5 w-1.5 rounded-full bg-current" />
-                  <span className="loading-dot h-1.5 w-1.5 rounded-full bg-current" />
-                  <span className="loading-dot h-1.5 w-1.5 rounded-full bg-current" />
-                </span>
-              ) : (
-                "Approve"
-              )}
-            </button>
+              Approve
+            </Button>
           </div>
 
-          {clientId && (
-            <p className="text-center text-[10px] font-mono text-text-muted break-all">
-              client_id: {clientId}
-            </p>
-          )}
+          <div className="flex justify-center pt-1">
+            <MonoId id={clientId} />
+          </div>
         </div>
       </div>
     </div>
