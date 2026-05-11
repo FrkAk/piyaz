@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import {
   oauthAccessToken,
   oauthClient,
+  oauthConsent,
   oauthRefreshToken,
   organization,
 } from "@/lib/db/auth-schema";
@@ -125,4 +126,31 @@ export async function revokeOAuthSession(
       .delete(oauthAccessToken)
       .where(eq(oauthAccessToken.refreshId, sessionId));
   });
+}
+
+/**
+ * Check whether a user has previously approved a specific OAuth client.
+ * Drives the consent page's first-time warning. Uses `oauthConsent` rather
+ * than `oauthAccessToken` so that token rotation or expiry never re-flags
+ * a previously-approved client as first-time.
+ *
+ * @param userId - Verified user id.
+ * @param clientId - OAuth client id to check.
+ * @returns True iff at least one `oauthConsent` row exists for the pair.
+ */
+export async function userHasConsentedTo(
+  userId: string,
+  clientId: string,
+): Promise<boolean> {
+  const existing = await db
+    .select({ id: oauthConsent.id })
+    .from(oauthConsent)
+    .where(
+      and(
+        eq(oauthConsent.userId, userId),
+        eq(oauthConsent.clientId, clientId),
+      ),
+    )
+    .limit(1);
+  return existing.length > 0;
 }

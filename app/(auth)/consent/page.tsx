@@ -1,30 +1,192 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
+import { evaluateRedirect, safeLinkHost } from "@/lib/auth/safe-redirect";
+import { Avatar } from "@/components/shared/Avatar";
+import { Button } from "@/components/shared/Button";
+import { MonoId } from "@/components/shared/MonoId";
+import { LoadingSpinner } from "@/components/shared/LoadingSpinner";
+
+/**
+ * Hydration-safe deployment-host snapshot for `useSyncExternalStore`.
+ *
+ * The redirect-safety check needs `window.location.host` to recognize a
+ * same-host redirect_uri, but referencing `window` during SSR throws. We
+ * solve it the canonical React 18+ way: the server snapshot returns
+ * `null` (fail-closed → redirect renders as unverified), and the client
+ * snapshot fills in the real host after hydration. No subscription is
+ * needed because the deployment host doesn't change during the page's
+ * lifetime — `subscribeNoop` satisfies the API without doing work.
+ *
+ * Note: this produces a brief content shift on first paint where a
+ * same-host redirect_uri flips from "unverified" to "verified" once
+ * hydration runs. That's the correct fail-closed trade-off.
+ */
+function subscribeNoop(): () => void {
+  return () => {};
+}
+function getOwnHostClient(): string | null {
+  return typeof window === "undefined" ? null : window.location.host;
+}
+function getOwnHostServer(): string | null {
+  return null;
+}
+
+type ConsentMeta = {
+  client_id: string;
+  client_name: string;
+  client_uri?: string;
+  logo_uri?: string;
+  tos_uri?: string;
+  policy_uri?: string;
+  isFirstTime: boolean;
+};
+
+/** Shared utility classes for the in-card section header — mirrors the
+ *  workspace detail convention (see `RelationshipsSection.tsx`). */
+const SECTION_LABEL =
+  "font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted";
+
+/**
+ * One DCR metadata link rendered with its destination host appended.
+ *
+ * The href is attacker-controlled (anyone can DCR a client with any
+ * `client_uri` / `tos_uri` / `policy_uri`), so the user must see the
+ * destination host before clicking. Unparseable or non-http(s) URLs
+ * render nothing — fail-closed against `javascript:` / `data:` smuggling.
+ *
+ * @param label - Visible link label (Website / Terms / Privacy).
+ * @param href - Raw URL from the DCR metadata field.
+ */
+function MetadataLink({
+  label,
+  href,
+}: {
+  label: string;
+  href: string;
+}): React.ReactNode {
+  const host = safeLinkHost(href);
+  if (!host) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="rounded-sm text-accent outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-0"
+    >
+      {label} ({host})
+    </a>
+  );
+}
+
+/** Centered single-message panel used for the missing-clientId and
+ *  fetch-error branches. Keeps the destructive Approve action off the
+ *  screen when there's nothing legitimate to approve. */
+function ConsentErrorPanel({ message }: { message: string }): React.ReactNode {
+  return (
+    <div className="flex min-h-dvh items-center justify-center px-4">
+      <div className="w-full max-w-sm space-y-4 text-center">
+        <h1
+          className="text-[22px] font-semibold text-text-primary"
+          style={{ letterSpacing: "-0.005em", lineHeight: 1.2 }}
+        >
+          Authorize access
+        </h1>
+        <div
+          className="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
+          role="alert"
+        >
+          {message}
+        </div>
+        <p className="text-sm text-text-muted">You can close this tab.</p>
+      </div>
+    </div>
+  );
+}
 
 /**
  * OAuth consent page — approve or deny an MCP client's access request.
- * Redirected here by the OAuth authorization endpoint with signed query params.
- * Requires an active session (enforced by sessionMiddleware on the consent endpoint).
+ * Redirected here by the OAuth authorization endpoint with signed query
+ * params. Requires an active session (BA's consent action is session-gated).
+ *
+ * Renders an identity-aware view: brand-normalized client name, the host of
+ * the actual redirect_uri, a first-time / unsafe-redirect warning banner,
+ * and the raw client_id demoted to a copyable mono footnote.
+ *
+ * Trust model: `formatOAuthClientName` collapses brand-suffixed names
+ * (e.g. `Claude Code (plugin:evil)` → `Claude Code`) for legibility, so
+ * the consent header is NOT a trust statement about the client. The
+ * `isFirstTime` warning is the only signal that fires on a never-seen
+ * client; once the user approves, repeat visits no longer distinguish
+ * spoofed clients from the originals visually. Long-term mitigation is
+ * software statements (RFC 7591 §2.3) — tracked as MYMR-199.
+ *
+ * `logo_uri` is intentionally NOT rendered. Displaying an
+ * attacker-controlled image is a separate UX upgrade requiring
+ * `referrerPolicy="no-referrer"` + a CSP `img-src` review + layout-shift
+ * safety; until that lands, the avatar shows the brand initial.
+ *
  * @returns Consent form with approve/deny buttons.
  */
 export default function ConsentPage() {
   const searchParams = useSearchParams();
   const clientId = searchParams.get("client_id");
+  const redirectUri = searchParams.get("redirect_uri");
   const scope = searchParams.get("scope");
-  const [loading, setLoading] = useState(false);
+
+  const [meta, setMeta] = useState<ConsentMeta | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
 
+  useEffect(() => {
+    if (!clientId) return;
+    const controller = new AbortController();
+    fetch(
+      `/api/oauth/consent-meta?client_id=${encodeURIComponent(clientId)}`,
+      { signal: controller.signal },
+    )
+      .then(async (res) => {
+        if (!res.ok) {
+          setFetchError(
+            res.status === 404
+              ? "This application is no longer registered."
+              : "Could not load application details.",
+          );
+          return;
+        }
+        setMeta((await res.json()) as ConsentMeta);
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        setFetchError("Could not load application details.");
+      });
+    return () => controller.abort();
+  }, [clientId]);
+
+  const ownHost = useSyncExternalStore(
+    subscribeNoop,
+    getOwnHostClient,
+    getOwnHostServer,
+  );
+
+  const redirect = useMemo(
+    () => evaluateRedirect(redirectUri, ownHost),
+    [redirectUri, ownHost],
+  );
+
   /**
    * Submit consent decision to the OAuth provider.
+   *
    * @param accept - Whether the user approved access.
    */
   async function handleConsent(accept: boolean) {
     setError("");
-    setLoading(true);
+    setSubmitting(true);
 
     try {
       const res = await authClient.oauth2.consent({
@@ -37,18 +199,18 @@ export default function ConsentPage() {
         window.location.href = res.data.url;
         if (!isHttp) {
           setDone(true);
-          setLoading(false);
+          setSubmitting(false);
         }
         return;
       }
 
       if (res.error) {
         setError(res.error.message ?? "Consent failed");
-        setLoading(false);
+        setSubmitting(false);
       }
     } catch {
       setError("Something went wrong");
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
@@ -56,94 +218,159 @@ export default function ConsentPage() {
 
   if (done) {
     return (
-      <div className="flex min-h-[100dvh] items-center justify-center px-4">
+      <div className="flex min-h-dvh items-center justify-center px-4">
         <div className="w-full max-w-sm space-y-4 text-center">
-          <h1 className="text-xl font-semibold text-text-primary">
+          <h1
+            className="text-[22px] font-semibold text-text-primary"
+            style={{ letterSpacing: "-0.005em", lineHeight: 1.2 }}
+          >
             Authorization sent
           </h1>
           <p className="text-sm text-text-muted">
-            Return to your application to finish signing in. You can close this tab.
+            Return to your application to finish signing in. You can close
+            this tab.
           </p>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="flex min-h-[100dvh] items-center justify-center px-4">
-      <div className="w-full max-w-sm space-y-6">
-      <div className="text-center space-y-1">
-        <h1 className="text-xl font-semibold text-text-primary">
-          Authorize access
-        </h1>
-        <p className="text-sm text-text-muted">
-          An application is requesting access to your mymir account.
-        </p>
+  if (!clientId) {
+    return (
+      <ConsentErrorPanel message="Missing client_id in the authorization request." />
+    );
+  }
+
+  if (fetchError) {
+    return <ConsentErrorPanel message={fetchError} />;
+  }
+
+  if (!meta) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center px-4">
+        <LoadingSpinner label="Loading application details" />
       </div>
+    );
+  }
 
-      <div className="space-y-4">
-        {clientId && (
-          <div className="rounded-md border border-border-strong bg-surface p-3">
-            <p className="text-xs font-medium text-text-secondary">
-              Application
+  const brandName = formatOAuthClientName(meta.client_name);
+
+  const warnings: string[] = [];
+  if (!meta.client_uri) {
+    warnings.push("This app has not published a website.");
+  }
+  if (meta.isFirstTime) {
+    warnings.push("This is the first time you are approving this app.");
+  }
+  if (!redirect.safe) {
+    warnings.push(
+      `Redirecting to an unverified destination: ${redirect.display}.`,
+    );
+  }
+
+  return (
+    <div className="flex min-h-dvh items-center justify-center px-4">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="flex flex-col items-center gap-3">
+          <Avatar name={brandName} size={56} />
+          <div className="space-y-1 text-center">
+            <h1
+              className="text-[22px] font-semibold text-text-primary"
+              style={{ letterSpacing: "-0.005em", lineHeight: 1.2 }}
+            >
+              {brandName}
+            </h1>
+            <p className="text-sm text-text-muted">
+              wants to access your mymir account.
             </p>
-            <p className="text-sm text-text-primary font-mono">{clientId}</p>
           </div>
-        )}
+        </div>
 
-        {scopes.length > 0 && (
-          <div className="rounded-md border border-border-strong bg-surface p-3 space-y-2">
-            <p className="text-xs font-medium text-text-secondary">
-              Requested permissions
+        <div className="space-y-3">
+          <div className="rounded-lg border border-border-strong bg-surface p-3">
+            <p className={SECTION_LABEL}>Redirecting to</p>
+            <p className="mt-1.5 break-all font-mono text-sm text-text-primary">
+              {redirect.display}
             </p>
-            <ul className="space-y-1">
-              {scopes.map((s) => (
-                <li
-                  key={s}
-                  className="text-sm text-text-primary flex items-center gap-2"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                  {s}
-                </li>
+          </div>
+
+          {(meta.client_uri || meta.tos_uri || meta.policy_uri) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 px-1 text-xs">
+              {meta.client_uri && (
+                <MetadataLink label="Website" href={meta.client_uri} />
+              )}
+              {meta.tos_uri && (
+                <MetadataLink label="Terms" href={meta.tos_uri} />
+              )}
+              {meta.policy_uri && (
+                <MetadataLink label="Privacy" href={meta.policy_uri} />
+              )}
+            </div>
+          )}
+
+          {scopes.length > 0 && (
+            <div className="space-y-2 rounded-lg border border-border-strong bg-surface p-3">
+              <p className={SECTION_LABEL}>Requested permissions</p>
+              <ul className="space-y-1">
+                {scopes.map((s) => (
+                  <li
+                    key={s}
+                    className="flex items-center gap-2 text-sm text-text-primary"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {warnings.length > 0 && (
+            <div
+              className="space-y-1 rounded-lg border border-progress/25 bg-progress/10 p-3 text-xs text-progress"
+              role="alert"
+            >
+              {warnings.map((w) => (
+                <p key={w}>{w}</p>
               ))}
-            </ul>
+              <p className="text-text-muted">
+                Confirm this matches where you started.
+              </p>
+            </div>
+          )}
+
+          {error && (
+            <p className="text-xs text-danger" role="alert">
+              {error}
+            </p>
+          )}
+
+          <div className="flex gap-3">
+            <Button
+              variant="secondary"
+              size="lg"
+              fullWidth
+              disabled={submitting}
+              onClick={() => handleConsent(false)}
+            >
+              Deny
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              isLoading={submitting}
+              onClick={() => handleConsent(true)}
+            >
+              Approve
+            </Button>
           </div>
-        )}
 
-        {error && (
-          <p className="text-xs text-danger" role="alert">
-            {error}
-          </p>
-        )}
-
-        <div className="flex gap-3">
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => handleConsent(false)}
-            className="flex-1 rounded-md border border-border-strong bg-surface px-4 py-2 text-sm font-medium text-text-primary transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Deny
-          </button>
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => handleConsent(true)}
-            className="flex-1 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-1">
-                <span className="loading-dot h-1.5 w-1.5 rounded-full bg-current" />
-                <span className="loading-dot h-1.5 w-1.5 rounded-full bg-current" />
-                <span className="loading-dot h-1.5 w-1.5 rounded-full bg-current" />
-              </span>
-            ) : (
-              "Approve"
-            )}
-          </button>
+          <div className="flex justify-center pt-1">
+            <MonoId id={clientId} />
+          </div>
         </div>
       </div>
-    </div>
     </div>
   );
 }
