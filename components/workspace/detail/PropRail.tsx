@@ -665,9 +665,7 @@ interface PlaceholderValueProps {
 
 /**
  * Placeholder slot for un-wired property fields. Pairs an em-dash with a
- * tooltip explaining that backend wiring is pending. Retained because
- * `CategoryDropdown` still falls back to it when a project has zero
- * categories.
+ * tooltip explaining that backend wiring is pending.
  *
  * @param props - Placeholder configuration.
  * @returns Inline-flex span with the slot content.

@@ -13,10 +13,11 @@ interface PriorityIconProps {
 /**
  * Three ascending bars indicating priority level. Maps the four-value
  * schema vocabulary (`release-blocker` / `core` / `normal` / `backlog`)
- * to bar count + color, with `release-blocker` getting an extra-saturated
- * danger color so it scans at-a-glance as the top of the scale.
+ * to bar count + color. `release-blocker` and `core` both fill 3 bars,
+ * so `release-blocker` also gets a danger glow on the tallest bar to
+ * distinguish it without relying on hue alone.
  *
- * - `release-blocker` fills 3 bars (danger red).
+ * - `release-blocker` fills 3 bars (danger red, tallest bar glows).
  * - `core` fills 3 bars (blocked red).
  * - `normal` fills 2 bars (amber).
  * - `backlog` fills 1 bar (muted).
@@ -52,18 +53,24 @@ export function PriorityIcon({ priority, className }: PriorityIconProps) {
       style={{ height: 12 }}
       aria-label={priority ? `Priority: ${priority}` : 'Priority: none'}
     >
-      {[1, 2, 3].map((i) => (
-        <span
-          key={i}
-          style={{
-            width: 3,
-            height: i * 4,
-            background: i <= filled ? color : 'var(--color-border-strong)',
-            borderRadius: 1,
-            opacity: i <= filled ? 1 : 0.6,
-          }}
-        />
-      ))}
+      {[1, 2, 3].map((i) => {
+        const glow = priority === 'release-blocker' && i === 3;
+        return (
+          <span
+            key={i}
+            style={{
+              width: 3,
+              height: i * 4,
+              background: i <= filled ? color : 'var(--color-border-strong)',
+              borderRadius: 1,
+              opacity: i <= filled ? 1 : 0.6,
+              boxShadow: glow
+                ? '0 0 4px color-mix(in srgb, var(--color-danger) 90%, transparent), 0 0 10px color-mix(in srgb, var(--color-danger) 55%, transparent)'
+                : undefined,
+            }}
+          />
+        );
+      })}
     </span>
   );
 }

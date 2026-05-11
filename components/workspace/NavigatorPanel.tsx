@@ -37,7 +37,7 @@ interface NavigatorPanelProps {
  */
 function readFilterCount(searchParams: URLSearchParams): number {
   let count = 0;
-  for (const key of ['tags', 'cat', 'status'] as const) {
+  for (const key of ['tags', 'cat', 'status', 'pri'] as const) {
     const value = searchParams.get(key);
     if (value) count += value.split(',').filter(Boolean).length;
   }
@@ -64,7 +64,7 @@ function readView(raw: string | null): WorkspaceView {
  * @returns Sort key.
  */
 function readSort(raw: string | null): SortKey {
-  if (raw === 'updated' || raw === 'identifier') return raw;
+  if (raw === 'updated' || raw === 'identifier' || raw === 'priority') return raw;
   return 'status';
 }
 

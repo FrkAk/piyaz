@@ -9,7 +9,7 @@ import { useUndo, UndoButton } from '@/hooks/useUndo';
 import { IconSearch, IconTrash, IconX } from '@/components/shared/icons';
 import type { TaskEdge } from '@/lib/db/schema';
 import type { TaskGraphSlim, TaskFull } from '@/lib/data/views';
-import type { TaskStatus } from '@/lib/types';
+import type { Priority, TaskStatus } from '@/lib/types';
 import { taskKeys } from '@/lib/query/keys';
 import { fetchTaskBody } from '@/lib/query/queries';
 import { listTeamMembersAction } from '@/lib/actions/team-members';
@@ -23,7 +23,25 @@ import { FilterPanel } from './FilterPanel';
 import { formatRelative } from './relativeTime';
 
 /** URL search-param keys persisting filter state. */
-const FILTER_PARAM_KEYS = { tags: 'tags', categories: 'cat', statuses: 'status', search: 'q' } as const;
+const FILTER_PARAM_KEYS = { tags: 'tags', categories: 'cat', statuses: 'status', priorities: 'pri', search: 'q' } as const;
+
+/**
+ * Priority sort weight — release-blocker is most-urgent (0), null is least
+ * (4). Shared between the sort comparator and the `Priority` filter chip
+ * order so both surfaces stay in lockstep.
+ */
+const PRIORITY_ORDER: Record<Priority, number> = {
+  'release-blocker': 0,
+  core: 1,
+  normal: 2,
+  backlog: 3,
+};
+
+/** Sentinel used in the URL and chip set to represent "no priority assigned". */
+const UNPRIORITIZED_KEY = 'Unprioritized';
+
+/** Display order for the Priority filter chips — highest urgency first. */
+const PRIORITY_FILTER_ORDER: readonly Priority[] = ['release-blocker', 'core', 'normal', 'backlog'];
 
 /** Display order for status groups — most actionable at the top. */
 const GROUP_ORDER: readonly TaskGroupKey[] = [
@@ -109,7 +127,7 @@ function parseSet(value: string | null): Set<string> {
  */
 function serializeFilters(
   current: URLSearchParams,
-  next: { tags: Set<string>; categories: Set<string>; statuses: Set<string>; search: string },
+  next: { tags: Set<string>; categories: Set<string>; statuses: Set<string>; priorities: Set<string>; search: string },
 ): string {
   const out = new URLSearchParams(current);
   const apply = (key: string, set: Set<string>) => {
@@ -119,6 +137,7 @@ function serializeFilters(
   apply(FILTER_PARAM_KEYS.tags, next.tags);
   apply(FILTER_PARAM_KEYS.categories, next.categories);
   apply(FILTER_PARAM_KEYS.statuses, next.statuses);
+  apply(FILTER_PARAM_KEYS.priorities, next.priorities);
   if (next.search.trim()) out.set(FILTER_PARAM_KEYS.search, next.search.trim());
   else out.delete(FILTER_PARAM_KEYS.search);
   const qs = out.toString();
@@ -174,6 +193,16 @@ function sortTasks(items: TaskWithRef[], key: SortKey): TaskWithRef[] {
     });
   } else if (key === 'identifier') {
     copy.sort((a, b) => a.taskRef.localeCompare(b.taskRef, undefined, { numeric: true }));
+  } else if (key === 'priority') {
+    // Unset priorities sort below the lowest assigned value so the user
+    // sees a meaningful gradient first; ties fall back to `order` to keep
+    // adjacent rows stable.
+    copy.sort((a, b) => {
+      const ap = a.priority ? PRIORITY_ORDER[a.priority] : 4;
+      const bp = b.priority ? PRIORITY_ORDER[b.priority] : 4;
+      if (ap !== bp) return ap - bp;
+      return a.order - b.order;
+    });
   } else {
     copy.sort((a, b) => a.order - b.order);
   }
@@ -214,14 +243,23 @@ export function StructureView({
     for (const t of [...parsed]) if (isLegacyPriorityTag(t)) parsed.delete(t);
     return parsed;
   });
+  const [activePriorities, setActivePriorities] = useState<Set<string>>(() => {
+    // Sanitize the URL value to the four schema priorities + the unset
+    // sentinel so a stale bookmark with an unknown token cannot empty the
+    // list.
+    const parsed = parseSet(searchParams.get(FILTER_PARAM_KEYS.priorities));
+    const allowed = new Set<string>([UNPRIORITIZED_KEY, ...PRIORITY_FILTER_ORDER]);
+    for (const p of [...parsed]) if (!allowed.has(p)) parsed.delete(p);
+    return parsed;
+  });
   const [search, setSearch] = useState<string>(() => searchParams.get(FILTER_PARAM_KEYS.search) ?? '');
   const [addingToGroup, setAddingToGroup] = useState<TaskGroupKey | null>(null);
   const [addTitle, setAddTitle] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const pendingDeleteBodyRef = useRef<Map<string, Promise<TaskFull | null>>>(new Map());
-  const filtersRef = useRef({ tags: activeTags, categories: activeCategories, statuses: activeStatuses, search });
+  const filtersRef = useRef({ tags: activeTags, categories: activeCategories, statuses: activeStatuses, priorities: activePriorities, search });
 
-  filtersRef.current = { tags: activeTags, categories: activeCategories, statuses: activeStatuses, search };
+  filtersRef.current = { tags: activeTags, categories: activeCategories, statuses: activeStatuses, priorities: activePriorities, search };
 
   useEffect(() => {
     const qs = serializeFilters(searchParams, filtersRef.current);
@@ -234,7 +272,7 @@ export function StructureView({
     if (qs === currentQs) return;
     router.replace(`${pathname}${qs}`, { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTags, activeCategories, activeStatuses, search]);
+  }, [activeTags, activeCategories, activeStatuses, activePriorities, search]);
 
   // Shared team-member cache: PropRail's AssigneePicker uses the same key,
   // so the first surface that fires the query warms the cache for the
@@ -302,6 +340,16 @@ export function StructureView({
     return out;
   }, [tasks]);
 
+  const priorityCounts = useMemo(() => {
+    const out: Record<string, number> = { [UNPRIORITIZED_KEY]: 0 };
+    for (const p of PRIORITY_FILTER_ORDER) out[p] = 0;
+    for (const t of tasks) {
+      if (t.priority) out[t.priority] += 1;
+      else out[UNPRIORITIZED_KEY] += 1;
+    }
+    return out;
+  }, [tasks]);
+
   const visibleTasks = useMemo(() => {
     const q = search.trim().toLowerCase();
     return tasks.filter((t) => {
@@ -319,6 +367,11 @@ export function StructureView({
         if (!list.some((tag) => activeTags.has(tag))) return false;
       }
 
+      if (activePriorities.size > 0) {
+        const key = t.priority ?? UNPRIORITIZED_KEY;
+        if (!activePriorities.has(key)) return false;
+      }
+
       if (q) {
         const haystack = `${t.title} ${t.taskRef}`.toLowerCase();
         if (!haystack.includes(q)) return false;
@@ -326,7 +379,7 @@ export function StructureView({
 
       return true;
     });
-  }, [tasks, activeStatuses, activeCategories, activeTags, search]);
+  }, [tasks, activeStatuses, activeCategories, activeTags, activePriorities, search]);
 
   const groupedVisible = useMemo<ReadonlyArray<readonly [GroupSection, TaskWithRef[]]>>(() => {
     if (group === 'none') {
@@ -389,10 +442,19 @@ export function StructureView({
     });
   }, []);
 
+  const togglePriority = useCallback((id: string) => {
+    setActivePriorities((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
   const clearFilters = useCallback(() => {
     setActiveStatuses(new Set());
     setActiveCategories(new Set());
     setActiveTags(new Set());
+    setActivePriorities(new Set());
     setSearch('');
   }, []);
 
@@ -491,7 +553,7 @@ export function StructureView({
     onGraphChange?.();
   }, [tasks, pushUndo, onGraphChange, queryClient, projectId]);
 
-  const totalActiveFilters = activeStatuses.size + activeCategories.size + activeTags.size + (search.trim() ? 1 : 0);
+  const totalActiveFilters = activeStatuses.size + activeCategories.size + activeTags.size + activePriorities.size + (search.trim() ? 1 : 0);
 
   return (
     <div className="flex h-full flex-col">
@@ -507,8 +569,12 @@ export function StructureView({
         tags={allTags}
         activeTags={activeTags}
         onTagToggle={toggleTag}
+        priorities={PRIORITY_FILTER_ORDER}
+        activePriorities={activePriorities}
+        onPriorityToggle={togglePriority}
         statusCounts={statusCounts}
         categoryCounts={categoryCounts}
+        priorityCounts={priorityCounts}
         totalActive={totalActiveFilters}
         onClearAll={clearFilters}
       />

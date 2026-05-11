@@ -14,7 +14,7 @@ import {
 export type WorkspaceView = 'structure' | 'graph';
 
 /** Identifier for the active sort key. */
-export type SortKey = 'status' | 'updated' | 'identifier';
+export type SortKey = 'status' | 'updated' | 'identifier' | 'priority';
 
 /** Identifier for the active grouping (Linear-style segmentation). */
 export type GroupKey = 'status' | 'category' | 'none';
@@ -43,6 +43,7 @@ interface FilterBarProps {
 /** Sort dropdown options. */
 const SORT_OPTIONS: ReadonlyArray<{ value: SortKey; label: string }> = [
   { value: 'status',     label: 'Status' },
+  { value: 'priority',   label: 'Priority' },
   { value: 'updated',    label: 'Updated' },
   { value: 'identifier', label: 'ID' },
 ];

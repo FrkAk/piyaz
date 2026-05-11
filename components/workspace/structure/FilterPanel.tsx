@@ -1,8 +1,9 @@
 'use client';
 
 import { motion, AnimatePresence } from 'motion/react';
+import { PriorityIcon } from '@/components/shared/PriorityIcon';
 import { STATUS_META } from '@/components/shared/StatusGlyph';
-import type { TaskStatus } from '@/lib/types';
+import type { Priority, TaskStatus } from '@/lib/types';
 
 /** Status filter options exposed in the sheet — `ready` and `plannable` are derived. */
 const STATUS_FILTERS: readonly { id: string; label: string }[] = [
@@ -34,10 +35,18 @@ interface FilterPanelProps {
   activeTags: Set<string>;
   /** Toggle a tag filter. */
   onTagToggle: (id: string) => void;
+  /** Priority filter options in display order. */
+  priorities: readonly Priority[];
+  /** Active priority filters. `Unprioritized` matches tasks without a priority. */
+  activePriorities: Set<string>;
+  /** Toggle a priority filter. */
+  onPriorityToggle: (id: string) => void;
   /** Per-status counts for the chip badges. */
   statusCounts: Record<string, number>;
   /** Per-category counts. `__uncategorized__` keys the Uncategorized chip. */
   categoryCounts: Record<string, number>;
+  /** Per-priority counts. The `Unprioritized` key counts tasks with `priority === null`. */
+  priorityCounts: Record<string, number>;
   /** Total active filter count, drives the summary row. */
   totalActive: number;
   /** Clear every active filter at once. */
@@ -77,8 +86,12 @@ export function FilterPanel({
   tags,
   activeTags,
   onTagToggle,
+  priorities,
+  activePriorities,
+  onPriorityToggle,
   statusCounts,
   categoryCounts,
+  priorityCounts,
   totalActive,
   onClearAll,
 }: FilterPanelProps) {
@@ -152,6 +165,41 @@ export function FilterPanel({
                 )}
               </FilterSection>
             )}
+
+            <FilterSection title="Priority">
+              {priorities.map((p) => {
+                const count = priorityCounts[p] ?? 0;
+                if (count === 0 && !activePriorities.has(p)) return null;
+                const active = activePriorities.has(p);
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => onPriorityToggle(p)}
+                    className={`${chipClass(active)} inline-flex items-center gap-1.5`}
+                  >
+                    <PriorityIcon priority={p} />
+                    {p}
+                    <span className={`tabular-nums ${active ? 'text-accent-light/70' : 'text-text-faint'}`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+              {(priorityCounts.Unprioritized ?? 0) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onPriorityToggle('Unprioritized')}
+                  className={`${chipClass(activePriorities.has('Unprioritized'))} inline-flex items-center gap-1.5`}
+                >
+                  <PriorityIcon priority={null} />
+                  Unprioritized
+                  <span className={`tabular-nums ${activePriorities.has('Unprioritized') ? 'text-accent-light/70' : 'text-text-faint'}`}>
+                    {priorityCounts.Unprioritized}
+                  </span>
+                </button>
+              )}
+            </FilterSection>
 
             {tags.length > 0 && (
               <FilterSection title="Tags">

@@ -255,7 +255,7 @@ interface PriorityChipProps {
 }
 
 /**
- * Icon-only priority badge per DESIGN.md §3.2 — `PriorityIcon` inside a
+ * Icon-only priority badge — `PriorityIcon` inside a
  * 14×14 inline-flex slot with a tooltip carrying the schema value. The
  * row passes a non-null priority; the null check happens before render so
  * unset rows lose the slot entirely.
