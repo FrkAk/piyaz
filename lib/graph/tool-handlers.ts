@@ -24,6 +24,7 @@ import {
   deleteTaskPreview,
   searchTasks,
   getProjectTasksSlim,
+  fetchAssigneesUnchecked,
 } from "@/lib/data/task";
 import {
   createEdge,
@@ -258,11 +259,13 @@ function overwriteShrinkHints(
     acceptanceCriteria?: unknown[];
     decisions?: unknown[];
     files?: string[];
+    assigneeIds?: string[];
   },
   prior: {
     acceptanceCriteria?: unknown[] | null;
     decisions?: unknown[] | null;
     files?: string[] | null;
+    assigneeIds?: string[] | null;
   },
 ): string[] {
   const hints: string[] = [];
@@ -283,6 +286,7 @@ function overwriteShrinkHints(
   check("acceptanceCriteria", payload.acceptanceCriteria, prior.acceptanceCriteria);
   check("decisions", payload.decisions, prior.decisions);
   check("files", payload.files, prior.files);
+  check("assigneeIds", payload.assigneeIds, prior.assigneeIds);
   return hints;
 }
 
@@ -937,11 +941,13 @@ export async function handleTask(
         let priorAcceptanceCriteria: unknown[] | null | undefined;
         let priorDecisions: unknown[] | null | undefined;
         let priorFiles: string[] | null | undefined;
+        let priorAssigneeIds: string[] | null | undefined;
         const willOverwriteShrinkable =
           !!p.overwriteArrays &&
           (p.acceptanceCriteria !== undefined ||
             p.decisions !== undefined ||
-            p.files !== undefined);
+            p.files !== undefined ||
+            p.assigneeIds !== undefined);
         const needsExisting =
           (p.tags !== undefined && p.tags.length > 0) ||
           p.status !== undefined ||
@@ -958,6 +964,11 @@ export async function handleTask(
             priorAcceptanceCriteria = existing.acceptanceCriteria as unknown[] | null;
             priorDecisions = existing.decisions as unknown[] | null;
             priorFiles = existing.files as string[] | null;
+            if (p.assigneeIds !== undefined && !!p.overwriteArrays) {
+              priorAssigneeIds = (
+                await fetchAssigneesUnchecked(p.taskId)
+              ).map((a) => a.userId);
+            }
           }
         }
         const changes: TaskUpdate = {};
@@ -988,11 +999,13 @@ export async function handleTask(
                 acceptanceCriteria: p.acceptanceCriteria as unknown[] | undefined,
                 decisions: p.decisions as unknown[] | undefined,
                 files: p.files,
+                assigneeIds: p.assigneeIds,
               },
               {
                 acceptanceCriteria: priorAcceptanceCriteria,
                 decisions: priorDecisions,
                 files: priorFiles,
+                assigneeIds: priorAssigneeIds,
               },
             ),
           );

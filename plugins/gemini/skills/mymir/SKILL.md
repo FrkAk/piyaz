@@ -42,7 +42,7 @@ Six tools. Read tools have cost (slim → very heavy); pick the lightest that an
 
 | Action | Cost | Use when |
 |---|---|---|
-| `create` | mutation | new task. Required: title (verb+noun), description (2-4 sentences), acceptanceCriteria (2-4 binary), category, all four tag dimensions. Artifacts §1-4. |
+| `create` | mutation | new task. Required: title (verb+noun), description (2-4 sentences), acceptanceCriteria (2-4 binary), category, three tag dimensions (work-type, cross-cutting, tech). Optional first-class fields: priority, estimate, assigneeIds. Artifacts §1-4. |
 | `update` | mutation | edit fields, status transitions, append decisions / acceptanceCriteria / files. Default appends. **`overwriteArrays=true` REPLACES the existing arrays. Destructive. Always confirm with the user before using it.** |
 | `delete` | mutation | remove a task that is noise (accidental, duplicate, never had content). Default `preview=true` shows impact; set `preview=false` to execute. For abandoned scope, cancel instead (see Delete or cancel workflow). |
 

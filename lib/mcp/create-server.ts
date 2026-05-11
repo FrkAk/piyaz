@@ -77,7 +77,7 @@ function toMcp(result: ToolResult) {
 
 const INSTRUCTIONS = `Mymir is an agentic project management server for software projects. It tracks tasks, dependencies, decisions, and execution records across sessions and teammates so coding agents and engineers can hand work to each other. Stateless HTTP endpoint with no server-side session state; pass \`projectId\` explicitly on every call.
 
-This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the four-dimension tag taxonomy, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`mymir\` skill on your platform (Claude Code, Codex, Cursor, Gemini) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
+This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the three-dimension tag taxonomy plus the first-class \`priority\` / \`estimate\` / \`assigneeIds\` fields, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`mymir\` skill on your platform (Claude Code, Codex, Cursor, Gemini) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
 
 ## Multi-team awareness
 The caller's account spans every membership. There is no 'active' team. Read tools span every team you belong to; writes name \`organizationId\` or auto-resolve when the account has exactly one membership.
@@ -439,7 +439,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "mymir", version: "1.5.0" },
+    { name: "mymir", version: "1.6.0" },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);

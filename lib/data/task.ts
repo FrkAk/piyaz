@@ -1226,6 +1226,7 @@ export async function updateTask(
 
   changes = await formatTaskMarkdownFields(changes);
 
+  let wasNoOp = false;
   const updated = await db.transaction(async (tx) => {
     // Re-read the row under FOR UPDATE so the merge sees the committed
     // state from any concurrent updateTask. Without the lock, two callers
@@ -1238,6 +1239,16 @@ export async function updateTask(
       .where(eq(tasks.id, taskId))
       .for("update");
     if (!current) throw new ForbiddenError("Forbidden", "task", taskId);
+
+    // After normalization above, an `assigneeIds: []` in default-append
+    // mode collapses to `assigneeIds === undefined`. If that was the
+    // only field on the call AND nothing else needs writing, the call
+    // is a pure no-op: skip the tasks-row bump, the empty history
+    // entry, and the downstream realtime emit.
+    if (Object.keys(changes).length === 0 && assigneeIds === undefined) {
+      wasNoOp = true;
+      return current;
+    }
 
     if (!overwriteArrays) {
       if (Array.isArray(changes.decisions)) {
@@ -1311,7 +1322,7 @@ export async function updateTask(
     return row;
   });
 
-  emitTaskEvent(updated.projectId, taskId);
+  if (!wasNoOp) emitTaskEvent(updated.projectId, taskId);
   return updated;
 }
 
