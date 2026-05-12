@@ -11,6 +11,7 @@ import { PriorityIcon } from '@/components/shared/PriorityIcon';
 import { StatusGlyph, STATUS_META } from '@/components/shared/StatusGlyph';
 import { Dropdown } from '@/components/shared/Dropdown';
 import { useUndo, UndoButton } from '@/hooks/useUndo';
+import { popoverFixedStyle, usePopoverAnchor } from '@/hooks/usePopoverAnchor';
 import { updateTask } from '@/lib/graph/mutations';
 import { projectColor } from '@/lib/ui/project-color';
 import { listTeamMembersAction } from '@/lib/actions/team-members';
@@ -1035,6 +1036,13 @@ interface AssigneePickerProps {
 }
 
 /**
+ * Estimated popover height — search row (~40px) + max list height (260px)
+ * + chrome (~4px). Drives the flip-above decision so the panel never falls
+ * below the viewport.
+ */
+const ASSIGNEE_POPOVER_HEIGHT_PX = 304;
+
+/**
  * Avatar-stack trigger anchoring a search + checklist popover of every
  * team member. Mirrors `TagAdd`'s popover shape (click-out / Esc / focus
  * trap) but reads from `listTeamMembersAction` cached under
@@ -1046,11 +1054,6 @@ interface AssigneePickerProps {
 function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [anchor, setAnchor] = useState<
-    | { mode: 'below'; top: number; right: number }
-    | { mode: 'above'; bottom: number; right: number }
-    | null
-  >(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1066,49 +1069,15 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
     enabled: open,
   });
 
-  // Estimated popover height — search row (~40px) + max list height (260px)
-  // + chrome (~4px). Used to decide whether to flip above the trigger so
-  // the panel never falls below the viewport.
-  const POPOVER_HEIGHT_PX = 304;
-
-  // Recompute the popover anchor on open and whenever layout shifts
-  // (scroll, resize). Fixed positioning means the popover escapes the
-  // rail's `overflow-y-auto` clipping context — without this, the panel
-  // gets cut off by the detail column when it extends past the rail's
-  // left edge. Updates are coalesced through requestAnimationFrame so
-  // capture-phase scroll spam from nested scrollers can't trigger a
-  // layout-and-render per event.
-  useEffect(() => {
-    if (!open) return;
-    let frame = 0;
-    const compute = () => {
-      frame = 0;
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const right = window.innerWidth - rect.right;
-      const spaceBelow = window.innerHeight - rect.bottom;
-      // Flip above the trigger when there is not enough room below but
-      // there IS room above; otherwise stay below and let the internal
-      // list scroll handle overflow.
-      if (spaceBelow < POPOVER_HEIGHT_PX && rect.top > POPOVER_HEIGHT_PX) {
-        setAnchor({ mode: 'above', bottom: window.innerHeight - rect.top + 4, right });
-      } else {
-        setAnchor({ mode: 'below', top: rect.bottom + 4, right });
-      }
-    };
-    const update = () => {
-      if (frame !== 0) return;
-      frame = window.requestAnimationFrame(compute);
-    };
-    compute();
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    return () => {
-      if (frame !== 0) window.cancelAnimationFrame(frame);
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-    };
-  }, [open]);
+  // Fixed-position anchor: escapes the rail's `overflow-y-auto` clipping
+  // context so the panel can extend past the rail's left edge without
+  // getting cut off by the detail column.
+  const { anchor } = usePopoverAnchor({
+    open,
+    triggerRef,
+    align: 'end',
+    popoverHeight: ASSIGNEE_POPOVER_HEIGHT_PX,
+  });
 
   // Close handler used by every dismissal path (outside click, Escape, the
   // trigger toggling itself off). Resets the search box so the next open
@@ -1206,12 +1175,8 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
   // Flip direction drives both the panel positioning and the enter/exit
   // y-translate so the popover slides toward its anchored edge instead of
   // away from it.
-  const flipped = anchor?.mode === 'above';
-  const popoverPosition = anchor
-    ? anchor.mode === 'below'
-      ? { top: anchor.top, right: anchor.right }
-      : { bottom: anchor.bottom, right: anchor.right }
-    : null;
+  const flipped = anchor?.vertical === 'above';
+  const popoverStyle = anchor ? popoverFixedStyle(anchor) : null;
 
   return (
     <>
@@ -1260,7 +1225,7 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
 
       {typeof document !== 'undefined' && createPortal(
         <AnimatePresence>
-          {open && popoverPosition && (
+          {open && popoverStyle && (
             <motion.div
               ref={popoverRef}
               role="listbox"
@@ -1269,7 +1234,7 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: flipped ? 4 : -4, scale: 0.97 }}
               transition={{ duration: 0.11, ease: 'easeOut' }}
-              style={{ position: 'fixed', ...popoverPosition }}
+              style={popoverStyle}
               className="z-50 w-[240px] overflow-hidden rounded-md border border-border-strong bg-surface-raised shadow-float"
             >
               <div className="border-b border-border bg-base p-2">

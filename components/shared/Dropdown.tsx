@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { IconCheck, IconChevronDown } from '@/components/shared/icons';
+import { popoverFixedStyle, usePopoverAnchor } from '@/hooks/usePopoverAnchor';
 
 export interface DropdownOption<V extends string = string> {
   /** Option value — what gets passed to onChange. */
@@ -43,66 +44,6 @@ interface DropdownProps<V extends string> {
 const PANEL_MAX_HEIGHT_PX = 288;
 
 /**
- * Discriminated anchor describing where the panel attaches. `position:
- * fixed` coords keyed to either the trigger's bottom (below) or top
- * (above) edge, and to either the trigger's left or right edge.
- */
-type DropdownAnchor =
-  | { vertical: 'below'; horizontal: 'start'; top: number; left: number; width: number }
-  | { vertical: 'below'; horizontal: 'end'; top: number; right: number; width: number }
-  | { vertical: 'above'; horizontal: 'start'; bottom: number; left: number; width: number }
-  | { vertical: 'above'; horizontal: 'end'; bottom: number; right: number; width: number };
-
-/**
- * Measure the trigger and decide where the panel should attach.
- * Computes the flip direction in the same pass so the panel never
- * renders below the viewport when there's room above.
- *
- * @param rect - Trigger client rect.
- * @param align - Caller-requested horizontal anchor.
- * @returns Anchor descriptor or null when the rect is unavailable.
- */
-function computeAnchor(rect: DOMRect, align: 'start' | 'end'): DropdownAnchor {
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const spaceAbove = rect.top;
-  const flip = spaceBelow < PANEL_MAX_HEIGHT_PX && spaceAbove > spaceBelow;
-  if (flip) {
-    if (align === 'end') {
-      return {
-        vertical: 'above',
-        horizontal: 'end',
-        bottom: window.innerHeight - rect.top + 4,
-        right: window.innerWidth - rect.right,
-        width: rect.width,
-      };
-    }
-    return {
-      vertical: 'above',
-      horizontal: 'start',
-      bottom: window.innerHeight - rect.top + 4,
-      left: rect.left,
-      width: rect.width,
-    };
-  }
-  if (align === 'end') {
-    return {
-      vertical: 'below',
-      horizontal: 'end',
-      top: rect.bottom + 4,
-      right: window.innerWidth - rect.right,
-      width: rect.width,
-    };
-  }
-  return {
-    vertical: 'below',
-    horizontal: 'start',
-    top: rect.bottom + 4,
-    left: rect.left,
-    width: rect.width,
-  };
-}
-
-/**
  * Anchored dropdown — single-select. The trigger is fully owned by the
  * caller via `renderTrigger`, so the same primitive serves status pills,
  * filter chips, and rail rows without forcing a single appearance. The
@@ -127,8 +68,14 @@ export function Dropdown<V extends string>({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [anchor, setAnchor] = useState<DropdownAnchor | null>(null);
   const listId = useId();
+
+  const { anchor, measureNow } = usePopoverAnchor({
+    open,
+    triggerRef,
+    align,
+    popoverHeight: PANEL_MAX_HEIGHT_PX,
+  });
 
   // Click-outside + Escape close. Both the trigger and the portalled
   // panel must be exempt; the panel lives outside the trigger's DOM tree,
@@ -152,58 +99,23 @@ export function Dropdown<V extends string>({
     };
   }, [open]);
 
-  // Re-anchor on scroll and resize while open. Coalesced through
-  // requestAnimationFrame so capture-phase scroll spam from nested
-  // scrollers (e.g. the property rail) doesn't trigger a layout-read
-  // and React render per event.
-  useEffect(() => {
-    if (!open) return;
-    let frame = 0;
-    const recompute = () => {
-      frame = 0;
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) setAnchor(computeAnchor(rect, align));
-    };
-    const schedule = () => {
-      if (frame !== 0) return;
-      frame = window.requestAnimationFrame(recompute);
-    };
-    window.addEventListener('resize', schedule);
-    window.addEventListener('scroll', schedule, true);
-    return () => {
-      if (frame !== 0) window.cancelAnimationFrame(frame);
-      window.removeEventListener('resize', schedule);
-      window.removeEventListener('scroll', schedule, true);
-    };
-  }, [open, align]);
-
-  // Toggle handler: measure during the click event so the panel renders
-  // with the correct anchor on its first frame. Two batched setStates
-  // commit together — no extra render to read the DOM.
+  // Toggle handler: measure synchronously during the click so the panel
+  // renders with the correct anchor on its first frame. React batches the
+  // two setStates inside the same event handler, so there's no extra
+  // render before paint.
   const handleToggle = useCallback(() => {
     setOpen((wasOpen) => {
-      if (!wasOpen && triggerRef.current) {
-        const rect = triggerRef.current.getBoundingClientRect();
-        setAnchor(computeAnchor(rect, align));
-      }
+      if (!wasOpen) measureNow();
       return !wasOpen;
     });
-  }, [align]);
+  }, [measureNow]);
 
   const active = options.find((o) => o.value === value);
   const flipped = anchor?.vertical === 'above';
 
-  // Build the `position: fixed` style for the panel from the discriminated
-  // anchor. Always emits one vertical and one horizontal coordinate.
   const panelStyle: React.CSSProperties | null = anchor
     ? {
-        position: 'fixed',
-        ...(anchor.vertical === 'below'
-          ? { top: anchor.top }
-          : { bottom: anchor.bottom }),
-        ...(anchor.horizontal === 'start'
-          ? { left: anchor.left }
-          : { right: anchor.right }),
+        ...popoverFixedStyle(anchor),
         width: matchTriggerWidth ? anchor.width : undefined,
         minWidth,
       }
