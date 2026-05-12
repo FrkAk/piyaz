@@ -30,32 +30,31 @@ import {
 import type { TaskEdge } from '@/lib/db/schema';
 import type { Priority, Estimate, TaskStatus } from '@/lib/types';
 import type { AssigneeRef, ProjectGraphSlim, TaskFull } from '@/lib/data/views';
+
+/**
+ * Subset of task fields safe to patch onto both the `TaskFull` and
+ * `TaskGraphSlim` caches. Restricted to fields that exist on the slim
+ * shape so a spread `{ ...t, ...patch }` produces a valid slim entry —
+ * fields not in this list (description, decisions, history) live only on
+ * TaskFull and would have to be patched there separately.
+ */
+type TaskPatch = Partial<{
+  status: TaskStatus;
+  priority: Priority | null;
+  estimate: Estimate | null;
+  category: string | null;
+  tags: string[];
+}>;
 import { isLegacyPriorityTag } from '@/lib/ui/legacy-priority-tags';
-import { projectKeys, taskKeys } from '@/lib/query/keys';
+import { PRIORITY_COLOR, PRIORITY_DISPLAY_ORDER } from '@/lib/ui/priority';
+import { projectKeys, taskKeys, teamKeys } from '@/lib/query/keys';
 
 /** Display order for the Status dropdown — matches the lifecycle ribbon. */
 const STATUS_OPTIONS: readonly TaskStatus[] = ['draft', 'planned', 'in_progress', 'done', 'cancelled'];
-/** Display order for the Priority dropdown — highest impact first. */
-const PRIORITY_OPTIONS: readonly Priority[] = ['urgent', 'core', 'normal', 'backlog'];
 /** Display order for the Estimate dropdown — Fibonacci story points. */
 const ESTIMATE_OPTIONS: readonly Estimate[] = [1, 2, 3, 5, 8, 13];
 /** Sentinel used by dropdowns to model the "clear" action under `string` schemas. */
 const SENTINEL_CLEAR = '__clear__';
-
-/**
- * TanStack Query key for the per-team member list. Shared with
- * StructureView so the popover and row avatars draw from the same cache.
- */
-export const teamMembersQueryKey = (organizationId: string) =>
-  ['team-members', organizationId] as const;
-
-/** Color tokens by priority — drives the dropdown trigger pill tint. */
-const PRIORITY_COLOR: Record<Priority, string> = {
-  urgent: 'var(--color-danger)',
-  core: 'var(--color-glyph-progress)',
-  normal: 'var(--color-accent)',
-  backlog: 'var(--color-text-muted)',
-};
 
 interface PropRailProps {
   /** Task UUID. */
@@ -124,14 +123,79 @@ export function PropRail({
   onSelectNode,
   onGraphChange,
 }: PropRailProps) {
-  const dependsOn = edges.filter((e) => e.edgeType === 'depends_on' && e.sourceTaskId === taskId);
-  const blocks = edges.filter((e) => e.edgeType === 'depends_on' && e.targetTaskId === taskId);
-  const totalDeps = dependsOn.length + blocks.length;
+  // Walk `edges` once and produce both directions plus the pre-mapped
+  // DepGroup items. Filtering twice per render — once per direction — was
+  // an O(edges) hit on every refetch even when nothing relevant changed.
+  // Centralising the pass also gives `DepGroup` a stable `items` prop so a
+  // future `React.memo` on the sub-row can short-circuit.
+  const {
+    dependsOnItems,
+    blocksItems,
+    totalDeps,
+  } = useMemo(() => {
+    const dependsOnArr: { edgeId: string; otherId: string }[] = [];
+    const blocksArr: { edgeId: string; otherId: string }[] = [];
+    for (const e of edges) {
+      if (e.edgeType !== 'depends_on') continue;
+      if (e.sourceTaskId === taskId) {
+        dependsOnArr.push({ edgeId: e.id, otherId: e.targetTaskId });
+      } else if (e.targetTaskId === taskId) {
+        blocksArr.push({ edgeId: e.id, otherId: e.sourceTaskId });
+      }
+    }
+    return {
+      dependsOnItems: dependsOnArr,
+      blocksItems: blocksArr,
+      totalDeps: dependsOnArr.length + blocksArr.length,
+    };
+  }, [edges, taskId]);
+
+  // Shared cache-patch helper for every scalar/array property write
+  // (status, priority, estimate, category, tags). Cancels any in-flight
+  // refetch — `RealtimeBridge` may have invalidated the query from a
+  // previous mutation's SSE event, and the resulting refetch is
+  // currently in flight; without the cancel, that refetch can complete
+  // after our `setQueryData` below and clobber it with stale data.
+  //
+  // Then writes the patch to both caches the workspace renders from:
+  //
+  //   - `TaskFull` (drives PropRail's pills and DetailView's body)
+  //   - the slim graph (drives TaskRow chips on the structure list)
+  //
+  // The slim cache only carries a subset of Task fields, but every key
+  // in `TaskPatch` is present on both shapes, so the same patch object
+  // is safe to spread onto either.
+  const queryClient = useQueryClient();
+  const applyOptimisticPatch = useCallback((patch: TaskPatch) => {
+    const taskKey = taskKeys.detail(projectId, taskId);
+    const graphKey = projectKeys.graph(projectId);
+
+    void queryClient.cancelQueries({ queryKey: taskKey });
+    void queryClient.cancelQueries({ queryKey: graphKey });
+
+    queryClient.setQueryData<TaskFull>(taskKey, (prev) =>
+      prev ? { ...prev, ...patch } : prev,
+    );
+    queryClient.setQueryData<ProjectGraphSlim>(graphKey, (prev) =>
+      prev
+        ? {
+            ...prev,
+            tasks: prev.tasks.map((t) =>
+              t.id === taskId ? { ...t, ...patch } : t,
+            ),
+          }
+        : prev,
+    );
+  }, [projectId, taskId, queryClient]);
 
   const handleRestoreStatus = useCallback(async (prev: TaskStatus) => {
-    await updateTask(taskId, { status: prev });
-    onGraphChange?.();
-  }, [taskId, onGraphChange]);
+    applyOptimisticPatch({ status: prev });
+    try {
+      await updateTask(taskId, { status: prev });
+    } finally {
+      onGraphChange?.();
+    }
+  }, [taskId, applyOptimisticPatch, onGraphChange]);
 
   const { canUndo: canUndoStatus, push: pushStatusUndo, undo: undoStatus } = useUndo<TaskStatus>({
     onUndo: handleRestoreStatus,
@@ -141,19 +205,31 @@ export function PropRail({
   const handleStatusChange = useCallback(async (next: TaskStatus) => {
     if (next === status) return;
     pushStatusUndo(status);
-    await updateTask(taskId, { status: next });
-    onGraphChange?.();
-  }, [taskId, status, pushStatusUndo, onGraphChange]);
+    applyOptimisticPatch({ status: next });
+    try {
+      await updateTask(taskId, { status: next });
+    } finally {
+      onGraphChange?.();
+    }
+  }, [taskId, status, pushStatusUndo, applyOptimisticPatch, onGraphChange]);
 
   const handleCategoryChange = useCallback(async (next: string | null) => {
-    await updateTask(taskId, { category: next });
-    onGraphChange?.();
-  }, [taskId, onGraphChange]);
+    applyOptimisticPatch({ category: next });
+    try {
+      await updateTask(taskId, { category: next });
+    } finally {
+      onGraphChange?.();
+    }
+  }, [taskId, applyOptimisticPatch, onGraphChange]);
 
   const handleTagsChange = useCallback(async (next: string[]) => {
-    await updateTask(taskId, { tags: next }, true);
-    onGraphChange?.();
-  }, [taskId, onGraphChange]);
+    applyOptimisticPatch({ tags: next });
+    try {
+      await updateTask(taskId, { tags: next }, true);
+    } finally {
+      onGraphChange?.();
+    }
+  }, [taskId, applyOptimisticPatch, onGraphChange]);
 
   // Hide legacy priority strings from the tag editor; MYMR-195 strips them
   // server-side, but until then the UI gates them so the workspace stops
@@ -174,42 +250,80 @@ export function PropRail({
   }, [tags, handleTagsChange]);
 
   const handlePriorityChange = useCallback(async (next: Priority | null) => {
-    await updateTask(taskId, { priority: next });
-    onGraphChange?.();
-  }, [taskId, onGraphChange]);
+    applyOptimisticPatch({ priority: next });
+    try {
+      await updateTask(taskId, { priority: next });
+    } finally {
+      onGraphChange?.();
+    }
+  }, [taskId, applyOptimisticPatch, onGraphChange]);
 
   const handleEstimateChange = useCallback(async (next: Estimate | null) => {
-    await updateTask(taskId, { estimate: next });
-    onGraphChange?.();
-  }, [taskId, onGraphChange]);
+    applyOptimisticPatch({ estimate: next });
+    try {
+      await updateTask(taskId, { estimate: next });
+    } finally {
+      onGraphChange?.();
+    }
+  }, [taskId, applyOptimisticPatch, onGraphChange]);
 
   // Optimistic assignee updates: rewrite both the task-detail cache
   // (drives PropRail's trigger + name resolution) and the slim graph
-  // cache (drives every TaskRow's avatar stack) so every consumer
-  // snaps to the new state immediately, without waiting for the
-  // round-trip. Writes are chained — `overwriteArrays=true` would
-  // otherwise let parallel responses race, with the last response
-  // winning regardless of click order. Invalidation is suppressed
-  // until the chain drains so intermediate refetches can't clobber
-  // the user's latest local intent.
-  const queryClient = useQueryClient();
+  // cache (drives every TaskRow's avatar stack) so every consumer snaps
+  // to the new state immediately, without waiting for the round-trip.
+  //
+  // Three races we have to defeat for the trigger to stop flickering
+  // when the user toggles rapidly:
+  //
+  //   1. **In-flight refetch overwrites our setQueryData.** Every
+  //      `updateTask` triggers an SSE `task` event that `RealtimeBridge`
+  //      invalidates on. The refetch may complete after our optimistic
+  //      write and clobber it with stale server state. We
+  //      `cancelQueries` before each optimistic write so any pending
+  //      refetch is aborted before we set.
+  //   2. **Mid-chain refetch overwrites the latest intent.** Each chain
+  //      step's `await updateTask` blocks for the network round-trip.
+  //      During that wait, the SSE for the *previous* step's response
+  //      can land and trigger a refetch that returns an intermediate
+  //      server state. After every chain step we re-apply the latest
+  //      intent if more clicks are queued.
+  //   3. **Redundant intermediate writes amplify the SSE storm.** Each
+  //      mutation fires another SSE event, multiplying the chances of
+  //      hitting race #2. `overwriteArrays=true` makes intermediate
+  //      states recoverable from any later write, so we skip a chain
+  //      step entirely when newer clicks have queued after it.
   const assigneeMutationChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const pendingAssigneeWritesRef = useRef(0);
-  const handleAssigneesChange = useCallback((nextUserIds: string[]) => {
+  const latestAssigneeIntentRef = useRef<string[] | null>(null);
+
+  const applyAssigneesOptimistically = useCallback((nextUserIds: string[]) => {
     const taskKey = taskKeys.detail(projectId, taskId);
     const graphKey = projectKeys.graph(projectId);
 
-    const members =
-      queryClient.getQueryData<MemberView[]>(teamMembersQueryKey(organizationId)) ?? [];
-    const memberById = new Map(members.map((m) => [m.userId, m]));
-    const nextAssignees: AssigneeRef[] = nextUserIds
-      .map((id) => memberById.get(id))
-      .filter((m): m is MemberView => m !== undefined)
-      .map((m) => ({ userId: m.userId, name: m.name, email: m.email }));
+    // Resolve the new assignee projection from the team-members cache. If
+    // the cache is cold (graph-rooted entry, picker opened before the
+    // query resolved), `getQueryData` returns undefined; the safe fall
+    // back is to keep `prev.assignees` for unresolved ids so a cold cache
+    // cannot drop an assignee.
+    const cachedMembers =
+      queryClient.getQueryData<MemberView[]>(teamKeys.members(organizationId));
+    const memberById = new Map((cachedMembers ?? []).map((m) => [m.userId, m]));
 
-    queryClient.setQueryData<TaskFull>(taskKey, (prev) =>
-      prev ? { ...prev, assignees: nextAssignees } : prev,
-    );
+    queryClient.setQueryData<TaskFull>(taskKey, (prev) => {
+      if (!prev) return prev;
+      const prevById = new Map(prev.assignees.map((a) => [a.userId, a]));
+      const nextAssignees: AssigneeRef[] = nextUserIds
+        .map((id) => {
+          const fromCache = memberById.get(id);
+          if (fromCache) {
+            return { userId: fromCache.userId, name: fromCache.name, email: fromCache.email };
+          }
+          return prevById.get(id);
+        })
+        .filter((a): a is AssigneeRef => a !== undefined)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return { ...prev, assignees: nextAssignees };
+    });
     queryClient.setQueryData<ProjectGraphSlim>(graphKey, (prev) =>
       prev
         ? {
@@ -222,24 +336,58 @@ export function PropRail({
           }
         : prev,
     );
+  }, [projectId, taskId, organizationId, queryClient]);
+
+  const handleAssigneesChange = useCallback((nextUserIds: string[]) => {
+    const taskKey = taskKeys.detail(projectId, taskId);
+    const graphKey = projectKeys.graph(projectId);
+
+    // Track latest user intent — re-applied after each mutation lands so
+    // an SSE-driven refetch that completed mid-chain can't reveal an
+    // intermediate server state.
+    latestAssigneeIntentRef.current = nextUserIds;
+
+    // Cancel any in-flight refetch — `RealtimeBridge` may have invalidated
+    // the query from a previous mutation's SSE event, and the resulting
+    // refetch is currently in flight. Without cancellation, that refetch
+    // can complete after our `setQueryData` below and overwrite it.
+    void queryClient.cancelQueries({ queryKey: taskKey });
+    void queryClient.cancelQueries({ queryKey: graphKey });
+
+    applyAssigneesOptimistically(nextUserIds);
 
     pendingAssigneeWritesRef.current += 1;
     const myTurn = assigneeMutationChainRef.current.then(async () => {
       try {
+        // Skip when newer clicks have queued after this step —
+        // `overwriteArrays=true` makes the later write a complete superset
+        // so this intermediate call is redundant, and dropping it reduces
+        // the SSE storm that drives race #2 above.
+        if (pendingAssigneeWritesRef.current > 1) return;
         await updateTask(taskId, { assigneeIds: nextUserIds }, true);
       } finally {
         pendingAssigneeWritesRef.current -= 1;
-        // Only invalidate once the entire chain has drained, otherwise an
-        // intermediate refetch overwrites our optimistic state with a
-        // mid-sequence server snapshot.
         if (pendingAssigneeWritesRef.current === 0) {
+          // Final mutation drained — let the broker-triggered refetch sync
+          // the server's settled view back in.
+          latestAssigneeIntentRef.current = null;
           onGraphChange?.();
+        } else {
+          // More clicks queued: an SSE event from this step's response is
+          // about to (or already has) triggered an invalidating refetch
+          // that would land an intermediate snapshot on the cache. Cancel
+          // it and re-apply the latest intent so the trigger stays at the
+          // user's latest selection.
+          void queryClient.cancelQueries({ queryKey: taskKey });
+          void queryClient.cancelQueries({ queryKey: graphKey });
+          const latest = latestAssigneeIntentRef.current;
+          if (latest !== null) applyAssigneesOptimistically(latest);
         }
       }
     });
     assigneeMutationChainRef.current = myTurn.catch(() => {});
     return myTurn;
-  }, [projectId, taskId, organizationId, queryClient, onGraphChange]);
+  }, [projectId, taskId, queryClient, onGraphChange, applyAssigneesOptimistically]);
 
   return (
     <aside
@@ -293,14 +441,14 @@ export function PropRail({
           <DepGroup
             kind="depends"
             label="Depends on"
-            items={dependsOn.map((e) => ({ edgeId: e.id, otherId: e.targetTaskId }))}
+            items={dependsOnItems}
             taskMap={taskMap}
             onSelectNode={onSelectNode}
           />
           <DepGroup
             kind="relates"
             label="Blocks"
-            items={blocks.map((e) => ({ edgeId: e.id, otherId: e.sourceTaskId }))}
+            items={blocksItems}
             taskMap={taskMap}
             onSelectNode={onSelectNode}
           />
@@ -402,10 +550,9 @@ interface CategoryDropdownProps {
  * @returns Anchored dropdown element.
  */
 function CategoryDropdown({ category, categories, onChange, align = 'start' }: CategoryDropdownProps) {
-  const SENTINEL_NULL = '__none__';
   const options = useMemo(() => {
     const items: { value: string; label: string }[] = [
-      { value: SENTINEL_NULL, label: 'Uncategorized' },
+      { value: SENTINEL_CLEAR, label: 'Uncategorized' },
     ];
     for (const cat of categories) items.push({ value: cat, label: cat });
     return items;
@@ -415,13 +562,13 @@ function CategoryDropdown({ category, categories, onChange, align = 'start' }: C
     return <PlaceholderValue title="No project categories yet"><span>—</span></PlaceholderValue>;
   }
 
-  const selected = category ?? SENTINEL_NULL;
+  const selected = category ?? SENTINEL_CLEAR;
 
   return (
     <Dropdown
       value={selected}
       options={options}
-      onChange={(v) => onChange(v === SENTINEL_NULL ? null : v)}
+      onChange={(v) => onChange(v === SENTINEL_CLEAR ? null : v)}
       align={align}
       ariaLabel="Change category"
       title="Change category"
@@ -532,22 +679,31 @@ function TagAdd({ vocabulary, active, onToggle, onCreate }: TagAddProps) {
   const wrapRef = useRef<HTMLSpanElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Close handler used by every dismissal path. Resets the search box so
+  // the next open starts clean — done at the call site instead of in an
+  // effect to keep setState out of the effect body.
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery('');
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) close();
     };
     const escape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') close();
     };
     document.addEventListener('mousedown', handler);
     document.addEventListener('keydown', escape);
-    setTimeout(() => inputRef.current?.focus(), 30);
+    const focusTimer = window.setTimeout(() => inputRef.current?.focus(), 30);
     return () => {
       document.removeEventListener('mousedown', handler);
       document.removeEventListener('keydown', escape);
+      window.clearTimeout(focusTimer);
     };
-  }, [open]);
+  }, [open, close]);
 
   const q = query.trim().toLowerCase();
   const sorted = useMemo(() => [...vocabulary].sort((a, b) => a.localeCompare(b)), [vocabulary]);
@@ -559,7 +715,7 @@ function TagAdd({ vocabulary, active, onToggle, onCreate }: TagAddProps) {
     <span ref={wrapRef} className="relative inline-flex">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? close() : setOpen(true))}
         className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed border-border-strong px-1.5 py-px font-mono text-[10px] text-text-muted transition-colors hover:border-border-stronger hover:bg-surface-hover hover:text-text-secondary"
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -758,7 +914,7 @@ interface PriorityDropdownProps {
 function PriorityDropdown({ priority, onChange, align = 'start' }: PriorityDropdownProps) {
   const options = useMemo(
     () => {
-      const items: DropdownItem[] = PRIORITY_OPTIONS.map((p) => ({
+      const items: DropdownItem[] = PRIORITY_DISPLAY_ORDER.map((p) => ({
         value: p,
         label: p,
         leading: <PriorityIcon priority={p} />,
@@ -909,13 +1065,17 @@ interface AssigneePickerProps {
 function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null);
+  const [anchor, setAnchor] = useState<
+    | { mode: 'below'; top: number; right: number }
+    | { mode: 'above'; bottom: number; right: number }
+    | null
+  >(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { data: members, isPending, isError } = useQuery({
-    queryKey: teamMembersQueryKey(organizationId),
+    queryKey: teamKeys.members(organizationId),
     queryFn: async () => {
       const result = await listTeamMembersAction({ organizationId });
       if (!result.ok) throw new Error(`list-team-members:${result.code}`);
@@ -925,48 +1085,78 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
     enabled: open,
   });
 
+  // Estimated popover height — search row (~40px) + max list height (260px)
+  // + chrome (~4px). Used to decide whether to flip above the trigger so
+  // the panel never falls below the viewport.
+  const POPOVER_HEIGHT_PX = 304;
+
   // Recompute the popover anchor on open and whenever layout shifts
   // (scroll, resize). Fixed positioning means the popover escapes the
   // rail's `overflow-y-auto` clipping context — without this, the panel
   // gets cut off by the detail column when it extends past the rail's
-  // left edge.
+  // left edge. Updates are coalesced through requestAnimationFrame so
+  // capture-phase scroll spam from nested scrollers can't trigger a
+  // layout-and-render per event.
   useEffect(() => {
     if (!open) return;
-    const update = () => {
+    let frame = 0;
+    const compute = () => {
+      frame = 0;
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
-      setAnchor({
-        top: rect.bottom + 4,
-        right: window.innerWidth - rect.right,
-      });
+      const right = window.innerWidth - rect.right;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      // Flip above the trigger when there is not enough room below but
+      // there IS room above; otherwise stay below and let the internal
+      // list scroll handle overflow.
+      if (spaceBelow < POPOVER_HEIGHT_PX && rect.top > POPOVER_HEIGHT_PX) {
+        setAnchor({ mode: 'above', bottom: window.innerHeight - rect.top + 4, right });
+      } else {
+        setAnchor({ mode: 'below', top: rect.bottom + 4, right });
+      }
     };
-    update();
+    const update = () => {
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(compute);
+    };
+    compute();
     window.addEventListener('resize', update);
     window.addEventListener('scroll', update, true);
     return () => {
+      if (frame !== 0) window.cancelAnimationFrame(frame);
       window.removeEventListener('resize', update);
       window.removeEventListener('scroll', update, true);
     };
   }, [open]);
+
+  // Close handler used by every dismissal path (outside click, Escape, the
+  // trigger toggling itself off). Resets the search box so the next open
+  // starts clean — done at the call site instead of in an effect to keep
+  // setState out of the effect body.
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery('');
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
       const inTrigger = triggerRef.current?.contains(e.target as Node);
       const inPopover = popoverRef.current?.contains(e.target as Node);
-      if (!inTrigger && !inPopover) setOpen(false);
+      if (!inTrigger && !inPopover) close();
     };
     const escape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') close();
     };
     document.addEventListener('mousedown', handler);
     document.addEventListener('keydown', escape);
-    setTimeout(() => inputRef.current?.focus(), 30);
+    const focusTimer = window.setTimeout(() => inputRef.current?.focus(), 30);
     return () => {
       document.removeEventListener('mousedown', handler);
       document.removeEventListener('keydown', escape);
+      window.clearTimeout(focusTimer);
     };
-  }, [open]);
+  }, [open, close]);
 
   // Local source of truth for which members are checked. Rapid clicks
   // need to read the latest intent synchronously, not the prop-derived
@@ -1012,37 +1202,64 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
     }
   }, [onChange]);
 
+  // Pre-sort the trigger avatars by name so they match `TaskRow`'s avatar
+  // stack and the server-returned ordering. `assignees` already arrives
+  // name-sorted from `fetchAssigneesUnchecked`, but the optimistic write
+  // path can write a click-ordered array briefly; sorting on render
+  // collapses both states.
+  const sortedAssignees = useMemo(
+    () => [...assignees].sort((a, b) => a.name.localeCompare(b.name)),
+    [assignees],
+  );
+  const visibleAssignees = sortedAssignees.slice(0, 2);
+  const overflowAssignees = sortedAssignees.length - visibleAssignees.length;
+
+  // Flip direction drives both the panel positioning and the enter/exit
+  // y-translate so the popover slides toward its anchored edge instead of
+  // away from it.
+  const flipped = anchor?.mode === 'above';
+  const popoverPosition = anchor
+    ? anchor.mode === 'below'
+      ? { top: anchor.top, right: anchor.right }
+      : { bottom: anchor.bottom, right: anchor.right }
+    : null;
+
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? close() : setOpen(true))}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={assignees.length === 0 ? 'Add assignees' : 'Edit assignees'}
-        className="inline-flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-surface-hover"
+        title={sortedAssignees.length === 0 ? 'Add assignees' : 'Edit assignees'}
+        className="inline-flex cursor-pointer items-center justify-end gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-surface-hover"
       >
-        {assignees.length === 0 ? (
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border-strong px-2 py-0.5 font-mono text-[10px] font-medium text-text-muted/70 transition-colors hover:border-border-stronger hover:text-text-secondary">
-            <span aria-hidden="true" className="inline-flex h-4 w-4 rounded-full border border-dashed border-border-strong" />
-            <span>Add</span>
+        {sortedAssignees.length === 0 ? (
+          // Empty-state placeholder shares the 18px avatar footprint so the
+          // trigger keeps a stable width as the user toggles assignees on
+          // and off. Matches the TaskRow "Unassigned" affordance; the `+`
+          // glyph differentiates this editable trigger from the static
+          // row indicator.
+          <span
+            aria-hidden="true"
+            className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full border border-dashed border-border-strong text-text-muted/60 transition-colors hover:border-border-stronger hover:text-text-secondary"
+          >
+            <IconPlus size={9} />
           </span>
         ) : (
           <span className="inline-flex items-center">
-            {assignees.slice(0, 2).map((a, i) => {
-              const visible = assignees.slice(0, 2);
-              const overflow = assignees.length - visible.length;
-              const isLastVisible = i === visible.length - 1;
+            {visibleAssignees.map((a, i) => {
+              const isLastVisible = i === visibleAssignees.length - 1;
               return (
                 <span key={a.userId} className={`relative ${i === 0 ? '' : '-ml-2'}`}>
                   <Avatar name={a.name} size={18} />
-                  {isLastVisible && overflow > 0 && (
+                  {isLastVisible && overflowAssignees > 0 && (
                     <span
                       aria-hidden="true"
                       className="absolute -top-1 -right-1 inline-flex h-[11px] min-w-[11px] items-center justify-center rounded-full border border-border-strong bg-surface-raised px-[2px] font-mono text-[7.5px] font-semibold leading-none text-text-secondary"
                     >
-                      +{overflow}
+                      +{overflowAssignees}
                     </span>
                   )}
                 </span>
@@ -1054,19 +1271,20 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
 
       {typeof document !== 'undefined' && createPortal(
         <AnimatePresence>
-          {open && anchor && (
+          {open && popoverPosition && (
             <motion.div
               ref={popoverRef}
               role="listbox"
-              initial={{ opacity: 0, y: -4, scale: 0.97 }}
+              aria-multiselectable="true"
+              initial={{ opacity: 0, y: flipped ? 4 : -4, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -4, scale: 0.97 }}
+              exit={{ opacity: 0, y: flipped ? 4 : -4, scale: 0.97 }}
               transition={{ duration: 0.11, ease: 'easeOut' }}
-              style={{ position: 'fixed', top: anchor.top, right: anchor.right }}
+              style={{ position: 'fixed', ...popoverPosition }}
               className="z-50 w-[240px] overflow-hidden rounded-md border border-border-strong bg-surface-raised shadow-float"
             >
               <div className="border-b border-border bg-base p-2">
-                <div className="flex items-center gap-1.5 rounded-md px-2 py-1.5 transition-shadow focus-within:ring-2 focus-within:ring-accent/30">
+                <div className="flex items-center gap-1.5 rounded-md px-2 py-1.5">
                   <span aria-hidden="true" className="text-text-muted">
                     <IconSearch size={11} />
                   </span>

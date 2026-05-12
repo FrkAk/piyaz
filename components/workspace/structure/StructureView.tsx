@@ -9,12 +9,18 @@ import { useUndo, UndoButton } from '@/hooks/useUndo';
 import { IconSearch, IconTrash, IconX } from '@/components/shared/icons';
 import type { TaskEdge } from '@/lib/db/schema';
 import type { TaskGraphSlim, TaskFull } from '@/lib/data/views';
-import type { Priority, TaskStatus } from '@/lib/types';
+import type { TaskStatus } from '@/lib/types';
 import { taskKeys } from '@/lib/query/keys';
 import { fetchTaskBody } from '@/lib/query/queries';
 import { listTeamMembersAction } from '@/lib/actions/team-members';
 import type { MemberView } from '@/lib/actions/team-members-map';
-import { teamMembersQueryKey } from '@/components/workspace/detail/PropRail';
+import { teamKeys } from '@/lib/query/keys';
+import {
+  PRIORITY_DISPLAY_ORDER,
+  PRIORITY_RANK,
+  PRIORITY_RANK_UNSET,
+  UNPRIORITIZED_KEY,
+} from '@/lib/ui/priority';
 import { isLegacyPriorityTag } from '@/lib/ui/legacy-priority-tags';
 import { TaskRow } from './TaskRow';
 import { TaskGroup, type TaskGroupKey } from './TaskGroup';
@@ -24,24 +30,6 @@ import { formatRelative } from './relativeTime';
 
 /** URL search-param keys persisting filter state. */
 const FILTER_PARAM_KEYS = { tags: 'tags', categories: 'cat', statuses: 'status', priorities: 'pri', search: 'q' } as const;
-
-/**
- * Priority sort weight — urgent is most-urgent (0), null is least
- * (4). Shared between the sort comparator and the `Priority` filter chip
- * order so both surfaces stay in lockstep.
- */
-const PRIORITY_ORDER: Record<Priority, number> = {
-  urgent: 0,
-  core: 1,
-  normal: 2,
-  backlog: 3,
-};
-
-/** Sentinel used in the URL and chip set to represent "no priority assigned". */
-const UNPRIORITIZED_KEY = 'Unprioritized';
-
-/** Display order for the Priority filter chips — highest urgency first. */
-const PRIORITY_FILTER_ORDER: readonly Priority[] = ['urgent', 'core', 'normal', 'backlog'];
 
 /** Display order for status groups — most actionable at the top. */
 const GROUP_ORDER: readonly TaskGroupKey[] = [
@@ -198,8 +186,8 @@ function sortTasks(items: TaskWithRef[], key: SortKey): TaskWithRef[] {
     // sees a meaningful gradient first; ties fall back to `order` to keep
     // adjacent rows stable.
     copy.sort((a, b) => {
-      const ap = a.priority ? PRIORITY_ORDER[a.priority] : 4;
-      const bp = b.priority ? PRIORITY_ORDER[b.priority] : 4;
+      const ap = a.priority ? PRIORITY_RANK[a.priority] : PRIORITY_RANK_UNSET;
+      const bp = b.priority ? PRIORITY_RANK[b.priority] : PRIORITY_RANK_UNSET;
       if (ap !== bp) return ap - bp;
       return a.order - b.order;
     });
@@ -248,7 +236,7 @@ export function StructureView({
     // sentinel so a stale bookmark with an unknown token cannot empty the
     // list.
     const parsed = parseSet(searchParams.get(FILTER_PARAM_KEYS.priorities));
-    const allowed = new Set<string>([UNPRIORITIZED_KEY, ...PRIORITY_FILTER_ORDER]);
+    const allowed = new Set<string>([UNPRIORITIZED_KEY, ...PRIORITY_DISPLAY_ORDER]);
     for (const p of [...parsed]) if (!allowed.has(p)) parsed.delete(p);
     return parsed;
   });
@@ -279,7 +267,7 @@ export function StructureView({
   // other. Fires eagerly here because rows render names without a popover
   // open; 5-minute staleTime keeps it cheap across navigation.
   const { data: teamMembers } = useQuery({
-    queryKey: teamMembersQueryKey(organizationId),
+    queryKey: teamKeys.members(organizationId),
     queryFn: async () => {
       const result = await listTeamMembersAction({ organizationId });
       if (!result.ok) throw new Error(`list-team-members:${result.code}`);
@@ -342,7 +330,7 @@ export function StructureView({
 
   const priorityCounts = useMemo(() => {
     const out: Record<string, number> = { [UNPRIORITIZED_KEY]: 0 };
-    for (const p of PRIORITY_FILTER_ORDER) out[p] = 0;
+    for (const p of PRIORITY_DISPLAY_ORDER) out[p] = 0;
     for (const t of tasks) {
       if (t.priority) out[t.priority] += 1;
       else out[UNPRIORITIZED_KEY] += 1;
@@ -569,7 +557,7 @@ export function StructureView({
         tags={allTags}
         activeTags={activeTags}
         onTagToggle={toggleTag}
-        priorities={PRIORITY_FILTER_ORDER}
+        priorities={PRIORITY_DISPLAY_ORDER}
         activePriorities={activePriorities}
         onPriorityToggle={togglePriority}
         statusCounts={statusCounts}

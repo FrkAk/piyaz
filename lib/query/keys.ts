@@ -25,3 +25,12 @@ export const taskKeys = {
   context: (projectId: string, taskId: string) =>
     ["task", projectId, taskId, "context"] as const,
 } as const;
+
+/** Team-scoped query keys (member roster). */
+export const teamKeys = {
+  /** All team-scoped queries. */
+  all: () => ["team"] as const,
+  /** Member roster for an organization — drives the AssigneePicker and TaskRow avatar names. */
+  members: (organizationId: string) =>
+    ["team", organizationId, "members"] as const,
+} as const;

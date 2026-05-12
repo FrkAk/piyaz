@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Avatar } from '@/components/shared/Avatar';
 import { MonoId, type MonoIdTone } from '@/components/shared/MonoId';
 import { PriorityIcon } from '@/components/shared/PriorityIcon';
@@ -269,11 +269,11 @@ interface PriorityChipProps {
  * @returns Inline-flex chip element.
  */
 function PriorityChip({ priority }: PriorityChipProps) {
+  // `PriorityIcon` carries the accessible name via its own `aria-label`. The
+  // chip span just provides the hit box, so it stays unlabeled to avoid a
+  // duplicate announcement.
   return (
-    <span
-      className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center"
-      title={`Priority: ${priority}`}
-    >
+    <span className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center">
       <PriorityIcon priority={priority} />
     </span>
   );
@@ -296,6 +296,26 @@ interface AssigneeStackProps {
  * @returns Inline-flex stack element.
  */
 function AssigneeStack({ userIds, memberLookup }: AssigneeStackProps) {
+  // Re-sort by member name so the first two avatars match `PropRail`'s
+  // trigger and the server-returned ordering. The slim graph subquery
+  // returns user-id-sorted ids for determinism; the client picks the
+  // user-visible order. Ids that aren't in the cache yet fall to the end
+  // (sorted by id fragment) so they don't shuffle visible avatars while
+  // the team-member roster is loading. Memoised because the row re-renders
+  // on every StructureView pass — multiplying a tiny sort by row count.
+  // Computed before the empty-stack early return so the hook order stays
+  // consistent across renders.
+  const sortedUserIds = useMemo(() => {
+    return [...userIds].sort((a, b) => {
+      const an = memberLookup.get(a)?.name;
+      const bn = memberLookup.get(b)?.name;
+      if (an && bn) return an.localeCompare(bn);
+      if (an) return -1;
+      if (bn) return 1;
+      return a.localeCompare(b);
+    });
+  }, [userIds, memberLookup]);
+
   if (userIds.length === 0) {
     return (
       <span
@@ -307,8 +327,8 @@ function AssigneeStack({ userIds, memberLookup }: AssigneeStackProps) {
       </span>
     );
   }
-  const visible = userIds.slice(0, 2);
-  const overflow = userIds.length - visible.length;
+  const visible = sortedUserIds.slice(0, 2);
+  const overflow = sortedUserIds.length - visible.length;
   return (
     <span className="inline-flex items-center">
       {visible.map((userId, i) => {

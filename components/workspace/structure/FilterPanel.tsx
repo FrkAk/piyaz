@@ -3,6 +3,7 @@
 import { motion, AnimatePresence } from 'motion/react';
 import { PriorityIcon } from '@/components/shared/PriorityIcon';
 import { STATUS_META } from '@/components/shared/StatusGlyph';
+import { UNPRIORITIZED_KEY } from '@/lib/ui/priority';
 import type { Priority, TaskStatus } from '@/lib/types';
 
 /** Status filter options exposed in the sheet — `ready` and `plannable` are derived. */
@@ -166,40 +167,56 @@ export function FilterPanel({
               </FilterSection>
             )}
 
-            <FilterSection title="Priority">
-              {priorities.map((p) => {
-                const count = priorityCounts[p] ?? 0;
-                if (count === 0 && !activePriorities.has(p)) return null;
-                const active = activePriorities.has(p);
-                return (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => onPriorityToggle(p)}
-                    className={`${chipClass(active)} inline-flex items-center gap-1.5`}
-                  >
-                    <PriorityIcon priority={p} />
-                    {p}
-                    <span className={`tabular-nums ${active ? 'text-accent-light/70' : 'text-text-faint'}`}>
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-              {(priorityCounts.Unprioritized ?? 0) > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onPriorityToggle('Unprioritized')}
-                  className={`${chipClass(activePriorities.has('Unprioritized'))} inline-flex items-center gap-1.5`}
-                >
-                  <PriorityIcon priority={null} />
-                  Unprioritized
-                  <span className={`tabular-nums ${activePriorities.has('Unprioritized') ? 'text-accent-light/70' : 'text-text-faint'}`}>
-                    {priorityCounts.Unprioritized}
-                  </span>
-                </button>
-              )}
-            </FilterSection>
+            {(() => {
+              // Skip rendering the section entirely when no chip would
+              // show — every assigned-priority count is zero (and not
+              // already active), and no `Unprioritized` tasks exist
+              // either. Otherwise the section header renders an empty
+              // row below the Categories block.
+              const hasAssignedHit = priorities.some(
+                (p) => (priorityCounts[p] ?? 0) > 0 || activePriorities.has(p),
+              );
+              const hasUnprioritizedHit =
+                (priorityCounts[UNPRIORITIZED_KEY] ?? 0) > 0 ||
+                activePriorities.has(UNPRIORITIZED_KEY);
+              if (!hasAssignedHit && !hasUnprioritizedHit) return null;
+              return (
+                <FilterSection title="Priority">
+                  {priorities.map((p) => {
+                    const count = priorityCounts[p] ?? 0;
+                    if (count === 0 && !activePriorities.has(p)) return null;
+                    const active = activePriorities.has(p);
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => onPriorityToggle(p)}
+                        className={`${chipClass(active)} inline-flex items-center gap-1.5`}
+                      >
+                        <PriorityIcon priority={p} />
+                        {p}
+                        <span className={`tabular-nums ${active ? 'text-accent-light/70' : 'text-text-faint'}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {hasUnprioritizedHit && (
+                    <button
+                      type="button"
+                      onClick={() => onPriorityToggle(UNPRIORITIZED_KEY)}
+                      className={`${chipClass(activePriorities.has(UNPRIORITIZED_KEY))} inline-flex items-center gap-1.5`}
+                    >
+                      <PriorityIcon priority={null} />
+                      Unprioritized
+                      <span className={`tabular-nums ${activePriorities.has(UNPRIORITIZED_KEY) ? 'text-accent-light/70' : 'text-text-faint'}`}>
+                        {priorityCounts[UNPRIORITIZED_KEY] ?? 0}
+                      </span>
+                    </button>
+                  )}
+                </FilterSection>
+              );
+            })()}
 
             {tags.length > 0 && (
               <FilterSection title="Tags">
