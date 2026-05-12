@@ -21,7 +21,6 @@ import {
   PRIORITY_RANK_UNSET,
   UNPRIORITIZED_KEY,
 } from '@/lib/ui/priority';
-import { isLegacyPriorityTag } from '@/lib/ui/legacy-priority-tags';
 import { TaskRow } from './TaskRow';
 import { TaskGroup, type TaskGroupKey } from './TaskGroup';
 import type { GroupKey, SortKey } from './FilterBar';
@@ -224,13 +223,9 @@ export function StructureView({
 
   const [activeStatuses, setActiveStatuses] = useState<Set<string>>(() => parseSet(searchParams.get(FILTER_PARAM_KEYS.statuses)));
   const [activeCategories, setActiveCategories] = useState<Set<string>>(() => parseSet(searchParams.get(FILTER_PARAM_KEYS.categories)));
-  const [activeTags, setActiveTags] = useState<Set<string>>(() => {
-    // Strip legacy priority strings on parse so an old bookmark cannot
-    // silently filter everything out once those tags stop rendering.
-    const parsed = parseSet(searchParams.get(FILTER_PARAM_KEYS.tags));
-    for (const t of [...parsed]) if (isLegacyPriorityTag(t)) parsed.delete(t);
-    return parsed;
-  });
+  const [activeTags, setActiveTags] = useState<Set<string>>(() =>
+    parseSet(searchParams.get(FILTER_PARAM_KEYS.tags)),
+  );
   const [activePriorities, setActivePriorities] = useState<Set<string>>(() => {
     // Sanitize the URL value to the four schema priorities + the unset
     // sentinel so a stale bookmark with an unknown token cannot empty the
@@ -301,11 +296,7 @@ export function StructureView({
     const counts = new Map<string, number>();
     for (const task of tasks) {
       const list = (task.tags as string[] | null) ?? [];
-      for (const tag of list) {
-        // Hide legacy priority strings until MYMR-195 strips them server-side.
-        if (isLegacyPriorityTag(tag)) continue;
-        counts.set(tag, (counts.get(tag) ?? 0) + 1);
-      }
+      for (const tag of list) counts.set(tag, (counts.get(tag) ?? 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])) as ReadonlyArray<readonly [string, number]>;
   }, [tasks]);

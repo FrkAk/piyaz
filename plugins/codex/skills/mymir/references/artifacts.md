@@ -195,7 +195,7 @@ These are top-level columns on every task, set via `mymir_task` parameters of th
 
 **Do NOT tag:**
 
-- Priority: that is the `priority` field's job; the four old priority strings (`release-blocker`, `core`, `normal`, `backlog`) are no longer accepted as tags.
+- Priority: that is the `priority` field's job. Setting `urgent`, `core`, `normal`, or `backlog` as tags duplicates the field and adds no signal.
 - Codebase area: that's `category`'s job. **Test: would this name plausibly be a category in some other project shape?** `render-loop`, `effect-system`, `auth`, `payments`, `inference`, `marts`, `flight-control`, `hal-drivers` all answer YES. They're subsystems / product areas, even if your project's category list happens to omit them. Tags are axes the project does not shape itself around: quality attributes (`security`, `a11y`, `perf`, `reliability`, `observability`, `dx`, `compliance`, `safety`, `i18n`) and multi-category feature clusters (`onboarding-flow`, `agent-loop`, `mission-planning`, `live-replay`). If a candidate tag names a subsystem, surface it as a category proposal at the gate or use the existing category. Coining an area-shaped tag because the categories lack a good slot is a category-list bug, not a tag.
 - Task status: that is `status`'s job.
 - Generic adjectives like "important", "main", "primary".

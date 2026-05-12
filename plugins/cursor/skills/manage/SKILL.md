@@ -160,7 +160,6 @@ The user wants a CTO sitting down with the project. Spend tokens here. The strat
    - Is every task carrying all three dimensions (work-type, cross-cutting, tech)?
    - Is the work-type vocabulary cleanly closed (`bug`, `feature`, `refactor`, `docs`, `test`, `chore`, `perf`)?
    - Are there codebase-area tags (which should be `category`'s job)?
-   - Are the four legacy priority strings (`release-blocker`, `core`, `normal`, `backlog`) still appearing in `tags`? They should not be: priority is a first-class column on `tasks`. Recommend the migration to `priority`.
    - Recommend tag consolidation, remapping, or pruning.
 6. **Coverage gaps.** Anything missing from the project that should be there? Common omissions: no testing tasks, no security task, no observability / monitoring work, no CI configuration, no docs task. Surface these.
 7. **Priority calibration.** Is the priority field carrying signal? Compute the share of `urgent` over total non-cancelled tasks. If above 80%, the field is dead. Run `mymir_analyze type='critical_path'` and recommend re-pricing only the critical-path tasks as `urgent`; everything else moves to `core` or `normal`. Is everything `core` or everything `urgent`? Push back on the user. The critical path defines what actually blocks; everything else is `normal` or `backlog`.

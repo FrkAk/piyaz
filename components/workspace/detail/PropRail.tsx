@@ -45,7 +45,6 @@ type TaskPatch = Partial<{
   category: string | null;
   tags: string[];
 }>;
-import { isLegacyPriorityTag } from '@/lib/ui/legacy-priority-tags';
 import { PRIORITY_COLOR, PRIORITY_DISPLAY_ORDER } from '@/lib/ui/priority';
 import { projectKeys, taskKeys, teamKeys } from '@/lib/query/keys';
 
@@ -231,24 +230,6 @@ export function PropRail({
     }
   }, [taskId, applyOptimisticPatch, onGraphChange]);
 
-  // Hide legacy priority strings from the tag editor; MYMR-195 strips them
-  // server-side, but until then the UI gates them so the workspace stops
-  // emitting both the new priority column and the legacy tag.
-  const visibleTags = useMemo(
-    () => tags.filter((t) => !isLegacyPriorityTag(t)),
-    [tags],
-  );
-  const visibleVocab = useMemo(
-    () => projectTags.filter((t) => !isLegacyPriorityTag(t)),
-    [projectTags],
-  );
-  const handleVisibleTagsChange = useCallback(async (nextVisible: string[]) => {
-    // Re-attach the persisted legacy strings so the write does not strip
-    // them out — that work belongs to MYMR-195.
-    const persistedLegacy = tags.filter(isLegacyPriorityTag);
-    await handleTagsChange([...persistedLegacy, ...nextVisible]);
-  }, [tags, handleTagsChange]);
-
   const handlePriorityChange = useCallback(async (next: Priority | null) => {
     applyOptimisticPatch({ priority: next });
     try {
@@ -433,8 +414,8 @@ export function PropRail({
           </RailRow>
         </RailGroup>
 
-        <RailGroup label="Tags" count={visibleTags.length > 0 ? visibleTags.length : undefined}>
-          <TagsEditor tags={visibleTags} vocabulary={visibleVocab} onChange={handleVisibleTagsChange} />
+        <RailGroup label="Tags" count={tags.length > 0 ? tags.length : undefined}>
+          <TagsEditor tags={tags} vocabulary={projectTags} onChange={handleTagsChange} />
         </RailGroup>
 
         <RailGroup label="Dependencies" count={totalDeps > 0 ? totalDeps : undefined}>
@@ -1169,6 +1150,13 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
   const pendingMutationsRef = useRef(0);
+  // Ticks every time the mutation chain drains, re-triggering the sync
+  // effect even when `assignees` hasn't changed shape since the last
+  // tick. Without this, a remote teammate's edit that arrives via SSE
+  // while `pendingMutationsRef > 0` is silently dropped: the effect
+  // bails on the guard, and its `[assignees]` dep already moved on by
+  // the time mutations settle.
+  const [drainTick, setDrainTick] = useState(0);
 
   // Sync from props only when no mutations are in flight. Otherwise we
   // race: a settled-but-not-final mutation updates `assignees` to an
@@ -1176,7 +1164,7 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
   useEffect(() => {
     if (pendingMutationsRef.current > 0) return;
     setSelectedIds(new Set(assignees.map((a) => a.userId)));
-  }, [assignees]);
+  }, [assignees, drainTick]);
 
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -1199,6 +1187,7 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
       await Promise.resolve(onChange([...next]));
     } finally {
       pendingMutationsRef.current -= 1;
+      if (pendingMutationsRef.current === 0) setDrainTick((t) => t + 1);
     }
   }, [onChange]);
 
