@@ -443,7 +443,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "mymir", version: "1.7.0" },
+    { name: "mymir", version: "1.7.1" },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);
