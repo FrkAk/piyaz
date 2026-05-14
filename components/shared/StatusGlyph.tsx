@@ -14,6 +14,7 @@ export type TaskStatus =
   | 'planned'
   | 'ready'
   | 'in_progress'
+  | 'in_review'
   | 'blocked'
   | 'done'
   | 'cancelled';
@@ -21,7 +22,7 @@ export type TaskStatus =
 interface StatusMeta {
   label: string;
   /** Glyph visual style. */
-  glyph: 'dashed' | 'ring' | 'ring-bold' | 'half' | 'blocked' | 'filled' | 'x';
+  glyph: 'dashed' | 'ring' | 'ring-bold' | 'half' | 'three-quarter' | 'blocked' | 'filled' | 'x';
   /** CSS variable holding the fill colour for this status. */
   cssVar: string;
 }
@@ -31,10 +32,13 @@ interface StatusMeta {
  * colour variable.
  *
  * Visual convention (matched on the graph canvas):
- *   dashed ring         → spec stage, criteria still being met (draft, plannable)
- *   solid ring          → committed plan, may still be waiting on deps (planned)
- *   solid ring + dot    → committed plan AND deps done — agent can fire (ready)
- *   half / pulse / etc  → executing or terminal (in_progress, done, cancelled, blocked)
+ *   dashed ring          → spec stage, criteria still being met (draft, plannable)
+ *   solid ring           → committed plan, may still be waiting on deps (planned)
+ *   solid ring + dot     → committed plan AND deps done — agent can fire (ready)
+ *   half (50% pie)       → in_progress, amber
+ *   three-quarter (270°) → in_review, violet — "about to turn done"
+ *   filled + check       → done, green
+ *   bar / x              → terminal exception (blocked, cancelled)
  *
  * `plannable` and `ready` share the planned blue colour but get DIFFERENT
  * shapes: plannable is dashed (still in drafting territory), ready is the
@@ -50,6 +54,7 @@ export const STATUS_META: Record<TaskStatus, StatusMeta> = {
   // "this is the one an agent is about to pick up" without reading text.
   ready:       { label: 'Ready',       glyph: 'ring-bold', cssVar: 'var(--color-glyph-progress)' },
   in_progress: { label: 'In Progress', glyph: 'half',      cssVar: 'var(--color-glyph-progress)' },
+  in_review:   { label: 'In Review',   glyph: 'three-quarter', cssVar: 'var(--color-glyph-review)' },
   blocked:     { label: 'Blocked',     glyph: 'blocked',   cssVar: 'var(--color-glyph-blocked)' },
   done:        { label: 'Done',        glyph: 'filled',    cssVar: 'var(--color-glyph-done)' },
   cancelled:   { label: 'Cancelled',   glyph: 'x',         cssVar: 'var(--color-glyph-cancelled)' },
@@ -103,6 +108,15 @@ export function StatusGlyph({ status, size = 14, className }: StatusGlyphProps) 
         <>
           <circle cx={half} cy={half} r={r} fill="none" stroke={c} strokeWidth={1.6} />
           <path d={`M ${half} ${half - r} A ${r} ${r} 0 0 1 ${half} ${half + r} Z`} fill={c} />
+        </>
+      )}
+      {meta.glyph === 'three-quarter' && (
+        <>
+          <circle cx={half} cy={half} r={r} fill="none" stroke={c} strokeWidth={1.6} />
+          <path
+            d={`M ${half} ${half} L ${half} ${half - r} A ${r} ${r} 0 1 1 ${half - r} ${half} Z`}
+            fill={c}
+          />
         </>
       )}
       {meta.glyph === 'blocked' && (

@@ -229,7 +229,7 @@ function draftFieldHints(
  * @returns Hint strings; empty when the transition is monotonic.
  */
 function statusJumpHints(priorStatus: string, nextStatus: string): string[] {
-  const order = ["draft", "planned", "in_progress", "done"];
+  const order = ["draft", "planned", "in_progress", "in_review", "done"];
   const priorIdx = order.indexOf(priorStatus);
   const nextIdx = order.indexOf(nextStatus);
   if (priorIdx === -1 || nextIdx === -1) return [];
@@ -451,8 +451,10 @@ const STATE_HINTS: Record<TaskState, string> = {
   blocked:
     "Blocked. Cannot advance until upstream deps complete. Run mymir_analyze type='blocked' for blocker details, or fetch depth='summary' for this task's edges. Surface the choices to the user/leader: pick a different ready task, or unblock by completing a dep. Do not pick silently.",
   in_progress:
-    "Claimed (one worker per task; lifecycle §1). Take-over is not automatic: confirm with the user (direct mode) or orchestrator (dispatched mode) that the prior worker has gone away before resuming. After confirmation: fetch depth='agent', read prior notes plus upstream executionRecords. To finish: populate executionRecord, decisions, files, evaluate every AC (do not auto-check), open a PR if files changed, then follow the Completion Protocol (lifecycle §2).",
-  done: "Terminal. Fetch depth='agent' for the full executionRecord, decisions, and files (depth='working' renders ACs/decisions/edges but not executionRecord or files; depth='summary' is just the header + edges). Then mymir_analyze type='downstream' to propagate decisions onto dependents (edge notes, descriptions, new edges, stale edges). After propagation, ask the user/leader what's next; do not auto-proceed to another task.",
+    "Claimed (one worker per task; lifecycle §1). Take-over is not automatic: confirm with the user (direct mode) or orchestrator (dispatched mode) that the prior worker has gone away before resuming. After confirmation: fetch depth='agent', read prior notes plus upstream executionRecords. To finish: populate executionRecord, decisions, files, evaluate every AC (do not auto-check), open a PR if files changed, then transition to `in_review` (the implementer's terminal write; HOTL flips to `done` after PR approval) per the Completion Protocol (lifecycle §2).",
+  in_review:
+    "In review (implementer terminal write; lifecycle §1). The implementer subagent has shipped the PR with tests green and populated executionRecord/decisions/files/acceptanceCriteria. The HOTL operator inspects the PR and flips to `done` after approval, or back to `in_progress` if rework is required. Agents do not self-promote to `done` from here; surface the PR for review and stop.",
+  done: "Terminal (HOTL-finalized). The PR has been approved and the operator has flipped the task from `in_review` to `done`. Fetch depth='agent' for the full executionRecord, decisions, and files (depth='working' renders ACs/decisions/edges but not executionRecord or files; depth='summary' is just the header + edges). Then mymir_analyze type='downstream' to propagate decisions onto dependents (edge notes, descriptions, new edges, stale edges). After propagation, ask the user/leader what's next; do not auto-proceed to another task.",
   cancelled:
     "Terminal (abandoned). Fetch depth='agent' for the cancellation rationale (lives in executionRecord) and decisions; depth='working' renders decisions but not the rationale. Edges remain in place; cancellation is transparent (dependents stay blocked through this task's own unsatisfied deps; lifecycle §3). Ask the user/leader: is there a replacement? If yes, rewire dependents to it. If not, dependents may need cancelling or re-scoping. Do not decide silently.",
   draft:
@@ -593,7 +595,7 @@ export const DESCRIPTIONS = {
     "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline; auto-resolves single-team). " +
     "update=title, description, status, categories, or identifier. Renaming identifier cascades every taskRef and breaks external references (PR titles, docs, commits).",
   mymir_task:
-    "Create, update, or delete tasks. Lifecycle: draft → planned → in_progress → done. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
+    "Create, update, or delete tasks. Lifecycle: draft → planned → in_progress → in_review → done. The implementer subagent's terminal write is `in_review` (PR opened, tests green); the HOTL gate flips to `done` after PR approval. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
     "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, three tag dimensions (work-type, cross-cutting, tech), one project category. priority, estimate, and assigneeIds are first-class fields, not tags: priority (urgent / core / normal / backlog), estimate (Fibonacci story points 1/2/3/5/8/13), assigneeIds (array of team-member user UUIDs). After create: search precedents/coordinators by verb+noun+surface, wire mymir_edge, verify with mymir_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
     "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files, assigneeIds) APPEND by default; overwriteArrays=true REPLACES them. Destructive, NO undo (history is an audit log); confirm with user first. " +
     "delete: preview=true (default) shows impact; preview=false executes. Prefer status='cancelled' for abandoned scope so the rationale is preserved. " +
@@ -654,7 +656,7 @@ export type TaskParams = {
   taskId?: string;
   title?: string;
   description?: string;
-  status?: "draft" | "planned" | "in_progress" | "done" | "cancelled";
+  status?: "draft" | "planned" | "in_progress" | "in_review" | "done" | "cancelled";
   acceptanceCriteria?: unknown[];
   decisions?: unknown[];
   tags?: string[];

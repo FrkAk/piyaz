@@ -139,7 +139,10 @@ export async function buildAgentContext(
     );
   }
 
-  if (task.executionRecord && (status === "done" || status === "cancelled")) {
+  if (
+    task.executionRecord &&
+    (status === "done" || status === "cancelled" || status === "in_review")
+  ) {
     parts.push(section("Execution Record") + "\n" + task.executionRecord);
   }
 

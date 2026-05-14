@@ -9,7 +9,7 @@ export type ProjectStatus =
   | "archived";
 
 /** Task lifecycle status. */
-export type TaskStatus = "draft" | "planned" | "in_progress" | "done" | "cancelled";
+export type TaskStatus = "draft" | "planned" | "in_progress" | "in_review" | "done" | "cancelled";
 
 /** Task priority. */
 export type Priority = "urgent" | "core" | "normal" | "backlog";

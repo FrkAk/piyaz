@@ -326,6 +326,7 @@ export type TaskState =
   | "done"
   | "cancelled"
   | "in_progress"
+  | "in_review"
   | "ready"
   | "plannable"
   | "blocked"
@@ -369,6 +370,7 @@ function deriveTaskState(
   if (task.status === "done") return "done";
   if (task.status === "cancelled") return "cancelled";
   if (task.status === "in_progress") return "in_progress";
+  if (task.status === "in_review") return "in_review";
 
   const deps = graph.effectiveDeps.get(task.id) ?? new Set<string>();
   let allDepsDone = true;

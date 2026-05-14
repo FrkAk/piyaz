@@ -25,7 +25,7 @@ Composer is glue. The heavy lifting (task selection, refinement, the Completion 
 Two modes, both surfaced as slash commands by the plugin:
 
 - **`/mymir:composer`**: backlog loop. The orchestrator picks the highest-value ready task each iteration and keeps going until a stop condition fires.
-- **`/mymir:composer <taskRef>`**: single-task mode (e.g. `/mymir:composer ZIN-42`). Same pipeline applied to one task; the loop exits after the implementer marks it `done`.
+- **`/mymir:composer <taskRef>`**: single-task mode (e.g. `/mymir:composer ZIN-42`). Same pipeline applied to one task; the loop exits after the implementer marks it `in_review`.
 
 If the user typed `/mymir:composer` with no argument, treat it as backlog mode. Anything else is single-task.
 
@@ -37,7 +37,7 @@ Each subagent is a registered plugin agent. The orchestrator dispatches them via
 | --- | --- | --- | --- | --- |
 | 1. Research | `mymir:composer-researcher` | `plugins/claude-code/agents/composer-researcher.md` | Refinement fields on the target task (`description`, `acceptanceCriteria`, `tags`, `category`, `priority`, `estimate`, `decisions`); **never `status`, `implementationPlan`, `executionRecord`, or `files`** | A research brief: files to touch, existing patterns, library docs (with version-pin checks), security/perf considerations, project conventions, applied refinements with citations, open questions, flags |
 | 2. Plan | `mymir:composer-planner` | `plugins/claude-code/agents/composer-planner.md` | `implementationPlan` and `decisions`; `status='planned'` only on `draft → planned` transition; nothing else | Saves the unabridged `implementationPlan` to Mymir; transitions the task `draft → planned` when entering at `draft`; returns a one-sentence confirmation |
-| 3. Implement | `mymir:composer-implementer` | `plugins/claude-code/agents/composer-implementer.md` | `status='in_progress'` (claim) and `status='done'` (with Completion Protocol payload: `executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`) | Writes code on a feature branch, runs tests/lint/typecheck, opens a PR, marks the task `done` in dispatched mode; returns the PR URL plus a one-sentence summary |
+| 3. Implement | `mymir:composer-implementer` | `plugins/claude-code/agents/composer-implementer.md` | `status='in_progress'` (claim) and `status='in_review'` (with Completion Protocol payload: `executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`); HOTL flips `in_review → done` post-approval, outside composer's loop | Writes code on a feature branch, runs tests/lint/typecheck, opens a PR, marks the task `in_review` in dispatched mode; returns the PR URL plus a one-sentence summary |
 
 The contract is intentionally tight: the researcher applies refinements directly so the task row reflects ground truth before planning starts; the brief is the planner's *findings reference*, while the refined task itself is the planner's *input*. The planner's output also lands in Mymir, so the implementer reads everything (refined description, refined ACs, the implementation plan, upstream decisions) from `mymir_context depth='agent'` rather than receiving it from the orchestrator. This keeps each dispatch payload small and the source of truth in one place: the task row.
 
@@ -88,9 +88,9 @@ Per iteration the orchestrator runs:
 
 3. **Dispatch planner.** One `Agent` call with `subagent_type='mymir:composer-planner'`. The prompt body includes `Target task: <taskRef>`, the task's current `status` so the planner knows whether it is writing a new plan or re-validating an existing one, the research brief verbatim, and a pointer to `mymir_context depth='planning'` (the planner fetches it itself). The planner owns the `draft → planned` transition: when the task entered at `draft`, the planner writes the full `implementationPlan` and flips status to `planned` in one call; when the task entered at `planned`, the planner re-validates against the brief and either keeps the plan as-is without mutating the task (a silent re-validation is the correct trace) or refreshes the plan when the brief shows real drift. Verify the planner's write by polling `mymir_context depth='summary' taskId='<id>'` once before advancing. If no plan is visible after a `draft` entry (or the planner reports failure), retry once with the failure message appended to the dispatch; on a second failure, treat the iteration as a failed attempt (see *Failure handling*).
 
-4. **Dispatch implementer.** One `Agent` call with `subagent_type='mymir:composer-implementer'`. The prompt body is short: `Target task: <taskRef>. Plan is saved to Mymir; fetch via mymir_context depth='agent'. Claim the task (planned → in_progress), implement per the implementationPlan, open a PR, mark the task done in dispatched mode per the Completion Protocol.` Await the implementer's return. The implementer owns the `planned → in_progress` claim, the `in_progress → done` completion, the PR creation, and the full Completion Protocol payload; the orchestrator writes none of these.
+4. **Dispatch implementer.** One `Agent` call with `subagent_type='mymir:composer-implementer'`. The prompt body is short: `Target task: <taskRef>. Plan is saved to Mymir; fetch via mymir_context depth='agent'. Claim the task (planned → in_progress), implement per the implementationPlan, open a PR, mark the task `in_review` in dispatched mode per the Completion Protocol (the HOTL operator finalizes `in_review → done` after PR approval).` Await the implementer's return. The implementer owns the `planned → in_progress` claim, the `in_progress → in_review` completion, the PR creation, and the full Completion Protocol payload; the orchestrator writes none of these.
 
-5. **Propagate.** Once the implementer reports `done` and returns a PR URL, run propagation per lifecycle §3: `mymir_query type='edges' taskId='<id>'` then `mymir_analyze type='downstream' taskId='<id>'`. Update or retire edge notes the implementer's work invalidated. Edge-note content follows artifacts §3: one to three short sentences, written as a brief to the downstream task's coding agent (what specifically does this task get from the target). No prose recaps. Surface newly-unblocked tasks in the next pick rationale.
+5. **Propagate.** Once the implementer reports `in_review` and returns a PR URL, run propagation per lifecycle §3: `mymir_query type='edges' taskId='<id>'` then `mymir_analyze type='downstream' taskId='<id>'`. Update or retire edge notes the implementer's work invalidated. Edge-note content follows artifacts §3: one to three short sentences, written as a brief to the downstream task's coding agent (what specifically does this task get from the target). No prose recaps. Surface newly-unblocked tasks in the next pick rationale.
 
 6. **Loop.** Single-task mode: emit the done line (see *Stop conditions* item 4) and exit. Backlog mode: return to step 1.
 
@@ -118,9 +118,9 @@ Subsequent rewrite proposals on the re-dispatched run go through the same gate. 
 |---|---|---|---|
 | Researcher | Task at `draft` or `planned`; pick rationale emitted | Brief returned, `confidence ≥ 0.6`, no `oversize-task` flag, no pending `## Proposed rewrites` (or all accepted and re-dispatched), refinements landed in Mymir | `confidence < 0.6` pauses for user; oversize routes to *Oversize handling*; proposed rewrites route to *Proposed rewrites handling* |
 | Planner | Task at `draft` (write new plan) or `planned` (re-validate); brief in dispatch prompt | `implementationPlan` visible via `mymir_context depth='summary'`; status flipped to `planned` if entry was `draft` | No plan after one retry counts as a failed attempt per *Failure handling* |
-| Implementer | Task at `planned`; plan saved to Mymir | Status `done`, full Completion Protocol payload, PR URL returned | Tests/lint/typecheck red unrecoverable, or PR not opened, counts as a failed attempt; partial success (PR opened, `done` not marked) recovered per *Failure handling* |
+| Implementer | Task at `planned`; plan saved to Mymir | Status `in_review`, full Completion Protocol payload, PR URL returned (HOTL flips to `done` outside composer) | Tests/lint/typecheck red unrecoverable, or PR not opened, counts as a failed attempt; partial success (PR opened, `in_review` not marked) recovered per *Failure handling* |
 
-**Recovering after orchestrator compaction.** Infer the current phase from the task's Mymir status alone. `draft` with no plan: researcher pending. `draft` with plan present, or `planned`: planner done, implementer pending. `in_progress`: implementer pending or partial-success recovery (see *Failure handling*). `done`: iteration complete; advance to propagation.
+**Recovering after orchestrator compaction.** Infer the current phase from the task's Mymir status alone. `draft` with no plan: researcher pending. `draft` with plan present, or `planned`: planner done, implementer pending. `in_progress`: implementer pending or partial-success recovery (see *Failure handling*). `in_review`: implementer done, awaiting HOTL approval; treat as iteration-complete for composer's purposes and advance to propagation. `done`: HOTL approved; iteration complete; advance to propagation.
 
 ### The orchestrator does not write `status`
 
@@ -128,7 +128,8 @@ This is load-bearing and the most common way an orchestrator like composer goes 
 
 - `draft → planned`: **planner**, when it saves the `implementationPlan` in one atomic update.
 - `planned → in_progress`: **implementer**, as its claim before any code is touched.
-- `in_progress → done`: **implementer**, with the full Completion Protocol payload (`executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`).
+- `in_progress → in_review`: **implementer**, with the full Completion Protocol payload (`executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`) after the PR opens.
+- `in_review → done`: **HOTL operator**, after PR approval/merge; never automatic and never written by composer or any subagent.
 - `* → cancelled`: never automatic; only triggered by an explicit user request, and even then routed through the appropriate subagent.
 
 The orchestrator's only Mymir writes per iteration are **edge updates during propagation** (step 5), and even those are conditional on what propagation discovers. Picking a task does not claim it. Dispatching a researcher does not claim it. The implementer is the only writer of `status='in_progress'`.
@@ -147,7 +148,7 @@ A failed attempt is any of: implementer reports tests/lint/typecheck red and can
 
 Each retry dispatches the implementer fresh with the parent attempt's failure summary appended to the prompt; the researcher and planner are not re-run unless the failure clearly traces to a planning gap (e.g., the plan references a file that does not exist).
 
-**Partial success: PR opened, `done` not marked.** If a retry's pre-flight finds the task at `in_progress` with an open PR matching the branch name pattern (`<type>/<taskRef-lowercased>-<title-slug>`), do not re-implement. Resume the Completion Protocol: re-evaluate acceptance criteria against the PR diff, populate `executionRecord` / `decisions` / `files`, mark `done`. The PR is the load-bearing artifact; the missing status write is recoverable. This is a single-attempt recovery; if it fails, count it toward the failure budget per rule 3.
+**Partial success: PR opened, `in_review` not marked.** If a retry's pre-flight finds the task at `in_progress` with an open PR matching the branch name pattern (`<type>/<taskRef-lowercased>-<title-slug>`), do not re-implement. Resume the Completion Protocol: re-evaluate acceptance criteria against the PR diff, populate `executionRecord` / `decisions` / `files`, mark `in_review`. The PR is the load-bearing artifact; the missing status write is recoverable. This is a single-attempt recovery; if it fails, count it toward the failure budget per rule 3.
 
 ## Stop conditions
 
@@ -177,7 +178,7 @@ If a flow exists in the mymir skill, do not reinvent it inside a subagent. Cite 
 
 - **Not a decomposer.** Oversize tasks route to `mymir:decompose-task`. Composer asks first; never silently splits a task.
 - **Not a refiner.** Composer's researcher proposes refinements via the brief; the planner applies them through the canonical `mymir_task` update path. If the user wants pure refinement, they should run the `mymir` skill directly.
-- **Not a code reviewer.** The PR is reviewed on GitHub like any other PR. The implementer marks the task `done` in dispatched mode immediately after opening the PR; if the user wants a human gate before `done`, they should run single-task mode and watch the loop, or run the `mymir` skill manually instead.
+- **Not a code reviewer.** The PR is reviewed on GitHub like any other PR. The implementer marks the task `in_review` in dispatched mode immediately after opening the PR; the HOTL operator owns the final `in_review → done` transition outside composer's loop after PR approval.
 - **Not a session-resilience layer.** Long runs that hit auto-compaction rely on `/goal` to bound the session and on `mymir_query type='meta'` plus the per-task Mymir status to re-acquire project state on resume; composer does not persist its own session file. The orchestrator's "current phase" is implicit, derived from transcript and task status; after compaction it reconstructs per the *Phase entry and exit conditions* table. For runs likely to span compaction, prefer single-task mode and re-invoke composer per task rather than running an unbounded backlog loop. See `skills/mymir/references/resilience.md` for the broader resilience primitives.
 
 ## See also

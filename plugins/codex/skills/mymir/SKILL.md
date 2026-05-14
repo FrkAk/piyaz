@@ -148,7 +148,7 @@ You handle most Mymir interactions inline. The four agents are escalations for h
 
 Two distinct cases:
 
-- **Dispatching a coding sub-agent to implement a single task** (the most common case in a multi-session workflow). Brief them that they are dispatched. They follow the Completion Protocol (lifecycle §2): mark the task done directly with full payload, no asking, return one-sentence summary. They open a PR per §10 step 3 if the work changed code.
+- **Dispatching a coding sub-agent to implement a single task** (the most common case in a multi-session workflow). Brief them that they are dispatched. They follow the Completion Protocol (lifecycle §2): mark the task `in_review` directly with the full Completion Protocol payload (the implementer's terminal write; HOTL flips to `done` after PR approval), no asking, return one-sentence summary. They open a PR per §10 step 3 if the work changed code.
 - **Dispatching a meta-agent (`mymir:brainstorm` / `mymir:decompose` / `mymir:decompose-task` / `mymir:decompose-feature` / `mymir:onboarding` / `mymir:manage`)**. Each has its own gates and reporting style documented in its agent file. The Completion Protocol applies only when they themselves mark a task done as part of their work. Brief them on the user intent, then trust their phase-gating.
 
 ## Workflows
@@ -201,8 +201,8 @@ Lead with slim tools.
 1. Claim. `mymir_task action='update' status='in_progress'`.
 2. `mymir_context depth='agent'`. Multi-hop deps, execution records, ACs.
 3. **Understand before doing.** Read the description, the executionRecords from upstream tasks, and the relevant code. Reason about what could go wrong. Ask if anything is unclear. Then implement. Rushing here produces work that misses the actual requirement.
-4. Confirm before marking done. Completion Protocol (lifecycle §2): if you were dispatched (parent agent visible in your transcript), mark done directly; otherwise ask.
-5. `mymir_task action='update' status='done' executionRecord='...' decisions=[...] files=[...] acceptanceCriteria=[...]`. Read response `_hints`. Re-call with missing fields if any. **Do not pass `overwriteArrays=true`** unless replacing the arrays is the intent and the user has confirmed. The default append behavior is safe.
+4. Confirm before marking in_review. Completion Protocol (lifecycle §2): if you were dispatched (parent agent visible in your transcript), mark in_review directly; otherwise ask.
+5. `mymir_task action='update' status='in_review' executionRecord='...' decisions=[...] files=[...] acceptanceCriteria=[...]`. Read response `_hints`. Re-call with missing fields if any. **Do not pass `overwriteArrays=true`** unless replacing the arrays is the intent and the user has confirmed. The default append behavior is safe. After the PR is approved, the HOTL operator flips the task `in_review → done` — agents do not self-promote.
 6. **If the work changed code, open a PR.** Detect a PR template (`.github/PULL_REQUEST_TEMPLATE.md` and variants). Fill it concisely from the executionRecord and ACs. Use `[MYMR-N]` bracket form for the primary task ref so Mymir tracks PR status. Skip sections where you have nothing to say. Lifecycle §2 step 3 has the full rules.
 7. **Propagate** (lifecycle §3). `mymir_query type='edges'`, then `mymir_analyze type='downstream'`. Update, create, or remove edges.
 
@@ -212,6 +212,7 @@ Lead with slim tools.
 
 1. `mymir_query type='search'`. Find it.
 2. If not `in_progress`, set it first. Preserves lifecycle history.
+2.5. If the task is at `in_review` (implementer already populated executionRecord/decisions/files/ACs), the only operator action is the status flip to `done`. Skip the field collection in step 3; jump to propagation.
 3. Collect details. Extract from conversation if the user described the work; ask if they only said "done"; summarize agent reports if a coding agent did the work.
 4. Evaluate each acceptance criterion. `checked: true` if the work clearly satisfies it, `false` otherwise. **Don't auto-check everything.**
 5. Confirm per Completion Protocol. Update with all required fields (append, do not overwrite). Open the PR if applicable. Propagate.
@@ -224,8 +225,8 @@ Use this when **multiple independent ready tasks** exist AND **multiple coding a
 2. **Sanity-check independence at the file level.** Two ready tasks both editing `lib/auth/middleware.ts` are not actually independent. They will create merge conflicts. Look for file overlap before dispatching. If you find it, either serialize them or split the shared change into a third task that lands first.
 3. **Rank by critical-path proximity.** `mymir_analyze type='critical_path'`. Prefer tasks on the chain. If you have 3 agents and 6 ready tasks, send the agents to the 3 critical-path tasks first.
 4. **Claim and hand off.** For each task: claim with `mymir_task action='update' status='in_progress'` (prevents two agents grabbing the same task), then `mymir_context depth='agent'` to fetch the implementation context. Hand the context to the assigned agent and brief them that they are dispatched.
-5. **Each agent marks done directly.** No asking. They populate executionRecord, decisions, files, acceptance criteria, then update to `done`. They open a PR per Completion Protocol if the work changed code. They return a one-sentence summary.
-6. **Review and propagate.** When all dispatched agents return, review their executionRecords for quality, run propagation on each completed task to update downstream context.
+5. **Each agent marks `in_review` directly.** No asking. They populate executionRecord, decisions, files, acceptance criteria, then update to `in_review`. They open a PR per Completion Protocol if the work changed code. They return a one-sentence summary.
+6. **Review and finalize.** When all dispatched agents return, review their executionRecords and the resulting PRs for quality, flip approved tasks `in_review → done`, then run propagation on each finalized task to update downstream context.
 7. **More agents than ready tasks?** Assign the surplus to plan draft tasks (`§ Plan a draft task`). Planning is parallelizable too.
 
 ### Create a project

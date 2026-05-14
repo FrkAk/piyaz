@@ -45,6 +45,7 @@
   --color-glyph-planned: #55b3ff;
   --color-glyph-ready: #818cf8;
   --color-glyph-progress: #ffbc33;
+  --color-glyph-review: #a78bfa;
   --color-glyph-done: #5fc992;
   --color-glyph-blocked: #e57373;
   --color-glyph-cancelled: #6a6b6c;
@@ -111,6 +112,7 @@ html.light {
   --color-glyph-planned: #2563eb;
   --color-glyph-ready: #6366f1;
   --color-glyph-progress: #d97706;
+  --color-glyph-review: #7c3aed;
   --color-glyph-done: #059669;
   --color-glyph-blocked: #dc2626;
   --color-glyph-cancelled: #94a3b8;

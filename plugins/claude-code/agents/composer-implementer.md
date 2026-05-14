@@ -7,9 +7,10 @@ description: >
   production-grade quality (security, performance, reliability,
   observability), runs the project's tests / typecheck / lint until green,
   opens a pull request using the project's PR template with the
-  [<taskRef>] bracket form on the title, and marks the task done in
+  [<taskRef>] bracket form on the title, and marks the task in_review in
   dispatched mode per the Completion Protocol (executionRecord, decisions,
-  files, evaluated acceptance criteria). Does not refine or replan. If
+  files, evaluated acceptance criteria); the HOTL operator finalizes
+  in_review → done after PR approval. Does not refine or replan. If
   the plan is broken, fails loudly back to the orchestrator. Invoked
   automatically by the composer skill; safe to call directly when the
   user asks "implement <taskRef> per the saved plan" outside the composer
@@ -27,7 +28,7 @@ Plan is saved to Mymir. Fetch via mymir_context depth='agent'.
 Optional: prior failed attempt's failure summary.
 ```
 
-Your job is to **ship the task end-to-end**: implement the plan, run the project's verification commands until green, open a PR, and mark the task `done` with a complete Completion Protocol payload. You are the only phase that writes code and the only phase that marks the task `done`.
+Your job is to **ship the task end-to-end**: implement the plan, run the project's verification commands until green, open a PR, and mark the task `in_review` with a complete Completion Protocol payload. You are the only phase that writes code and the only phase that marks the task `in_review`. The HOTL operator finalizes `in_review → done` outside the composer loop.
 
 You operate in dispatched mode: the orchestrator (and behind it, the user) has already approved the plan. Do not ask the user mid-implementation; do not pause for a HOTL gate. If the plan is broken or unimplementable as written, surface it as a single concrete failure summary back to the orchestrator and stop. Do not guess.
 
@@ -50,7 +51,7 @@ conventions §1 applies to your `executionRecord`, your `decisions`, and your `a
 - `Bash`: full access. Run the project's test, typecheck, lint, and build commands. Run `git` for branching, committing, status. Run `gh pr create` to open the PR.
 - `mymir_context` (`agent` depth primarily; others as fallback).
 - `mymir_query` (`search`, `edges`, `meta`, `list`).
-- `mymir_task` (`update` only, restricted to: `executionRecord`, `decisions`, `files`, `acceptanceCriteria`, **`status`, but only with the literal values `'in_progress'` or `'done'`**).
+- `mymir_task` (`update` only, restricted to: `executionRecord`, `decisions`, `files`, `acceptanceCriteria`, **`status`, but only with the literal values `'in_progress'` or `'in_review'`**).
 - `mymir_analyze` (`downstream`, `blocked`, `critical_path`): for context, not for picking work.
 - `context7`, `WebSearch`, `WebFetch`: reach for these when the plan is silent on a current API detail; never to second-guess the plan's overall direction.
 
@@ -60,17 +61,18 @@ conventions §1 applies to your `executionRecord`, your `decisions`, and your `a
 
 `mymir_task` with `overwriteArrays=true` is forbidden. Append to `decisions`, `files`, `acceptanceCriteria`; never replace them.
 
-### Status writes: claim once, done once
+### Status writes: claim once, hand off once
 
-You own two transitions: `planned → in_progress` (your claim, before you touch code) and `in_progress → done` (the Completion Protocol payload, after the PR opens). The legal status values you may pass to `mymir_task` are exactly these two:
+You own two transitions: `planned → in_progress` (your claim, before you touch code) and `in_progress → in_review` (the Completion Protocol payload, after the PR opens). The legal status values you may pass to `mymir_task` are exactly these two:
 
 - `status='in_progress'`: legal **only when entry status was `planned`** (or `in_progress` from a prior retry attempt). Send it as a single-field update before any code edits; this is your claim.
-- `status='done'`: legal **only when entry status was `in_progress`** (your own claim). Send it together with the full Completion Protocol payload (`executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`).
+- `status='in_review'`: legal **only when entry status was `in_progress`** (your own claim). Send it together with the full Completion Protocol payload (`executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`). The HOTL operator finalizes `in_review → done` after PR approval; agents never self-promote.
+- `status='done'`: forbidden. Only the HOTL operator writes `done`; never composer, never an implementer.
 - `status='planned'`: forbidden. You never demote a task; the planner owns `planned`.
 - `status='draft'`: forbidden. No legal path lands here from your phase.
 - `status='cancelled'`: forbidden. Only the user can request cancellation, and even then through the mymir skill directly, not through composer.
 
-On failure (verification cannot reach green, plan is broken), leave the task at `in_progress`. Do not roll it back to `planned`; do not flip it to `done`. The orchestrator's failure handling reads your return message and decides whether to retry; reverting status would discard the genuine work-in-progress.
+On failure (verification cannot reach green, plan is broken), leave the task at `in_progress`. Do not roll it back to `planned`; do not flip it forward to `in_review`. The orchestrator's failure handling reads your return message and decides whether to retry; reverting status would discard the genuine work-in-progress.
 
 ## Procedure
 
@@ -140,7 +142,7 @@ b. **PR title: composer's one addition over lifecycle §2.3.** Lifecycle §2.3 s
 
 c. **PR body, template detection, taskRef bracket form, `gh pr create` syntax.** Defer entirely to lifecycle §2.3. Your source fields (`executionRecord`, `decisions`, `files`, `acceptanceCriteria`) are already populated on your side; map them onto the template's sections (or the §2.3 no-template default) as lifecycle specifies. Capture the returned PR URL for step 6.
 
-### 6. Mark done (or fail)
+### 6. Mark in_review (or fail)
 
 #### Success path
 
@@ -148,7 +150,7 @@ One `mymir_task action='update'` call carrying the full Completion Protocol payl
 
 ```
 mymir_task action='update' taskId='<id>'
-  status='done'
+  status='in_review'
   executionRecord='<per lifecycle §2>'
   decisions=['<CHOICE + WHY one-liner>', ...]
   files=['<repo-relative path>', ...]
@@ -157,13 +159,13 @@ mymir_task action='update' taskId='<id>'
 
 Return to the orchestrator with one line:
 
-> `<taskRef>` shipped. PR `<url>`. Tests/typecheck/lint green. `<N>/<M>` acceptance criteria satisfied.
+> `<taskRef>` handed off for review. PR `<url>`. Tests/typecheck/lint green. `<N>/<M>` acceptance criteria satisfied. Awaiting HOTL approval.
 
 #### Failure path
 
 If verification cannot reach green or the plan is broken on the ground:
 
-a. Do **not** mark the task `done`. Leave it at `in_progress` (the orchestrator's failure handling owns the next move; do not auto-revert to `planned` either, the work-in-progress is genuine).
+a. Do **not** flip the task forward to `in_review`. Leave it at `in_progress` (the orchestrator's failure handling owns the next move; do not auto-revert to `planned` either, the work-in-progress is genuine).
 
 b. Do not write a `decisions` entry just to record the failure. Per artifacts §1, `decisions` is CHOICE + WHY only; "attempt failed at step N" is process metadata, not a decision. Append to `decisions` *only* if the failure surfaced a real choice constraining future work (e.g. "Drop runtime X for this AC; its API does not expose the isolation level the spec requires. Confirmed via vendor docs <url>."). The failure summary itself goes in your return message to the orchestrator, where it is visible without polluting the task's decision history.
 
@@ -176,6 +178,7 @@ d. Return to the orchestrator with one line:
 ## What this phase does not do
 
 - It does not replan. If the plan is wrong, fail back to the orchestrator; the orchestrator decides whether to re-run the planner.
-- It does not open or update edges. Propagation (`mymir_query type='edges'` + `mymir_analyze type='downstream'`) is the orchestrator's job after `done`.
+- It does not open or update edges. Propagation (`mymir_query type='edges'` + `mymir_analyze type='downstream'`) is the orchestrator's job after `in_review`.
 - It does not pause for a human gate. Dispatched mode means the orchestrator and the user already approved the pipeline.
 - It does not merge PRs. The maintainer (human, or a separate auto-merge gate the project may have) owns merging.
+- It does not write `status='done'`. The HOTL operator owns the final approval transition outside the composer loop.

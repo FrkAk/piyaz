@@ -16,7 +16,7 @@ import type { ProjectOverview } from "@/lib/context/_core/overview";
 import type { SummaryContext } from "@/lib/context/_core/summary";
 import type { ProjectMeta } from "@/lib/data/views";
 
-const STATUS_ORDER = ["in_progress", "planned", "draft", "done", "cancelled"] as const;
+const STATUS_ORDER = ["in_progress", "in_review", "planned", "draft", "done", "cancelled"] as const;
 
 /**
  * Format a task as a compact single line.
