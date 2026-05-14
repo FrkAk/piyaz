@@ -4,8 +4,12 @@ import type { AcceptanceCriterion } from "@/lib/types";
 import { getAncestors } from "@/lib/data/traversal";
 import { getTaskEdgesDetailed } from "@/lib/data/edge";
 import { getProjectIdentifier } from "@/lib/data/project";
-import { fetchSiblingTasks, fetchAssigneesUnchecked } from "@/lib/data/task";
-import type { AssigneeRef } from "@/lib/data/views";
+import {
+  fetchSiblingTasks,
+  fetchAssigneesUnchecked,
+  fetchLinksUnchecked,
+} from "@/lib/data/task";
+import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
@@ -27,6 +31,7 @@ type WorkingContext = {
   }[];
   siblings: { id: string; taskRef: string; title: string; status: string }[];
   assignees: AssigneeRef[];
+  links: TaskLinkRef[];
 };
 
 /**
@@ -47,13 +52,14 @@ export async function buildWorkingContext(
   const task = await assertTaskAccess(taskId, ctx);
   const projectId = task.projectId;
 
-  const [identifier, ancestors, detailedEdges, siblings, assignees] =
+  const [identifier, ancestors, detailedEdges, siblings, assignees, links] =
     await Promise.all([
       getProjectIdentifier(projectId),
       getAncestors(taskId),
       getTaskEdgesDetailed(ctx, taskId),
       fetchSiblingTasks(projectId, taskId),
       fetchAssigneesUnchecked(taskId),
+      fetchLinksUnchecked(taskId),
     ]);
 
   if (!identifier) {
@@ -83,6 +89,7 @@ export async function buildWorkingContext(
     edges,
     siblings,
     assignees,
+    links,
   };
 }
 
@@ -105,7 +112,7 @@ export async function formatWorkingContext(
 
   if (description) parts.push(`\n## Description\n${description}`);
 
-  const meta = formatMetaSection(node, ctx.assignees);
+  const meta = formatMetaSection(node, ctx.assignees, ctx.links);
   if (meta) parts.push(meta);
 
   const tags = formatTagsSection(node);
@@ -126,6 +133,9 @@ export async function formatWorkingContext(
   const siblings = formatSiblingsSection(ctx.siblings);
   if (siblings) parts.push(siblings);
 
+  const links = formatLinksSection(ctx.links);
+  if (links) parts.push(links);
+
   return parts.join("\n");
 }
 
@@ -141,6 +151,7 @@ export async function formatWorkingContext(
 function formatMetaSection(
   node: Record<string, unknown>,
   assignees: AssigneeRef[],
+  links: TaskLinkRef[],
 ): string {
   const lines: string[] = [];
   const priority = (node.priority as string | null) ?? null;
@@ -151,8 +162,32 @@ function formatMetaSection(
     const names = assignees.map((a) => a.name).join(", ");
     lines.push(`- Assignees: ${names}`);
   }
+  const prLink = links.find((l) => l.kind === "pull_request");
+  if (prLink) lines.push(`- PR: ${prLink.url}`);
   if (lines.length === 0) return "";
   return "\n## Meta\n" + lines.join("\n");
+}
+
+/**
+ * Format the Links section: one line per task_link with a derived host.
+ *
+ * @param links - Task links projection.
+ * @returns Formatted Links section or empty string.
+ */
+function formatLinksSection(links: TaskLinkRef[]): string {
+  if (links.length === 0) return "";
+  const lines = ["\n## Links"];
+  for (const l of links) {
+    let host = "";
+    try {
+      host = new URL(l.url).host;
+    } catch {
+      host = l.url;
+    }
+    const display = l.label ?? host;
+    lines.push(`- [${l.kind}] ${display} — ${l.url}`);
+  }
+  return lines.join("\n");
 }
 
 /**

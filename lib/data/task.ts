@@ -1,13 +1,15 @@
 import "server-only";
 
-import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   projects,
   tasks,
   taskEdges,
   taskAssignees,
+  taskLinks,
   type NewTask,
+  type TaskLink,
 } from "@/lib/db/schema";
 import { user, member } from "@/lib/db/auth-schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
@@ -38,8 +40,14 @@ import {
   encodeOrderCursor,
   type Cursor,
 } from "@/lib/data/cursor";
-import type { AssigneeRef, TaskFull, TaskSlim } from "@/lib/data/views";
+import type {
+  AssigneeRef,
+  TaskFull,
+  TaskLinkRef,
+  TaskSlim,
+} from "@/lib/data/views";
 import { emitTaskEvent } from "@/lib/realtime/events";
+import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
 
 /**
  * Build a timestamped history entry.
@@ -102,9 +110,12 @@ export async function getTaskFull(
     );
   }
   const taskRef = composeTaskRef(asIdentifier(proj.identifier), task.sequenceNumber);
-  const assignees = await fetchAssigneesUnchecked(taskId);
+  const [assignees, links] = await Promise.all([
+    fetchAssigneesUnchecked(taskId),
+    fetchLinksUnchecked(taskId),
+  ]);
 
-  return { ...task, taskRef, assignees };
+  return { ...task, taskRef, assignees, links };
 }
 
 /**
@@ -169,6 +180,32 @@ export async function fetchAssigneesByTaskUnchecked(
     result.set(r.taskId, list);
   }
   return result;
+}
+
+/**
+ * Fetch the link projection (id, kind, url, label, createdAt) for a task,
+ * ordered by createdAt ascending.
+ *
+ * UNCHECKED: this function performs NO authorization. The caller is
+ * responsible for asserting task access (`assertTaskAccess`) before
+ * invoking. The `Unchecked` suffix is the contract — do not strip it
+ * when wrapping or re-exporting.
+ *
+ * @param taskId - UUID of the task.
+ * @returns Ordered array of link refs (empty when no links exist).
+ */
+export async function fetchLinksUnchecked(taskId: string): Promise<TaskLinkRef[]> {
+  return db
+    .select({
+      id: taskLinks.id,
+      kind: taskLinks.kind,
+      url: taskLinks.url,
+      label: taskLinks.label,
+      createdAt: taskLinks.createdAt,
+    })
+    .from(taskLinks)
+    .where(eq(taskLinks.taskId, taskId))
+    .orderBy(asc(taskLinks.createdAt));
 }
 
 /**
@@ -929,6 +966,12 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
    * column).
    */
   assigneeIds?: string[];
+  /**
+   * Optional PR URL. Sugar: upserts a `task_links` row with kind derived
+   * from {@link classifyLink} inside the same transaction as the task
+   * insert. Not a column on `tasks`; stripped before the typed insert.
+   */
+  prUrl?: string | null;
 };
 
 /**
@@ -1067,10 +1110,20 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
 
   data = await formatTaskMarkdownFields(data);
 
-  // assigneeIds is not a column on `tasks`; strip before the typed insert
-  // so the row spread does not poison the values clause. The junction
-  // write happens later inside the same transaction.
-  const { assigneeIds, ...taskFields } = data;
+  // assigneeIds and prUrl are not columns on `tasks`; strip before the
+  // typed insert so the row spread does not poison the values clause.
+  // Junction-table writes happen later inside the same transaction.
+  const { assigneeIds, prUrl, ...taskFields } = data;
+  if (typeof prUrl === "string") {
+    try {
+      classifyLink(prUrl);
+    } catch (e) {
+      if (e instanceof MalformedLinkError) {
+        throw new ForbiddenError("Invalid prUrl", "task", data.projectId);
+      }
+      throw e;
+    }
+  }
 
   const result = await db.transaction(async (tx) => {
     await acquireProjectLock(tx, taskFields.projectId);
@@ -1115,6 +1168,22 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
     if (assigneeIds && assigneeIds.length > 0) {
       await assertAssigneesInTeam(tx, taskFields.projectId, assigneeIds);
       await setTaskAssignees(tx, task.id, assigneeIds, "replace");
+    }
+
+    if (typeof prUrl === "string" && prUrl.length > 0) {
+      const classified = classifyLink(prUrl);
+      await tx
+        .insert(taskLinks)
+        .values({
+          taskId: task.id,
+          kind: classified.kind,
+          url: classified.url,
+          label: classified.label,
+          createdBy: ctx.userId,
+        })
+        .onConflictDoNothing({
+          target: [taskLinks.taskId, taskLinks.url],
+        });
     }
 
     return {
@@ -1171,6 +1240,13 @@ export type TaskUpdate = {
   decisions?: unknown[];
   acceptanceCriteria?: unknown[];
   assigneeIds?: string[];
+  /**
+   * Sugar field: upserts a `task_links` row with kind derived from
+   * {@link classifyLink}. `null` deletes any existing `pull_request` link
+   * on this task. `undefined` (omitted) leaves links untouched. Not a
+   * column on `tasks`; stripped before the typed row update.
+   */
+  prUrl?: string | null;
 };
 
 /**
@@ -1211,6 +1287,23 @@ export async function updateTask(
     !overwriteArrays
       ? undefined
       : rawAssigneeIds;
+
+  // prUrl writes the `task_links` junction, not the tasks row. Pull it
+  // out so the typed update never sees it. `undefined` ↦ no link write,
+  // `null` ↦ delete pull_request links, string ↦ upsert.
+  const hasPrUrl = "prUrl" in changes;
+  const prUrl = hasPrUrl ? (changes.prUrl as string | null) : undefined;
+  delete changes.prUrl;
+  if (hasPrUrl && typeof prUrl === "string") {
+    try {
+      classifyLink(prUrl);
+    } catch (e) {
+      if (e instanceof MalformedLinkError) {
+        throw new ForbiddenError("Invalid prUrl", "task", taskId);
+      }
+      throw e;
+    }
+  }
 
   if (Array.isArray(changes.acceptanceCriteria)) {
     changes.acceptanceCriteria = (
@@ -1266,10 +1359,15 @@ export async function updateTask(
 
     // After normalization above, an `assigneeIds: []` in default-append
     // mode collapses to `assigneeIds === undefined`. If that was the
-    // only field on the call AND nothing else needs writing, the call
-    // is a pure no-op: skip the tasks-row bump, the empty history
-    // entry, and the downstream realtime emit.
-    if (Object.keys(changes).length === 0 && assigneeIds === undefined) {
+    // only field on the call AND nothing else needs writing (no
+    // assignee write, no prUrl write), the call is a pure no-op: skip
+    // the tasks-row bump, the empty history entry, and the downstream
+    // realtime emit.
+    if (
+      Object.keys(changes).length === 0 &&
+      assigneeIds === undefined &&
+      !hasPrUrl
+    ) {
       wasNoOp = true;
       return current;
     }
@@ -1314,6 +1412,7 @@ export async function updateTask(
     const fieldList = [
       ...Object.keys(changes),
       ...(assigneeIds !== undefined ? ["assigneeIds"] : []),
+      ...(hasPrUrl ? ["prUrl"] : []),
     ];
     const entry = makeHistoryEntry({
       type: isStatusChange ? "status_change" : "refined",
@@ -1343,10 +1442,36 @@ export async function updateTask(
         overwriteArrays ? "replace" : "append",
       );
     }
+
+    if (hasPrUrl) {
+      if (typeof prUrl !== "string" || prUrl.length === 0) {
+        await tx
+          .delete(taskLinks)
+          .where(
+            and(eq(taskLinks.taskId, taskId), eq(taskLinks.kind, "pull_request")),
+          );
+      } else {
+        const classified = classifyLink(prUrl);
+        await tx
+          .insert(taskLinks)
+          .values({
+            taskId,
+            kind: classified.kind,
+            url: classified.url,
+            label: classified.label,
+            createdBy: ctx.userId,
+          })
+          .onConflictDoNothing({
+            target: [taskLinks.taskId, taskLinks.url],
+          });
+      }
+    }
     return row;
   });
 
-  if (!wasNoOp) emitTaskEvent(updated.projectId, taskId);
+  // Reflect a prUrl-only call (no other field changes) as a meaningful
+  // realtime event so detail surfaces see the link arrive.
+  if (!wasNoOp || hasPrUrl) emitTaskEvent(updated.projectId, taskId);
   return updated;
 }
 
@@ -1427,5 +1552,188 @@ export async function deleteTaskPreview(ctx: AuthContext, taskId: string) {
     task: { id: task.id, title: task.title },
     edgesRemoved: edgeRows.length,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Task links (add / remove)
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a URL to the task's links. Membership-gated; the URL is parsed by
+ * {@link classifyLink} so the same kind/label derivation feeds the UI
+ * path and the MCP `prUrl` sugar path. Idempotent: a second add of the
+ * same URL on the same task returns the existing row.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @param url - URL to attach.
+ * @returns The new link row, or the existing row when the URL was a duplicate.
+ * @throws {ForbiddenError} When the caller cannot access the task or the URL is malformed.
+ */
+export async function addTaskLink(
+  ctx: AuthContext,
+  taskId: string,
+  url: string,
+): Promise<TaskLink> {
+  const task = await assertTaskAccess(taskId, ctx);
+  let classified;
+  try {
+    classified = classifyLink(url);
+  } catch (e) {
+    if (e instanceof MalformedLinkError) {
+      throw new ForbiddenError("Invalid url", "task", taskId);
+    }
+    throw e;
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(taskLinks)
+      .values({
+        taskId,
+        kind: classified.kind,
+        url: classified.url,
+        label: classified.label,
+        createdBy: ctx.userId,
+      })
+      .onConflictDoNothing({
+        target: [taskLinks.taskId, taskLinks.url],
+      })
+      .returning();
+
+    let row = inserted;
+    if (!row) {
+      // Conflict: surface the existing row so the UI shows the duplicate
+      // gracefully instead of toggling between empty and present states.
+      const [existing] = await tx
+        .select()
+        .from(taskLinks)
+        .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, classified.url)))
+        .limit(1);
+      if (!existing) throw new Error("Link insert reported conflict but no row exists");
+      row = existing;
+    }
+
+    await tx
+      .update(tasks)
+      .set({ updatedAt: new Date() })
+      .where(eq(tasks.id, taskId));
+    return row;
+  });
+
+  emitTaskEvent(task.projectId, taskId);
+  return result;
+}
+
+/**
+ * Remove a single link by id. Access is checked via the link's parent
+ * task; the caller does not need to pass the taskId. Missing link ids
+ * surface as `ForbiddenError` to avoid enumerating link ids cross-team.
+ *
+ * @param ctx - Resolved auth context.
+ * @param linkId - UUID of the `task_links` row to remove.
+ * @returns The id of the deleted link.
+ * @throws {ForbiddenError} When the link is missing or the caller cannot access the parent task.
+ */
+export async function removeTaskLink(
+  ctx: AuthContext,
+  linkId: string,
+): Promise<{ id: string }> {
+  const [link] = await db
+    .select()
+    .from(taskLinks)
+    .where(eq(taskLinks.id, linkId))
+    .limit(1);
+  if (!link) throw new ForbiddenError("Forbidden", "task", linkId);
+  const task = await assertTaskAccess(link.taskId, ctx);
+
+  await db.transaction(async (tx) => {
+    await tx.delete(taskLinks).where(eq(taskLinks.id, linkId));
+    await tx
+      .update(tasks)
+      .set({ updatedAt: new Date() })
+      .where(eq(tasks.id, link.taskId));
+  });
+
+  emitTaskEvent(task.projectId, link.taskId);
+  return { id: linkId };
+}
+
+/**
+ * Update a link's URL in place. Re-classifies the new URL so `kind` and
+ * `label` reflect the new shape; preserves `id`, `createdAt`, `createdBy`,
+ * and `metadata` so the audit trail survives an edit. Same access gate
+ * as {@link removeTaskLink}: missing or cross-team `linkId` surfaces as
+ * `ForbiddenError`. A new URL that collides with another link on the
+ * same task raises `ForbiddenError` (mapped from the unique constraint
+ * pre-check) so the UI can flash a duplicate-link message.
+ *
+ * @param ctx - Resolved auth context.
+ * @param linkId - UUID of the `task_links` row to update.
+ * @param url - New URL for the link.
+ * @returns The updated link row.
+ * @throws {ForbiddenError} When the link is missing, the caller cannot
+ *   access the parent task, the URL is malformed, or the new URL collides
+ *   with another link on the same task.
+ */
+export async function updateTaskLink(
+  ctx: AuthContext,
+  linkId: string,
+  url: string,
+): Promise<TaskLink> {
+  const [link] = await db
+    .select()
+    .from(taskLinks)
+    .where(eq(taskLinks.id, linkId))
+    .limit(1);
+  if (!link) throw new ForbiddenError("Forbidden", "task", linkId);
+  const task = await assertTaskAccess(link.taskId, ctx);
+
+  let classified;
+  try {
+    classified = classifyLink(url);
+  } catch (e) {
+    if (e instanceof MalformedLinkError) {
+      throw new ForbiddenError("Invalid url", "task", link.taskId);
+    }
+    throw e;
+  }
+
+  if (classified.url !== link.url) {
+    const [conflict] = await db
+      .select({ id: taskLinks.id })
+      .from(taskLinks)
+      .where(
+        and(
+          eq(taskLinks.taskId, link.taskId),
+          eq(taskLinks.url, classified.url),
+          ne(taskLinks.id, linkId),
+        ),
+      )
+      .limit(1);
+    if (conflict) {
+      throw new ForbiddenError("Duplicate url", "task", link.taskId);
+    }
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(taskLinks)
+      .set({
+        kind: classified.kind,
+        url: classified.url,
+        label: classified.label,
+      })
+      .where(eq(taskLinks.id, linkId))
+      .returning();
+    await tx
+      .update(tasks)
+      .set({ updatedAt: new Date() })
+      .where(eq(tasks.id, link.taskId));
+    return updated;
+  });
+
+  emitTaskEvent(task.projectId, link.taskId);
+  return result;
 }
 

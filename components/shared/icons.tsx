@@ -361,6 +361,16 @@ export function IconTrash(props: IconProps) {
   );
 }
 
+/** Pencil — inline edit affordance. */
+export function IconPencil(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2.5 13.5v-2L10 4l2 2-7.5 7.5h-2z" />
+      <path d="M9 5l2 2" />
+    </IconBase>
+  );
+}
+
 /** Log out / sign out — door + arrow. */
 export function IconLogOut(props: IconProps) {
   return (
@@ -393,3 +403,4 @@ export function IconUndo(props: IconProps) {
     </IconBase>
   );
 }
+

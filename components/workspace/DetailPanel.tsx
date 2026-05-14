@@ -1,16 +1,16 @@
 'use client';
 
 import { DetailView } from './detail/DetailView';
-import type { Task, TaskEdge } from '@/lib/db/schema';
-import type { TaskGraphSlim } from '@/lib/data/views';
+import type { TaskEdge } from '@/lib/db/schema';
+import type { TaskFull, TaskGraphSlim } from '@/lib/data/views';
 
 interface DetailPanelProps {
   /** Task UUID. */
   taskId: string;
   /** Project UUID. */
   projectId: string;
-  /** Current task with composed taskRef. */
-  task: Task & { taskRef: string };
+  /** Current task with composed taskRef, assignees, and links. */
+  task: TaskFull;
   /** Project display name (breadcrumb). */
   parentName: string;
   /** Edges connected to this task. */

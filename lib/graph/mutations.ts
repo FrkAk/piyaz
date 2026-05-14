@@ -12,6 +12,9 @@ import {
   createTask as coreCreateTask,
   updateTask as coreUpdateTask,
   deleteTask as coreDeleteTask,
+  addTaskLink as coreAddTaskLink,
+  removeTaskLink as coreRemoveTaskLink,
+  updateTaskLink as coreUpdateTaskLink,
 } from "@/lib/data/task";
 import type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
 import {
@@ -108,6 +111,45 @@ export async function createEdge(data: Omit<NewTaskEdge, "id">) {
 export async function removeEdge(edgeId: string) {
   const ctx = await getAuthContext();
   return coreRemoveEdge(ctx, edgeId);
+}
+
+/**
+ * Server action wrapper — add a URL to a task's links. The data layer
+ * classifies the URL and inserts a `task_links` row; duplicate URLs on
+ * the same task return the existing row idempotently.
+ * @param taskId - UUID of the task.
+ * @param url - URL to attach.
+ * @returns The new (or pre-existing) link row.
+ */
+export async function addTaskLink(taskId: string, url: string) {
+  const ctx = await getAuthContext();
+  return coreAddTaskLink(ctx, taskId, url);
+}
+
+/**
+ * Server action wrapper — remove a link by id. Access is checked against
+ * the link's parent task; missing link ids surface as authorization
+ * failures to avoid cross-team enumeration.
+ * @param linkId - UUID of the `task_links` row.
+ * @returns Deletion summary with the removed link id.
+ */
+export async function removeTaskLink(linkId: string) {
+  const ctx = await getAuthContext();
+  return coreRemoveTaskLink(ctx, linkId);
+}
+
+/**
+ * Server action wrapper — update a link's URL in place. The data layer
+ * re-classifies the URL so `kind` and `label` reflect the new shape;
+ * `id`, `createdAt`, and `createdBy` are preserved so the audit trail
+ * survives the edit.
+ * @param linkId - UUID of the `task_links` row.
+ * @param url - New URL.
+ * @returns The updated link row.
+ */
+export async function updateTaskLink(linkId: string, url: string) {
+  const ctx = await getAuthContext();
+  return coreUpdateTaskLink(ctx, linkId, url);
 }
 
 /**

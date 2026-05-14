@@ -25,7 +25,9 @@ import {
   searchTasks,
   getProjectTasksSlim,
   fetchAssigneesUnchecked,
+  fetchLinksUnchecked,
 } from "@/lib/data/task";
+import type { TaskLinkRef } from "@/lib/data/views";
 import {
   createEdge,
   updateEdge,
@@ -412,6 +414,87 @@ function doneStatusHints(
   return hints;
 }
 
+/**
+ * Compute completion-protocol hints for the implementer's terminal write,
+ * `status='in_review'`. Mirrors {@link doneStatusHints} for the
+ * executionRecord / decisions / files / AC checks and adds a `prUrl` hint
+ * when the task has no `pull_request` link and the payload did not supply
+ * one. The PR is the review subagent's primary handle for inspecting the
+ * implementer's output, so missing it should be loud.
+ *
+ * @param payload - Fields supplied by the caller in this request.
+ * @param persisted - Row state after the mutation, including persisted links.
+ * @returns Hint strings.
+ */
+function inReviewStatusHints(
+  payload: {
+    executionRecord?: string;
+    decisions?: Decision[];
+    files?: string[];
+    prUrl?: string | null;
+  },
+  persisted: {
+    executionRecord?: string | null;
+    decisions?: Decision[] | null;
+    files?: string[] | null;
+    acceptanceCriteria?: { checked: boolean }[] | null;
+    links: TaskLinkRef[];
+  },
+): string[] {
+  const hints: string[] = [];
+  if (!payload.executionRecord && !persisted.executionRecord) {
+    hints.push(
+      "Missing executionRecord (lifecycle §1). Add 3-5 sentences on HOW it was built: function names, file paths, endpoints. Distinct from description (scope). Downstream tasks depend on this for context.",
+    );
+  }
+  if (!payload.decisions && (!persisted.decisions || persisted.decisions.length === 0)) {
+    hints.push(
+      "Missing decisions (lifecycle §1). Record technical choices (CHOICE + WHY); downstream tasks need them.",
+    );
+  }
+  if (!payload.files && (!persisted.files || persisted.files.length === 0)) {
+    hints.push(
+      "Missing files (lifecycle §1). Record every path created or modified. For pure spec-review / docs / decision-only tasks that touched no repo files, pass files=[] explicitly so this hint clears.",
+    );
+  }
+  const criteria = persisted.acceptanceCriteria;
+  if (
+    persisted.executionRecord &&
+    criteria &&
+    criteria.length > 0 &&
+    criteria.every((c) => !c.checked)
+  ) {
+    hints.push(
+      "Acceptance criteria are all unchecked. Evaluate each against your executionRecord and re-submit with acceptanceCriteria=[{text, checked: true|false}, ...]. Do not auto-check everything.",
+    );
+  }
+  const hasPrLink = persisted.links.some((l) => l.kind === "pull_request");
+  if (payload.prUrl == null && !hasPrLink) {
+    hints.push(
+      "Missing prUrl. The Completion Protocol writes the PR URL alongside the in_review status flip so the review subagent and detail UI can resolve the PR (lifecycle §2). Pass prUrl='<gh-pr-url>' on this call. Omit only when no PR was opened (research / docs-only / decision-only tasks).",
+    );
+  }
+  // Read the cumulative post-update state from `persisted.files` — the
+  // append merge inside updateTask already folded in this turn's payload,
+  // so persisted is the canonical "does the task have files" signal. The
+  // earlier `payload.files ?? persisted.files` form silently swallowed a
+  // deliberate `files=[]` from the agent because `??` does not short-circuit
+  // on empty array, suppressing the "no PR" warning when the task had files.
+  if (
+    (persisted.files?.length ?? 0) > 0 &&
+    payload.prUrl == null &&
+    !hasPrLink
+  ) {
+    hints.push(
+      "Code change shipped without a PR. Open one per Completion Protocol (lifecycle §2 step 3) and pass prUrl on the next call. The implementer's terminal write is in_review with the PR attached; HOTL flips to done after approval.",
+    );
+  }
+  hints.push(
+    "Run mymir_analyze type='downstream' to propagate (lifecycle §3): update edge notes, retire stale edges, surface new dependencies revealed by this completion.",
+  );
+  return hints;
+}
+
 // ---------------------------------------------------------------------------
 // Result type
 // ---------------------------------------------------------------------------
@@ -667,6 +750,7 @@ export type TaskParams = {
   files?: string[];
   implementationPlan?: string;
   executionRecord?: string;
+  prUrl?: string | null;
   preview?: boolean;
   overwriteArrays?: boolean;
 };
@@ -844,6 +928,7 @@ export async function handleTask(
           implementationPlan: p.implementationPlan,
           executionRecord: p.executionRecord,
           decisions: p.decisions as unknown as Decision[],
+          prUrl: p.prUrl,
         });
         const createHints: string[] = [];
         // Required-field-shaped hints first (artifact-quality violations on input)
@@ -932,10 +1017,11 @@ export async function handleTask(
           p.assigneeIds === undefined &&
           p.files === undefined &&
           p.implementationPlan === undefined &&
-          p.executionRecord === undefined
+          p.executionRecord === undefined &&
+          p.prUrl === undefined
         ) {
           return fail(
-            "update requires at least one of: title, description, status, acceptanceCriteria, decisions, tags, category, priority, estimate, assigneeIds, files, implementationPlan, executionRecord.",
+            "update requires at least one of: title, description, status, acceptanceCriteria, decisions, tags, category, priority, estimate, assigneeIds, files, implementationPlan, executionRecord, prUrl.",
           );
         }
         let preExistingTags: string[] = [];
@@ -990,6 +1076,7 @@ export async function handleTask(
           changes.implementationPlan = p.implementationPlan;
         if (p.executionRecord !== undefined)
           changes.executionRecord = p.executionRecord;
+        if (p.prUrl !== undefined) changes.prUrl = p.prUrl;
         const result = await updateTask(ctx, p.taskId, changes, !!p.overwriteArrays);
 
         const updateHints: string[] = [];
@@ -1052,6 +1139,27 @@ export async function handleTask(
                 files: result.files,
                 acceptanceCriteria:
                   result.acceptanceCriteria as { checked: boolean }[] | null,
+              },
+            ),
+          );
+        }
+        if (p.status === "in_review") {
+          const persistedLinks = await fetchLinksUnchecked(p.taskId);
+          updateHints.push(
+            ...inReviewStatusHints(
+              {
+                executionRecord: p.executionRecord,
+                decisions: p.decisions as Decision[] | undefined,
+                files: p.files,
+                prUrl: p.prUrl,
+              },
+              {
+                executionRecord: result.executionRecord,
+                decisions: result.decisions as Decision[] | null,
+                files: result.files,
+                acceptanceCriteria:
+                  result.acceptanceCriteria as { checked: boolean }[] | null,
+                links: persistedLinks,
               },
             ),
           );

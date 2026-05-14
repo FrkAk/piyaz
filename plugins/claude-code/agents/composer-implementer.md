@@ -146,7 +146,7 @@ c. **PR body, template detection, taskRef bracket form, `gh pr create` syntax.**
 
 #### Success path
 
-One `mymir_task action='update'` call carrying the full Completion Protocol payload, append-only. Field shape, content rules, and AC evaluation semantics: lifecycle §2.
+One `mymir_task action='update'` call carrying the full Completion Protocol payload, append-only. Field shape, content rules, and AC evaluation semantics: lifecycle §2. Pass `prUrl` whenever a PR was opened (the dominant case); the backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR.
 
 ```
 mymir_task action='update' taskId='<id>'
@@ -155,6 +155,7 @@ mymir_task action='update' taskId='<id>'
   decisions=['<CHOICE + WHY one-liner>', ...]
   files=['<repo-relative path>', ...]
   acceptanceCriteria=[{id: '<id>', checked: true|false}, ...]
+  prUrl='<gh-pr-url>'
 ```
 
 Return to the orchestrator with one line:

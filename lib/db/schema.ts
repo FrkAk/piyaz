@@ -146,6 +146,33 @@ export type TaskAssignee = typeof taskAssignees.$inferSelect;
 export type NewTaskAssignee = typeof taskAssignees.$inferInsert;
 
 // ---------------------------------------------------------------------------
+// Task Links (URLs attached to a task: PRs, issues, commits, docs, etc.)
+// ---------------------------------------------------------------------------
+
+export const taskLinks = pgTable(
+  "task_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    url: text("url").notNull(),
+    label: text("label"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by").references(() => user.id, { onDelete: "set null" }),
+    metadata: jsonb("metadata"),
+  },
+  (t) => [
+    index("task_links_task_id_idx").on(t.taskId),
+    unique("task_links_task_url_unique").on(t.taskId, t.url),
+  ],
+);
+
+export type TaskLink = typeof taskLinks.$inferSelect;
+export type NewTaskLink = typeof taskLinks.$inferInsert;
+
+// ---------------------------------------------------------------------------
 // Team Invite Codes (separate file, re-exported here for drizzle-kit)
 // ---------------------------------------------------------------------------
 

@@ -10,6 +10,7 @@ import {
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
   fetchAssigneesUnchecked,
+  fetchLinksUnchecked,
 } from "@/lib/data/task";
 import { getProjectIdentifier } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
@@ -51,6 +52,17 @@ export async function buildAgentContext(
   const priority = task.priority as string | null;
   const estimate = task.estimate as number | null;
 
+  const [deps, downstream, upstreamEdgeNotes, assignees, links] = await Promise.all([
+    getDependencyChain(taskId, task.projectId, 2),
+    // getDownstream is public — caller already asserted; pass ctx through
+    getDownstream(ctx, taskId, 2),
+    fetchEdgeNotesBySource(task.projectId, taskId),
+    fetchAssigneesUnchecked(taskId),
+    fetchLinksUnchecked(taskId),
+  ]);
+
+  const prLink = links.find((l) => l.kind === "pull_request");
+
   const headerLines: string[] = [
     `# ${taskRef ? `\`${taskRef}\` ` : ""}${task.title}`,
   ];
@@ -59,6 +71,7 @@ export async function buildAgentContext(
   }
   if (priority) headerLines.push(`Priority: \`${priority}\``);
   if (estimate) headerLines.push(`Estimate: ${estimate} pts`);
+  if (prLink) headerLines.push(`PR: ${prLink.url}`);
   headerLines.push("");
   headerLines.push(task.description);
 
@@ -69,14 +82,6 @@ export async function buildAgentContext(
       section("Implementation Plan") + "\n" + task.implementationPlan,
     );
   }
-
-  const [deps, downstream, upstreamEdgeNotes, assignees] = await Promise.all([
-    getDependencyChain(taskId, task.projectId, 2),
-    // getDownstream is public — caller already asserted; pass ctx through
-    getDownstream(ctx, taskId, 2),
-    fetchEdgeNotesBySource(task.projectId, taskId),
-    fetchAssigneesUnchecked(taskId),
-  ]);
 
   if (deps.length > 0) {
     const prereqLines: string[] = [];
@@ -137,6 +142,20 @@ export async function buildAgentContext(
         "\n" +
         assignees.map((a) => `- ${a.name} <${a.email}>`).join("\n"),
     );
+  }
+
+  if (links.length > 0) {
+    const linkLines = links.map((l) => {
+      let host = "";
+      try {
+        host = new URL(l.url).host;
+      } catch {
+        host = l.url;
+      }
+      const display = l.label ?? host;
+      return `- [${l.kind}] ${display} (${l.url})`;
+    });
+    parts.push(section("Links") + "\n" + linkLines.join("\n"));
   }
 
   if (

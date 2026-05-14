@@ -1,14 +1,15 @@
 'use client';
 
 import { useMemo } from 'react';
-import type { Task, TaskEdge } from '@/lib/db/schema';
-import type { TaskGraphSlim } from '@/lib/data/views';
+import type { TaskEdge } from '@/lib/db/schema';
+import type { TaskFull, TaskGraphSlim, TaskLinkRef } from '@/lib/data/views';
 import type { TaskStatus } from '@/lib/types';
 import { BundlePreview } from '@/components/workspace/BundlePreview';
 import { DetailHeader } from './DetailHeader';
 import { DescriptionSection } from './DescriptionSection';
 import { CriteriaSection } from './CriteriaSection';
 import { DecisionsSection } from './DecisionsSection';
+import { LinksSection } from './LinksSection';
 import { RelationshipsSection } from './RelationshipsSection';
 import { ExecutionSection } from './ExecutionSection';
 import { ActivitySection } from './ActivitySection';
@@ -17,8 +18,14 @@ import { SectionHeader } from './SectionHeader';
 interface DetailViewProps {
   /** Task UUID. */
   taskId: string;
-  /** Current task with composed taskRef. */
-  task: Task & { taskRef: string };
+  /**
+   * Current task with composed taskRef and full server-side projections
+   * (assignees, links). The `/api/task/[taskId]` route returns the
+   * {@link TaskFull} shape; older callers fed only `Task & { taskRef }`,
+   * so `links` and `assignees` are typed nullable on this surface and
+   * the sections below default to `[]`.
+   */
+  task: TaskFull;
   /** Project UUID. */
   projectId: string;
   /** Project display name for the breadcrumb. */
@@ -157,6 +164,12 @@ export function DetailView({
             edges={edges}
             taskMap={taskMap}
             onSelectNode={onSelectNode}
+            onGraphChange={onGraphChange}
+          />
+
+          <LinksSection
+            taskId={taskId}
+            links={(task.links as TaskLinkRef[] | undefined) ?? []}
             onGraphChange={onGraphChange}
           />
 

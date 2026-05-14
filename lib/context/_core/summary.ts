@@ -8,7 +8,11 @@ import type {
   Estimate,
 } from "@/lib/types";
 import { getTaskEdgesDetailed } from "@/lib/data/edge";
-import { fetchAssigneesUnchecked } from "@/lib/data/task";
+import {
+  fetchAssigneesUnchecked,
+  fetchLinksUnchecked,
+} from "@/lib/data/task";
+import type { TaskLinkRef } from "@/lib/data/views";
 import { getProjectHeader } from "@/lib/data/project";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import type { AuthContext } from "@/lib/auth/context";
@@ -34,6 +38,7 @@ export type SummaryContext = {
     description: string;
     priority: Priority | null;
     estimate: Estimate | null;
+    prUrl: string | null;
   };
   parent: { title: string; type: "project" } | null;
   edgeCount: Record<EdgeType, number>;
@@ -42,6 +47,7 @@ export type SummaryContext = {
   decisionsCount: number;
   assigneeCount: number;
   hasImplementationPlan: boolean;
+  links: TaskLinkRef[];
 };
 
 /**
@@ -64,9 +70,10 @@ export async function buildSummaryContext(
     });
   }
 
-  const [detailedEdges, assignees] = await Promise.all([
+  const [detailedEdges, assignees, links] = await Promise.all([
     getTaskEdgesDetailed(ctx, taskId),
     fetchAssigneesUnchecked(taskId),
+    fetchLinksUnchecked(taskId),
   ]);
 
   const edges: EdgeDetail[] = detailedEdges.map((e) => ({
@@ -81,6 +88,8 @@ export async function buildSummaryContext(
 
   const edgeCount = buildEdgeCount(edges);
 
+  const prUrl = links.find((l) => l.kind === "pull_request")?.url ?? null;
+
   return {
     node: {
       taskRef: project
@@ -91,6 +100,7 @@ export async function buildSummaryContext(
       description: task.description,
       priority: task.priority,
       estimate: task.estimate,
+      prUrl,
     },
     parent: project ? { title: project.title, type: "project" } : null,
     edgeCount,
@@ -100,6 +110,7 @@ export async function buildSummaryContext(
     decisionsCount: (task.decisions as Decision[]).length,
     assigneeCount: assignees.length,
     hasImplementationPlan: !!task.implementationPlan,
+    links,
   };
 }
 
