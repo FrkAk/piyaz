@@ -123,6 +123,7 @@ Drop to \`mymir_query\` for browse / lookup:
    - \`decisions\`: one line per technical choice. Format: CHOICE plus WHY.
    - \`files\`: every path created or modified.
    - \`acceptanceCriteria\`: pass each item as \`{text, checked: true|false}\`. Evaluate against the work; do not auto-check everything.
+   - \`prUrl\`: the PR URL the implementer just opened (optional sugar; backend upserts a \`task_links\` row with kind='pull_request' so the review subagent and detail UI can read it). Omit when no PR was opened.
    Do not pass \`overwriteArrays=true\` unless replacing the arrays is the intent and the user has confirmed.
    The HOTL gate flips \`in_review → done\` after PR approval/merge. Agents must not self-promote to \`done\`.
 6. Propagate per the Propagate section.
@@ -140,7 +141,7 @@ Run before transitioning a task to \`in_review\`, \`done\`, or \`cancelled\`. Th
    - Direct: invoked by the user in a normal session. Ask "Ready to mark this \`in_review\`?" with a one-sentence \`executionRecord\` preview. Wait for explicit confirmation; the HOTL operator finalizes to \`done\` after PR approval.
    - Uncertain: default to asking. A spurious confirmation is cheap; an unauthorized status change is expensive.
 
-2. Populate required fields. \`executionRecord\`, \`decisions\`, \`files\`, \`acceptanceCriteria\`. The server returns \`_hints\` for any missing fields; re-call with the additions before continuing. For \`cancelled\`: \`executionRecord\` carries the rationale (why abandoned, what was tried) and \`decisions\` records anything learned.
+2. Populate required fields. \`executionRecord\`, \`decisions\`, \`files\`, \`acceptanceCriteria\`, and \`prUrl\` when a PR was opened (backend upserts a \`task_links\` row with kind='pull_request'). The server returns \`_hints\` for any missing fields; re-call with the additions before continuing. For \`cancelled\`: \`executionRecord\` carries the rationale (why abandoned, what was tried) and \`decisions\` records anything learned.
 
 3. Open a PR if the work changed code. Detect a template at \`.github/PULL_REQUEST_TEMPLATE.md\`, \`.github/pull_request_template.md\`, \`.github/PULL_REQUEST_TEMPLATE/<name>.md\`, or \`docs/pull_request_template.md\`. If a template exists, fill it; map task fields onto template sections only where they fit, and leave a section blank rather than invent content. Common mappings:
    - Linked issue / linked task: include the \`taskRef\` in \`[BRACKETS]\` (e.g. \`[MYMR-83]\`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference related tasks elsewhere as plain links (no brackets). Add \`Closes #N\` on its own line if a GitHub issue is being resolved.
@@ -272,6 +273,8 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           .describe("Implementation plan (markdown, unabridged; do not summarize). Pass with `status='planned'` to transition draft → planned; without the status change the task stays incomplete (lifecycle §1)."),
         executionRecord: z.string().optional()
           .describe("3-5 sentences on HOW it was built (function names, file paths, endpoints; distinct from description=scope). For cancelled: rationale + what was tried instead. Draft tasks must not carry this. Iron Law: cite real code, omit what you cannot. Markdown. Artifacts §1."),
+        prUrl: z.url().nullable().optional()
+          .describe("PR URL for this task's code change. Sugar field that upserts a `task_links` row with kind derived from the URL classifier (`pull_request` for github.com/.../pull/N, gitlab.com/.../merge_requests/N). Pass alongside `status='in_review'` in the Completion Protocol payload; the composer-implementer subagent writes this in the same call as executionRecord/decisions/files/acceptanceCriteria. Pass `null` to remove an existing PR link. Other link kinds (issues, commits, docs) are user-managed via the UI; only PRs are agent-write today."),
         preview: z.boolean().optional().default(true)
           .describe("Delete only: true=show impact (default), false=actually delete."),
         overwriteArrays: z.boolean().optional().default(false)

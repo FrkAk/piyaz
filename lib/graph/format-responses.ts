@@ -89,6 +89,7 @@ export function formatSummary(ctx: SummaryContext): string {
   if (ctx.assigneeCount > 0) stats.push(`${ctx.assigneeCount} assigned`);
   if (ctx.hasImplementationPlan) stats.push("has plan");
   parts.push(`\n${stats.join(" | ")}`);
+  if (ctx.node.prUrl) parts.push(`PR: ${ctx.node.prUrl}`);
 
   if (ctx.edges.length > 0) {
     parts.push("\n## Edges");

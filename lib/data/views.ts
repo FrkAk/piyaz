@@ -14,6 +14,20 @@ export type AssigneeRef = {
 };
 
 /**
+ * Projection of a single `task_links` row for the task detail surface and
+ * context builders. `host` is derived on read from `url` (not stored) so the
+ * DB stays single-sourced and renaming hosts in the classifier doesn't
+ * require a backfill.
+ */
+export type TaskLinkRef = {
+  id: string;
+  kind: string;
+  url: string;
+  label: string | null;
+  createdAt: Date;
+};
+
+/**
  * Slim view of the project's owning team — only the fields the home grid
  * and team chip render. Decorating each project with its own organization
  * here saves the home page from a separate `organization` query.
@@ -163,8 +177,9 @@ export type TaskSlim = {
   order: number;
 };
 
-/** Full task row + the composed `taskRef` and assignees for project page detail surfaces. */
+/** Full task row + the composed `taskRef`, assignees, and links for project page detail surfaces. */
 export type TaskFull = Task & {
   taskRef: string;
   assignees: AssigneeRef[];
+  links: TaskLinkRef[];
 };
