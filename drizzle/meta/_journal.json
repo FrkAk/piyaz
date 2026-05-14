@@ -8,6 +8,13 @@
       "when": 1778519988334,
       "tag": "0000_gorgeous_forge",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778790581821,
+      "tag": "0001_tan_nova",
+      "breakpoints": true
     }
   ]
 }

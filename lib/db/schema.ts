@@ -5,6 +5,7 @@ import {
   integer,
   timestamp,
   jsonb,
+  boolean,
   index,
   unique,
   uniqueIndex,
@@ -17,7 +18,6 @@ import type {
   EdgeType,
   Decision,
   HistoryEntry,
-  AcceptanceCriterion,
   Priority,
   Estimate,
 } from "@/lib/types";
@@ -68,11 +68,6 @@ export const tasks = pgTable(
     status: text("status").$type<TaskStatus>().notNull().default("draft"),
     order: integer("order").notNull().default(0),
     category: text("category"),
-    acceptanceCriteria: jsonb("acceptance_criteria")
-      .$type<AcceptanceCriterion[]>()
-      .notNull()
-      .default([]),
-    decisions: jsonb("decisions").$type<Decision[]>().notNull().default([]),
     implementationPlan: text("implementation_plan"),
     executionRecord: text("execution_record"),
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
@@ -144,6 +139,57 @@ export const taskAssignees = pgTable(
 
 export type TaskAssignee = typeof taskAssignees.$inferSelect;
 export type NewTaskAssignee = typeof taskAssignees.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Task Acceptance Criteria (replaces tasks.acceptance_criteria JSONB)
+// ---------------------------------------------------------------------------
+
+export const taskAcceptanceCriteria = pgTable(
+  "task_acceptance_criteria",
+  {
+    id: uuid("id").primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    checked: boolean("checked").notNull().default(false),
+    position: integer("position").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("task_acceptance_criteria_task_id_position_idx").on(t.taskId, t.position),
+  ],
+);
+
+export type TaskAcceptanceCriterion = typeof taskAcceptanceCriteria.$inferSelect;
+export type NewTaskAcceptanceCriterion = typeof taskAcceptanceCriteria.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Task Decisions (replaces tasks.decisions JSONB)
+// ---------------------------------------------------------------------------
+
+export const taskDecisions = pgTable(
+  "task_decisions",
+  {
+    id: uuid("id").primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    source: text("source").$type<Decision["source"]>().notNull(),
+    decisionDate: text("decision_date").notNull(),
+    position: integer("position").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("task_decisions_task_id_position_idx").on(t.taskId, t.position),
+  ],
+);
+
+export type TaskDecision = typeof taskDecisions.$inferSelect;
+export type NewTaskDecision = typeof taskDecisions.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Task Links (URLs attached to a task: PRs, issues, commits, docs, etc.)
