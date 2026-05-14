@@ -12,6 +12,13 @@ export interface ClassifiedLink {
   kind: LinkKind;
   label: string;
   host: string;
+  /**
+   * Canonical URL after scheme normalization. Always carries an `http:` or
+   * `https:` scheme and a trailing-slash-normalized path. Callers should
+   * persist this rather than the raw input so the `unique(taskId, url)`
+   * constraint dedups variants like `github.com/x` vs `https://github.com/x`.
+   */
+  url: string;
   owner?: string;
   repo?: string;
   number?: number;
@@ -37,6 +44,12 @@ export class MalformedLinkError extends Error {
   }
 }
 
+/**
+ * Internal classifier-helper return shape. Sub-classifiers don't know the
+ * canonical URL — {@link classifyLink} layers it on after parse + protocol-gate.
+ */
+type ClassifiedLinkSeed = Omit<ClassifiedLink, "url">;
+
 const HOST_NORMALIZE_RE = /^www\./;
 
 function normalizeHost(host: string): string {
@@ -61,7 +74,7 @@ function shortenSha(sha: string): string {
  * @param segments - Path segments split on `/`, with empty segments removed.
  * @returns Classified link or null if the path doesn't match.
  */
-function classifyGithub(host: string, segments: string[]): ClassifiedLink | null {
+function classifyGithub(host: string, segments: string[]): ClassifiedLinkSeed | null {
   if (segments.length < 4) return null;
   const [owner, repo, kindSeg, idSeg] = segments;
   if (kindSeg === "pull") {
@@ -108,7 +121,7 @@ function classifyGithub(host: string, segments: string[]): ClassifiedLink | null
  * @param segments - Path segments.
  * @returns Classified link or null.
  */
-function classifyGitlab(host: string, segments: string[]): ClassifiedLink | null {
+function classifyGitlab(host: string, segments: string[]): ClassifiedLinkSeed | null {
   const dashIdx = segments.indexOf("-");
   if (dashIdx < 2 || dashIdx + 2 >= segments.length) return null;
   const owner = segments.slice(0, dashIdx - 1).join("/");
@@ -158,7 +171,7 @@ function classifyGitlab(host: string, segments: string[]): ClassifiedLink | null
  * @param segments - Path segments.
  * @returns Classified link or null.
  */
-function classifyLinear(host: string, segments: string[]): ClassifiedLink | null {
+function classifyLinear(host: string, segments: string[]): ClassifiedLinkSeed | null {
   const issueIdx = segments.indexOf("issue");
   if (issueIdx === -1 || issueIdx + 1 >= segments.length) return null;
   const id = segments[issueIdx + 1];
@@ -176,7 +189,7 @@ function classifyLinear(host: string, segments: string[]): ClassifiedLink | null
  * @param host - The URL's hostname.
  * @returns Classified link.
  */
-function classifyDoc(host: string): ClassifiedLink {
+function classifyDoc(host: string): ClassifiedLinkSeed {
   return {
     kind: "doc",
     label: `${host} doc`,
@@ -194,6 +207,12 @@ function classifyDoc(host: string): ClassifiedLink {
  * - `doc`: notion.so, docs.google.com, figma.com.
  * - `link`: everything else (fallback).
  *
+ * Scheme-less input is normalized to `https://`. Users typing or pasting
+ * `github.com/owner/repo/pull/1` get the same treatment as the fully-qualified
+ * URL. The normalization runs only when the raw input fails to parse as-is,
+ * so a user-supplied scheme (including `javascript:`) is preserved and then
+ * rejected by the protocol gate below.
+ *
  * @param rawUrl - User-supplied URL string.
  * @returns ClassifiedLink with kind, label, host, and optional owner/repo/number.
  * @throws {MalformedLinkError} When the URL constructor rejects the input or
@@ -204,11 +223,17 @@ function classifyDoc(host: string): ClassifiedLink {
  *   (`addTaskLink`) and the MCP `prUrl` sugar funnel through.
  */
 export function classifyLink(rawUrl: string): ClassifiedLink {
+  const trimmed = rawUrl.trim();
   let parsed: URL;
   try {
-    parsed = new URL(rawUrl);
-  } catch (e) {
-    throw new MalformedLinkError(rawUrl, e);
+    parsed = new URL(trimmed);
+  } catch {
+    const candidate = trimmed.startsWith("//") ? `https:${trimmed}` : `https://${trimmed}`;
+    try {
+      parsed = new URL(candidate);
+    } catch (e) {
+      throw new MalformedLinkError(rawUrl, e);
+    }
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -217,36 +242,18 @@ export function classifyLink(rawUrl: string): ClassifiedLink {
 
   const host = normalizeHost(parsed.host);
   const segments = parsed.pathname.split("/").filter((s) => s.length > 0);
+  const url = parsed.toString();
 
-  if (host === "github.com") {
-    const result = classifyGithub(host, segments);
-    if (result) return result;
-  }
+  let seed: ClassifiedLinkSeed | null = null;
+  if (host === "github.com") seed = classifyGithub(host, segments);
+  else if (host === "gitlab.com") seed = classifyGitlab(host, segments);
+  else if (host === "linear.app") seed = classifyLinear(host, segments);
+  else if (host === "notion.so" || host.endsWith(".notion.site")) seed = classifyDoc(host);
+  else if (host === "docs.google.com") seed = classifyDoc(host);
+  else if (host === "figma.com") seed = classifyDoc(host);
 
-  if (host === "gitlab.com") {
-    const result = classifyGitlab(host, segments);
-    if (result) return result;
-  }
-
-  if (host === "linear.app") {
-    const result = classifyLinear(host, segments);
-    if (result) return result;
-  }
-
-  if (host === "notion.so" || host.endsWith(".notion.site")) {
-    return classifyDoc(host);
-  }
-  if (host === "docs.google.com") {
-    return classifyDoc(host);
-  }
-  if (host === "figma.com") {
-    return classifyDoc(host);
-  }
+  if (seed) return { ...seed, url };
 
   const label = truncateLabel(host + parsed.pathname.replace(/\/$/, ""));
-  return {
-    kind: "link",
-    label,
-    host,
-  };
+  return { kind: "link", label, host, url };
 }

@@ -93,6 +93,36 @@ test("accepts http: and https: URLs", () => {
   expect(classifyLink("https://example.com/a").host).toBe("example.com");
 });
 
+test("normalizes scheme-less input to https://", () => {
+  const result = classifyLink("github.com/anthropic/claude/pull/42");
+  expect(result.kind).toBe("pull_request");
+  expect(result.url).toBe("https://github.com/anthropic/claude/pull/42");
+  expect(result.host).toBe("github.com");
+});
+
+test("normalizes www-prefixed scheme-less input", () => {
+  const result = classifyLink("www.example.com/page");
+  expect(result.url).toBe("https://www.example.com/page");
+  expect(result.host).toBe("example.com");
+});
+
+test("normalizes protocol-relative input (//host/path)", () => {
+  const result = classifyLink("//github.com/owner/repo");
+  expect(result.url).toBe("https://github.com/owner/repo");
+  expect(result.host).toBe("github.com");
+});
+
+test("trims whitespace around scheme-less input", () => {
+  const result = classifyLink("  github.com/owner/repo/issues/5  ");
+  expect(result.kind).toBe("issue");
+  expect(result.url).toBe("https://github.com/owner/repo/issues/5");
+});
+
+test("preserves a user-supplied https:// scheme verbatim", () => {
+  const result = classifyLink("https://github.com/o/r/pull/1");
+  expect(result.url).toBe("https://github.com/o/r/pull/1");
+});
+
 test("strips www prefix from host", () => {
   const result = classifyLink("https://www.example.com/page");
   expect(result.host).toBe("example.com");

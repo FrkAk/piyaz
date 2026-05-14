@@ -1177,7 +1177,7 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
         .values({
           taskId: task.id,
           kind: classified.kind,
-          url: prUrl,
+          url: classified.url,
           label: classified.label,
           createdBy: ctx.userId,
         })
@@ -1457,7 +1457,7 @@ export async function updateTask(
           .values({
             taskId,
             kind: classified.kind,
-            url: prUrl,
+            url: classified.url,
             label: classified.label,
             createdBy: ctx.userId,
           })
@@ -1592,7 +1592,7 @@ export async function addTaskLink(
       .values({
         taskId,
         kind: classified.kind,
-        url,
+        url: classified.url,
         label: classified.label,
         createdBy: ctx.userId,
       })
@@ -1608,7 +1608,7 @@ export async function addTaskLink(
       const [existing] = await tx
         .select()
         .from(taskLinks)
-        .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, url)))
+        .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, classified.url)))
         .limit(1);
       if (!existing) throw new Error("Link insert reported conflict but no row exists");
       row = existing;

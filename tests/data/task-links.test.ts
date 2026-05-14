@@ -115,6 +115,31 @@ test("updateTask with malformed or unsafe prUrl raises ForbiddenError before per
 // Reliability: idempotency, transactional safety, cascade behavior
 // ---------------------------------------------------------------------------
 
+test("addTaskLink normalizes scheme-less input and stores the canonical URL", async () => {
+  const f = await seedUserOrgProject("links-normalize-add");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await addTaskLink(ctx, task.id, "github.com/anthropic/claude/pull/42");
+  const rows = await fetchLinksUnchecked(task.id);
+
+  expect(rows.length).toBe(1);
+  expect(rows[0].url).toBe("https://github.com/anthropic/claude/pull/42");
+  expect(rows[0].kind).toBe("pull_request");
+});
+
+test("addTaskLink dedupes scheme-less + canonical inputs of the same URL", async () => {
+  const f = await seedUserOrgProject("links-normalize-dedup");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  const first = await addTaskLink(ctx, task.id, "github.com/o/r/pull/1");
+  const second = await addTaskLink(ctx, task.id, "https://github.com/o/r/pull/1");
+
+  expect(second.id).toBe(first.id);
+  expect((await fetchLinksUnchecked(task.id)).length).toBe(1);
+});
+
 test("addTaskLink is idempotent: re-adding the same URL returns the existing row", async () => {
   const f = await seedUserOrgProject("links-idem");
   const ctx = makeAuthContext(f.userId);
