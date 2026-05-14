@@ -10,6 +10,7 @@ import {
   updateTask,
   addTaskLink,
   removeTaskLink,
+  updateTaskLink,
   fetchLinksUnchecked,
   getTaskFull,
 } from "@/lib/data/task";
@@ -138,6 +139,85 @@ test("addTaskLink dedupes scheme-less + canonical inputs of the same URL", async
 
   expect(second.id).toBe(first.id);
   expect((await fetchLinksUnchecked(task.id)).length).toBe(1);
+});
+
+test("updateTaskLink rewrites the URL in place and preserves id and createdAt", async () => {
+  const f = await seedUserOrgProject("links-edit");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  const original = await addTaskLink(ctx, task.id, "https://github.com/o/r/pull/1");
+
+  const updated = await updateTaskLink(ctx, original.id, "github.com/o/r/issues/2");
+
+  expect(updated.id).toBe(original.id);
+  expect(updated.createdAt.toISOString()).toBe(original.createdAt.toISOString());
+  expect(updated.url).toBe("https://github.com/o/r/issues/2");
+  expect(updated.kind).toBe("issue");
+});
+
+test("updateTaskLink raises ForbiddenError for callers outside the task's team", async () => {
+  const owner = await seedUserOrgProject("links-edit-x1");
+  const stranger = await seedUserOrgProject("links-edit-x2");
+  const ownerCtx = makeAuthContext(owner.userId);
+  const strangerCtx = makeAuthContext(stranger.userId);
+  const task = await createTask(ownerCtx, { projectId: owner.projectId, title: "T" });
+  const link = await addTaskLink(ownerCtx, task.id, "https://github.com/o/r/pull/1");
+
+  await expect(
+    updateTaskLink(strangerCtx, link.id, "https://github.com/o/r/pull/2"),
+  ).rejects.toBeInstanceOf(ForbiddenError);
+
+  const rows = await fetchLinksUnchecked(task.id);
+  expect(rows[0].url).toBe("https://github.com/o/r/pull/1");
+});
+
+test("updateTaskLink rejects a malformed URL and leaves the row untouched", async () => {
+  const f = await seedUserOrgProject("links-edit-bad-url");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  const link = await addTaskLink(ctx, task.id, "https://github.com/o/r/pull/1");
+
+  await expect(updateTaskLink(ctx, link.id, "javascript:alert(1)")).rejects.toBeInstanceOf(
+    ForbiddenError,
+  );
+  await expect(updateTaskLink(ctx, link.id, "not a url")).rejects.toBeInstanceOf(
+    ForbiddenError,
+  );
+
+  const rows = await fetchLinksUnchecked(task.id);
+  expect(rows[0].url).toBe("https://github.com/o/r/pull/1");
+});
+
+test("updateTaskLink raises ForbiddenError when the new URL collides with another link on the same task", async () => {
+  const f = await seedUserOrgProject("links-edit-collide");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  await addTaskLink(ctx, task.id, "https://github.com/o/r/pull/1");
+  const second = await addTaskLink(ctx, task.id, "https://github.com/o/r/pull/2");
+
+  await expect(
+    updateTaskLink(ctx, second.id, "https://github.com/o/r/pull/1"),
+  ).rejects.toBeInstanceOf(ForbiddenError);
+
+  const rows = await fetchLinksUnchecked(task.id);
+  expect(rows.length).toBe(2);
+  const urls = rows.map((r) => r.url).sort();
+  expect(urls).toEqual([
+    "https://github.com/o/r/pull/1",
+    "https://github.com/o/r/pull/2",
+  ]);
+});
+
+test("updateTaskLink is a no-op when the new URL equals the current canonical URL", async () => {
+  const f = await seedUserOrgProject("links-edit-noop");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  const link = await addTaskLink(ctx, task.id, "https://github.com/o/r/pull/1");
+
+  const updated = await updateTaskLink(ctx, link.id, "github.com/o/r/pull/1");
+
+  expect(updated.id).toBe(link.id);
+  expect(updated.url).toBe("https://github.com/o/r/pull/1");
 });
 
 test("addTaskLink is idempotent: re-adding the same URL returns the existing row", async () => {

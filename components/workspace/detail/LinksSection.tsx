@@ -3,19 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { useUndo, UndoButton } from '@/hooks/useUndo';
-import { addTaskLink, removeTaskLink } from '@/lib/graph/mutations';
+import { addTaskLink, removeTaskLink, updateTaskLink } from '@/lib/graph/mutations';
 import { classifyLink } from '@/lib/links/classify';
+import { IconPencil, IconPlus, IconTrash } from '@/components/shared/icons';
+import type { IconProps } from '@/components/shared/icons';
 import {
   IconFigma,
   IconGitHub,
   IconGitLab,
   IconGlobe,
+  IconGoogle,
   IconLinear,
   IconNotion,
-  IconPlus,
-  IconTrash,
-} from '@/components/shared/icons';
-import type { IconProps } from '@/components/shared/icons';
+  IconReddit,
+  IconStackOverflow,
+} from '@/components/shared/host-icons';
 import type { TaskLinkRef } from '@/lib/data/views';
 import { SectionHeader } from './SectionHeader';
 
@@ -33,7 +35,15 @@ const HOST_ICONS: Record<string, ComponentType<IconProps>> = {
   'www.notion.so': IconNotion,
   'figma.com': IconFigma,
   'www.figma.com': IconFigma,
-  'docs.google.com': IconGlobe,
+  'google.com': IconGoogle,
+  'www.google.com': IconGoogle,
+  'docs.google.com': IconGoogle,
+  'drive.google.com': IconGoogle,
+  'reddit.com': IconReddit,
+  'www.reddit.com': IconReddit,
+  'old.reddit.com': IconReddit,
+  'stackoverflow.com': IconStackOverflow,
+  'www.stackoverflow.com': IconStackOverflow,
 };
 
 /**
@@ -105,6 +115,7 @@ export function LinksSection({ taskId, links, onGraphChange }: LinksSectionProps
   const [prevTaskId, setPrevTaskId] = useState(taskId);
   const [suppressing, setSuppressing] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const localRef = useRef(local);
   const suppressTimerRef = useRef<number | null>(null);
@@ -151,6 +162,7 @@ export function LinksSection({ taskId, links, onGraphChange }: LinksSectionProps
   if (taskId !== prevTaskId) {
     setPrevTaskId(taskId);
     setAdding(false);
+    setEditingId(null);
     setError(null);
   }
 
@@ -223,6 +235,34 @@ export function LinksSection({ taskId, links, onGraphChange }: LinksSectionProps
     [taskId, onGraphChange],
   );
 
+  const handleEdit = useCallback(
+    async (linkId: string, url: string) => {
+      const trimmed = url.trim();
+      if (!trimmed) { setEditingId(null); return; }
+      const target = localRef.current.find((l) => l.id === linkId);
+      if (target && trimmed === target.url) { setEditingId(null); return; }
+      try {
+        classifyLink(trimmed);
+      } catch {
+        flashError('Invalid URL.');
+        return;
+      }
+      setEditingId(null);
+      markMutation();
+      try {
+        const updated = await updateTaskLink(linkId, trimmed);
+        const next = localRef.current.map((l) =>
+          l.id === linkId ? (updated as TaskLinkRef) : l,
+        );
+        setLocal(next);
+        onGraphChange?.();
+      } catch {
+        flashError('Could not update link.');
+      }
+    },
+    [onGraphChange],
+  );
+
   return (
     <section className="mb-7">
       <SectionHeader
@@ -253,7 +293,15 @@ export function LinksSection({ taskId, links, onGraphChange }: LinksSectionProps
       ) : (
         <div className="space-y-1.5">
           {local.map((link) => (
-            <LinkCard key={link.id} link={link} onDelete={() => void handleDelete(link.id)} />
+            <LinkCard
+              key={link.id}
+              link={link}
+              editing={editingId === link.id}
+              onStartEdit={() => setEditingId(link.id)}
+              onCommitEdit={(url) => void handleEdit(link.id, url)}
+              onCancelEdit={() => setEditingId(null)}
+              onDelete={() => void handleDelete(link.id)}
+            />
           ))}
         </div>
       )}
@@ -277,6 +325,14 @@ export function LinksSection({ taskId, links, onGraphChange }: LinksSectionProps
 interface LinkCardProps {
   /** Link projection. */
   link: TaskLinkRef;
+  /** Whether this card is in edit mode. */
+  editing: boolean;
+  /** Switch to edit mode. */
+  onStartEdit: () => void;
+  /** Commit a new URL for the link. */
+  onCommitEdit: (url: string) => void;
+  /** Leave edit mode without committing. */
+  onCancelEdit: () => void;
   /** Delete this link. */
   onDelete: () => void;
 }
@@ -284,12 +340,30 @@ interface LinkCardProps {
 /**
  * Link row with kind-derived host glyph, parsed label, and a kind chip
  * that mirrors the decisions-section source chip. Anchor opens in a new
- * tab with `rel='noopener noreferrer'` per security.
+ * tab with `rel='noopener noreferrer'` per security. The pencil button
+ * swaps the row into an inline edit form; the anchor itself stays a pure
+ * navigation surface so single-click never accidentally enters edit mode.
  *
  * @param props - Card configuration.
  * @returns Card element.
  */
-function LinkCard({ link, onDelete }: LinkCardProps) {
+function LinkCard({
+  link,
+  editing,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
+  onDelete,
+}: LinkCardProps) {
+  if (editing) {
+    return (
+      <LinkEditForm
+        initialUrl={link.url}
+        onSubmit={onCommitEdit}
+        onCancel={onCancelEdit}
+      />
+    );
+  }
   const host = hostOf(link.url);
   const display = link.label ?? host ?? link.url;
   return (
@@ -311,12 +385,83 @@ function LinkCard({ link, onDelete }: LinkCardProps) {
       </span>
       <button
         type="button"
+        onClick={onStartEdit}
+        aria-label="Edit link"
+        className="shrink-0 cursor-pointer rounded p-1 text-text-muted opacity-0 transition-all hover:text-accent-light group-hover/link:opacity-100"
+      >
+        <IconPencil size={11} />
+      </button>
+      <button
+        type="button"
         onClick={onDelete}
         aria-label="Delete link"
         className="shrink-0 cursor-pointer rounded p-1 text-text-muted opacity-0 transition-all hover:text-danger group-hover/link:opacity-100"
       >
         <IconTrash size={11} />
       </button>
+    </div>
+  );
+}
+
+interface LinkEditFormProps {
+  /** Current URL value to preload into the input. */
+  initialUrl: string;
+  /** Commit the edited URL. */
+  onSubmit: (url: string) => void;
+  /** Dismiss without saving. */
+  onCancel: () => void;
+}
+
+/**
+ * Inline edit form for an existing link. Same visual treatment as
+ * {@link LinkAddForm} so a row swaps in place without layout shift.
+ * Enter commits; Escape cancels.
+ *
+ * @param props - Form configuration.
+ * @returns Form element.
+ */
+function LinkEditForm({ initialUrl, onSubmit, onCancel }: LinkEditFormProps) {
+  const [url, setUrl] = useState(initialUrl);
+
+  const submit = () => {
+    const trimmed = url.trim();
+    if (!trimmed) { onCancel(); return; }
+    onSubmit(trimmed);
+  };
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-surface-raised/40">
+      <div className="space-y-2 p-3">
+        <input
+          autoFocus
+          type="text"
+          inputMode="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); submit(); }
+            if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+          }}
+          className="w-full rounded-md border border-border-strong bg-surface px-2.5 py-1.5 font-mono text-[12px] text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
+        />
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!url.trim()}
+            className="cursor-pointer rounded-md border border-accent/30 bg-accent/15 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-accent-light transition-colors hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="cursor-pointer rounded-md px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

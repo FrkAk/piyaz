@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   projects,
@@ -1657,5 +1657,83 @@ export async function removeTaskLink(
 
   emitTaskEvent(task.projectId, link.taskId);
   return { id: linkId };
+}
+
+/**
+ * Update a link's URL in place. Re-classifies the new URL so `kind` and
+ * `label` reflect the new shape; preserves `id`, `createdAt`, `createdBy`,
+ * and `metadata` so the audit trail survives an edit. Same access gate
+ * as {@link removeTaskLink}: missing or cross-team `linkId` surfaces as
+ * `ForbiddenError`. A new URL that collides with another link on the
+ * same task raises `ForbiddenError` (mapped from the unique constraint
+ * pre-check) so the UI can flash a duplicate-link message.
+ *
+ * @param ctx - Resolved auth context.
+ * @param linkId - UUID of the `task_links` row to update.
+ * @param url - New URL for the link.
+ * @returns The updated link row.
+ * @throws {ForbiddenError} When the link is missing, the caller cannot
+ *   access the parent task, the URL is malformed, or the new URL collides
+ *   with another link on the same task.
+ */
+export async function updateTaskLink(
+  ctx: AuthContext,
+  linkId: string,
+  url: string,
+): Promise<TaskLink> {
+  const [link] = await db
+    .select()
+    .from(taskLinks)
+    .where(eq(taskLinks.id, linkId))
+    .limit(1);
+  if (!link) throw new ForbiddenError("Forbidden", "task", linkId);
+  const task = await assertTaskAccess(link.taskId, ctx);
+
+  let classified;
+  try {
+    classified = classifyLink(url);
+  } catch (e) {
+    if (e instanceof MalformedLinkError) {
+      throw new ForbiddenError("Invalid url", "task", link.taskId);
+    }
+    throw e;
+  }
+
+  if (classified.url !== link.url) {
+    const [conflict] = await db
+      .select({ id: taskLinks.id })
+      .from(taskLinks)
+      .where(
+        and(
+          eq(taskLinks.taskId, link.taskId),
+          eq(taskLinks.url, classified.url),
+          ne(taskLinks.id, linkId),
+        ),
+      )
+      .limit(1);
+    if (conflict) {
+      throw new ForbiddenError("Duplicate url", "task", link.taskId);
+    }
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(taskLinks)
+      .set({
+        kind: classified.kind,
+        url: classified.url,
+        label: classified.label,
+      })
+      .where(eq(taskLinks.id, linkId))
+      .returning();
+    await tx
+      .update(tasks)
+      .set({ updatedAt: new Date() })
+      .where(eq(tasks.id, link.taskId));
+    return updated;
+  });
+
+  emitTaskEvent(task.projectId, link.taskId);
+  return result;
 }
 

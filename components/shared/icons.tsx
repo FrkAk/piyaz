@@ -361,6 +361,16 @@ export function IconTrash(props: IconProps) {
   );
 }
 
+/** Pencil — inline edit affordance. */
+export function IconPencil(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2.5 13.5v-2L10 4l2 2-7.5 7.5h-2z" />
+      <path d="M9 5l2 2" />
+    </IconBase>
+  );
+}
+
 /** Log out / sign out — door + arrow. */
 export function IconLogOut(props: IconProps) {
   return (
@@ -394,105 +404,3 @@ export function IconUndo(props: IconProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Host glyphs — Links section
-//
-// Each link kind in the task-detail Links section renders a kind-specific
-// inline SVG identifying the source. The set covers the five hosts the
-// classifier recognises plus a globe fallback. Glyphs are deliberately
-// schematic, not brand-faithful: shape recognition at 14px on a chip is
-// the goal, and forcing solid brand marks into the 1.5-stroke 16-unit
-// system would clash with the rest of the icon set.
-// ---------------------------------------------------------------------------
-
-/**
- * GitHub — Octocat reduction. A circular silhouette with twin
- * "ear" tufts hints at the cat without lifting the brand mark, then a
- * tail-like vertical anchors the lower body so it reads as a creature, not
- * a coin.
- */
-export function IconGitHub(props: IconProps) {
-  return (
-    <IconBase {...props}>
-      <circle cx="8" cy="8" r="5.5" />
-      <path d="M4.5 5.5l-0.6 -1.5M11.5 5.5l0.6 -1.5" />
-      <path d="M8 11v2.5" />
-      <path d="M6 11c0 1 0.8 1.5 2 1.5s2 -0.5 2 -1.5" />
-    </IconBase>
-  );
-}
-
-/**
- * GitLab — three converging slashes evoking the tanuki silhouette.
- * Diagonals meet at a central apex, mirroring the brand's iconic upward
- * fan without rendering the fox geometry.
- */
-export function IconGitLab(props: IconProps) {
-  return (
-    <IconBase {...props}>
-      <path d="M8 2.5L10 7.5L14 7.5L8 13.5L2 7.5L6 7.5L8 2.5z" />
-      <path d="M6 7.5L8 13.5L10 7.5" />
-    </IconBase>
-  );
-}
-
-/**
- * Linear — three parallel offset diagonals at the chevron angle Linear
- * uses in its mark. Hairline geometry matches the brand's tight, minimal
- * aesthetic better than a filled shape would.
- */
-export function IconLinear(props: IconProps) {
-  return (
-    <IconBase {...props}>
-      <path d="M3 8.5L8.5 14" />
-      <path d="M3 5.5L10.5 13" />
-      <path d="M4 3L13 12" />
-      <path d="M7 2.5L13.5 9" />
-    </IconBase>
-  );
-}
-
-/**
- * Notion — a stylized capital N inscribed in a rounded square. The N's
- * downstroke leans like the brand mark's italic, and the inner counter is
- * left empty so the letter reads at small sizes.
- */
-export function IconNotion(props: IconProps) {
-  return (
-    <IconBase {...props}>
-      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-      <path d="M5.5 11.5V4.5L10.5 11.5V4.5" />
-    </IconBase>
-  );
-}
-
-/**
- * Figma — three stacked offset circles riffing on the brand's lozenge
- * stack. The arrangement reads as Figma's component layering without
- * lifting the exact F-shaped composition.
- */
-export function IconFigma(props: IconProps) {
-  return (
-    <IconBase {...props}>
-      <circle cx="6" cy="4.5" r="2" />
-      <circle cx="10" cy="8" r="2" />
-      <circle cx="6" cy="11.5" r="2" />
-      <path d="M6 6.5v3" />
-    </IconBase>
-  );
-}
-
-/**
- * Globe — fallback for unrecognised hosts. Two latitude bands and a
- * meridian sit inside a circle. The schematic globe is the universal
- * "external link" cue when no brand-specific glyph fits.
- */
-export function IconGlobe(props: IconProps) {
-  return (
-    <IconBase {...props}>
-      <circle cx="8" cy="8" r="5.5" />
-      <path d="M2.5 8h11" />
-      <path d="M8 2.5c2 2 3 4 3 5.5s-1 3.5 -3 5.5c-2 -2 -3 -4 -3 -5.5s1 -3.5 3 -5.5z" />
-    </IconBase>
-  );
-}

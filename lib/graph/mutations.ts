@@ -14,6 +14,7 @@ import {
   deleteTask as coreDeleteTask,
   addTaskLink as coreAddTaskLink,
   removeTaskLink as coreRemoveTaskLink,
+  updateTaskLink as coreUpdateTaskLink,
 } from "@/lib/data/task";
 import type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
 import {
@@ -135,6 +136,20 @@ export async function addTaskLink(taskId: string, url: string) {
 export async function removeTaskLink(linkId: string) {
   const ctx = await getAuthContext();
   return coreRemoveTaskLink(ctx, linkId);
+}
+
+/**
+ * Server action wrapper — update a link's URL in place. The data layer
+ * re-classifies the URL so `kind` and `label` reflect the new shape;
+ * `id`, `createdAt`, and `createdBy` are preserved so the audit trail
+ * survives the edit.
+ * @param linkId - UUID of the `task_links` row.
+ * @param url - New URL.
+ * @returns The updated link row.
+ */
+export async function updateTaskLink(linkId: string, url: string) {
+  const ctx = await getAuthContext();
+  return coreUpdateTaskLink(ctx, linkId, url);
 }
 
 /**
