@@ -185,6 +185,7 @@ const BUNDLE_BADGE_CAPTION: Record<string, string> = {
   planned:     'working',
   ready:       'planning',
   in_progress: 'agent',
+  in_review:   'execution',
   done:        'execution',
   cancelled:   'execution',
 };

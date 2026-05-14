@@ -17,6 +17,7 @@ const ORDER: TaskStatus[] = [
   'planned',
   'ready',
   'in_progress',
+  'in_review',
   'blocked',
   'done',
   'cancelled',

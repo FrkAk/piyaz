@@ -54,7 +54,7 @@ import {
   IconX,
 } from '@/components/shared/icons';
 
-const STATUSES: TaskStatus[] = ['draft', 'planned', 'ready', 'in_progress', 'blocked', 'done', 'cancelled'];
+const STATUSES: TaskStatus[] = ['draft', 'planned', 'ready', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'];
 const PRIORITIES: Priority[] = [null, 'backlog', 'normal', 'core', 'urgent'];
 
 interface SectionProps {

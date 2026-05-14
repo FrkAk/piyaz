@@ -13,7 +13,7 @@ import { taskKeys } from '@/lib/query/keys';
 import { fetchTaskContext } from '@/lib/query/queries';
 
 /** Resolved bundle stage — adds derived `plannable` and `ready` sub-stages. */
-type BundleStage = 'draft' | 'plannable' | 'planned' | 'ready' | 'in_progress' | 'done' | 'cancelled';
+type BundleStage = 'draft' | 'plannable' | 'planned' | 'ready' | 'in_progress' | 'in_review' | 'done' | 'cancelled';
 
 /** Section identifiers — also used as React keys. */
 type SectionId =
@@ -68,6 +68,7 @@ const SHAPE_BY_STAGE: Record<BundleStage, readonly SectionId[]> = {
   planned:     ['spec', 'criteria', 'decisions', 'prerequisites', 'neighbors'],
   ready:       ['spec', 'criteria', 'plan', 'prerequisites', 'decisions', 'downstream'],
   in_progress: ['spec', 'plan', 'prerequisites', 'decisions', 'criteria', 'files', 'downstream'],
+  in_review:   ['execution', 'spec', 'criteria', 'files', 'downstream'],
   done:        ['execution', 'spec', 'criteria', 'files', 'downstream'],
   cancelled:   ['execution'],
 };
@@ -79,6 +80,7 @@ const BUNDLE_NAME: Record<BundleStage, string> = {
   planned:     'working bundle',
   ready:       'planning bundle',
   in_progress: 'agent bundle',
+  in_review:   'execution record',
   done:        'execution record',
   cancelled:   'execution record',
 };
@@ -90,6 +92,7 @@ const BUNDLE_SOURCE: Record<BundleStage, 'agent' | 'planning' | 'working' | 'exe
   planned:     'working',
   ready:       'planning',
   in_progress: 'agent',
+  in_review:   'execution',
   done:        'execution',
   cancelled:   'execution',
 };

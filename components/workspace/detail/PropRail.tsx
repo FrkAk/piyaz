@@ -50,7 +50,7 @@ import { PRIORITY_COLOR, PRIORITY_DISPLAY_ORDER } from '@/lib/ui/priority';
 import { projectKeys, taskKeys, teamKeys } from '@/lib/query/keys';
 
 /** Display order for the Status dropdown — matches the lifecycle ribbon. */
-const STATUS_OPTIONS: readonly TaskStatus[] = ['draft', 'planned', 'in_progress', 'done', 'cancelled'];
+const STATUS_OPTIONS: readonly TaskStatus[] = ['draft', 'planned', 'in_progress', 'in_review', 'done', 'cancelled'];
 /** Display order for the Estimate dropdown — Fibonacci story points. */
 const ESTIMATE_OPTIONS: readonly Estimate[] = [1, 2, 3, 5, 8, 13];
 /** Sentinel used by dropdowns to model the "clear" action under `string` schemas. */

@@ -14,6 +14,7 @@ export type TaskStatus =
   | 'planned'
   | 'ready'
   | 'in_progress'
+  | 'in_review'
   | 'blocked'
   | 'done'
   | 'cancelled';
@@ -50,6 +51,7 @@ export const STATUS_META: Record<TaskStatus, StatusMeta> = {
   // "this is the one an agent is about to pick up" without reading text.
   ready:       { label: 'Ready',       glyph: 'ring-bold', cssVar: 'var(--color-glyph-progress)' },
   in_progress: { label: 'In Progress', glyph: 'half',      cssVar: 'var(--color-glyph-progress)' },
+  in_review:   { label: 'In Review',   glyph: 'half',      cssVar: 'var(--color-glyph-review)' },
   blocked:     { label: 'Blocked',     glyph: 'blocked',   cssVar: 'var(--color-glyph-blocked)' },
   done:        { label: 'Done',        glyph: 'filled',    cssVar: 'var(--color-glyph-done)' },
   cancelled:   { label: 'Cancelled',   glyph: 'x',         cssVar: 'var(--color-glyph-cancelled)' },

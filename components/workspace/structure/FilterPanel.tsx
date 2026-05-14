@@ -9,6 +9,7 @@ import type { Priority, TaskStatus } from '@/lib/types';
 /** Status filter options exposed in the sheet — `ready` and `plannable` are derived. */
 const STATUS_FILTERS: readonly { id: string; label: string }[] = [
   { id: 'in_progress', label: STATUS_META.in_progress.label },
+  { id: 'in_review',   label: STATUS_META.in_review.label },
   { id: 'ready',       label: 'Ready' },
   { id: 'planned',     label: STATUS_META.planned.label },
   { id: 'plannable',   label: 'Plannable' },

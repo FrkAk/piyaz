@@ -35,6 +35,7 @@ const FILTER_PARAM_KEYS = { tags: 'tags', categories: 'cat', statuses: 'status',
 /** Display order for status groups — most actionable at the top. */
 const GROUP_ORDER: readonly TaskGroupKey[] = [
   'in_progress',
+  'in_review',
   'ready',
   'planned',
   'plannable',

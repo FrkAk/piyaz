@@ -17,7 +17,7 @@ const EDGE_META: Record<string, EdgeMeta> = {
 };
 
 interface BadgeProps {
-  /** @param status - Task status (`draft|planned|ready|in_progress|blocked|done|cancelled`) or edge type. */
+  /** @param status - Task status (`draft|planned|ready|in_progress|in_review|blocked|done|cancelled`) or edge type. */
   status: string;
   /** @param dense - Slightly smaller pill (used inline in dense lists). */
   dense?: boolean;
