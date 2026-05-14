@@ -24,6 +24,7 @@ import {
   deleteTaskPreview,
   searchTasks,
   getProjectTasksSlim,
+  getTaskFull,
   fetchAssigneesUnchecked,
   fetchLinksUnchecked,
 } from "@/lib/data/task";
@@ -946,42 +947,37 @@ export async function handleTask(
         );
         // Status-driven completion-protocol hints
         if (p.status === "done") {
-          const persisted = await assertTaskAccess(task.id, ctx);
-          if (persisted) {
-            createHints.push(
-              ...doneStatusHints(
-                {
-                  executionRecord: p.executionRecord,
-                  decisions: p.decisions as Decision[] | undefined,
-                  files: p.files,
-                },
-                {
-                  executionRecord: persisted.executionRecord,
-                  decisions: persisted.decisions as Decision[] | null,
-                  files: persisted.files,
-                  acceptanceCriteria:
-                    persisted.acceptanceCriteria as { checked: boolean }[] | null,
-                },
-              ),
-            );
-          }
+          const persisted = await getTaskFull(ctx, task.id);
+          createHints.push(
+            ...doneStatusHints(
+              {
+                executionRecord: p.executionRecord,
+                decisions: p.decisions as Decision[] | undefined,
+                files: p.files,
+              },
+              {
+                executionRecord: persisted.executionRecord,
+                decisions: persisted.decisions,
+                files: persisted.files,
+                acceptanceCriteria: persisted.acceptanceCriteria,
+              },
+            ),
+          );
         }
         if (p.status === "cancelled") {
-          const persisted = await assertTaskAccess(task.id, ctx);
-          if (persisted) {
-            createHints.push(
-              ...cancelledStatusHints(
-                {
-                  executionRecord: p.executionRecord,
-                  decisions: p.decisions as Decision[] | undefined,
-                },
-                {
-                  executionRecord: persisted.executionRecord,
-                  decisions: persisted.decisions as Decision[] | null,
-                },
-              ),
-            );
-          }
+          const persisted = await getTaskFull(ctx, task.id);
+          createHints.push(
+            ...cancelledStatusHints(
+              {
+                executionRecord: p.executionRecord,
+                decisions: p.decisions as Decision[] | undefined,
+              },
+              {
+                executionRecord: persisted.executionRecord,
+                decisions: persisted.decisions,
+              },
+            ),
+          );
         }
         // Informational follow-ups
         if (!p.acceptanceCriteria || p.acceptanceCriteria.length === 0) {
@@ -1049,13 +1045,26 @@ export async function handleTask(
               ).map((t) => t.tag);
             }
             priorStatus = existing.status;
-            priorAcceptanceCriteria = existing.acceptanceCriteria as unknown[] | null;
-            priorDecisions = existing.decisions as unknown[] | null;
             priorFiles = existing.files as string[] | null;
             if (p.assigneeIds !== undefined && !!p.overwriteArrays) {
               priorAssigneeIds = (
                 await fetchAssigneesUnchecked(p.taskId)
               ).map((a) => a.userId);
+            }
+            // Criteria and decisions now live in child tables; pull them
+            // explicitly when the shrink check needs the prior values.
+            if (
+              willOverwriteShrinkable &&
+              (p.acceptanceCriteria !== undefined ||
+                p.decisions !== undefined)
+            ) {
+              const persisted = await getTaskFull(ctx, p.taskId);
+              if (p.acceptanceCriteria !== undefined) {
+                priorAcceptanceCriteria = persisted.acceptanceCriteria;
+              }
+              if (p.decisions !== undefined) {
+                priorDecisions = persisted.decisions;
+              }
             }
           }
         }
@@ -1135,10 +1144,9 @@ export async function handleTask(
               },
               {
                 executionRecord: result.executionRecord,
-                decisions: result.decisions as Decision[] | null,
+                decisions: result.decisions,
                 files: result.files,
-                acceptanceCriteria:
-                  result.acceptanceCriteria as { checked: boolean }[] | null,
+                acceptanceCriteria: result.acceptanceCriteria,
               },
             ),
           );
@@ -1155,10 +1163,9 @@ export async function handleTask(
               },
               {
                 executionRecord: result.executionRecord,
-                decisions: result.decisions as Decision[] | null,
+                decisions: result.decisions,
                 files: result.files,
-                acceptanceCriteria:
-                  result.acceptanceCriteria as { checked: boolean }[] | null,
+                acceptanceCriteria: result.acceptanceCriteria,
                 links: persistedLinks,
               },
             ),
@@ -1173,7 +1180,7 @@ export async function handleTask(
               },
               {
                 executionRecord: result.executionRecord,
-                decisions: result.decisions as Decision[] | null,
+                decisions: result.decisions,
               },
             ),
           );
