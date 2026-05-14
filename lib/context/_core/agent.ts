@@ -9,14 +9,10 @@ import {
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
-  fetchAssigneesUnchecked,
-  fetchLinksUnchecked,
+  getTaskFull,
 } from "@/lib/data/task";
-import { getProjectIdentifier } from "@/lib/data/project";
-import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
-import { assertTaskAccess } from "@/lib/auth/authorization";
 
 /**
  * Build lean, position-optimized context for external coding agents.
@@ -33,32 +29,22 @@ export async function buildAgentContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<string> {
-  const task = await assertTaskAccess(taskId, ctx);
+  const task = await getTaskFull(ctx, taskId);
 
-  const identifier = await getProjectIdentifier(task.projectId);
-  if (!identifier) {
-    console.error("Task has no joinable project", {
-      taskId: task.id,
-      projectId: task.projectId,
-    });
-  }
-  const taskRef = identifier
-    ? composeTaskRef(asIdentifier(identifier), task.sequenceNumber)
-    : "";
-
+  const taskRef = task.taskRef;
   const tags = (task.tags as string[] | null) ?? [];
   const files = (task.files as string[] | null) ?? [];
   const status = task.status as string;
   const priority = task.priority as string | null;
   const estimate = task.estimate as number | null;
+  const assignees = task.assignees;
+  const links = task.links;
 
-  const [deps, downstream, upstreamEdgeNotes, assignees, links] = await Promise.all([
+  const [deps, downstream, upstreamEdgeNotes] = await Promise.all([
     getDependencyChain(taskId, task.projectId, 2),
     // getDownstream is public — caller already asserted; pass ctx through
     getDownstream(ctx, taskId, 2),
     fetchEdgeNotesBySource(task.projectId, taskId),
-    fetchAssigneesUnchecked(taskId),
-    fetchLinksUnchecked(taskId),
   ]);
 
   const prLink = links.find((l) => l.kind === "pull_request");

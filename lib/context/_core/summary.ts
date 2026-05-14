@@ -2,21 +2,14 @@ import "server-only";
 
 import type {
   EdgeType,
-  AcceptanceCriterion,
-  Decision,
   Priority,
   Estimate,
 } from "@/lib/types";
 import { getTaskEdgesDetailed } from "@/lib/data/edge";
-import {
-  fetchAssigneesUnchecked,
-  fetchLinksUnchecked,
-} from "@/lib/data/task";
+import { getTaskFull } from "@/lib/data/task";
 import type { TaskLinkRef } from "@/lib/data/views";
 import { getProjectHeader } from "@/lib/data/project";
-import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import type { AuthContext } from "@/lib/auth/context";
-import { assertTaskAccess } from "@/lib/auth/authorization";
 
 /** Detailed edge information for summary context. */
 type EdgeDetail = {
@@ -60,7 +53,7 @@ export async function buildSummaryContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<SummaryContext> {
-  const task = await assertTaskAccess(taskId, ctx);
+  const task = await getTaskFull(ctx, taskId);
 
   const project = await getProjectHeader(task.projectId);
   if (!project) {
@@ -70,11 +63,8 @@ export async function buildSummaryContext(
     });
   }
 
-  const [detailedEdges, assignees, links] = await Promise.all([
-    getTaskEdgesDetailed(ctx, taskId),
-    fetchAssigneesUnchecked(taskId),
-    fetchLinksUnchecked(taskId),
-  ]);
+  const detailedEdges = await getTaskEdgesDetailed(ctx, taskId);
+  const links = task.links;
 
   const edges: EdgeDetail[] = detailedEdges.map((e) => ({
     edgeType: e.edgeType,
@@ -92,9 +82,7 @@ export async function buildSummaryContext(
 
   return {
     node: {
-      taskRef: project
-        ? composeTaskRef(asIdentifier(project.identifier), task.sequenceNumber)
-        : "",
+      taskRef: task.taskRef,
       title: task.title,
       status: task.status,
       description: task.description,
@@ -105,10 +93,9 @@ export async function buildSummaryContext(
     parent: project ? { title: project.title, type: "project" } : null,
     edgeCount,
     edges,
-    acceptanceCriteriaCount: (task.acceptanceCriteria as AcceptanceCriterion[])
-      .length,
-    decisionsCount: (task.decisions as Decision[]).length,
-    assigneeCount: assignees.length,
+    acceptanceCriteriaCount: task.acceptanceCriteria.length,
+    decisionsCount: task.decisions.length,
+    assigneeCount: task.assignees.length,
     hasImplementationPlan: !!task.implementationPlan,
     links,
   };
