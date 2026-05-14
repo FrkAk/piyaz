@@ -159,6 +159,7 @@ export const taskAcceptanceCriteria = pgTable(
   },
   (t) => [
     index("task_acceptance_criteria_task_id_position_idx").on(t.taskId, t.position),
+    unique("task_acceptance_criteria_task_id_text_unique").on(t.taskId, t.text),
   ],
 );
 
@@ -185,6 +186,7 @@ export const taskDecisions = pgTable(
   },
   (t) => [
     index("task_decisions_task_id_position_idx").on(t.taskId, t.position),
+    unique("task_decisions_task_id_text_unique").on(t.taskId, t.text),
   ],
 );
 
