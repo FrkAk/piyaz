@@ -16,6 +16,7 @@ import {
 import { user, member } from "@/lib/db/auth-schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
 import { fetchTaskFull } from "@/lib/db/raw/fetch-task-full";
+import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
 import type {
   AcceptanceCriterion,
   Decision,
@@ -298,55 +299,6 @@ async function applyDecisionsWrite(
         updatedAt: sql`NOW()`,
       },
     });
-}
-
-/**
- * Fetch the criteria projection for a task, ordered by position.
- *
- * UNCHECKED: this function performs NO authorization. The caller must
- * assert task access first. The `Unchecked` suffix is the contract — do
- * not strip it when wrapping or re-exporting.
- *
- * @param taskId - UUID of the task.
- * @returns Ordered array of criteria (empty when none exist).
- */
-export async function fetchCriteriaUnchecked(
-  taskId: string,
-): Promise<AcceptanceCriterion[]> {
-  return db
-    .select({
-      id: taskAcceptanceCriteria.id,
-      text: taskAcceptanceCriteria.text,
-      checked: taskAcceptanceCriteria.checked,
-    })
-    .from(taskAcceptanceCriteria)
-    .where(eq(taskAcceptanceCriteria.taskId, taskId))
-    .orderBy(asc(taskAcceptanceCriteria.position));
-}
-
-/**
- * Fetch the decisions projection for a task, ordered by position. Maps
- * `decision_date` back to the public `date` field.
- *
- * UNCHECKED: caller must assert task access first.
- *
- * @param taskId - UUID of the task.
- * @returns Ordered array of decisions (empty when none exist).
- */
-export async function fetchDecisionsUnchecked(
-  taskId: string,
-): Promise<Decision[]> {
-  const rows = await db
-    .select({
-      id: taskDecisions.id,
-      text: taskDecisions.text,
-      source: taskDecisions.source,
-      date: taskDecisions.decisionDate,
-    })
-    .from(taskDecisions)
-    .where(eq(taskDecisions.taskId, taskId))
-    .orderBy(asc(taskDecisions.position));
-  return rows;
 }
 
 /**
@@ -1855,23 +1807,29 @@ export async function updateTask(
   // (e.g. tool-handlers' completion-protocol hint checks on status
   // transitions to done/in_review/cancelled) see the freshest state.
   //
-  // Skip both fetches when this update neither wrote a child table nor
-  // changed status. A pure title/description/tags/files update has no
-  // consumer of the post-state criteria, so paying two RTTs there is
-  // waste on every refinement call.
+  // One round-trip via `fetchTaskChildren` — both `json_agg` subqueries
+  // ride a single SELECT. Skipped entirely when neither a child write nor
+  // a status change occurred (a pure title/description/tags/files update
+  // has no consumer of the post-state).
   const wroteChildren =
     formattedCriteria !== undefined || formattedDecisions !== undefined;
   const statusChanged = typeof input.status === "string";
   const refetchNeeded = wroteChildren || statusChanged;
-  const [postCriteria, postDecisions] = refetchNeeded
-    ? await Promise.all([
-        fetchCriteriaUnchecked(taskId),
-        fetchDecisionsUnchecked(taskId),
-      ])
-    : [[], []];
+  const children = refetchNeeded
+    ? await fetchTaskChildren(db, taskId)
+    : { acceptance_criteria: null, decisions: null };
   return Object.assign(updated, {
-    acceptanceCriteria: postCriteria,
-    decisions: postDecisions,
+    acceptanceCriteria: (children.acceptance_criteria ?? []).map((c) => ({
+      id: c.id,
+      text: c.text,
+      checked: c.checked,
+    })),
+    decisions: (children.decisions ?? []).map((d) => ({
+      id: d.id,
+      text: d.text,
+      source: d.source as Decision["source"],
+      date: d.date,
+    })),
   });
 }
 
