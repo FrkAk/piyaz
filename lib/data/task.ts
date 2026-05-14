@@ -198,14 +198,9 @@ async function applyCriteriaWrite(
       ),
     );
 
-  const [maxPosRow] = await tx
-    .select({
-      maxPos: sql<number>`COALESCE(MAX(${taskAcceptanceCriteria.position}), -1)`,
-    })
-    .from(taskAcceptanceCriteria)
-    .where(eq(taskAcceptanceCriteria.taskId, taskId));
-  const basePos = (maxPosRow?.maxPos ?? -1) + 1;
-
+  // Inline `MAX(position)` as a scalar subquery on each VALUES row to skip
+  // the standalone SELECT round-trip. All rows in one INSERT see the same
+  // post-DELETE snapshot, so positions stay monotonic across the batch.
   await tx
     .insert(taskAcceptanceCriteria)
     .values(
@@ -214,7 +209,7 @@ async function applyCriteriaWrite(
         taskId,
         text: c.text,
         checked: c.checked,
-        position: basePos + i,
+        position: sql<number>`(SELECT COALESCE(MAX("position"), -1) FROM "task_acceptance_criteria" WHERE "task_id" = ${taskId}::uuid) + ${i + 1}`,
       })),
     )
     .onConflictDoUpdate({
@@ -279,14 +274,8 @@ async function applyDecisionsWrite(
       ),
     );
 
-  const [maxPosRow] = await tx
-    .select({
-      maxPos: sql<number>`COALESCE(MAX(${taskDecisions.position}), -1)`,
-    })
-    .from(taskDecisions)
-    .where(eq(taskDecisions.taskId, taskId));
-  const basePos = (maxPosRow?.maxPos ?? -1) + 1;
-
+  // Inline `MAX(position)` as a scalar subquery to skip the standalone
+  // SELECT round-trip. Mirrors {@link applyCriteriaWrite}.
   await tx
     .insert(taskDecisions)
     .values(
@@ -296,7 +285,7 @@ async function applyDecisionsWrite(
         text: d.text,
         source: d.source,
         decisionDate: d.date,
-        position: basePos + i,
+        position: sql<number>`(SELECT COALESCE(MAX("position"), -1) FROM "task_decisions" WHERE "task_id" = ${taskId}::uuid) + ${i + 1}`,
       })),
     )
     .onConflictDoUpdate({
