@@ -9,8 +9,8 @@ Agents read this file before any status transition, before marking a task done o
 ## 1. Status lifecycle
 
 ```
-draft → planned → in_progress → done
-                                cancelled (terminal, reachable from any non-terminal)
+draft → planned → in_progress → in_review → done
+                                            cancelled (terminal, reachable from any non-terminal)
 ```
 
 ### Summary
@@ -19,8 +19,9 @@ draft → planned → in_progress → done
 |---|---|---|---|
 | `draft` | `description`, `acceptanceCriteria` | `executionRecord`, `implementationPlan` | implementation plan saved → `planned` |
 | `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `action='update' status='in_progress'` → `in_progress` |
-| `in_progress` | + active worker (one only) | — | work complete + record + ACs + Completion Protocol §2 run → `done` |
-| `done` | + `executionRecord` (3-5 sentences), `decisions`, `files`, every AC `checked: true|false` | — | terminal |
+| `in_progress` | + active worker (one only) | — | work complete + record + ACs + Completion Protocol §2 run → `in_review` |
+| `in_review` | + `executionRecord`, `decisions`, `files`, every AC evaluated | — | HOTL operator inspects PR and flips → `done` (or back to `in_progress` for rework) |
+| `done` | (inherited from `in_review`) | — | terminal |
 | `cancelled` | + `executionRecord` (rationale + what was tried), `decisions` | — | terminal |
 
 ### `draft`
@@ -38,11 +39,18 @@ draft → planned → in_progress → done
 
 - **What it means.** Active implementation. Exactly one engineer or agent is working on it.
 - **Constraint:** should not span sessions. If work pauses, leave a note in the task or move it back to `planned`.
-- **Transitions to `done`:** when implementation is complete, `executionRecord` / `decisions` / `files` are populated, acceptance criteria are evaluated, and the Completion Protocol (§2) has run.
+- **Transitions to `in_review`:** when implementation is complete, `executionRecord` / `decisions` / `files` are populated, acceptance criteria are evaluated, and the Completion Protocol (§2) has run.
+
+### `in_review`
+
+- **What it means.** Implementer subagent has finished the work, opened a PR, and populated the full Completion Protocol payload (`executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`). Tests, lint, and typecheck are green. Awaiting human review on the PR.
+- **Cannot:** be self-promoted to `done` by any agent. The HOTL operator owns the `in_review → done` transition.
+- **Transitions to `done`:** when the PR is approved/merged and the operator updates status. No additional payload is required; the implementer already populated everything.
+- **Transitions back to `in_progress`:** when the reviewer requests rework. The implementer or a follow-up worker picks the task up again from `in_progress`.
 
 ### `done` (terminal)
 
-- **What it means.** Shipped. Carries the full record: `executionRecord` (3-5 sentences on what was built), `decisions` (one-liner per choice), `files` (every path touched), `acceptanceCriteria` with each item evaluated (`checked: true` or `false`).
+- **What it means.** Shipped and approved. The PR is merged (or otherwise accepted) and the HOTL operator has flipped the task from `in_review`. Carries the full record: `executionRecord` (3-5 sentences on what was built), `decisions` (one-liner per choice), `files` (every path touched), `acceptanceCriteria` with each item evaluated (`checked: true` or `false`).
 - **Effect on graph:** downstream tasks unblock when their `depends_on` chain reaches `done`. If a downstream still appears blocked, run propagation (§3); the chain may pass through a partially-done sub-graph.
 
 ### `cancelled` (terminal, reachable from any non-terminal state)
@@ -55,11 +63,11 @@ draft → planned → in_progress → done
 
 ## 2. Completion Protocol
 
-Before transitioning a task to `done` or `cancelled`:
+Before transitioning a task to `in_review`, `done`, or `cancelled`:
 
 ### 2.1. Detect mode by transcript
 
-- **Dispatched mode**: your context shows you were invoked via the Task tool by a parent agent. Mark done directly with the full payload. Return to the parent with the task ref and a one-sentence summary. Do not ask.
+- **Dispatched mode**: your context shows you were invoked via the Task tool by a parent agent. Mark `in_review` directly with the full payload (the implementer's terminal write); the HOTL operator finalizes to `done`. Return to the parent with the task ref and a one-sentence summary. Do not ask.
 - **Direct mode**: invoked by the user in a normal session. Ask "Ready to mark this done?" with a one-sentence executionRecord preview. Wait for explicit confirmation.
 - **Uncertain**: default to asking. A spurious confirmation prompt is cheap; an unauthorized status change is expensive.
 
