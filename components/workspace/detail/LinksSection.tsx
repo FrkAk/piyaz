@@ -63,6 +63,48 @@ function HostGlyph({ host, size = 14 }: { host: string; size?: number }) {
 }
 
 /**
+ * Per-kind dot color, sourced from existing DESIGN_2 §1.2 tokens.
+ * Hardcoded (not hashed like {@link CategoryDot}) because link kinds are
+ * a small closed set with semantic affinities — PR sits in brand indigo,
+ * issue is amber ("work needed"), commit is green ("completed thing"),
+ * doc is violet ("knowledge"), fallback link is neutral muted.
+ */
+const KIND_COLORS: Record<string, string> = {
+  pull_request: 'var(--color-accent)',
+  issue: 'var(--color-glyph-progress)',
+  commit: 'var(--color-glyph-done)',
+  doc: 'var(--color-glyph-review)',
+  link: 'var(--color-text-muted)',
+};
+
+/**
+ * Kind affordance, modelled on {@link CategoryDot} from DESIGN_2 §3.10:
+ * a 6×6 hue swatch that conveys kind at-a-glance and reclaims the
+ * horizontal space the old "PULL REQUEST" chip was eating. The kind
+ * label rides in the native `title` tooltip so the value stays
+ * discoverable on hover without competing with the link text.
+ *
+ * @param kind - Link kind enum value.
+ * @returns Dot element.
+ */
+function KindDot({ kind }: { kind: string }) {
+  const color = KIND_COLORS[kind] ?? KIND_COLORS.link;
+  return (
+    <span
+      aria-label={`kind: ${kind.replace(/_/g, ' ')}`}
+      title={kind.replace(/_/g, ' ')}
+      className="shrink-0 rounded-full"
+      style={{
+        width: 6,
+        height: 6,
+        background: color,
+        boxShadow: `0 0 0 2px color-mix(in srgb, ${color} 22%, transparent)`,
+      }}
+    />
+  );
+}
+
+/**
  * Extract a URL's host, falling back to an empty string when the URL is
  * unparseable. Server-side classification already validated the URL on
  * write, so this should almost never miss.
@@ -287,9 +329,17 @@ export function LinksSection({ taskId, links, onGraphChange }: LinksSectionProps
       />
 
       {local.length === 0 && !adding ? (
-        <div className="rounded-lg border border-dashed border-border bg-surface-raised/20 px-4 py-3 font-mono text-[11px] text-text-faint">
-          No links yet. Attach a PR, issue, or doc by URL.
-        </div>
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          aria-label="Attach a link"
+          className="group/empty flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 bg-surface-raised/10 px-4 py-3.5 text-text-muted transition-colors hover:border-accent/40 hover:bg-surface-raised/30 hover:text-text-secondary"
+        >
+          <IconPlus size={11} />
+          <span className="font-mono text-[11px] tracking-wide">
+            Attach a PR, issue, or doc by URL
+          </span>
+        </button>
       ) : (
         <div className="space-y-1.5">
           {local.map((link) => (
@@ -367,38 +417,41 @@ function LinkCard({
   const host = hostOf(link.url);
   const display = link.label ?? host ?? link.url;
   return (
-    <div className="group/link flex items-center gap-2.5 rounded-lg border border-border bg-surface-raised/40 py-2 pl-3 pr-2 transition-colors hover:border-border-strong">
-      <span className="shrink-0 text-text-secondary">
+    <div className="group/link flex items-center gap-2.5 rounded-md border border-border/40 bg-transparent py-1.5 pl-2.5 pr-1.5 transition-colors hover:border-border-strong hover:bg-surface-raised/40">
+      <KindDot kind={link.kind} />
+      <span className="shrink-0 text-text-secondary transition-colors group-hover/link:text-text-primary">
         <HostGlyph host={host} size={14} />
       </span>
       <a
         href={link.url}
         target="_blank"
         rel="noopener noreferrer"
-        className="min-w-0 flex-1 truncate text-[12.5px] text-text-primary transition-colors hover:text-accent-light"
+        className="min-w-0 flex-1 truncate text-[13px] text-text-primary transition-colors hover:text-accent-light"
         title={link.url}
       >
         {display}
       </a>
-      <span className="shrink-0 rounded border border-accent/20 bg-accent/10 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.08em] text-accent-light">
+      <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint opacity-0 transition-opacity group-hover/link:opacity-100">
         {link.kind.replace(/_/g, ' ')}
       </span>
-      <button
-        type="button"
-        onClick={onStartEdit}
-        aria-label="Edit link"
-        className="shrink-0 cursor-pointer rounded p-1 text-text-muted opacity-0 transition-all hover:text-accent-light group-hover/link:opacity-100"
-      >
-        <IconPencil size={11} />
-      </button>
-      <button
-        type="button"
-        onClick={onDelete}
-        aria-label="Delete link"
-        className="shrink-0 cursor-pointer rounded p-1 text-text-muted opacity-0 transition-all hover:text-danger group-hover/link:opacity-100"
-      >
-        <IconTrash size={11} />
-      </button>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/link:opacity-100">
+        <button
+          type="button"
+          onClick={onStartEdit}
+          aria-label="Edit link"
+          className="cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-surface-hover hover:text-accent-light"
+        >
+          <IconPencil size={11} />
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label="Delete link"
+          className="cursor-pointer rounded p-1 text-text-muted transition-colors hover:bg-surface-hover hover:text-danger"
+        >
+          <IconTrash size={11} />
+        </button>
+      </div>
     </div>
   );
 }
