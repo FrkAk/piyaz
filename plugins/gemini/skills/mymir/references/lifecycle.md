@@ -20,7 +20,7 @@ draft → planned → in_progress → in_review → done
 | `draft` | `description`, `acceptanceCriteria` | `executionRecord`, `implementationPlan` | implementation plan saved → `planned` |
 | `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `action='update' status='in_progress'` → `in_progress` |
 | `in_progress` | + active worker (one only) | — | work complete + record + ACs + Completion Protocol §2 run → `in_review` |
-| `in_review` | + `executionRecord`, `decisions`, `files`, every AC evaluated | — | HOTL operator inspects PR and flips → `done` (or back to `in_progress` for rework) |
+| `in_review` | + `executionRecord`, `decisions`, `files`, every AC evaluated, `prUrl` (optional sugar — when a PR was opened; backend upserts a `task_links` row with `kind='pull_request'`) | — | HOTL operator inspects PR and flips → `done` (or back to `in_progress` for rework) |
 | `done` | (inherited from `in_review`) | — | terminal |
 | `cancelled` | + `executionRecord` (rationale + what was tried), `decisions` | — | terminal |
 
@@ -73,7 +73,7 @@ Before transitioning a task to `in_review`, `done`, or `cancelled`:
 
 ### 2.2. Populate the required fields
 
-`executionRecord`, `decisions`, `files`, `acceptanceCriteria`. The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
+`executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
 
 For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
