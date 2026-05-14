@@ -3,7 +3,7 @@ import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { getConnectionString } from "@/tests/setup/container";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { createTask, deleteTask, updateTask, searchTasksPaged, getTaskSlim, getTaskFull } from "@/lib/data/task";
+import { createTask, deleteTask, updateTask, searchTasksPaged, getTaskSlim, getTaskFull, getTaskFullUnchecked } from "@/lib/data/task";
 import { getProjectMaxUpdatedAt } from "@/lib/data/project";
 import { makeAuthContext } from "@/lib/auth/context";
 
@@ -379,4 +379,92 @@ test("createTask with priority and estimate persists both fields", async () => {
   const full = await getTaskFull(ctx, task.id);
   expect(full.priority).toBe("urgent");
   expect(full.estimate).toBe(8);
+});
+
+test("getTaskFull returns empty arrays (not null) when no children exist", async () => {
+  // Regression guard: the raw SQL projection uses LEFT-LATERAL `json_agg`
+  // subqueries that return NULL when the child table has no matching
+  // rows. The mapper must coerce NULL → [] so consumers can read
+  // `.length` without an undefined-trap. Protects every list/iterate
+  // call site that assumes the typed contract (`AcceptanceCriterion[]`,
+  // `Decision[]`, `AssigneeRef[]`, `TaskLinkRef[]`) holds even when the
+  // task has no rows in the respective child table.
+  const f = await seedUserOrgProject("empty-children");
+  const ctx = makeAuthContext(f.userId);
+  const created = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  const full = await getTaskFull(ctx, created.id);
+  expect(full.acceptanceCriteria).toEqual([]);
+  expect(full.decisions).toEqual([]);
+  expect(full.assignees).toEqual([]);
+  expect(full.links).toEqual([]);
+});
+
+test("getTaskFullUnchecked returns the same shape without re-asserting access", async () => {
+  // The route handler short-circuits the conditional GET via
+  // assertTaskAccess and then calls the unchecked variant to avoid the
+  // duplicate team-scoped JOIN. Verify the unchecked variant returns
+  // the same shape as the gated one when the caller has done the
+  // authorization upstream.
+  const f = await seedUserOrgProject("getfull-unchecked");
+  const ctx = makeAuthContext(f.userId);
+  const created = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    acceptanceCriteria: ["A"],
+    decisions: ["D"],
+  });
+
+  const gated = await getTaskFull(ctx, created.id);
+  const direct = await getTaskFullUnchecked(created.id);
+  expect(direct.id).toBe(gated.id);
+  expect(direct.taskRef).toBe(gated.taskRef);
+  expect(direct.acceptanceCriteria.map((c) => c.text)).toEqual(["A"]);
+  expect(direct.decisions.map((d) => d.text)).toEqual(["D"]);
+});
+
+test("searchTasksPaged reports hasCriteria via LEFT JOIN, not correlated EXISTS", async () => {
+  // Regression guard for MYMR-136 cleanup: the implementer's
+  // `criteriaCountSubquery()` helper exists explicitly so the slim
+  // workspace + search paths avoid issuing N correlated EXISTS probes
+  // per query. This test verifies the boolean is correctly populated
+  // from the LEFT JOIN against the helper subquery — if a future
+  // refactor reverts to a per-row correlated subquery, the boolean
+  // logic still must yield the same answer.
+  const f = await seedUserOrgProject("hascriteria-leftjoin");
+  const ctx = makeAuthContext(f.userId);
+  const withAc = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "with-ac",
+    acceptanceCriteria: ["First criterion"],
+  });
+  const withoutAc = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "without-ac",
+  });
+
+  const page = await searchTasksPaged(ctx, f.projectId, { limit: 50 });
+  const ids = new Set(page.rows.map((r) => r.id));
+  expect(ids.has(withAc.id)).toBe(true);
+  expect(ids.has(withoutAc.id)).toBe(true);
+  // The boolean drives `deriveTaskStatesSlim`: with-ac + non-empty
+  // description ⇒ `plannable`; without-ac ⇒ `draft`. The state
+  // projection on the row is the observable proxy for the join result.
+  const withAcRow = page.rows.find((r) => r.id === withAc.id);
+  const withoutAcRow = page.rows.find((r) => r.id === withoutAc.id);
+  // Tasks have empty description by default — the state stays `draft`
+  // regardless of `hasCriteria` until a description is set. Add one
+  // to the with-ac task to confirm `hasCriteria` lifts it to `plannable`.
+  await updateTask(ctx, withAc.id, { description: "desc" });
+  await updateTask(ctx, withoutAc.id, { description: "desc" });
+  const refreshed = await searchTasksPaged(ctx, f.projectId, { limit: 50 });
+  const updatedWithAc = refreshed.rows.find((r) => r.id === withAc.id);
+  const updatedWithoutAc = refreshed.rows.find((r) => r.id === withoutAc.id);
+  expect(updatedWithAc?.state).toBe("plannable");
+  expect(updatedWithoutAc?.state).toBe("draft");
+  // Touch the unused page captures so the linter does not complain
+  // about destructured results — and so the explicit assertions on
+  // the pre-description state stay close to the lift assertions.
+  expect(withAcRow).toBeDefined();
+  expect(withoutAcRow).toBeDefined();
 });

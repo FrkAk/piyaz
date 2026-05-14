@@ -1,4 +1,4 @@
-CREATE TABLE "task_acceptance_criteria" (
+CREATE TABLE IF NOT EXISTS "task_acceptance_criteria" (
 	"id" uuid PRIMARY KEY NOT NULL,
 	"task_id" uuid NOT NULL,
 	"text" text NOT NULL,
@@ -8,7 +8,7 @@ CREATE TABLE "task_acceptance_criteria" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "task_decisions" (
+CREATE TABLE IF NOT EXISTS "task_decisions" (
 	"id" uuid PRIMARY KEY NOT NULL,
 	"task_id" uuid NOT NULL,
 	"text" text NOT NULL,
@@ -31,8 +31,18 @@ CREATE TABLE IF NOT EXISTS "task_links" (
 	CONSTRAINT "task_links_task_url_unique" UNIQUE("task_id","url")
 );
 --> statement-breakpoint
-ALTER TABLE "task_acceptance_criteria" ADD CONSTRAINT "task_acceptance_criteria_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "task_decisions" ADD CONSTRAINT "task_decisions_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+DO $$ BEGIN
+	ALTER TABLE "task_acceptance_criteria" ADD CONSTRAINT "task_acceptance_criteria_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+	WHEN duplicate_object THEN NULL;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	ALTER TABLE "task_decisions" ADD CONSTRAINT "task_decisions_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+	WHEN duplicate_object THEN NULL;
+END $$;
+--> statement-breakpoint
 DO $$ BEGIN
 	ALTER TABLE "task_links" ADD CONSTRAINT "task_links_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
@@ -45,8 +55,8 @@ EXCEPTION
 	WHEN duplicate_object THEN NULL;
 END $$;
 --> statement-breakpoint
-CREATE INDEX "task_acceptance_criteria_task_id_position_idx" ON "task_acceptance_criteria" USING btree ("task_id","position");--> statement-breakpoint
-CREATE INDEX "task_decisions_task_id_position_idx" ON "task_decisions" USING btree ("task_id","position");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "task_acceptance_criteria_task_id_position_idx" ON "task_acceptance_criteria" USING btree ("task_id","position");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "task_decisions_task_id_position_idx" ON "task_decisions" USING btree ("task_id","position");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "task_links_task_id_idx" ON "task_links" USING btree ("task_id");--> statement-breakpoint
 -- Backfill: task_acceptance_criteria from tasks.acceptance_criteria JSONB
 INSERT INTO task_acceptance_criteria (id, task_id, text, checked, position, created_at, updated_at)

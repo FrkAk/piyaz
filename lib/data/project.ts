@@ -15,6 +15,7 @@ import { projects, tasks, taskEdges } from "@/lib/db/schema";
 import {
   assigneeCountSubquery,
   assigneeUserIdsSubquery,
+  criteriaCountSubquery,
 } from "@/lib/data/task";
 import { member, organization } from "@/lib/db/auth-schema";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
@@ -103,6 +104,7 @@ export async function getProjectGraphSlim(
 
   const ac = assigneeCountSubquery();
   const au = assigneeUserIdsSubquery();
+  const cc = criteriaCountSubquery();
   const tasksQ = db
     .select({
       id: tasks.id,
@@ -116,13 +118,14 @@ export async function getProjectGraphSlim(
       updatedAt: tasks.updatedAt,
       sequenceNumber: tasks.sequenceNumber,
       hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: sql<boolean>`EXISTS (SELECT 1 FROM task_acceptance_criteria tac WHERE tac.task_id = ${tasks.id})`,
+      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
       assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
       assigneeUserIds: sql<string[]>`COALESCE(${au.userIds}, '{}'::uuid[])`,
     })
     .from(tasks)
     .leftJoin(ac, eq(ac.taskId, tasks.id))
     .leftJoin(au, eq(au.taskId, tasks.id))
+    .leftJoin(cc, eq(cc.taskId, tasks.id))
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.order));
 

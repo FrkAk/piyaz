@@ -15,7 +15,7 @@ import {
 } from "@/lib/db/schema";
 import { user, member } from "@/lib/db/auth-schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
-import { executeRaw } from "@/lib/db/raw";
+import { fetchTaskFull } from "@/lib/db/raw/fetch-task-full";
 import type {
   AcceptanceCriterion,
   Decision,
@@ -432,7 +432,7 @@ export function criteriaCountSubquery() {
   return db
     .select({
       taskId: taskAcceptanceCriteria.taskId,
-      count: sql<number>`COUNT(*)::int`.as("count"),
+      count: sql<number>`COUNT(*)::int`.as("criteria_count"),
     })
     .from(taskAcceptanceCriteria)
     .groupBy(taskAcceptanceCriteria.taskId)
@@ -450,7 +450,7 @@ export function decisionsCountSubquery() {
   return db
     .select({
       taskId: taskDecisions.taskId,
-      count: sql<number>`COUNT(*)::int`.as("count"),
+      count: sql<number>`COUNT(*)::int`.as("decisions_count"),
     })
     .from(taskDecisions)
     .groupBy(taskDecisions.taskId)
@@ -483,69 +483,26 @@ export async function getTaskFull(
   taskId: string,
 ): Promise<TaskFull> {
   await assertTaskAccess(taskId, ctx);
+  return getTaskFullUnchecked(taskId);
+}
 
-  type RawRow = {
-    id: string;
-    project_id: string;
-    title: string;
-    sequence_number: number;
-    description: string;
-    status: string;
-    order: number;
-    category: string | null;
-    implementation_plan: string | null;
-    execution_record: string | null;
-    tags: string[];
-    priority: string | null;
-    estimate: number | null;
-    files: string[];
-    history: unknown[];
-    created_at: string | Date;
-    updated_at: string | Date;
-    project_identifier: string;
-    assignees: { userId: string; name: string; email: string }[] | null;
-    acceptance_criteria:
-      | { id: string; text: string; checked: boolean }[]
-      | null;
-    decisions:
-      | { id: string; text: string; source: string; date: string }[]
-      | null;
-    links:
-      | {
-          id: string;
-          kind: string;
-          url: string;
-          label: string | null;
-          createdAt: string;
-        }[]
-      | null;
-  };
-
-  const rows = await executeRaw<RawRow>(
-    db,
-    sql`
-      SELECT
-        t.*,
-        p.identifier AS project_identifier,
-        (SELECT json_agg(json_build_object('userId', u.id, 'name', u.name, 'email', u.email) ORDER BY u.name)
-         FROM task_assignees ta
-         JOIN neon_auth."user" u ON u.id = ta.user_id
-         WHERE ta.task_id = t.id) AS assignees,
-        (SELECT json_agg(json_build_object('id', c.id, 'text', c.text, 'checked', c.checked) ORDER BY c.position)
-         FROM task_acceptance_criteria c
-         WHERE c.task_id = t.id) AS acceptance_criteria,
-        (SELECT json_agg(json_build_object('id', d.id, 'text', d.text, 'source', d.source, 'date', d.decision_date) ORDER BY d.position)
-         FROM task_decisions d
-         WHERE d.task_id = t.id) AS decisions,
-        (SELECT json_agg(json_build_object('id', l.id, 'kind', l.kind, 'url', l.url, 'label', l.label, 'createdAt', l.created_at) ORDER BY l.created_at)
-         FROM task_links l
-         WHERE l.task_id = t.id) AS links
-      FROM tasks t
-      JOIN projects p ON p.id = t.project_id
-      WHERE t.id = ${taskId}
-    `,
-  );
-
+/**
+ * Unchecked variant of {@link getTaskFull} for callers that have already
+ * authorized access (e.g. the API route runs `assertTaskAccess` for the
+ * 304 short-circuit before falling through to the 200 body). Skipping
+ * the duplicate auth JOIN saves one Neon RTT per call.
+ *
+ * UNCHECKED: caller MUST `assertTaskAccess` first; the `Unchecked` suffix
+ * is the contract — do not strip it when wrapping or re-exporting.
+ *
+ * @param taskId - UUID of the task.
+ * @returns Full task row with composed `taskRef`, assignees, criteria,
+ *   decisions, and links.
+ */
+export async function getTaskFullUnchecked(
+  taskId: string,
+): Promise<TaskFull> {
+  const rows = await fetchTaskFull(db, taskId);
   if (rows.length === 0) {
     throw new Error(
       `getTaskFull: task ${taskId} disappeared after access check`,
@@ -694,7 +651,7 @@ export function assigneeCountSubquery() {
   return db
     .select({
       taskId: taskAssignees.taskId,
-      count: sql<number>`COUNT(*)::int`.as("count"),
+      count: sql<number>`COUNT(*)::int`.as("assignee_count"),
     })
     .from(taskAssignees)
     .groupBy(taskAssignees.taskId)
@@ -724,7 +681,12 @@ export function assigneeUserIdsSubquery() {
 }
 
 /**
- * Fetch the slim task view for listing surfaces.
+ * Fetch the slim task view for listing surfaces. Issues a slim projection
+ * with an `assigneeCountSubquery` LEFT JOIN; does not pull criteria,
+ * decisions, history, files, or links — listing surfaces never render
+ * those fields and the bandwidth saving is meaningful on the workspace
+ * canvas and search-result paths.
+ *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task.
  * @returns Slim task view.
@@ -734,18 +696,41 @@ export async function getTaskSlim(
   ctx: AuthContext,
   taskId: string,
 ): Promise<TaskSlim> {
-  const full = await getTaskFull(ctx, taskId);
+  await assertTaskAccess(taskId, ctx);
+  const ac = assigneeCountSubquery();
+  const [row] = await db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      tags: tasks.tags,
+      category: tasks.category,
+      priority: tasks.priority,
+      estimate: tasks.estimate,
+      order: tasks.order,
+      sequenceNumber: tasks.sequenceNumber,
+      identifier: projects.identifier,
+      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
+    })
+    .from(tasks)
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .leftJoin(ac, eq(ac.taskId, tasks.id))
+    .where(eq(tasks.id, taskId))
+    .limit(1);
+  if (!row) {
+    throw new ForbiddenError("Forbidden", "task", taskId);
+  }
   return {
-    id: full.id,
-    taskRef: full.taskRef,
-    title: full.title,
-    status: full.status,
-    tags: full.tags,
-    category: full.category,
-    priority: full.priority,
-    estimate: full.estimate,
-    assigneeCount: full.assignees.length,
-    order: full.order,
+    id: row.id,
+    taskRef: composeTaskRef(asIdentifier(row.identifier), row.sequenceNumber),
+    title: row.title,
+    status: row.status,
+    tags: row.tags,
+    category: row.category,
+    priority: row.priority,
+    estimate: row.estimate,
+    assigneeCount: row.assigneeCount,
+    order: row.order,
   };
 }
 
@@ -986,6 +971,7 @@ export async function searchTasks(
   }
 
   const ac = assigneeCountSubquery();
+  const cc = criteriaCountSubquery();
   const matchingTasks = await db
     .select({
       id: tasks.id,
@@ -995,14 +981,15 @@ export async function searchTasks(
       category: tasks.category,
       priority: tasks.priority,
       estimate: tasks.estimate,
-      description: tasks.description,
-      hasCriteria: sql<boolean>`EXISTS (SELECT 1 FROM task_acceptance_criteria c WHERE c.task_id = ${tasks.id})`,
+      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
       sequenceNumber: tasks.sequenceNumber,
       order: tasks.order,
       assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
     })
     .from(tasks)
     .leftJoin(ac, eq(ac.taskId, tasks.id))
+    .leftJoin(cc, eq(cc.taskId, tasks.id))
     .where(and(...clauses));
 
   if (trimmedQuery.length > 0) {
@@ -1038,7 +1025,7 @@ export async function searchTasks(
     trimmed.map((t) => ({
       id: t.id,
       status: t.status,
-      hasDescription: t.description.trim().length > 0,
+      hasDescription: t.hasDescription,
       hasCriteria: t.hasCriteria,
     })),
   );
@@ -1123,6 +1110,7 @@ export async function searchTasksPaged(
     : sql`TRUE`;
 
   const ac = assigneeCountSubquery();
+  const cc = criteriaCountSubquery();
   const matchingTasks = await db
     .select({
       id: tasks.id,
@@ -1132,14 +1120,15 @@ export async function searchTasksPaged(
       category: tasks.category,
       priority: tasks.priority,
       estimate: tasks.estimate,
-      description: tasks.description,
-      hasCriteria: sql<boolean>`EXISTS (SELECT 1 FROM task_acceptance_criteria c WHERE c.task_id = ${tasks.id})`,
+      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
       sequenceNumber: tasks.sequenceNumber,
       order: tasks.order,
       assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
     })
     .from(tasks)
     .leftJoin(ac, eq(ac.taskId, tasks.id))
+    .leftJoin(cc, eq(cc.taskId, tasks.id))
     .where(and(...clauses, cursorClause))
     .orderBy(desc(tasks.order), desc(tasks.id))
     .limit(limit + 1);
@@ -1159,7 +1148,7 @@ export async function searchTasksPaged(
     trimmed.map((t) => ({
       id: t.id,
       status: t.status,
-      hasDescription: t.description.trim().length > 0,
+      hasDescription: t.hasDescription,
       hasCriteria: t.hasCriteria,
     })),
   );
@@ -1957,12 +1946,23 @@ export async function updateTask(
   }
   // Surface the post-update criteria/decisions on the returned row so
   // callers that read `result.acceptanceCriteria` / `result.decisions`
-  // (e.g. tool-handlers' completion-protocol hint checks) see the same
-  // shape they saw on the JSONB-storage path.
-  const [postCriteria, postDecisions] = await Promise.all([
-    fetchCriteriaUnchecked(taskId),
-    fetchDecisionsUnchecked(taskId),
-  ]);
+  // (e.g. tool-handlers' completion-protocol hint checks on status
+  // transitions to done/in_review/cancelled) see the freshest state.
+  //
+  // Skip both fetches when this update neither wrote a child table nor
+  // changed status. A pure title/description/tags/files update has no
+  // consumer of the post-state criteria, so paying two RTTs there is
+  // waste on every refinement call.
+  const wroteChildren =
+    formattedCriteria !== undefined || formattedDecisions !== undefined;
+  const statusChanged = typeof input.status === "string";
+  const refetchNeeded = wroteChildren || statusChanged;
+  const [postCriteria, postDecisions] = refetchNeeded
+    ? await Promise.all([
+        fetchCriteriaUnchecked(taskId),
+        fetchDecisionsUnchecked(taskId),
+      ])
+    : [[], []];
   return Object.assign(updated, {
     acceptanceCriteria: postCriteria,
     decisions: postDecisions,

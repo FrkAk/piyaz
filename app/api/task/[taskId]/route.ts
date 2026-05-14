@@ -1,7 +1,7 @@
 import { getAuthContext } from '@/lib/auth/context';
 import { ForbiddenError, assertTaskAccess } from '@/lib/auth/authorization';
 import { conditionalRespond, etagMatches } from '@/lib/api/conditional';
-import { getTaskFull } from '@/lib/data/task';
+import { getTaskFullUnchecked } from '@/lib/data/task';
 import { broker } from '@/lib/realtime/broker';
 import { internalError } from '@/lib/api/error';
 import { error } from '@/lib/api/response';
@@ -42,16 +42,17 @@ async function handle(req: Request, taskId: string): Promise<Response> {
     // Cheap timestamp probe first — gates the conditional-GET path so a
     // HEAD or `If-None-Match` match short-circuits before paying the
     // join + JSON-agg cost of `getTaskFull`. On the 200 fall-through we
-    // re-enter via `getTaskFull` which performs its own access check
-    // (single PK lookup; the duplication is cheaper than exposing an
-    // `unchecked` variant just to skip a redundant check).
+    // use the *unchecked* variant since `assertTaskAccess` already
+    // authorized the caller above; re-running the team-scoped JOIN
+    // inside `getTaskFull` would double the Neon RTT cost for every 200
+    // (and the Cloudflare-Worker CPU-ms billed waiting on the second I/O).
     const access = await assertTaskAccess(taskId, ctx);
 
     if (req.method === 'HEAD' || etagMatches(req, access.updatedAt)) {
       return conditionalRespond(req, null, access.updatedAt);
     }
 
-    const task = await getTaskFull(ctx, taskId);
+    const task = await getTaskFullUnchecked(taskId);
 
     if (broker.hasConnections(ctx.userId)) {
       broker.register(ctx.userId, `task:${taskId}`, TASK_SUBSCRIPTION_TTL_MS);

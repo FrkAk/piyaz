@@ -7,7 +7,7 @@ import { fetchDependencyChain } from "@/lib/db/raw/fetch-dependency-chain";
 import { fetchDownstream } from "@/lib/db/raw/fetch-downstream";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
-import { deriveTaskStatesSlim } from "@/lib/data/task";
+import { criteriaCountSubquery, deriveTaskStatesSlim } from "@/lib/data/task";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccess,
@@ -227,17 +227,19 @@ export async function getReadyTasks(
   const { project } = await assertProjectAccess(projectId, ctx);
   const identifier = asIdentifier(project.identifier);
 
+  const cc = criteriaCountSubquery();
   const allTasks = await db
     .select({
       id: tasks.id,
       title: tasks.title,
       status: tasks.status,
       tags: tasks.tags,
-      description: tasks.description,
-      hasCriteria: sql<boolean>`EXISTS (SELECT 1 FROM task_acceptance_criteria c WHERE c.task_id = ${tasks.id})`,
+      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
       sequenceNumber: tasks.sequenceNumber,
     })
     .from(tasks)
+    .leftJoin(cc, eq(cc.taskId, tasks.id))
     .where(eq(tasks.projectId, projectId));
 
   if (allTasks.length === 0) return [];
@@ -247,7 +249,7 @@ export async function getReadyTasks(
     allTasks.map((t) => ({
       id: t.id,
       status: t.status,
-      hasDescription: t.description.trim().length > 0,
+      hasDescription: t.hasDescription,
       hasCriteria: t.hasCriteria,
     })),
   );
@@ -293,17 +295,19 @@ export async function getPlannableTasks(
   const { project } = await assertProjectAccess(projectId, ctx);
   const identifier = asIdentifier(project.identifier);
 
+  const cc = criteriaCountSubquery();
   const allTasks = await db
     .select({
       id: tasks.id,
       title: tasks.title,
       status: tasks.status,
       tags: tasks.tags,
-      description: tasks.description,
-      hasCriteria: sql<boolean>`EXISTS (SELECT 1 FROM task_acceptance_criteria c WHERE c.task_id = ${tasks.id})`,
+      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
       sequenceNumber: tasks.sequenceNumber,
     })
     .from(tasks)
+    .leftJoin(cc, eq(cc.taskId, tasks.id))
     .where(eq(tasks.projectId, projectId));
 
   if (allTasks.length === 0) return [];
@@ -313,7 +317,7 @@ export async function getPlannableTasks(
     allTasks.map((t) => ({
       id: t.id,
       status: t.status,
-      hasDescription: t.description.trim().length > 0,
+      hasDescription: t.hasDescription,
       hasCriteria: t.hasCriteria,
     })),
   );
