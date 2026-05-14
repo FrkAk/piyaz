@@ -1,13 +1,13 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { tasks, projects, taskEdges } from "@/lib/db/schema";
 import { fetchDependencyChain } from "@/lib/db/raw/fetch-dependency-chain";
 import { fetchDownstream } from "@/lib/db/raw/fetch-downstream";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
-import { criteriaCountSubquery, deriveTaskStatesSlim } from "@/lib/data/task";
+import { hasCriteriaExpr, deriveTaskStatesSlim } from "@/lib/data/task";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccess,
@@ -227,7 +227,8 @@ export async function getReadyTasks(
   const { project } = await assertProjectAccess(projectId, ctx);
   const identifier = asIdentifier(project.identifier);
 
-  const cc = criteriaCountSubquery();
+  // Pre-filter to `status = 'planned'` at SQL: `ready` requires it, so
+  // every other status row would be discarded by the JS filter below.
   const allTasks = await db
     .select({
       id: tasks.id,
@@ -235,12 +236,11 @@ export async function getReadyTasks(
       status: tasks.status,
       tags: tasks.tags,
       hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
+      hasCriteria: hasCriteriaExpr(),
       sequenceNumber: tasks.sequenceNumber,
     })
     .from(tasks)
-    .leftJoin(cc, eq(cc.taskId, tasks.id))
-    .where(eq(tasks.projectId, projectId));
+    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, "planned")));
 
   if (allTasks.length === 0) return [];
 
@@ -295,7 +295,10 @@ export async function getPlannableTasks(
   const { project } = await assertProjectAccess(projectId, ctx);
   const identifier = asIdentifier(project.identifier);
 
-  const cc = criteriaCountSubquery();
+  // Pre-filter to `status = 'draft' AND hasDescription AND hasCriteria`
+  // at SQL: those three are necessary conditions for `plannable`, and
+  // every other row would be discarded by the JS filter below. The dep
+  // readiness check stays in JS via `deriveTaskStatesSlim`.
   const allTasks = await db
     .select({
       id: tasks.id,
@@ -303,12 +306,18 @@ export async function getPlannableTasks(
       status: tasks.status,
       tags: tasks.tags,
       hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
+      hasCriteria: hasCriteriaExpr(),
       sequenceNumber: tasks.sequenceNumber,
     })
     .from(tasks)
-    .leftJoin(cc, eq(cc.taskId, tasks.id))
-    .where(eq(tasks.projectId, projectId));
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        eq(tasks.status, "draft"),
+        sql`length(btrim(${tasks.description})) > 0`,
+        hasCriteriaExpr(),
+      ),
+    );
 
   if (allTasks.length === 0) return [];
 

@@ -424,40 +424,18 @@ export async function fetchDecisionsByTaskUnchecked(
 }
 
 /**
- * Build a `(task_id, count)` subquery for criteria counts. Sibling of
- * {@link assigneeCountSubquery} — LEFT JOIN it against `tasks` instead of
- * issuing a correlated subquery per row.
+ * SQL expression: `hasCriteria` boolean as a correlated `EXISTS` semi-join
+ * keyed on `(task_id, position)`. Postgres short-circuits on the first
+ * matching row per task — no global `GROUP BY` scan of the child table.
  *
- * Each call returns a fresh subquery with the same alias; do not reuse in
- * one query.
- */
-export function criteriaCountSubquery() {
-  return db
-    .select({
-      taskId: taskAcceptanceCriteria.taskId,
-      count: sql<number>`COUNT(*)::int`.as("criteria_count"),
-    })
-    .from(taskAcceptanceCriteria)
-    .groupBy(taskAcceptanceCriteria.taskId)
-    .as("criteria_counts");
-}
-
-/**
- * Build a `(task_id, count)` subquery for decisions counts. Sibling of
- * {@link criteriaCountSubquery}.
+ * Factory: returns a fresh expression each call so drizzle's planner
+ * always reconstructs the SQL fragment within the enclosing query scope
+ * (avoids stale binding from module-level reuse).
  *
- * Each call returns a fresh subquery with the same alias; do not reuse in
- * one query.
+ * Inline at SELECT sites: `hasCriteria: hasCriteriaExpr()`.
  */
-export function decisionsCountSubquery() {
-  return db
-    .select({
-      taskId: taskDecisions.taskId,
-      count: sql<number>`COUNT(*)::int`.as("decisions_count"),
-    })
-    .from(taskDecisions)
-    .groupBy(taskDecisions.taskId)
-    .as("decisions_counts");
+export function hasCriteriaExpr() {
+  return sql<boolean>`EXISTS (SELECT 1 FROM "task_acceptance_criteria" "tac" WHERE "tac"."task_id" = "tasks"."id")`;
 }
 
 // ---------------------------------------------------------------------------
@@ -623,45 +601,25 @@ export async function fetchLinksUnchecked(taskId: string): Promise<TaskLinkRef[]
 }
 
 /**
- * Build the `(task_id, count)` subquery for assignee counts. Callers
- * LEFT JOIN it against `tasks` and read `COALESCE(sq.count, 0)` instead
- * of issuing a correlated subquery per row. Postgres can index-only-scan
- * the GROUP BY off the `(task_id, user_id)` PK leading column.
+ * SQL expression: `assigneeCount` as a correlated `COUNT(*)` keyed on the
+ * `(task_id, user_id)` PK leading column. Per-row scalar subquery; the
+ * planner uses an index-only count.
  *
- * Each call returns a fresh subquery with the same alias; do not use
- * twice in one query.
+ * Factory: returns a fresh expression each call. See {@link hasCriteriaExpr}.
  */
-export function assigneeCountSubquery() {
-  return db
-    .select({
-      taskId: taskAssignees.taskId,
-      count: sql<number>`COUNT(*)::int`.as("assignee_count"),
-    })
-    .from(taskAssignees)
-    .groupBy(taskAssignees.taskId)
-    .as("assignee_counts");
+export function assigneeCountExpr() {
+  return sql<number>`(SELECT COUNT(*) FROM "task_assignees" "ta_ac" WHERE "ta_ac"."task_id" = "tasks"."id")::int`;
 }
 
 /**
- * Build the `(task_id, user_ids[])` subquery for assignee user IDs.
- * Sibling of {@link assigneeCountSubquery}; the slim graph view joins
- * both so row renderers can paint avatar stacks without a per-row fetch.
- * `array_agg` is index-only-scannable off the `(task_id, user_id)` PK.
+ * SQL expression: `assigneeUserIds` as a correlated `array_agg` keyed on
+ * the `(task_id, user_id)` PK. Returns an empty `uuid[]` when no assignees
+ * exist — never `NULL` — so callers can iterate without a null guard.
  *
- * Each call returns a fresh subquery with the same alias; do not use
- * twice in one query.
+ * Factory: returns a fresh expression each call. See {@link hasCriteriaExpr}.
  */
-export function assigneeUserIdsSubquery() {
-  return db
-    .select({
-      taskId: taskAssignees.taskId,
-      userIds: sql<string[]>`array_agg(${taskAssignees.userId} ORDER BY ${taskAssignees.userId})`.as(
-        "user_ids",
-      ),
-    })
-    .from(taskAssignees)
-    .groupBy(taskAssignees.taskId)
-    .as("assignee_user_ids");
+export function assigneeUserIdsExpr() {
+  return sql<string[]>`COALESCE((SELECT array_agg("ta_au"."user_id" ORDER BY "ta_au"."user_id") FROM "task_assignees" "ta_au" WHERE "ta_au"."task_id" = "tasks"."id"), '{}'::uuid[])`;
 }
 
 /**
@@ -681,7 +639,6 @@ export async function getTaskSlim(
   taskId: string,
 ): Promise<TaskSlim> {
   await assertTaskAccess(taskId, ctx);
-  const ac = assigneeCountSubquery();
   const [row] = await db
     .select({
       id: tasks.id,
@@ -694,11 +651,10 @@ export async function getTaskSlim(
       order: tasks.order,
       sequenceNumber: tasks.sequenceNumber,
       identifier: projects.identifier,
-      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
+      assigneeCount: assigneeCountExpr(),
     })
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
-    .leftJoin(ac, eq(ac.taskId, tasks.id))
     .where(eq(tasks.id, taskId))
     .limit(1);
   if (!row) {
@@ -763,7 +719,6 @@ export async function getProjectTasksSlim(
 ): Promise<TaskSlim[]> {
   const { project } = await assertProjectAccess(projectId, ctx);
 
-  const ac = assigneeCountSubquery();
   const rows = await db
     .select({
       id: tasks.id,
@@ -775,10 +730,9 @@ export async function getProjectTasksSlim(
       estimate: tasks.estimate,
       order: tasks.order,
       sequenceNumber: tasks.sequenceNumber,
-      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
+      assigneeCount: assigneeCountExpr(),
     })
     .from(tasks)
-    .leftJoin(ac, eq(ac.taskId, tasks.id))
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.order));
 
@@ -954,9 +908,21 @@ export async function searchTasks(
     );
   }
 
-  const ac = assigneeCountSubquery();
-  const cc = criteriaCountSubquery();
-  const matchingTasks = await db
+  // Push relevance ranking + LIMIT 20 into SQL so the DB never returns a
+  // multi-thousand-row match set for a project the planner could trim
+  // upstream. The CASE bands mirror the previous JS sort exactly.
+  const lower = trimmedQuery.toLowerCase();
+  const rankExpr =
+    trimmedQuery.length > 0
+      ? sql<number>`CASE
+          WHEN LOWER(${tasks.title}) = ${lower} THEN 0
+          WHEN LOWER(${tasks.title}) LIKE ${lower + "%"} THEN 1
+          WHEN LOWER(${tasks.title}) LIKE ${"%" + lower + "%"} THEN 2
+          ELSE 3
+        END`
+      : sql<number>`0`;
+
+  const trimmed = await db
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -966,44 +932,15 @@ export async function searchTasks(
       priority: tasks.priority,
       estimate: tasks.estimate,
       hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
+      hasCriteria: hasCriteriaExpr(),
       sequenceNumber: tasks.sequenceNumber,
       order: tasks.order,
-      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
+      assigneeCount: assigneeCountExpr(),
     })
     .from(tasks)
-    .leftJoin(ac, eq(ac.taskId, tasks.id))
-    .leftJoin(cc, eq(cc.taskId, tasks.id))
-    .where(and(...clauses));
-
-  if (trimmedQuery.length > 0) {
-    const lower = trimmedQuery.toLowerCase();
-    matchingTasks.sort((a, b) => {
-      const aLower = a.title.toLowerCase();
-      const bLower = b.title.toLowerCase();
-      const aTitle =
-        aLower === lower
-          ? 0
-          : aLower.startsWith(lower)
-            ? 1
-            : aLower.includes(lower)
-              ? 2
-              : 3;
-      const bTitle =
-        bLower === lower
-          ? 0
-          : bLower.startsWith(lower)
-            ? 1
-            : bLower.includes(lower)
-              ? 2
-              : 3;
-      return aTitle - bTitle;
-    });
-  } else {
-    matchingTasks.sort((a, b) => a.order - b.order);
-  }
-
-  const trimmed = matchingTasks.slice(0, 20);
+    .where(and(...clauses))
+    .orderBy(rankExpr, asc(tasks.order))
+    .limit(20);
   const stateMap = await deriveTaskStatesSlim(
     projectId,
     trimmed.map((t) => ({
@@ -1093,8 +1030,6 @@ export async function searchTasksPaged(
             OR (${tasks.order} = ${after.order} AND ${tasks.id} < ${after.id}))`
     : sql`TRUE`;
 
-  const ac = assigneeCountSubquery();
-  const cc = criteriaCountSubquery();
   const matchingTasks = await db
     .select({
       id: tasks.id,
@@ -1105,14 +1040,12 @@ export async function searchTasksPaged(
       priority: tasks.priority,
       estimate: tasks.estimate,
       hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
+      hasCriteria: hasCriteriaExpr(),
       sequenceNumber: tasks.sequenceNumber,
       order: tasks.order,
-      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
+      assigneeCount: assigneeCountExpr(),
     })
     .from(tasks)
-    .leftJoin(ac, eq(ac.taskId, tasks.id))
-    .leftJoin(cc, eq(cc.taskId, tasks.id))
     .where(and(...clauses, cursorClause))
     .orderBy(desc(tasks.order), desc(tasks.id))
     .limit(limit + 1);

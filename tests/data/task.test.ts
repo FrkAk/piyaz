@@ -400,14 +400,12 @@ test("getTaskFull returns empty arrays (not null) when no children exist", async
   expect(full.links).toEqual([]);
 });
 
-test("searchTasksPaged reports hasCriteria via LEFT JOIN, not correlated EXISTS", async () => {
-  // Regression guard for MYMR-136 cleanup: the implementer's
-  // `criteriaCountSubquery()` helper exists explicitly so the slim
-  // workspace + search paths avoid issuing N correlated EXISTS probes
-  // per query. This test verifies the boolean is correctly populated
-  // from the LEFT JOIN against the helper subquery — if a future
-  // refactor reverts to a per-row correlated subquery, the boolean
-  // logic still must yield the same answer.
+test("searchTasksPaged reports hasCriteria correctly via correlated EXISTS", async () => {
+  // Regression guard for MYMR-136 cleanup: the prior `criteriaCountSubquery()`
+  // helper materialized a global `GROUP BY` across the entire child table
+  // (per-list-call scan of every project's criteria), so it was replaced by
+  // a correlated `EXISTS` semi-join. The boolean logic must yield the same
+  // observable state through `deriveTaskStatesSlim`.
   const f = await seedUserOrgProject("hascriteria-leftjoin");
   const ctx = makeAuthContext(f.userId);
   const withAc = await createTask(ctx, {

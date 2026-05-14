@@ -13,9 +13,9 @@ import {
 import { db } from "@/lib/db";
 import { projects, tasks, taskEdges } from "@/lib/db/schema";
 import {
-  assigneeCountSubquery,
-  assigneeUserIdsSubquery,
-  criteriaCountSubquery,
+  assigneeCountExpr,
+  assigneeUserIdsExpr,
+  hasCriteriaExpr,
 } from "@/lib/data/task";
 import { member, organization } from "@/lib/db/auth-schema";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
@@ -102,9 +102,6 @@ export async function getProjectGraphSlim(
 ): Promise<ProjectGraphSlim> {
   const { project } = await assertProjectAccess(projectId, ctx);
 
-  const ac = assigneeCountSubquery();
-  const au = assigneeUserIdsSubquery();
-  const cc = criteriaCountSubquery();
   const tasksQ = db
     .select({
       id: tasks.id,
@@ -118,14 +115,11 @@ export async function getProjectGraphSlim(
       updatedAt: tasks.updatedAt,
       sequenceNumber: tasks.sequenceNumber,
       hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: sql<boolean>`COALESCE(${cc.count}, 0) > 0`,
-      assigneeCount: sql<number>`COALESCE(${ac.count}, 0)`,
-      assigneeUserIds: sql<string[]>`COALESCE(${au.userIds}, '{}'::uuid[])`,
+      hasCriteria: hasCriteriaExpr(),
+      assigneeCount: assigneeCountExpr(),
+      assigneeUserIds: assigneeUserIdsExpr(),
     })
     .from(tasks)
-    .leftJoin(ac, eq(ac.taskId, tasks.id))
-    .leftJoin(au, eq(au.taskId, tasks.id))
-    .leftJoin(cc, eq(cc.taskId, tasks.id))
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.order));
 
