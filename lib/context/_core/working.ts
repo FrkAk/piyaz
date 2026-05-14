@@ -3,17 +3,10 @@ import "server-only";
 import type { AcceptanceCriterion } from "@/lib/types";
 import { getAncestors } from "@/lib/data/traversal";
 import { getTaskEdgesDetailed } from "@/lib/data/edge";
-import { getProjectIdentifier } from "@/lib/data/project";
-import {
-  fetchSiblingTasks,
-  fetchAssigneesUnchecked,
-  fetchLinksUnchecked,
-} from "@/lib/data/task";
+import { fetchSiblingTasks, getTaskFull } from "@/lib/data/task";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
-import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
-import { assertTaskAccess } from "@/lib/auth/authorization";
 
 /** Full working context for AI assistant (1-hop). */
 type WorkingContext = {
@@ -49,28 +42,14 @@ export async function buildWorkingContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<WorkingContext> {
-  const task = await assertTaskAccess(taskId, ctx);
+  const task = await getTaskFull(ctx, taskId);
   const projectId = task.projectId;
 
-  const [identifier, ancestors, detailedEdges, siblings, assignees, links] =
-    await Promise.all([
-      getProjectIdentifier(projectId),
-      getAncestors(taskId),
-      getTaskEdgesDetailed(ctx, taskId),
-      fetchSiblingTasks(projectId, taskId),
-      fetchAssigneesUnchecked(taskId),
-      fetchLinksUnchecked(taskId),
-    ]);
-
-  if (!identifier) {
-    console.error("Task has no joinable project", {
-      taskId: task.id,
-      projectId: task.projectId,
-    });
-  }
-  const taskRef = identifier
-    ? composeTaskRef(asIdentifier(identifier), task.sequenceNumber)
-    : "";
+  const [ancestors, detailedEdges, siblings] = await Promise.all([
+    getAncestors(taskId),
+    getTaskEdgesDetailed(ctx, taskId),
+    fetchSiblingTasks(projectId, taskId),
+  ]);
 
   const edges = detailedEdges.map((e) => ({
     id: e.connectedTask.id,
@@ -84,12 +63,12 @@ export async function buildWorkingContext(
 
   return {
     node: task as unknown as Record<string, unknown>,
-    taskRef,
+    taskRef: task.taskRef,
     ancestors,
     edges,
     siblings,
-    assignees,
-    links,
+    assignees: task.assignees,
+    links: task.links,
   };
 }
 

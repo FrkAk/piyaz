@@ -12,11 +12,34 @@ CREATE TABLE "projects" (
 	CONSTRAINT "projects_org_identifier_unique" UNIQUE("organization_id","identifier")
 );
 --> statement-breakpoint
+CREATE TABLE "task_acceptance_criteria" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"task_id" uuid NOT NULL,
+	"text" text NOT NULL,
+	"checked" boolean DEFAULT false NOT NULL,
+	"position" integer NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "task_acceptance_criteria_task_id_text_unique" UNIQUE("task_id","text")
+);
+--> statement-breakpoint
 CREATE TABLE "task_assignees" (
 	"task_id" uuid NOT NULL,
 	"user_id" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "task_assignees_task_id_user_id_pk" PRIMARY KEY("task_id","user_id")
+);
+--> statement-breakpoint
+CREATE TABLE "task_decisions" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"task_id" uuid NOT NULL,
+	"text" text NOT NULL,
+	"source" text NOT NULL,
+	"decision_date" text NOT NULL,
+	"position" integer NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "task_decisions_task_id_text_unique" UNIQUE("task_id","text")
 );
 --> statement-breakpoint
 CREATE TABLE "task_edges" (
@@ -29,6 +52,18 @@ CREATE TABLE "task_edges" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "task_links" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"task_id" uuid NOT NULL,
+	"kind" text NOT NULL,
+	"url" text NOT NULL,
+	"label" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"created_by" uuid,
+	"metadata" jsonb,
+	CONSTRAINT "task_links_task_url_unique" UNIQUE("task_id","url")
+);
+--> statement-breakpoint
 CREATE TABLE "tasks" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"project_id" uuid NOT NULL,
@@ -38,8 +73,6 @@ CREATE TABLE "tasks" (
 	"status" text DEFAULT 'draft' NOT NULL,
 	"order" integer DEFAULT 0 NOT NULL,
 	"category" text,
-	"acceptance_criteria" jsonb DEFAULT '[]'::jsonb NOT NULL,
-	"decisions" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"implementation_plan" text,
 	"execution_record" text,
 	"tags" jsonb DEFAULT '[]'::jsonb NOT NULL,
@@ -70,17 +103,24 @@ CREATE TABLE "team_invite_code" (
 );
 --> statement-breakpoint
 ALTER TABLE "projects" ADD CONSTRAINT "projects_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "neon_auth"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "task_acceptance_criteria" ADD CONSTRAINT "task_acceptance_criteria_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "task_assignees" ADD CONSTRAINT "task_assignees_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "task_assignees" ADD CONSTRAINT "task_assignees_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "neon_auth"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "task_decisions" ADD CONSTRAINT "task_decisions_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "task_edges" ADD CONSTRAINT "task_edges_source_task_id_tasks_id_fk" FOREIGN KEY ("source_task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "task_edges" ADD CONSTRAINT "task_edges_target_task_id_tasks_id_fk" FOREIGN KEY ("target_task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "task_links" ADD CONSTRAINT "task_links_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "task_links" ADD CONSTRAINT "task_links_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "neon_auth"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tasks" ADD CONSTRAINT "tasks_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "team_invite_code" ADD CONSTRAINT "team_invite_code_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "neon_auth"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "team_invite_code" ADD CONSTRAINT "team_invite_code_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "neon_auth"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "projects_organization_id_idx" ON "projects" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX "task_acceptance_criteria_task_id_position_idx" ON "task_acceptance_criteria" USING btree ("task_id","position");--> statement-breakpoint
 CREATE INDEX "task_assignees_user_id_idx" ON "task_assignees" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "task_decisions_task_id_position_idx" ON "task_decisions" USING btree ("task_id","position");--> statement-breakpoint
 CREATE INDEX "task_edges_source_idx" ON "task_edges" USING btree ("source_task_id");--> statement-breakpoint
 CREATE INDEX "task_edges_target_idx" ON "task_edges" USING btree ("target_task_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "task_edges_unique_idx" ON "task_edges" USING btree ("source_task_id","target_task_id","edge_type");--> statement-breakpoint
+CREATE INDEX "task_links_task_id_idx" ON "task_links" USING btree ("task_id");--> statement-breakpoint
 CREATE INDEX "tasks_project_id_idx" ON "tasks" USING btree ("project_id");--> statement-breakpoint
 CREATE INDEX "team_invite_code_code_idx" ON "team_invite_code" USING btree ("code");

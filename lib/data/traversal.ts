@@ -1,13 +1,13 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { tasks, projects, taskEdges } from "@/lib/db/schema";
 import { fetchDependencyChain } from "@/lib/db/raw/fetch-dependency-chain";
 import { fetchDownstream } from "@/lib/db/raw/fetch-downstream";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
-import { deriveTaskStates } from "@/lib/data/task";
+import { hasCriteriaExpr, deriveTaskStatesSlim } from "@/lib/data/task";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccess,
@@ -211,14 +211,14 @@ export type ReadyTask = {
  * own, but the walk continues through them to find the next active
  * prerequisite (which is the actual wall).
  *
- * Delegates the derivation to `deriveTaskStates` so this analyzer agrees
+ * Delegates the derivation to `deriveTaskStatesSlim` so this analyzer agrees
  * with search-result `state`, `getPlannableTasks`, `mymir_analyze
  * type='blocked'`, and the slim payload's `task.state`. Single source of
  * truth — no parallel implementations to drift.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @returns Array of ready tasks (state === 'ready' from deriveTaskStates).
+ * @returns Array of ready tasks (state === 'ready' from deriveTaskStatesSlim).
  */
 export async function getReadyTasks(
   ctx: AuthContext,
@@ -227,22 +227,32 @@ export async function getReadyTasks(
   const { project } = await assertProjectAccess(projectId, ctx);
   const identifier = asIdentifier(project.identifier);
 
+  // Pre-filter to `status = 'planned'` at SQL: `ready` requires it, so
+  // every other status row would be discarded by the JS filter below.
   const allTasks = await db
     .select({
       id: tasks.id,
       title: tasks.title,
       status: tasks.status,
       tags: tasks.tags,
-      description: tasks.description,
-      acceptanceCriteria: tasks.acceptanceCriteria,
+      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+      hasCriteria: hasCriteriaExpr(),
       sequenceNumber: tasks.sequenceNumber,
     })
     .from(tasks)
-    .where(eq(tasks.projectId, projectId));
+    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, "planned")));
 
   if (allTasks.length === 0) return [];
 
-  const stateMap = await deriveTaskStates(projectId, allTasks);
+  const stateMap = await deriveTaskStatesSlim(
+    projectId,
+    allTasks.map((t) => ({
+      id: t.id,
+      status: t.status,
+      hasDescription: t.hasDescription,
+      hasCriteria: t.hasCriteria,
+    })),
+  );
 
   return allTasks
     .filter((task) => stateMap.get(task.id) === "ready")
@@ -271,12 +281,12 @@ export type PlannableTask = {
 /**
  * Find draft tasks that are plannable now: have a description, at least one
  * acceptance criterion, AND every effective dep is done. Delegates the
- * readiness logic to `deriveTaskStates` so this analyzer agrees with
+ * readiness logic to `deriveTaskStatesSlim` so this analyzer agrees with
  * search-result `state` and `mymir_analyze type='blocked'`.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @returns Array of plannable tasks (state === 'plannable' from deriveTaskStates).
+ * @returns Array of plannable tasks (state === 'plannable' from deriveTaskStatesSlim).
  */
 export async function getPlannableTasks(
   ctx: AuthContext,
@@ -285,22 +295,41 @@ export async function getPlannableTasks(
   const { project } = await assertProjectAccess(projectId, ctx);
   const identifier = asIdentifier(project.identifier);
 
+  // Pre-filter to `status = 'draft' AND hasDescription AND hasCriteria`
+  // at SQL: those three are necessary conditions for `plannable`, and
+  // every other row would be discarded by the JS filter below. The dep
+  // readiness check stays in JS via `deriveTaskStatesSlim`.
   const allTasks = await db
     .select({
       id: tasks.id,
       title: tasks.title,
       status: tasks.status,
       tags: tasks.tags,
-      description: tasks.description,
-      acceptanceCriteria: tasks.acceptanceCriteria,
+      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+      hasCriteria: hasCriteriaExpr(),
       sequenceNumber: tasks.sequenceNumber,
     })
     .from(tasks)
-    .where(eq(tasks.projectId, projectId));
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        eq(tasks.status, "draft"),
+        sql`length(btrim(${tasks.description})) > 0`,
+        hasCriteriaExpr(),
+      ),
+    );
 
   if (allTasks.length === 0) return [];
 
-  const stateMap = await deriveTaskStates(projectId, allTasks);
+  const stateMap = await deriveTaskStatesSlim(
+    projectId,
+    allTasks.map((t) => ({
+      id: t.id,
+      status: t.status,
+      hasDescription: t.hasDescription,
+      hasCriteria: t.hasCriteria,
+    })),
+  );
 
   return allTasks
     .filter((task) => stateMap.get(task.id) === "plannable")

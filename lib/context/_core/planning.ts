@@ -9,12 +9,11 @@ import {
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
+  getTaskFull,
 } from "@/lib/data/task";
 import { getProjectHeader } from "@/lib/data/project";
-import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
-import { assertTaskAccess } from "@/lib/auth/authorization";
 
 /**
  * Build planning-optimized context for a task.
@@ -32,7 +31,7 @@ export async function buildPlanningContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<string> {
-  const task = await assertTaskAccess(taskId, ctx);
+  const task = await getTaskFull(ctx, taskId);
 
   const project = await getProjectHeader(task.projectId);
   if (!project) {
@@ -44,9 +43,7 @@ export async function buildPlanningContext(
   const tags = (task.tags as string[] | null) ?? [];
   const priority = task.priority as string | null;
   const estimate = task.estimate as number | null;
-  const taskRef = project
-    ? composeTaskRef(asIdentifier(project.identifier), task.sequenceNumber)
-    : "";
+  const taskRef = task.taskRef;
 
   const headerLines: string[] = [
     `# ${taskRef ? `\`${taskRef}\` ` : ""}${task.title}`,

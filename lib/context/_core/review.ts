@@ -9,13 +9,11 @@ import {
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
-  fetchLinksUnchecked,
+  getTaskFull,
 } from "@/lib/data/task";
 import { getProjectHeader } from "@/lib/data/project";
-import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
-import { assertTaskAccess } from "@/lib/auth/authorization";
 
 /**
  * Extract path-like tokens from a markdown plan. A token qualifies when it
@@ -62,7 +60,7 @@ export async function buildReviewContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<string> {
-  const task = await assertTaskAccess(taskId, ctx);
+  const task = await getTaskFull(ctx, taskId);
 
   const project = await getProjectHeader(task.projectId);
   if (!project) {
@@ -76,15 +74,13 @@ export async function buildReviewContext(
   const status = task.status as string;
   const priority = task.priority as string | null;
   const estimate = task.estimate as number | null;
-  const taskRef = project
-    ? composeTaskRef(asIdentifier(project.identifier), task.sequenceNumber)
-    : "";
+  const taskRef = task.taskRef;
+  const links = task.links;
 
-  const [deps, downstream, upstreamEdgeNotes, links] = await Promise.all([
+  const [deps, downstream, upstreamEdgeNotes] = await Promise.all([
     getDependencyChain(taskId, task.projectId, 2),
     getDownstream(ctx, taskId, 2),
     fetchEdgeNotesBySource(task.projectId, taskId),
-    fetchLinksUnchecked(taskId),
   ]);
 
   const prLink = links.find((l) => l.kind === "pull_request");

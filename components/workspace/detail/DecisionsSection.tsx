@@ -29,25 +29,6 @@ function signatureFor(items: Decision[] | undefined | null): string {
   return (items ?? []).map((d) => d.text).join('||');
 }
 
-/**
- * Strip duplicate ids and mint missing ids on a decisions array.
- *
- * @param items - Decisions from props.
- * @returns Normalised list with unique ids preserving order.
- */
-function normalise(items: Decision[] | undefined | null): Decision[] {
-  if (!items?.length) return [];
-  const seen = new Set<string>();
-  const out: Decision[] = [];
-  for (const d of items) {
-    const id = d.id ?? crypto.randomUUID();
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push(d.id ? d : { ...d, id });
-  }
-  return out;
-}
-
 interface DecisionsSectionProps {
   /** Task UUID. */
   taskId: string;
@@ -65,7 +46,7 @@ interface DecisionsSectionProps {
  * @returns Decisions list plus add affordance.
  */
 export function DecisionsSection({ taskId, decisions, onGraphChange }: DecisionsSectionProps) {
-  const [local, setLocal] = useState(() => normalise(decisions));
+  const [local, setLocal] = useState(() => decisions ?? []);
   const [syncedSig, setSyncedSig] = useState(() => signatureFor(decisions));
   const [prevTaskId, setPrevTaskId] = useState(taskId);
   const [suppressing, setSuppressing] = useState(false);
@@ -96,7 +77,7 @@ export function DecisionsSection({ taskId, decisions, onGraphChange }: Decisions
   const incomingSig = signatureFor(decisions);
   if (!suppressing && incomingSig !== syncedSig) {
     setSyncedSig(incomingSig);
-    setLocal(normalise(decisions));
+    setLocal(decisions ?? []);
   }
 
   if (taskId !== prevTaskId) {

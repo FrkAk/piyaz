@@ -1,6 +1,11 @@
 import type { Project, Task, TaskEdge } from "@/lib/db/schema";
 import type { TaskState } from "@/lib/data/task";
-import type { Priority, Estimate } from "@/lib/types";
+import type {
+  AcceptanceCriterion,
+  Decision,
+  Priority,
+  Estimate,
+} from "@/lib/types";
 
 /**
  * Lightweight assignee projection used by surfaces that render
@@ -177,9 +182,17 @@ export type TaskSlim = {
   order: number;
 };
 
-/** Full task row + the composed `taskRef`, assignees, and links for project page detail surfaces. */
+/**
+ * Full task row + the composed `taskRef`, assignees, criteria, decisions, and
+ * links for project page detail surfaces. After MYMR-136, criteria and
+ * decisions live in relational child tables; this type carries them
+ * explicitly via join so existing consumers continue reading
+ * `task.acceptanceCriteria` and `task.decisions` without code changes.
+ */
 export type TaskFull = Task & {
   taskRef: string;
   assignees: AssigneeRef[];
+  acceptanceCriteria: AcceptanceCriterion[];
+  decisions: Decision[];
   links: TaskLinkRef[];
 };

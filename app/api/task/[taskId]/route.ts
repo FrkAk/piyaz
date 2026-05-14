@@ -1,9 +1,7 @@
 import { getAuthContext } from '@/lib/auth/context';
 import { ForbiddenError, assertTaskAccess } from '@/lib/auth/authorization';
 import { conditionalRespond, etagMatches } from '@/lib/api/conditional';
-import { getProjectIdentifier } from '@/lib/data/project';
-import { fetchAssigneesUnchecked, fetchLinksUnchecked } from '@/lib/data/task';
-import { asIdentifier, composeTaskRef } from '@/lib/graph/identifier';
+import { getTaskFull } from '@/lib/data/task';
 import { broker } from '@/lib/realtime/broker';
 import { internalError } from '@/lib/api/error';
 import { error } from '@/lib/api/response';
@@ -41,34 +39,24 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   }
 
   try {
-    const task = await assertTaskAccess(taskId, ctx);
+    // Cheap timestamp probe first — gates the conditional-GET path so
+    // HEAD and `If-None-Match` matches short-circuit before paying the
+    // join + JSON-agg cost of `getTaskFull`. The 200 fall-through goes
+    // through the ctx-taking `getTaskFull` (which re-asserts) so the
+    // route stays on the canonical pattern: every public data-layer
+    // call authorizes itself.
+    const access = await assertTaskAccess(taskId, ctx);
 
-    if (req.method === 'HEAD' || etagMatches(req, task.updatedAt)) {
-      return conditionalRespond(req, null, task.updatedAt);
+    if (req.method === 'HEAD' || etagMatches(req, access.updatedAt)) {
+      return conditionalRespond(req, null, access.updatedAt);
     }
 
-    const [identifier, assignees, links] = await Promise.all([
-      getProjectIdentifier(task.projectId),
-      // `assertTaskAccess` already authorized this taskId for the caller,
-      // so the unchecked fetch is safe here. Single round-trip parallel to
-      // the identifier read keeps the 200-path cost down.
-      fetchAssigneesUnchecked(taskId),
-      fetchLinksUnchecked(taskId),
-    ]);
-    if (!identifier) {
-      throw new Error(
-        `Task ${task.id} references missing project ${task.projectId}`,
-      );
-    }
-    const taskRef = composeTaskRef(
-      asIdentifier(identifier),
-      task.sequenceNumber,
-    );
+    const task = await getTaskFull(ctx, taskId);
 
     if (broker.hasConnections(ctx.userId)) {
       broker.register(ctx.userId, `task:${taskId}`, TASK_SUBSCRIPTION_TTL_MS);
     }
-    return conditionalRespond(req, { ...task, taskRef, assignees, links }, task.updatedAt);
+    return conditionalRespond(req, task, task.updatedAt);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return error('Task not found', 404);

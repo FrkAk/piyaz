@@ -22,26 +22,6 @@ function signatureFor(items: AcceptanceCriterion[] | undefined | null): string {
   return (items ?? []).map((c) => `${c.checked}|${c.text}`).join('||');
 }
 
-/**
- * Strip duplicate ids and mint missing ids on a criteria array — mirrors
- * the pattern from `tabs/TaskTab.tsx` so SSE merges don't drop entries.
- *
- * @param items - Criteria from props.
- * @returns Normalised list with unique ids preserving order.
- */
-function normalise(items: AcceptanceCriterion[] | undefined | null): AcceptanceCriterion[] {
-  if (!items?.length) return [];
-  const seen = new Set<string>();
-  const out: AcceptanceCriterion[] = [];
-  for (const c of items) {
-    const id = c.id ?? crypto.randomUUID();
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push(c.id ? c : { ...c, id });
-  }
-  return out;
-}
-
 interface CriteriaSectionProps {
   /** Task UUID. */
   taskId: string;
@@ -60,7 +40,7 @@ interface CriteriaSectionProps {
  * @returns Checklist plus add affordance.
  */
 export function CriteriaSection({ taskId, criteria, onGraphChange }: CriteriaSectionProps) {
-  const [local, setLocal] = useState(() => normalise(criteria));
+  const [local, setLocal] = useState(() => criteria ?? []);
   const [syncedSig, setSyncedSig] = useState(() => signatureFor(criteria));
   const [prevTaskId, setPrevTaskId] = useState(taskId);
   const [suppressing, setSuppressing] = useState(false);
@@ -91,7 +71,7 @@ export function CriteriaSection({ taskId, criteria, onGraphChange }: CriteriaSec
   const incomingSig = signatureFor(criteria);
   if (!suppressing && incomingSig !== syncedSig) {
     setSyncedSig(incomingSig);
-    setLocal(normalise(criteria));
+    setLocal(criteria ?? []);
   }
 
   if (taskId !== prevTaskId) {
