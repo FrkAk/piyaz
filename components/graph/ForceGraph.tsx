@@ -971,6 +971,12 @@ export function ForceGraph({
             ctx.shadowBlur = 6 + Math.sin(Date.now() / 400) * 3;
           }
           break;
+        case "in_review":
+          // Solid violet ring + filled body, no pulse — the work is done,
+          // the node is calmly waiting on a human gate. Distinguished from
+          // in_progress (amber + pulse) and done (green) by colour alone.
+          ctx.setLineDash([]);
+          break;
         case "planned":
         case "ready":
           // Solid blue ring. `ready` adds an inner filled dot below

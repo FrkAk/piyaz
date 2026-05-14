@@ -106,6 +106,7 @@ export interface ThemeColors {
   statusDraft: string;
   statusPlanned: string;
   statusInProgress: string;
+  statusInReview: string;
   statusDone: string;
   statusCancelled: string;
   surface: string;
@@ -136,6 +137,7 @@ export const DARK_THEME: ThemeColors = {
   statusDraft: "#b9c1cb",
   statusPlanned: "#55b3ff",
   statusInProgress: "#ffbc33",
+  statusInReview: "#a78bfa",
   statusDone: "#5fc992",
   statusCancelled: "#e57373",
   surface: "rgba(7,8,10,0.85)",
@@ -156,6 +158,7 @@ export const LIGHT_THEME: ThemeColors = {
   statusDraft: "#6b7280",
   statusPlanned: "#3b82f6",
   statusInProgress: "#d97706",
+  statusInReview: "#7c3aed",
   statusDone: "#059669",
   statusCancelled: "#c25454",
   surface: "rgba(255,255,255,0.85)",
@@ -187,6 +190,7 @@ export function getCanvasTheme(): ThemeColors {
       surface: isLight ? "rgba(255,255,255,0.85)" : "rgba(7,8,10,0.85)",
       tooltipText: textPrimary,
       statusDraft: read("--color-todo") || base.statusDraft,
+      statusInReview: read("--color-glyph-review") || base.statusInReview,
       statusDone: read("--color-done") || base.statusDone,
       statusCancelled: read("--color-cancelled") || base.statusCancelled,
     };
@@ -219,6 +223,7 @@ export function statusColor(stage: string, t: ThemeColors): string {
     case "ready":
     case "in_progress":
       return t.statusInProgress;
+    case "in_review": return t.statusInReview;
     case "cancelled": return t.statusCancelled;
     default: return t.statusDraft;
   }
