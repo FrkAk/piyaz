@@ -483,25 +483,6 @@ export async function getTaskFull(
   taskId: string,
 ): Promise<TaskFull> {
   await assertTaskAccess(taskId, ctx);
-  return getTaskFullUnchecked(taskId);
-}
-
-/**
- * Unchecked variant of {@link getTaskFull} for callers that have already
- * authorized access (e.g. the API route runs `assertTaskAccess` for the
- * 304 short-circuit before falling through to the 200 body). Skipping
- * the duplicate auth JOIN saves one Neon RTT per call.
- *
- * UNCHECKED: caller MUST `assertTaskAccess` first; the `Unchecked` suffix
- * is the contract — do not strip it when wrapping or re-exporting.
- *
- * @param taskId - UUID of the task.
- * @returns Full task row with composed `taskRef`, assignees, criteria,
- *   decisions, and links.
- */
-export async function getTaskFullUnchecked(
-  taskId: string,
-): Promise<TaskFull> {
   const rows = await fetchTaskFull(db, taskId);
   if (rows.length === 0) {
     throw new Error(

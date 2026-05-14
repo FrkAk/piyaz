@@ -3,7 +3,7 @@ import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { getConnectionString } from "@/tests/setup/container";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { createTask, deleteTask, updateTask, searchTasksPaged, getTaskSlim, getTaskFull, getTaskFullUnchecked } from "@/lib/data/task";
+import { createTask, deleteTask, updateTask, searchTasksPaged, getTaskSlim, getTaskFull } from "@/lib/data/task";
 import { getProjectMaxUpdatedAt } from "@/lib/data/project";
 import { makeAuthContext } from "@/lib/auth/context";
 
@@ -398,29 +398,6 @@ test("getTaskFull returns empty arrays (not null) when no children exist", async
   expect(full.decisions).toEqual([]);
   expect(full.assignees).toEqual([]);
   expect(full.links).toEqual([]);
-});
-
-test("getTaskFullUnchecked returns the same shape without re-asserting access", async () => {
-  // The route handler short-circuits the conditional GET via
-  // assertTaskAccess and then calls the unchecked variant to avoid the
-  // duplicate team-scoped JOIN. Verify the unchecked variant returns
-  // the same shape as the gated one when the caller has done the
-  // authorization upstream.
-  const f = await seedUserOrgProject("getfull-unchecked");
-  const ctx = makeAuthContext(f.userId);
-  const created = await createTask(ctx, {
-    projectId: f.projectId,
-    title: "T",
-    acceptanceCriteria: ["A"],
-    decisions: ["D"],
-  });
-
-  const gated = await getTaskFull(ctx, created.id);
-  const direct = await getTaskFullUnchecked(created.id);
-  expect(direct.id).toBe(gated.id);
-  expect(direct.taskRef).toBe(gated.taskRef);
-  expect(direct.acceptanceCriteria.map((c) => c.text)).toEqual(["A"]);
-  expect(direct.decisions.map((d) => d.text)).toEqual(["D"]);
 });
 
 test("searchTasksPaged reports hasCriteria via LEFT JOIN, not correlated EXISTS", async () => {
