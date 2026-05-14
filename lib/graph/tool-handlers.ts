@@ -474,8 +474,17 @@ function inReviewStatusHints(
       "Missing prUrl. The Completion Protocol writes the PR URL alongside the in_review status flip so the review subagent and detail UI can resolve the PR (lifecycle §2). Pass prUrl='<gh-pr-url>' on this call. Omit only when no PR was opened (research / docs-only / decision-only tasks).",
     );
   }
-  const persistedFiles = payload.files ?? persisted.files ?? [];
-  if (persistedFiles.length > 0 && payload.prUrl == null && !hasPrLink) {
+  // Read the cumulative post-update state from `persisted.files` — the
+  // append merge inside updateTask already folded in this turn's payload,
+  // so persisted is the canonical "does the task have files" signal. The
+  // earlier `payload.files ?? persisted.files` form silently swallowed a
+  // deliberate `files=[]` from the agent because `??` does not short-circuit
+  // on empty array, suppressing the "no PR" warning when the task had files.
+  if (
+    (persisted.files?.length ?? 0) > 0 &&
+    payload.prUrl == null &&
+    !hasPrLink
+  ) {
     hints.push(
       "Code change shipped without a PR. Open one per Completion Protocol (lifecycle §2 step 3) and pass prUrl on the next call. The implementer's terminal write is in_review with the PR attached; HOTL flips to done after approval.",
     );
