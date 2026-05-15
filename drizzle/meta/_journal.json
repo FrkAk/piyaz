@@ -8,13 +8,6 @@
       "when": 1778799052353,
       "tag": "0000_goofy_the_enforcers",
       "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1778839201373,
-      "tag": "0001_illegal_absorbing_man",
-      "breakpoints": true
     }
   ]
 }

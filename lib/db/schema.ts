@@ -1,7 +1,5 @@
-import { sql } from "drizzle-orm";
 import {
   pgTable,
-  pgPolicy,
   uuid,
   text,
   integer,
@@ -25,25 +23,23 @@ import type {
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
-// Row-Level Security policy expressions
+// Row-Level Security
 // ---------------------------------------------------------------------------
 //
-// All public-schema tables enable RLS via `.enableRLS()` and a single
-// permissive policy that resolves membership through `neon_auth.member`. The
-// predicate uses `NULLIF(current_setting('app.user_id', TRUE), '')::uuid` so
-// the missing-GUC path resolves to NULL and the EXISTS subquery evaluates to
-// false (default-deny) instead of raising an error or matching arbitrary
-// rows.
+// Every public-schema table opts into RLS via `.enableRLS()` so push emits
+// `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`. The CREATE POLICY predicates
+// themselves live in `docker/rls-policies.sql` (applied after `db:push`):
+// `drizzle-kit push` cannot round-trip `pgPolicy()` declarations correctly —
+// its introspection-based diff drops the `USING`/`WITH CHECK` clauses — so
+// policies are managed entirely as hand-written SQL and the schema only
+// declares the RLS enable bit.
 //
-// `for: 'all'` collapses SELECT/INSERT/UPDATE/DELETE into one declaration;
-// `using` applies on read paths, `withCheck` applies on write paths. Both
-// must pass so cross-team writes also fail under default-deny.
-//
-// `to: 'public'` (not a specific role): `service_role` has BYPASSRLS, so it
-// sidesteps policies entirely without needing exclusion. Targeting `public`
-// means anyone WITHOUT BYPASSRLS gets the predicate; targeting only
-// `app_user` would make policies silently inapplicable to e.g. `mymir`
-// connections from a misconfigured deploy.
+// All policies share the same shape: one permissive `FOR ALL TO public`
+// policy per table, predicating membership through `neon_auth.member` keyed
+// on `NULLIF(current_setting('app.user_id', TRUE), '')::uuid`. The
+// missing-GUC path resolves to NULL so the EXISTS subquery evaluates false
+// (default-deny). `service_role` (BYPASSRLS) sidesteps policies entirely;
+// `app_user` evaluates them on every query.
 
 // ---------------------------------------------------------------------------
 // Projects
@@ -68,21 +64,6 @@ export const projects = pgTable(
   (t) => [
     index("projects_organization_id_idx").on(t.organizationId),
     unique("projects_org_identifier_unique").on(t.organizationId, t.identifier),
-    pgPolicy("projects_member_access", {
-      as: "permissive",
-      for: "all",
-      to: "public",
-      using: sql`EXISTS (
-        SELECT 1 FROM neon_auth."member" m
-        WHERE m."organizationId" = ${t.organizationId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-      withCheck: sql`EXISTS (
-        SELECT 1 FROM neon_auth."member" m
-        WHERE m."organizationId" = ${t.organizationId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-    }),
   ],
 ).enableRLS();
 
@@ -119,23 +100,6 @@ export const tasks = pgTable(
   (t) => [
     index("tasks_project_id_idx").on(t.projectId),
     unique("tasks_project_sequence_unique").on(t.projectId, t.sequenceNumber),
-    pgPolicy("tasks_member_access", {
-      as: "permissive",
-      for: "all",
-      to: "public",
-      using: sql`EXISTS (
-        SELECT 1 FROM projects p
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE p.id = ${t.projectId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-      withCheck: sql`EXISTS (
-        SELECT 1 FROM projects p
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE p.id = ${t.projectId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-    }),
   ],
 ).enableRLS();
 
@@ -165,25 +129,6 @@ export const taskEdges = pgTable(
     index("task_edges_source_idx").on(t.sourceTaskId),
     index("task_edges_target_idx").on(t.targetTaskId),
     uniqueIndex("task_edges_unique_idx").on(t.sourceTaskId, t.targetTaskId, t.edgeType),
-    pgPolicy("task_edges_member_access", {
-      as: "permissive",
-      for: "all",
-      to: "public",
-      using: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.sourceTaskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-      withCheck: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.sourceTaskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-    }),
   ],
 ).enableRLS();
 
@@ -208,25 +153,6 @@ export const taskAssignees = pgTable(
   (t) => [
     primaryKey({ columns: [t.taskId, t.userId] }),
     index("task_assignees_user_id_idx").on(t.userId),
-    pgPolicy("task_assignees_member_access", {
-      as: "permissive",
-      for: "all",
-      to: "public",
-      using: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.taskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-      withCheck: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.taskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-    }),
   ],
 ).enableRLS();
 
@@ -253,25 +179,6 @@ export const taskAcceptanceCriteria = pgTable(
   (t) => [
     index("task_acceptance_criteria_task_id_position_idx").on(t.taskId, t.position),
     unique("task_acceptance_criteria_task_id_text_unique").on(t.taskId, t.text),
-    pgPolicy("task_acceptance_criteria_member_access", {
-      as: "permissive",
-      for: "all",
-      to: "public",
-      using: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.taskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-      withCheck: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.taskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-    }),
   ],
 ).enableRLS();
 
@@ -299,25 +206,6 @@ export const taskDecisions = pgTable(
   (t) => [
     index("task_decisions_task_id_position_idx").on(t.taskId, t.position),
     unique("task_decisions_task_id_text_unique").on(t.taskId, t.text),
-    pgPolicy("task_decisions_member_access", {
-      as: "permissive",
-      for: "all",
-      to: "public",
-      using: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.taskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-      withCheck: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.taskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-    }),
   ],
 ).enableRLS();
 
@@ -345,25 +233,6 @@ export const taskLinks = pgTable(
   (t) => [
     index("task_links_task_id_idx").on(t.taskId),
     unique("task_links_task_url_unique").on(t.taskId, t.url),
-    pgPolicy("task_links_member_access", {
-      as: "permissive",
-      for: "all",
-      to: "public",
-      using: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.taskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-      withCheck: sql`EXISTS (
-        SELECT 1 FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        JOIN neon_auth."member" m ON m."organizationId" = p.organization_id
-        WHERE t.id = ${t.taskId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-    }),
   ],
 ).enableRLS();
 

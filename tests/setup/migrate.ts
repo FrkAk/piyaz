@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
 
@@ -47,42 +47,48 @@ async function provisionRoles(sql: ReturnType<typeof postgres>): Promise<void> {
 }
 
 /**
- * Apply every `drizzle/NNNN_*.sql` migration file in order. The migration
- * files are split on the `--> statement-breakpoint` marker drizzle-kit
- * emits; each chunk is executed as a separate statement so policy DDL
- * (which `drizzle-kit push` silently drops) lands intact.
+ * Apply the hand-written RLS policy DDL from `docker/rls-policies.sql`.
+ * Run after `drizzle-kit push` because each policy references public
+ * tables that push creates first. The file is idempotent
+ * (`DROP POLICY IF EXISTS` + `CREATE POLICY`), so re-runs are safe.
+ *
+ * Split on semicolons rather than the drizzle `--> statement-breakpoint`
+ * marker because this file is plain SQL, not a drizzle-generated migration.
  *
  * @param sql - Active postgres client (uses superuser or service_role).
  */
-async function applyDrizzleMigrations(
-  sql: ReturnType<typeof postgres>,
-): Promise<void> {
-  const dir = join(process.cwd(), "drizzle");
-  const files = readdirSync(dir)
-    .filter((f) => /^\d{4}_.*\.sql$/.test(f))
-    .sort();
-  for (const file of files) {
-    const content = readFileSync(join(dir, file), "utf8");
-    const statements = content
-      .split("--> statement-breakpoint")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    for (const stmt of statements) {
-      await sql.unsafe(stmt);
-    }
+async function applyRlsPolicies(sql: ReturnType<typeof postgres>): Promise<void> {
+  const content = readFileSync(
+    join(process.cwd(), "docker", "rls-policies.sql"),
+    "utf8",
+  );
+  // Strip line comments first, then split on `;`. Splitting first leaves
+  // leading `-- comment` lines glued to the next statement, which trips
+  // the `startsWith('--')` filter and silently drops the whole chunk.
+  const stripped = content
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+  const statements = stripped
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  for (const stmt of statements) {
+    await sql.unsafe(stmt);
   }
 }
 
 /**
  * Apply `docker/init-auth.sql` (the neon_auth schema for self-hosted
  * Postgres), provision the RLS role split (`app_user` + `service_role`),
- * and run every drizzle migration in order. Run once per container at
- * `globalSetup`.
+ * run `drizzle-kit push` to create the public schema, then apply
+ * `docker/rls-policies.sql` so RLS policies land. Run once per container
+ * at `globalSetup`.
  *
- * Drizzle-kit `push` is intentionally NOT used: it silently drops the
- * `USING`/`WITH CHECK` clauses on policy DDL during introspection-based
- * diffing. Applying the generated migration files literally is the only
- * way to land non-empty policy predicates.
+ * `drizzle-kit push` is used (not `migrate`) because the project doesn't
+ * maintain a migration journal pre-v0.1. Policies live entirely in
+ * hand-written SQL because push's introspection-based diff silently drops
+ * the `USING`/`WITH CHECK` clauses on `pgPolicy()` declarations.
  *
  * @param url - Connection string for the target database.
  */
@@ -96,12 +102,27 @@ export async function applyMigrations(url: string): Promise<void> {
     await sql.unsafe(initAuth);
     // `init-auth.sql` calls `SET search_path TO neon_auth` for the duration
     // of its CREATE TABLEs. The setting persists on the pooled connection;
-    // reset it so the drizzle migrations land in the `public` schema as
-    // they expect.
+    // reset it so subsequent statements land in the `public` schema.
     await sql.unsafe("SET search_path TO public, neon_auth");
     await provisionRoles(sql);
-    await applyDrizzleMigrations(sql);
   } finally {
     await sql.end({ timeout: 5 });
+  }
+
+  const proc = Bun.spawnSync({
+    cmd: ["bun", "run", "drizzle-kit", "push", "--force"],
+    env: { ...process.env, DATABASE_URL: url, DATABASE_SERVICE_ROLE_URL: url },
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (proc.exitCode !== 0) {
+    throw new Error(`drizzle-kit push exited with code ${proc.exitCode}`);
+  }
+
+  const sqlPolicies = postgres(url, { max: 1 });
+  try {
+    await applyRlsPolicies(sqlPolicies);
+  } finally {
+    await sqlPolicies.end({ timeout: 5 });
   }
 }

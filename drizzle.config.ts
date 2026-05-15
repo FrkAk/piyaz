@@ -15,15 +15,16 @@ if (existsSync(envPath)) {
   }
 }
 
-// Migrations run as `service_role` (BYPASSRLS + CREATE on schema public +
-// USAGE/CREATE on the pre-provisioned `drizzle` schema for migration
-// tracking). `app_user` (the runtime DATABASE_URL role) has no CREATE
-// privilege and MUST NEVER run migrations. Falls back to DATABASE_URL
-// for legacy setups without DATABASE_SERVICE_ROLE_URL configured.
-const migrationUrl =
+// `drizzle-kit push` runs DDL (CREATE TABLE / ALTER TABLE / etc.) and needs
+// the BYPASSRLS + CREATE-on-schema-public role. The runtime `DATABASE_URL`
+// points at `app_user` (no CREATE, no BYPASSRLS), so push must connect via
+// `DATABASE_SERVICE_ROLE_URL`. Falls back to `DATABASE_URL` for legacy
+// single-role setups (pre-MYMR-151 clones, or environments where the
+// runtime role still carries BYPASSRLS).
+const pushUrl =
   process.env.DATABASE_SERVICE_ROLE_URL ?? process.env.DATABASE_URL;
 
-if (!migrationUrl) {
+if (!pushUrl) {
   throw new Error(
     "DATABASE_SERVICE_ROLE_URL (or DATABASE_URL) is required for drizzle-kit",
   );
@@ -35,6 +36,6 @@ export default defineConfig({
   dialect: "postgresql",
   schemaFilter: ["public"],
   dbCredentials: {
-    url: migrationUrl,
+    url: pushUrl,
   },
 });

@@ -3,7 +3,6 @@ import {
   check,
   index,
   integer,
-  pgPolicy,
   pgTable,
   text,
   timestamp,
@@ -24,8 +23,10 @@ import { organization, user } from "@/lib/db/auth-schema";
  * A team-wide code can't ride that flow without forging email, so we use
  * `auth.api.addMember` against this separate table instead.
  *
- * RLS is enabled with a 1-hop membership predicate. The three join-path
- * helpers in `lib/data/team-invite-code.ts` (`reserveInviteCodeSlot`,
+ * RLS is enabled here via `.enableRLS()`; the policy DDL itself lives in
+ * `docker/rls-policies.sql` (1-hop membership through `neon_auth.member`,
+ * applied after `db:push`). The three join-path helpers in
+ * `lib/data/team-invite-code.ts` (`reserveInviteCodeSlot`,
  * `releaseInviteCodeSlot`, `diagnoseTeamInviteCode`) use `serviceRoleDb`
  * (BYPASSRLS) because the joining user has no `neon_auth.member` row at
  * the moment of lookup. The four admin helpers (`findTeamInviteCode`,
@@ -68,21 +69,6 @@ export const teamInviteCodes = pgTable(
       "team_invite_code_default_role_check",
       sql`${t.defaultRole} IN ('member', 'admin')`,
     ),
-    pgPolicy("team_invite_code_member_access", {
-      as: "permissive",
-      for: "all",
-      to: "public",
-      using: sql`EXISTS (
-        SELECT 1 FROM neon_auth."member" m
-        WHERE m."organizationId" = ${t.organizationId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-      withCheck: sql`EXISTS (
-        SELECT 1 FROM neon_auth."member" m
-        WHERE m."organizationId" = ${t.organizationId}
-          AND m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
-      )`,
-    }),
   ],
 ).enableRLS();
 
