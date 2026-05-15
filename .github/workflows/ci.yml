@@ -28,6 +28,8 @@ jobs:
       - name: Install dependencies (Dependabot)
         run: bun install
         if: github.actor == 'dependabot[bot]'
+      - name: Audit dependencies
+        run: bun audit --audit-level=high
       - name: Validate PR title
         if: github.event_name == 'pull_request'
         env:

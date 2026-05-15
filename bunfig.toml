@@ -1,3 +1,6 @@
+[install]
+minimumReleaseAge = 259200
+
 [test]
 preload = ["./tests/setup/preload.ts"]
 timeout = 120000
