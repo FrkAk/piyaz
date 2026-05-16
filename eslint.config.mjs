@@ -22,6 +22,19 @@ const eslintConfig = [
   ...tsConfig,
   {
     files: ["**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
+  {
+    files: ["**/*.{ts,tsx}"],
     ignores: [
       "lib/db/**",
       "tests/**",
