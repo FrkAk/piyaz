@@ -405,7 +405,17 @@ export async function joinTeamByCodeAction(input: {
   }
   const { code } = parsed.data;
 
-  const reserved = await reserveInviteCodeSlot(userId, code);
+  let reserved: Awaited<ReturnType<typeof reserveInviteCodeSlot>>;
+  try {
+    reserved = await reserveInviteCodeSlot(makeAuthContext(userId), code);
+  } catch (err) {
+    console.error("joinTeamByCodeAction reserveInviteCodeSlot failed", { err });
+    return {
+      ok: false,
+      code: "unknown",
+      message: TEAM_ACTION_MESSAGES.unknown,
+    };
+  }
 
   if (!reserved) {
     // Fire-and-forget: keeping the diagnostic SELECT off the response
@@ -469,9 +479,17 @@ export async function joinTeamByCodeAction(input: {
 
 /**
  * Run `releaseInviteCodeSlot` swallowing transient failures so the caller
- * surfaces the addMember outcome rather than the bookkeeping outcome.
- * Logs every failure for ops; the slot is reclaimable by the pre-sweep in
- * `reserve_team_invite_code_slot`.
+ * surfaces the addMember outcome rather than the bookkeeping outcome. On
+ * the success path (`succeeded = true`) a single retry is attempted before
+ * giving up, because a leaked post-commit reservation on a `maxUses=1`
+ * slot is decremented back to redeemable by the pre-sweep in
+ * `reserve_team_invite_code_slot`. The SDF is idempotent so the retry
+ * either succeeds or hits the same transient failure.
+ *
+ * A retry-then-fail on the success path emits a `[ops-alert]` log so the
+ * leaked reservation is greppable in dashboards. Failure-path retries are
+ * not attempted: the pre-sweep reclaims the slot 15 minutes later with no
+ * security impact.
  *
  * @param userId - Caller user id (binding check inside the SDF).
  * @param reservationId - Row id returned by `reserveInviteCodeSlot`.
@@ -484,11 +502,23 @@ async function safeReleaseSlot(
 ): Promise<void> {
   try {
     await releaseInviteCodeSlot(userId, reservationId, succeeded);
+    return;
   } catch (err) {
-    console.error("joinTeamByCodeAction releaseInviteCodeSlot failed", {
-      reservationId,
-      succeeded,
-      err,
-    });
+    if (!succeeded) {
+      console.error("joinTeamByCodeAction releaseInviteCodeSlot failed", {
+        reservationId,
+        succeeded,
+        err,
+      });
+      return;
+    }
+    try {
+      await releaseInviteCodeSlot(userId, reservationId, succeeded);
+    } catch (retryErr) {
+      console.error(
+        "[ops-alert] joinTeamByCodeAction releaseInviteCodeSlot failed after retry",
+        { reservationId, succeeded, err: retryErr },
+      );
+    }
   }
 }

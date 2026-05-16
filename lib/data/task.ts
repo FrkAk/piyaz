@@ -71,53 +71,23 @@ function makeHistoryEntry(
 }
 
 /**
- * Append a history entry to a task's history array.
- *
- * Runs under RLS: callers must supply either an active transaction handle
- * (`opts.tx`, when the append participates in a larger same-transaction
- * mutation) or a `userId` to drive a fresh `withUserContext` frame. The
- * discriminated union prevents a bare call from silently default-denying
- * under `app_user`.
- *
- * @param taskId - UUID of the task.
- * @param entry - The history entry to append.
- * @param opts - Either `{ tx }` (run inside the supplied transaction) or
- *   `{ userId }` (open a fresh `withUserContext` frame).
- */
-export async function appendTaskHistory(
-  taskId: string,
-  entry: HistoryEntry,
-  opts: { tx: Tx } | { userId: string },
-): Promise<void> {
-  const run = async (handle: Tx) => {
-    await handle
-      .update(tasks)
-      .set({
-        history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
-        updatedAt: new Date(),
-      })
-      .where(eq(tasks.id, taskId));
-  };
-  if ("tx" in opts) {
-    await run(opts.tx);
-    return;
-  }
-  await withUserContext(opts.userId, run);
-}
-
-/**
  * Append the same history entry to multiple tasks in a single UPDATE.
  * Used by edge mutations to log "edge created/updated/deleted" on both
  * endpoints with one wire round-trip instead of two serial UPDATEs
  * inside the transaction.
  *
- * Caller is responsible for asserting access to every task in `taskIds`
- * — same contract as {@link appendTaskHistory}. Duplicates and empty
- * arrays are handled gracefully (no-op for empty input).
+ * Runs under RLS: callers must supply either an active transaction handle
+ * (`opts.tx`, when the append participates in a larger same-transaction
+ * mutation) or a `userId` to drive a fresh `withUserContext` frame. The
+ * discriminated union prevents a bare call from silently default-denying
+ * under `app_user`. Caller is responsible for asserting access to every
+ * task in `taskIds`. Duplicates and empty arrays are handled gracefully
+ * (no-op for empty input).
  *
  * @param taskIds - UUIDs of the tasks to append to. Duplicates dedup'd.
  * @param entry - The history entry to append to every supplied task.
- * @param opts - Either `{ tx }` or `{ userId }`; see {@link appendTaskHistory}.
+ * @param opts - Either `{ tx }` (run inside the supplied transaction) or
+ *   `{ userId }` (open a fresh `withUserContext` frame).
  */
 export async function appendTaskHistoryMany(
   taskIds: string[],

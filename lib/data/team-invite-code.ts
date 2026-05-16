@@ -141,38 +141,40 @@ export type InviteCodeReservation = {
  * the code is non-revoked, non-expired, and below `max_uses`. Records the
  * caller's `userId` in `reserved_by` so the matching release can confirm
  * the same caller before mutating the slot. Returns the row's
- * `{id, orgId, defaultRole}` on success, null when the code is invalid or
- * exhausted.
+ * `{id, orgId, defaultRole}` on success, null when the code is invalid,
+ * exhausted, or the caller's session identity does not match `ctx.userId`.
  *
  * Anti-enumeration: a null result hides which validity guard failed.
  *
- * Trust boundary: `userId` must come from a verified session (the action
- * layer enforces this via `requireSession`). The SDF runs on the bare
- * pool — it does NOT read `app.user_id` from the GUC.
+ * Trust boundary: the SDF binds `p_user_id` to the session's `app.user_id`
+ * GUC, so the wrapper must enter through `withUserContext`. Calling on a
+ * bare pool leaves the GUC unset and the SDF rejects every input.
  *
- * @param userId - Authenticated caller's user id.
+ * @param ctx - Verified caller context.
  * @param code - Raw invite code string (already shape-validated).
  * @returns Reservation handle, or null on failure.
  */
 export async function reserveInviteCodeSlot(
-  userId: string,
+  ctx: AuthContext,
   code: string,
 ): Promise<InviteCodeReservation | null> {
-  const rows = await executeRaw<{
-    id: string;
-    organization_id: string;
-    default_role: "member" | "admin";
-  }>(
-    db,
-    sql`SELECT id, organization_id, default_role FROM public.reserve_team_invite_code_slot(${code}, ${userId}::uuid)`,
-  );
-  const reserved = rows[0];
-  if (!reserved) return null;
-  return {
-    id: reserved.id,
-    orgId: reserved.organization_id,
-    defaultRole: reserved.default_role,
-  };
+  return withUserContext(ctx.userId, async (tx) => {
+    const rows = await executeRaw<{
+      id: string;
+      organization_id: string;
+      default_role: "member" | "admin";
+    }>(
+      tx,
+      sql`SELECT id, organization_id, default_role FROM public.reserve_team_invite_code_slot(${code}, ${ctx.userId}::uuid)`,
+    );
+    const reserved = rows[0];
+    if (!reserved) return null;
+    return {
+      id: reserved.id,
+      orgId: reserved.organization_id,
+      defaultRole: reserved.default_role,
+    };
+  });
 }
 
 /**

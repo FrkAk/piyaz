@@ -244,9 +244,11 @@ GROUP BY grantee, table_name
 ORDER BY table_name, grantee;
 
 -- Confirm neon_auth grants per role
--- Expected:
---   app_user: SELECT + REFERENCES on member/organization/user/invitation only (8 rows: 4 tables × 2 privs)
---   service_role: same as app_user, PLUS SELECT/UPDATE on session, SELECT/DELETE on oauth* tables
+-- Expected (source of truth: docker/grants.sql):
+--   app_user: zero rows on neon_auth.* (Option B lockdown — neon_auth reads
+--             route through SECURITY DEFINER functions in docker/rls-functions.sql)
+--   service_role: SELECT + REFERENCES on member/organization/user/invitation,
+--                 PLUS SELECT/UPDATE on session, SELECT/DELETE on oauth* tables
 --   auth_role: SELECT/INSERT/UPDATE/DELETE on every neon_auth table
 SELECT grantee, table_schema, table_name, privilege_type
 FROM information_schema.table_privileges

@@ -79,11 +79,17 @@ GRANT EXECUTE ON FUNCTION public.lookup_team_invite_code(text) TO service_role;
 -- a no-op and the main UPDATE matches nothing — identical null-result
 -- behavior to a missing code.
 --
--- This SDF does NOT read `app.user_id` from the GUC — the caller's
--- identity is passed explicitly so the SDF is safe to call on the bare
--- pool (no withUserContext wrapper required). Trust boundary: the JS
--- action verifies `session.user.id` before invoking, identical to the
--- contract of `auth.api.addMember`.
+-- Caller binding: the SDF aborts (returns empty set) unless `p_user_id`
+-- matches the session's `app.user_id` GUC. EXECUTE is granted to
+-- `app_user`, so without binding any SQL-injection sink could pass an
+-- arbitrary uuid to (a) burn slots on guessed codes or (b) recover
+-- `(organization_id, default_role)` for a code under a forged identity.
+-- Pairing the binding check with the GUC pins the SDF to the caller the
+-- JS action layer verified via `requireSession()`. Empty-set on
+-- mismatch (rather than RAISE) preserves anti-enumeration: the JS layer
+-- treats null identically whether the call was rejected for binding or
+-- for an invalid code. JS callers MUST enter through `withUserContext`
+-- so the GUC is set; without it the binding check rejects every call.
 DROP FUNCTION IF EXISTS public.reserve_team_invite_code_slot(text);
 CREATE OR REPLACE FUNCTION public.reserve_team_invite_code_slot(p_code text, p_user_id uuid)
 RETURNS TABLE (id uuid, organization_id uuid, default_role text)
@@ -92,6 +98,10 @@ SECURITY DEFINER
 SET search_path = public, pg_catalog, pg_temp
 AS $$
 BEGIN
+  IF p_user_id::text IS DISTINCT FROM current_setting('app.user_id', TRUE) THEN
+    RETURN;
+  END IF;
+
   UPDATE public.team_invite_code AS t
      SET use_count = GREATEST(t.use_count - 1, 0),
          reserved_until = NULL,
@@ -637,16 +647,20 @@ CREATE TRIGGER tasks_project_id_immutable
 -- source and target live in different projects — possibly in different
 -- orgs — exfiltrating cross-tenant task ids through edge metadata.
 --
--- Caller-rights (NOT SECURITY DEFINER) so the trigger appears in pg_proc
--- like the existing `reject_*_change` immutability triggers (no EXECUTE
--- grant to manage, trigger function body is fully schema-qualified). The
--- NULL-aware check matters: if a hostile role references an invisible task
--- id under RLS, the subquery returns NULL, and `NULL IS DISTINCT FROM
--- NULL` evaluates to FALSE — the explicit NULL check rejects that path.
+-- SECURITY DEFINER so the per-row `tasks` lookups bypass RLS — the
+-- function then sees both endpoints unconditionally regardless of the
+-- caller's team. Combined with the uniform error message + ERRCODE
+-- below, this collapses what was previously a 4-state oracle (both
+-- invisible / one visible / different projects / same project) into a
+-- single failure shape, eliminating the per-row visibility leak. The
+-- INSERT/UPDATE itself is still gated by the table's RLS WITH CHECK and
+-- by `team_invite_code_*` policies, so SECURITY DEFINER here cannot be
+-- abused to wire foreign edges — only to validate them uniformly.
 CREATE OR REPLACE FUNCTION public.reject_task_edges_cross_project()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER
+SET search_path = public, pg_catalog, pg_temp
 AS $$
 DECLARE
   v_source_project uuid;
@@ -657,17 +671,18 @@ BEGIN
   SELECT project_id INTO v_target_project
   FROM public.tasks WHERE id = NEW.target_task_id;
 
-  IF v_source_project IS NULL OR v_target_project IS NULL THEN
-    RAISE EXCEPTION 'task_edges: both endpoint tasks must exist'
-      USING ERRCODE = '23514';
-  END IF;
-  IF v_source_project IS DISTINCT FROM v_target_project THEN
-    RAISE EXCEPTION 'task_edges: source and target must share a project_id'
+  IF v_source_project IS NULL
+     OR v_target_project IS NULL
+     OR v_source_project IS DISTINCT FROM v_target_project THEN
+    RAISE EXCEPTION 'task_edges: invalid endpoint pair'
       USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.reject_task_edges_cross_project() FROM public;
+GRANT EXECUTE ON FUNCTION public.reject_task_edges_cross_project() TO app_user;
 
 DROP TRIGGER IF EXISTS task_edges_same_project_immutable ON public.task_edges;
 CREATE TRIGGER task_edges_same_project_immutable
