@@ -60,7 +60,17 @@ export async function listPendingInvitationsAction(input: {
   const parsed = parseOrFail(listInvitationsSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail('forbidden');
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error('listPendingInvitationsAction: isOrgAdmin failed', {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail('unknown');
+  }
+  if (!isAdmin) return teamFail('forbidden');
 
   let raw: BetterAuthInvitationRow[];
   try {
@@ -135,7 +145,17 @@ export async function cancelInvitationAction(input: {
   );
   if (!inOrg) return teamFail('not_found');
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail('forbidden');
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error('cancelInvitationAction: isOrgAdmin failed', {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail('unknown');
+  }
+  if (!isAdmin) return teamFail('forbidden');
 
   try {
     await auth.api.cancelInvitation({

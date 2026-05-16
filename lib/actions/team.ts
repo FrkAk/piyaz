@@ -178,7 +178,17 @@ export async function inviteMemberAction(input: {
   const parsed = parseOrFail(inviteMemberSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("inviteMemberAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
 
   try {
     const reqHeaders = await headers();
@@ -229,7 +239,17 @@ export async function removeMemberAction(input: {
   const parsed = parseOrFail(removeMemberSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("removeMemberAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
 
   try {
     const reqHeaders = await headers();
@@ -299,7 +319,17 @@ export async function updateMemberRoleAction(input: {
   const parsed = parseOrFail(updateMemberRoleSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("updateMemberRoleAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
 
   const preRead = await findMemberById(userId, parsed.data.memberId);
   if (!preRead) return teamFail("not_found");
@@ -468,7 +498,17 @@ export async function updateTeamAction(input: {
   const parsed = parseOrFail(updateTeamSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("updateTeamAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
 
   const data: { name?: string; slug?: string } = {};
   if (parsed.data.name !== undefined) data.name = parsed.data.name;
@@ -517,7 +557,17 @@ export async function deleteTeamAction(input: {
   const parsed = parseOrFail(deleteTeamSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgOwner(parsed.data.organizationId))) return teamFail("forbidden");
+  let isOwner: boolean;
+  try {
+    isOwner = await isOrgOwner(parsed.data.organizationId);
+  } catch (err) {
+    console.error("deleteTeamAction: isOrgOwner failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isOwner) return teamFail("forbidden");
 
   try {
     await auth.api.deleteOrganization({
@@ -570,7 +620,17 @@ export async function previewTeamDeleteAction(input: {
   const parsed = parseOrFail(deleteTeamSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgOwner(parsed.data.organizationId))) return teamFail("forbidden");
+  let isOwner: boolean;
+  try {
+    isOwner = await isOrgOwner(parsed.data.organizationId);
+  } catch (err) {
+    console.error("previewTeamDeleteAction: isOrgOwner failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isOwner) return teamFail("forbidden");
 
   try {
     const data = await previewTeamDelete(userId, parsed.data.organizationId);

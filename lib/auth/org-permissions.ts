@@ -36,8 +36,11 @@ export async function isOrgAdmin(organizationId: string): Promise<boolean> {
       },
     });
     return result.success === true;
-  } catch {
-    return false;
+  } catch (err) {
+    const code = (err as { body?: { code?: string } } | null)?.body?.code;
+    if (code === "USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION") return false;
+    console.error("isOrgAdmin failed", { organizationId, err });
+    throw err;
   }
 }
 
@@ -68,7 +71,10 @@ export async function isOrgOwner(organizationId: string): Promise<boolean> {
       },
     });
     return result.success === true;
-  } catch {
-    return false;
+  } catch (err) {
+    const code = (err as { body?: { code?: string } } | null)?.body?.code;
+    if (code === "USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION") return false;
+    console.error("isOrgOwner failed", { organizationId, err });
+    throw err;
   }
 }

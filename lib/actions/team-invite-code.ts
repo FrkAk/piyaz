@@ -109,7 +109,7 @@ async function resolveAdminContext(
   organizationId: string,
 ): Promise<
   | { ok: true; userId: string }
-  | { ok: false; code: "unauthorized" | "forbidden"; message: string }
+  | { ok: false; code: "unauthorized" | "forbidden" | "unknown"; message: string }
 > {
   let userId: string;
   try {
@@ -122,7 +122,21 @@ async function resolveAdminContext(
       message: TEAM_ACTION_MESSAGES.unauthorized,
     };
   }
-  if (!(await isOrgAdmin(organizationId))) {
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(organizationId);
+  } catch (err) {
+    console.error("resolveAdminContext: isOrgAdmin failed", {
+      organizationId,
+      err,
+    });
+    return {
+      ok: false,
+      code: "unknown",
+      message: TEAM_ACTION_MESSAGES.unknown,
+    };
+  }
+  if (!isAdmin) {
     return { ok: false, code: "forbidden", message: FORBIDDEN_MSG };
   }
   return { ok: true, userId };
