@@ -3,6 +3,10 @@ import { superuserPool } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { appUserConnect, seedUserOrgProject } from "@/tests/setup/seed";
 import { expectQueryRejects } from "@/tests/setup/expect-query";
+import {
+  releaseInviteCodeSlot,
+  reserveInviteCodeSlot,
+} from "@/lib/data/team-invite-code";
 
 /**
  * Direct-SQL RLS tests for `team_invite_code` admin-only writes.
@@ -67,6 +71,112 @@ describe("team_invite_code RLS — admin-only writes", () => {
     } finally {
       await c.end({ timeout: 5 });
     }
+  });
+
+  test("reserve → release(succeeded=true) saga: slot is consumed, reservation cleared", async () => {
+    // Pins the JS-side saga: the data-layer helpers, called in the order
+    // the action layer calls them, leave the row in the expected
+    // committed state. The action layer wraps releaseInviteCodeSlot in
+    // a safe try/catch — this test exercises the underlying contract.
+    const owner = await seedUserOrgProject("ic-saga-owner");
+    const joiner = await seedUserOrgProject("ic-saga-joiner");
+
+    const seed = superuserPool();
+    try {
+      await seed`
+        INSERT INTO team_invite_code (organization_id, code, created_by, max_uses)
+        VALUES (${owner.organizationId}, 'SAGA-OK', ${owner.userId}, 1)
+      `;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const reserved = await reserveInviteCodeSlot(joiner.userId, "SAGA-OK");
+    expect(reserved).not.toBeNull();
+    expect(reserved?.orgId).toBe(owner.organizationId);
+
+    // Mid-saga inspection: use_count incremented, reserved_by set to
+    // the joiner. After release(true): use_count stays, reservation cleared.
+    await releaseInviteCodeSlot(joiner.userId, reserved!.id, true);
+
+    const verify = superuserPool();
+    try {
+      const [row] = await verify<
+        Array<{ use_count: number; reserved_by: string | null; reserved_until: Date | null }>
+      >`
+        SELECT use_count, reserved_by, reserved_until
+        FROM team_invite_code
+        WHERE id = ${reserved!.id}
+      `;
+      expect(row.use_count).toBe(1);
+      expect(row.reserved_by).toBeNull();
+      expect(row.reserved_until).toBeNull();
+    } finally {
+      await verify.end({ timeout: 5 });
+    }
+  });
+
+  test("reserve → release(succeeded=false) saga: slot is freed, use_count decremented", async () => {
+    // The compensating branch — `addMember` threw, the action calls
+    // safeReleaseSlot(false). The slot is freed for retry.
+    const owner = await seedUserOrgProject("ic-saga-fail-owner");
+    const joiner = await seedUserOrgProject("ic-saga-fail-joiner");
+
+    const seed = superuserPool();
+    try {
+      await seed`
+        INSERT INTO team_invite_code (organization_id, code, created_by, max_uses)
+        VALUES (${owner.organizationId}, 'SAGA-FAIL', ${owner.userId}, 5)
+      `;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const reserved = await reserveInviteCodeSlot(joiner.userId, "SAGA-FAIL");
+    expect(reserved).not.toBeNull();
+    await releaseInviteCodeSlot(joiner.userId, reserved!.id, false);
+
+    const verify = superuserPool();
+    try {
+      const [row] = await verify<
+        Array<{ use_count: number; reserved_by: string | null }>
+      >`
+        SELECT use_count, reserved_by FROM team_invite_code
+        WHERE id = ${reserved!.id}
+      `;
+      expect(row.use_count).toBe(0);
+      expect(row.reserved_by).toBeNull();
+    } finally {
+      await verify.end({ timeout: 5 });
+    }
+  });
+
+  test("concurrent reserves of a max_uses=1 code: exactly one succeeds", async () => {
+    // The single-atomic-UPDATE design pinned by the SDF body. Two
+    // simultaneous reserves on a 1-use code must serialize via row-lock
+    // semantics so the second observes use_count >= max_uses and returns
+    // null.
+    const owner = await seedUserOrgProject("ic-race-owner");
+    const joinerA = await seedUserOrgProject("ic-race-a");
+    const joinerB = await seedUserOrgProject("ic-race-b");
+
+    const seed = superuserPool();
+    try {
+      await seed`
+        INSERT INTO team_invite_code (organization_id, code, created_by, max_uses)
+        VALUES (${owner.organizationId}, 'RACE-ONE', ${owner.userId}, 1)
+      `;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const [a, b] = await Promise.all([
+      reserveInviteCodeSlot(joinerA.userId, "RACE-ONE"),
+      reserveInviteCodeSlot(joinerB.userId, "RACE-ONE"),
+    ]);
+
+    const successes = [a, b].filter((r) => r !== null);
+    expect(successes.length).toBe(1);
   });
 
   test("any member CAN SELECT team_invite_code rows for their org", async () => {

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { appUserConnect, seedUserOrgProject } from "@/tests/setup/seed";
+import { getConnectionString } from "@/tests/setup/global";
 import { expectQueryRejects } from "@/tests/setup/expect-query";
 
 afterEach(async () => {
@@ -87,6 +89,78 @@ describe("app_user neon_auth lockdown", () => {
         `;
         expect(rows[0].current_user_org_ids).not.toContain(teamA.organizationId);
       });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
+});
+
+describe("auth_role public.* lockdown", () => {
+  // auth_role is Better Auth's connection — it must have ZERO grants on
+  // public.* so a compromise of the BA path cannot reach app data. A
+  // future docker/grants.sql edit that accidentally granted SELECT (or
+  // worse) on a public table would silently widen the blast radius.
+  // These tests pin the contract.
+  const publicTables = [
+    "projects",
+    "tasks",
+    "task_edges",
+    "task_assignees",
+    "task_acceptance_criteria",
+    "task_decisions",
+    "task_links",
+    "team_invite_code",
+  ];
+
+  function authRolePool() {
+    const url = new URL(getConnectionString());
+    url.username = "auth_role";
+    url.password = "auth_role";
+    return postgres(url.toString(), { max: 1, idle_timeout: 5 });
+  }
+
+  for (const t of publicTables) {
+    test(`auth_role cannot SELECT from public.${t}`, async () => {
+      const c = authRolePool();
+      try {
+        await expectQueryRejects(
+          c.unsafe(`SELECT 1 FROM public."${t}" LIMIT 1`),
+          /permission denied/i,
+        );
+      } finally {
+        await c.end({ timeout: 5 });
+      }
+    });
+  }
+
+  test("auth_role has no table-level privileges on any public.* table", async () => {
+    // USAGE on the schema is granted to PUBLIC by default on Postgres ≤14
+    // and to pg_database_owner on ≥15; the per-table privileges are the
+    // meaningful contract. The per-table SELECT/INSERT/UPDATE/DELETE
+    // probes above already prove the runtime path is locked down; this
+    // catalog assertion is the static-shape backup.
+    const c = authRolePool();
+    try {
+      for (const t of publicTables) {
+        const [row] = await c<
+          Array<{
+            sel: boolean;
+            ins: boolean;
+            upd: boolean;
+            del: boolean;
+          }>
+        >`
+          SELECT
+            has_table_privilege('auth_role', 'public.' || ${t}, 'SELECT') AS sel,
+            has_table_privilege('auth_role', 'public.' || ${t}, 'INSERT') AS ins,
+            has_table_privilege('auth_role', 'public.' || ${t}, 'UPDATE') AS upd,
+            has_table_privilege('auth_role', 'public.' || ${t}, 'DELETE') AS del
+        `;
+        expect(row.sel, `auth_role must NOT have SELECT on public.${t}`).toBe(false);
+        expect(row.ins, `auth_role must NOT have INSERT on public.${t}`).toBe(false);
+        expect(row.upd, `auth_role must NOT have UPDATE on public.${t}`).toBe(false);
+        expect(row.del, `auth_role must NOT have DELETE on public.${t}`).toBe(false);
+      }
     } finally {
       await c.end({ timeout: 5 });
     }

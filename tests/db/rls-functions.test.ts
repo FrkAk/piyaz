@@ -547,3 +547,74 @@ describe("is_caller_in_invitation_org SECURITY DEFINER", () => {
     expect(await callPredicate(fx.userId, bogus, fx.organizationId)).toBe(false);
   });
 });
+
+describe("SECURITY DEFINER catalog invariants", () => {
+  test("every public.* SECURITY DEFINER function is owned by a BYPASSRLS role", async () => {
+    // A SECURITY DEFINER body runs with the owner's row-level visibility.
+    // If the owner is ever flipped to a NOBYPASSRLS role, every definer
+    // call would suddenly evaluate RLS as that role's identity (typically
+    // empty), silently breaking the invite-code join flow without raising.
+    // This test pins the contract: every definer must be owned by a role
+    // whose `rolbypassrls = true`.
+    const sr = serviceRoleConnect();
+    const rows = await sr<
+      Array<{ proname: string; rolbypassrls: boolean; rolname: string }>
+    >`
+      SELECT p.proname, r.rolname, r.rolbypassrls
+      FROM pg_proc p
+      INNER JOIN pg_namespace n ON n.oid = p.pronamespace
+      INNER JOIN pg_roles r ON r.oid = p.proowner
+      WHERE n.nspname = 'public'
+        AND p.prosecdef = true
+      ORDER BY p.proname
+    `;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(
+        row.rolbypassrls,
+        `${row.proname}: owner ${row.rolname} must be BYPASSRLS (rolbypassrls=true)`,
+      ).toBe(true);
+    }
+  });
+
+  test("EXECUTE grant matrix matches the expected (app_user, public, service_role) tuple per function", async () => {
+    // PUBLIC must be denied on every public.* SECURITY DEFINER. app_user
+    // and service_role get EXECUTE selectively per function (the
+    // *AsAdmin definers are service_role-only). Any drift here is a
+    // privilege-escalation candidate and warrants a docker/grants.sql
+    // diff.
+    const sr = serviceRoleConnect();
+    const rows = await sr<
+      Array<{
+        proname: string;
+        public_role: boolean;
+        app_user: boolean;
+        service_role: boolean;
+      }>
+    >`
+      SELECT
+        p.oid::regprocedure::text AS proname,
+        has_function_privilege('public', p.oid, 'EXECUTE') AS public_role,
+        has_function_privilege('app_user', p.oid, 'EXECUTE') AS app_user,
+        has_function_privilege('service_role', p.oid, 'EXECUTE') AS service_role
+      FROM pg_proc p
+      INNER JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public'
+        AND p.prosecdef = true
+      ORDER BY p.proname
+    `;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(
+        row.public_role,
+        `${row.proname}: PUBLIC must NOT have EXECUTE (CVE-2018-1058 hardening)`,
+      ).toBe(false);
+      // Every definer is granted to app_user OR service_role (or both);
+      // a definer with no grants is dead code and worth flagging.
+      expect(
+        row.app_user || row.service_role,
+        `${row.proname}: no role has EXECUTE — orphan definer?`,
+      ).toBe(true);
+    }
+  });
+});

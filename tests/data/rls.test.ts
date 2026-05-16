@@ -288,4 +288,236 @@ describe("RLS — defense-in-depth on team isolation", () => {
       await sr2.end({ timeout: 5 });
     }
   });
+
+  test("cross-team UPDATE on projects mutates zero rows under app_user", async () => {
+    const teamA = await seedUserOrgProject("rls-x-upd-prj-a");
+    const teamB = await seedUserOrgProject("rls-x-upd-prj-b");
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+        const updated = await tx<{ id: string }[]>`
+          UPDATE projects SET title = 'pwned' WHERE id = ${teamA.projectId}
+          RETURNING id
+        `;
+        expect(updated.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+
+    const su = superuserPool();
+    const [verify] = await su<{ title: string }[]>`
+      SELECT title FROM projects WHERE id = ${teamA.projectId}
+    `;
+    expect(verify.title).not.toBe("pwned");
+  });
+
+  test("cross-team DELETE on projects affects zero rows under app_user", async () => {
+    const teamA = await seedUserOrgProject("rls-x-del-prj-a");
+    const teamB = await seedUserOrgProject("rls-x-del-prj-b");
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+        const deleted = await tx<{ id: string }[]>`
+          DELETE FROM projects WHERE id = ${teamA.projectId} RETURNING id
+        `;
+        expect(deleted.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+
+    const su = superuserPool();
+    const [verify] = await su<{ id: string }[]>`
+      SELECT id FROM projects WHERE id = ${teamA.projectId}
+    `;
+    expect(verify.id).toBe(teamA.projectId);
+  });
+
+  test("cross-team UPDATE on tasks mutates zero rows under app_user", async () => {
+    const teamA = await seedUserOrgProject("rls-x-upd-task-a");
+    const teamB = await seedUserOrgProject("rls-x-upd-task-b");
+
+    const su = superuserPool();
+    const [taskA] = await su<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, status)
+      VALUES (${teamA.projectId}, 'A task', 1, 'planned')
+      RETURNING id
+    `;
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+        const updated = await tx<{ id: string }[]>`
+          UPDATE tasks SET title = 'pwned' WHERE id = ${taskA.id} RETURNING id
+        `;
+        expect(updated.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+
+    const [verify] = await su<{ title: string }[]>`
+      SELECT title FROM tasks WHERE id = ${taskA.id}
+    `;
+    expect(verify.title).not.toBe("pwned");
+  });
+
+  test("cross-team DELETE on tasks affects zero rows under app_user", async () => {
+    const teamA = await seedUserOrgProject("rls-x-del-task-a");
+    const teamB = await seedUserOrgProject("rls-x-del-task-b");
+
+    const su = superuserPool();
+    const [taskA] = await su<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, status)
+      VALUES (${teamA.projectId}, 'A task', 2, 'planned')
+      RETURNING id
+    `;
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+        const deleted = await tx<{ id: string }[]>`
+          DELETE FROM tasks WHERE id = ${taskA.id} RETURNING id
+        `;
+        expect(deleted.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+
+    const [verify] = await su<{ id: string }[]>`
+      SELECT id FROM tasks WHERE id = ${taskA.id}
+    `;
+    expect(verify.id).toBe(taskA.id);
+  });
+
+  test("cross-team SELECT on task_acceptance_criteria returns zero rows", async () => {
+    const teamA = await seedUserOrgProject("rls-x-ac-a");
+    const teamB = await seedUserOrgProject("rls-x-ac-b");
+
+    const su = superuserPool();
+    const [task] = await su<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, status)
+      VALUES (${teamA.projectId}, 'A', 3, 'planned')
+      RETURNING id
+    `;
+    const [criterion] = await su<{ id: string }[]>`
+      INSERT INTO task_acceptance_criteria (id, task_id, position, text)
+      VALUES (gen_random_uuid(), ${task.id}, 0, 'A criterion')
+      RETURNING id
+    `;
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+        const rows = await tx<{ id: string }[]>`
+          SELECT id FROM task_acceptance_criteria WHERE id = ${criterion.id}
+        `;
+        expect(rows.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
+
+  test("cross-team SELECT on task_decisions returns zero rows", async () => {
+    const teamA = await seedUserOrgProject("rls-x-td-a");
+    const teamB = await seedUserOrgProject("rls-x-td-b");
+
+    const su = superuserPool();
+    const [task] = await su<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, status)
+      VALUES (${teamA.projectId}, 'A', 4, 'planned')
+      RETURNING id
+    `;
+    const [dec] = await su<{ id: string }[]>`
+      INSERT INTO task_decisions (id, task_id, position, text, source, decision_date)
+      VALUES (gen_random_uuid(), ${task.id}, 0, 'A decision', 'inferred', '2026-05-16')
+      RETURNING id
+    `;
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+        const rows = await tx<{ id: string }[]>`
+          SELECT id FROM task_decisions WHERE id = ${dec.id}
+        `;
+        expect(rows.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
+
+  test("cross-team SELECT on task_links returns zero rows", async () => {
+    const teamA = await seedUserOrgProject("rls-x-tl-a");
+    const teamB = await seedUserOrgProject("rls-x-tl-b");
+
+    const su = superuserPool();
+    const [task] = await su<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, status)
+      VALUES (${teamA.projectId}, 'A', 5, 'planned')
+      RETURNING id
+    `;
+    const [link] = await su<{ id: string }[]>`
+      INSERT INTO task_links (task_id, url, kind)
+      VALUES (${task.id}, 'https://example.test/x', 'other')
+      RETURNING id
+    `;
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+        const rows = await tx<{ id: string }[]>`
+          SELECT id FROM task_links WHERE id = ${link.id}
+        `;
+        expect(rows.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
+
+  test("team_invite_code RESTRICTIVE write floor blocks regular-member INSERT", async () => {
+    // Pin H1 directly at the SQL layer: even if a future permissive
+    // policy is added that would allow a member to INSERT, the
+    // RESTRICTIVE per-command floor still requires admin/owner.
+    const teamA = await seedUserOrgProject("rls-x-tic-floor-admin");
+    const su = superuserPool();
+    const [u] = await su<{ id: string }[]>`
+      INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      VALUES ('Regular Member', 'regular@test.local', true, now())
+      RETURNING id
+    `;
+    await su`
+      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      VALUES (${teamA.organizationId}, ${u.id}, 'member', now())
+    `;
+
+    const c = appUserConnect();
+    try {
+      await expectQueryRejects(
+        c.begin(async (tx) => {
+          await tx`SELECT set_config('app.user_id', ${u.id}, true)`;
+          await tx`
+            INSERT INTO team_invite_code (organization_id, code, created_by)
+            VALUES (${teamA.organizationId}, 'MEMBER-BLOCKED', ${u.id})
+          `;
+        }),
+        /violates row-level security policy|new row violates row-level/,
+      );
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
 });
