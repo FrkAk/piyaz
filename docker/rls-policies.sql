@@ -15,18 +15,18 @@
 
 -- projects — 1-hop directly on organization_id
 DROP POLICY IF EXISTS "projects_member_access" ON "projects";
-CREATE POLICY "projects_member_access" ON "projects" AS PERMISSIVE FOR ALL TO public
+CREATE POLICY "projects_member_access" ON "projects" AS PERMISSIVE FOR ALL TO app_user
   USING (organization_id = ANY (public.current_user_org_ids()));
 
 -- tasks — 2-hop via projects. Delegates to projects' RLS so the membership
 -- check evaluates once at the projects layer, not per task row.
 DROP POLICY IF EXISTS "tasks_member_access" ON "tasks";
-CREATE POLICY "tasks_member_access" ON "tasks" AS PERMISSIVE FOR ALL TO public
+CREATE POLICY "tasks_member_access" ON "tasks" AS PERMISSIVE FOR ALL TO app_user
   USING (project_id IN (SELECT id FROM public.projects));
 
 -- task_edges — both endpoints must be visible (see header on the DELETE quirk).
 DROP POLICY IF EXISTS "task_edges_member_access" ON "task_edges";
-CREATE POLICY "task_edges_member_access" ON "task_edges" AS PERMISSIVE FOR ALL TO public
+CREATE POLICY "task_edges_member_access" ON "task_edges" AS PERMISSIVE FOR ALL TO app_user
   USING (
     source_task_id IN (SELECT id FROM public.tasks)
     AND target_task_id IN (SELECT id FROM public.tasks)
@@ -38,22 +38,22 @@ CREATE POLICY "task_edges_member_access" ON "task_edges" AS PERMISSIVE FOR ALL T
 
 -- task_assignees — 3-hop via task. Delegates to tasks' RLS.
 DROP POLICY IF EXISTS "task_assignees_member_access" ON "task_assignees";
-CREATE POLICY "task_assignees_member_access" ON "task_assignees" AS PERMISSIVE FOR ALL TO public
+CREATE POLICY "task_assignees_member_access" ON "task_assignees" AS PERMISSIVE FOR ALL TO app_user
   USING (task_id IN (SELECT id FROM public.tasks));
 
 -- task_acceptance_criteria — 3-hop via task.
 DROP POLICY IF EXISTS "task_acceptance_criteria_member_access" ON "task_acceptance_criteria";
-CREATE POLICY "task_acceptance_criteria_member_access" ON "task_acceptance_criteria" AS PERMISSIVE FOR ALL TO public
+CREATE POLICY "task_acceptance_criteria_member_access" ON "task_acceptance_criteria" AS PERMISSIVE FOR ALL TO app_user
   USING (task_id IN (SELECT id FROM public.tasks));
 
 -- task_decisions — 3-hop via task.
 DROP POLICY IF EXISTS "task_decisions_member_access" ON "task_decisions";
-CREATE POLICY "task_decisions_member_access" ON "task_decisions" AS PERMISSIVE FOR ALL TO public
+CREATE POLICY "task_decisions_member_access" ON "task_decisions" AS PERMISSIVE FOR ALL TO app_user
   USING (task_id IN (SELECT id FROM public.tasks));
 
 -- task_links — 3-hop via task.
 DROP POLICY IF EXISTS "task_links_member_access" ON "task_links";
-CREATE POLICY "task_links_member_access" ON "task_links" AS PERMISSIVE FOR ALL TO public
+CREATE POLICY "task_links_member_access" ON "task_links" AS PERMISSIVE FOR ALL TO app_user
   USING (task_id IN (SELECT id FROM public.tasks));
 
 -- team_invite_code — split: SELECT for all members of the org, writes
@@ -65,11 +65,11 @@ DROP POLICY IF EXISTS "team_invite_code_member_select" ON "team_invite_code";
 DROP POLICY IF EXISTS "team_invite_code_admin_write" ON "team_invite_code";
 
 CREATE POLICY "team_invite_code_member_select" ON "team_invite_code"
-  AS PERMISSIVE FOR SELECT TO public
+  AS PERMISSIVE FOR SELECT TO app_user
   USING (organization_id = ANY (public.current_user_org_ids()));
 
 CREATE POLICY "team_invite_code_admin_write" ON "team_invite_code"
-  AS PERMISSIVE FOR ALL TO public
+  AS PERMISSIVE FOR ALL TO app_user
   USING (public.current_user_org_role(organization_id) IN ('admin', 'owner'))
   WITH CHECK (public.current_user_org_role(organization_id) IN ('admin', 'owner'));
 
