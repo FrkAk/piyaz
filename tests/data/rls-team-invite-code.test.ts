@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import postgres from "postgres";
-import { getConnectionString } from "@/tests/setup/container";
+import { getConnectionString } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { appUserConnect, seedUserOrgProject } from "@/tests/setup/seed";
 

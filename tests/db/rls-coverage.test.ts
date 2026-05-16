@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import postgres from "postgres";
-import { getConnectionString } from "@/tests/setup/container";
+import { getConnectionString } from "@/tests/setup/global";
 
 describe("RLS coverage — every public.* table is enabled + forced", () => {
   test("relrowsecurity = true and relforcerowsecurity = true for every public table", async () => {

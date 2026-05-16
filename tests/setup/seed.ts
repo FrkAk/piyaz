@@ -1,5 +1,5 @@
 import postgres from "postgres";
-import { getConnectionString } from "./container";
+import { getConnectionString } from "./global";
 
 /**
  * Open a postgres connection as `app_user` — the non-BYPASSRLS runtime role

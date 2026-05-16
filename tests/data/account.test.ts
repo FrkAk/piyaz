@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
-import { getConnectionString } from "@/tests/setup/container";
+import { getConnectionString } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 

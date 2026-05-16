@@ -6,7 +6,7 @@ import {
   seedUserOrgProject,
   serviceRoleConnect,
 } from "@/tests/setup/seed";
-import { getConnectionString } from "@/tests/setup/container";
+import { getConnectionString } from "@/tests/setup/global";
 import { withUserContext } from "@/lib/db/rls";
 
 afterEach(async () => {

@@ -1,5 +1,5 @@
 import postgres from "postgres";
-import { getConnectionString } from "./container";
+import { getConnectionString } from "./global";
 
 const TRUNCATE_TABLES = [
   "task_edges",

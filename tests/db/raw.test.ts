@@ -5,7 +5,7 @@ import { normalizeExecuteResult, executeRaw } from "@/lib/db/raw";
 import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
 import { db } from "@/lib/db";
 import { withUserContext } from "@/lib/db/rls";
-import { getConnectionString } from "@/tests/setup/container";
+import { getConnectionString } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 

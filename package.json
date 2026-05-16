@@ -18,7 +18,9 @@
     "db:setup": "docker compose up -d --wait && docker exec -i mymir-db-1 psql -U mymir -d mymir < docker/init-auth.sql && docker exec -e APP_USER_PASSWORD -e SERVICE_ROLE_PASSWORD -e AUTH_ROLE_PASSWORD -e POSTGRES_USER=mymir -e POSTGRES_DB=mymir mymir-db-1 /docker-entrypoint-initdb.d/02-rls.sh && bun run db:push && docker exec -i mymir-db-1 psql -U mymir -d mymir < docker/rls-policies.sql && docker exec -i mymir-db-1 psql -U mymir -d mymir < docker/rls-functions.sql",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "db:test:up": "docker compose -f docker-compose.test.yml up -d --wait",
+    "db:test:down": "docker compose -f docker-compose.test.yml down -v"
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.6.11",
@@ -49,7 +51,6 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@testcontainers/postgresql": "^11.14.0",
     "@types/d3-force": "^3.0.10",
     "@types/node": "^24.12.4",
     "@types/react": "^19.2.14",
@@ -59,7 +60,6 @@
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.6",
     "eslint-plugin-import": "^2.32.0",
-    "testcontainers": "^11.14.0",
     "typescript": "^6.0.3"
   }
 }

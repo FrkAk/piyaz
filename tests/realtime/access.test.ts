@@ -2,7 +2,7 @@ import { test, expect, beforeEach, afterEach, mock } from "bun:test";
 import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { getConnectionString } from "@/tests/setup/container";
+import { getConnectionString } from "@/tests/setup/global";
 import { broker } from "@/lib/realtime/broker";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 

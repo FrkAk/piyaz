@@ -7,7 +7,7 @@ import {
   afterEach,
 } from "bun:test";
 import postgres from "postgres";
-import { getConnectionString } from "@/tests/setup/container";
+import { getConnectionString } from "@/tests/setup/global";
 
 test("container is reachable and migrations applied", async () => {
   const sql = postgres(getConnectionString(), { max: 1 });

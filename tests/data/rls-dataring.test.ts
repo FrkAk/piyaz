@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { getConnectionString } from "@/tests/setup/container";
+import { getConnectionString } from "@/tests/setup/global";
 import { makeAuthContext } from "@/lib/auth/context";
 import {
   createTeamInviteCode,
