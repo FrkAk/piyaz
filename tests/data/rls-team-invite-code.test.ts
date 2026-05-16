@@ -3,19 +3,21 @@ import { superuserPool } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { appUserConnect, seedUserOrgProject } from "@/tests/setup/seed";
 import { expectQueryRejects } from "@/tests/setup/expect-query";
+import { makeAuthContext } from "@/lib/auth/context";
 import {
   releaseInviteCodeSlot,
   reserveInviteCodeSlot,
 } from "@/lib/data/team-invite-code";
 
 /**
- * Direct-SQL RLS tests for `team_invite_code` admin-only writes.
+ * Direct-SQL RLS tests for `team_invite_code` admin-only access.
  *
  * Pins the defense-in-depth contract: a regular org member must NOT be able
- * to INSERT/UPDATE/DELETE invite-code rows via raw SQL even if they bypass
- * the action-layer `isOrgAdmin` check (e.g. a new endpoint that forgets to
- * call it, or SQL injection landing inside the app_user session). Any
- * member is still allowed to SELECT rows scoped to their own org.
+ * to SELECT/INSERT/UPDATE/DELETE invite-code rows via raw SQL even if they
+ * bypass the action-layer `isOrgAdmin` check (e.g. a new endpoint that
+ * forgets to call it, or SQL injection landing inside the app_user
+ * session). The redemption SDFs are SECURITY DEFINER and sidestep the
+ * policy so the join flow still works for non-admin members.
  *
  * Membership-role changes use the testcontainer superuser (`getConnectionString`)
  * because `service_role` only has SELECT/REFERENCES on `neon_auth."member"`
@@ -91,7 +93,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
       await seed.end({ timeout: 5 });
     }
 
-    const reserved = await reserveInviteCodeSlot(joiner.userId, "SAGA-OK");
+    const reserved = await reserveInviteCodeSlot(makeAuthContext(joiner.userId), "SAGA-OK");
     expect(reserved).not.toBeNull();
     expect(reserved?.orgId).toBe(owner.organizationId);
 
@@ -132,7 +134,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
       await seed.end({ timeout: 5 });
     }
 
-    const reserved = await reserveInviteCodeSlot(joiner.userId, "SAGA-FAIL");
+    const reserved = await reserveInviteCodeSlot(makeAuthContext(joiner.userId), "SAGA-FAIL");
     expect(reserved).not.toBeNull();
     await releaseInviteCodeSlot(joiner.userId, reserved!.id, false);
 
@@ -171,8 +173,8 @@ describe("team_invite_code RLS — admin-only writes", () => {
     }
 
     const [a, b] = await Promise.all([
-      reserveInviteCodeSlot(joinerA.userId, "RACE-ONE"),
-      reserveInviteCodeSlot(joinerB.userId, "RACE-ONE"),
+      reserveInviteCodeSlot(makeAuthContext(joinerA.userId), "RACE-ONE"),
+      reserveInviteCodeSlot(makeAuthContext(joinerB.userId), "RACE-ONE"),
     ]);
 
     const successes = [a, b].filter((r) => r !== null);
@@ -233,7 +235,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
       await seed.end({ timeout: 5 });
     }
 
-    const reserved = await reserveInviteCodeSlot(joiner.userId, "REPLAY-FAIL");
+    const reserved = await reserveInviteCodeSlot(makeAuthContext(joiner.userId), "REPLAY-FAIL");
     expect(reserved).not.toBeNull();
     await releaseInviteCodeSlot(joiner.userId, reserved!.id, false);
 
@@ -287,7 +289,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
       await seed.end({ timeout: 5 });
     }
 
-    const reserved = await reserveInviteCodeSlot(joiner.userId, "REPLAY-MIX");
+    const reserved = await reserveInviteCodeSlot(makeAuthContext(joiner.userId), "REPLAY-MIX");
     expect(reserved).not.toBeNull();
     await releaseInviteCodeSlot(joiner.userId, reserved!.id, true);
     await releaseInviteCodeSlot(joiner.userId, reserved!.id, false);
@@ -310,12 +312,12 @@ describe("team_invite_code RLS — admin-only writes", () => {
     }
   });
 
-  test("any member CAN SELECT team_invite_code rows for their org", async () => {
-    const fx = await seedUserOrgProject("ic-select");
+  test("regular member CANNOT SELECT team_invite_code rows via direct SQL", async () => {
+    const fx = await seedUserOrgProject("h1-sel-member");
     const seed = superuserPool();
     try {
       await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
-                 VALUES (${fx.organizationId}, 'SELECTABLE1', 'member')`;
+                 VALUES (${fx.organizationId}, 'h1selmember', 'member')`;
       await seed`UPDATE neon_auth."member" SET "role" = 'member'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
@@ -328,8 +330,157 @@ describe("team_invite_code RLS — admin-only writes", () => {
         await tx`SELECT set_config('app.user_id', ${fx.userId}, true)`;
         const rows = await tx<{ code: string }[]>`
           SELECT code FROM team_invite_code WHERE organization_id = ${fx.organizationId}`;
+        expect(rows.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
+
+  test("admin CAN SELECT team_invite_code rows via direct SQL", async () => {
+    const fx = await seedUserOrgProject("h1-sel-admin");
+    const seed = superuserPool();
+    try {
+      await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
+                 VALUES (${fx.organizationId}, 'h1seladmin', 'member')`;
+      await seed`UPDATE neon_auth."member" SET "role" = 'admin'
+                 WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${fx.userId}, true)`;
+        const rows = await tx<{ code: string }[]>`
+          SELECT code FROM team_invite_code WHERE organization_id = ${fx.organizationId}`;
         expect(rows.length).toBe(1);
-        expect(rows[0].code).toBe("SELECTABLE1");
+        expect(rows[0].code).toBe("h1seladmin");
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
+
+  test("regular member CANNOT UPDATE a team_invite_code row via direct SQL", async () => {
+    const fx = await seedUserOrgProject("h7-update-member");
+    const seed = superuserPool();
+    try {
+      await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
+                 VALUES (${fx.organizationId}, 'h7updmember', 'member')`;
+      await seed`UPDATE neon_auth."member" SET "role" = 'member'
+                 WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${fx.userId}, true)`;
+        const updated = await tx<{ id: string }[]>`
+          UPDATE team_invite_code SET revoked_at = NOW()
+          WHERE organization_id = ${fx.organizationId}
+          RETURNING id`;
+        expect(updated.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+
+    const verify = superuserPool();
+    try {
+      const [row] = await verify<{ revoked_at: Date | null }[]>`
+        SELECT revoked_at FROM team_invite_code WHERE organization_id = ${fx.organizationId}`;
+      expect(row.revoked_at).toBeNull();
+    } finally {
+      await verify.end({ timeout: 5 });
+    }
+  });
+
+  test("regular member CANNOT DELETE a team_invite_code row via direct SQL", async () => {
+    const fx = await seedUserOrgProject("h7-delete-member");
+    const seed = superuserPool();
+    try {
+      await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
+                 VALUES (${fx.organizationId}, 'h7delmember', 'member')`;
+      await seed`UPDATE neon_auth."member" SET "role" = 'member'
+                 WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${fx.userId}, true)`;
+        const deleted = await tx<{ id: string }[]>`
+          DELETE FROM team_invite_code WHERE organization_id = ${fx.organizationId}
+          RETURNING id`;
+        expect(deleted.length).toBe(0);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+
+    const verify = superuserPool();
+    try {
+      const [row] = await verify<{ code: string }[]>`
+        SELECT code FROM team_invite_code WHERE organization_id = ${fx.organizationId}`;
+      expect(row.code).toBe("h7delmember");
+    } finally {
+      await verify.end({ timeout: 5 });
+    }
+  });
+
+  test("admin CAN UPDATE a team_invite_code row via direct SQL", async () => {
+    const fx = await seedUserOrgProject("h7-update-admin");
+    const seed = superuserPool();
+    try {
+      await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
+                 VALUES (${fx.organizationId}, 'h7updadmin', 'member')`;
+      await seed`UPDATE neon_auth."member" SET "role" = 'admin'
+                 WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${fx.userId}, true)`;
+        const updated = await tx<{ id: string }[]>`
+          UPDATE team_invite_code SET revoked_at = NOW()
+          WHERE organization_id = ${fx.organizationId}
+          RETURNING id`;
+        expect(updated.length).toBe(1);
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
+
+  test("admin CAN DELETE a team_invite_code row via direct SQL", async () => {
+    const fx = await seedUserOrgProject("h7-delete-admin");
+    const seed = superuserPool();
+    try {
+      await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
+                 VALUES (${fx.organizationId}, 'h7deladmin', 'member')`;
+      await seed`UPDATE neon_auth."member" SET "role" = 'admin'
+                 WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${fx.userId}, true)`;
+        const deleted = await tx<{ id: string }[]>`
+          DELETE FROM team_invite_code WHERE organization_id = ${fx.organizationId}
+          RETURNING id`;
+        expect(deleted.length).toBe(1);
       });
     } finally {
       await c.end({ timeout: 5 });
