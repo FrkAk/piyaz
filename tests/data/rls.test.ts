@@ -230,8 +230,73 @@ describe("RLS — defense-in-depth on team isolation", () => {
           VALUES (${taskAId}, ${taskBId}, 'depends_on')
         `;
       }),
-      /row-level security|violates row-level security|task_edges: both endpoint tasks must exist/i,
+      /row-level security|violates row-level security|task_edges: invalid endpoint pair/i,
     );
+  });
+
+  test("task_edges USING hides cross-team edges from target-side member — SELECT and DELETE are both blocked", async () => {
+    const fxA = await seedUserOrgProject("h8-edge-tgt-a");
+    const fxB = await seedUserOrgProject("h8-edge-tgt-b");
+
+    const sr = serviceRoleConnect();
+    let taskAId: string;
+    let taskBId: string;
+    try {
+      const [a] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number)
+        VALUES (${fxA.projectId}, 'task-A', 1)
+        RETURNING id
+      `;
+      const [b] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number)
+        VALUES (${fxB.projectId}, 'task-B', 1)
+        RETURNING id
+      `;
+      taskAId = a.id;
+      taskBId = b.id;
+      const suTrig = superuserPool();
+      try {
+        await suTrig`ALTER TABLE task_edges DISABLE TRIGGER task_edges_same_project_immutable`;
+        try {
+          await sr`
+            INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+            VALUES (${taskAId}, ${taskBId}, 'depends_on')
+          `;
+        } finally {
+          await suTrig`ALTER TABLE task_edges ENABLE TRIGGER task_edges_same_project_immutable`;
+        }
+      } finally {
+        await suTrig.end({ timeout: 5 });
+      }
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const c = appUserConnect();
+    try {
+      await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${fxB.userId}, true)`;
+        const visible = await tx<{ source_task_id: string; target_task_id: string }[]>`
+          SELECT source_task_id, target_task_id FROM task_edges
+          WHERE target_task_id = ${taskBId}
+        `;
+        expect(visible.length).toBe(0);
+        await tx`DELETE FROM task_edges WHERE target_task_id = ${taskBId}`;
+      });
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+
+    const sr2 = serviceRoleConnect();
+    try {
+      const [row] = await sr2<{ count: number }[]>`
+        SELECT count(*)::int AS count FROM task_edges
+        WHERE source_task_id = ${taskAId} AND target_task_id = ${taskBId}
+      `;
+      expect(row.count).toBe(1);
+    } finally {
+      await sr2.end({ timeout: 5 });
+    }
   });
 
   test("task_edges USING hides cross-team edges from source-side member — SELECT and DELETE are both blocked", async () => {
