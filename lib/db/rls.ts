@@ -2,16 +2,16 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { executeRawDiscard } from "@/lib/db/raw";
+import { executeRawDiscard, type RlsTx } from "@/lib/db/raw";
 
 /**
- * Drizzle transaction handle. Distinct from `Conn` (which is `db | Tx`) — this
- * alias is the narrow callback argument that `db.transaction(fn)` passes to
- * `fn`. The data ring's helpers expect this exact shape (they call methods
- * like `tx.delete(...).returning()` that `db` does not expose), so the
- * {@link withUserContext} callback receives this rather than the union.
+ * Drizzle transaction handle scoped to the caller's `app.user_id` GUC.
+ * Re-exported from `@/lib/db/raw` so the data ring imports one name; the
+ * brand prevents helpers in `lib/data/*` from accepting a bare
+ * `db.transaction(...)` handle (forbidden by lint, but the brand makes
+ * it a TypeScript error too).
  */
-export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Tx = RlsTx;
 
 // Pre-validate UUID shape so a Postgres `invalid input syntax for type uuid`
 // 500 surfaces as a typed error at the helper boundary. Unicode whitespace,
@@ -56,7 +56,12 @@ export async function withUserContext<T>(
   if (typeof userId !== "string" || !UUID_RE.test(userId)) {
     throw new InvalidUserIdError();
   }
-  return db.transaction(async (tx) => {
+  return db.transaction(async (rawTx) => {
+    // The bare drizzle Tx satisfies `RlsTx`'s structural shape; the brand
+    // is purely nominal so a cast here is sound. The GUC is set on the
+    // same transaction before `fn` runs, so every read/write inside the
+    // callback evaluates under `app.user_id`.
+    const tx = rawTx as Tx;
     await executeRawDiscard(
       tx,
       sql`SELECT set_config('app.user_id', ${userId}, true)`,

@@ -21,6 +21,36 @@ import * as authSchema from "./auth-schema";
 type AppDb = ReturnType<typeof drizzlePg<typeof appSchema>>;
 type AuthDb = ReturnType<typeof drizzlePg<typeof authSchema>>;
 
+declare const appUserBrand: unique symbol;
+declare const serviceRoleBrand: unique symbol;
+declare const rlsScopedBrand: unique symbol;
+
+/** Drizzle client pinned to the `app_user` pool (NOBYPASSRLS). */
+export type AppUserConn = AppDb & {
+  readonly [appUserBrand]: true;
+};
+
+/**
+ * Drizzle client pinned to the `service_role` pool (BYPASSRLS). Reserved
+ * for the documented bypass sites enumerated below. Distinct from
+ * {@link AppUserConn} so the type system rejects passing `serviceRoleDb`
+ * into a `Conn`-typed helper by mistake.
+ */
+export type ServiceRoleConn = AppDb & {
+  readonly [serviceRoleBrand]: true;
+};
+
+/**
+ * Transaction handle returned by `db.transaction(...)` inside a
+ * `withUserContext` frame. Carries a brand so a helper that opens a bare
+ * `db.transaction(...)` outside `withUserContext` (forbidden by the
+ * ESLint rule) cannot satisfy the `Conn` contract through structural
+ * typing.
+ */
+export type RlsTx = Parameters<Parameters<AppDb["transaction"]>[0]>[0] & {
+  readonly [rlsScopedBrand]: true;
+};
+
 declare global {
   var __mymirAppDb: AppDb | undefined;
   var __mymirAuthDb: AuthDb | undefined;
@@ -128,7 +158,7 @@ function buildServiceRoleDb(): AppDb {
  * Cached on `globalThis` so a warm Node process reuses the connection
  * across requests instead of paying the WebSocket handshake each time.
  */
-export const appDb = new Proxy({} as AppDb, {
+export const appDb = new Proxy({} as AppUserConn, {
   get(_target, prop, receiver) {
     if (!globalThis.__mymirAppDb) globalThis.__mymirAppDb = buildAppDb();
     return Reflect.get(globalThis.__mymirAppDb, prop, receiver);
@@ -160,7 +190,7 @@ export const authDb = new Proxy({} as AuthDb, {
  *   - `lib/data/oauth-session.ts` (app_user has no grants on the
  *     oauth* tables; rows are not tenant-scoped so RLS does not apply).
  */
-export const serviceRoleDb = new Proxy({} as AppDb, {
+export const serviceRoleDb = new Proxy({} as ServiceRoleConn, {
   get(_target, prop, receiver) {
     if (!globalThis.__mymirServiceRoleDb) {
       globalThis.__mymirServiceRoleDb = buildServiceRoleDb();

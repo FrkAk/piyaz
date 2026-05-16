@@ -1,13 +1,28 @@
 import { sql, type SQL } from "drizzle-orm";
-import type { db as appDb } from "@/lib/db";
+import type {
+  AppUserConn,
+  RlsTx,
+  ServiceRoleConn,
+} from "@/lib/db/connection";
+
+export type { AppUserConn, RlsTx, ServiceRoleConn };
 
 /**
- * A drizzle client or a transaction handle. Use as a parameter type when a
- * helper must be callable both standalone and inside `db.transaction`.
+ * A drizzle client or a transaction handle pinned to the caller's RLS
+ * scope. Use as the parameter type on every internal `lib/data/*` helper
+ * so a non-RLS-scoped handle (e.g. `serviceRoleDb`, or a bare drizzle tx
+ * opened outside `withUserContext`) is a TypeScript error at the call
+ * site, not just an ESLint violation.
  */
-export type Conn =
-  | typeof appDb
-  | Parameters<Parameters<typeof appDb.transaction>[0]>[0];
+export type Conn = AppUserConn | RlsTx;
+
+/**
+ * Internal: any drizzle handle the `executeRaw` helpers accept. Broader
+ * than {@link Conn} because the bypass sites (`clearOrgMembershipArtifacts`,
+ * `listOrgProjectIdsAsAdmin`, etc.) legitimately route raw SQL through
+ * the BYPASSRLS pool.
+ */
+type AnyConn = AppUserConn | ServiceRoleConn | RlsTx;
 
 /**
  * Drizzle's `client.execute()` returns one of two shapes depending on the
@@ -46,7 +61,7 @@ export function normalizeExecuteResult<T>(result: unknown): T[] {
  * @returns Result rows.
  */
 export async function executeRaw<T = Record<string, unknown>>(
-  conn: Conn,
+  conn: AnyConn,
   query: SQL,
 ): Promise<T[]> {
   const raw = await conn.execute(query);
@@ -62,7 +77,7 @@ export async function executeRaw<T = Record<string, unknown>>(
  * @param query - SQL fragment.
  */
 export async function executeRawDiscard(
-  conn: Conn,
+  conn: AnyConn,
   query: SQL,
 ): Promise<void> {
   await conn.execute(query);
