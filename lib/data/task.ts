@@ -16,10 +16,7 @@ import {
 } from "@/lib/db/schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
 import { fetchTaskFull } from "@/lib/db/raw/fetch-task-full";
-import {
-  fetchTaskChildren,
-  type TaskChildrenRow,
-} from "@/lib/db/raw/fetch-task-children";
+import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
 import type {
   AcceptanceCriterion,
   Decision,
@@ -39,8 +36,7 @@ import { ProjectNotFoundError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import type { AuthContext } from "@/lib/auth/context";
 import {
-  assertProjectAccess,
-  assertTaskAccess,
+  assertProjectAccessTx,
   assertTaskAccessTx,
   ForbiddenError,
   isUuid,
@@ -719,9 +715,9 @@ export async function getTaskSlim(
   ctx: AuthContext,
   taskId: string,
 ): Promise<TaskSlim> {
-  await assertTaskAccess(taskId, ctx);
-  const [row] = await withUserContext(ctx.userId, (tx) =>
-    tx
+  const [row] = await withUserContext(ctx.userId, async (tx) => {
+    await assertTaskAccessTx(tx, taskId);
+    return tx
       .select({
         id: tasks.id,
         title: tasks.title,
@@ -738,8 +734,8 @@ export async function getTaskSlim(
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(eq(tasks.id, taskId))
-      .limit(1),
-  );
+      .limit(1);
+  });
   if (!row) {
     throw new ForbiddenError("Forbidden", "task", taskId);
   }
@@ -768,8 +764,10 @@ export async function getTaskSlim(
  * @returns Ordered array of tasks.
  */
 export async function getProjectTasks(ctx: AuthContext, projectId: string) {
-  await assertProjectAccess(projectId, ctx);
-  return withUserContext(ctx.userId, (tx) => listProjectTasks(projectId, tx));
+  return withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
+    return listProjectTasks(projectId, tx);
+  });
 }
 
 /**
@@ -804,10 +802,9 @@ export async function getProjectTasksSlim(
   ctx: AuthContext,
   projectId: string,
 ): Promise<TaskSlim[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-
-  const rows = await withUserContext(ctx.userId, (tx) =>
-    tx
+  const { project, rows } = await withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const rows = await tx
       .select({
         id: tasks.id,
         title: tasks.title,
@@ -822,8 +819,9 @@ export async function getProjectTasksSlim(
       })
       .from(tasks)
       .where(eq(tasks.projectId, projectId))
-      .orderBy(asc(tasks.order)),
-  );
+      .orderBy(asc(tasks.order));
+    return { project, rows };
+  });
 
   return enrichWithTaskRef(rows, asIdentifier(project.identifier)).map((t) => ({
     id: t.id,
@@ -973,37 +971,10 @@ export async function searchTasks(
   query?: string,
   tags?: string[],
 ): Promise<SearchResult[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-
   const trimmedQuery = query?.trim() ?? "";
   const tagFilter = normalizeTags(tags);
   if (trimmedQuery.length === 0 && tagFilter.length === 0) return [];
 
-  const clauses = [eq(tasks.projectId, projectId)];
-
-  if (trimmedQuery.length > 0) {
-    const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
-    const seqClause =
-      refMatch && refMatch[1].toUpperCase() === project.identifier
-        ? eq(tasks.sequenceNumber, Number(refMatch[2]))
-        : null;
-
-    const pattern = `%${trimmedQuery}%`;
-    const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
-    const queryClause =
-      seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
-    if (queryClause) clauses.push(queryClause);
-  }
-
-  if (tagFilter.length > 0) {
-    clauses.push(
-      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
-    );
-  }
-
-  // Push relevance ranking + LIMIT 20 into SQL so the DB never returns a
-  // multi-thousand-row match set for a project the planner could trim
-  // upstream. The CASE bands mirror the previous JS sort exactly.
   const lower = trimmedQuery.toLowerCase();
   const rankExpr =
     trimmedQuery.length > 0
@@ -1015,7 +986,31 @@ export async function searchTasks(
         END`
       : sql<number>`0`;
 
-  const { trimmed, stateMap } = await withUserContext(ctx.userId, async (tx) => {
+  const { project, trimmed, stateMap } = await withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+
+    const clauses = [eq(tasks.projectId, projectId)];
+
+    if (trimmedQuery.length > 0) {
+      const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
+      const seqClause =
+        refMatch && refMatch[1].toUpperCase() === project.identifier
+          ? eq(tasks.sequenceNumber, Number(refMatch[2]))
+          : null;
+
+      const pattern = `%${trimmedQuery}%`;
+      const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
+      const queryClause =
+        seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
+      if (queryClause) clauses.push(queryClause);
+    }
+
+    if (tagFilter.length > 0) {
+      clauses.push(
+        sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
+      );
+    }
+
     const trimmedRows = await tx
       .select({
         id: tasks.id,
@@ -1045,7 +1040,7 @@ export async function searchTasks(
       })),
       tx,
     );
-    return { trimmed: trimmedRows, stateMap: states };
+    return { project, trimmed: trimmedRows, stateMap: states };
   });
 
   const identifier = asIdentifier(project.identifier);
@@ -1094,42 +1089,43 @@ export async function searchTasksPaged(
     cursor?: Cursor | string | null;
   } = {},
 ): Promise<SearchResultPage> {
-  const { project } = await assertProjectAccess(projectId, ctx);
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
   const after = decodeOrderCursor(opts.cursor);
 
   const trimmedQuery = opts.query?.trim() ?? "";
   const tagFilter = normalizeTags(opts.tags);
 
-  const clauses = [eq(tasks.projectId, projectId)];
-
-  if (trimmedQuery.length > 0) {
-    const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
-    const seqClause =
-      refMatch && refMatch[1].toUpperCase() === project.identifier
-        ? eq(tasks.sequenceNumber, Number(refMatch[2]))
-        : null;
-    const pattern = `%${trimmedQuery}%`;
-    const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
-    const queryClause =
-      seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
-    if (queryClause) clauses.push(queryClause);
-  }
-
-  if (tagFilter.length > 0) {
-    clauses.push(
-      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
-    );
-  }
-
   const cursorClause = after
     ? sql`(${tasks.order} < ${after.order}
             OR (${tasks.order} = ${after.order} AND ${tasks.id} < ${after.id}))`
     : sql`TRUE`;
 
-  const { trimmed, nextCursor, stateMap } = await withUserContext(
+  const { project, trimmed, nextCursor, stateMap } = await withUserContext(
     ctx.userId,
     async (tx) => {
+      const { project } = await assertProjectAccessTx(tx, projectId);
+
+      const clauses = [eq(tasks.projectId, projectId)];
+
+      if (trimmedQuery.length > 0) {
+        const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
+        const seqClause =
+          refMatch && refMatch[1].toUpperCase() === project.identifier
+            ? eq(tasks.sequenceNumber, Number(refMatch[2]))
+            : null;
+        const pattern = `%${trimmedQuery}%`;
+        const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
+        const queryClause =
+          seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
+        if (queryClause) clauses.push(queryClause);
+      }
+
+      if (tagFilter.length > 0) {
+        clauses.push(
+          sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
+        );
+      }
+
       const matchingTasks = await tx
         .select({
           id: tasks.id,
@@ -1161,7 +1157,7 @@ export async function searchTasksPaged(
           : null;
 
       if (trimmedRows.length === 0) {
-        return { trimmed: trimmedRows, nextCursor: null, stateMap: null };
+        return { project, trimmed: trimmedRows, nextCursor: null, stateMap: null };
       }
 
       const states = await deriveTaskStatesSlim(
@@ -1174,7 +1170,7 @@ export async function searchTasksPaged(
         })),
         tx,
       );
-      return { trimmed: trimmedRows, nextCursor: cursor, stateMap: states };
+      return { project, trimmed: trimmedRows, nextCursor: cursor, stateMap: states };
     },
   );
 
@@ -1573,8 +1569,6 @@ async function setTaskAssignees(
  * @returns Task summary with composed taskRef.
  */
 export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
-  await assertProjectAccess(data.projectId, ctx);
-
   const normalizedCriteria = Array.isArray(data.acceptanceCriteria)
     ? normalizeCriteria(data.acceptanceCriteria)
     : undefined;
@@ -1623,6 +1617,7 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
   }
 
   const result = await withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, taskFields.projectId);
     await acquireProjectLock(tx, taskFields.projectId);
 
     const [proj] = await tx
@@ -1759,14 +1754,18 @@ export type TaskUpdate = {
  * checks in `lib/graph/tool-handlers.ts`) see the same shape they saw on
  * the JSONB-storage path.
  *
- * WARNING — partial contract: `acceptanceCriteria` and `decisions` are
- * the freshly-fetched persisted state ONLY when `updateTask` wrote child
+ * Partial contract: `acceptanceCriteria` and `decisions` are the
+ * freshly-fetched persisted state ONLY when `updateTask` wrote child
  * tables (criteria or decisions passed) or transitioned `status`. On any
  * other path (title / description / tags / files / assignees / prUrl
- * only), both arrays are returned as `[]` regardless of what is
- * persisted — the post-write refetch is skipped to save a round-trip.
+ * only), both fields are returned as `null` — the post-write refetch is
+ * skipped to save a round-trip.
  *
- * Read them ONLY when your call set one of:
+ * `null` means "the field was not read or written on this update path;
+ * consult `getTaskFull` if you need the current value". An empty array
+ * means the refetch ran and the child table is genuinely empty.
+ *
+ * Read these fields ONLY when your call set one of:
  *   - `input.acceptanceCriteria`
  *   - `input.decisions`
  *   - `input.status`
@@ -1774,8 +1773,8 @@ export type TaskUpdate = {
  * For any other caller, re-fetch via `getTaskFull(ctx, taskId)` instead.
  */
 export type UpdateTaskResult = typeof tasks.$inferSelect & {
-  acceptanceCriteria: AcceptanceCriterion[];
-  decisions: Decision[];
+  acceptanceCriteria: AcceptanceCriterion[] | null;
+  decisions: Decision[] | null;
 };
 
 /**
@@ -1790,8 +1789,8 @@ export type UpdateTaskResult = typeof tasks.$inferSelect & {
  * @returns The updated row. `acceptanceCriteria` / `decisions` reflect the
  *   freshly-fetched persisted state ONLY when this call wrote child tables
  *   (criteria or decisions in `input`) or changed `status`. On any other
- *   path both arrays are returned empty regardless of what is persisted —
- *   see the `UpdateTaskResult` JSDoc for the full partial-contract notes.
+ *   path both fields are returned as `null` — see the `UpdateTaskResult`
+ *   JSDoc for the full partial-contract notes.
  */
 export async function updateTask(
   ctx: AuthContext,
@@ -1799,8 +1798,6 @@ export async function updateTask(
   input: TaskUpdate,
   overwriteArrays = false,
 ): Promise<UpdateTaskResult> {
-  await assertTaskAccess(taskId, ctx);
-
   let changes: Record<string, unknown> = { ...input };
   for (const key of PROTECTED_TASK_FIELDS) {
     if (key in changes) delete changes[key];
@@ -1889,6 +1886,7 @@ export async function updateTask(
   const statusChanged = typeof input.status === "string";
   const refetchNeeded = wroteChildren || statusChanged;
   const result = await withUserContext(ctx.userId, async (tx) => {
+    await assertTaskAccessTx(tx, taskId);
     // Row-level INSERT/UPDATE/DELETE on the child tables is atomic per row
     // via MVCC + ON CONFLICT (id) DO UPDATE, so a FOR UPDATE row lock is not
     // required. A plain SELECT is sufficient for the no-op short-circuit
@@ -1913,11 +1911,7 @@ export async function updateTask(
       formattedDecisions === undefined
     ) {
       wasNoOp = true;
-      const noOpChildren: TaskChildrenRow = {
-        acceptance_criteria: null,
-        decisions: null,
-      };
-      return { row: current, children: noOpChildren };
+      return { row: current, criteriaResult: null, decisionsResult: null };
     }
 
     if (!overwriteArrays && Array.isArray(changes.files)) {
@@ -2020,10 +2014,23 @@ export async function updateTask(
           });
       }
     }
-    const children: TaskChildrenRow = refetchNeeded
-      ? await fetchTaskChildren(tx, taskId)
-      : { acceptance_criteria: null, decisions: null };
-    return { row, children };
+    let criteriaResult: AcceptanceCriterion[] | null = null;
+    let decisionsResult: Decision[] | null = null;
+    if (refetchNeeded) {
+      const children = await fetchTaskChildren(tx, taskId);
+      criteriaResult = (children.acceptance_criteria ?? []).map((c) => ({
+        id: c.id,
+        text: c.text,
+        checked: c.checked,
+      }));
+      decisionsResult = (children.decisions ?? []).map((d) => ({
+        id: d.id,
+        text: d.text,
+        source: d.source as Decision["source"],
+        date: d.date,
+      }));
+    }
+    return { row, criteriaResult, decisionsResult };
   });
 
   // Reflect a prUrl- or criteria/decisions-only call (no other field
@@ -2038,17 +2045,8 @@ export async function updateTask(
     emitTaskEvent(result.row.projectId, taskId);
   }
   return Object.assign(result.row, {
-    acceptanceCriteria: (result.children.acceptance_criteria ?? []).map((c) => ({
-      id: c.id,
-      text: c.text,
-      checked: c.checked,
-    })),
-    decisions: (result.children.decisions ?? []).map((d) => ({
-      id: d.id,
-      text: d.text,
-      source: d.source as Decision["source"],
-      date: d.date,
-    })),
+    acceptanceCriteria: result.criteriaResult,
+    decisions: result.decisionsResult,
   });
 }
 
@@ -2072,30 +2070,33 @@ export async function updateTask(
  * @returns Deletion summary.
  */
 export async function deleteTask(ctx: AuthContext, taskId: string) {
-  const task = await assertTaskAccess(taskId, ctx);
+  const { projectId, deletedEdges } = await withUserContext(
+    ctx.userId,
+    async (tx) => {
+      const task = await assertTaskAccessTx(tx, taskId);
 
-  const deletedEdges = await withUserContext(ctx.userId, async (tx) => {
-    const removed = await tx
-      .delete(taskEdges)
-      .where(
-        or(
-          eq(taskEdges.sourceTaskId, taskId),
-          eq(taskEdges.targetTaskId, taskId),
-        ),
-      )
-      .returning({ id: taskEdges.id });
+      const removed = await tx
+        .delete(taskEdges)
+        .where(
+          or(
+            eq(taskEdges.sourceTaskId, taskId),
+            eq(taskEdges.targetTaskId, taskId),
+          ),
+        )
+        .returning({ id: taskEdges.id });
 
-    await tx.delete(tasks).where(eq(tasks.id, taskId));
+      await tx.delete(tasks).where(eq(tasks.id, taskId));
 
-    await tx
-      .update(projects)
-      .set({ updatedAt: new Date() })
-      .where(eq(projects.id, task.projectId));
+      await tx
+        .update(projects)
+        .set({ updatedAt: new Date() })
+        .where(eq(projects.id, task.projectId));
 
-    return removed;
-  });
+      return { projectId: task.projectId, deletedEdges: removed };
+    },
+  );
 
-  emitTaskEvent(task.projectId, taskId);
+  emitTaskEvent(projectId, taskId);
   return {
     deleted: { id: taskId },
     edgesRemoved: deletedEdges.length,
@@ -2113,10 +2114,9 @@ export async function deleteTask(ctx: AuthContext, taskId: string) {
  * @returns Summary of the task and edge impact.
  */
 export async function deleteTaskPreview(ctx: AuthContext, taskId: string) {
-  const task = await assertTaskAccess(taskId, ctx);
-
-  const edgeRows = await withUserContext(ctx.userId, (tx) =>
-    tx
+  const { task, edgeRows } = await withUserContext(ctx.userId, async (tx) => {
+    const task = await assertTaskAccessTx(tx, taskId);
+    const edgeRows = await tx
       .select({ id: taskEdges.id })
       .from(taskEdges)
       .where(
@@ -2124,8 +2124,9 @@ export async function deleteTaskPreview(ctx: AuthContext, taskId: string) {
           eq(taskEdges.sourceTaskId, taskId),
           eq(taskEdges.targetTaskId, taskId),
         ),
-      ),
-  );
+      );
+    return { task, edgeRows };
+  });
 
   return {
     task: { id: task.id, title: task.title },
@@ -2154,7 +2155,6 @@ export async function addTaskLink(
   taskId: string,
   url: string,
 ): Promise<TaskLink> {
-  const task = await assertTaskAccess(taskId, ctx);
   let classified;
   try {
     classified = classifyLink(url);
@@ -2165,7 +2165,8 @@ export async function addTaskLink(
     throw e;
   }
 
-  const result = await withUserContext(ctx.userId, async (tx) => {
+  const { row, projectId } = await withUserContext(ctx.userId, async (tx) => {
+    const task = await assertTaskAccessTx(tx, taskId);
     const [inserted] = await tx
       .insert(taskLinks)
       .values({
@@ -2197,11 +2198,11 @@ export async function addTaskLink(
       .update(tasks)
       .set({ updatedAt: new Date() })
       .where(eq(tasks.id, taskId));
-    return row;
+    return { row, projectId: task.projectId };
   });
 
-  emitTaskEvent(task.projectId, taskId);
-  return result;
+  emitTaskEvent(projectId, taskId);
+  return row;
 }
 
 /**

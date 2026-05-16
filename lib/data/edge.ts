@@ -17,7 +17,6 @@ import { formatMarkdown } from "@/lib/markdown/format";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   ForbiddenError,
-  assertTaskAccess,
   assertTaskAccessTx,
   isUuid,
 } from "@/lib/auth/authorization";
@@ -57,9 +56,11 @@ export async function findEdgeByNodes(
   targetTaskId: string,
   edgeType: EdgeType,
 ) {
-  await assertTaskAccess(sourceTaskId, ctx);
-  await assertTaskAccess(targetTaskId, ctx);
   return withUserContext(ctx.userId, async (tx) => {
+    await Promise.all([
+      assertTaskAccessTx(tx, sourceTaskId),
+      assertTaskAccessTx(tx, targetTaskId),
+    ]);
     const [row] = await tx
       .select()
       .from(taskEdges)
@@ -82,8 +83,8 @@ export async function findEdgeByNodes(
  * @returns Array of edges.
  */
 export async function getTaskEdges(ctx: AuthContext, taskId: string) {
-  await assertTaskAccess(taskId, ctx);
   return withUserContext(ctx.userId, async (tx) => {
+    await assertTaskAccessTx(tx, taskId);
     return tx
       .select()
       .from(taskEdges)
@@ -290,20 +291,22 @@ export async function createEdge(
     );
   }
 
-  const [sourceTask, targetTask] = await Promise.all([
-    assertTaskAccess(data.sourceTaskId, ctx),
-    assertTaskAccess(data.targetTaskId, ctx),
-  ]);
-
-  if (sourceTask.projectId !== targetTask.projectId) {
-    throw new Error("Cannot create edge between tasks in different projects.");
-  }
-
   if (typeof data.note === "string" && data.note.trim()) {
     data = { ...data, note: (await formatMarkdown(data.note)) ?? data.note };
   }
 
-  const edge = await withUserContext(ctx.userId, async (tx) => {
+  const { edge, projectId } = await withUserContext(ctx.userId, async (tx) => {
+    const [sourceTask, targetTask] = await Promise.all([
+      assertTaskAccessTx(tx, data.sourceTaskId),
+      assertTaskAccessTx(tx, data.targetTaskId),
+    ]);
+
+    if (sourceTask.projectId !== targetTask.projectId) {
+      throw new Error(
+        "Cannot create edge between tasks in different projects.",
+      );
+    }
+
     const [existing] = await tx
       .select({ id: taskEdges.id })
       .from(taskEdges)
@@ -347,10 +350,10 @@ export async function createEdge(
       { tx },
     );
 
-    return created;
+    return { edge: created, projectId: sourceTask.projectId };
   });
 
-  emitEdgeMutation(sourceTask.projectId, data.sourceTaskId, data.targetTaskId);
+  emitEdgeMutation(projectId, data.sourceTaskId, data.targetTaskId);
   return {
     id: edge.id,
     sourceTaskId: edge.sourceTaskId,
@@ -362,28 +365,31 @@ export async function createEdge(
 
 /**
  * Internal helper: fetch an edge by id then assert the caller can reach it
- * via the parent project. Both the missing-edge case and a cross-team task
- * surface as a `ForbiddenError` tagged with `resource: "edge"` so the tool
- * layer can render an edge-specific recovery hint without re-querying.
+ * via the parent project on a caller-supplied transaction handle. Both the
+ * missing-edge case and a cross-team task surface as a `ForbiddenError`
+ * tagged with `resource: "edge"` so the tool layer can render an
+ * edge-specific recovery hint without re-querying. Sharing one
+ * `withUserContext` frame across the edge lookup, the access check, and
+ * the surrounding mutation keeps every read/write on a single RLS-scoped
+ * transaction.
+ *
+ * @param tx - Drizzle transaction handle from an active `withUserContext` frame.
  * @param edgeId - UUID of the edge.
- * @param ctx - Resolved auth context.
- * @returns The edge row.
+ * @returns The edge row and its parent project id.
+ * @throws ForbiddenError on missing edge, malformed id, or cross-team access.
  */
-async function loadAuthorizedEdge(edgeId: string, ctx: AuthContext) {
+async function loadAuthorizedEdgeTx(tx: Tx, edgeId: string) {
   if (!isUuid(edgeId)) {
     throw new ForbiddenError("Forbidden", "edge", edgeId);
   }
-  const edge = await withUserContext(ctx.userId, async (tx) => {
-    const [row] = await tx
-      .select()
-      .from(taskEdges)
-      .where(eq(taskEdges.id, edgeId));
-    return row;
-  });
+  const [edge] = await tx
+    .select()
+    .from(taskEdges)
+    .where(eq(taskEdges.id, edgeId));
   if (!edge) throw new ForbiddenError("Forbidden", "edge", edgeId);
   let sourceTask;
   try {
-    sourceTask = await assertTaskAccess(edge.sourceTaskId, ctx);
+    sourceTask = await assertTaskAccessTx(tx, edge.sourceTaskId);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       throw new ForbiddenError("Forbidden", "edge", edgeId);
@@ -416,8 +422,6 @@ export async function updateEdge(
   edgeId: string,
   updates: { edgeType?: EdgeType; note?: string },
 ) {
-  const { edge: existing, projectId } = await loadAuthorizedEdge(edgeId, ctx);
-
   if (typeof updates.note === "string" && updates.note.trim()) {
     updates = {
       ...updates,
@@ -425,76 +429,84 @@ export async function updateEdge(
     };
   }
 
-  let targetProjectIdForCycle: string | undefined;
-  if (
-    updates.edgeType &&
-    updates.edgeType !== existing.edgeType &&
-    updates.edgeType === "depends_on"
-  ) {
-    const targetTask = await assertTaskAccess(existing.targetTaskId, ctx);
-    targetProjectIdForCycle = targetTask.projectId;
-  }
-
   const setClause: Record<string, unknown> = { updatedAt: new Date() };
   if (updates.edgeType !== undefined) setClause.edgeType = updates.edgeType;
   if (updates.note !== undefined) setClause.note = updates.note;
 
-  const updated = await withUserContext(ctx.userId, async (tx) => {
-    if (updates.edgeType && updates.edgeType !== existing.edgeType) {
-      const [dup] = await tx
-        .select({ id: taskEdges.id })
-        .from(taskEdges)
-        .where(
-          and(
-            eq(taskEdges.sourceTaskId, existing.sourceTaskId),
-            eq(taskEdges.targetTaskId, existing.targetTaskId),
-            eq(taskEdges.edgeType, updates.edgeType),
-          ),
-        );
-      if (dup) {
-        throw new Error(
-          "Duplicate edge: an edge with this type already exists between these tasks.",
-        );
-      }
-    }
-
-    if (targetProjectIdForCycle) {
-      const chain = await fetchDependencyChain(
+  const { updated, existing, projectId } = await withUserContext(
+    ctx.userId,
+    async (tx) => {
+      const { edge: existing, projectId } = await loadAuthorizedEdgeTx(
         tx,
-        existing.targetTaskId,
-        targetProjectIdForCycle,
-        10,
+        edgeId,
       );
-      if (chain.some((node) => node.id === existing.sourceTaskId)) {
-        throw new Error(
-          "Circular dependency: changing this edge type would create a cycle.",
-        );
+
+      let targetProjectIdForCycle: string | undefined;
+      if (
+        updates.edgeType &&
+        updates.edgeType !== existing.edgeType &&
+        updates.edgeType === "depends_on"
+      ) {
+        const targetTask = await assertTaskAccessTx(tx, existing.targetTaskId);
+        targetProjectIdForCycle = targetTask.projectId;
       }
-    }
 
-    const [row] = await tx
-      .update(taskEdges)
-      .set(setClause)
-      .where(eq(taskEdges.id, edgeId))
-      .returning();
+      if (updates.edgeType && updates.edgeType !== existing.edgeType) {
+        const [dup] = await tx
+          .select({ id: taskEdges.id })
+          .from(taskEdges)
+          .where(
+            and(
+              eq(taskEdges.sourceTaskId, existing.sourceTaskId),
+              eq(taskEdges.targetTaskId, existing.targetTaskId),
+              eq(taskEdges.edgeType, updates.edgeType),
+            ),
+          );
+        if (dup) {
+          throw new Error(
+            "Duplicate edge: an edge with this type already exists between these tasks.",
+          );
+        }
+      }
 
-    const historyEntry = makeHistoryEntry({
-      type: "edge_updated",
-      label: `Edge updated: ${row.edgeType}`,
-      description: `Edge updated${updates.edgeType ? ` to ${updates.edgeType}` : ""}${
-        updates.note !== undefined ? " with new note" : ""
-      }.`,
-      actor: "ai",
-    });
+      if (targetProjectIdForCycle) {
+        const chain = await fetchDependencyChain(
+          tx,
+          existing.targetTaskId,
+          targetProjectIdForCycle,
+          10,
+        );
+        if (chain.some((node) => node.id === existing.sourceTaskId)) {
+          throw new Error(
+            "Circular dependency: changing this edge type would create a cycle.",
+          );
+        }
+      }
 
-    await appendTaskHistoryMany(
-      [existing.sourceTaskId, existing.targetTaskId],
-      historyEntry,
-      { tx },
-    );
+      const [row] = await tx
+        .update(taskEdges)
+        .set(setClause)
+        .where(eq(taskEdges.id, edgeId))
+        .returning();
 
-    return row;
-  });
+      const historyEntry = makeHistoryEntry({
+        type: "edge_updated",
+        label: `Edge updated: ${row.edgeType}`,
+        description: `Edge updated${updates.edgeType ? ` to ${updates.edgeType}` : ""}${
+          updates.note !== undefined ? " with new note" : ""
+        }.`,
+        actor: "ai",
+      });
+
+      await appendTaskHistoryMany(
+        [existing.sourceTaskId, existing.targetTaskId],
+        historyEntry,
+        { tx },
+      );
+
+      return { updated: row, existing, projectId };
+    },
+  );
 
   emitEdgeMutation(projectId, existing.sourceTaskId, existing.targetTaskId);
   return {
@@ -512,9 +524,9 @@ export async function updateEdge(
  * @param edgeId - UUID of the edge to delete.
  */
 export async function removeEdge(ctx: AuthContext, edgeId: string) {
-  const { edge, projectId } = await loadAuthorizedEdge(edgeId, ctx);
+  const { edge, projectId } = await withUserContext(ctx.userId, async (tx) => {
+    const { edge, projectId } = await loadAuthorizedEdgeTx(tx, edgeId);
 
-  await withUserContext(ctx.userId, async (tx) => {
     await tx.delete(taskEdges).where(eq(taskEdges.id, edgeId));
 
     const historyEntry = makeHistoryEntry({
@@ -529,6 +541,8 @@ export async function removeEdge(ctx: AuthContext, edgeId: string) {
       historyEntry,
       { tx },
     );
+
+    return { edge, projectId };
   });
 
   emitEdgeMutation(projectId, edge.sourceTaskId, edge.targetTaskId);

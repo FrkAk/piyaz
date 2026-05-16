@@ -44,6 +44,15 @@ const eslintConfig = [
     ],
     plugins: { import: importPlugin },
     rules: {
+      // The name-based selectors below can be defeated by aliasing
+      // (`const x = db; x.transaction(...)`), destructuring
+      // (`const { transaction } = db; transaction(...)`), or renamed
+      // imports (`import { db as foo } from "@/lib/db"`). They catch
+      // the common case and serve as documentation. The primary runtime
+      // defense is the `Conn` brand in lib/db/raw.ts (which is
+      // `AppUserConn | RlsTx`, NOT `ServiceRoleConn` or a bare `AppDb`).
+      // Any data-ring helper typed against `Conn` rejects unbranded
+      // handles at compile time — see tests/security/conn-brand.test.ts.
       "no-restricted-syntax": [
         "error",
         {

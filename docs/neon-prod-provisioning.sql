@@ -75,12 +75,17 @@ CREATE ROLE auth_role WITH
 --   * public DML on all *existing* tables + sequences (no default privileges)
 --   * neon_auth USAGE + REVOKE-from-app_user (Option B lockdown)
 --   * neon_auth tight grants for service_role
---   * neon_auth full DML + default privileges for auth_role
+--   * neon_auth full DML on existing tables for auth_role (no default privileges)
 --
 -- New public tables require explicit `GRANT SELECT, INSERT, UPDATE, DELETE
 -- ON <table> TO app_user, service_role;` in their migration. Default
 -- privileges on schema public were intentionally removed — they would
 -- auto-grant DML before RLS is attached to a newly created table.
+--
+-- New neon_auth tables require explicit `GRANT SELECT, INSERT, UPDATE,
+-- DELETE ON neon_auth.<table> TO auth_role;` in their migration. Default
+-- privileges on schema neon_auth were intentionally removed for the same
+-- RLS-race reason (lower blast radius — auth_role has no public grants).
 --
 -- See sections 1, 3-7 below for context-specific steps not covered by
 -- grants.sql (role creation, DB-level grants, drizzle migrations schema,

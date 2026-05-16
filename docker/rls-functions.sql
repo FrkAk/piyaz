@@ -70,6 +70,15 @@ GRANT EXECUTE ON FUNCTION public.lookup_team_invite_code(text) TO service_role;
 -- is scoped to the row being attempted, so unrelated codes are not
 -- touched.
 --
+-- Concurrency: concurrent reservations on the same code serialize via
+-- an explicit row-level lock (`SELECT … FOR UPDATE`) acquired before the
+-- reservation UPDATE re-evaluates `use_count < max_uses`. Closes the
+-- read-committed `max_uses + (concurrency-1)` overflow window where two
+-- reservers could both observe `use_count < max_uses` and both succeed
+-- via EvalPlanQual re-checks. If the row does not exist the PERFORM is
+-- a no-op and the main UPDATE matches nothing — identical null-result
+-- behavior to a missing code.
+--
 -- This SDF does NOT read `app.user_id` from the GUC — the caller's
 -- identity is passed explicitly so the SDF is safe to call on the bare
 -- pool (no withUserContext wrapper required). Trust boundary: the JS
@@ -91,6 +100,8 @@ BEGIN
    WHERE t.code = p_code
      AND t.reserved_until IS NOT NULL
      AND t.reserved_until < NOW();
+
+  PERFORM 1 FROM public.team_invite_code WHERE code = p_code FOR UPDATE;
 
   RETURN QUERY
   UPDATE public.team_invite_code AS t

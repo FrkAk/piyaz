@@ -11,7 +11,7 @@ import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
 import { hasCriteriaExpr, deriveTaskStatesSlim } from "@/lib/data/task";
 import type { AuthContext } from "@/lib/auth/context";
 import {
-  assertProjectAccess,
+  assertProjectAccessTx,
   assertTaskAccessTx,
 } from "@/lib/auth/authorization";
 
@@ -261,10 +261,10 @@ export async function getReadyTasks(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ReadyTask[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-  const identifier = asIdentifier(project.identifier);
-
   return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
+
     // Pre-filter to `status = 'planned'` at SQL: `ready` requires it, so
     // every other status row would be discarded by the JS filter below.
     const allTasks = await tx
@@ -332,10 +332,10 @@ export async function getPlannableTasks(
   ctx: AuthContext,
   projectId: string,
 ): Promise<PlannableTask[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-  const identifier = asIdentifier(project.identifier);
-
   return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
+
     // Pre-filter to `status = 'draft' AND hasDescription AND hasCriteria`
     // at SQL: those three are necessary conditions for `plannable`, and
     // every other row would be discarded by the JS filter below. The dep
@@ -419,10 +419,10 @@ export async function getBlockedTasks(
   ctx: AuthContext,
   projectId: string,
 ): Promise<BlockedTask[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-  const identifier = asIdentifier(project.identifier);
-
   return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
+
     const graph = await buildEffectiveDepGraph(projectId, tx);
     const blocked: BlockedTask[] = [];
 
@@ -493,10 +493,10 @@ export async function getCriticalPath(
   ctx: AuthContext,
   projectId: string,
 ): Promise<CriticalPathTask[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-  const identifier = asIdentifier(project.identifier);
-
   return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
+
     const graph = await buildEffectiveDepGraph(projectId, tx);
     if (graph.activeTasks.size === 0) return [];
 

@@ -488,7 +488,7 @@ test("overwriteArrays clears all criteria when called with empty array", async (
   });
 
   const cleared = await updateTask(ctx, task.id, { acceptanceCriteria: [] }, true);
-  expect(cleared.acceptanceCriteria.length).toBe(0);
+  expect((cleared.acceptanceCriteria ?? []).length).toBe(0);
 
   const reread = await getTaskFull(ctx, task.id);
   expect(reread.acceptanceCriteria.length).toBe(0);
@@ -504,7 +504,7 @@ test("overwriteArrays clears all decisions when called with empty array", async 
   });
 
   const cleared = await updateTask(ctx, task.id, { decisions: [] }, true);
-  expect(cleared.decisions.length).toBe(0);
+  expect((cleared.decisions ?? []).length).toBe(0);
 
   const reread = await getTaskFull(ctx, task.id);
   expect(reread.decisions.length).toBe(0);
@@ -516,7 +516,7 @@ test("single-call dedup collapses same-id and same-text rows in one payload", as
   const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
 
   const seeded = await updateTask(ctx, task.id, { acceptanceCriteria: ["X"] });
-  const idA = seeded.acceptanceCriteria[0].id;
+  const idA = (seeded.acceptanceCriteria ?? [])[0].id;
 
   // Element 1 collides on id (with new text "Y"); element 2 collides on
   // text "X" (with a fresh id). Both branches of the `id IN OR text IN`
@@ -541,7 +541,7 @@ test("decisions dedup replaces same-id and same-text entries (mirror of criteria
   const seeded = await updateTask(ctx, task.id, {
     decisions: [{ text: "chose X", source: "refinement", date: "2026-01-01" }],
   });
-  const idA = seeded.decisions[0].id;
+  const idA = (seeded.decisions ?? [])[0].id;
 
   // Same-id, different text.
   await updateTask(ctx, task.id, {
@@ -646,7 +646,10 @@ test("updateTask return value carries the freshly-written criteria", async () =>
   const result = await updateTask(ctx, task.id, {
     acceptanceCriteria: ["one", "two"],
   });
-  expect(result.acceptanceCriteria.map((c) => c.text).sort()).toEqual(["one", "two"]);
+  expect((result.acceptanceCriteria ?? []).map((c) => c.text).sort()).toEqual([
+    "one",
+    "two",
+  ]);
 });
 
 test("foreign key rejects orphan decision insert", async () => {

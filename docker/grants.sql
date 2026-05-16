@@ -65,7 +65,15 @@ GRANT SELECT, DELETE ON neon_auth."oauthConsent" TO service_role;
 
 -- auth_role: full DML on every neon_auth table (Better Auth runtime connection).
 -- No grants on public; auth_role cannot touch app data even under SQLi.
+--
+-- No `ALTER DEFAULT PRIVILEGES` on schema neon_auth. Same RLS-race rationale
+-- as the public-schema block above (H2): default privileges would auto-grant
+-- DML on any future neon_auth table at CREATE TIME, before the migration
+-- could attach RLS or audit-only controls. Better Auth's schema is stable
+-- and managed via @better-auth/cli's drizzle adapter; new neon_auth tables
+-- (if/when they appear) must receive an explicit
+--   GRANT SELECT, INSERT, UPDATE, DELETE ON neon_auth.<table> TO auth_role;
+-- in the migration that introduces them. Lower blast radius than H2 because
+-- auth_role has zero grants on the public schema.
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA neon_auth TO auth_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA neon_auth TO auth_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA neon_auth
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO auth_role;

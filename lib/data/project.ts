@@ -102,9 +102,9 @@ export async function getProjectGraphSlim(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ProjectGraphSlim> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-
   return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+
     const tasksQ = tx
       .select({
         id: tasks.id,
@@ -193,7 +193,7 @@ export async function getProjectGraphSlim(
 /**
  * Chrome data for the workspace layout (TopBar + settings modal). Returns
  * the project header fields plus the caller's role, owning team, and a
- * total task count — fetched in two queries (`assertProjectAccess` JOIN
+ * total task count — fetched in two queries (`assertProjectAccessTx` JOIN
  * plus a single `COUNT(*)`).
  *
  * @param ctx - Resolved auth context.
@@ -205,12 +205,13 @@ export async function getProjectChrome(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ProjectChrome> {
-  const { project, memberRole, organization: org } = await assertProjectAccess(
-    projectId,
-    ctx,
-  );
-
   return withUserContext(ctx.userId, async (tx) => {
+    const {
+      project,
+      memberRole,
+      organization: org,
+    } = await assertProjectAccessTx(tx, projectId);
+
     const [{ count }] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(tasks)
@@ -244,8 +245,8 @@ export async function getProjectMaxUpdatedAt(
   ctx: AuthContext,
   projectId: string,
 ): Promise<Date> {
-  await assertProjectAccess(projectId, ctx);
   return withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
     const max = await getProjectMaxUpdatedAtRaw(tx, projectId);
     if (!max) {
       throw new Error(
@@ -464,7 +465,7 @@ export async function getProjectTagsTx(
  * Slim project-level metadata for agent orientation. Intended as the
  * lightweight alternative to {@link buildProjectOverview} when the agent
  * needs categories, tag vocab, or progress without dragging every task and
- * edge into context. Three queries: project header (via assertProjectAccess),
+ * edge into context. Three queries: project header (via assertProjectAccessTx),
  * tag aggregation, and status-grouped count.
  *
  * @param ctx - Resolved auth context.
@@ -476,9 +477,9 @@ export async function getProjectMeta(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ProjectMeta> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-
   return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+
     const [tagVocabulary, statusCounts] = await Promise.all([
       aggregateProjectTags(tx, projectId),
       tx
@@ -1076,8 +1077,6 @@ export async function updateProject(
   projectId: string,
   changes: ProjectUpdate,
 ) {
-  await assertProjectAccess(projectId, ctx);
-
   const incoming = changes as Record<string, unknown>;
   if (incoming.identifier !== undefined) {
     throw new InsufficientRoleError(["rename"], "project", projectId);
@@ -1092,6 +1091,7 @@ export async function updateProject(
     safe.description = formatted ?? safe.description;
   }
   const updated = await withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
     const [row] = await tx
       .update(projects)
       .set({ ...safe, updatedAt: new Date() })
@@ -1111,13 +1111,14 @@ export async function updateProject(
  * @param projectId - UUID of the project to delete.
  */
 export async function deleteProject(ctx: AuthContext, projectId: string) {
-  const { project } = await assertProjectAccess(projectId, ctx, {
-    project: ["delete"],
-  });
-  await withUserContext(ctx.userId, async (tx) => {
+  const organizationId = await withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId, {
+      project: ["delete"],
+    });
     await tx.delete(projects).where(eq(projects.id, projectId));
+    return project.organizationId;
   });
-  await emitProjectDeleted(projectId, project.organizationId);
+  await emitProjectDeleted(projectId, organizationId);
 }
 
 /**
@@ -1141,11 +1142,10 @@ export async function renameProjectIdentifier(
   projectId: string,
   identifier: Identifier,
 ) {
-  const { project } = await assertProjectAccess(projectId, ctx, {
-    project: ["rename"],
-  });
-
   const updated = await withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId, {
+      project: ["rename"],
+    });
     await acquireOrgIdentifierLock(tx, project.organizationId);
     const [row] = await tx
       .update(projects)
@@ -1176,9 +1176,8 @@ export async function renameCategory(
   oldName: string,
   newName: string,
 ) {
-  await assertProjectAccess(projectId, ctx);
-
   await withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
     const [project] = await tx
       .select({ categories: projects.categories })
       .from(projects)
@@ -1214,9 +1213,8 @@ export async function deleteCategory(
   projectId: string,
   categoryName: string,
 ) {
-  await assertProjectAccess(projectId, ctx);
-
   await withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
     const [project] = await tx
       .select({ categories: projects.categories })
       .from(projects)
