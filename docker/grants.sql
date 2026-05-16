@@ -16,6 +16,13 @@
 -- Idempotent. Safe to re-run.
 -- =============================================================================
 
+-- CVE-2018-1058 hardening note: TEMPORARY privilege on the database is
+-- revoked from PUBLIC. Because REVOKE TEMPORARY requires a concrete
+-- database name (no function-call form), the statement lives in two
+-- context-aware locations rather than this file:
+--   * docker/init-rls.sh             (self-host / testcontainer)
+--   * docs/neon-prod-provisioning.sql section 8 (Neon prod runbook)
+
 -- public schema: app_user runs every query under RLS; service_role bypasses.
 GRANT USAGE ON SCHEMA public TO app_user, service_role;
 GRANT CREATE ON SCHEMA public TO service_role;

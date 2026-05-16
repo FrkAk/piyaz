@@ -269,3 +269,24 @@ SELECT public.current_user_has_any_membership();
 SELECT public.current_user_org_ids();
 -- Expected: {} (empty uuid array)
 RESET ROLE;
+
+
+-- -----------------------------------------------------------------------------
+-- 8. REVOKE TEMPORARY on DATABASE from PUBLIC (CVE-2018-1058)
+-- -----------------------------------------------------------------------------
+-- Defense-in-depth alongside `pg_temp` pinned last in every SECURITY DEFINER
+-- search_path. Removes the privilege that lets app_user create temp objects
+-- which could shadow operators/functions used inside SDF bodies.
+--
+-- service_role and auth_role lose TEMPORARY too; nothing in our query path
+-- creates temp tables (verified by inspection — drizzle's migration tracking
+-- uses the permanent `drizzle.*` schema). Regrant explicitly if a future
+-- feature needs it.
+-- -----------------------------------------------------------------------------
+
+REVOKE TEMPORARY ON DATABASE neondb FROM PUBLIC;
+
+-- Verify (expected: false)
+SELECT has_database_privilege('app_user', 'neondb', 'TEMPORARY') AS has_temp;
+SELECT has_database_privilege('service_role', 'neondb', 'TEMPORARY') AS has_temp;
+SELECT has_database_privilege('auth_role', 'neondb', 'TEMPORARY') AS has_temp;

@@ -465,4 +465,20 @@ describe("CVE-2018-1058 hardening — search_path", () => {
       expect((searchPath ?? "").endsWith("pg_temp")).toBe(true);
     }
   });
+
+  test("app_user cannot CREATE TEMP TABLE (TEMPORARY revoked from PUBLIC)", async () => {
+    const c = appUserConnect();
+    await expectQueryRejects(
+      c`CREATE TEMP TABLE _temp_probe (x int)`,
+      /permission denied (to create temporary tables in database|for database)/,
+    );
+  });
+
+  test("has_database_privilege reports false for TEMPORARY on app_user", async () => {
+    const sr = serviceRoleConnect();
+    const [row] = await sr<Array<{ has_temp: boolean }>>`
+      SELECT has_database_privilege('app_user', current_database(), 'TEMPORARY') AS has_temp
+    `;
+    expect(row.has_temp).toBe(false);
+  });
 });

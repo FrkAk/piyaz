@@ -61,4 +61,12 @@ CREATE SCHEMA IF NOT EXISTS drizzle;
 GRANT USAGE, CREATE ON SCHEMA drizzle TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA drizzle
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role;
+
+-- CVE-2018-1058 hardening: deny temp-object creation. Combined with
+-- pg_temp pinned last in every SECURITY DEFINER's search_path
+-- (docker/rls-functions.sql), this closes the operator/function
+-- shadowing surface entirely. service_role and auth_role lose TEMPORARY
+-- too; nothing in our query path creates temp tables. Regrant explicitly
+-- if a future feature needs them.
+REVOKE TEMPORARY ON DATABASE "${POSTGRES_DB}" FROM PUBLIC;
 EOSQL
