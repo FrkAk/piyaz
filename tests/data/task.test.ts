@@ -310,13 +310,17 @@ test("createTask with assigneeIds rejects non-team-member users", async () => {
     await sqlc.end({ timeout: 5 });
   }
 
-  await expect(
-    createTask(ctx, {
-      projectId: f.projectId,
-      title: "T",
-      assigneeIds: [strangerId],
-    }),
-  ).rejects.toThrow(/not a member/);
+  const err = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    assigneeIds: [strangerId],
+  }).catch((e: unknown) => e) as { message?: string; resourceId?: string; name?: string } | null;
+
+  expect(err).not.toBeNull();
+  expect(err?.name).toBe("ForbiddenError");
+  expect(err?.message).toBe("One or more assignees are not members of this team.");
+  expect(err?.resourceId).toBeUndefined();
+  expect(err?.message).not.toContain(strangerId);
 });
 
 test("updateTask appends assigneeIds by default and replaces with overwriteArrays", async () => {

@@ -640,7 +640,9 @@ function translateError(e: unknown): ToolResult {
         );
       case "team":
         return fail(
-          `organizationId '${id}' is not a team you belong to. Run mymir_project action='teams' to see valid ids, then ask the user which team before retrying.`,
+          e.resourceId
+            ? `organizationId '${e.resourceId}' is not a team you belong to. Run mymir_project action='teams' to see valid ids, then ask the user which team before retrying.`
+            : e.message,
         );
       default:
         return fail(

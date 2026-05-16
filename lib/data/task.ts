@@ -1405,7 +1405,7 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
  * @param tx - Drizzle transaction handle.
  * @param projectId - UUID of the project the task belongs to.
  * @param userIds - Caller-supplied assignee ids.
- * @throws ForbiddenError naming the first non-member id.
+ * @throws ForbiddenError if any supplied id is not a team member.
  */
 async function assertAssigneesInTeam(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
@@ -1425,12 +1425,11 @@ async function assertAssigneesInTeam(
     sql`SELECT user_id FROM public.org_member_user_ids_visible(${proj.organizationId}::uuid, ${uuidArray(dedup)})`,
   );
   const found = new Set(rows.map((r) => r.user_id));
-  const missing = dedup.find((id) => !found.has(id));
-  if (missing) {
+  const allInTeam = dedup.every((id) => found.has(id));
+  if (!allInTeam) {
     throw new ForbiddenError(
-      `User '${missing}' is not a member of the task's team.`,
+      "One or more assignees are not members of this team.",
       "team",
-      missing,
     );
   }
 }
