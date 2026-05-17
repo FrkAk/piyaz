@@ -1,0 +1,6 @@
+# Format-only commits. `git config blame.ignoreRevsFile .git-blame-ignore-revs`
+# makes `git blame` skip these so authorship still points at the real change.
+# GitHub's web blame honors this file automatically.
+
+# chore: adopt biome as code formatter (#81)
+ffdeba0c85977fb3f963f54932cd7932ac5dc1c5
