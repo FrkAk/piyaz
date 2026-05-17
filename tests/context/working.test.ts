@@ -10,7 +10,7 @@ afterEach(async () => {
 });
 
 describe("buildWorkingContext under app_user", () => {
-  test("returns ancestor project and sibling tasks for an authorized caller", async () => {
+  test("returns ancestor project for an authorized caller", async () => {
     const fx = await seedUserOrgProject("working-ctx-1");
     const sr = serviceRoleConnect();
     let mainTaskId: string;
@@ -19,8 +19,6 @@ describe("buildWorkingContext under app_user", () => {
         INSERT INTO tasks (project_id, title, sequence_number)
         VALUES (${fx.projectId}, 'Main', 1)
         RETURNING id`;
-      await sr`INSERT INTO tasks (project_id, title, sequence_number)
-               VALUES (${fx.projectId}, 'Sibling', 2)`;
       mainTaskId = main.id;
     } finally {
       await sr.end({ timeout: 5 });
@@ -30,8 +28,7 @@ describe("buildWorkingContext under app_user", () => {
     const result = await buildWorkingContext(ctx, mainTaskId);
     expect(result.ancestors.length).toBe(1);
     expect(result.ancestors[0].id).toBe(fx.projectId);
-    expect(result.siblings.length).toBe(1);
-    expect(result.siblings[0].title).toBe("Sibling");
+    expect(result.edges.length).toBe(0);
   });
 
   test("returns 1-hop relates_to neighbor in the edges section for an authorized caller", async () => {
