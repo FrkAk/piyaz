@@ -1,5 +1,22 @@
 import { mock } from "bun:test";
 
+// Better Auth refuses to boot in production without a non-default secret;
+// any non-default value satisfies the validator. `??=` preserves a real
+// secret if the developer has loaded `.env.local` into this shell.
+process.env.BETTER_AUTH_SECRET ??=
+  "test-only-secret-not-used-outside-this-suite-0000";
+// BA emits a base-URL warning otherwise; harmless but noisy in test logs.
+process.env.BETTER_AUTH_URL ??= "https://example.test";
+
+// Bun sets `NODE_ENV=test` by default. Force production at the test
+// process boundary so `betterAuth({...})` in `lib/auth.ts:45` initializes
+// `useSecureCookies: true` regardless of which test file imports
+// `@/lib/auth` first. The only test that asserts on NODE_ENV at request
+// time is `tests/api/error.test.ts`, which mutates per-test and restores
+// in `afterEach` — so a production baseline does not change observable
+// behavior anywhere except cookie tests, which expect it.
+process.env.NODE_ENV = "production";
+
 // Neutralize `server-only` so lib/ modules can be imported in the test process.
 mock.module("server-only", () => ({}));
 

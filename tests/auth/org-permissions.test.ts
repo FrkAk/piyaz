@@ -1,4 +1,15 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
+import { auth } from "@/lib/auth";
 
 /**
  * Narrow-catch tests for `isOrgAdmin` / `isOrgOwner`. Pins the H4 fix:
@@ -9,25 +20,34 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
  * `forbidden`.
  *
  * The helper resolves the BA `auth.api.hasPermission` call against the
- * request headers; we mock both `next/headers` (the helper awaits it
- * once) and `@/lib/auth` (the `auth.api.hasPermission` target).
+ * request headers; `next/headers` is mocked at file-top (process-wide
+ * but stable across the suite) and `auth.api.hasPermission` is spied on
+ * via `spyOn` in `beforeAll` so it can be restored in `afterAll` —
+ * keeping the real `@/lib/auth` instance available to other test files
+ * in the same `bun test` invocation. `mock.module("@/lib/auth", ...)`
+ * is unrestoreable per Bun docs and would block any test that needs
+ * the real BA handler (e.g. `tests/auth/cookie-attributes.test.ts`).
  */
 
 type HasPermissionImpl = () => Promise<{ success: boolean }>;
 
 let nextHasPermission: HasPermissionImpl = async () => ({ success: false });
+let hasPermissionSpy: ReturnType<typeof spyOn>;
 
 mock.module("next/headers", () => ({
   headers: async () => new Headers(),
 }));
 
-mock.module("@/lib/auth", () => ({
-  auth: {
-    api: {
-      hasPermission: (..._args: unknown[]) => nextHasPermission(),
-    },
-  },
-}));
+beforeAll(() => {
+  hasPermissionSpy = spyOn(
+    auth.api as unknown as { hasPermission: HasPermissionImpl },
+    "hasPermission",
+  ).mockImplementation(() => nextHasPermission());
+});
+
+afterAll(() => {
+  hasPermissionSpy.mockRestore();
+});
 
 beforeEach(() => {
   nextHasPermission = async () => ({ success: false });

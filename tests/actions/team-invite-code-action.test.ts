@@ -1,35 +1,47 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
+import { auth } from "@/lib/auth";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 
 /**
- * End-to-end coverage of `joinTeamByCodeAction`. Mocks `@/lib/auth` so the
- * BA `auth.api.addMember` call is fully controllable (success / `already
- * member` throw); seeds an actual `team_invite_code` row via the
- * superuser pool and drives the action so the saga interacts with the
- * real RLS + SDF stack.
+ * End-to-end coverage of `joinTeamByCodeAction`. Spies on the BA
+ * `auth.api.addMember` call so it is fully controllable (success /
+ * `already member` throw); seeds an actual `team_invite_code` row via
+ * the superuser pool and drives the action so the saga interacts with
+ * the real RLS + SDF stack.
  *
  * Pins the H6 contract: when `addMember` throws
  * USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION, the release-saga
  * compensates by decrementing `use_count` and clearing the reservation
  * (slot is freed), and the action surfaces the typed
  * `{ ok: false, code: "already_member" }` failure.
+ *
+ * `next/headers` is mocked at file-top (process-wide but stable across
+ * the suite); `auth.api.addMember` is spied via `spyOn` in `beforeAll`
+ * and restored in `afterAll`, keeping the real `@/lib/auth` instance
+ * available to other test files in the same `bun test` invocation.
+ * `mock.module("@/lib/auth", ...)` is unrestoreable per Bun docs and
+ * would block tests that need the real BA handler (e.g.
+ * `tests/auth/cookie-attributes.test.ts`).
  */
 
 type AddMemberImpl = (...args: unknown[]) => Promise<unknown>;
 let nextAddMember: AddMemberImpl = async () => ({});
+let addMemberSpy: ReturnType<typeof spyOn>;
 
 mock.module("next/headers", () => ({
   headers: async () => new Headers(),
-}));
-
-mock.module("@/lib/auth", () => ({
-  auth: {
-    api: {
-      addMember: (...args: unknown[]) => nextAddMember(...args),
-    },
-  },
 }));
 
 const setSession = (
@@ -37,6 +49,17 @@ const setSession = (
     __setTestSession: (s: { user: { id: string } } | null) => void;
   }
 ).__setTestSession;
+
+beforeAll(() => {
+  addMemberSpy = spyOn(
+    auth.api as unknown as { addMember: AddMemberImpl },
+    "addMember",
+  ).mockImplementation((...args: unknown[]) => nextAddMember(...args));
+});
+
+afterAll(() => {
+  addMemberSpy.mockRestore();
+});
 
 beforeEach(() => {
   nextAddMember = async () => ({});
