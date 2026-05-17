@@ -44,8 +44,10 @@ export async function buildWorkingContext(
 ): Promise<WorkingContext> {
   return withUserContext(ctx.userId, async (tx) => {
     const task = await getTaskFullTx(tx, taskId);
-    const detailedEdges = await getTaskEdgesDetailedTx(tx, taskId);
-    const ancestors = await getAncestors(taskId, tx);
+    const [detailedEdges, ancestors] = await Promise.all([
+      getTaskEdgesDetailedTx(tx, taskId),
+      getAncestors(taskId, tx),
+    ]);
 
     const edges = detailedEdges.map((e) => ({
       id: e.connectedTask.id,
