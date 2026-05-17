@@ -1,9 +1,8 @@
 -- =============================================================================
 -- Canonical GRANT/REVOKE for the three-role split (app_user, service_role,
--- auth_role). Single source of truth — consumed by:
+-- auth_role). Single source of truth, consumed by:
 --   * docker/init-rls.sh                       (self-host bootstrap, `\i`)
 --   * tests/setup/migrate.ts                   (testcontainer, readFileSync)
---   * docs/neon-prod-provisioning.sql          (Neon prod runbook, pointer)
 --
 -- Scope: schema/table/sequence grants and default privileges only.
 -- Out of scope here (kept in each consumer because they vary per context):
@@ -17,11 +16,9 @@
 -- =============================================================================
 
 -- CVE-2018-1058 hardening note: TEMPORARY privilege on the database is
--- revoked from PUBLIC. Because REVOKE TEMPORARY requires a concrete
--- database name (no function-call form), the statement lives in two
--- context-aware locations rather than this file:
---   * docker/init-rls.sh             (self-host / testcontainer)
---   * docs/neon-prod-provisioning.sql section 8 (Neon prod runbook)
+-- revoked from PUBLIC inside docker/init-rls.sh (self-host / testcontainer).
+-- Kept there because REVOKE TEMPORARY requires a concrete database name and
+-- POSTGRES_DB varies per context.
 
 -- public schema: app_user runs every query under RLS; service_role bypasses.
 --
@@ -38,8 +35,6 @@
 -- The `rls-coverage.test.ts` invariant catches a missing RLS attach. A
 -- missing grant is a LOUD failure (queries error on first hit), not a
 -- stealth failure, so the trade is asymmetric in our favor.
---
--- KEEP IN SYNC WITH docs/neon-prod-provisioning.sql.
 --
 -- CVE-2018-1058 belt: revoke CREATE on schema public from PUBLIC. PG ≤ 14
 -- grants this by default; PG 15+ removes the default but the bootstrap

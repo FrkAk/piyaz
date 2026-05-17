@@ -20,9 +20,7 @@
 -- unless explicitly listed; putting it last forces attacker-injected
 -- temp objects to resolve only after the trusted schemas.
 --
--- KEEP IN SYNC WITH:
---   lib/data/team-invite-code.ts (JS callers)
---   docs/neon-prod-provisioning.sql section 9 (prod runbook pointer)
+-- KEEP IN SYNC WITH lib/data/team-invite-code.ts (JS callers).
 -- ---------------------------------------------------------------------------
 
 -- Returns only the four diagnostic fields. Withholding id /

@@ -21,7 +21,7 @@ import {
  *
  * Membership-role changes use the testcontainer superuser (`getConnectionString`)
  * because `service_role` only has SELECT/REFERENCES on `neon_auth."member"`
- * by design (mirrors the prod grants in `docs/neon-prod-provisioning.sql`).
+ * by design (see `docker/grants.sql`).
  */
 
 afterEach(async () => {
@@ -97,8 +97,6 @@ describe("team_invite_code RLS — admin-only writes", () => {
     expect(reserved).not.toBeNull();
     expect(reserved?.orgId).toBe(owner.organizationId);
 
-    // Mid-saga inspection: use_count incremented, reserved_by set to
-    // the joiner. After release(true): use_count stays, reservation cleared.
     await releaseInviteCodeSlot(joiner.userId, reserved!.id, true);
 
     const verify = superuserPool();
@@ -119,8 +117,6 @@ describe("team_invite_code RLS — admin-only writes", () => {
   });
 
   test("reserve → release(succeeded=false) saga: slot is freed, use_count decremented", async () => {
-    // The compensating branch — `addMember` threw, the action calls
-    // safeReleaseSlot(false). The slot is freed for retry.
     const owner = await seedUserOrgProject("ic-saga-fail-owner");
     const joiner = await seedUserOrgProject("ic-saga-fail-joiner");
 
