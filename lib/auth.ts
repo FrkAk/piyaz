@@ -20,7 +20,10 @@ export const auth = betterAuth({
     schema: authSchema,
   }),
   secret: process.env.BETTER_AUTH_SECRET,
-  emailAndPassword: { enabled: true },
+  emailAndPassword: {
+    enabled: true,
+    revokeSessionsOnPasswordReset: true,
+  },
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24,      // 1 day
@@ -39,6 +42,11 @@ export const auth = betterAuth({
     ? [process.env.BETTER_AUTH_URL]
     : [],
   advanced: {
+    useSecureCookies: process.env.NODE_ENV === "production",
+    defaultCookieAttributes: {
+      httpOnly: true,
+      sameSite: "lax",
+    },
     database: {
       generateId: false,
     },
