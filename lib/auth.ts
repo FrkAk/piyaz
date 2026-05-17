@@ -149,20 +149,6 @@ export const auth = betterAuth({
     }),
   ],
   databaseHooks: {
-    session: {
-      delete: {
-        after: async (session) => {
-          try {
-            await clearUserOAuthArtifacts(session.userId);
-          } catch (err) {
-            console.error("session.delete.after cascade failure", {
-              userId: session.userId,
-              err,
-            });
-          }
-        },
-      },
-    },
     account: {
       update: {
         after: async (account) => {
