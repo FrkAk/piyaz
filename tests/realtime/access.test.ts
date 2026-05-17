@@ -1,8 +1,7 @@
 import { test, expect, beforeEach, afterEach, mock } from "bun:test";
-import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { getConnectionString } from "@/tests/setup/container";
+import { superuserPool } from "@/tests/setup/global";
 import { broker } from "@/lib/realtime/broker";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 
@@ -27,7 +26,7 @@ const fakeConn = () => ({
  * the project lands in the same Postgres testcontainer.
  */
 async function addProject(orgId: string, suffix: string): Promise<string> {
-  const sql = postgres(getConnectionString(), { max: 1 });
+  const sql = superuserPool();
   try {
     const [p] = await sql<{ id: string }[]>`
       INSERT INTO projects ("organization_id", "title", "identifier")
@@ -150,6 +149,44 @@ test("grantOrgAccess swallows errors so caller mutations don't fail", async () =
   await expect(
     grantOrgAccess(userId, "not-a-uuid"),
   ).resolves.toBeUndefined();
+});
+
+test("revokeOrgAccess enumerates and unregisters subs for every project in the org after membership row is removed", async () => {
+  // Regression guard: better-auth's `afterRemoveMember` hook fires AFTER the
+  // membership row has been deleted. Under that timeline, a member-scoped
+  // listOrgProjectIds(userId, orgId) running as app_user with the GUC set to
+  // the removed user returns zero rows — the user no longer satisfies the
+  // RLS predicate. revokeOrgAccess must instead route through an admin path
+  // so the project enumeration still works after membership is gone.
+  const f = await seedUserOrgProject("revoke-rt-no-membership");
+  // Use the testcontainer superuser for DELETE on neon_auth.member — neither
+  // app_user nor service_role have DELETE on that table; only auth_role does
+  // and it has no public-schema access, so the simplest path is the same
+  // superuser the seed helper uses.
+  const su = superuserPool();
+  let project2Id = "";
+  try {
+    const [p2] = await su<{ id: string }[]>`
+      INSERT INTO projects ("organization_id", "title", "identifier")
+      VALUES (${f.organizationId}, 'Second project', 'PRJ2')
+      RETURNING id`;
+    project2Id = p2.id;
+    await su`DELETE FROM neon_auth."member"
+             WHERE "userId" = ${f.userId}
+               AND "organizationId" = ${f.organizationId}`;
+  } finally {
+    await su.end({ timeout: 5 });
+  }
+
+  const conn = fakeConn();
+  broker.attach(f.userId, conn);
+  broker.register(f.userId, `project:${f.projectId}`);
+  broker.register(f.userId, `project:${project2Id}`);
+
+  await revokeOrgAccess(f.userId, f.organizationId);
+
+  expect([...broker.subscribers(`project:${f.projectId}`)]).toEqual([]);
+  expect([...broker.subscribers(`project:${project2Id}`)]).toEqual([]);
 });
 
 test("revokeOrgAccess clears task:* subs in addition to project:* subs when user has connections", async () => {

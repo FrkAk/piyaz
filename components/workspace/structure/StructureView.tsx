@@ -582,6 +582,10 @@ export function StructureView({
   // Sizes include borders so positions stay pixel-accurate without needing
   // `measureElement`. Group headers ship `border-y` (+2px) on a 30px row;
   // task and new-task rows ship `border-b` (+1px) on a 34px row.
+  //
+  // `useVirtualizer` uses interior mutability; React Compiler auto-skip is safe.
+  // https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: flatItems.length,
     getScrollElement: () => scrollRef.current,

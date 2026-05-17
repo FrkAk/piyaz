@@ -1,5 +1,5 @@
 import "server-only";
-import { findOrgMemberUserIds } from "@/lib/data/membership";
+import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { broker } from "@/lib/realtime/broker";
 import type { RealtimeEvent } from "@/lib/realtime/types";
 
@@ -92,7 +92,7 @@ export function emitProjectListForUser(userId: string, orgId: string): void {
  */
 export async function emitProjectListEvent(orgId: string): Promise<void> {
   try {
-    const userIds = await findOrgMemberUserIds(orgId);
+    const userIds = await findOrgMemberUserIdsAsAdmin(orgId);
     for (const userId of userIds) {
       broker.dispatch(`project-list:${userId}`, {
         kind: "project-list",

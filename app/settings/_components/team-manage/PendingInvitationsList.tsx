@@ -9,6 +9,8 @@ import type { InvitationView } from '@/lib/actions/team-invitations-map';
 import { InlineConfirm } from '@/app/settings/_components/InlineConfirm';
 
 interface PendingInvitationsListProps {
+  /** Team UUID — used to bind the cancel call to the invitation's org. */
+  organizationId: string;
   /** Invitations currently in `pending` state. Already filtered server-side. */
   invitations: InvitationView[];
   /** Called after a successful cancel to refresh the list. */
@@ -40,12 +42,16 @@ function formatExpiry(date: Date): string {
  * @returns Section card with optional list of invitation rows.
  */
 export function PendingInvitationsList({
+  organizationId,
   invitations,
   onChanged,
   onError,
 }: PendingInvitationsListProps) {
   const handleCancel = async (id: string) => {
-    const result = await cancelInvitationAction({ invitationId: id });
+    const result = await cancelInvitationAction({
+      invitationId: id,
+      organizationId,
+    });
     if (!result.ok) {
       onError(result.message);
       return;

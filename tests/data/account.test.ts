@@ -1,7 +1,6 @@
 import { test, expect, describe, afterEach } from "bun:test";
-import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
-import { getConnectionString } from "@/tests/setup/container";
+import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 
@@ -13,7 +12,7 @@ describe("clearOrgMembershipArtifacts", () => {
   test("wipes session pointer + 3 oauth tables for matching (userId, orgId)", async () => {
     const f = await seedUserOrgProject("clear-match");
 
-    const sqlc = postgres(getConnectionString(), { max: 1 });
+    const sqlc = superuserPool();
     try {
       await sqlc`
         INSERT INTO neon_auth."session" ("expiresAt", "token", "updatedAt", "userId", "activeOrganizationId")
@@ -58,7 +57,7 @@ describe("clearOrgMembershipArtifacts", () => {
     const a = await seedUserOrgProject("clear-iso-a");
     const b = await seedUserOrgProject("clear-iso-b");
 
-    const sqlc = postgres(getConnectionString(), { max: 1 });
+    const sqlc = superuserPool();
     try {
       await sqlc`
         INSERT INTO neon_auth."oauthAccessToken" ("token", "clientId", "userId", "referenceId", "scopes", "expiresAt")

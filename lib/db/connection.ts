@@ -1,3 +1,5 @@
+import "server-only";
+
 import { drizzle as drizzlePg } from "drizzle-orm/postgres-js";
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
 import { Pool as NeonPool } from "@neondatabase/serverless";
@@ -16,12 +18,43 @@ import * as authSchema from "./auth-schema";
  * differences inside `client.execute()` are normalized by `executeRaw` in
  * `./raw.ts`, so the cast is sound at runtime.
  */
-type AppDb = ReturnType<typeof drizzlePg<typeof appSchema>>;
+export type AppDb = ReturnType<typeof drizzlePg<typeof appSchema>>;
 type AuthDb = ReturnType<typeof drizzlePg<typeof authSchema>>;
+
+declare const appUserBrand: unique symbol;
+declare const serviceRoleBrand: unique symbol;
+declare const rlsScopedBrand: unique symbol;
+
+/** Drizzle client pinned to the `app_user` pool (NOBYPASSRLS). */
+export type AppUserConn = AppDb & {
+  readonly [appUserBrand]: true;
+};
+
+/**
+ * Drizzle client pinned to the `service_role` pool (BYPASSRLS). Reserved
+ * for the documented bypass sites enumerated below. Distinct from
+ * {@link AppUserConn} so the type system rejects passing `serviceRoleDb`
+ * into a `Conn`-typed helper by mistake.
+ */
+export type ServiceRoleConn = AppDb & {
+  readonly [serviceRoleBrand]: true;
+};
+
+/**
+ * Transaction handle returned by `db.transaction(...)` inside a
+ * `withUserContext` frame. Carries a brand so a helper that opens a bare
+ * `db.transaction(...)` outside `withUserContext` (forbidden by the
+ * ESLint rule) cannot satisfy the `Conn` contract through structural
+ * typing.
+ */
+export type RlsTx = Parameters<Parameters<AppDb["transaction"]>[0]>[0] & {
+  readonly [rlsScopedBrand]: true;
+};
 
 declare global {
   var __mymirAppDb: AppDb | undefined;
   var __mymirAuthDb: AuthDb | undefined;
+  var __mymirServiceRoleDb: AppDb | undefined;
 }
 
 const isNeon = (): boolean => process.env.MYMIR_DB_DRIVER === "neon";
@@ -29,29 +62,87 @@ const isNeon = (): boolean => process.env.MYMIR_DB_DRIVER === "neon";
 /**
  * Build the application Drizzle client for the active driver.
  *
+ * Pool sized at `max: 3` per role so the three pools (`app_user`,
+ * `auth_role`, `service_role`) plus dev/test parallelism stay well under
+ * Neon Launch tier's ~100-connection per-branch cap. Bump if the deploy
+ * target adds replicas or runs on a higher tier.
+ *
  * @returns Drizzle instance bound to the public schema.
+ * @throws Error when `DATABASE_URL` is unset.
  */
 function buildAppDb(): AppDb {
-  const url = process.env.DATABASE_URL!;
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL is required for the app runtime connection (app_user role).",
+    );
+  }
   if (isNeon()) {
-    const pool = new NeonPool({ connectionString: url });
+    const pool = new NeonPool({
+      connectionString: url,
+      max: 3,
+      idleTimeoutMillis: 10_000,
+    });
     return drizzleNeon(pool, { schema: appSchema }) as unknown as AppDb;
   }
-  return drizzlePg(postgres(url), { schema: appSchema });
+  return drizzlePg(postgres(url, { max: 3, idle_timeout: 10 }), {
+    schema: appSchema,
+  });
 }
 
 /**
  * Build the Better-auth Drizzle client for the active driver.
  *
  * @returns Drizzle instance bound to the neon_auth schema.
+ * @throws Error when `DATABASE_AUTH_URL` is unset.
  */
 function buildAuthDb(): AuthDb {
-  const url = process.env.DATABASE_URL!;
+  const url = process.env.DATABASE_AUTH_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
+        "(DML on neon_auth.*, no public-schema access).",
+    );
+  }
   if (isNeon()) {
-    const pool = new NeonPool({ connectionString: url });
+    const pool = new NeonPool({
+      connectionString: url,
+      max: 3,
+      idleTimeoutMillis: 10_000,
+    });
     return drizzleNeon(pool, { schema: authSchema }) as unknown as AuthDb;
   }
-  return drizzlePg(postgres(url), { schema: authSchema });
+  return drizzlePg(postgres(url, { max: 3, idle_timeout: 10 }), {
+    schema: authSchema,
+  });
+}
+
+/**
+ * Build the BYPASSRLS Drizzle client for the active driver. Wired against
+ * `DATABASE_SERVICE_ROLE_URL` — a separate connection string for a role with
+ * BYPASSRLS (Neon `service_role` in prod, `service_role` in self-host).
+ *
+ * @returns Drizzle instance bound to the public schema.
+ * @throws Error when `DATABASE_SERVICE_ROLE_URL` is unset.
+ */
+function buildServiceRoleDb(): AppDb {
+  const url = process.env.DATABASE_SERVICE_ROLE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
+    );
+  }
+  if (isNeon()) {
+    const pool = new NeonPool({
+      connectionString: url,
+      max: 3,
+      idleTimeoutMillis: 10_000,
+    });
+    return drizzleNeon(pool, { schema: appSchema }) as unknown as AppDb;
+  }
+  return drizzlePg(postgres(url, { max: 3, idle_timeout: 10 }), {
+    schema: appSchema,
+  });
 }
 
 /**
@@ -61,10 +152,10 @@ function buildAuthDb(): AuthDb {
  * - `neon` → `drizzle-orm/neon-serverless` + WebSocket `Pool`
  * - unset / anything else → `drizzle-orm/postgres-js` + `postgres` TCP
  *
- * Cached on `globalThis` so warm Workers isolates reuse the connection
+ * Cached on `globalThis` so a warm Node process reuses the connection
  * across requests instead of paying the WebSocket handshake each time.
  */
-export const appDb = new Proxy({} as AppDb, {
+export const appDb = new Proxy({} as AppUserConn, {
   get(_target, prop, receiver) {
     if (!globalThis.__mymirAppDb) globalThis.__mymirAppDb = buildAppDb();
     return Reflect.get(globalThis.__mymirAppDb, prop, receiver);
@@ -81,5 +172,29 @@ export const authDb = new Proxy({} as AuthDb, {
   get(_target, prop, receiver) {
     if (!globalThis.__mymirAuthDb) globalThis.__mymirAuthDb = buildAuthDb();
     return Reflect.get(globalThis.__mymirAuthDb, prop, receiver);
+  },
+});
+
+/**
+ * Lazily initialized BYPASSRLS Drizzle client. Reserved for the documented
+ * bypass sites — adding a new one requires auditing whether a SECURITY
+ * DEFINER function in `docker/rls-functions.sql` can replace it.
+ *
+ * Current bypass sites (direct method access — require eslint.config.mjs ignores entry):
+ *   - `lib/data/account.ts:clearOrgMembershipArtifacts`
+ *   - `lib/data/membership.ts:findOrgMemberUserIdsAsAdmin`
+ *   - `lib/data/oauth-session.ts` (app_user has no grants on the
+ *     oauth* tables; rows are not tenant-scoped so RLS does not apply;
+ *     uses both method access and `executeRaw`).
+ *
+ * Indirect bypass sites (`executeRaw(serviceRoleDb, ...)` — no ignores entry needed):
+ *   - `lib/data/project.ts:listOrgProjectIdsAsAdmin`
+ */
+export const serviceRoleDb = new Proxy({} as ServiceRoleConn, {
+  get(_target, prop, receiver) {
+    if (!globalThis.__mymirServiceRoleDb) {
+      globalThis.__mymirServiceRoleDb = buildServiceRoleDb();
+    }
+    return Reflect.get(globalThis.__mymirServiceRoleDb, prop, receiver);
   },
 });

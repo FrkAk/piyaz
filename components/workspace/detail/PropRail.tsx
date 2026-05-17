@@ -1117,7 +1117,6 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
     () => new Set(assignees.map((a) => a.userId)),
   );
   const selectedIdsRef = useRef(selectedIds);
-  selectedIdsRef.current = selectedIds;
   const pendingMutationsRef = useRef(0);
   // Ticks every time the mutation chain drains, re-triggering the sync
   // effect even when `assignees` hasn't changed shape since the last
@@ -1132,7 +1131,9 @@ function AssigneePicker({ organizationId, assignees, onChange }: AssigneePickerP
   // intermediate state and overwrites the user's latest local intent.
   useEffect(() => {
     if (pendingMutationsRef.current > 0) return;
-    setSelectedIds(new Set(assignees.map((a) => a.userId)));
+    const next = new Set(assignees.map((a) => a.userId));
+    selectedIdsRef.current = next;
+    setSelectedIds(next);
   }, [assignees, drainTick]);
 
   const q = query.trim().toLowerCase();

@@ -2,11 +2,12 @@ import "server-only";
 
 import type { AcceptanceCriterion } from "@/lib/types";
 import { getAncestors } from "@/lib/data/traversal";
-import { getTaskEdgesDetailed } from "@/lib/data/edge";
-import { fetchSiblingTasks, getTaskFull } from "@/lib/data/task";
+import { getTaskEdgesDetailedTx } from "@/lib/data/edge";
+import { fetchSiblingTasks, getTaskFullTx } from "@/lib/data/task";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import { section, formatCriteria } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
+import { withUserContext } from "@/lib/db/rls";
 
 /** Full working context for AI assistant (1-hop). */
 type WorkingContext = {
@@ -42,34 +43,36 @@ export async function buildWorkingContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<WorkingContext> {
-  const task = await getTaskFull(ctx, taskId);
-  const projectId = task.projectId;
+  return withUserContext(ctx.userId, async (tx) => {
+    const task = await getTaskFullTx(tx, taskId);
+    const projectId = task.projectId;
+    const detailedEdges = await getTaskEdgesDetailedTx(tx, taskId);
 
-  const [ancestors, detailedEdges, siblings] = await Promise.all([
-    getAncestors(taskId),
-    getTaskEdgesDetailed(ctx, taskId),
-    fetchSiblingTasks(projectId, taskId),
-  ]);
+    const [ancestors, siblings] = await Promise.all([
+      getAncestors(taskId, tx),
+      fetchSiblingTasks(projectId, taskId, tx),
+    ]);
 
-  const edges = detailedEdges.map((e) => ({
-    id: e.connectedTask.id,
-    taskRef: e.connectedTask.taskRef,
-    edgeType: e.edgeType as string,
-    direction: e.direction,
-    title: e.connectedTask.title,
-    status: e.connectedTask.status,
-    note: e.note,
-  }));
+    const edges = detailedEdges.map((e) => ({
+      id: e.connectedTask.id,
+      taskRef: e.connectedTask.taskRef,
+      edgeType: e.edgeType as string,
+      direction: e.direction,
+      title: e.connectedTask.title,
+      status: e.connectedTask.status,
+      note: e.note,
+    }));
 
-  return {
-    node: task as unknown as Record<string, unknown>,
-    taskRef: task.taskRef,
-    ancestors,
-    edges,
-    siblings,
-    assignees: task.assignees,
-    links: task.links,
-  };
+    return {
+      node: task as unknown as Record<string, unknown>,
+      taskRef: task.taskRef,
+      ancestors,
+      edges,
+      siblings,
+      assignees: task.assignees,
+      links: task.links,
+    };
+  });
 }
 
 /**

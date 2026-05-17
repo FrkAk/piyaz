@@ -13,8 +13,8 @@ import { auth } from "@/lib/auth";
  *
  * Probes `invitation:create` — both `owner` and `admin` hold this by
  * default; plain `member` does not. Compatible with the custom roles
- * configured via the organization plugin's `roles` option (MYMR-69) since
- * those preserve `invitation:create` in the admin/owner statements.
+ * configured via the organization plugin's `roles` option since those
+ * preserve `invitation:create` in the admin/owner statements.
  *
  * Non-members of the supplied team surface as `false` — BA throws
  * `USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION` which is caught here. So
@@ -36,8 +36,11 @@ export async function isOrgAdmin(organizationId: string): Promise<boolean> {
       },
     });
     return result.success === true;
-  } catch {
-    return false;
+  } catch (err) {
+    const code = (err as { body?: { code?: string } } | null)?.body?.code;
+    if (code === "USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION") return false;
+    console.error("isOrgAdmin failed", { organizationId, err });
+    throw err;
   }
 }
 
@@ -68,7 +71,10 @@ export async function isOrgOwner(organizationId: string): Promise<boolean> {
       },
     });
     return result.success === true;
-  } catch {
-    return false;
+  } catch (err) {
+    const code = (err as { body?: { code?: string } } | null)?.body?.code;
+    if (code === "USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION") return false;
+    console.error("isOrgOwner failed", { organizationId, err });
+    throw err;
   }
 }

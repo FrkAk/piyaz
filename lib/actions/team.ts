@@ -178,7 +178,17 @@ export async function inviteMemberAction(input: {
   const parsed = parseOrFail(inviteMemberSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("inviteMemberAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
 
   try {
     const reqHeaders = await headers();
@@ -229,7 +239,17 @@ export async function removeMemberAction(input: {
   const parsed = parseOrFail(removeMemberSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("removeMemberAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
 
   try {
     const reqHeaders = await headers();
@@ -289,22 +309,44 @@ export async function updateMemberRoleAction(input: {
   memberId: string;
   role: "member" | "admin" | "owner";
 }): Promise<TeamActionResult> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail("unauthorized");
   }
   const parsed = parseOrFail(updateMemberRoleSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("updateMemberRoleAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
 
-  const preRead = await findMemberById(parsed.data.memberId);
+  let preRead: Awaited<ReturnType<typeof findMemberById>>;
+  try {
+    preRead = await findMemberById(userId, parsed.data.memberId);
+  } catch (err) {
+    console.error("updateMemberRoleAction: findMemberById failed", {
+      memberId: parsed.data.memberId,
+      err,
+    });
+    return teamFail("unknown");
+  }
   if (!preRead) return teamFail("not_found");
   if (preRead.organizationId !== parsed.data.organizationId) return teamFail("forbidden");
 
   const reqHeaders = await headers();
   const outcome = await demoteMemberWithGuard(
+    userId,
     {
       organizationId: parsed.data.organizationId,
       memberId: parsed.data.memberId,
@@ -336,6 +378,11 @@ export async function updateMemberRoleAction(input: {
  * Leave the named organization. Better Auth's `leaveOrganization` does NOT
  * fire `afterRemoveMember`, so we call `clearOrgMembershipArtifacts` here
  * directly to wipe OAuth tokens and other-session active-org pointers.
+ *
+ * Cleanup runs through `Promise.allSettled` so a failure in one side
+ * (e.g. `clearOrgMembershipArtifacts` aborting on a DB blip) still lets
+ * the other (broker revocation) commit, and each failure is logged with
+ * its own step attribution so ops can replay manually.
  *
  * @param input - Organization id to leave.
  * @returns Discriminated result.
@@ -374,17 +421,21 @@ export async function leaveTeamAction(input: {
   // access revocation is paired here because BA's `leaveOrganization`
   // does NOT fire `afterRemoveMember` — without this call, broker subs
   // and the home-grid project list stay stale until SSE reconnects.
-  try {
-    await Promise.all([
-      clearOrgMembershipArtifacts(userId, parsed.data.organizationId),
-      revokeOrgAccess(userId, parsed.data.organizationId),
-    ]);
-  } catch (err) {
-    console.error("leaveTeamAction cleanup failed", {
-      err,
-      userId,
-      orgId: parsed.data.organizationId,
-    });
+  const cleanupResults = await Promise.allSettled([
+    clearOrgMembershipArtifacts(userId, parsed.data.organizationId),
+    revokeOrgAccess(userId, parsed.data.organizationId),
+  ]);
+  const labels = ["clearOrgMembershipArtifacts", "revokeOrgAccess"] as const;
+  for (let i = 0; i < cleanupResults.length; i++) {
+    const result = cleanupResults[i];
+    if (result.status === "rejected") {
+      console.error("leaveTeamAction cleanup partial failure", {
+        step: labels[i],
+        userId,
+        orgId: parsed.data.organizationId,
+        err: result.reason,
+      });
+    }
   }
   return { ok: true };
 }
@@ -465,7 +516,17 @@ export async function updateTeamAction(input: {
   const parsed = parseOrFail(updateTeamSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail("forbidden");
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("updateTeamAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
 
   const data: { name?: string; slug?: string } = {};
   if (parsed.data.name !== undefined) data.name = parsed.data.name;
@@ -514,7 +575,17 @@ export async function deleteTeamAction(input: {
   const parsed = parseOrFail(deleteTeamSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgOwner(parsed.data.organizationId))) return teamFail("forbidden");
+  let isOwner: boolean;
+  try {
+    isOwner = await isOrgOwner(parsed.data.organizationId);
+  } catch (err) {
+    console.error("deleteTeamAction: isOrgOwner failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isOwner) return teamFail("forbidden");
 
   try {
     await auth.api.deleteOrganization({
@@ -557,18 +628,30 @@ export type TeamDeletePreview = {
 export async function previewTeamDeleteAction(input: {
   organizationId: string;
 }): Promise<TeamActionResult<TeamDeletePreview>> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail("unauthorized");
   }
   const parsed = parseOrFail(deleteTeamSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgOwner(parsed.data.organizationId))) return teamFail("forbidden");
+  let isOwner: boolean;
+  try {
+    isOwner = await isOrgOwner(parsed.data.organizationId);
+  } catch (err) {
+    console.error("previewTeamDeleteAction: isOrgOwner failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isOwner) return teamFail("forbidden");
 
   try {
-    const data = await previewTeamDelete(parsed.data.organizationId);
+    const data = await previewTeamDelete(userId, parsed.data.organizationId);
     return { ok: true, data };
   } catch (err) {
     console.error("previewTeamDeleteAction failed", err);

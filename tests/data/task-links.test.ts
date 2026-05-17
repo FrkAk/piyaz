@@ -1,7 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
-import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
-import { getConnectionString } from "@/tests/setup/container";
+import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import {
@@ -19,6 +18,16 @@ import { buildAgentContext } from "@/lib/context/_core/agent";
 import { buildWorkingContext } from "@/lib/context/_core/working";
 import { buildSummaryContext } from "@/lib/context/_core/summary";
 import { buildReviewContext } from "@/lib/context/_core/review";
+import { withUserContext } from "@/lib/db/rls";
+
+/**
+ * Read links for a task as a specific user. Mirrors the production call
+ * pattern: `fetchLinksUnchecked` is invoked inside a `withUserContext`
+ * frame so RLS scoping is exercised exactly as in prod.
+ */
+function linksAs(taskId: string, userId: string) {
+  return withUserContext(userId, (tx) => fetchLinksUnchecked(taskId, tx));
+}
 
 afterEach(async () => {
   await truncateAll();
@@ -52,7 +61,7 @@ test("removeTaskLink raises ForbiddenError for callers outside the task's team",
     ForbiddenError,
   );
 
-  const remaining = await fetchLinksUnchecked(task.id);
+  const remaining = await linksAs(task.id, owner.userId);
   expect(remaining.length).toBe(1);
 });
 
@@ -77,7 +86,7 @@ test("addTaskLink rejects malformed URLs as ForbiddenError (input validation)", 
     ForbiddenError,
   );
 
-  expect((await fetchLinksUnchecked(task.id)).length).toBe(0);
+  expect((await linksAs(task.id, f.userId)).length).toBe(0);
 });
 
 test("addTaskLink rejects non-http(s) protocols (XSS-in-href guard)", async () => {
@@ -95,7 +104,7 @@ test("addTaskLink rejects non-http(s) protocols (XSS-in-href guard)", async () =
     addTaskLink(ctx, task.id, "file:///etc/passwd"),
   ).rejects.toBeInstanceOf(ForbiddenError);
 
-  expect((await fetchLinksUnchecked(task.id)).length).toBe(0);
+  expect((await linksAs(task.id, f.userId)).length).toBe(0);
 });
 
 test("updateTask with malformed or unsafe prUrl raises ForbiddenError before persisting", async () => {
@@ -110,7 +119,7 @@ test("updateTask with malformed or unsafe prUrl raises ForbiddenError before per
     updateTask(ctx, task.id, { prUrl: "javascript:alert(1)" }),
   ).rejects.toBeInstanceOf(ForbiddenError);
 
-  expect((await fetchLinksUnchecked(task.id)).length).toBe(0);
+  expect((await linksAs(task.id, f.userId)).length).toBe(0);
 });
 
 // ---------------------------------------------------------------------------
@@ -123,7 +132,7 @@ test("addTaskLink normalizes scheme-less input and stores the canonical URL", as
   const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
 
   await addTaskLink(ctx, task.id, "github.com/anthropic/claude/pull/42");
-  const rows = await fetchLinksUnchecked(task.id);
+  const rows = await linksAs(task.id, f.userId);
 
   expect(rows.length).toBe(1);
   expect(rows[0].url).toBe("https://github.com/anthropic/claude/pull/42");
@@ -139,7 +148,7 @@ test("addTaskLink dedupes scheme-less + canonical inputs of the same URL", async
   const second = await addTaskLink(ctx, task.id, "https://github.com/o/r/pull/1");
 
   expect(second.id).toBe(first.id);
-  expect((await fetchLinksUnchecked(task.id)).length).toBe(1);
+  expect((await linksAs(task.id, f.userId)).length).toBe(1);
 });
 
 test("updateTaskLink rewrites the URL in place and preserves id and createdAt", async () => {
@@ -168,7 +177,7 @@ test("updateTaskLink raises ForbiddenError for callers outside the task's team",
     updateTaskLink(strangerCtx, link.id, "https://github.com/o/r/pull/2"),
   ).rejects.toBeInstanceOf(ForbiddenError);
 
-  const rows = await fetchLinksUnchecked(task.id);
+  const rows = await linksAs(task.id, owner.userId);
   expect(rows[0].url).toBe("https://github.com/o/r/pull/1");
 });
 
@@ -185,7 +194,7 @@ test("updateTaskLink rejects a malformed URL and leaves the row untouched", asyn
     ForbiddenError,
   );
 
-  const rows = await fetchLinksUnchecked(task.id);
+  const rows = await linksAs(task.id, f.userId);
   expect(rows[0].url).toBe("https://github.com/o/r/pull/1");
 });
 
@@ -200,7 +209,7 @@ test("updateTaskLink raises ForbiddenError when the new URL collides with anothe
     updateTaskLink(ctx, second.id, "https://github.com/o/r/pull/1"),
   ).rejects.toBeInstanceOf(ForbiddenError);
 
-  const rows = await fetchLinksUnchecked(task.id);
+  const rows = await linksAs(task.id, f.userId);
   expect(rows.length).toBe(2);
   const urls = rows.map((r) => r.url).sort();
   expect(urls).toEqual([
@@ -230,7 +239,7 @@ test("addTaskLink is idempotent: re-adding the same URL returns the existing row
   const second = await addTaskLink(ctx, task.id, "https://github.com/o/r/pull/1");
 
   expect(second.id).toBe(first.id);
-  const rows = await fetchLinksUnchecked(task.id);
+  const rows = await linksAs(task.id, f.userId);
   expect(rows.length).toBe(1);
 });
 
@@ -244,8 +253,8 @@ test("unique(taskId, url) allows the same URL across different tasks", async () 
   await addTaskLink(ctx, a.id, sharedUrl);
   await addTaskLink(ctx, b.id, sharedUrl);
 
-  expect((await fetchLinksUnchecked(a.id)).length).toBe(1);
-  expect((await fetchLinksUnchecked(b.id)).length).toBe(1);
+  expect((await linksAs(a.id, f.userId)).length).toBe(1);
+  expect((await linksAs(b.id, f.userId)).length).toBe(1);
 });
 
 test("updateTask prUrl=null deletes only the pull_request row, preserves other kinds", async () => {
@@ -256,11 +265,11 @@ test("updateTask prUrl=null deletes only the pull_request row, preserves other k
   await updateTask(ctx, task.id, { prUrl: "https://github.com/o/r/pull/1" });
   await addTaskLink(ctx, task.id, "https://github.com/o/r/issues/2");
   await addTaskLink(ctx, task.id, "https://www.notion.so/Some-doc-abc");
-  expect((await fetchLinksUnchecked(task.id)).length).toBe(3);
+  expect((await linksAs(task.id, f.userId)).length).toBe(3);
 
   await updateTask(ctx, task.id, { prUrl: null });
 
-  const remaining = await fetchLinksUnchecked(task.id);
+  const remaining = await linksAs(task.id, f.userId);
   const kinds = remaining.map((l) => l.kind).sort();
   expect(kinds).toEqual(["doc", "issue"]);
 });
@@ -274,7 +283,7 @@ test("updateTask with the same prUrl twice is idempotent (handles composer retry
   await updateTask(ctx, task.id, { prUrl: pr });
   await updateTask(ctx, task.id, { prUrl: pr });
 
-  const rows = await fetchLinksUnchecked(task.id);
+  const rows = await linksAs(task.id, f.userId);
   expect(rows.length).toBe(1);
   expect(rows[0].kind).toBe("pull_request");
   expect(rows[0].url).toBe(pr);
@@ -289,7 +298,7 @@ test("deleting a task cascades and removes its task_links rows", async () => {
 
   await deleteTask(ctx, task.id);
 
-  const sql = postgres(getConnectionString(), { max: 1 });
+  const sql = superuserPool();
   try {
     const rows = await sql<{ count: number }[]>`
       SELECT COUNT(*)::int AS count FROM task_links WHERE task_id = ${task.id}
@@ -315,7 +324,7 @@ test("fetchLinksUnchecked returns links ordered by createdAt ascending", async (
   await new Promise((r) => setTimeout(r, 15));
   await addTaskLink(ctx, task.id, "https://www.notion.so/Some-doc-abc");
 
-  const rows = await fetchLinksUnchecked(task.id);
+  const rows = await linksAs(task.id, f.userId);
   expect(rows.map((r) => r.kind)).toEqual(["pull_request", "issue", "doc"]);
 });
 
@@ -429,7 +438,7 @@ test("link read paths never fetch the stored URL (SSRF guard)", async () => {
   }) as typeof globalThis.fetch;
 
   try {
-    await fetchLinksUnchecked(task.id);
+    await linksAs(task.id, f.userId);
     await getTaskFull(ctx, task.id);
   } finally {
     globalThis.fetch = originalFetch;

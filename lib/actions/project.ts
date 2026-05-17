@@ -16,6 +16,7 @@ import {
   ForbiddenError,
   InsufficientRoleError,
 } from '@/lib/auth/authorization';
+import { isUniqueViolation } from '@/lib/db/errors';
 
 /** Statuses the web app is allowed to set. Coding agents handle brainstorming/decomposing via MCP. */
 const WEB_ALLOWED_STATUSES = ['active', 'archived'] as const;
@@ -264,8 +265,7 @@ export async function updateProjectSettings(
     if (err instanceof ProjectNotFoundError) {
       return { ok: false, code: 'not_found', message: 'Project not found.' };
     }
-    const code = (err as { code?: string } | null)?.code;
-    if (code === '23505') {
+    if (isUniqueViolation(err)) {
       return {
         ok: false,
         code: 'identifier_conflict',

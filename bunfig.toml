@@ -1,3 +1,9 @@
+[install]
+minimumReleaseAge = 259200
+
 [test]
 preload = ["./tests/setup/preload.ts"]
-timeout = 120000
+# 15 s per-test cap. Real tests in this suite run in 50–500 ms; anything
+# past 15 s is a hang (postgres-js client wedged, broker await never
+# fires, etc.). The previous 120 s buried hangs in 2-minute waits each.
+timeout = 15000

@@ -503,9 +503,12 @@ export function useForceSimulation(
    *  without stomping the adaptive `centerStrength * 0.55`. */
   const cfgRef = useRef<ForceConfig | null>(null);
   /** Mirror the latest tick callback into a ref so attached d3-force
-   *  handlers don't capture a stale closure. */
+   *  handlers don't capture a stale closure. Effect-time write (rather than
+   *  render-time) keeps the React Compiler safe-mutation invariant. */
   const onTickRef = useRef<(() => void) | undefined>(onTick);
-  onTickRef.current = onTick;
+  useEffect(() => {
+    onTickRef.current = onTick;
+  }, [onTick]);
   useEffect(() => {
     dimsRef.current = { width, height };
   }, [width, height]);
@@ -515,14 +518,15 @@ export function useForceSimulation(
   // through subsequent resizes so the effect doesn't rebuild needlessly.
   const dimsValid = width > 0 && height > 0;
 
-  // Mirror React state into refs so effects and callbacks can read latest
-  // values without listing them as deps (which would re-fire too aggressively).
-  nodesRef.current = nodes;
-  linksRef.current = links;
+  // Refs mirror latest state for non-reactive consumers (d3 handlers, RAF loop).
   const selectedRef = useRef(selectedNodeId);
-  selectedRef.current = selectedNodeId;
   const projectIdRef = useRef(projectId);
-  projectIdRef.current = projectId;
+  useEffect(() => {
+    nodesRef.current = nodes;
+    linksRef.current = links;
+    selectedRef.current = selectedNodeId;
+    projectIdRef.current = projectId;
+  });
 
   // Topology fingerprint — ids + edges only. Statuses and titles go through
   // `propsKey` and never trigger a simulation rebuild.
@@ -591,18 +595,20 @@ export function useForceSimulation(
     [],
   );
 
-  // -----------------------------------------------------------------------
-  // Topology effect — (re)build the simulation on real structural changes.
-  // -----------------------------------------------------------------------
+  // Topology effect — (re)build the simulation on structural changes.
+  // setState calls disabled at the rule: state tracks the imperative
+  // d3-force lifecycle (stop/attach/restart) and can't be derived from props.
   useEffect(() => {
     if (taskList.length === 0) {
       simRef.current?.stop();
       simRef.current = null;
       nodesRef.current = [];
       linksRef.current = [];
+      /* eslint-disable react-hooks/set-state-in-effect */
       setNodes([]);
       setLinks([]);
       setState("cold");
+      /* eslint-enable react-hooks/set-state-in-effect */
       return;
     }
 
@@ -713,6 +719,8 @@ export function useForceSimulation(
     if (ns.length === 0) return;
     const byId = new Map(taskList.map((t) => [t.id, t] as const));
     let changed = false;
+    // d3-force keys nodes by object identity; swapping objects resets positions.
+    /* eslint-disable react-hooks/immutability */
     for (const n of ns) {
       const t = byId.get(n.id);
       if (!t) continue;
@@ -725,6 +733,7 @@ export function useForceSimulation(
         changed = true;
       }
     }
+    /* eslint-enable react-hooks/immutability */
     if (changed) setNodes([...ns]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propsKey]);
@@ -750,6 +759,9 @@ export function useForceSimulation(
       }
     }
 
+    // Same `selectedNodeId` drives different transitions per prior phase;
+    // not derivable from props.
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (selectedNodeId) {
       const next = ns.find((n) => n.id === selectedNodeId);
       if (next && next.x != null && next.y != null) {
@@ -763,6 +775,7 @@ export function useForceSimulation(
       // the consumer animates a fit-to-graph.
       setState("settled");
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [selectedNodeId]);
 
   // -----------------------------------------------------------------------

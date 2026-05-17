@@ -1,5 +1,8 @@
 import "server-only";
-import { listOrgProjectIds } from "@/lib/data/project";
+import {
+  listOrgProjectIds,
+  listOrgProjectIdsAsAdmin,
+} from "@/lib/data/project";
 import { broker } from "@/lib/realtime/broker";
 import { emitProjectListForUser } from "@/lib/realtime/events";
 
@@ -26,7 +29,7 @@ export async function grantOrgAccess(
 ): Promise<void> {
   try {
     if (broker.hasConnections(userId)) {
-      const projectIds = await listOrgProjectIds(orgId);
+      const projectIds = await listOrgProjectIds(userId, orgId);
       for (const id of projectIds) {
         broker.register(userId, `project:${id}`);
       }
@@ -55,6 +58,10 @@ export async function grantOrgAccess(
  *
  * Non-throwing for the same reason as {@link grantOrgAccess}.
  *
+ * Uses the admin-scoped project list: `afterRemoveMember` fires after the
+ * member row is gone, so the user-scoped `listOrgProjectIds(userId, orgId)`
+ * would return `[]` and silently skip every `unregister`.
+ *
  * @param userId - The departing user.
  * @param orgId - The team they left.
  */
@@ -64,7 +71,7 @@ export async function revokeOrgAccess(
 ): Promise<void> {
   try {
     if (broker.hasConnections(userId)) {
-      const projectIds = await listOrgProjectIds(orgId);
+      const projectIds = await listOrgProjectIdsAsAdmin(orgId);
       for (const id of projectIds) {
         broker.unregister(userId, `project:${id}`);
       }

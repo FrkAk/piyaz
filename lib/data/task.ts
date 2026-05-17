@@ -1,7 +1,8 @@
 import "server-only";
 
 import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { executeRaw, uuidArray, type Conn } from "@/lib/db/raw";
+import { withUserContext, type Tx } from "@/lib/db/rls";
 import {
   projects,
   tasks,
@@ -13,7 +14,6 @@ import {
   type NewTask,
   type TaskLink,
 } from "@/lib/db/schema";
-import { user, member } from "@/lib/db/auth-schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
 import { fetchTaskFull } from "@/lib/db/raw/fetch-task-full";
 import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
@@ -36,9 +36,10 @@ import { ProjectNotFoundError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import type { AuthContext } from "@/lib/auth/context";
 import {
-  assertProjectAccess,
-  assertTaskAccess,
+  assertProjectAccessTx,
+  assertTaskAccessTx,
   ForbiddenError,
+  isUuid,
 } from "@/lib/auth/authorization";
 import {
   decodeOrderCursor,
@@ -53,9 +54,6 @@ import type {
 } from "@/lib/data/views";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
-
-/** Drizzle transaction handle alias for the helpers in this file. */
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Build a timestamped history entry.
@@ -73,21 +71,45 @@ function makeHistoryEntry(
 }
 
 /**
- * Append a history entry to a task's history array.
- * @param taskId - UUID of the task.
- * @param entry - The history entry to append.
+ * Append the same history entry to multiple tasks in a single UPDATE.
+ * Used by edge mutations to log "edge created/updated/deleted" on both
+ * endpoints with one wire round-trip instead of two serial UPDATEs
+ * inside the transaction.
+ *
+ * Runs under RLS: callers must supply either an active transaction handle
+ * (`opts.tx`, when the append participates in a larger same-transaction
+ * mutation) or a `userId` to drive a fresh `withUserContext` frame. The
+ * discriminated union prevents a bare call from silently default-denying
+ * under `app_user`. Caller is responsible for asserting access to every
+ * task in `taskIds`. Duplicates and empty arrays are handled gracefully
+ * (no-op for empty input).
+ *
+ * @param taskIds - UUIDs of the tasks to append to. Duplicates dedup'd.
+ * @param entry - The history entry to append to every supplied task.
+ * @param opts - Either `{ tx }` (run inside the supplied transaction) or
+ *   `{ userId }` (open a fresh `withUserContext` frame).
  */
-export async function appendTaskHistory(
-  taskId: string,
+export async function appendTaskHistoryMany(
+  taskIds: string[],
   entry: HistoryEntry,
+  opts: { tx: Tx } | { userId: string },
 ): Promise<void> {
-  await db
-    .update(tasks)
-    .set({
-      history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
-      updatedAt: new Date(),
-    })
-    .where(eq(tasks.id, taskId));
+  const dedup = [...new Set(taskIds)];
+  if (dedup.length === 0) return;
+  const run = async (handle: Tx) => {
+    await handle
+      .update(tasks)
+      .set({
+        history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
+        updatedAt: new Date(),
+      })
+      .where(inArray(tasks.id, dedup));
+  };
+  if ("tx" in opts) {
+    await run(opts.tx);
+    return;
+  }
+  await withUserContext(opts.userId, run);
 }
 
 /**
@@ -307,14 +329,16 @@ async function applyDecisionsWrite(
  * UNCHECKED: caller must assert access on every supplied taskId.
  *
  * @param taskIds - UUIDs to fetch criteria for.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Map of taskId -> AcceptanceCriterion[]; missing tasks omitted.
  */
 export async function fetchCriteriaByTaskUnchecked(
   taskIds: string[],
+  conn: Conn,
 ): Promise<Map<string, AcceptanceCriterion[]>> {
   const result = new Map<string, AcceptanceCriterion[]>();
   if (taskIds.length === 0) return result;
-  const rows = await db
+  const rows = await conn
     .select({
       taskId: taskAcceptanceCriteria.taskId,
       id: taskAcceptanceCriteria.id,
@@ -338,14 +362,16 @@ export async function fetchCriteriaByTaskUnchecked(
  * UNCHECKED: caller must assert access on every supplied taskId.
  *
  * @param taskIds - UUIDs to fetch decisions for.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Map of taskId -> Decision[]; missing tasks omitted.
  */
 export async function fetchDecisionsByTaskUnchecked(
   taskIds: string[],
+  conn: Conn,
 ): Promise<Map<string, Decision[]>> {
   const result = new Map<string, Decision[]>();
   if (taskIds.length === 0) return result;
-  const rows = await db
+  const rows = await conn
     .select({
       taskId: taskDecisions.taskId,
       id: taskDecisions.id,
@@ -389,10 +415,7 @@ export function hasCriteriaExpr() {
  *
  * Single round-trip: a raw SQL query joins `tasks` to `projects` and folds
  * `task_assignees`, `task_acceptance_criteria`, `task_decisions`, and
- * `task_links` into JSON-aggregated subqueries. Replaces the previous
- * three-query approach (`assertTaskAccess` row + `projects` lookup +
- * parallel assignees/links fetches) that became necessary once
- * criteria/decisions moved out of the `tasks` row in MYMR-136.
+ * `task_links` into JSON-aggregated subqueries.
  *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task.
@@ -404,8 +427,24 @@ export async function getTaskFull(
   ctx: AuthContext,
   taskId: string,
 ): Promise<TaskFull> {
-  await assertTaskAccess(taskId, ctx);
-  const rows = await fetchTaskFull(db, taskId);
+  return withUserContext(ctx.userId, (tx) => getTaskFullTx(tx, taskId));
+}
+
+/**
+ * {@link getTaskFull} on a caller-supplied tx.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param taskId - UUID of the task.
+ * @returns Full task row with composed `taskRef`, assignees, criteria,
+ *   decisions, and links.
+ * @throws ForbiddenError when the caller is not a member of the task's team.
+ */
+export async function getTaskFullTx(
+  tx: Tx,
+  taskId: string,
+): Promise<TaskFull> {
+  await assertTaskAccessTx(tx, taskId);
+  const rows = await fetchTaskFull(tx, taskId);
   if (rows.length === 0) {
     throw new Error(
       `getTaskFull: task ${taskId} disappeared after access check`,
@@ -453,64 +492,114 @@ export async function getTaskFull(
 
 /**
  * Fetch the assignee projection (userId + name + email) for a task,
- * joined to `neon_auth.user` and ordered by name.
+ * routed through the `task_assignees_visible` SECURITY DEFINER function
+ * so `app_user` can read `neon_auth.user` under the Option-B lockdown.
  *
- * UNCHECKED: this function performs NO authorization. The caller is
- * responsible for asserting task access (`assertTaskAccess`) before
- * invoking. Calling without an upstream check leaks assignee identity
- * cross-team. The `Unchecked` suffix is the contract — do not strip
- * it when wrapping or re-exporting.
+ * UNCHECKED: the SDF itself re-checks caller membership of the task's
+ * org, but the upstream `assertTaskAccess` is still the contract. The
+ * `Unchecked` suffix is the contract — do not strip it when wrapping or
+ * re-exporting.
  *
  * @param taskId - UUID of the task.
+ * @param conn - Drizzle client or transaction handle. Callers running
+ *   under a `withUserContext` transaction should pass the active `tx`
+ *   so the read participates in the same RLS-scoped frame (the SDF
+ *   reads `app.user_id` from the GUC).
  * @returns Ordered array of assignee refs (empty when nobody is assigned).
  */
-export async function fetchAssigneesUnchecked(taskId: string): Promise<AssigneeRef[]> {
-  return db
-    .select({
-      userId: taskAssignees.userId,
-      name: user.name,
-      email: user.email,
-    })
-    .from(taskAssignees)
-    .innerJoin(user, eq(user.id, taskAssignees.userId))
-    .where(eq(taskAssignees.taskId, taskId))
-    .orderBy(asc(user.name));
+export async function fetchAssigneesUnchecked(
+  taskId: string,
+  conn: Conn,
+): Promise<AssigneeRef[]> {
+  const rows = await executeRaw<{
+    user_id: string;
+    name: string;
+    email: string;
+  }>(
+    conn,
+    sql`SELECT user_id, name, email FROM public.task_assignees_visible(${taskId}::uuid) ORDER BY name`,
+  );
+  return rows.map((r) => ({ userId: r.user_id, name: r.name, email: r.email }));
 }
 
 /**
- * Fetch assignee projections for a batch of task ids. Returns a map
- * keyed by taskId for easy zipping with a parallel task list.
+ * Fetch assignee projections for a batch of task ids in one round-trip
+ * via `LATERAL public.task_assignees_visible(...)`. Returns a map keyed
+ * by taskId for easy zipping with a parallel task list.
  *
- * UNCHECKED: this function performs NO authorization. The caller is
- * responsible for asserting access on every supplied taskId (typically
- * via `assertProjectAccess` on the parent project) before invoking.
- * Calling without an upstream check leaks assignee identity cross-team.
- * The `Unchecked` suffix is the contract — do not strip it when
- * wrapping or re-exporting.
+ * UNCHECKED: per-task membership is enforced by the SDF, but the upstream
+ * `assertProjectAccess` is still the contract. The `Unchecked` suffix is
+ * the contract — do not strip it when wrapping or re-exporting.
  *
  * @param taskIds - UUIDs to fetch assignees for.
+ * @param conn - Drizzle client or transaction handle. Callers running
+ *   under a `withUserContext` transaction should pass the active `tx`.
  * @returns Map of taskId -> AssigneeRef[]; missing tasks omitted.
  */
 export async function fetchAssigneesByTaskUnchecked(
   taskIds: string[],
+  conn: Conn,
 ): Promise<Map<string, AssigneeRef[]>> {
   const result = new Map<string, AssigneeRef[]>();
   if (taskIds.length === 0) return result;
-  const rows = await db
-    .select({
-      taskId: taskAssignees.taskId,
-      userId: taskAssignees.userId,
-      name: user.name,
-      email: user.email,
-    })
-    .from(taskAssignees)
-    .innerJoin(user, eq(user.id, taskAssignees.userId))
-    .where(sql`${taskAssignees.taskId} IN ${taskIds}`)
-    .orderBy(asc(user.name));
+  const rows = await executeRaw<{
+    task_id: string;
+    user_id: string;
+    name: string;
+    email: string;
+  }>(
+    conn,
+    sql`
+      SELECT t.task_id, a.user_id, a.name, a.email
+      FROM unnest(${uuidArray(taskIds)}) AS t(task_id)
+      CROSS JOIN LATERAL public.task_assignees_visible(t.task_id) a
+      ORDER BY a.name
+    `,
+  );
   for (const r of rows) {
-    const list = result.get(r.taskId) ?? [];
-    list.push({ userId: r.userId, name: r.name, email: r.email });
-    result.set(r.taskId, list);
+    const list = result.get(r.task_id) ?? [];
+    list.push({ userId: r.user_id, name: r.name, email: r.email });
+    result.set(r.task_id, list);
+  }
+  return result;
+}
+
+/**
+ * Batched sibling of {@link fetchAssigneesByTaskUnchecked} that resolves the
+ * caller-membership check ONCE for the whole project, rather than N times
+ * per task. Calls `public.task_assignees_for_project_visible`, which holds
+ * the same anti-disclosure contract as the per-task variant (empty result
+ * for non-members; no oracle on project existence).
+ *
+ * UNCHECKED: caller must assert project access (`assertProjectAccess`)
+ * before invoking. The `Unchecked` suffix is the contract — do not strip
+ * it when wrapping or re-exporting.
+ *
+ * @param projectId - UUID of the project whose tasks to enumerate.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
+ * @returns Map of taskId -> AssigneeRef[]; tasks without assignees omitted.
+ */
+export async function fetchAssigneesByProjectUnchecked(
+  projectId: string,
+  conn: Conn,
+): Promise<Map<string, AssigneeRef[]>> {
+  const result = new Map<string, AssigneeRef[]>();
+  const rows = await executeRaw<{
+    task_id: string;
+    user_id: string;
+    name: string;
+    email: string;
+  }>(
+    conn,
+    sql`
+      SELECT task_id, user_id, name, email
+      FROM public.task_assignees_for_project_visible(${projectId}::uuid)
+    `,
+  );
+  for (const r of rows) {
+    const list = result.get(r.task_id) ?? [];
+    list.push({ userId: r.user_id, name: r.name, email: r.email });
+    result.set(r.task_id, list);
   }
   return result;
 }
@@ -525,10 +614,14 @@ export async function fetchAssigneesByTaskUnchecked(
  * when wrapping or re-exporting.
  *
  * @param taskId - UUID of the task.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Ordered array of link refs (empty when no links exist).
  */
-export async function fetchLinksUnchecked(taskId: string): Promise<TaskLinkRef[]> {
-  return db
+export async function fetchLinksUnchecked(
+  taskId: string,
+  conn: Conn,
+): Promise<TaskLinkRef[]> {
+  return conn
     .select({
       id: taskLinks.id,
       kind: taskLinks.kind,
@@ -579,25 +672,27 @@ export async function getTaskSlim(
   ctx: AuthContext,
   taskId: string,
 ): Promise<TaskSlim> {
-  await assertTaskAccess(taskId, ctx);
-  const [row] = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      tags: tasks.tags,
-      category: tasks.category,
-      priority: tasks.priority,
-      estimate: tasks.estimate,
-      order: tasks.order,
-      sequenceNumber: tasks.sequenceNumber,
-      identifier: projects.identifier,
-      assigneeCount: assigneeCountExpr(),
-    })
-    .from(tasks)
-    .innerJoin(projects, eq(projects.id, tasks.projectId))
-    .where(eq(tasks.id, taskId))
-    .limit(1);
+  const [row] = await withUserContext(ctx.userId, async (tx) => {
+    await assertTaskAccessTx(tx, taskId);
+    return tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        tags: tasks.tags,
+        category: tasks.category,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        order: tasks.order,
+        sequenceNumber: tasks.sequenceNumber,
+        identifier: projects.identifier,
+        assigneeCount: assigneeCountExpr(),
+      })
+      .from(tasks)
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+  });
   if (!row) {
     throw new ForbiddenError("Forbidden", "task", taskId);
   }
@@ -626,8 +721,10 @@ export async function getTaskSlim(
  * @returns Ordered array of tasks.
  */
 export async function getProjectTasks(ctx: AuthContext, projectId: string) {
-  await assertProjectAccess(projectId, ctx);
-  return listProjectTasks(projectId);
+  return withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
+    return listProjectTasks(projectId, tx);
+  });
 }
 
 /**
@@ -636,10 +733,11 @@ export async function getProjectTasks(ctx: AuthContext, projectId: string) {
  * assemblers that have already authorized the parent project.
  *
  * @param projectId - UUID of the project.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Ordered array of tasks.
  */
-export async function listProjectTasks(projectId: string) {
-  return db
+export async function listProjectTasks(projectId: string, conn: Conn) {
+  return conn
     .select()
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
@@ -658,24 +756,26 @@ export async function getProjectTasksSlim(
   ctx: AuthContext,
   projectId: string,
 ): Promise<TaskSlim[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-
-  const rows = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      tags: tasks.tags,
-      category: tasks.category,
-      priority: tasks.priority,
-      estimate: tasks.estimate,
-      order: tasks.order,
-      sequenceNumber: tasks.sequenceNumber,
-      assigneeCount: assigneeCountExpr(),
-    })
-    .from(tasks)
-    .where(eq(tasks.projectId, projectId))
-    .orderBy(asc(tasks.order));
+  const { project, rows } = await withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const rows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        tags: tasks.tags,
+        category: tasks.category,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        order: tasks.order,
+        sequenceNumber: tasks.sequenceNumber,
+        assigneeCount: assigneeCountExpr(),
+      })
+      .from(tasks)
+      .where(eq(tasks.projectId, projectId))
+      .orderBy(asc(tasks.order));
+    return { project, rows };
+  });
 
   return enrichWithTaskRef(rows, asIdentifier(project.identifier)).map((t) => ({
     id: t.id,
@@ -772,13 +872,15 @@ function deriveTaskState(
  *
  * @param projectId - UUID of the project.
  * @param taskSubset - Tasks in `TaskStateInput` shape.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Map of taskId → TaskState.
  */
 export async function deriveTaskStatesSlim(
   projectId: string,
   taskSubset: TaskStateInput[],
+  conn: Conn,
 ): Promise<Map<string, TaskState>> {
-  const graph = await buildEffectiveDepGraph(projectId);
+  const graph = await buildEffectiveDepGraph(projectId, conn);
   const result = new Map<string, TaskState>();
   for (const task of taskSubset) {
     result.set(task.id, deriveTaskState(task, graph));
@@ -821,37 +923,10 @@ export async function searchTasks(
   query?: string,
   tags?: string[],
 ): Promise<SearchResult[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-
   const trimmedQuery = query?.trim() ?? "";
   const tagFilter = normalizeTags(tags);
   if (trimmedQuery.length === 0 && tagFilter.length === 0) return [];
 
-  const clauses = [eq(tasks.projectId, projectId)];
-
-  if (trimmedQuery.length > 0) {
-    const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
-    const seqClause =
-      refMatch && refMatch[1].toUpperCase() === project.identifier
-        ? eq(tasks.sequenceNumber, Number(refMatch[2]))
-        : null;
-
-    const pattern = `%${trimmedQuery}%`;
-    const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
-    const queryClause =
-      seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
-    if (queryClause) clauses.push(queryClause);
-  }
-
-  if (tagFilter.length > 0) {
-    clauses.push(
-      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
-    );
-  }
-
-  // Push relevance ranking + LIMIT 20 into SQL so the DB never returns a
-  // multi-thousand-row match set for a project the planner could trim
-  // upstream. The CASE bands mirror the previous JS sort exactly.
   const lower = trimmedQuery.toLowerCase();
   const rankExpr =
     trimmedQuery.length > 0
@@ -861,36 +936,67 @@ export async function searchTasks(
           WHEN LOWER(${tasks.title}) LIKE ${"%" + lower + "%"} THEN 2
           ELSE 3
         END`
-      : sql<number>`0`;
+      : null;
 
-  const trimmed = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      tags: tasks.tags,
-      category: tasks.category,
-      priority: tasks.priority,
-      estimate: tasks.estimate,
-      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: hasCriteriaExpr(),
-      sequenceNumber: tasks.sequenceNumber,
-      order: tasks.order,
-      assigneeCount: assigneeCountExpr(),
-    })
-    .from(tasks)
-    .where(and(...clauses))
-    .orderBy(rankExpr, asc(tasks.order))
-    .limit(20);
-  const stateMap = await deriveTaskStatesSlim(
-    projectId,
-    trimmed.map((t) => ({
-      id: t.id,
-      status: t.status,
-      hasDescription: t.hasDescription,
-      hasCriteria: t.hasCriteria,
-    })),
-  );
+  const { project, trimmed, stateMap } = await withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+
+    const clauses = [eq(tasks.projectId, projectId)];
+
+    if (trimmedQuery.length > 0) {
+      const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
+      const seqClause =
+        refMatch && refMatch[1].toUpperCase() === project.identifier
+          ? eq(tasks.sequenceNumber, Number(refMatch[2]))
+          : null;
+
+      const pattern = `%${trimmedQuery}%`;
+      const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
+      const queryClause =
+        seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
+      if (queryClause) clauses.push(queryClause);
+    }
+
+    if (tagFilter.length > 0) {
+      clauses.push(
+        sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
+      );
+    }
+
+    // Inlining a literal `0` in ORDER BY is parsed as a positional column
+    // reference, not a constant — Postgres rejects it with 42P10.
+    const orderByCols = rankExpr ? [rankExpr, asc(tasks.order)] : [asc(tasks.order)];
+    const trimmedRows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        tags: tasks.tags,
+        category: tasks.category,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+        hasCriteria: hasCriteriaExpr(),
+        sequenceNumber: tasks.sequenceNumber,
+        order: tasks.order,
+        assigneeCount: assigneeCountExpr(),
+      })
+      .from(tasks)
+      .where(and(...clauses))
+      .orderBy(...orderByCols)
+      .limit(20);
+    const states = await deriveTaskStatesSlim(
+      projectId,
+      trimmedRows.map((t) => ({
+        id: t.id,
+        status: t.status,
+        hasDescription: t.hasDescription,
+        hasCriteria: t.hasCriteria,
+      })),
+      tx,
+    );
+    return { project, trimmed: trimmedRows, stateMap: states };
+  });
 
   const identifier = asIdentifier(project.identifier);
   return enrichWithTaskRef(trimmed, identifier).map((t) => ({
@@ -938,78 +1044,94 @@ export async function searchTasksPaged(
     cursor?: Cursor | string | null;
   } = {},
 ): Promise<SearchResultPage> {
-  const { project } = await assertProjectAccess(projectId, ctx);
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
   const after = decodeOrderCursor(opts.cursor);
 
   const trimmedQuery = opts.query?.trim() ?? "";
   const tagFilter = normalizeTags(opts.tags);
 
-  const clauses = [eq(tasks.projectId, projectId)];
-
-  if (trimmedQuery.length > 0) {
-    const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
-    const seqClause =
-      refMatch && refMatch[1].toUpperCase() === project.identifier
-        ? eq(tasks.sequenceNumber, Number(refMatch[2]))
-        : null;
-    const pattern = `%${trimmedQuery}%`;
-    const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
-    const queryClause =
-      seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
-    if (queryClause) clauses.push(queryClause);
-  }
-
-  if (tagFilter.length > 0) {
-    clauses.push(
-      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
-    );
-  }
-
   const cursorClause = after
     ? sql`(${tasks.order} < ${after.order}
             OR (${tasks.order} = ${after.order} AND ${tasks.id} < ${after.id}))`
     : sql`TRUE`;
 
-  const matchingTasks = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      tags: tasks.tags,
-      category: tasks.category,
-      priority: tasks.priority,
-      estimate: tasks.estimate,
-      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: hasCriteriaExpr(),
-      sequenceNumber: tasks.sequenceNumber,
-      order: tasks.order,
-      assigneeCount: assigneeCountExpr(),
-    })
-    .from(tasks)
-    .where(and(...clauses, cursorClause))
-    .orderBy(desc(tasks.order), desc(tasks.id))
-    .limit(limit + 1);
+  const { project, trimmed, nextCursor, stateMap } = await withUserContext(
+    ctx.userId,
+    async (tx) => {
+      const { project } = await assertProjectAccessTx(tx, projectId);
 
-  const hasMore = matchingTasks.length > limit;
-  const trimmed = hasMore ? matchingTasks.slice(0, limit) : matchingTasks;
-  const last = trimmed[trimmed.length - 1];
-  const nextCursor =
-    hasMore && last
-      ? encodeOrderCursor({ order: last.order, id: last.id })
-      : null;
+      const clauses = [eq(tasks.projectId, projectId)];
 
-  if (trimmed.length === 0) return { rows: [], nextCursor: null };
+      if (trimmedQuery.length > 0) {
+        const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
+        const seqClause =
+          refMatch && refMatch[1].toUpperCase() === project.identifier
+            ? eq(tasks.sequenceNumber, Number(refMatch[2]))
+            : null;
+        const pattern = `%${trimmedQuery}%`;
+        const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
+        const queryClause =
+          seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
+        if (queryClause) clauses.push(queryClause);
+      }
 
-  const stateMap = await deriveTaskStatesSlim(
-    projectId,
-    trimmed.map((t) => ({
-      id: t.id,
-      status: t.status,
-      hasDescription: t.hasDescription,
-      hasCriteria: t.hasCriteria,
-    })),
+      if (tagFilter.length > 0) {
+        clauses.push(
+          sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
+        );
+      }
+
+      const matchingTasks = await tx
+        .select({
+          id: tasks.id,
+          title: tasks.title,
+          status: tasks.status,
+          tags: tasks.tags,
+          category: tasks.category,
+          priority: tasks.priority,
+          estimate: tasks.estimate,
+          hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+          hasCriteria: hasCriteriaExpr(),
+          sequenceNumber: tasks.sequenceNumber,
+          order: tasks.order,
+          assigneeCount: assigneeCountExpr(),
+        })
+        .from(tasks)
+        .where(and(...clauses, cursorClause))
+        .orderBy(desc(tasks.order), desc(tasks.id))
+        .limit(limit + 1);
+
+      const hasMore = matchingTasks.length > limit;
+      const trimmedRows = hasMore
+        ? matchingTasks.slice(0, limit)
+        : matchingTasks;
+      const last = trimmedRows[trimmedRows.length - 1];
+      const cursor =
+        hasMore && last
+          ? encodeOrderCursor({ order: last.order, id: last.id })
+          : null;
+
+      if (trimmedRows.length === 0) {
+        return { project, trimmed: trimmedRows, nextCursor: null, stateMap: null };
+      }
+
+      const states = await deriveTaskStatesSlim(
+        projectId,
+        trimmedRows.map((t) => ({
+          id: t.id,
+          status: t.status,
+          hasDescription: t.hasDescription,
+          hasCriteria: t.hasCriteria,
+        })),
+        tx,
+      );
+      return { project, trimmed: trimmedRows, nextCursor: cursor, stateMap: states };
+    },
   );
+
+  if (trimmed.length === 0 || !stateMap) {
+    return { rows: [], nextCursor: null };
+  }
   const identifier = asIdentifier(project.identifier);
   const rows = enrichWithTaskRef(trimmed, identifier).map((t) => ({
     id: t.id,
@@ -1039,13 +1161,15 @@ export async function searchTasksPaged(
  * note into context output.
  * @param projectId - UUID of the project the source task belongs to.
  * @param taskId - UUID of the source task.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Map of target task ID to edge note.
  */
 export async function fetchEdgeNotesBySource(
   projectId: string,
   taskId: string,
+  conn: Conn,
 ): Promise<Map<string, string>> {
-  const rows = await db
+  const rows = await conn
     .select({ targetTaskId: taskEdges.targetTaskId, note: taskEdges.note })
     .from(taskEdges)
     .innerJoin(tasks, eq(tasks.id, taskEdges.targetTaskId))
@@ -1069,13 +1193,15 @@ export async function fetchEdgeNotesBySource(
  * for the projectId-filter rationale.
  * @param projectId - UUID of the project the target task belongs to.
  * @param taskId - UUID of the target task.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Map of source task ID to edge note.
  */
 export async function fetchEdgeNotesByTarget(
   projectId: string,
   taskId: string,
+  conn: Conn,
 ): Promise<Map<string, string>> {
-  const rows = await db
+  const rows = await conn
     .select({ sourceTaskId: taskEdges.sourceTaskId, note: taskEdges.note })
     .from(taskEdges)
     .innerJoin(tasks, eq(tasks.id, taskEdges.sourceTaskId))
@@ -1104,14 +1230,16 @@ export async function fetchEdgeNotesByTarget(
  * id list that crosses projects, the SQL ignores out-of-project rows.
  * @param projectId - UUID of the project the tasks belong to.
  * @param taskIds - Array of task UUIDs.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Array of task summaries with composed taskRef.
  */
 export async function fetchTaskSummaries(
   projectId: string,
   taskIds: string[],
+  conn: Conn,
 ) {
   if (taskIds.length === 0) return [];
-  const rows = await db
+  const rows = await conn
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1152,14 +1280,16 @@ export type DependencyTaskInfo = {
  *
  * @param projectId - UUID of the project the dependency tasks belong to.
  * @param taskIds - UUIDs of the dependency tasks.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Dep-task projections including `executionRecord` and `taskRef`.
  */
 export async function fetchDependencyTasks(
   projectId: string,
   taskIds: string[],
+  conn: Conn,
 ): Promise<DependencyTaskInfo[]> {
   if (taskIds.length === 0) return [];
-  const rows = await db
+  const rows = await conn
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1197,13 +1327,15 @@ export type SiblingTaskInfo = {
  *
  * @param projectId - UUID of the project.
  * @param excludeTaskId - UUID of the task to omit from the result.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Sibling task projections.
  */
 export async function fetchSiblingTasks(
   projectId: string,
   excludeTaskId: string,
+  conn: Conn,
 ): Promise<SiblingTaskInfo[]> {
-  const rows = await db
+  const rows = await conn
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1233,10 +1365,11 @@ export async function fetchSiblingTasks(
  * algorithms (`buildEffectiveDepGraph`) that only need a small slice.
  *
  * @param projectId - UUID of the project.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Slim rows for every task in the project.
  */
-export async function listTasksForGraph(projectId: string) {
-  return db
+export async function listTasksForGraph(projectId: string, conn: Conn) {
+  return conn
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1268,7 +1401,7 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
    */
   prUrl?: string | null;
   /**
-   * Optional initial acceptance criteria. After MYMR-136 these live in
+   * Optional initial acceptance criteria. These live in
    * `task_acceptance_criteria`, not on `tasks`. The field is accepted on
    * input so the restore path (`StructureView.tsx`) and MCP create handler
    * can pass strings or partial objects; the data layer normalizes and
@@ -1293,10 +1426,12 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
  * @param tx - Drizzle transaction handle.
  * @param projectId - UUID of the project the task belongs to.
  * @param userIds - Caller-supplied assignee ids.
- * @throws ForbiddenError naming the first non-member id.
+ * @throws ForbiddenError with a generic message and no `resourceId` if any
+ *   supplied id is not a team member. Per-id details are deliberately
+ *   withheld so the error cannot be used as a membership oracle.
  */
 async function assertAssigneesInTeam(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  tx: Tx,
   projectId: string,
   userIds: string[],
 ): Promise<void> {
@@ -1308,22 +1443,16 @@ async function assertAssigneesInTeam(
     .limit(1);
   if (!proj) throw new ProjectNotFoundError(projectId);
   const dedup = [...new Set(userIds)];
-  const rows = await tx
-    .select({ userId: member.userId })
-    .from(member)
-    .where(
-      and(
-        eq(member.organizationId, proj.organizationId),
-        sql`${member.userId} IN ${dedup}`,
-      ),
-    );
-  const found = new Set(rows.map((r) => r.userId));
-  const missing = dedup.find((id) => !found.has(id));
-  if (missing) {
+  const rows = await executeRaw<{ user_id: string }>(
+    tx,
+    sql`SELECT user_id FROM public.org_member_user_ids_visible(${proj.organizationId}::uuid, ${uuidArray(dedup)})`,
+  );
+  const found = new Set(rows.map((r) => r.user_id));
+  const allInTeam = dedup.every((id) => found.has(id));
+  if (!allInTeam) {
     throw new ForbiddenError(
-      `User '${missing}' is not a member of the task's team.`,
+      "One or more assignees are not members of this team.",
       "team",
-      missing,
     );
   }
 }
@@ -1341,7 +1470,7 @@ async function assertAssigneesInTeam(
  * @param mode - `append` (default) or `replace`.
  */
 async function setTaskAssignees(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  tx: Tx,
   taskId: string,
   incoming: string[],
   mode: "append" | "replace",
@@ -1377,8 +1506,6 @@ async function setTaskAssignees(
  * @returns Task summary with composed taskRef.
  */
 export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
-  await assertProjectAccess(data.projectId, ctx);
-
   const normalizedCriteria = Array.isArray(data.acceptanceCriteria)
     ? normalizeCriteria(data.acceptanceCriteria)
     : undefined;
@@ -1426,7 +1553,8 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
     }
   }
 
-  const result = await db.transaction(async (tx) => {
+  const result = await withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, taskFields.projectId);
     await acquireProjectLock(tx, taskFields.projectId);
 
     const [proj] = await tx
@@ -1563,14 +1691,18 @@ export type TaskUpdate = {
  * checks in `lib/graph/tool-handlers.ts`) see the same shape they saw on
  * the JSONB-storage path.
  *
- * WARNING — partial contract: `acceptanceCriteria` and `decisions` are
- * the freshly-fetched persisted state ONLY when `updateTask` wrote child
+ * Partial contract: `acceptanceCriteria` and `decisions` are the
+ * freshly-fetched persisted state ONLY when `updateTask` wrote child
  * tables (criteria or decisions passed) or transitioned `status`. On any
  * other path (title / description / tags / files / assignees / prUrl
- * only), both arrays are returned as `[]` regardless of what is
- * persisted — the post-write refetch is skipped to save a round-trip.
+ * only), both fields are returned as `null` — the post-write refetch is
+ * skipped to save a round-trip.
  *
- * Read them ONLY when your call set one of:
+ * `null` means "the field was not read or written on this update path;
+ * consult `getTaskFull` if you need the current value". An empty array
+ * means the refetch ran and the child table is genuinely empty.
+ *
+ * Read these fields ONLY when your call set one of:
  *   - `input.acceptanceCriteria`
  *   - `input.decisions`
  *   - `input.status`
@@ -1578,8 +1710,8 @@ export type TaskUpdate = {
  * For any other caller, re-fetch via `getTaskFull(ctx, taskId)` instead.
  */
 export type UpdateTaskResult = typeof tasks.$inferSelect & {
-  acceptanceCriteria: AcceptanceCriterion[];
-  decisions: Decision[];
+  acceptanceCriteria: AcceptanceCriterion[] | null;
+  decisions: Decision[] | null;
 };
 
 /**
@@ -1594,8 +1726,8 @@ export type UpdateTaskResult = typeof tasks.$inferSelect & {
  * @returns The updated row. `acceptanceCriteria` / `decisions` reflect the
  *   freshly-fetched persisted state ONLY when this call wrote child tables
  *   (criteria or decisions in `input`) or changed `status`. On any other
- *   path both arrays are returned empty regardless of what is persisted —
- *   see the `UpdateTaskResult` JSDoc for the full partial-contract notes.
+ *   path both fields are returned as `null` — see the `UpdateTaskResult`
+ *   JSDoc for the full partial-contract notes.
  */
 export async function updateTask(
   ctx: AuthContext,
@@ -1603,8 +1735,6 @@ export async function updateTask(
   input: TaskUpdate,
   overwriteArrays = false,
 ): Promise<UpdateTaskResult> {
-  await assertTaskAccess(taskId, ctx);
-
   let changes: Record<string, unknown> = { ...input };
   for (const key of PROTECTED_TASK_FIELDS) {
     if (key in changes) delete changes[key];
@@ -1676,12 +1806,14 @@ export async function updateTask(
   delete changes.decisions;
 
   let wasNoOp = false;
-  const updated = await db.transaction(async (tx) => {
-    // After MYMR-136 the row-level INSERT/UPDATE/DELETE on the child tables
-    // is atomic per row via MVCC + ON CONFLICT (id) DO UPDATE, so the old
-    // `FOR UPDATE` row lock that serialized concurrent merges is no longer
-    // required. A plain SELECT is sufficient for the no-op short-circuit
-    // and the history-row baseline.
+  const wroteChildren =
+    formattedCriteria !== undefined || formattedDecisions !== undefined;
+  const statusChanged = typeof input.status === "string";
+  const refetchNeeded = wroteChildren || statusChanged;
+  const result = await withUserContext(ctx.userId, async (tx) => {
+    await assertTaskAccessTx(tx, taskId);
+    // Child-table writes are atomic per row (MVCC + ON CONFLICT (id) DO
+    // UPDATE); no FOR UPDATE lock needed for this baseline SELECT.
     const [current] = await tx
       .select()
       .from(tasks)
@@ -1702,7 +1834,7 @@ export async function updateTask(
       formattedDecisions === undefined
     ) {
       wasNoOp = true;
-      return current;
+      return { row: current, criteriaResult: null, decisionsResult: null };
     }
 
     if (!overwriteArrays && Array.isArray(changes.files)) {
@@ -1805,7 +1937,23 @@ export async function updateTask(
           });
       }
     }
-    return row;
+    let criteriaResult: AcceptanceCriterion[] | null = null;
+    let decisionsResult: Decision[] | null = null;
+    if (refetchNeeded) {
+      const children = await fetchTaskChildren(tx, taskId);
+      criteriaResult = (children.acceptance_criteria ?? []).map((c) => ({
+        id: c.id,
+        text: c.text,
+        checked: c.checked,
+      }));
+      decisionsResult = (children.decisions ?? []).map((d) => ({
+        id: d.id,
+        text: d.text,
+        source: d.source as Decision["source"],
+        date: d.date,
+      }));
+    }
+    return { row, criteriaResult, decisionsResult };
   });
 
   // Reflect a prUrl- or criteria/decisions-only call (no other field
@@ -1817,39 +1965,11 @@ export async function updateTask(
     formattedCriteria !== undefined ||
     formattedDecisions !== undefined
   ) {
-    emitTaskEvent(updated.projectId, taskId);
+    emitTaskEvent(result.row.projectId, taskId);
   }
-  // Surface the post-update criteria/decisions on the returned row so
-  // callers that read `result.acceptanceCriteria` / `result.decisions`
-  // (e.g. tool-handlers' completion-protocol hint checks on status
-  // transitions to done/in_review/cancelled) see the freshest state.
-  //
-  // One round-trip via `fetchTaskChildren` — both `json_agg` subqueries
-  // ride a single SELECT. PARTIAL CONTRACT: skipped entirely when
-  // neither a child write nor a status change occurred. Callers on the
-  // skip path see `[]` regardless of persisted state; this is documented
-  // on `UpdateTaskResult`. Do not extend the consumer set without
-  // either (a) including their call site in the refetch trigger or
-  // (b) routing them through `getTaskFull` afterwards.
-  const wroteChildren =
-    formattedCriteria !== undefined || formattedDecisions !== undefined;
-  const statusChanged = typeof input.status === "string";
-  const refetchNeeded = wroteChildren || statusChanged;
-  const children = refetchNeeded
-    ? await fetchTaskChildren(db, taskId)
-    : { acceptance_criteria: null, decisions: null };
-  return Object.assign(updated, {
-    acceptanceCriteria: (children.acceptance_criteria ?? []).map((c) => ({
-      id: c.id,
-      text: c.text,
-      checked: c.checked,
-    })),
-    decisions: (children.decisions ?? []).map((d) => ({
-      id: d.id,
-      text: d.text,
-      source: d.source as Decision["source"],
-      date: d.date,
-    })),
+  return Object.assign(result.row, {
+    acceptanceCriteria: result.criteriaResult,
+    decisions: result.decisionsResult,
   });
 }
 
@@ -1873,30 +1993,33 @@ export async function updateTask(
  * @returns Deletion summary.
  */
 export async function deleteTask(ctx: AuthContext, taskId: string) {
-  const task = await assertTaskAccess(taskId, ctx);
+  const { projectId, deletedEdges } = await withUserContext(
+    ctx.userId,
+    async (tx) => {
+      const task = await assertTaskAccessTx(tx, taskId);
 
-  const deletedEdges = await db.transaction(async (tx) => {
-    const removed = await tx
-      .delete(taskEdges)
-      .where(
-        or(
-          eq(taskEdges.sourceTaskId, taskId),
-          eq(taskEdges.targetTaskId, taskId),
-        ),
-      )
-      .returning({ id: taskEdges.id });
+      const removed = await tx
+        .delete(taskEdges)
+        .where(
+          or(
+            eq(taskEdges.sourceTaskId, taskId),
+            eq(taskEdges.targetTaskId, taskId),
+          ),
+        )
+        .returning({ id: taskEdges.id });
 
-    await tx.delete(tasks).where(eq(tasks.id, taskId));
+      await tx.delete(tasks).where(eq(tasks.id, taskId));
 
-    await tx
-      .update(projects)
-      .set({ updatedAt: new Date() })
-      .where(eq(projects.id, task.projectId));
+      await tx
+        .update(projects)
+        .set({ updatedAt: new Date() })
+        .where(eq(projects.id, task.projectId));
 
-    return removed;
-  });
+      return { projectId: task.projectId, deletedEdges: removed };
+    },
+  );
 
-  emitTaskEvent(task.projectId, taskId);
+  emitTaskEvent(projectId, taskId);
   return {
     deleted: { id: taskId },
     edgesRemoved: deletedEdges.length,
@@ -1914,17 +2037,19 @@ export async function deleteTask(ctx: AuthContext, taskId: string) {
  * @returns Summary of the task and edge impact.
  */
 export async function deleteTaskPreview(ctx: AuthContext, taskId: string) {
-  const task = await assertTaskAccess(taskId, ctx);
-
-  const edgeRows = await db
-    .select({ id: taskEdges.id })
-    .from(taskEdges)
-    .where(
-      or(
-        eq(taskEdges.sourceTaskId, taskId),
-        eq(taskEdges.targetTaskId, taskId),
-      ),
-    );
+  const { task, edgeRows } = await withUserContext(ctx.userId, async (tx) => {
+    const task = await assertTaskAccessTx(tx, taskId);
+    const edgeRows = await tx
+      .select({ id: taskEdges.id })
+      .from(taskEdges)
+      .where(
+        or(
+          eq(taskEdges.sourceTaskId, taskId),
+          eq(taskEdges.targetTaskId, taskId),
+        ),
+      );
+    return { task, edgeRows };
+  });
 
   return {
     task: { id: task.id, title: task.title },
@@ -1953,7 +2078,6 @@ export async function addTaskLink(
   taskId: string,
   url: string,
 ): Promise<TaskLink> {
-  const task = await assertTaskAccess(taskId, ctx);
   let classified;
   try {
     classified = classifyLink(url);
@@ -1964,7 +2088,8 @@ export async function addTaskLink(
     throw e;
   }
 
-  const result = await db.transaction(async (tx) => {
+  const { row, projectId } = await withUserContext(ctx.userId, async (tx) => {
+    const task = await assertTaskAccessTx(tx, taskId);
     const [inserted] = await tx
       .insert(taskLinks)
       .values({
@@ -1996,11 +2121,11 @@ export async function addTaskLink(
       .update(tasks)
       .set({ updatedAt: new Date() })
       .where(eq(tasks.id, taskId));
-    return row;
+    return { row, projectId: task.projectId };
   });
 
-  emitTaskEvent(task.projectId, taskId);
-  return result;
+  emitTaskEvent(projectId, taskId);
+  return row;
 }
 
 /**
@@ -2017,24 +2142,31 @@ export async function removeTaskLink(
   ctx: AuthContext,
   linkId: string,
 ): Promise<{ id: string }> {
-  const [link] = await db
-    .select()
-    .from(taskLinks)
-    .where(eq(taskLinks.id, linkId))
-    .limit(1);
-  if (!link) throw new ForbiddenError("Forbidden", "task", linkId);
-  const task = await assertTaskAccess(link.taskId, ctx);
+  if (!isUuid(linkId)) throw new ForbiddenError("Forbidden", "task", linkId);
+  const result = await withUserContext(ctx.userId, async (tx) => {
+    const [row] = await tx
+      .select({
+        linkId: taskLinks.id,
+        taskId: taskLinks.taskId,
+        projectId: tasks.projectId,
+      })
+      .from(taskLinks)
+      .innerJoin(tasks, eq(tasks.id, taskLinks.taskId))
+      .where(eq(taskLinks.id, linkId))
+      .limit(1);
+    if (!row) throw new ForbiddenError("Forbidden", "task", linkId);
 
-  await db.transaction(async (tx) => {
     await tx.delete(taskLinks).where(eq(taskLinks.id, linkId));
     await tx
       .update(tasks)
       .set({ updatedAt: new Date() })
-      .where(eq(tasks.id, link.taskId));
+      .where(eq(tasks.id, row.taskId));
+
+    return row;
   });
 
-  emitTaskEvent(task.projectId, link.taskId);
-  return { id: linkId };
+  emitTaskEvent(result.projectId, result.taskId);
+  return { id: result.linkId };
 }
 
 /**
@@ -2059,42 +2191,46 @@ export async function updateTaskLink(
   linkId: string,
   url: string,
 ): Promise<TaskLink> {
-  const [link] = await db
-    .select()
-    .from(taskLinks)
-    .where(eq(taskLinks.id, linkId))
-    .limit(1);
-  if (!link) throw new ForbiddenError("Forbidden", "task", linkId);
-  const task = await assertTaskAccess(link.taskId, ctx);
-
+  if (!isUuid(linkId)) throw new ForbiddenError("Forbidden", "task", linkId);
   let classified;
   try {
     classified = classifyLink(url);
   } catch (e) {
     if (e instanceof MalformedLinkError) {
-      throw new ForbiddenError("Invalid url", "task", link.taskId);
+      throw new ForbiddenError("Invalid url", "task", linkId);
     }
     throw e;
   }
 
-  if (classified.url !== link.url) {
-    const [conflict] = await db
-      .select({ id: taskLinks.id })
+  const result = await withUserContext(ctx.userId, async (tx) => {
+    const [row] = await tx
+      .select({
+        link: taskLinks,
+        projectId: tasks.projectId,
+      })
       .from(taskLinks)
-      .where(
-        and(
-          eq(taskLinks.taskId, link.taskId),
-          eq(taskLinks.url, classified.url),
-          ne(taskLinks.id, linkId),
-        ),
-      )
+      .innerJoin(tasks, eq(tasks.id, taskLinks.taskId))
+      .where(eq(taskLinks.id, linkId))
       .limit(1);
-    if (conflict) {
-      throw new ForbiddenError("Duplicate url", "task", link.taskId);
-    }
-  }
+    if (!row) throw new ForbiddenError("Forbidden", "task", linkId);
 
-  const result = await db.transaction(async (tx) => {
+    if (classified.url !== row.link.url) {
+      const [conflict] = await tx
+        .select({ id: taskLinks.id })
+        .from(taskLinks)
+        .where(
+          and(
+            eq(taskLinks.taskId, row.link.taskId),
+            eq(taskLinks.url, classified.url),
+            ne(taskLinks.id, linkId),
+          ),
+        )
+        .limit(1);
+      if (conflict) {
+        throw new ForbiddenError("Duplicate url", "task", row.link.taskId);
+      }
+    }
+
     const [updated] = await tx
       .update(taskLinks)
       .set({
@@ -2107,11 +2243,12 @@ export async function updateTaskLink(
     await tx
       .update(tasks)
       .set({ updatedAt: new Date() })
-      .where(eq(tasks.id, link.taskId));
-    return updated;
+      .where(eq(tasks.id, row.link.taskId));
+
+    return { updated, projectId: row.projectId, taskId: row.link.taskId };
   });
 
-  emitTaskEvent(task.projectId, link.taskId);
-  return result;
+  emitTaskEvent(result.projectId, result.taskId);
+  return result.updated;
 }
 

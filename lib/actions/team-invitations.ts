@@ -16,11 +16,17 @@ import {
   type BetterAuthInvitationRow,
   type InvitationView,
 } from '@/lib/actions/team-invitations-map';
-import { findInvitationOrgId } from '@/lib/data/invitation';
+import { isCallerInInvitationOrg } from '@/lib/data/invitation';
 import { lookupUserNames } from '@/lib/data/membership';
 
+/**
+ * Input schema for {@link cancelInvitationAction}. Requires the caller
+ * to supply both the invitation id and the organization id they believe
+ * owns it so the action can verify the linkage without disclosing it.
+ */
 const cancelSchema = z.object({
   invitationId: z.uuid(),
+  organizationId: z.uuid(),
 });
 
 const listInvitationsSchema = z.object({
@@ -33,7 +39,9 @@ const listInvitationsSchema = z.object({
  * actionable items.
  *
  * Inviter names are resolved via a single batched user lookup since BA
- * returns only `inviterId` on the listInvitations row.
+ * returns only `inviterId` on the listInvitations row. A transient
+ * name-lookup failure degrades gracefully to the 'Unknown' fallback
+ * rather than collapsing the whole list.
  *
  * Defense-in-depth: BA's `listInvitations` endpoint only checks team
  * membership, NOT role. Without the explicit `isOrgAdmin(organizationId)`
@@ -48,8 +56,10 @@ const listInvitationsSchema = z.object({
 export async function listPendingInvitationsAction(input: {
   organizationId: string;
 }): Promise<TeamActionResult<InvitationView[]>> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail('unauthorized');
   }
@@ -57,7 +67,17 @@ export async function listPendingInvitationsAction(input: {
   const parsed = parseOrFail(listInvitationsSchema, input);
   if (!parsed.ok) return parsed;
 
-  if (!(await isOrgAdmin(parsed.data.organizationId))) return teamFail('forbidden');
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error('listPendingInvitationsAction: isOrgAdmin failed', {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail('unknown');
+  }
+  if (!isAdmin) return teamFail('forbidden');
 
   let raw: BetterAuthInvitationRow[];
   try {
@@ -84,7 +104,16 @@ export async function listPendingInvitationsAction(input: {
   if (pending.length === 0) return { ok: true, data: [] };
 
   const inviterIds = Array.from(new Set(pending.map((row) => row.inviterId)));
-  const nameById = await lookupUserNames(inviterIds);
+  let nameById: Map<string, string>;
+  try {
+    nameById = await lookupUserNames(userId, inviterIds);
+  } catch (err) {
+    console.error('listPendingInvitationsAction: lookupUserNames failed', {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    nameById = new Map();
+  }
 
   const data = pending
     .map((row) =>
@@ -100,21 +129,24 @@ export async function listPendingInvitationsAction(input: {
  * (admin+owner) at the endpoint and scopes by the invitation's own
  * organization, so cross-team cancels are rejected.
  *
- * Defense-in-depth: we resolve the invitation's `organizationId` from
- * the DB and run `isOrgAdmin(invitationOrgId)` so the upstream check is
- * scoped to the invitation's own team. A non-existent invitation
- * surfaces a typed `not_found` (preserving the "already cancelled in
- * another tab" UX); BA reveals the same existence signal, so this
- * lookup adds no new info disclosure.
+ * Defense-in-depth: the caller passes the `organizationId` they already
+ * believe owns the invitation; we route through
+ * `isCallerInInvitationOrg` which returns a boolean predicate without
+ * disclosing the invitation→org linkage, then run
+ * `isOrgAdmin(organizationId)` against the same id. A mismatched or
+ * non-existent invitation surfaces a typed `not_found`.
  *
- * @param input - `{ invitationId }` to cancel.
+ * @param input - `{ invitationId, organizationId }` to cancel.
  * @returns Discriminated result.
  */
 export async function cancelInvitationAction(input: {
   invitationId: string;
+  organizationId: string;
 }): Promise<TeamActionResult> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail('unauthorized');
   }
@@ -122,9 +154,34 @@ export async function cancelInvitationAction(input: {
   const parsed = parseOrFail(cancelSchema, input);
   if (!parsed.ok) return parsed;
 
-  const orgId = await findInvitationOrgId(parsed.data.invitationId);
-  if (!orgId) return teamFail('not_found');
-  if (!(await isOrgAdmin(orgId))) return teamFail('forbidden');
+  let inOrg: boolean;
+  try {
+    inOrg = await isCallerInInvitationOrg(
+      userId,
+      parsed.data.invitationId,
+      parsed.data.organizationId,
+    );
+  } catch (err) {
+    console.error('cancelInvitationAction: isCallerInInvitationOrg failed', {
+      invitationId: parsed.data.invitationId,
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail('unknown');
+  }
+  if (!inOrg) return teamFail('not_found');
+
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error('cancelInvitationAction: isOrgAdmin failed', {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail('unknown');
+  }
+  if (!isAdmin) return teamFail('forbidden');
 
   try {
     await auth.api.cancelInvitation({

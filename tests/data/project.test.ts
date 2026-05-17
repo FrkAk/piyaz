@@ -1,8 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
-import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { getConnectionString } from "@/tests/setup/container";
+import { superuserPool } from "@/tests/setup/global";
 import {
   getProjectSlim,
   getProjectGraphSlim,
@@ -41,7 +40,7 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
   const f = await seedUserOrgProject("graphslim");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     await sqlc`
       INSERT INTO tasks ("project_id", "title", "sequence_number", "description", "implementation_plan")
@@ -104,7 +103,7 @@ test("getProjectChrome returns header fields plus task count", async () => {
   const f = await seedUserOrgProject("chrome");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     await sqlc`
       INSERT INTO tasks ("project_id", "title", "sequence_number") VALUES
@@ -138,7 +137,7 @@ test("getProjectMeta returns header + tag vocabulary + status-grouped stats", as
   const f = await seedUserOrgProject("meta");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     await sqlc`
       INSERT INTO tasks ("project_id", "title", "sequence_number", "status", "tags") VALUES
@@ -206,7 +205,7 @@ test("getProjectMaxUpdatedAt returns the latest updated_at across project + task
   const f = await seedUserOrgProject("max");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     const future = new Date(Date.now() + 3600_000);
     await sqlc`
@@ -232,18 +231,13 @@ test("getProjectMaxUpdatedAt returns the latest updated_at across project + task
   }
 });
 
-test("getProjectListMaxUpdatedAt joins neon_auth.member by camelCase columns", async () => {
-  // Regression: the raw SQL referenced `m.organization_id` / `m.user_id`
-  // (snake_case), but Better Auth's `neon_auth.member` defines those
-  // columns as quoted camelCase (`"organizationId"`, `"userId"`). Hitting
-  // the helper used to throw `column m.organization_id does not exist`;
-  // every `/api/projects` call returned 500. This test exercises the
-  // happy path against the testcontainer schema and asserts a real
-  // timestamp comes back.
+test("getProjectListMaxUpdatedAt returns the latest updated_at across the caller's accessible scope", async () => {
+  // RLS scopes the row sets; the helper aggregates MAX(updated_at) with
+  // no neon_auth join (app_user has no grant there).
   const f = await seedUserOrgProject("listmax");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     const future = new Date(Date.now() + 3600_000);
     await sqlc`
@@ -262,7 +256,7 @@ test("getProjectListMaxUpdatedAt returns epoch when caller has no projects", asy
   const f = await seedUserOrgProject("listmax-empty");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     // Drop the seeded project so the user has zero accessible projects.
     await sqlc`DELETE FROM projects WHERE id = ${f.projectId}`;
@@ -279,7 +273,7 @@ test("listProjectsSlim aggregates statuses via grouped COUNT", async () => {
   const f = await seedUserOrgProject("counts");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     let seq = 1;
     for (let i = 0; i < 3; i++) {
@@ -312,7 +306,7 @@ test("listProjectsSlim paginates with cursor", async () => {
   const f = await seedUserOrgProject("page");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     for (let i = 0; i < 5; i++) {
       await sqlc`
@@ -353,7 +347,7 @@ test("listProjectsForMcp returns the slim agent shape without description, histo
   const f = await seedUserOrgProject("mcp-shape");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     await sqlc`
       UPDATE projects
@@ -385,7 +379,7 @@ test("listProjectsForMcp aggregates task stats and progress like listProjectsSli
   const f = await seedUserOrgProject("mcp-counts");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     let seq = 1;
     for (let i = 0; i < 3; i++) {
@@ -418,7 +412,7 @@ test("listProjectsForMcp skips teams with zero projects", async () => {
   const f = await seedUserOrgProject("mcp-empty-team");
   const ctx = makeAuthContext(f.userId);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     const [emptyOrg] = await sqlc<{ id: string }[]>`
       INSERT INTO neon_auth."organization" ("name", "slug", "createdAt")

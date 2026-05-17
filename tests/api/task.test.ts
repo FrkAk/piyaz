@@ -1,8 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
-import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { getConnectionString } from "@/tests/setup/container";
+import { superuserPool } from "@/tests/setup/global";
 import { broker } from "@/lib/realtime/broker";
 import { GET } from "@/app/api/task/[taskId]/route";
 
@@ -19,7 +18,7 @@ afterEach(async () => {
 
 /** Insert a task into a seeded project; return its id. */
 async function addTask(projectId: string, suffix: string): Promise<string> {
-  const sql = postgres(getConnectionString(), { max: 1 });
+  const sql = superuserPool();
   try {
     const [t] = await sql<{ id: string }[]>`
       INSERT INTO tasks ("project_id", "title", "sequence_number")

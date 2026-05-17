@@ -10,14 +10,15 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { serviceRoleDb } from "@/lib/db";
+import { executeRaw, type Conn } from "@/lib/db/raw";
+import { withUserContext, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges } from "@/lib/db/schema";
 import {
   assigneeCountExpr,
   assigneeUserIdsExpr,
   hasCriteriaExpr,
 } from "@/lib/data/task";
-import { member, organization } from "@/lib/db/auth-schema";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
 import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
@@ -53,6 +54,7 @@ import {
   ForbiddenError,
   InsufficientRoleError,
   assertProjectAccess,
+  assertProjectAccessTx,
   isUuid,
 } from "@/lib/auth/authorization";
 import {
@@ -100,93 +102,94 @@ export async function getProjectGraphSlim(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ProjectGraphSlim> {
-  const { project } = await assertProjectAccess(projectId, ctx);
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
 
-  const tasksQ = db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      category: tasks.category,
-      tags: tasks.tags,
-      priority: tasks.priority,
-      estimate: tasks.estimate,
-      order: tasks.order,
-      updatedAt: tasks.updatedAt,
-      sequenceNumber: tasks.sequenceNumber,
-      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: hasCriteriaExpr(),
-      assigneeCount: assigneeCountExpr(),
-      assigneeUserIds: assigneeUserIdsExpr(),
-    })
-    .from(tasks)
-    .where(eq(tasks.projectId, projectId))
-    .orderBy(asc(tasks.order));
+    const tasksQ = tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        category: tasks.category,
+        tags: tasks.tags,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        order: tasks.order,
+        updatedAt: tasks.updatedAt,
+        sequenceNumber: tasks.sequenceNumber,
+        hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+        hasCriteria: hasCriteriaExpr(),
+        assigneeCount: assigneeCountExpr(),
+        assigneeUserIds: assigneeUserIdsExpr(),
+      })
+      .from(tasks)
+      .where(eq(tasks.projectId, projectId))
+      .orderBy(asc(tasks.order));
 
-  const edgesQ = db
-    .select()
-    .from(taskEdges)
-    .where(
-      or(
-        sql`${taskEdges.sourceTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
-        sql`${taskEdges.targetTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
-      ),
+    const edgesQ = tx
+      .select()
+      .from(taskEdges)
+      .where(
+        or(
+          sql`${taskEdges.sourceTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
+          sql`${taskEdges.targetTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
+        ),
+      );
+
+    const [taskRows, edges] = await Promise.all([tasksQ, edgesQ]);
+    const enriched = enrichWithTaskRef(
+      taskRows,
+      asIdentifier(project.identifier),
     );
 
-  const [taskRows, edges] = await Promise.all([tasksQ, edgesQ]);
-  const enriched = enrichWithTaskRef(taskRows, asIdentifier(project.identifier));
+    const stateMap = await deriveTaskStatesSlim(
+      projectId,
+      enriched.map((t) => ({
+        id: t.id,
+        status: t.status,
+        hasDescription: t.hasDescription,
+        hasCriteria: t.hasCriteria,
+      })),
+      tx,
+    );
 
-  // Derived state lives on the slim payload — single source of truth for
-  // every UI surface. Computing it here avoids the client mirroring the
-  // server-side rules and the drift that pattern caused historically.
-  const stateMap = await deriveTaskStatesSlim(
-    projectId,
-    enriched.map((t) => ({
+    const slimTasks: TaskGraphSlim[] = enriched.map((t) => ({
       id: t.id,
+      taskRef: t.taskRef,
+      title: t.title,
       status: t.status,
+      category: t.category,
+      tags: t.tags,
+      priority: t.priority,
+      estimate: t.estimate,
+      order: t.order,
+      updatedAt: t.updatedAt,
       hasDescription: t.hasDescription,
       hasCriteria: t.hasCriteria,
-    })),
-  );
+      state: stateMap.get(t.id) ?? "draft",
+      assigneeCount: t.assigneeCount,
+      assigneeUserIds: t.assigneeUserIds,
+    }));
 
-  const slimTasks: TaskGraphSlim[] = enriched.map((t) => ({
-    id: t.id,
-    taskRef: t.taskRef,
-    title: t.title,
-    status: t.status,
-    category: t.category,
-    tags: t.tags,
-    priority: t.priority,
-    estimate: t.estimate,
-    order: t.order,
-    updatedAt: t.updatedAt,
-    hasDescription: t.hasDescription,
-    hasCriteria: t.hasCriteria,
-    state: stateMap.get(t.id) ?? "draft",
-    assigneeCount: t.assigneeCount,
-    assigneeUserIds: t.assigneeUserIds,
-  }));
-
-  return {
-    project: {
-      id: project.id,
-      organizationId: project.organizationId,
-      identifier: project.identifier,
-      title: project.title,
-      status: project.status,
-      updatedAt: project.updatedAt,
-      categories: project.categories,
-    },
-    tasks: slimTasks,
-    edges,
-  };
+    return {
+      project: {
+        id: project.id,
+        organizationId: project.organizationId,
+        identifier: project.identifier,
+        title: project.title,
+        status: project.status,
+        updatedAt: project.updatedAt,
+        categories: project.categories,
+      },
+      tasks: slimTasks,
+      edges,
+    };
+  });
 }
 
 /**
- * Chrome data for the workspace layout (TopBar + settings modal). Returns
- * the project header fields plus the caller's role, owning team, and a
- * total task count — fetched in two queries (`assertProjectAccess` JOIN
- * plus a single `COUNT(*)`).
+ * Chrome data for the workspace layout: project header, caller role,
+ * owning team, and total task count.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -197,27 +200,30 @@ export async function getProjectChrome(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ProjectChrome> {
-  const { project, memberRole, organization: org } = await assertProjectAccess(
-    projectId,
-    ctx,
-  );
+  return withUserContext(ctx.userId, async (tx) => {
+    const {
+      project,
+      memberRole,
+      organization: org,
+    } = await assertProjectAccessTx(tx, projectId);
 
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(tasks)
-    .where(eq(tasks.projectId, projectId));
+    const [{ count }] = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(tasks)
+      .where(eq(tasks.projectId, projectId));
 
-  return {
-    id: project.id,
-    title: project.title,
-    description: project.description,
-    identifier: project.identifier,
-    status: project.status,
-    categories: project.categories,
-    organization: org,
-    memberRole,
-    taskCount: count,
-  };
+    return {
+      id: project.id,
+      title: project.title,
+      description: project.description,
+      identifier: project.identifier,
+      status: project.status,
+      categories: project.categories,
+      organization: org,
+      memberRole,
+      taskCount: count,
+    };
+  });
 }
 
 /**
@@ -234,14 +240,16 @@ export async function getProjectMaxUpdatedAt(
   ctx: AuthContext,
   projectId: string,
 ): Promise<Date> {
-  await assertProjectAccess(projectId, ctx);
-  const max = await getProjectMaxUpdatedAtRaw(db, projectId);
-  if (!max) {
-    throw new Error(
-      `getProjectMaxUpdatedAt: project ${projectId} disappeared after access check`,
-    );
-  }
-  return max;
+  return withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
+    const max = await getProjectMaxUpdatedAtRaw(tx, projectId);
+    if (!max) {
+      throw new Error(
+        `getProjectMaxUpdatedAt: project ${projectId} disappeared after access check`,
+      );
+    }
+    return max;
+  });
 }
 
 /**
@@ -256,26 +264,49 @@ export async function getProjectMaxUpdatedAt(
 export async function getProjectListMaxUpdatedAt(
   ctx: AuthContext,
 ): Promise<Date> {
-  return getProjectListMaxUpdatedAtRaw(db, ctx.userId);
+  return withUserContext(ctx.userId, async (tx) =>
+    getProjectListMaxUpdatedAtRaw(tx),
+  );
 }
 
 /**
- * Project ids belonging to a single organization. Org-scoped — no per-user
- * filtering — meant for trusted server-side bookkeeping inside the
- * org-membership hooks where the caller has already established the scope
- * (see `lib/realtime/access.ts`). Do NOT expose this through any route or
- * server action that takes user-supplied input.
+ * Project ids in a single organization, scoped to the caller's membership.
+ * Internal — for trusted bookkeeping in org-membership hooks; do NOT expose
+ * through any route that takes user-supplied input.
  *
+ * @param userId - Verified user id of the member triggering the lookup.
  * @param organizationId - Organization UUID.
  * @returns Project ids in that org.
  */
 export async function listOrgProjectIds(
+  userId: string,
   organizationId: string,
 ): Promise<string[]> {
-  const rows = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.organizationId, organizationId));
+  return withUserContext(userId, async (tx) => {
+    const rows = await tx
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.organizationId, organizationId));
+    return rows.map((r) => r.id);
+  });
+}
+
+/**
+ * Admin lookup: project ids for an org, NOT scoped by caller membership.
+ * Routes through `list_org_project_ids` (SECURITY DEFINER, service_role-only).
+ * Used by Better Auth's `afterRemoveMember` hook, where the member row is
+ * already gone and the caller-scoped variant returns [].
+ *
+ * @param orgId - UUID of the organization.
+ * @returns Array of project ids in the organization.
+ */
+export async function listOrgProjectIdsAsAdmin(
+  orgId: string,
+): Promise<string[]> {
+  const rows = await executeRaw<{ id: string }>(
+    serviceRoleDb,
+    sql`SELECT id FROM public.list_org_project_ids(${orgId}::uuid)`,
+  );
   return rows.map((r) => r.id);
 }
 
@@ -291,17 +322,10 @@ export async function listOrgProjectIds(
 export async function listAccessibleProjectIds(
   ctx: AuthContext,
 ): Promise<string[]> {
-  const rows = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .innerJoin(
-      member,
-      and(
-        eq(member.organizationId, projects.organizationId),
-        eq(member.userId, ctx.userId),
-      ),
-    );
-  return rows.map((r) => r.id);
+  return withUserContext(ctx.userId, async (tx) => {
+    const rows = await tx.select({ id: projects.id }).from(projects);
+    return rows.map((r) => r.id);
+  });
 }
 
 /**
@@ -331,12 +355,14 @@ export async function getProjectSlim(
  * assemblers — caller has already asserted access on the parent task.
  *
  * @param projectId - UUID of the project.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns The identifier string, or null when the project is missing.
  */
 export async function getProjectIdentifier(
   projectId: string,
+  conn: Conn,
 ): Promise<string | null> {
-  const [row] = await db
+  const [row] = await conn
     .select({ identifier: projects.identifier })
     .from(projects)
     .where(eq(projects.id, projectId))
@@ -357,12 +383,14 @@ export type ProjectHeader = {
  * task.
  *
  * @param projectId - UUID of the project.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns The header, or null when the project is missing.
  */
 export async function getProjectHeader(
   projectId: string,
+  conn: Conn,
 ): Promise<ProjectHeader | null> {
-  const [row] = await db
+  const [row] = await conn
     .select({
       title: projects.title,
       description: projects.description,
@@ -391,8 +419,22 @@ export async function getProjectTags(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ProjectTag[]> {
-  await assertProjectAccess(projectId, ctx);
-  return aggregateProjectTags(db, projectId);
+  return withUserContext(ctx.userId, (tx) => getProjectTagsTx(tx, projectId));
+}
+
+/**
+ * {@link getProjectTags} on a caller-supplied tx.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param projectId - UUID of the project.
+ * @returns Sorted tag vocabulary with usage counts.
+ */
+export async function getProjectTagsTx(
+  tx: Tx,
+  projectId: string,
+): Promise<ProjectTag[]> {
+  await assertProjectAccessTx(tx, projectId);
+  return aggregateProjectTags(tx, projectId);
 }
 
 // ---------------------------------------------------------------------------
@@ -403,7 +445,7 @@ export async function getProjectTags(
  * Slim project-level metadata for agent orientation. Intended as the
  * lightweight alternative to {@link buildProjectOverview} when the agent
  * needs categories, tag vocab, or progress without dragging every task and
- * edge into context. Three queries: project header (via assertProjectAccess),
+ * edge into context. Three queries: project header (via assertProjectAccessTx),
  * tag aggregation, and status-grouped count.
  *
  * @param ctx - Resolved auth context.
@@ -415,47 +457,49 @@ export async function getProjectMeta(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ProjectMeta> {
-  const { project } = await assertProjectAccess(projectId, ctx);
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
 
-  const [tagVocabulary, statusCounts] = await Promise.all([
-    aggregateProjectTags(db, projectId),
-    db
-      .select({
-        status: tasks.status,
-        count: sql<number>`count(*)::int`.as("count"),
-      })
-      .from(tasks)
-      .where(eq(tasks.projectId, projectId))
-      .groupBy(tasks.status),
-  ]);
+    const [tagVocabulary, statusCounts] = await Promise.all([
+      aggregateProjectTags(tx, projectId),
+      tx
+        .select({
+          status: tasks.status,
+          count: sql<number>`count(*)::int`.as("count"),
+        })
+        .from(tasks)
+        .where(eq(tasks.projectId, projectId))
+        .groupBy(tasks.status),
+    ]);
 
-  const taskStats: ProjectTaskStats = {
-    total: 0,
-    done: 0,
-    inProgress: 0,
-    cancelled: 0,
-  };
-  for (const c of statusCounts) {
-    taskStats.total += c.count;
-    if (c.status === "done") taskStats.done = c.count;
-    else if (c.status === "in_progress") taskStats.inProgress = c.count;
-    else if (c.status === "cancelled") taskStats.cancelled = c.count;
-  }
-  const denominator = taskStats.total - taskStats.cancelled;
-  const progress =
-    denominator > 0 ? Math.round((taskStats.done / denominator) * 100) : 0;
+    const taskStats: ProjectTaskStats = {
+      total: 0,
+      done: 0,
+      inProgress: 0,
+      cancelled: 0,
+    };
+    for (const c of statusCounts) {
+      taskStats.total += c.count;
+      if (c.status === "done") taskStats.done = c.count;
+      else if (c.status === "in_progress") taskStats.inProgress = c.count;
+      else if (c.status === "cancelled") taskStats.cancelled = c.count;
+    }
+    const denominator = taskStats.total - taskStats.cancelled;
+    const progress =
+      denominator > 0 ? Math.round((taskStats.done / denominator) * 100) : 0;
 
-  return {
-    id: project.id,
-    identifier: project.identifier,
-    title: project.title,
-    description: project.description,
-    status: project.status,
-    categories: project.categories,
-    tagVocabulary,
-    taskStats,
-    progress,
-  };
+    return {
+      id: project.id,
+      identifier: project.identifier,
+      title: project.title,
+      description: project.description,
+      status: project.status,
+      categories: project.categories,
+      tagVocabulary,
+      taskStats,
+      progress,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -485,49 +529,53 @@ export type UserTeamEntry = {
  * Empty teams (no projects) are included — that's the entire point of this
  * action; `listProjectsSlim` skips them.
  *
+ * Per-org project counts use `inArray` even though RLS already scopes
+ * `projects` to the caller's accessible orgs — the explicit list narrows
+ * the index scan.
+ *
  * @param ctx - Resolved auth context.
  * @returns Array of teams with role and project counts.
  */
 export async function listUserTeams(
   ctx: AuthContext,
 ): Promise<UserTeamEntry[]> {
-  const memberships = await db
-    .select({
-      id: organization.id,
-      name: organization.name,
-      slug: organization.slug,
-      role: member.role,
-    })
-    .from(member)
-    .innerJoin(organization, eq(organization.id, member.organizationId))
-    .where(eq(member.userId, ctx.userId))
-    .orderBy(asc(member.createdAt));
+  return withUserContext(ctx.userId, async (tx) => {
+    const orgRows = await executeRaw<{
+      org_id: string;
+      name: string;
+      slug: string;
+      member_role: string;
+    }>(
+      tx,
+      sql`SELECT org_id, name, slug, member_role FROM public.current_user_orgs()`,
+    );
 
-  if (memberships.length === 0) return [];
+    if (orgRows.length === 0) return [];
 
-  const counts = await db
-    .select({
-      organizationId: projects.organizationId,
-      total: sql<number>`count(*)::int`.as("total"),
-    })
-    .from(projects)
-    .where(
-      inArray(
-        projects.organizationId,
-        memberships.map((m) => m.id),
-      ),
-    )
-    .groupBy(projects.organizationId);
+    const counts = await tx
+      .select({
+        organizationId: projects.organizationId,
+        total: sql<number>`count(*)::int`.as("total"),
+      })
+      .from(projects)
+      .where(
+        inArray(
+          projects.organizationId,
+          orgRows.map((r) => r.org_id),
+        ),
+      )
+      .groupBy(projects.organizationId);
 
-  const countByOrg = new Map(counts.map((c) => [c.organizationId, c.total]));
+    const countByOrg = new Map(counts.map((c) => [c.organizationId, c.total]));
 
-  return memberships.map((m) => ({
-    id: m.id,
-    name: m.name,
-    slug: m.slug,
-    role: m.role,
-    projectCount: countByOrg.get(m.id) ?? 0,
-  }));
+    return orgRows.map((r) => ({
+      id: r.org_id,
+      name: r.name,
+      slug: r.slug,
+      role: r.member_role,
+      projectCount: countByOrg.get(r.org_id) ?? 0,
+    }));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -566,70 +614,80 @@ export async function listProjectsSlim(
             OR (${projects.updatedAt} = ${afterIso}::timestamptz AND ${projects.id} < ${after.id}))`
     : sql`TRUE`;
 
-  const rawRows = await db
-    .select({
-      project: getTableColumns(projects),
-      organization: {
-        id: organization.id,
-        name: organization.name,
-        slug: organization.slug,
-      },
-      memberRole: member.role,
-    })
-    .from(projects)
-    .innerJoin(
-      member,
-      and(
-        eq(member.organizationId, projects.organizationId),
-        eq(member.userId, ctx.userId),
+  return withUserContext(ctx.userId, async (tx) => {
+    const [orgRows, trimmedAll] = await Promise.all([
+      executeRaw<{
+        org_id: string;
+        name: string;
+        slug: string;
+        member_role: string;
+      }>(
+        tx,
+        sql`SELECT org_id, name, slug, member_role FROM public.current_user_orgs()`,
       ),
-    )
-    .innerJoin(organization, eq(organization.id, projects.organizationId))
-    .where(cursorClause)
-    .orderBy(desc(projects.updatedAt), desc(projects.id))
-    .limit(limit + 1);
+      tx
+        .select(getTableColumns(projects))
+        .from(projects)
+        .where(cursorClause)
+        .orderBy(desc(projects.updatedAt), desc(projects.id))
+        .limit(limit + 1),
+    ]);
 
-  const hasMore = rawRows.length > limit;
-  const trimmed = hasMore ? rawRows.slice(0, limit) : rawRows;
-  const last = trimmed[trimmed.length - 1];
-  const nextCursor =
-    hasMore && last
-      ? encodeCursor({
-          updatedAt: new Date(last.project.updatedAt),
-          id: last.project.id,
-        })
-      : null;
+    const orgsById = new Map(
+      orgRows.map((r) => ({
+        id: r.org_id,
+        name: r.name,
+        slug: r.slug,
+        memberRole: r.member_role,
+      })).map((o) => [o.id, o]),
+    );
 
-  if (trimmed.length === 0) return { rows: [], nextCursor: null };
+    const hasMore = trimmedAll.length > limit;
+    const trimmed = hasMore ? trimmedAll.slice(0, limit) : trimmedAll;
+    const last = trimmed[trimmed.length - 1];
+    const nextCursor =
+      hasMore && last
+        ? encodeCursor({
+            updatedAt: new Date(last.updatedAt),
+            id: last.id,
+          })
+        : null;
 
-  const projectIds = trimmed.map((p) => p.project.id);
-  const counts = await db
-    .select({
-      projectId: tasks.projectId,
-      status: tasks.status,
-      count: sql<number>`count(*)::int`.as("count"),
-    })
-    .from(tasks)
-    .where(sql`${tasks.projectId} IN ${projectIds}`)
-    .groupBy(tasks.projectId, tasks.status);
+    if (trimmed.length === 0) return { rows: [], nextCursor: null };
 
-  const statsByProject = new Map<string, ProjectTaskStats>();
-  for (const c of counts) {
-    const stats = statsByProject.get(c.projectId) ?? {
-      total: 0,
-      done: 0,
-      inProgress: 0,
-      cancelled: 0,
-    };
-    stats.total += c.count;
-    if (c.status === "done") stats.done = c.count;
-    else if (c.status === "in_progress") stats.inProgress = c.count;
-    else if (c.status === "cancelled") stats.cancelled = c.count;
-    statsByProject.set(c.projectId, stats);
-  }
+    const projectIds = trimmed.map((p) => p.id);
+    const counts = await tx
+      .select({
+        projectId: tasks.projectId,
+        status: tasks.status,
+        count: sql<number>`count(*)::int`.as("count"),
+      })
+      .from(tasks)
+      .where(sql`${tasks.projectId} IN ${projectIds}`)
+      .groupBy(tasks.projectId, tasks.status);
 
-  const rows: ProjectListEntry[] = trimmed.map(
-    ({ project, organization: org, memberRole }) => {
+    const statsByProject = new Map<string, ProjectTaskStats>();
+    for (const c of counts) {
+      const stats = statsByProject.get(c.projectId) ?? {
+        total: 0,
+        done: 0,
+        inProgress: 0,
+        cancelled: 0,
+      };
+      stats.total += c.count;
+      if (c.status === "done") stats.done = c.count;
+      else if (c.status === "in_progress") stats.inProgress = c.count;
+      else if (c.status === "cancelled") stats.cancelled = c.count;
+      statsByProject.set(c.projectId, stats);
+    }
+
+    const rows: ProjectListEntry[] = trimmed.map((project) => {
+      const org = orgsById.get(project.organizationId);
+      if (!org) {
+        throw new Error(
+          `listProjectsSlim: project ${project.id} has no matching org in current_user_orgs()`,
+        );
+      }
       const taskStats = statsByProject.get(project.id) ?? {
         total: 0,
         done: 0,
@@ -639,18 +697,18 @@ export async function listProjectsSlim(
       const denominator = taskStats.total - taskStats.cancelled;
       return {
         ...project,
-        organization: org,
-        memberRole,
+        organization: { id: org.id, name: org.name, slug: org.slug },
+        memberRole: org.memberRole,
         taskStats,
         progress:
           denominator > 0
             ? Math.round((taskStats.done / denominator) * 100)
             : 0,
       };
-    },
-  );
+    });
 
-  return { rows, nextCursor };
+    return { rows, nextCursor };
+  });
 }
 
 /**
@@ -671,81 +729,98 @@ export async function listProjectsSlim(
 export async function listProjectsForMcp(
   ctx: AuthContext,
 ): Promise<ProjectListEntryMcp[]> {
-  const rawRows = await db
-    .select({
-      id: projects.id,
-      organizationId: projects.organizationId,
-      title: projects.title,
-      identifier: projects.identifier,
-      status: projects.status,
-      organization: {
-        id: organization.id,
-        name: organization.name,
-        slug: organization.slug,
-      },
-      memberRole: member.role,
-    })
-    .from(projects)
-    .innerJoin(
-      member,
-      and(
-        eq(member.organizationId, projects.organizationId),
-        eq(member.userId, ctx.userId),
+  return withUserContext(ctx.userId, async (tx) => {
+    const [orgRows, projectRows] = await Promise.all([
+      executeRaw<{
+        org_id: string;
+        name: string;
+        slug: string;
+        member_role: string;
+      }>(
+        tx,
+        sql`SELECT org_id, name, slug, member_role FROM public.current_user_orgs()`,
       ),
-    )
-    .innerJoin(organization, eq(organization.id, projects.organizationId))
-    .orderBy(desc(projects.updatedAt), desc(projects.id));
+      tx
+        .select({
+          id: projects.id,
+          organizationId: projects.organizationId,
+          title: projects.title,
+          identifier: projects.identifier,
+          status: projects.status,
+        })
+        .from(projects)
+        .orderBy(desc(projects.updatedAt), desc(projects.id)),
+    ]);
 
-  if (rawRows.length === 0) return [];
+    if (projectRows.length === 0) return [];
 
-  const projectIds = rawRows.map((r) => r.id);
-  const counts = await db
-    .select({
-      projectId: tasks.projectId,
-      status: tasks.status,
-      count: sql<number>`count(*)::int`.as("count"),
-    })
-    .from(tasks)
-    .where(sql`${tasks.projectId} IN ${projectIds}`)
-    .groupBy(tasks.projectId, tasks.status);
+    const orgsById = new Map(
+      orgRows.map((r) => [
+        r.org_id,
+        {
+          id: r.org_id,
+          name: r.name,
+          slug: r.slug,
+          memberRole: r.member_role,
+        },
+      ]),
+    );
 
-  const statsByProject = new Map<string, ProjectTaskStats>();
-  for (const c of counts) {
-    const stats = statsByProject.get(c.projectId) ?? {
-      total: 0,
-      done: 0,
-      inProgress: 0,
-      cancelled: 0,
-    };
-    stats.total += c.count;
-    if (c.status === "done") stats.done = c.count;
-    else if (c.status === "in_progress") stats.inProgress = c.count;
-    else if (c.status === "cancelled") stats.cancelled = c.count;
-    statsByProject.set(c.projectId, stats);
-  }
+    const projectIds = projectRows.map((r) => r.id);
+    const counts = await tx
+      .select({
+        projectId: tasks.projectId,
+        status: tasks.status,
+        count: sql<number>`count(*)::int`.as("count"),
+      })
+      .from(tasks)
+      .where(sql`${tasks.projectId} IN ${projectIds}`)
+      .groupBy(tasks.projectId, tasks.status);
 
-  return rawRows.map((row) => {
-    const taskStats = statsByProject.get(row.id) ?? {
-      total: 0,
-      done: 0,
-      inProgress: 0,
-      cancelled: 0,
-    };
-    const denominator = taskStats.total - taskStats.cancelled;
-    return {
-      id: row.id,
-      organizationId: row.organizationId,
-      title: row.title,
-      identifier: row.identifier,
-      status: row.status,
-      organization: row.organization,
-      memberRole: row.memberRole,
-      taskStats,
-      progress:
-        denominator > 0
-          ? Math.round((taskStats.done / denominator) * 100)
-          : 0,
-    };
+    const statsByProject = new Map<string, ProjectTaskStats>();
+    for (const c of counts) {
+      const stats = statsByProject.get(c.projectId) ?? {
+        total: 0,
+        done: 0,
+        inProgress: 0,
+        cancelled: 0,
+      };
+      stats.total += c.count;
+      if (c.status === "done") stats.done = c.count;
+      else if (c.status === "in_progress") stats.inProgress = c.count;
+      else if (c.status === "cancelled") stats.cancelled = c.count;
+      statsByProject.set(c.projectId, stats);
+    }
+
+    return projectRows.map((row) => {
+      const org = orgsById.get(row.organizationId);
+      if (!org) {
+        throw new Error(
+          `listProjectsForMcp: project ${row.id} has no matching org in current_user_orgs()`,
+        );
+      }
+      const taskStats = statsByProject.get(row.id) ?? {
+        total: 0,
+        done: 0,
+        inProgress: 0,
+        cancelled: 0,
+      };
+      const denominator = taskStats.total - taskStats.cancelled;
+      return {
+        id: row.id,
+        organizationId: row.organizationId,
+        title: row.title,
+        identifier: row.identifier,
+        status: row.status,
+        organization: { id: org.id, name: org.name, slug: org.slug },
+        memberRole: org.memberRole,
+        taskStats,
+        progress:
+          denominator > 0
+            ? Math.round((taskStats.done / denominator) * 100)
+            : 0,
+      };
+    });
   });
 }
 
@@ -787,7 +862,7 @@ export type CreateProjectInput = Omit<
  * @throws If no unique variant found within 1000 attempts.
  */
 async function pickAvailableIdentifier(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  tx: Tx,
   organizationId: string,
   base: Identifier,
 ): Promise<Identifier> {
@@ -806,12 +881,13 @@ async function pickAvailableIdentifier(
 }
 
 /**
- * Resolve the destination team for a `createProject` call.
+ * Resolve the destination team for a `createProject` call inside an
+ * existing transaction frame.
  *
  * Resolution rules — every path enforces a fresh membership check, so a
  * stale token cannot write into a team the user has been removed from:
  *
- * 1. `data.organizationId` provided → membership-checked; on miss raise
+ * 1. `requested` provided → membership-checked; on miss raise
  *    `ForbiddenError`.
  * 2. Omitted + caller has exactly one membership → use that team.
  * 3. Omitted + caller has multiple memberships → raise
@@ -820,44 +896,52 @@ async function pickAvailableIdentifier(
  * 4. Omitted + caller has zero memberships → raise
  *    {@link NoTeamMembershipError}.
  *
- * @param ctx - Resolved auth context.
+ * @param tx - Active RLS transaction frame whose GUC already binds the
+ *   caller; membership is read via `public.current_user_orgs()`.
+ * @param _ctx - Resolved auth context (currently unused — kept for parity
+ *   with the public `createProject` signature should a future check need
+ *   non-user fields).
  * @param requested - Optional explicit `organizationId` from the caller.
  * @returns Verified destination team UUID.
+ * @throws ForbiddenError when `requested` is supplied but the caller is
+ *   not a member of that team.
+ * @throws MultiTeamAmbiguityError when omitted and the caller is in >1 team.
+ * @throws NoTeamMembershipError when omitted and the caller has no teams.
  */
-async function resolveTargetOrgId(
-  ctx: AuthContext,
+async function resolveTargetOrgIdInTx(
+  tx: Tx,
+  _ctx: AuthContext,
   requested: string | undefined,
 ): Promise<string> {
+  const memberships = await executeRaw<{ org_id: string; name: string }>(
+    tx,
+    sql`SELECT org_id, name FROM public.current_user_orgs()`,
+  );
+
   if (requested !== undefined) {
     if (!isUuid(requested)) {
       throw new ForbiddenError("Forbidden", "team", requested);
     }
-    const [row] = await db
-      .select({ id: member.id })
-      .from(member)
-      .where(
-        and(eq(member.userId, ctx.userId), eq(member.organizationId, requested)),
-      )
-      .limit(1);
-    if (!row) throw new ForbiddenError("Forbidden", "team", requested);
+    if (!memberships.some((m) => m.org_id === requested)) {
+      throw new ForbiddenError("Forbidden", "team", requested);
+    }
     return requested;
   }
 
-  const memberships = await db
-    .select({ id: organization.id, name: organization.name })
-    .from(member)
-    .innerJoin(organization, eq(organization.id, member.organizationId))
-    .where(eq(member.userId, ctx.userId));
-
   if (memberships.length === 0) throw new NoTeamMembershipError();
-  if (memberships.length === 1) return memberships[0].id;
-  const teams: TeamOption[] = memberships.map((m) => ({ id: m.id, name: m.name }));
+  if (memberships.length === 1) return memberships[0].org_id;
+  const teams: TeamOption[] = memberships.map((m) => ({
+    id: m.org_id,
+    name: m.name,
+  }));
   throw new MultiTeamAmbiguityError(teams);
 }
 
 /**
- * Insert a new project. Destination resolution is handled by
- * {@link resolveTargetOrgId} (always membership-checked).
+ * Insert a new project. Destination resolution and the insert run in a
+ * single `withUserContext` frame — one `set_config` round-trip, and the
+ * membership check shares the transaction snapshot with the insert so
+ * membership cannot be revoked between checks.
  *
  * If `identifier` is omitted, it is derived from the title and auto-suffixed
  * on collision under a transaction-scoped advisory lock keyed on the target
@@ -876,43 +960,52 @@ export async function createProject(
   ctx: AuthContext,
   data: CreateProjectInput,
 ) {
-  const targetOrgId = await resolveTargetOrgId(ctx, data.organizationId);
-
   if (typeof data.description === "string" && data.description.trim()) {
     data = {
       ...data,
       description: (await formatMarkdown(data.description)) ?? data.description,
     };
   }
-  const project = await db.transaction(async (tx) => {
-    let identifier = data.identifier;
-    if (identifier === undefined) {
-      await acquireOrgIdentifierLock(tx, targetOrgId);
-      identifier = await pickAvailableIdentifier(
-        tx,
-        targetOrgId,
-        deriveIdentifier(data.title),
-      );
-    }
 
-    const [row] = await tx
-      .insert(projects)
-      .values({
-        ...data,
-        identifier,
-        organizationId: targetOrgId,
-        history: [
-          makeHistoryEntry({
-            type: "created",
-            label: "Project created",
-            description: `Project "${data.title}" created.`,
-            actor: "user",
-          }),
-        ],
-      })
-      .returning();
-    return row;
-  });
+  const { project, targetOrgId } = await withUserContext(
+    ctx.userId,
+    async (tx) => {
+      const targetOrgId = await resolveTargetOrgIdInTx(
+        tx,
+        ctx,
+        data.organizationId,
+      );
+
+      let identifier = data.identifier;
+      if (identifier === undefined) {
+        await acquireOrgIdentifierLock(tx, targetOrgId);
+        identifier = await pickAvailableIdentifier(
+          tx,
+          targetOrgId,
+          deriveIdentifier(data.title),
+        );
+      }
+
+      const [row] = await tx
+        .insert(projects)
+        .values({
+          ...data,
+          identifier,
+          organizationId: targetOrgId,
+          history: [
+            makeHistoryEntry({
+              type: "created",
+              label: "Project created",
+              description: `Project "${data.title}" created.`,
+              actor: "user",
+            }),
+          ],
+        })
+        .returning();
+      return { project: row, targetOrgId };
+    },
+  );
+
   await emitProjectListEvent(targetOrgId);
   return project;
 }
@@ -964,8 +1057,6 @@ export async function updateProject(
   projectId: string,
   changes: ProjectUpdate,
 ) {
-  await assertProjectAccess(projectId, ctx);
-
   const incoming = changes as Record<string, unknown>;
   if (incoming.identifier !== undefined) {
     throw new InsufficientRoleError(["rename"], "project", projectId);
@@ -979,11 +1070,15 @@ export async function updateProject(
     const formatted = await formatMarkdown(safe.description);
     safe.description = formatted ?? safe.description;
   }
-  const [updated] = await db
-    .update(projects)
-    .set({ ...safe, updatedAt: new Date() })
-    .where(eq(projects.id, projectId))
-    .returning();
+  const updated = await withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
+    const [row] = await tx
+      .update(projects)
+      .set({ ...safe, updatedAt: new Date() })
+      .where(eq(projects.id, projectId))
+      .returning();
+    return row;
+  });
   emitProjectEvent(projectId);
   return updated;
 }
@@ -996,11 +1091,14 @@ export async function updateProject(
  * @param projectId - UUID of the project to delete.
  */
 export async function deleteProject(ctx: AuthContext, projectId: string) {
-  const { project } = await assertProjectAccess(projectId, ctx, {
-    project: ["delete"],
+  const organizationId = await withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId, {
+      project: ["delete"],
+    });
+    await tx.delete(projects).where(eq(projects.id, projectId));
+    return project.organizationId;
   });
-  await db.delete(projects).where(eq(projects.id, projectId));
-  await emitProjectDeleted(projectId, project.organizationId);
+  await emitProjectDeleted(projectId, organizationId);
 }
 
 /**
@@ -1024,11 +1122,10 @@ export async function renameProjectIdentifier(
   projectId: string,
   identifier: Identifier,
 ) {
-  const { project } = await assertProjectAccess(projectId, ctx, {
-    project: ["rename"],
-  });
-
-  const updated = await db.transaction(async (tx) => {
+  const updated = await withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId, {
+      project: ["rename"],
+    });
     await acquireOrgIdentifierLock(tx, project.organizationId);
     const [row] = await tx
       .update(projects)
@@ -1059,9 +1156,8 @@ export async function renameCategory(
   oldName: string,
   newName: string,
 ) {
-  await assertProjectAccess(projectId, ctx);
-
-  await db.transaction(async (tx) => {
+  await withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
     const [project] = await tx
       .select({ categories: projects.categories })
       .from(projects)
@@ -1097,9 +1193,8 @@ export async function deleteCategory(
   projectId: string,
   categoryName: string,
 ) {
-  await assertProjectAccess(projectId, ctx);
-
-  await db.transaction(async (tx) => {
+  await withUserContext(ctx.userId, async (tx) => {
+    await assertProjectAccessTx(tx, projectId);
     const [project] = await tx
       .select({ categories: projects.categories })
       .from(projects)

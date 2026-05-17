@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
 import { requireSession } from "@/lib/auth/session";
 import { isOrgAdmin } from "@/lib/auth/org-permissions";
+import { makeAuthContext } from "@/lib/auth/context";
 import { generateInviteCode, INVITE_CODE_PATTERN } from "@/lib/auth/invite-code";
 import {
   createTeamInviteCode,
@@ -21,6 +22,7 @@ import {
   TEAM_ACTION_MESSAGES,
 } from "@/lib/actions/team-errors";
 import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
+import { isUniqueViolation } from "@/lib/db/errors";
 
 /** Public-facing metadata for a team invite code. Hides internal fields. */
 export type InviteCodeMetadata = {
@@ -109,7 +111,7 @@ async function resolveAdminContext(
   organizationId: string,
 ): Promise<
   | { ok: true; userId: string }
-  | { ok: false; code: "unauthorized" | "forbidden"; message: string }
+  | { ok: false; code: "unauthorized" | "forbidden" | "unknown"; message: string }
 > {
   let userId: string;
   try {
@@ -122,7 +124,21 @@ async function resolveAdminContext(
       message: TEAM_ACTION_MESSAGES.unauthorized,
     };
   }
-  if (!(await isOrgAdmin(organizationId))) {
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(organizationId);
+  } catch (err) {
+    console.error("resolveAdminContext: isOrgAdmin failed", {
+      organizationId,
+      err,
+    });
+    return {
+      ok: false,
+      code: "unknown",
+      message: TEAM_ACTION_MESSAGES.unknown,
+    };
+  }
+  if (!isAdmin) {
     return { ok: false, code: "forbidden", message: FORBIDDEN_MSG };
   }
   return { ok: true, userId };
@@ -168,22 +184,40 @@ export async function getOrCreateTeamInviteCodeAction(input: {
 
   const authResult = await resolveAdminContext(orgId);
   if (!authResult.ok) return authResult;
-  const { userId } = authResult;
-
-  const existing = await findTeamInviteCode(orgId);
-  if (existing) return { ok: true, data: toMetadata(existing) };
+  const ctx = makeAuthContext(authResult.userId);
 
   try {
-    const created = await createTeamInviteCode({
+    const existing = await findTeamInviteCode(ctx, orgId);
+    if (existing) return { ok: true, data: toMetadata(existing) };
+  } catch (err) {
+    console.error("getOrCreateTeamInviteCodeAction findTeamInviteCode failed", {
+      orgId,
+      err,
+    });
+    return {
+      ok: false,
+      code: "unknown",
+      message: TEAM_ACTION_MESSAGES.unknown,
+    };
+  }
+
+  try {
+    const created = await createTeamInviteCode(ctx, {
       organizationId: orgId,
       code: generateInviteCode(),
-      createdBy: userId,
     });
     return { ok: true, data: toMetadata(created) };
   } catch (err) {
-    if ((err as { code?: string } | null)?.code === "23505") {
-      const row = await findTeamInviteCode(orgId);
-      if (row) return { ok: true, data: toMetadata(row) };
+    if (isUniqueViolation(err)) {
+      try {
+        const row = await findTeamInviteCode(ctx, orgId);
+        if (row) return { ok: true, data: toMetadata(row) };
+      } catch (lookupErr) {
+        console.error(
+          "getOrCreateTeamInviteCodeAction post-conflict lookup failed",
+          { orgId, err: lookupErr },
+        );
+      }
     }
     console.error("getOrCreateTeamInviteCodeAction failed", err);
     return {
@@ -217,31 +251,49 @@ export async function regenerateTeamInviteCodeAction(input: {
 
   const authResult = await resolveAdminContext(orgId);
   if (!authResult.ok) return authResult;
-  const { userId } = authResult;
-
-  const updated = await rotateTeamInviteCode({
-    organizationId: orgId,
-    newCode: generateInviteCode(),
-  });
-  if (updated) return { ok: true, data: toMetadata(updated) };
+  const ctx = makeAuthContext(authResult.userId);
 
   try {
-    const created = await createTeamInviteCode({
+    const updated = await rotateTeamInviteCode(ctx, {
+      organizationId: orgId,
+      newCode: generateInviteCode(),
+    });
+    if (updated) return { ok: true, data: toMetadata(updated) };
+  } catch (err) {
+    console.error("regenerateTeamInviteCodeAction rotateTeamInviteCode failed", {
+      orgId,
+      err,
+    });
+    return {
+      ok: false,
+      code: "unknown",
+      message: TEAM_ACTION_MESSAGES.unknown,
+    };
+  }
+
+  try {
+    const created = await createTeamInviteCode(ctx, {
       organizationId: orgId,
       code: generateInviteCode(),
-      createdBy: userId,
     });
     return { ok: true, data: toMetadata(created) };
   } catch (err) {
     // 23505 here is almost always the org_id UNIQUE — a concurrent
     // first-rotate just landed a row. Retry as UPDATE with a freshly
     // generated code so a (vanishingly rare) code collision can't loop.
-    if ((err as { code?: string } | null)?.code === "23505") {
-      const retried = await rotateTeamInviteCode({
-        organizationId: orgId,
-        newCode: generateInviteCode(),
-      });
-      if (retried) return { ok: true, data: toMetadata(retried) };
+    if (isUniqueViolation(err)) {
+      try {
+        const retried = await rotateTeamInviteCode(ctx, {
+          organizationId: orgId,
+          newCode: generateInviteCode(),
+        });
+        if (retried) return { ok: true, data: toMetadata(retried) };
+      } catch (retryErr) {
+        console.error("regenerateTeamInviteCodeAction retry rotate failed", {
+          orgId,
+          err: retryErr,
+        });
+      }
     }
     console.error("regenerateTeamInviteCodeAction failed", err);
     return {
@@ -276,8 +328,19 @@ export async function revokeTeamInviteCodeAction(input: {
 
   const authResult = await resolveAdminContext(orgId);
   if (!authResult.ok) return authResult;
+  const ctx = makeAuthContext(authResult.userId);
 
-  const updated = await revokeTeamInviteCode(orgId);
+  let updated: InviteCodeRow | null;
+  try {
+    updated = await revokeTeamInviteCode(ctx, orgId);
+  } catch (err) {
+    console.error("revokeTeamInviteCodeAction failed", { orgId, err });
+    return {
+      ok: false,
+      code: "unknown",
+      message: TEAM_ACTION_MESSAGES.unknown,
+    };
+  }
   if (!updated) {
     return { ok: false, code: "not_found", message: NOT_FOUND_MSG };
   }
@@ -297,6 +360,11 @@ export async function revokeTeamInviteCodeAction(input: {
  *
  * Rate-limited per-user (5/min) AND per-IP (20/min) as defense in depth
  * on top of the 126-bit code entropy.
+ *
+ * Post-commit release is best-effort: once membership is committed a
+ * throw from `releaseInviteCodeSlot` must not surface as a 500 to a
+ * now-joined user; the pre-sweep in `reserve_team_invite_code_slot`
+ * reclaims any orphaned reservation on the next reserve.
  *
  * @param input - `{ code }` from the join form. Must match `INVITE_CODE_PATTERN`.
  * @returns Discriminated result; `data.organizationId` on success.
@@ -338,7 +406,17 @@ export async function joinTeamByCodeAction(input: {
   }
   const { code } = parsed.data;
 
-  const reserved = await reserveInviteCodeSlot(code);
+  let reserved: Awaited<ReturnType<typeof reserveInviteCodeSlot>>;
+  try {
+    reserved = await reserveInviteCodeSlot(makeAuthContext(userId), code);
+  } catch (err) {
+    console.error("joinTeamByCodeAction reserveInviteCodeSlot failed", { err });
+    return {
+      ok: false,
+      code: "unknown",
+      message: TEAM_ACTION_MESSAGES.unknown,
+    };
+  }
 
   if (!reserved) {
     // Fire-and-forget: keeping the diagnostic SELECT off the response
@@ -368,7 +446,7 @@ export async function joinTeamByCodeAction(input: {
       headers: reqHeaders,
     });
   } catch (err) {
-    await releaseInviteCodeSlot(reserved.id);
+    await safeReleaseSlot(userId, reserved.id, false);
 
     const mapped = mapBetterAuthError(err);
     if (mapped === "already_member") {
@@ -396,5 +474,52 @@ export async function joinTeamByCodeAction(input: {
     };
   }
 
+  await safeReleaseSlot(userId, reserved.id, true);
   return { ok: true, data: { organizationId: reserved.orgId } };
+}
+
+/**
+ * Run `releaseInviteCodeSlot` swallowing transient failures so the caller
+ * surfaces the addMember outcome rather than the bookkeeping outcome. On
+ * the success path (`succeeded = true`) a single retry is attempted before
+ * giving up, because a leaked post-commit reservation on a `maxUses=1`
+ * slot is decremented back to redeemable by the pre-sweep in
+ * `reserve_team_invite_code_slot`. The SDF is idempotent so the retry
+ * either succeeds or hits the same transient failure.
+ *
+ * A retry-then-fail on the success path emits a `[ops-alert]` log so the
+ * leaked reservation is greppable in dashboards. Failure-path retries are
+ * not attempted: the pre-sweep reclaims the slot 15 minutes later with no
+ * security impact.
+ *
+ * @param userId - Caller user id (binding check inside the SDF).
+ * @param reservationId - Row id returned by `reserveInviteCodeSlot`.
+ * @param succeeded - `true` when the membership committed, `false` otherwise.
+ */
+async function safeReleaseSlot(
+  userId: string,
+  reservationId: string,
+  succeeded: boolean,
+): Promise<void> {
+  try {
+    await releaseInviteCodeSlot(userId, reservationId, succeeded);
+    return;
+  } catch (err) {
+    if (!succeeded) {
+      console.error("joinTeamByCodeAction releaseInviteCodeSlot failed", {
+        reservationId,
+        succeeded,
+        err,
+      });
+      return;
+    }
+    try {
+      await releaseInviteCodeSlot(userId, reservationId, succeeded);
+    } catch (retryErr) {
+      console.error(
+        "[ops-alert] joinTeamByCodeAction releaseInviteCodeSlot failed after retry",
+        { reservationId, succeeded, err: retryErr },
+      );
+    }
+  }
 }

@@ -56,6 +56,7 @@ export function InviteSection({
           onError={onError}
         />
         <PendingInvitationsList
+          organizationId={teamId}
           invitations={invitations}
           onChanged={onInvitationsChanged}
           onError={onError}

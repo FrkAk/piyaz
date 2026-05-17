@@ -184,10 +184,10 @@ export type TaskSlim = {
 
 /**
  * Full task row + the composed `taskRef`, assignees, criteria, decisions, and
- * links for project page detail surfaces. After MYMR-136, criteria and
- * decisions live in relational child tables; this type carries them
- * explicitly via join so existing consumers continue reading
- * `task.acceptanceCriteria` and `task.decisions` without code changes.
+ * links for project page detail surfaces. Criteria and decisions live in
+ * relational child tables (`task_acceptance_criteria`, `task_decisions`);
+ * this type carries them via join so consumers read
+ * `task.acceptanceCriteria` and `task.decisions` directly.
  */
 export type TaskFull = Task & {
   taskRef: string;

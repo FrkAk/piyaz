@@ -42,16 +42,12 @@ mock.module("@/lib/auth/session", () => ({
   },
 }));
 
-import { setup, teardown } from "./global";
-import { beforeAll, afterAll, afterEach } from "bun:test";
+import { setup } from "./global";
+import { beforeAll, afterEach } from "bun:test";
 
 beforeAll(async () => {
   await setup();
 }, 120000);
-
-afterAll(async () => {
-  await teardown();
-}, 30000);
 
 // Hard reset between tests so a 200-path leak can't authenticate the next
 // 401-path test.

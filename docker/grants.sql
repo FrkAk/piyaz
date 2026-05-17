@@ -1,0 +1,54 @@
+-- =============================================================================
+-- Canonical GRANT/REVOKE for the three-role split (app_user, service_role,
+-- auth_role). Consumed by docker/init-rls.sh (self-host) and
+-- tests/setup/migrate.ts (testcontainer). Idempotent.
+--
+-- Out of scope (varies per consumer): CREATE ROLE, GRANT CREATE ON
+-- DATABASE, CREATE SCHEMA drizzle, REVOKE TEMPORARY (database name varies).
+-- =============================================================================
+
+-- public schema: app_user under RLS, service_role bypasses.
+--
+-- No `ALTER DEFAULT PRIVILEGES`: it would auto-grant DML on a future table
+-- BEFORE its migration could ENABLE RLS — a stealth leak between CREATE
+-- TABLE and the policy attach. New public tables must add explicit grants:
+--   GRANT SELECT, INSERT, UPDATE, DELETE ON <table> TO app_user, service_role;
+--   GRANT USAGE, SELECT ON <table>_id_seq TO app_user, service_role;
+-- A missing grant is a loud runtime failure; a missing RLS attach is
+-- caught by rls-coverage.test.ts.
+--
+-- CVE-2018-1058 belt: REVOKE CREATE prevents any role from installing a
+-- shadow function in schema public.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO app_user, service_role;
+GRANT CREATE ON SCHEMA public TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user, service_role;
+
+-- neon_auth: app_user reaches it only via SECURITY DEFINER functions.
+-- Explicit REVOKEs make re-runs idempotent on pre-lockdown installs.
+GRANT USAGE ON SCHEMA neon_auth TO service_role, auth_role;
+REVOKE ALL ON SCHEMA neon_auth FROM app_user;
+REVOKE ALL ON ALL TABLES IN SCHEMA neon_auth FROM app_user;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA neon_auth FROM app_user;
+
+-- service_role: minimal set on neon_auth — used by
+-- clearOrgMembershipArtifacts and the OAuth-session settings UI.
+GRANT SELECT, REFERENCES ON neon_auth."member" TO service_role;
+GRANT SELECT, REFERENCES ON neon_auth.organization TO service_role;
+GRANT SELECT, REFERENCES ON neon_auth."user" TO service_role;
+GRANT SELECT, REFERENCES ON neon_auth.invitation TO service_role;
+GRANT SELECT, UPDATE ON neon_auth."session" TO service_role;
+GRANT SELECT, DELETE ON neon_auth."oauthAccessToken" TO service_role;
+-- UPDATE: revokeOAuthSession soft-revokes (`revoked = now()`) before
+-- cascading the access-token delete in the same tx.
+GRANT SELECT, UPDATE, DELETE ON neon_auth."oauthRefreshToken" TO service_role;
+GRANT SELECT, DELETE ON neon_auth."oauthConsent" TO service_role;
+-- SELECT only; writes go through auth_role.
+GRANT SELECT ON neon_auth."oauthClient" TO service_role;
+
+-- auth_role: full DML on neon_auth, zero grants on public. No
+-- ALTER DEFAULT PRIVILEGES — same RLS-race rationale as the public block.
+-- New neon_auth tables need explicit grants in their migration.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA neon_auth TO auth_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA neon_auth TO auth_role;

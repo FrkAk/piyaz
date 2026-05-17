@@ -9,9 +9,20 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # Keep PG_IMAGE in sync with the tag used by tests/setup/container.ts.
-    env:
-      PG_IMAGE: postgres:17.6
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_USER: mymir
+          POSTGRES_PASSWORD: mymir
+          POSTGRES_DB: mymir_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mymir -d mymir_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -28,6 +39,8 @@ jobs:
       - name: Install dependencies (Dependabot)
         run: bun install
         if: github.actor == 'dependabot[bot]'
+      - name: Audit dependencies
+        run: bun audit --audit-level=high
       - name: Validate PR title
         if: github.event_name == 'pull_request'
         env:
@@ -43,21 +56,9 @@ jobs:
         run: bun run lint
       - name: Typecheck
         run: bun run typecheck
-      - name: Cache Postgres test container image
-        id: pg-cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/postgres-image.tar
-          key: docker-image-${{ env.PG_IMAGE }}
-      - name: Load Postgres image from cache
-        if: steps.pg-cache.outputs.cache-hit == 'true'
-        run: docker load -i /tmp/postgres-image.tar
-      - name: Pull and save Postgres image
-        if: steps.pg-cache.outputs.cache-hit != 'true'
-        run: |
-          docker pull "$PG_IMAGE"
-          docker save "$PG_IMAGE" -o /tmp/postgres-image.tar
       - name: Test
+        env:
+          TEST_DATABASE_URL: postgres://mymir:mymir@localhost:5432/mymir_test
         run: bun run test
       - name: Check plugin drift
         run: bun run check:plugins

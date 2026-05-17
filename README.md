@@ -23,7 +23,7 @@ Mymir replaces that cycle. It's not just a context layer your agents read from, 
 
 ## How to set it up
 
-You need [Bun](https://bun.sh) (v1.0+) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL.
+You need [Bun](https://bun.sh) (v1.0+) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Linux or macOS or Windows with WSL2.
 
 Clone the repo and install dependencies:
 
@@ -36,16 +36,7 @@ cp .env.local.example .env.local
 
 **Bring your own coding agent.** Mymir works directly inside the coding agent you already use: Claude Code, Codex, Cursor, or Gemini CLI. Brainstorm, decompose, and project activation happen there. The web app is for refining specs, planning, and tracking progress on `active` projects from the browser.
 
-Add your credentials to `.env.local` (see `.env.local.example` for the full list):
-
-```bash
-# Postgres: local Docker default; works with any connection string (Neon, Supabase, RDS)
-DATABASE_URL=postgresql://mymir:mymir@localhost:5432/mymir
-
-# Better Auth: session secret (openssl rand -base64 32) and callback origin
-BETTER_AUTH_SECRET=generate-a-random-secret-at-least-32-chars
-BETTER_AUTH_URL=http://localhost:3000
-```
+Fill in `.env.local` by following the numbered steps at the top of `.env.local.example`. You generate three `openssl rand -hex 32` passwords for the Postgres roles (same value in each `*_PASSWORD` and its matching URL) and one `openssl rand -base64 32` for `BETTER_AUTH_SECRET`.
 
 Spin up Postgres and push the schema:
 

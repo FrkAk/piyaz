@@ -1,11 +1,11 @@
 import { test, expect, afterEach } from "bun:test";
-import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
-import { getConnectionString } from "@/tests/setup/container";
+import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { createTask, deleteTask, updateTask, searchTasksPaged, getTaskSlim, getTaskFull } from "@/lib/data/task";
+import { createTask, deleteTask, updateTask, searchTasks, searchTasksPaged, getTaskSlim, getTaskFull } from "@/lib/data/task";
 import { getProjectMaxUpdatedAt } from "@/lib/data/project";
 import { makeAuthContext } from "@/lib/auth/context";
+import { ForbiddenError } from "@/lib/auth/authorization";
 
 afterEach(async () => {
   await truncateAll();
@@ -129,7 +129,7 @@ test("deleteTask cascades criteria and decisions", async () => {
 
   await deleteTask(ctx, task.id);
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     const [acRow] = await sqlc<{ count: string }[]>`
       SELECT COUNT(*)::text AS count FROM task_acceptance_criteria WHERE task_id = ${task.id}
@@ -147,7 +147,7 @@ test("deleteTask cascades criteria and decisions", async () => {
 test("foreign key rejects orphan criterion insert", async () => {
   await seedUserOrgProject("orphancriterion");
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     const orphanTaskId = "00000000-0000-0000-0000-000000000001";
     const orphanCriterionId = "00000000-0000-0000-0000-000000000002";
@@ -204,7 +204,7 @@ test("searchTasksPaged paginates by (order, id) cursor", async () => {
   const ctx = makeAuthContext(f.userId);
 
   // Seed 6 tasks with explicit order values via raw SQL.
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     for (let i = 0; i < 6; i++) {
       await sqlc`
@@ -232,6 +232,25 @@ test("searchTasksPaged paginates by (order, id) cursor", async () => {
   const ids2 = new Set(page2.rows.map((r) => r.id));
   for (const id of ids2) expect(ids1.has(id)).toBe(false);
   expect(ids1.size + ids2.size).toBe(6);
+});
+
+test("searchTasks tags-only filter omits relevance rank to avoid ORDER BY 0", async () => {
+  const f = await seedUserOrgProject("searchtagsonly");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "tags")
+      VALUES (${f.projectId}, 'X', 1, 1, '["feature"]'::jsonb)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasks(ctx, f.projectId, undefined, ["feature"]);
+  expect(rows.length).toBe(1);
+  expect(rows[0].tags).toEqual(["feature"]);
 });
 
 test("getTaskSlim returns the slim shape", async () => {
@@ -298,7 +317,7 @@ test("createTask with assigneeIds rejects non-team-member users", async () => {
   const ctx = makeAuthContext(f.userId);
 
   // A user who exists but is NOT a member of f's organization.
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   let strangerId: string;
   try {
     const [u] = await sqlc<{ id: string }[]>`
@@ -311,13 +330,17 @@ test("createTask with assigneeIds rejects non-team-member users", async () => {
     await sqlc.end({ timeout: 5 });
   }
 
-  await expect(
-    createTask(ctx, {
-      projectId: f.projectId,
-      title: "T",
-      assigneeIds: [strangerId],
-    }),
-  ).rejects.toThrow(/not a member/);
+  const err = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    assigneeIds: [strangerId],
+  }).catch((e: unknown) => e);
+
+  expect(err).toBeInstanceOf(ForbiddenError);
+  const fe = err as ForbiddenError;
+  expect(fe.message).toBe("One or more assignees are not members of this team.");
+  expect(fe.resourceId).toBeUndefined();
+  expect(fe.message).not.toContain(strangerId);
 });
 
 test("updateTask appends assigneeIds by default and replaces with overwriteArrays", async () => {
@@ -325,7 +348,7 @@ test("updateTask appends assigneeIds by default and replaces with overwriteArray
   const ctx = makeAuthContext(f.userId);
 
   // Add a second member to the same org.
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   let secondId: string;
   try {
     const [u] = await sqlc<{ id: string }[]>`
@@ -484,7 +507,7 @@ test("overwriteArrays clears all criteria when called with empty array", async (
   });
 
   const cleared = await updateTask(ctx, task.id, { acceptanceCriteria: [] }, true);
-  expect(cleared.acceptanceCriteria.length).toBe(0);
+  expect((cleared.acceptanceCriteria ?? []).length).toBe(0);
 
   const reread = await getTaskFull(ctx, task.id);
   expect(reread.acceptanceCriteria.length).toBe(0);
@@ -500,7 +523,7 @@ test("overwriteArrays clears all decisions when called with empty array", async 
   });
 
   const cleared = await updateTask(ctx, task.id, { decisions: [] }, true);
-  expect(cleared.decisions.length).toBe(0);
+  expect((cleared.decisions ?? []).length).toBe(0);
 
   const reread = await getTaskFull(ctx, task.id);
   expect(reread.decisions.length).toBe(0);
@@ -512,7 +535,7 @@ test("single-call dedup collapses same-id and same-text rows in one payload", as
   const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
 
   const seeded = await updateTask(ctx, task.id, { acceptanceCriteria: ["X"] });
-  const idA = seeded.acceptanceCriteria[0].id;
+  const idA = (seeded.acceptanceCriteria ?? [])[0].id;
 
   // Element 1 collides on id (with new text "Y"); element 2 collides on
   // text "X" (with a fresh id). Both branches of the `id IN OR text IN`
@@ -537,7 +560,7 @@ test("decisions dedup replaces same-id and same-text entries (mirror of criteria
   const seeded = await updateTask(ctx, task.id, {
     decisions: [{ text: "chose X", source: "refinement", date: "2026-01-01" }],
   });
-  const idA = seeded.decisions[0].id;
+  const idA = (seeded.decisions ?? [])[0].id;
 
   // Same-id, different text.
   await updateTask(ctx, task.id, {
@@ -563,7 +586,7 @@ test("getTaskFull returns criteria in position order, not insertion order", asyn
 
   // Mutate "B"'s position to 99 directly so insertion-order and position-
   // order diverge. getTaskFull must reflect position-order.
-  const direct = postgres(getConnectionString(), { max: 1 });
+  const direct = superuserPool();
   try {
     await direct`
       UPDATE task_acceptance_criteria
@@ -594,7 +617,7 @@ test("getTaskFull ties on position resolve deterministically by id", async () =>
 
   // Force two criteria and two decisions to share a position so the
   // tie-break has actual ties to resolve.
-  const direct = postgres(getConnectionString(), { max: 1 });
+  const direct = superuserPool();
   try {
     await direct`
       UPDATE task_acceptance_criteria SET position = 7
@@ -642,13 +665,16 @@ test("updateTask return value carries the freshly-written criteria", async () =>
   const result = await updateTask(ctx, task.id, {
     acceptanceCriteria: ["one", "two"],
   });
-  expect(result.acceptanceCriteria.map((c) => c.text).sort()).toEqual(["one", "two"]);
+  expect((result.acceptanceCriteria ?? []).map((c) => c.text).sort()).toEqual([
+    "one",
+    "two",
+  ]);
 });
 
 test("foreign key rejects orphan decision insert", async () => {
   await seedUserOrgProject("orphandecision");
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     const orphanTaskId = "00000000-0000-0000-0000-000000000003";
     const orphanDecisionId = "00000000-0000-0000-0000-000000000004";

@@ -1,10 +1,10 @@
 import { test, expect, describe, beforeAll, afterEach } from "bun:test";
 import { sql } from "drizzle-orm";
-import postgres from "postgres";
 import { normalizeExecuteResult, executeRaw } from "@/lib/db/raw";
 import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
 import { db } from "@/lib/db";
-import { getConnectionString } from "@/tests/setup/container";
+import { withUserContext } from "@/lib/db/rls";
+import { superuserPool } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 
@@ -53,7 +53,7 @@ describe("executeRaw integration (postgres-js driver)", () => {
 
   test("aggregateProjectTags returns sorted distinct counts", async () => {
     const f = await seedUserOrgProject("rawtest");
-    const sqlc = postgres(getConnectionString(), { max: 1 });
+    const sqlc = superuserPool();
     try {
       await sqlc`
         INSERT INTO tasks ("project_id", "title", "sequence_number", "tags")
@@ -65,7 +65,9 @@ describe("executeRaw integration (postgres-js driver)", () => {
       await sqlc.end({ timeout: 5 });
     }
 
-    const rows = await aggregateProjectTags(db, f.projectId);
+    const rows = await withUserContext(f.userId, (tx) =>
+      aggregateProjectTags(tx, f.projectId),
+    );
 
     expect(rows).toEqual([
       { tag: "alpha", count: 2 },

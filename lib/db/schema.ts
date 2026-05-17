@@ -46,7 +46,7 @@ export const projects = pgTable(
     index("projects_organization_id_idx").on(t.organizationId),
     unique("projects_org_identifier_unique").on(t.organizationId, t.identifier),
   ],
-);
+).enableRLS();
 
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
@@ -82,7 +82,7 @@ export const tasks = pgTable(
     index("tasks_project_id_idx").on(t.projectId),
     unique("tasks_project_sequence_unique").on(t.projectId, t.sequenceNumber),
   ],
-);
+).enableRLS();
 
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;
@@ -111,7 +111,7 @@ export const taskEdges = pgTable(
     index("task_edges_target_idx").on(t.targetTaskId),
     uniqueIndex("task_edges_unique_idx").on(t.sourceTaskId, t.targetTaskId, t.edgeType),
   ],
-);
+).enableRLS();
 
 export type TaskEdge = typeof taskEdges.$inferSelect;
 export type NewTaskEdge = typeof taskEdges.$inferInsert;
@@ -135,7 +135,7 @@ export const taskAssignees = pgTable(
     primaryKey({ columns: [t.taskId, t.userId] }),
     index("task_assignees_user_id_idx").on(t.userId),
   ],
-);
+).enableRLS();
 
 export type TaskAssignee = typeof taskAssignees.$inferSelect;
 export type NewTaskAssignee = typeof taskAssignees.$inferInsert;
@@ -161,7 +161,7 @@ export const taskAcceptanceCriteria = pgTable(
     index("task_acceptance_criteria_task_id_position_idx").on(t.taskId, t.position),
     unique("task_acceptance_criteria_task_id_text_unique").on(t.taskId, t.text),
   ],
-);
+).enableRLS();
 
 export type TaskAcceptanceCriterion = typeof taskAcceptanceCriteria.$inferSelect;
 export type NewTaskAcceptanceCriterion = typeof taskAcceptanceCriteria.$inferInsert;
@@ -188,7 +188,7 @@ export const taskDecisions = pgTable(
     index("task_decisions_task_id_position_idx").on(t.taskId, t.position),
     unique("task_decisions_task_id_text_unique").on(t.taskId, t.text),
   ],
-);
+).enableRLS();
 
 export type TaskDecision = typeof taskDecisions.$inferSelect;
 export type NewTaskDecision = typeof taskDecisions.$inferInsert;
@@ -215,7 +215,7 @@ export const taskLinks = pgTable(
     index("task_links_task_id_idx").on(t.taskId),
     unique("task_links_task_url_unique").on(t.taskId, t.url),
   ],
-);
+).enableRLS();
 
 export type TaskLink = typeof taskLinks.$inferSelect;
 export type NewTaskLink = typeof taskLinks.$inferInsert;

@@ -1,7 +1,6 @@
 import { test, expect, describe, afterEach } from "bun:test";
-import postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
-import { getConnectionString } from "@/tests/setup/container";
+import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { listMembershipsWithCounts, demoteMemberWithGuard } from "@/lib/data/membership";
 
@@ -13,7 +12,7 @@ test("listMembershipsWithCounts paginates by (createdAt, id) cursor", async () =
   // Seed 1 user with 6 organizations (all owner-membership)
   const base = await seedUserOrgProject("memberpage");
 
-  const sqlc = postgres(getConnectionString(), { max: 1 });
+  const sqlc = superuserPool();
   try {
     for (let i = 0; i < 5; i++) {
       const [o] = await sqlc<{ id: string }[]>`
@@ -50,7 +49,7 @@ test("listMembershipsWithCounts paginates by (createdAt, id) cursor", async () =
 describe("demoteMemberWithGuard", () => {
   test("returns ok when demoting an admin who isn't the last owner", async () => {
     const f = await seedUserOrgProject("demote-ok");
-    const sqlc = postgres(getConnectionString(), { max: 1 });
+    const sqlc = superuserPool();
     let secondMemberId: string;
     try {
       const [u] = await sqlc<{ id: string }[]>`
@@ -70,11 +69,12 @@ describe("demoteMemberWithGuard", () => {
 
     let demoteCalled = false;
     const outcome = await demoteMemberWithGuard(
+      f.userId,
       {
         organizationId: f.organizationId,
         memberId: secondMemberId,
         role: "member",
-        roleIncludesOwner: (r) => r.includes("owner"),
+        roleIncludesOwner: (r: string) => r.includes("owner"),
       },
       async () => {
         demoteCalled = true;
@@ -89,11 +89,12 @@ describe("demoteMemberWithGuard", () => {
     const f = await seedUserOrgProject("demote-notfound");
     let demoteCalled = false;
     const outcome = await demoteMemberWithGuard(
+      f.userId,
       {
         organizationId: f.organizationId,
         memberId: "00000000-0000-0000-0000-000000000000",
         role: "member",
-        roleIncludesOwner: (r) => r.includes("owner"),
+        roleIncludesOwner: (r: string) => r.includes("owner"),
       },
       async () => {
         demoteCalled = true;
@@ -105,11 +106,11 @@ describe("demoteMemberWithGuard", () => {
     expect(demoteCalled).toBe(false);
   });
 
-  test("returns fail/forbidden when member belongs to a different team", async () => {
+  test("returns fail/not_found when target member is in a team the caller can't see (anti-enumeration)", async () => {
     const a = await seedUserOrgProject("demote-cross-a");
     const b = await seedUserOrgProject("demote-cross-b");
 
-    const sqlc = postgres(getConnectionString(), { max: 1 });
+    const sqlc = superuserPool();
     let bMemberId: string;
     try {
       const [m] = await sqlc<{ id: string }[]>`
@@ -124,25 +125,30 @@ describe("demoteMemberWithGuard", () => {
 
     let demoteCalled = false;
     const outcome = await demoteMemberWithGuard(
+      a.userId,
       {
         organizationId: a.organizationId,
         memberId: bMemberId,
         role: "member",
-        roleIncludesOwner: (r) => r.includes("owner"),
+        roleIncludesOwner: (r: string) => r.includes("owner"),
       },
       async () => {
         demoteCalled = true;
       },
     );
 
+    // `current_user_visible_member` returns null for both "doesn't exist"
+    // and "exists but caller isn't a member" (anti-enumeration). Callers
+    // see `not_found` for both. `forbidden` is reserved for the
+    // mismatched-organizationId tampering path, not exercised here.
     expect(outcome.kind).toBe("fail");
-    if (outcome.kind === "fail") expect(outcome.code).toBe("forbidden");
+    if (outcome.kind === "fail") expect(outcome.code).toBe("not_found");
     expect(demoteCalled).toBe(false);
   });
 
   test("last-owner guard blocks demoting the only owner", async () => {
     const f = await seedUserOrgProject("demote-lastowner");
-    const sqlc = postgres(getConnectionString(), { max: 1 });
+    const sqlc = superuserPool();
     let memberId: string;
     try {
       const [m] = await sqlc<{ id: string }[]>`
@@ -157,11 +163,12 @@ describe("demoteMemberWithGuard", () => {
 
     let demoteCalled = false;
     const outcome = await demoteMemberWithGuard(
+      f.userId,
       {
         organizationId: f.organizationId,
         memberId,
         role: "member",
-        roleIncludesOwner: (r) => r.includes("owner"),
+        roleIncludesOwner: (r: string) => r.includes("owner"),
       },
       async () => {
         demoteCalled = true;
@@ -175,7 +182,7 @@ describe("demoteMemberWithGuard", () => {
 
   test("last-owner guard serializes concurrent demotes — only one of two owners gets demoted", async () => {
     const f = await seedUserOrgProject("demote-race");
-    const sqlc = postgres(getConnectionString(), { max: 1 });
+    const sqlc = superuserPool();
     let firstMemberId: string;
     let secondMemberId: string;
     try {
@@ -202,7 +209,7 @@ describe("demoteMemberWithGuard", () => {
     }
 
     const performDemote = async (memberId: string) => {
-      const c = postgres(getConnectionString(), { max: 1 });
+      const c = superuserPool();
       try {
         await c`
           UPDATE neon_auth."member"
@@ -216,20 +223,22 @@ describe("demoteMemberWithGuard", () => {
 
     const [outcome1, outcome2] = await Promise.all([
       demoteMemberWithGuard(
+        f.userId,
         {
           organizationId: f.organizationId,
           memberId: firstMemberId,
           role: "member",
-          roleIncludesOwner: (r) => r.includes("owner"),
+          roleIncludesOwner: (r: string) => r.includes("owner"),
         },
         () => performDemote(firstMemberId),
       ),
       demoteMemberWithGuard(
+        f.userId,
         {
           organizationId: f.organizationId,
           memberId: secondMemberId,
           role: "member",
-          roleIncludesOwner: (r) => r.includes("owner"),
+          roleIncludesOwner: (r: string) => r.includes("owner"),
         },
         () => performDemote(secondMemberId),
       ),

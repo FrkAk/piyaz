@@ -1,7 +1,8 @@
 import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { type Conn } from "@/lib/db/raw";
+import { withUserContext, type Tx } from "@/lib/db/rls";
 import { tasks, projects, taskEdges } from "@/lib/db/schema";
 import { fetchDependencyChain } from "@/lib/db/raw/fetch-dependency-chain";
 import { fetchDownstream } from "@/lib/db/raw/fetch-downstream";
@@ -10,8 +11,8 @@ import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
 import { hasCriteriaExpr, deriveTaskStatesSlim } from "@/lib/data/task";
 import type { AuthContext } from "@/lib/auth/context";
 import {
-  assertProjectAccess,
-  assertTaskAccess,
+  assertProjectAccessTx,
+  assertTaskAccessTx,
 } from "@/lib/auth/authorization";
 
 // ---------------------------------------------------------------------------
@@ -24,16 +25,20 @@ type Ancestor = { id: string; type: "project"; title: string };
 /**
  * Get the parent project for a task. Internal — caller asserted access.
  * @param taskId - UUID of the task.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Array with the project ancestor, or empty if not found.
  */
-export async function getAncestors(taskId: string): Promise<Ancestor[]> {
-  const [task] = await db
+export async function getAncestors(
+  taskId: string,
+  conn: Conn,
+): Promise<Ancestor[]> {
+  const [task] = await conn
     .select({ projectId: tasks.projectId })
     .from(tasks)
     .where(eq(tasks.id, taskId));
   if (!task) return [];
 
-  const [project] = await db
+  const [project] = await conn
     .select({ id: projects.id, title: projects.title })
     .from(projects)
     .where(eq(projects.id, task.projectId));
@@ -63,14 +68,16 @@ type DependencyNode = {
  * @param taskId - UUID of the starting task.
  * @param projectId - UUID of the project the starting task belongs to.
  * @param maxDepth - Maximum traversal depth (default 10).
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Array of dependency tasks with depth.
  */
 export async function getDependencyChain(
   taskId: string,
   projectId: string,
   maxDepth = 10,
+  conn: Conn,
 ): Promise<DependencyNode[]> {
-  return fetchDependencyChain(db, taskId, projectId, maxDepth);
+  return fetchDependencyChain(conn, taskId, projectId, maxDepth);
 }
 
 // ---------------------------------------------------------------------------
@@ -87,12 +94,14 @@ type ConnectedTask = {
 /**
  * Fetch all tasks connected by exactly one edge hop. Internal helper.
  * @param taskId - UUID of the task.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
  * @returns Array of connected tasks with edge info.
  */
 export async function getConnectedTasks(
   taskId: string,
+  conn: Conn,
 ): Promise<ConnectedTask[]> {
-  const outgoing = await db
+  const outgoing = await conn
     .select({
       id: taskEdges.targetTaskId,
       edgeType: taskEdges.edgeType,
@@ -100,7 +109,7 @@ export async function getConnectedTasks(
     .from(taskEdges)
     .where(eq(taskEdges.sourceTaskId, taskId));
 
-  const incoming = await db
+  const incoming = await conn
     .select({
       id: taskEdges.sourceTaskId,
       edgeType: taskEdges.edgeType,
@@ -151,14 +160,32 @@ export async function getDownstream(
   taskId: string,
   maxDepth = 10,
 ): Promise<DownstreamNode[]> {
-  const rootTask = await assertTaskAccess(taskId, ctx);
+  return withUserContext(ctx.userId, (tx) =>
+    getDownstreamTx(tx, taskId, maxDepth),
+  );
+}
+
+/**
+ * {@link getDownstream} on a caller-supplied tx.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param taskId - UUID of the starting task.
+ * @param maxDepth - Maximum traversal depth (default 10).
+ * @returns Array of downstream tasks with depth.
+ */
+export async function getDownstreamTx(
+  tx: Tx,
+  taskId: string,
+  maxDepth = 10,
+): Promise<DownstreamNode[]> {
+  const rootTask = await assertTaskAccessTx(tx, taskId);
   const projectId = rootTask.projectId;
 
-  const raw = await fetchDownstream(db, taskId, projectId, maxDepth);
+  const raw = await fetchDownstream(tx, taskId, projectId, maxDepth);
   if (raw.length === 0) return [];
 
   const ids = raw.map((r) => r.id);
-  const taskRows = await db
+  const taskRows = await tx
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -167,9 +194,7 @@ export async function getDownstream(
     })
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(
-      sql`${tasks.id} IN ${ids} AND ${tasks.projectId} = ${projectId}`,
-    );
+    .where(sql`${tasks.id} IN ${ids} AND ${tasks.projectId} = ${projectId}`);
 
   const infoMap = new Map<string, { taskRef: string; title: string }>();
   for (const t of taskRows) {
@@ -224,45 +249,48 @@ export async function getReadyTasks(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ReadyTask[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-  const identifier = asIdentifier(project.identifier);
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
 
-  // Pre-filter to `status = 'planned'` at SQL: `ready` requires it, so
-  // every other status row would be discarded by the JS filter below.
-  const allTasks = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      tags: tasks.tags,
-      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: hasCriteriaExpr(),
-      sequenceNumber: tasks.sequenceNumber,
-    })
-    .from(tasks)
-    .where(and(eq(tasks.projectId, projectId), eq(tasks.status, "planned")));
+    // Pre-filter to `status = 'planned'` at SQL: `ready` requires it, so
+    // every other status row would be discarded by the JS filter below.
+    const allTasks = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        tags: tasks.tags,
+        hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+        hasCriteria: hasCriteriaExpr(),
+        sequenceNumber: tasks.sequenceNumber,
+      })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), eq(tasks.status, "planned")));
 
-  if (allTasks.length === 0) return [];
+    if (allTasks.length === 0) return [];
 
-  const stateMap = await deriveTaskStatesSlim(
-    projectId,
-    allTasks.map((t) => ({
-      id: t.id,
-      status: t.status,
-      hasDescription: t.hasDescription,
-      hasCriteria: t.hasCriteria,
-    })),
-  );
+    const stateMap = await deriveTaskStatesSlim(
+      projectId,
+      allTasks.map((t) => ({
+        id: t.id,
+        status: t.status,
+        hasDescription: t.hasDescription,
+        hasCriteria: t.hasCriteria,
+      })),
+      tx,
+    );
 
-  return allTasks
-    .filter((task) => stateMap.get(task.id) === "ready")
-    .map((task) => ({
-      id: task.id,
-      taskRef: composeTaskRef(identifier, task.sequenceNumber),
-      title: task.title,
-      status: task.status,
-      tags: task.tags,
-    }));
+    return allTasks
+      .filter((task) => stateMap.get(task.id) === "ready")
+      .map((task) => ({
+        id: task.id,
+        taskRef: composeTaskRef(identifier, task.sequenceNumber),
+        title: task.title,
+        status: task.status,
+        tags: task.tags,
+      }));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -292,54 +320,57 @@ export async function getPlannableTasks(
   ctx: AuthContext,
   projectId: string,
 ): Promise<PlannableTask[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-  const identifier = asIdentifier(project.identifier);
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
 
-  // Pre-filter to `status = 'draft' AND hasDescription AND hasCriteria`
-  // at SQL: those three are necessary conditions for `plannable`, and
-  // every other row would be discarded by the JS filter below. The dep
-  // readiness check stays in JS via `deriveTaskStatesSlim`.
-  const allTasks = await db
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      tags: tasks.tags,
-      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-      hasCriteria: hasCriteriaExpr(),
-      sequenceNumber: tasks.sequenceNumber,
-    })
-    .from(tasks)
-    .where(
-      and(
-        eq(tasks.projectId, projectId),
-        eq(tasks.status, "draft"),
-        sql`length(btrim(${tasks.description})) > 0`,
-        hasCriteriaExpr(),
-      ),
+    // Pre-filter to `status = 'draft' AND hasDescription AND hasCriteria`
+    // at SQL: those three are necessary conditions for `plannable`, and
+    // every other row would be discarded by the JS filter below. The dep
+    // readiness check stays in JS via `deriveTaskStatesSlim`.
+    const allTasks = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        tags: tasks.tags,
+        hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+        hasCriteria: hasCriteriaExpr(),
+        sequenceNumber: tasks.sequenceNumber,
+      })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.projectId, projectId),
+          eq(tasks.status, "draft"),
+          sql`length(btrim(${tasks.description})) > 0`,
+          hasCriteriaExpr(),
+        ),
+      );
+
+    if (allTasks.length === 0) return [];
+
+    const stateMap = await deriveTaskStatesSlim(
+      projectId,
+      allTasks.map((t) => ({
+        id: t.id,
+        status: t.status,
+        hasDescription: t.hasDescription,
+        hasCriteria: t.hasCriteria,
+      })),
+      tx,
     );
 
-  if (allTasks.length === 0) return [];
-
-  const stateMap = await deriveTaskStatesSlim(
-    projectId,
-    allTasks.map((t) => ({
-      id: t.id,
-      status: t.status,
-      hasDescription: t.hasDescription,
-      hasCriteria: t.hasCriteria,
-    })),
-  );
-
-  return allTasks
-    .filter((task) => stateMap.get(task.id) === "plannable")
-    .map((task) => ({
-      id: task.id,
-      taskRef: composeTaskRef(identifier, task.sequenceNumber),
-      title: task.title,
-      status: task.status,
-      tags: task.tags,
-    }));
+    return allTasks
+      .filter((task) => stateMap.get(task.id) === "plannable")
+      .map((task) => ({
+        id: task.id,
+        taskRef: composeTaskRef(identifier, task.sequenceNumber),
+        title: task.title,
+        status: task.status,
+        tags: task.tags,
+      }));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -376,42 +407,44 @@ export async function getBlockedTasks(
   ctx: AuthContext,
   projectId: string,
 ): Promise<BlockedTask[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-  const identifier = asIdentifier(project.identifier);
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
 
-  const graph = await buildEffectiveDepGraph(projectId);
-  const blocked: BlockedTask[] = [];
+    const graph = await buildEffectiveDepGraph(projectId, tx);
+    const blocked: BlockedTask[] = [];
 
-  for (const info of graph.activeTasks.values()) {
-    const deps = graph.effectiveDeps.get(info.id) ?? new Set<string>();
-    const blockers: {
-      id: string;
-      taskRef: string;
-      title: string;
-      status: string;
-    }[] = [];
-    for (const depId of deps) {
-      const depInfo = graph.activeTasks.get(depId);
-      if (!depInfo) continue;
-      if (depInfo.status === "done") continue;
-      blockers.push({
-        id: depInfo.id,
-        taskRef: composeTaskRef(identifier, depInfo.sequenceNumber),
-        title: depInfo.title,
-        status: depInfo.status,
+    for (const info of graph.activeTasks.values()) {
+      const deps = graph.effectiveDeps.get(info.id) ?? new Set<string>();
+      const blockers: {
+        id: string;
+        taskRef: string;
+        title: string;
+        status: string;
+      }[] = [];
+      for (const depId of deps) {
+        const depInfo = graph.activeTasks.get(depId);
+        if (!depInfo) continue;
+        if (depInfo.status === "done") continue;
+        blockers.push({
+          id: depInfo.id,
+          taskRef: composeTaskRef(identifier, depInfo.sequenceNumber),
+          title: depInfo.title,
+          status: depInfo.status,
+        });
+      }
+      if (blockers.length === 0) continue;
+      blocked.push({
+        id: info.id,
+        taskRef: composeTaskRef(identifier, info.sequenceNumber),
+        title: info.title,
+        status: info.status,
+        blockedBy: blockers,
       });
     }
-    if (blockers.length === 0) continue;
-    blocked.push({
-      id: info.id,
-      taskRef: composeTaskRef(identifier, info.sequenceNumber),
-      title: info.title,
-      status: info.status,
-      blockedBy: blockers,
-    });
-  }
 
-  return blocked;
+    return blocked;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -448,77 +481,80 @@ export async function getCriticalPath(
   ctx: AuthContext,
   projectId: string,
 ): Promise<CriticalPathTask[]> {
-  const { project } = await assertProjectAccess(projectId, ctx);
-  const identifier = asIdentifier(project.identifier);
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
 
-  const graph = await buildEffectiveDepGraph(projectId);
-  if (graph.activeTasks.size === 0) return [];
+    const graph = await buildEffectiveDepGraph(projectId, tx);
+    if (graph.activeTasks.size === 0) return [];
 
-  const remaining = new Map<string, number>();
-  for (const id of graph.activeTasks.keys()) {
-    remaining.set(id, graph.effectiveDeps.get(id)?.size ?? 0);
-  }
-
-  const topoOrder: string[] = [];
-  const queue: string[] = [];
-  for (const [id, count] of remaining) {
-    if (count === 0) queue.push(id);
-  }
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    topoOrder.push(cur);
-    const dependents = graph.effectiveDependents.get(cur) ?? new Set<string>();
-    for (const dependent of dependents) {
-      const newCount = (remaining.get(dependent) ?? 0) - 1;
-      remaining.set(dependent, newCount);
-      if (newCount === 0) queue.push(dependent);
+    const remaining = new Map<string, number>();
+    for (const id of graph.activeTasks.keys()) {
+      remaining.set(id, graph.effectiveDeps.get(id)?.size ?? 0);
     }
-  }
 
-  if (topoOrder.length < graph.activeTasks.size) return [];
-
-  const longestTo = new Map<string, number>();
-  const parent = new Map<string, string | null>();
-  for (const node of topoOrder) {
-    const deps = graph.effectiveDeps.get(node) ?? new Set<string>();
-    let bestParent: string | null = null;
-    let bestParentLen = 0;
-    for (const dep of deps) {
-      const len = longestTo.get(dep) ?? 0;
-      if (len > bestParentLen) {
-        bestParentLen = len;
-        bestParent = dep;
+    const topoOrder: string[] = [];
+    const queue: string[] = [];
+    for (const [id, count] of remaining) {
+      if (count === 0) queue.push(id);
+    }
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      topoOrder.push(cur);
+      const dependents =
+        graph.effectiveDependents.get(cur) ?? new Set<string>();
+      for (const dependent of dependents) {
+        const newCount = (remaining.get(dependent) ?? 0) - 1;
+        remaining.set(dependent, newCount);
+        if (newCount === 0) queue.push(dependent);
       }
     }
-    longestTo.set(node, bestParentLen + 1);
-    parent.set(node, bestParent);
-  }
 
-  let endNode: string | null = null;
-  let maxLen = 0;
-  for (const [node, len] of longestTo) {
-    if (len > maxLen) {
-      maxLen = len;
-      endNode = node;
+    if (topoOrder.length < graph.activeTasks.size) return [];
+
+    const longestTo = new Map<string, number>();
+    const parent = new Map<string, string | null>();
+    for (const node of topoOrder) {
+      const deps = graph.effectiveDeps.get(node) ?? new Set<string>();
+      let bestParent: string | null = null;
+      let bestParentLen = 0;
+      for (const dep of deps) {
+        const len = longestTo.get(dep) ?? 0;
+        if (len > bestParentLen) {
+          bestParentLen = len;
+          bestParent = dep;
+        }
+      }
+      longestTo.set(node, bestParentLen + 1);
+      parent.set(node, bestParent);
     }
-  }
-  if (!endNode) return [];
 
-  const chain: string[] = [];
-  let cur: string | null = endNode;
-  while (cur !== null) {
-    chain.push(cur);
-    cur = parent.get(cur) ?? null;
-  }
-  chain.reverse();
+    let endNode: string | null = null;
+    let maxLen = 0;
+    for (const [node, len] of longestTo) {
+      if (len > maxLen) {
+        maxLen = len;
+        endNode = node;
+      }
+    }
+    if (!endNode) return [];
 
-  return chain.map((id) => {
-    const info = graph.activeTasks.get(id)!;
-    return {
-      id: info.id,
-      taskRef: composeTaskRef(identifier, info.sequenceNumber),
-      title: info.title,
-      status: info.status,
-    };
+    const chain: string[] = [];
+    let cur: string | null = endNode;
+    while (cur !== null) {
+      chain.push(cur);
+      cur = parent.get(cur) ?? null;
+    }
+    chain.reverse();
+
+    return chain.map((id) => {
+      const info = graph.activeTasks.get(id)!;
+      return {
+        id: info.id,
+        taskRef: composeTaskRef(identifier, info.sequenceNumber),
+        title: info.title,
+        status: info.status,
+      };
+    });
   });
 }

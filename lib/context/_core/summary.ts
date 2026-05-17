@@ -5,11 +5,12 @@ import type {
   Priority,
   Estimate,
 } from "@/lib/types";
-import { getTaskEdgesDetailed } from "@/lib/data/edge";
-import { getTaskFull } from "@/lib/data/task";
+import { getTaskEdgesDetailedTx } from "@/lib/data/edge";
+import { getTaskFullTx } from "@/lib/data/task";
 import type { TaskLinkRef } from "@/lib/data/views";
 import { getProjectHeader } from "@/lib/data/project";
 import type { AuthContext } from "@/lib/auth/context";
+import { withUserContext } from "@/lib/db/rls";
 
 /** Detailed edge information for summary context. */
 type EdgeDetail = {
@@ -53,52 +54,53 @@ export async function buildSummaryContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<SummaryContext> {
-  const task = await getTaskFull(ctx, taskId);
+  return withUserContext(ctx.userId, async (tx) => {
+    const task = await getTaskFullTx(tx, taskId);
+    const detailedEdges = await getTaskEdgesDetailedTx(tx, taskId);
+    const project = await getProjectHeader(task.projectId, tx);
+    if (!project) {
+      console.error("Task has no joinable project", {
+        taskId: task.id,
+        projectId: task.projectId,
+      });
+    }
 
-  const project = await getProjectHeader(task.projectId);
-  if (!project) {
-    console.error("Task has no joinable project", {
-      taskId: task.id,
-      projectId: task.projectId,
-    });
-  }
+    const links = task.links;
 
-  const detailedEdges = await getTaskEdgesDetailed(ctx, taskId);
-  const links = task.links;
+    const edges: EdgeDetail[] = detailedEdges.map((e) => ({
+      edgeType: e.edgeType,
+      direction: e.direction,
+      connectedTaskId: e.connectedTask.id,
+      connectedTaskRef: e.connectedTask.taskRef,
+      connectedTaskTitle: e.connectedTask.title,
+      connectedTaskStatus: e.connectedTask.status,
+      note: e.note,
+    }));
 
-  const edges: EdgeDetail[] = detailedEdges.map((e) => ({
-    edgeType: e.edgeType,
-    direction: e.direction,
-    connectedTaskId: e.connectedTask.id,
-    connectedTaskRef: e.connectedTask.taskRef,
-    connectedTaskTitle: e.connectedTask.title,
-    connectedTaskStatus: e.connectedTask.status,
-    note: e.note,
-  }));
+    const edgeCount = buildEdgeCount(edges);
 
-  const edgeCount = buildEdgeCount(edges);
+    const prUrl = links.find((l) => l.kind === "pull_request")?.url ?? null;
 
-  const prUrl = links.find((l) => l.kind === "pull_request")?.url ?? null;
-
-  return {
-    node: {
-      taskRef: task.taskRef,
-      title: task.title,
-      status: task.status,
-      description: task.description,
-      priority: task.priority,
-      estimate: task.estimate,
-      prUrl,
-    },
-    parent: project ? { title: project.title, type: "project" } : null,
-    edgeCount,
-    edges,
-    acceptanceCriteriaCount: task.acceptanceCriteria.length,
-    decisionsCount: task.decisions.length,
-    assigneeCount: task.assignees.length,
-    hasImplementationPlan: !!task.implementationPlan,
-    links,
-  };
+    return {
+      node: {
+        taskRef: task.taskRef,
+        title: task.title,
+        status: task.status,
+        description: task.description,
+        priority: task.priority,
+        estimate: task.estimate,
+        prUrl,
+      },
+      parent: project ? { title: project.title, type: "project" } : null,
+      edgeCount,
+      edges,
+      acceptanceCriteriaCount: task.acceptanceCriteria.length,
+      decisionsCount: task.decisions.length,
+      assigneeCount: task.assignees.length,
+      hasImplementationPlan: !!task.implementationPlan,
+      links,
+    };
+  });
 }
 
 /**

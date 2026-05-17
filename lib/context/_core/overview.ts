@@ -6,15 +6,16 @@ import {
   composeTaskRef,
   enrichWithTaskRef,
 } from "@/lib/graph/identifier";
-import { getProjectTags } from "@/lib/data/project";
+import { getProjectTagsTx } from "@/lib/data/project";
 import {
   listProjectTasks,
-  fetchAssigneesByTaskUnchecked,
+  fetchAssigneesByProjectUnchecked,
 } from "@/lib/data/task";
 import { fetchEdgesForTaskIds } from "@/lib/data/edge";
 import { compress } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
-import { assertProjectAccess } from "@/lib/auth/authorization";
+import { assertProjectAccessTx } from "@/lib/auth/authorization";
+import { withUserContext } from "@/lib/db/rls";
 
 /** Task summary within a project overview. */
 type TaskSummary = {
@@ -69,83 +70,87 @@ export async function buildProjectOverview(
   ctx: AuthContext,
   projectId: string,
 ): Promise<ProjectOverview> {
-  const { project } = await assertProjectAccess(projectId, ctx);
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const projectTags = await getProjectTagsTx(tx, projectId);
+    const allTasks = await listProjectTasks(projectId, tx);
 
-  const allTasks = await listProjectTasks(projectId);
+    const identifier = asIdentifier(project.identifier);
+    const assigneesByTask = await fetchAssigneesByProjectUnchecked(
+      projectId,
+      tx,
+    );
+    const taskSummaries: TaskSummary[] = enrichWithTaskRef(
+      allTasks,
+      identifier,
+    ).map((t) => ({
+      id: t.id,
+      taskRef: t.taskRef,
+      title: t.title,
+      status: t.status,
+      description: compress(t.description, 100),
+      order: t.order,
+      tags: t.tags,
+      category: t.category,
+      priority: t.priority,
+      estimate: t.estimate,
+      assigneeCount: assigneesByTask.get(t.id)?.length ?? 0,
+    }));
 
-  const projectTags = await getProjectTags(ctx, projectId);
+    const totalTasks = allTasks.length;
+    const doneTasks = allTasks.filter((t) => t.status === "done").length;
+    const inProgressTasks = allTasks.filter(
+      (t) => t.status === "in_progress",
+    ).length;
+    const cancelledTasks = allTasks.filter(
+      (t) => t.status === "cancelled",
+    ).length;
 
-  const identifier = asIdentifier(project.identifier);
-  const assigneesByTask = await fetchAssigneesByTaskUnchecked(
-    allTasks.map((t) => t.id),
-  );
-  const taskSummaries: TaskSummary[] = enrichWithTaskRef(
-    allTasks,
-    identifier,
-  ).map((t) => ({
-    id: t.id,
-    taskRef: t.taskRef,
-    title: t.title,
-    status: t.status,
-    description: compress(t.description, 100),
-    order: t.order,
-    tags: t.tags,
-    category: t.category,
-    priority: t.priority,
-    estimate: t.estimate,
-    assigneeCount: assigneesByTask.get(t.id)?.length ?? 0,
-  }));
+    const taskIds = allTasks.map((t) => t.id);
+    let edges: OverviewEdge[] = [];
 
-  const totalTasks = allTasks.length;
-  const doneTasks = allTasks.filter((t) => t.status === "done").length;
-  const inProgressTasks = allTasks.filter(
-    (t) => t.status === "in_progress",
-  ).length;
-  const cancelledTasks = allTasks.filter((t) => t.status === "cancelled").length;
+    if (taskIds.length > 0) {
+      const infoMap = new Map<string, { taskRef: string; title: string }>();
+      for (const t of allTasks) {
+        infoMap.set(t.id, {
+          taskRef: composeTaskRef(identifier, t.sequenceNumber),
+          title: t.title,
+        });
+      }
 
-  const taskIds = allTasks.map((t) => t.id);
-  let edges: OverviewEdge[] = [];
+      const rawEdges = await fetchEdgesForTaskIds(taskIds, tx);
 
-  if (taskIds.length > 0) {
-    const infoMap = new Map<string, { taskRef: string; title: string }>();
-    for (const t of allTasks) {
-      infoMap.set(t.id, {
-        taskRef: composeTaskRef(identifier, t.sequenceNumber),
-        title: t.title,
+      edges = rawEdges.map((e) => {
+        const source = infoMap.get(e.sourceTaskId);
+        const target = infoMap.get(e.targetTaskId);
+        return {
+          sourceTaskRef: source?.taskRef ?? "",
+          sourceTitle: source?.title ?? "Unknown",
+          targetTaskRef: target?.taskRef ?? "",
+          targetTitle: target?.title ?? "Unknown",
+          edgeType: e.edgeType,
+          note: e.note,
+        };
       });
     }
 
-    const rawEdges = await fetchEdgesForTaskIds(taskIds);
-
-    edges = rawEdges.map((e) => {
-      const source = infoMap.get(e.sourceTaskId);
-      const target = infoMap.get(e.targetTaskId);
-      return {
-        sourceTaskRef: source?.taskRef ?? "",
-        sourceTitle: source?.title ?? "Unknown",
-        targetTaskRef: target?.taskRef ?? "",
-        targetTitle: target?.title ?? "Unknown",
-        edgeType: e.edgeType,
-        note: e.note,
-      };
-    });
-  }
-
-  const denominator = totalTasks - cancelledTasks;
-  return {
-    id: project.id,
-    identifier: project.identifier,
-    title: project.title,
-    description: project.description,
-    status: project.status,
-    categories: project.categories,
-    tagVocabulary: projectTags.map((t) => t.tag),
-    tasks: taskSummaries,
-    edges,
-    totalTasks,
-    doneTasks,
-    inProgressTasks,
-    cancelledTasks,
-    progress: denominator > 0 ? Math.round((doneTasks / denominator) * 100) : 0,
-  };
+    const denominator = totalTasks - cancelledTasks;
+    return {
+      id: project.id,
+      identifier: project.identifier,
+      title: project.title,
+      description: project.description,
+      status: project.status,
+      categories: project.categories,
+      tagVocabulary: projectTags.map((t) => t.tag),
+      tasks: taskSummaries,
+      edges,
+      totalTasks,
+      doneTasks,
+      inProgressTasks,
+      cancelledTasks,
+      progress:
+        denominator > 0 ? Math.round((doneTasks / denominator) * 100) : 0,
+    };
+  });
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { AutoGrowTextarea } from '@/components/shared/AutoGrowTextarea';
 import { Markdown } from '@/components/shared/Markdown';
 import { updateTask } from '@/lib/graph/mutations';
@@ -25,11 +25,13 @@ interface DescriptionSectionProps {
 export function DescriptionSection({ taskId, description, onGraphChange }: DescriptionSectionProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(description);
+  const [prevDescription, setPrevDescription] = useState(description);
   const cancelRef = useRef(false);
 
-  useEffect(() => {
+  if (description !== prevDescription) {
+    setPrevDescription(description);
     setDraft(description);
-  }, [description]);
+  }
 
   const handleSave = useCallback(async () => {
     setEditing(false);

@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Conn } from "@/lib/db/raw";
 import { listTasksForGraph } from "@/lib/data/task";
 import { listDependsOnEdges } from "@/lib/data/edge";
 
@@ -41,12 +42,18 @@ export type EffectiveDepGraph = {
  * consistent transitive-aware semantics.
  *
  * @param projectId - UUID of the project.
+ * @param conn - Drizzle client or transaction handle. Callers running under a
+ *   `withUserContext` transaction must pass the active `tx` so the underlying
+ *   reads participate in the same RLS-scoped frame; standalone callers pass
+ *   the bare `db` pool client (data-layer scope only — boundary enforced by
+ *   the lint rule on this directory).
  * @returns The effective dependency graph (active-only nodes, transitive edges).
  */
 export async function buildEffectiveDepGraph(
   projectId: string,
+  conn: Conn,
 ): Promise<EffectiveDepGraph> {
-  const allTasks = await listTasksForGraph(projectId);
+  const allTasks = await listTasksForGraph(projectId, conn);
 
   const activeTasks = new Map<string, ActiveTaskInfo>();
   const taskStatus = new Map<string, string>();
@@ -72,7 +79,7 @@ export async function buildEffectiveDepGraph(
   }
 
   const taskIds = allTasks.map((t) => t.id);
-  const dependsOnEdges = await listDependsOnEdges(taskIds);
+  const dependsOnEdges = await listDependsOnEdges(taskIds, conn);
 
   const adj = new Map<string, string[]>();
   for (const e of dependsOnEdges) {

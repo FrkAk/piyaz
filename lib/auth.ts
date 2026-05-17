@@ -6,7 +6,7 @@ import * as authSchema from "@/lib/db/auth-schema";
 import { authDb } from "@/lib/db/connection";
 import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
-import { findOrgMemberUserIds } from "@/lib/data/membership";
+import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 
 /**
@@ -61,19 +61,46 @@ export const auth = betterAuth({
           await grantOrgAccess(added.userId, org.id);
         },
         afterRemoveMember: async ({ member: removed, organization: org }) => {
-          await Promise.all([
+          const results = await Promise.allSettled([
             clearOrgMembershipArtifacts(removed.userId, org.id),
             revokeOrgAccess(removed.userId, org.id),
           ]);
+          for (const r of results) {
+            if (r.status === "rejected") {
+              console.error("afterRemoveMember cleanup failure", {
+                userId: removed.userId,
+                orgId: org.id,
+                err: r.reason,
+              });
+            }
+          }
         },
         beforeDeleteOrganization: async ({ organization: org }) => {
-          const userIds = await findOrgMemberUserIds(org.id);
-          await Promise.all([
-            ...userIds.map((userId) =>
-              clearOrgMembershipArtifacts(userId, org.id),
-            ),
-            ...userIds.map((userId) => revokeOrgAccess(userId, org.id)),
+          const userIds = await findOrgMemberUserIdsAsAdmin(org.id);
+          const tasks = userIds.flatMap((userId) => [
+            {
+              step: "clearOrgMembershipArtifacts" as const,
+              userId,
+              run: () => clearOrgMembershipArtifacts(userId, org.id),
+            },
+            {
+              step: "revokeOrgAccess" as const,
+              userId,
+              run: () => revokeOrgAccess(userId, org.id),
+            },
           ]);
+          const results = await Promise.allSettled(tasks.map((t) => t.run()));
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r.status === "rejected") {
+              console.error("beforeDeleteOrganization cleanup failure", {
+                step: tasks[i].step,
+                userId: tasks[i].userId,
+                orgId: org.id,
+                err: r.reason,
+              });
+            }
+          }
         },
       },
     }),

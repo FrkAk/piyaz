@@ -1,6 +1,6 @@
 import "server-only";
 import { and, eq, inArray } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { serviceRoleDb } from "@/lib/db";
 import {
   oauthAccessToken,
   oauthConsent,
@@ -21,6 +21,11 @@ import { projects, tasks, taskAssignees } from "@/lib/db/schema";
  * - `organizationHooks.beforeDeleteOrganization` (per-member loop before
  *   the org row is deleted; member rows then cascade)
  *
+ * `orgId` MUST come from a verified Better Auth hook or action context — a
+ * wrong `orgId` here deletes the user's assignments in that org (blast radius
+ * is one user × one org, never another user's rows because of the
+ * `taskAssignees.userId = userId` outer scope).
+ *
  * @param userId - Owner of the artifacts to remove.
  * @param orgId - Organization the artifacts pointed at.
  */
@@ -28,7 +33,7 @@ export async function clearOrgMembershipArtifacts(
   userId: string,
   orgId: string,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
+  await serviceRoleDb.transaction(async (tx) => {
     await tx
       .update(session)
       .set({ activeOrganizationId: null })

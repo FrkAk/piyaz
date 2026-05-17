@@ -127,7 +127,7 @@ export function RelationshipsSection({ taskId, edges, taskMap, onSelectNode, onG
   const dropdownOpen = adding && !selectedTarget && search.length > 0;
 
   useLayoutEffect(() => {
-    if (!dropdownOpen) { setAnchorRect(null); return; }
+    if (!dropdownOpen) return;
     const update = () => {
       const rect = searchRef.current?.getBoundingClientRect();
       if (rect) setAnchorRect(rect);

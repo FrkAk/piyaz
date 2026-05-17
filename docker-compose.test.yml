@@ -1,0 +1,24 @@
+# Ephemeral test database. `bun run db:test:up` brings this up before
+# `bun test`; `bun run db:test:down` tears it down. Uses tmpfs for the
+# data dir so restarts are fast and state never persists across sessions.
+# Host port 5433 keeps it isolated from the dev DB on 5432.
+#
+# Roles, grants, schemas, and RLS are provisioned in-process from
+# tests/setup/migrate.ts after the container is healthy. CI uses the
+# equivalent declaration via GitHub Actions `services:` — see ci.yml.
+services:
+  db-test:
+    image: postgres:17.10
+    environment:
+      POSTGRES_USER: mymir
+      POSTGRES_PASSWORD: mymir
+      POSTGRES_DB: mymir_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mymir -d mymir_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
