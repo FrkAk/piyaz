@@ -15,6 +15,7 @@ process.env.BETTER_AUTH_URL ??= "https://example.test";
 // time is `tests/api/error.test.ts`, which mutates per-test and restores
 // in `afterEach` — so a production baseline does not change observable
 // behavior anywhere except cookie tests, which expect it.
+// @ts-expect-error NODE_ENV is readonly in @types/node
 process.env.NODE_ENV = "production";
 
 // Neutralize `server-only` so lib/ modules can be imported in the test process.

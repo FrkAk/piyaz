@@ -32,7 +32,12 @@ test("sign-in Set-Cookie carries Secure, HttpOnly, SameSite=Lax in production", 
     "https://example.test/api/auth/sign-in/email",
     {
       body: JSON.stringify({ email, password }),
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        // Satisfies `lib/auth.ts:54` ipAddressHeaders so BA's rate-limit
+        // path doesn't WARN about a missing client IP in the test output.
+        "cf-connecting-ip": "127.0.0.1",
+      },
       method: "POST",
     },
   );
@@ -63,7 +68,12 @@ test("production cookie name carries the __Secure- prefix", async () => {
     "https://example.test/api/auth/sign-in/email",
     {
       body: JSON.stringify({ email, password }),
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        // Satisfies `lib/auth.ts:54` ipAddressHeaders so BA's rate-limit
+        // path doesn't WARN about a missing client IP in the test output.
+        "cf-connecting-ip": "127.0.0.1",
+      },
       method: "POST",
     },
   );
