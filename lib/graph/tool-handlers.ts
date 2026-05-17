@@ -707,7 +707,7 @@ export const DESCRIPTIONS = {
   mymir_context:
     "Retrieve task context at varying depth. ALWAYS fetch context before reasoning about a task; pick the lightest depth that answers the question. " +
     "summary=task header + description + counts (criteria, decisions, plan flag, edge counts) + full 1-hop edges WITH notes. The lightest depth that still carries edge notes; folds in what `mymir_query type='edges'` would give. " +
-    "working=detailed (criteria, decisions, 1-hop edges, siblings) for refinement and review. " +
+    "working=detailed (criteria, decisions, 1-hop edges) for refinement and review. " +
     "agent=multi-hop dependency chains with upstream execution records (~4-8K tokens); fetch BEFORE coding. " +
     "planning=spec-focused (project description, prereqs, acceptance criteria, downstream specs); fetch BEFORE writing the implementation plan.",
   mymir_analyze:

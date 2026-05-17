@@ -109,7 +109,7 @@ Drop to \`mymir_query\` for browse / lookup:
 - \`overview\` (very heavy): full structure (every task, every edge, full tag vocab, progress). Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session. Do not run on routine status questions.
 
 ## Refine a task
-1. \`mymir_context taskId='...' depth='working'\` for current state, edges, siblings.
+1. \`mymir_context taskId='...' depth='working'\` for current state and 1-hop edges.
 2. Before proposing changes, explore. Search related tasks (\`mymir_query type='search'\` by tag or title fragment), read current docs for any framework or library the task touches, check the actual codebase for what already exists. No speculation. If you don't know, look; if you can't find it, ask. Refining on assumptions is how vague tasks survive review.
 3. Improve description, acceptance criteria, decisions, dependencies. Push back on vagueness; rewrite single-sentence descriptions and "works correctly" ACs before saving.
 4. \`mymir_task action='update'\`. The default appends to array fields; \`overwriteArrays=true\` REPLACES them and is destructive. Confirm with the user before using it.
@@ -548,7 +548,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           .enum(["summary", "working", "agent", "planning", "review"])
           .default("working")
           .describe(
-            "summary=task header + description + counts + 1-hop edges with notes (folds in `mymir_query type='edges'`). working=criteria, decisions, 1-hop edges, siblings (does NOT render executionRecord, files, or implementationPlan). agent=multi-hop deps + upstream execution records + files + downstream; renders the task's own executionRecord when status is done/cancelled (use BEFORE coding, and to read a finished task's record). planning=project description, prereqs, ACs, downstream specs (use BEFORE writing the implementation plan). review=in_review review bundle: implementationPlan alongside executionRecord, PR link surfaced, plan-vs-files drift, AC evaluation, downstream impact, review-lens prompts (security / perf / reliability / observability / codebase standards). The review subagent reads this depth.",
+            "summary=task header + description + counts + 1-hop edges with notes (folds in `mymir_query type='edges'`). working=criteria, decisions, 1-hop edges (both depends_on and relates_to, both directions, with notes) — does NOT render executionRecord, files, or implementationPlan. agent=multi-hop deps + upstream execution records + files + downstream; renders the task's own executionRecord when status is done/cancelled (use BEFORE coding, and to read a finished task's record). planning=project description, prereqs, ACs, downstream specs (use BEFORE writing the implementation plan). review=in_review review bundle: implementationPlan alongside executionRecord, PR link surfaced, plan-vs-files drift, AC evaluation, downstream impact, review-lens prompts (security / perf / reliability / observability / codebase standards). The review subagent reads this depth.",
           ),
         projectId: z
           .uuid()
