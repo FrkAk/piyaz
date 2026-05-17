@@ -5,6 +5,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as authSchema from "@/lib/db/auth-schema";
 import { authDb } from "@/lib/db/connection";
 import { clearOrgMembershipArtifacts } from "@/lib/data/account";
+import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
@@ -116,7 +117,8 @@ export const auth = betterAuth({
       loginPage: "/sign-in",
       consentPage: "/consent",
       allowDynamicClientRegistration: true,
-      allowUnauthenticatedClientRegistration: true,
+      allowUnauthenticatedClientRegistration: false,
+      refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7 days, matches session expiresIn
       validAudiences: process.env.BETTER_AUTH_URL
         ? [
             process.env.BETTER_AUTH_URL,
@@ -139,6 +141,37 @@ export const auth = betterAuth({
       silenceWarnings: { oauthAuthServerConfig: true },
     }),
   ],
+  databaseHooks: {
+    session: {
+      delete: {
+        after: async (session) => {
+          try {
+            await clearUserOAuthArtifacts(session.userId);
+          } catch (err) {
+            console.error("session.delete.after cascade failure", {
+              userId: session.userId,
+              err,
+            });
+          }
+        },
+      },
+    },
+    account: {
+      update: {
+        after: async (account) => {
+          if (account.providerId !== "credential") return;
+          try {
+            await clearUserOAuthArtifacts(account.userId);
+          } catch (err) {
+            console.error("account.update.after cascade failure", {
+              userId: account.userId,
+              err,
+            });
+          }
+        },
+      },
+    },
+  },
 });
 
 export type Session = typeof auth.$Infer.Session;
