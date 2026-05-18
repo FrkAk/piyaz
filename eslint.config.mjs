@@ -103,12 +103,12 @@ const eslintConfig = [
             {
               name: "@/lib/db",
               message:
-                "Application code must import from @/lib/data, not @/lib/db. The data layer is defined in lib/data/. Boundary documented in docs/superpowers/plans/2026-05-06-db-access-rework.md.",
+                "Application code must import from @/lib/data, not @/lib/db. The data layer is defined in lib/data/.",
             },
             {
               name: "@/lib/db/connection",
               message:
-                "Application code must import from @/lib/data, not @/lib/db. The data layer is defined in lib/data/. Boundary documented in docs/superpowers/plans/2026-05-06-db-access-rework.md.",
+                "Application code must import from @/lib/data, not @/lib/db. The data layer is defined in lib/data/.",
             },
             {
               name: "@cloudflare/workers-types",
