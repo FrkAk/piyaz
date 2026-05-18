@@ -10,6 +10,10 @@
 /.next/
 /out/
 
+# OpenNext + Wrangler build artifacts
+/.open-next/
+/.wrangler/
+
 # production
 /build
 /dist

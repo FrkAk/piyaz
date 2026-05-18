@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "main": ".open-next/worker.js",
+  "name": "mymir",
+  "compatibility_date": "2026-05-16",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "mymir" }],
+  "kv_namespaces": [
+    { "binding": "AUTH_KV", "id": "00000000000000000000000000000000" }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "NEXT_INC_CACHE_R2_BUCKET",
+      "bucket_name": "mymir-placeholder-cache"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "NEXT_TAG_CACHE_D1",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "mymir-tag-cache"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "MYMIR_BROKER", "class_name": "MymirBroker" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MymirBroker"] }],
+  "vars": {
+    "DEPLOY_TARGET": "cloudflare"
+  }
+}

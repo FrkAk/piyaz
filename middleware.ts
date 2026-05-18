@@ -13,22 +13,26 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Generate a per-request CSP nonce.
+ * Generate a per-request CSP nonce. Edge-runtime compatible: avoids
+ * `Buffer` so the Cloudflare Workers / Edge build accepts the module.
  *
  * @returns Base64-encoded UUID v4 (122 bits of entropy).
  */
 function generateNonce(): string {
-  return Buffer.from(crypto.randomUUID()).toString("base64");
+  return btoa(crypto.randomUUID());
 }
 
 /**
- * Next.js proxy: session enforcement, rate limiting, request validation,
- * and per-request CSP. API/MCP auth is delegated to route handlers.
+ * Next.js middleware: session enforcement, rate limiting, request
+ * validation, and per-request CSP. API/MCP auth is delegated to route
+ * handlers. Runs in the Edge runtime so the OpenNext Cloudflare build
+ * accepts the module — Next 16's `proxy.ts` filename is locked to the
+ * Node.js runtime which workerd rejects.
  *
  * @param request - Incoming request.
  * @returns Redirect, error response, or pass-through; all carry CSP headers.
  */
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const session = getSessionCookie(request);
 

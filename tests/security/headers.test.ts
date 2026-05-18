@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { buildCsp, headerRules, securityHeaders } from "@/lib/security/headers";
-import nextConfig from "@/next.config";
+import buildNextConfig from "@/next.config";
 
 const REQUIRED_KEYS = [
   "X-Content-Type-Options",
@@ -129,11 +129,13 @@ test("HSTS host exclusion matches loopback names but not real domains", () => {
   expect(regex.test("127.0.0.1.evil.com")).toBe(false);
 });
 
-test("nextConfig disables X-Powered-By", () => {
+test("nextConfig disables X-Powered-By", async () => {
+  const nextConfig = await buildNextConfig();
   expect(nextConfig.poweredByHeader).toBe(false);
 });
 
 test("nextConfig.headers() emits no CSP (CSP is set by middleware)", async () => {
+  const nextConfig = await buildNextConfig();
   const rules = await nextConfig.headers!();
   for (const rule of rules) {
     const keys = rule.headers.map((h) => h.key);
@@ -142,6 +144,7 @@ test("nextConfig.headers() emits no CSP (CSP is set by middleware)", async () =>
 });
 
 test("nextConfig.headers() applies the always-on rule to /:path*", async () => {
+  const nextConfig = await buildNextConfig();
   const rules = await nextConfig.headers!();
   expect(rules.length).toBeGreaterThanOrEqual(1);
   expect(rules[0]!.source).toBe("/:path*");

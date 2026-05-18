@@ -1,25 +1,14 @@
 import "server-only";
 
-import { drizzle as drizzlePg } from "drizzle-orm/postgres-js";
-import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
-import { Pool as NeonPool } from "@neondatabase/serverless";
-import postgres from "postgres";
-import * as appSchema from "./schema";
-import * as authSchema from "./auth-schema";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  buildAppPool,
+  buildAuthPool,
+  buildServicePool,
+} from "@/lib/db/_driver";
+import type { AppDb, AuthDb } from "@/lib/db/_driver.node";
 
-/**
- * Drizzle clients for both drivers conform to the same `PgDatabase` interface
- * but their `ReturnType<>` aliases diverge in method overloads (notably
- * `.returning({...})` and `.delete(...).returning()`), so unioning them
- * produces a method set TypeScript can't pick a callable signature from.
- *
- * Pin the alias to the postgres-js shape — the dev/self-host default — and
- * cast the neon-built instance via `as unknown as AppDb`. Driver shape
- * differences inside `client.execute()` are normalized by `executeRaw` in
- * `./raw.ts`, so the cast is sound at runtime.
- */
-export type AppDb = ReturnType<typeof drizzlePg<typeof appSchema>>;
-type AuthDb = ReturnType<typeof drizzlePg<typeof authSchema>>;
+export type { AppDb, AuthDb } from "@/lib/db/_driver.node";
 
 declare const appUserBrand: unique symbol;
 declare const serviceRoleBrand: unique symbol;
@@ -57,108 +46,57 @@ declare global {
   var __mymirServiceRoleDb: AppDb | undefined;
 }
 
-const isNeon = (): boolean => process.env.MYMIR_DB_DRIVER === "neon";
-
-/**
- * Build the application Drizzle client for the active driver.
- *
- * Pool sized at `max: 3` per role so the three pools (`app_user`,
- * `auth_role`, `service_role`) plus dev/test parallelism stay well under
- * Neon Launch tier's ~100-connection per-branch cap. Bump if the deploy
- * target adds replicas or runs on a higher tier.
- *
- * @returns Drizzle instance bound to the public schema.
- * @throws Error when `DATABASE_URL` is unset.
- */
-function buildAppDb(): AppDb {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error(
-      "DATABASE_URL is required for the app runtime connection (app_user role).",
-    );
-  }
-  if (isNeon()) {
-    const pool = new NeonPool({
-      connectionString: url,
-      max: 3,
-      idleTimeoutMillis: 10_000,
-    });
-    return drizzleNeon(pool, { schema: appSchema }) as unknown as AppDb;
-  }
-  return drizzlePg(postgres(url, { max: 3, idle_timeout: 10 }), {
-    schema: appSchema,
-  });
+/** Per-request DB bundle seeded by `withRequestDb` on Cloudflare Workers. */
+export interface RequestScopedDb {
+  appDb: AppDb;
+  authDb: AuthDb;
+  serviceRoleDb: AppDb;
 }
 
 /**
- * Build the Better-auth Drizzle client for the active driver.
- *
- * @returns Drizzle instance bound to the neon_auth schema.
- * @throws Error when `DATABASE_AUTH_URL` is unset.
+ * AsyncLocalStorage frame populated by the Workers request-scope helper.
+ * On self-host the frame is never entered; the global-cached singletons
+ * built lazily on first proxy access are used instead.
  */
-function buildAuthDb(): AuthDb {
-  const url = process.env.DATABASE_AUTH_URL;
-  if (!url) {
-    throw new Error(
-      "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
-        "(DML on neon_auth.*, no public-schema access).",
-    );
-  }
-  if (isNeon()) {
-    const pool = new NeonPool({
-      connectionString: url,
-      max: 3,
-      idleTimeoutMillis: 10_000,
-    });
-    return drizzleNeon(pool, { schema: authSchema }) as unknown as AuthDb;
-  }
-  return drizzlePg(postgres(url, { max: 3, idle_timeout: 10 }), {
-    schema: authSchema,
-  });
-}
+export const requestDbStore = new AsyncLocalStorage<RequestScopedDb>();
+
+type GlobalKey = "__mymirAppDb" | "__mymirAuthDb" | "__mymirServiceRoleDb";
 
 /**
- * Build the BYPASSRLS Drizzle client for the active driver. Wired against
- * `DATABASE_SERVICE_ROLE_URL` — a separate connection string for a role with
- * BYPASSRLS (Neon `service_role` in prod, `service_role` in self-host).
+ * Resolve the active Drizzle client for a role: prefer the AsyncLocalStorage
+ * frame (Workers), fall back to the `globalThis` cache (self-host).
  *
- * @returns Drizzle instance bound to the public schema.
- * @throws Error when `DATABASE_SERVICE_ROLE_URL` is unset.
+ * @param key - Which role to read from the request-scope bundle.
+ * @param globalKey - Matching `globalThis.__mymir*` slot for self-host.
+ * @param builder - Factory invoked at most once to populate the slot.
+ * @returns Drizzle instance for the role.
  */
-function buildServiceRoleDb(): AppDb {
-  const url = process.env.DATABASE_SERVICE_ROLE_URL;
-  if (!url) {
-    throw new Error(
-      "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
-    );
-  }
-  if (isNeon()) {
-    const pool = new NeonPool({
-      connectionString: url,
-      max: 3,
-      idleTimeoutMillis: 10_000,
-    });
-    return drizzleNeon(pool, { schema: appSchema }) as unknown as AppDb;
-  }
-  return drizzlePg(postgres(url, { max: 3, idle_timeout: 10 }), {
-    schema: appSchema,
-  });
+function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
+  key: keyof RequestScopedDb,
+  globalKey: GlobalKey,
+  builder: () => { db: TDb },
+): TDb {
+  const scoped = requestDbStore.getStore();
+  if (scoped) return scoped[key] as TDb;
+  const cached = globalThis[globalKey];
+  if (cached) return cached as TDb;
+  const built = builder().db;
+  globalThis[globalKey] = built as never;
+  return built;
 }
 
 /**
  * Lazily initialized application Drizzle client.
  *
- * Driver chosen at first access via `MYMIR_DB_DRIVER`:
- * - `neon` → `drizzle-orm/neon-serverless` + WebSocket `Pool`
- * - unset / anything else → `drizzle-orm/postgres-js` + `postgres` TCP
- *
- * Cached on `globalThis` so a warm Node process reuses the connection
- * across requests instead of paying the WebSocket handshake each time.
+ * On Workers, resolves to the per-request bundle seeded by `withRequestDb`
+ * (see `lib/db/request-scope.workers.ts`). On self-host, falls back to a
+ * `globalThis` singleton built from the postgres-js driver so a warm Node
+ * process reuses the connection across requests.
  */
 export const appDb = new Proxy({} as AppUserConn, {
   get(_target, prop, receiver) {
-    if (!globalThis.__mymirAppDb) globalThis.__mymirAppDb = buildAppDb();
-    return Reflect.get(globalThis.__mymirAppDb, prop, receiver);
+    const db = getScopedOrGlobal<AppDb>("appDb", "__mymirAppDb", buildAppPool);
+    return Reflect.get(db, prop, receiver);
   },
 });
 
@@ -170,8 +108,12 @@ export const appDb = new Proxy({} as AppUserConn, {
  */
 export const authDb = new Proxy({} as AuthDb, {
   get(_target, prop, receiver) {
-    if (!globalThis.__mymirAuthDb) globalThis.__mymirAuthDb = buildAuthDb();
-    return Reflect.get(globalThis.__mymirAuthDb, prop, receiver);
+    const db = getScopedOrGlobal<AuthDb>(
+      "authDb",
+      "__mymirAuthDb",
+      buildAuthPool,
+    );
+    return Reflect.get(db, prop, receiver);
   },
 });
 
@@ -192,9 +134,11 @@ export const authDb = new Proxy({} as AuthDb, {
  */
 export const serviceRoleDb = new Proxy({} as ServiceRoleConn, {
   get(_target, prop, receiver) {
-    if (!globalThis.__mymirServiceRoleDb) {
-      globalThis.__mymirServiceRoleDb = buildServiceRoleDb();
-    }
-    return Reflect.get(globalThis.__mymirServiceRoleDb, prop, receiver);
+    const db = getScopedOrGlobal<AppDb>(
+      "serviceRoleDb",
+      "__mymirServiceRoleDb",
+      buildServicePool,
+    );
+    return Reflect.get(db, prop, receiver);
   },
 });

@@ -21,6 +21,12 @@ const eslintConfig = [
   ...baseConfig,
   ...tsConfig,
   {
+    // Generated outputs: wrangler env types and OpenNext / Wrangler build
+    // artifacts. Linting these adds no value and surfaces noise from
+    // generated code.
+    ignores: ["cloudflare-env.d.ts", ".open-next/**", ".wrangler/**"],
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     rules: {
       "@typescript-eslint/no-unused-vars": [

@@ -20,6 +20,7 @@
       "!**/.vercel/**",
       "!**/*.tsbuildinfo",
       "!**/next-env.d.ts",
+      "!cloudflare-env.d.ts",
       "!bun.lock",
       "!migrations/**",
       "!drizzle/**"
