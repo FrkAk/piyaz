@@ -35,6 +35,43 @@ describe("buildReviewContext under app_user", () => {
     expect(result).toContain("execution body");
   });
 
+  test("cancelled middle is transparent: C surfaces, B does not", async () => {
+    // A depends_on B(cancelled) depends_on C(active). A is in_review with a
+    // plan/execution record (mirrors the populated-context test setup); the
+    // review bundle must show C as a prerequisite and never list B.
+    const fx = await seedUserOrgProject("review-ctx-cancel");
+    const sr = serviceRoleConnect();
+    let aTaskId: string;
+    try {
+      const [a] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number, status,
+          implementation_plan, execution_record)
+        VALUES (${fx.projectId}, 'Source task A', 1, 'in_review',
+          'plan body', 'execution body')
+        RETURNING id`;
+      const [b] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number, status)
+        VALUES (${fx.projectId}, 'Cancelled middle B', 2, 'cancelled')
+        RETURNING id`;
+      const [c] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number)
+        VALUES (${fx.projectId}, 'Active wall C', 3)
+        RETURNING id`;
+      await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+               VALUES (${a.id}, ${b.id}, 'depends_on')`;
+      await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+               VALUES (${b.id}, ${c.id}, 'depends_on')`;
+      aTaskId = a.id;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const ctx = makeAuthContext(fx.userId);
+    const result = await buildReviewContext(ctx, aTaskId);
+    expect(result).toContain("Active wall C");
+    expect(result).not.toContain("Cancelled middle B");
+  });
+
   test("rejects cross-team callers (RLS isolation under app_user)", async () => {
     const fxA = await seedUserOrgProject("review-ctx-a");
     const fxB = await seedUserOrgProject("review-ctx-b");

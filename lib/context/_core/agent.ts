@@ -1,6 +1,9 @@
 import "server-only";
 
-import { getDependencyChain, getDownstreamTx } from "@/lib/data/traversal";
+import {
+  buildDepAdjacency,
+  walkEffectiveDepsBounded,
+} from "@/lib/graph/effective-deps";
 import {
   fetchDependencyTasks,
   fetchEdgeNotesBySource,
@@ -39,12 +42,26 @@ export async function buildAgentContext(
     const assignees = task.assignees;
     const links = task.links;
 
-    const downstream = await getDownstreamTx(tx, taskId, 2);
-
-    const [deps, upstreamEdgeNotes] = await Promise.all([
-      getDependencyChain(taskId, task.projectId, 2, tx),
+    const [{ adj, taskStatus }, upstreamEdgeNotes] = await Promise.all([
+      buildDepAdjacency(task.projectId, tx),
       fetchEdgeNotesBySource(task.projectId, taskId, tx),
     ]);
+
+    const reverseAdj = new Map<string, string[]>();
+    for (const [src, targets] of adj) {
+      for (const t of targets) {
+        const list = reverseAdj.get(t) ?? [];
+        list.push(src);
+        reverseAdj.set(t, list);
+      }
+    }
+
+    const deps = [
+      ...walkEffectiveDepsBounded(taskId, adj, taskStatus, 2).keys(),
+    ].map((id) => ({ id }));
+    const downstream = [
+      ...walkEffectiveDepsBounded(taskId, reverseAdj, taskStatus, 2).keys(),
+    ].map((id) => ({ id }));
 
     const prLink = links.find((l) => l.kind === "pull_request");
 
