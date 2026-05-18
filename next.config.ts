@@ -13,13 +13,18 @@ const TARGET_FILES = [
 ] as const;
 
 const REPLACEMENT_REGEX = new RegExp(
-  `(^|/)(${TARGET_FILES.map(([from]) => from.split("/").pop()).join("|")})(\\.[cm]?[tj]sx?)?$`,
+  `(^|/)lib/(?:db|realtime)/(${TARGET_FILES.map(
+    ([from]) => from.split("/").pop(),
+  ).join("|")})(\\.[cm]?[tj]sx?)?$`,
 );
 
 /**
  * Rewrites runtime imports of the driver / broker indirection files to
- * the per-target sibling. Runs at module-resolution time so the imports
- * are swapped before any code from the unused target reaches the bundle.
+ * the per-target sibling. The regex is anchored on the `lib/db/` and
+ * `lib/realtime/` parent directories so files with the same basename
+ * elsewhere in the tree (test fixtures, transitive deps) are never
+ * touched. Runs at module-resolution time so the imports are swapped
+ * before any code from the unused target reaches the bundle.
  *
  * Triggered by `next.config.ts`'s webpack hook below.
  *

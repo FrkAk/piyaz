@@ -26,9 +26,17 @@
     }
   ],
   "durable_objects": {
-    "bindings": [{ "name": "MYMIR_BROKER", "class_name": "MymirBroker" }]
+    "bindings": [
+      { "name": "MYMIR_BROKER", "class_name": "MymirBroker" },
+      { "name": "NEXT_CACHE_DO_QUEUE", "class_name": "DOQueueHandler" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MymirBroker"] }],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MymirBroker", "DOQueueHandler"]
+    }
+  ],
   "vars": {
     "DEPLOY_TARGET": "cloudflare"
   }

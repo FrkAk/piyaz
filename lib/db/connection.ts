@@ -6,6 +6,7 @@ import {
   buildAuthPool,
   buildServicePool,
 } from "@/lib/db/_driver";
+import { autoSeedRequestDb } from "@/lib/db/request-scope";
 import type { AppDb, AuthDb } from "@/lib/db/_driver.node";
 
 export type { AppDb, AuthDb } from "@/lib/db/_driver.node";
@@ -64,18 +65,26 @@ type GlobalKey = "__mymirAppDb" | "__mymirAuthDb" | "__mymirServiceRoleDb";
 
 /**
  * Resolve the active Drizzle client for a role: prefer the AsyncLocalStorage
- * frame (Workers), fall back to the `globalThis` cache (self-host).
+ * frame, fall back per-target (Workers lazy-seeds, self-host caches on
+ * `globalThis`).
  *
- * On Cloudflare Workers (`DEPLOY_TARGET === "cloudflare"`) the globalThis
- * fallback is forbidden — the Neon serverless `Pool`'s WebSocket cannot
- * span requests, so missing the per-request frame is a programming error
- * rather than a recoverable cache miss.
+ * On Cloudflare Workers, when the proxy is first read in a request without
+ * an active `withRequestDb` frame, the {@link autoSeedRequestDb} hook builds
+ * the three role pools, registers `ctx.waitUntil(pool.end())` for teardown,
+ * and seeds the ALS store for the remainder of the request's async tree. The
+ * `globalThis` cache is never consulted on Workers because the Neon
+ * serverless `Pool`'s WebSocket cannot span requests.
+ *
+ * On self-host the seeder is a stub (throws); the `globalThis` cache holds
+ * a single warm pool per role for the lifetime of the Node process.
  *
  * @param key - Which role to read from the request-scope bundle.
  * @param globalKey - Matching `globalThis.__mymir*` slot for self-host.
  * @param builder - Factory invoked at most once to populate the slot.
  * @returns Drizzle instance for the role.
- * @throws Error on Cloudflare Workers when the ALS frame is missing.
+ * @throws Error on Workers when the seeder cannot register teardown (no
+ *   active fetch context, e.g. scheduled handler) — see
+ *   `autoSeedRequestDb` for the remediation.
  */
 function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
   key: keyof RequestScopedDb,
@@ -85,11 +94,8 @@ function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
   const scoped = requestDbStore.getStore();
   if (scoped) return scoped[key] as TDb;
   if (process.env.DEPLOY_TARGET === "cloudflare") {
-    throw new Error(
-      `${key} accessed outside withRequestDb on Cloudflare Workers — ` +
-        `wrap the request handler with withRequestDb(() => ...). ` +
-        `The Neon serverless Pool cannot be cached across requests.`,
-    );
+    const seeded = autoSeedRequestDb();
+    return seeded[key] as TDb;
   }
   const cached = globalThis[globalKey];
   if (cached) return cached as TDb;

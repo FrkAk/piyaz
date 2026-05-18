@@ -76,14 +76,20 @@ class Broker {
    * revoked org's task ids) is correct because re-registering on the next
    * task fetch is free.
    *
+   * Snapshots keys before mutation so deletions during iteration cannot
+   * skip entries due to V8's implementation-defined behavior on
+   * `Map#keys()` during `Map#delete()`.
+   *
    * @param userId - Caller user id.
    */
   clearTaskSubs(userId: string): void {
     const userMap = this.subs.get(userId);
     if (!userMap) return;
+    const taskKeys: ResourceKey[] = [];
     for (const key of userMap.keys()) {
-      if (key.startsWith("task:")) userMap.delete(key);
+      if (key.startsWith("task:")) taskKeys.push(key);
     }
+    for (const key of taskKeys) userMap.delete(key);
   }
 
   /**
@@ -228,6 +234,19 @@ class Broker {
         }
       }
     }
+  }
+
+  /**
+   * Dispatch multiple `{key, payload}` pairs in a single call. On self-host
+   * this is purely a loop over `dispatch`; the Workers broker overrides it
+   * to fold the items into a single DO sub-request so a wide fan-out (e.g.
+   * `emitProjectListEvent` across M org members) does not pay M sub-request
+   * round trips.
+   *
+   * @param items - Pairs to dispatch. Empty input is a no-op.
+   */
+  dispatchMany(items: Array<{ key: ResourceKey; payload: unknown }>): void {
+    for (const { key, payload } of items) this.dispatch(key, payload);
   }
 
   /** Test-only — wipes every subscription and connection. */

@@ -1,7 +1,16 @@
 import "server-only";
 
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import type { BrokerMessage } from "./broker-do";
 import type { Connection, ResourceKey } from "./_broker.node";
+import {
+  BROKER_SIG_HEADER,
+  BROKER_USER_ID_HEADER,
+  buildNonceHex,
+  buildSigningString,
+  hmacSha256Hex,
+  sha256Hex,
+} from "./broker-auth";
 
 /**
  * Minimal structural shape of the Durable Object binding we depend on.
@@ -31,8 +40,103 @@ export {
 /** Stable name for the single broker DO that owns every user's subs. */
 const BROKER_DO_NAME = "mymir-broker-global";
 
+/** Canonical request URL the adapter targets — fixed so signatures match. */
+const BROKER_URL = "https://broker/";
+
 /** Module-scoped flag so the missing-binding warning fires once per isolate. */
 let warnedMissingBinding = false;
+
+/** Module-scoped flag so the missing-secret warning fires once per isolate. */
+let warnedMissingSecret = false;
+
+/**
+ * Resolve the HMAC secret used to sign broker envelopes. Reads
+ * `BROKER_DO_SECRET` from `process.env` so the same value flows in via
+ * `wrangler secret put` on production and `.dev.vars` on local preview.
+ *
+ * @returns The shared secret, or `null` when unset. The adapter refuses
+ *   to send unsigned messages when the secret is missing rather than
+ *   silently downgrading authentication.
+ */
+function resolveBrokerSecret(): string | null {
+  const secret = process.env.BROKER_DO_SECRET;
+  if (!secret) {
+    if (!warnedMissingSecret) {
+      console.error(
+        "[realtime] BROKER_DO_SECRET unset — broker dispatches will be dropped. " +
+          "Set via 'wrangler secret put BROKER_DO_SECRET'.",
+      );
+      warnedMissingSecret = true;
+    }
+    return null;
+  }
+  return secret;
+}
+
+/**
+ * Build a signed `RequestInit` for a fetch to the broker DO. Computes the
+ * SHA-256 of the body and the HMAC of the canonical signing string, then
+ * returns headers plus the body ready to ship.
+ *
+ * @param method - HTTP method (POST or GET).
+ * @param body - Body bytes or `null` for upgrade.
+ * @param userId - `X-Mymir-User-Id` value or empty string.
+ * @returns `RequestInit` with method, headers, and body populated.
+ */
+async function signedRequestInit(
+  method: "POST" | "GET",
+  body: string | null,
+  userId: string,
+): Promise<{ init: RequestInit; secretPresent: boolean }> {
+  const secret = resolveBrokerSecret();
+  if (!secret) return { init: { method }, secretPresent: false };
+
+  const ts = Date.now();
+  const nonce = buildNonceHex();
+  const bodyHashHex = await sha256Hex(body ?? "");
+  const signingString = buildSigningString(
+    method,
+    "/",
+    ts,
+    nonce,
+    bodyHashHex,
+    userId,
+  );
+  const signature = await hmacSha256Hex(secret, signingString);
+
+  const headers: Record<string, string> = {
+    [BROKER_SIG_HEADER]: `t=${ts},n=${nonce},v=${signature}`,
+  };
+  if (method === "POST") headers["content-type"] = "application/json";
+  if (userId) headers[BROKER_USER_ID_HEADER] = userId;
+  if (method === "GET") headers.Upgrade = "websocket";
+
+  return {
+    init: { method, headers, body: body ?? undefined },
+    secretPresent: true,
+  };
+}
+
+/**
+ * Best-effort enrollment of a fire-and-forget broker send into the
+ * current Workers request's `ctx.waitUntil`. Workers terminate pending
+ * I/O at Response return, so without `waitUntil` the DO sub-request can
+ * be cut off and the event lost.
+ *
+ * Silently degrades when there is no active Cloudflare context (rare:
+ * tests, scheduled handlers) — the caller's `.catch` keeps the promise
+ * from raising unhandled rejections regardless.
+ *
+ * @param promise - The send promise to enroll.
+ */
+function enrollInWaitUntil(promise: Promise<unknown>): void {
+  try {
+    const { ctx } = getCloudflareContext({ async: false });
+    ctx.waitUntil(promise);
+  } catch {
+    /* no active CF context; the promise still resolves naturally */
+  }
+}
 
 /**
  * Cloudflare Workers Durable Object adapter for the realtime broker. Routes
@@ -66,24 +170,41 @@ class WorkersBroker {
   }
 
   /**
-   * Send a wire message to the broker DO. Errors are swallowed so a
-   * transient DO failure does not break the caller's mutation that already
-   * committed; the failing op is included in the log for diagnosis.
+   * Send a wire message to the broker DO with HMAC signing and
+   * `ctx.waitUntil` enrollment. Errors are swallowed so a transient DO
+   * failure does not break the caller's mutation that already committed;
+   * the failing op is included in the log for diagnosis.
    *
    * @param msg - Wire payload.
+   * @returns Promise resolving when the DO acknowledges, or after error
+   *   logging. Always resolves; never rejects.
    */
   private async send(msg: BrokerMessage): Promise<void> {
     const stub = this.stub();
     if (!stub) return;
+    const body = JSON.stringify(msg);
+    const { init, secretPresent } = await signedRequestInit("POST", body, "");
+    if (!secretPresent) return;
     try {
-      await stub.fetch("https://broker/", {
-        method: "POST",
-        body: JSON.stringify(msg),
-        headers: { "content-type": "application/json" },
-      });
+      await stub.fetch(BROKER_URL, init);
     } catch (err) {
       console.error("[realtime] broker send failed:", err, { op: msg.op });
     }
+  }
+
+  /**
+   * Schedule {@link send} on the next microtask and enroll the result in
+   * `ctx.waitUntil` so the response can return without losing the
+   * DO sub-request. Centralizes the fire-and-forget pattern used by every
+   * non-await mutation in this adapter.
+   *
+   * @param msg - Wire payload.
+   */
+  private fireAndForget(msg: BrokerMessage): void {
+    const promise = this.send(msg).catch((err) => {
+      console.error("[realtime] broker send rejected:", err, { op: msg.op });
+    });
+    enrollInWaitUntil(promise);
   }
 
   /**
@@ -94,7 +215,7 @@ class WorkersBroker {
    * @param ttlMs - Optional TTL in ms; omit for no expiry.
    */
   register(userId: string, key: ResourceKey, ttlMs?: number): void {
-    void this.send({ op: "register", userId, key, ttlMs });
+    this.fireAndForget({ op: "register", userId, key, ttlMs });
   }
 
   /**
@@ -104,7 +225,7 @@ class WorkersBroker {
    * @param key - Resource key.
    */
   unregister(userId: string, key: ResourceKey): void {
-    void this.send({ op: "unregister", userId, key });
+    this.fireAndForget({ op: "unregister", userId, key });
   }
 
   /**
@@ -113,7 +234,7 @@ class WorkersBroker {
    * @param userId - Caller user id.
    */
   clearTaskSubs(userId: string): void {
-    void this.send({ op: "clear-task-subs", userId });
+    this.fireAndForget({ op: "clear-task-subs", userId });
   }
 
   /**
@@ -126,7 +247,7 @@ class WorkersBroker {
    * @param _conn - SSE writer to remove (unused; identified DO-side).
    */
   detach(userId: string, _conn: Connection): void {
-    void this.send({ op: "detach", userId });
+    this.fireAndForget({ op: "detach", userId });
   }
 
   /**
@@ -138,7 +259,19 @@ class WorkersBroker {
    * @param payload - JSON-serializable event body.
    */
   dispatch(key: ResourceKey, payload: unknown): void {
-    void this.send({ op: "dispatch", key, payload });
+    this.fireAndForget({ op: "dispatch", key, payload });
+  }
+
+  /**
+   * Dispatch many `{key, payload}` pairs in a single DO sub-request. Used
+   * by `emitProjectListEvent` to fan out to every org member without
+   * paying N sub-requests against the Workers ceiling.
+   *
+   * @param items - Pairs to dispatch. No-ops on empty input.
+   */
+  dispatchMany(items: Array<{ key: ResourceKey; payload: unknown }>): void {
+    if (items.length === 0) return;
+    this.fireAndForget({ op: "dispatch-many", items });
   }
 
   /**
@@ -148,7 +281,8 @@ class WorkersBroker {
    *
    * @param userId - Caller user id; attached as the DO-side tag.
    * @returns The client end of the WebSocket pair.
-   * @throws When the binding is missing or the DO rejects the upgrade.
+   * @throws When the binding is missing, the secret is missing, or the DO
+   *   rejects the upgrade.
    */
   async connect(userId: string): Promise<WebSocket> {
     const stub = this.stub();
@@ -157,12 +291,18 @@ class WorkersBroker {
         "MymirBroker binding missing — cannot open WebSocket to DO",
       );
     }
-    const resp = await stub.fetch("https://broker/", {
-      headers: {
-        Upgrade: "websocket",
-        "X-Mymir-User-Id": userId,
-      },
-    });
+    const { init, secretPresent } = await signedRequestInit(
+      "GET",
+      null,
+      userId,
+    );
+    if (!secretPresent) {
+      throw new Error(
+        "BROKER_DO_SECRET unset — refusing to open an unauthenticated " +
+          "WebSocket to the broker DO",
+      );
+    }
+    const resp = await stub.fetch(BROKER_URL, init);
     if (resp.status !== 101 || !resp.webSocket) {
       throw new Error(`MymirBroker upgrade failed: status ${resp.status}`);
     }

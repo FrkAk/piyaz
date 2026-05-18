@@ -20,26 +20,29 @@ export function emitProjectEvent(projectId: string): void {
 /**
  * Emit a task-body-affecting event. Always paired with the project event
  * since the slim graph carries title/status/tags/category/order — a body
- * change is also a slim graph change.
+ * change is also a slim graph change. Batched via `dispatchMany` so the
+ * Workers backend costs one DO sub-request instead of two.
  *
  * @param projectId - Owning project id.
  * @param taskId - Task that changed.
  */
 export function emitTaskEvent(projectId: string, taskId: string): void {
-  broker.dispatch(`task:${taskId}`, {
-    kind: "task",
-    projectId,
-    taskId,
-  } satisfies RealtimeEvent);
-  broker.dispatch(`project:${projectId}`, {
-    kind: "project",
-    projectId,
-  } satisfies RealtimeEvent);
+  broker.dispatchMany([
+    {
+      key: `task:${taskId}`,
+      payload: { kind: "task", projectId, taskId } satisfies RealtimeEvent,
+    },
+    {
+      key: `project:${projectId}`,
+      payload: { kind: "project", projectId } satisfies RealtimeEvent,
+    },
+  ]);
 }
 
 /**
  * Emit project + both endpoint task events for an edge mutation. Avoids the
  * double project dispatch that two `emitTaskEvent` calls would produce.
+ * Batched into one Workers sub-request.
  *
  * @param projectId - Owning project id.
  * @param sourceTaskId - Edge source.
@@ -50,20 +53,28 @@ export function emitEdgeMutation(
   sourceTaskId: string,
   targetTaskId: string,
 ): void {
-  broker.dispatch(`task:${sourceTaskId}`, {
-    kind: "task",
-    projectId,
-    taskId: sourceTaskId,
-  } satisfies RealtimeEvent);
-  broker.dispatch(`task:${targetTaskId}`, {
-    kind: "task",
-    projectId,
-    taskId: targetTaskId,
-  } satisfies RealtimeEvent);
-  broker.dispatch(`project:${projectId}`, {
-    kind: "project",
-    projectId,
-  } satisfies RealtimeEvent);
+  broker.dispatchMany([
+    {
+      key: `task:${sourceTaskId}`,
+      payload: {
+        kind: "task",
+        projectId,
+        taskId: sourceTaskId,
+      } satisfies RealtimeEvent,
+    },
+    {
+      key: `task:${targetTaskId}`,
+      payload: {
+        kind: "task",
+        projectId,
+        taskId: targetTaskId,
+      } satisfies RealtimeEvent,
+    },
+    {
+      key: `project:${projectId}`,
+      payload: { kind: "project", projectId } satisfies RealtimeEvent,
+    },
+  ]);
 }
 
 /**
@@ -88,17 +99,25 @@ export function emitProjectListForUser(userId: string, orgId: string): void {
  * logged and swallowed — emit is a non-essential side effect of the API
  * mutation that already committed.
  *
+ * Uses `dispatchMany` so an org with M members costs one DO sub-request on
+ * Cloudflare rather than M (the Workers sub-request ceiling is 1000). On
+ * self-host the call degenerates to a `dispatch` loop.
+ *
  * @param orgId - Organization id.
  */
 export async function emitProjectListEvent(orgId: string): Promise<void> {
   try {
     const userIds = await findOrgMemberUserIdsAsAdmin(orgId);
-    for (const userId of userIds) {
-      broker.dispatch(`project-list:${userId}`, {
-        kind: "project-list",
-        orgId,
-      } satisfies RealtimeEvent);
-    }
+    if (userIds.length === 0) return;
+    broker.dispatchMany(
+      userIds.map((userId) => ({
+        key: `project-list:${userId}` as const,
+        payload: {
+          kind: "project-list",
+          orgId,
+        } satisfies RealtimeEvent,
+      })),
+    );
   } catch (err) {
     console.error("[realtime] emitProjectListEvent failed:", err);
   }

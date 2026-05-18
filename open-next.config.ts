@@ -9,10 +9,14 @@ import doQueue from "@opennextjs/cloudflare/overrides/queue/do-queue";
  *   - `incrementalCache: r2IncrementalCache` — ISR / SSG cache backed by the
  *     `NEXT_INC_CACHE_R2_BUCKET` R2 binding.
  *   - `queue: doQueue` — revalidation queue backed by OpenNext's built-in
- *     `DOQueueHandler` Durable Object (separate from `MymirBroker`).
+ *     `DOQueueHandler` Durable Object (declared as `NEXT_CACHE_DO_QUEUE` in
+ *     `wrangler.jsonc`; separate from `MymirBroker`).
  *   - `tagCache: d1NextTagCache` — tag-revalidation cache backed by the
  *     `NEXT_TAG_CACHE_D1` D1 database.
- *   - `enableCacheInterception: true` — OpenNext-recommended default.
+ *   - `enableCacheInterception: false` — matches the OpenNext default. The
+ *     flag is documented as "should be false when PPR is used", and Next 16's
+ *     PPR support is on the roadmap (see MYMR-167 follow-ups). Flip to
+ *     `true` only after measuring the cache-hit win against the PPR loss.
  *
  * `MymirBroker` is injected into `.open-next/worker.js` by
  * `scripts/postbuild-cf.ts`; re-exporting it here is dead code because the
@@ -22,5 +26,5 @@ export default defineCloudflareConfig({
   incrementalCache: r2IncrementalCache,
   queue: doQueue,
   tagCache: d1NextTagCache,
-  enableCacheInterception: true,
+  enableCacheInterception: false,
 });

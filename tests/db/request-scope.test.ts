@@ -126,13 +126,13 @@ describe("withRequestDbCore", () => {
     });
   });
 
-  it("schedules pool.end() via ctx.waitUntil exactly three times on success", async () => {
+  it("schedules pool.end() via a single ctx.waitUntil on success", async () => {
     const ctx = makeRecordingCtx();
     const { builders, pools } = makeBuilders();
 
     await withRequestDbCore(ctx, builders, async () => "ok");
 
-    expect(ctx.waitUntil).toHaveBeenCalledTimes(3);
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
     await ctx.awaited();
     expect(pools.app.end).toHaveBeenCalledTimes(1);
     expect(pools.auth.end).toHaveBeenCalledTimes(1);
@@ -150,7 +150,7 @@ describe("withRequestDbCore", () => {
       }),
     ).rejects.toBe(sentinelError);
 
-    expect(ctx.waitUntil).toHaveBeenCalledTimes(3);
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
     await ctx.awaited();
     expect(pools.app.end).toHaveBeenCalledTimes(1);
     expect(pools.auth.end).toHaveBeenCalledTimes(1);
@@ -183,8 +183,42 @@ describe("withRequestDbCore", () => {
       calls.some(
         (args) =>
           typeof args[0] === "string" &&
-          (args[0] as string).startsWith("[db] app pool end failed"),
+          (args[0] as string).startsWith("[db] pool end failed"),
       ),
     ).toBe(true);
+  });
+
+  it("closes earlier pools when a later builder throws", async () => {
+    const ctx = makeRecordingCtx();
+    const appEnd = mock(async () => undefined);
+    const authEnd = mock(async () => undefined);
+    const sentinelError = new Error("service builder boom");
+
+    const builders = {
+      buildAppPool: () =>
+        ({
+          pool: { end: appEnd },
+          db: {} as never,
+        }) as never,
+      buildAuthPool: () =>
+        ({
+          pool: { end: authEnd },
+          db: {} as never,
+        }) as never,
+      buildServicePool: () => {
+        throw sentinelError;
+      },
+    };
+
+    await expect(
+      withRequestDbCore(ctx, builders, async () => "ok"),
+    ).rejects.toBe(sentinelError);
+
+    // Eager fire-and-forget cleanup for app + auth; service was never built.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(appEnd).toHaveBeenCalledTimes(1);
+    expect(authEnd).toHaveBeenCalledTimes(1);
+    // No `ctx.waitUntil` because the body never ran; cleanup is direct.
+    expect(ctx.waitUntil).toHaveBeenCalledTimes(0);
   });
 });

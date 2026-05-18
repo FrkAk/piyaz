@@ -8,7 +8,15 @@ import type { AppDb, AuthDb, DbBundle } from "./_driver.node";
 
 export type { AppDb, AuthDb, DbBundle, ClosablePool } from "./_driver.node";
 
-const NEON_OPTS = { max: 3, idleTimeoutMillis: 10_000 } as const;
+/**
+ * Per-request Neon Pool tuning. `max: 1` because each pool's lifetime is a
+ * single request (created in `withRequestDbCore`, ended via
+ * `ctx.waitUntil(pool.end())`); a larger cap would open extra WebSocket
+ * connections to Neon that never resolve before teardown. `idleTimeoutMillis`
+ * is omitted on purpose for the same reason — idle reaping cannot fire
+ * inside a single request lifetime and the default is sufficient.
+ */
+const NEON_OPTS = { max: 1 } as const;
 
 /**
  * Build the application Drizzle client backed by `@neondatabase/serverless`.

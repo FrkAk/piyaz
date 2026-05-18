@@ -1,5 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 import type { ResourceKey } from "./_broker.node";
+import {
+  BROKER_SIG_HEADER,
+  BROKER_SIG_MAX_SKEW_MS,
+  BROKER_USER_ID_HEADER,
+  buildSigningString,
+  constantTimeEqual,
+  hmacSha256Hex,
+  parseSignatureHeader,
+  sha256Hex,
+} from "./broker-auth";
 
 /**
  * Wire message sent to the `MymirBroker` Durable Object over the
@@ -11,7 +21,20 @@ export type BrokerMessage =
   | { op: "unregister"; userId: string; key: ResourceKey }
   | { op: "clear-task-subs"; userId: string }
   | { op: "detach"; userId: string }
-  | { op: "dispatch"; key: ResourceKey; payload: unknown };
+  | { op: "dispatch"; key: ResourceKey; payload: unknown }
+  | {
+      op: "dispatch-many";
+      items: Array<{ key: ResourceKey; payload: unknown }>;
+    };
+
+/**
+ * Env-shape the DO reads. Only the HMAC secret is relevant today; declared
+ * structurally so we don't pull in `@cloudflare/workers-types` (which would
+ * clobber DOM `Request` / `Response` globally and break unrelated tests).
+ */
+interface BrokerEnv {
+  BROKER_DO_SECRET?: string;
+}
 
 /**
  * Hard cap on concurrent WebSocket connections per authenticated user.
@@ -33,23 +56,89 @@ const MAX_CONNECTIONS_PER_USER = 20;
  * via Cloudflare's WebSocket Hibernation API and are restored when the DO
  * rehydrates.
  */
-export class MymirBroker extends DurableObject<unknown> {
+export class MymirBroker extends DurableObject<BrokerEnv> {
   private subs = new Map<string, Map<ResourceKey, number | null>>();
 
   /**
-   * Handle a wire request from the Workers broker adapter. Routes WebSocket
-   * upgrades to the hibernation accept path and JSON RPCs to the
-   * subscription / dispatch handlers.
+   * Handle a wire request from the Workers broker adapter. Verifies the
+   * HMAC envelope, then routes WebSocket upgrades to the hibernation
+   * accept path and JSON RPCs to the subscription / dispatch handlers.
+   *
+   * The DO is only reachable to Workers that hold the `MYMIR_BROKER`
+   * binding, but the binding alone is not authentication: any caller
+   * with the binding could spoof `userId` or fabricate dispatches if the
+   * envelope check were skipped. The check rejects every unsigned or
+   * mis-signed request with 401 so the DO becomes a closed system that
+   * trusts only the in-process adapter (which signs with the shared
+   * `BROKER_DO_SECRET`).
    *
    * @param request - Incoming fetch from the adapter or SSE handler.
    * @returns 101 on accepted upgrades, 204 on accepted RPCs, 4xx on bad
-   *   input, 429 when a user is at the connection cap.
+   *   input, 401 when the envelope is missing or invalid, 429 when a
+   *   user is at the connection cap, 503 when the DO has no secret bound.
    */
   async fetch(request: Request): Promise<Response> {
+    const authResult = await this.verifyEnvelope(request);
+    if (!authResult.ok) {
+      return new Response(authResult.error, { status: authResult.status });
+    }
     if (request.headers.get("Upgrade") === "websocket") {
       return this.handleUpgrade(request);
     }
-    return this.handleRpc(request);
+    return this.handleRpc(authResult.body);
+  }
+
+  /**
+   * Verify the HMAC envelope on the request. Returns the request body as
+   * a string (or `""` for upgrades) so the caller does not need to
+   * re-read it for parsing. Constant-time signature comparison and a
+   * 60-second freshness window are enforced; the userId header (set on
+   * upgrades) is folded into the signing input so it cannot be swapped
+   * after signing.
+   *
+   * @param request - Incoming fetch.
+   * @returns `{ ok: true, body }` on success; `{ ok: false, status, error }`
+   *   otherwise.
+   */
+  private async verifyEnvelope(
+    request: Request,
+  ): Promise<
+    | { ok: true; body: string }
+    | { ok: false; status: number; error: string }
+  > {
+    const secret = this.env.BROKER_DO_SECRET;
+    if (!secret) {
+      return {
+        ok: false,
+        status: 503,
+        error: "BROKER_DO_SECRET unset",
+      };
+    }
+    const header = parseSignatureHeader(request.headers.get(BROKER_SIG_HEADER));
+    if (!header) {
+      return { ok: false, status: 401, error: "Missing or malformed signature" };
+    }
+    const now = Date.now();
+    if (Math.abs(now - header.ts) > BROKER_SIG_MAX_SKEW_MS) {
+      return { ok: false, status: 401, error: "Signature stale" };
+    }
+    const url = new URL(request.url);
+    const body = await request.text();
+    const bodyHashHex = await sha256Hex(body);
+    const userId = request.headers.get(BROKER_USER_ID_HEADER) ?? "";
+    const signingString = buildSigningString(
+      request.method,
+      url.pathname,
+      header.ts,
+      header.nonce,
+      bodyHashHex,
+      userId,
+    );
+    const expected = await hmacSha256Hex(secret, signingString);
+    if (!constantTimeEqual(expected, header.signature)) {
+      return { ok: false, status: 401, error: "Signature mismatch" };
+    }
+    return { ok: true, body };
   }
 
   /**
@@ -62,7 +151,7 @@ export class MymirBroker extends DurableObject<unknown> {
    *   missing, 429 when the user is already at the cap.
    */
   private handleUpgrade(request: Request): Response {
-    const userId = request.headers.get("X-Mymir-User-Id");
+    const userId = request.headers.get(BROKER_USER_ID_HEADER);
     if (!userId) {
       return new Response("Missing X-Mymir-User-Id", { status: 400 });
     }
@@ -81,15 +170,19 @@ export class MymirBroker extends DurableObject<unknown> {
 
   /**
    * Apply a {@link BrokerMessage} to the in-memory subscription map and, for
-   * `dispatch`, fan the payload out to every matching user's WebSockets.
+   * `dispatch` / `dispatch-many`, fan the payload out to every matching
+   * user's WebSockets.
    *
-   * @param request - JSON-body fetch from the adapter.
+   * @param body - JSON-encoded message body (pre-read by `verifyEnvelope`).
    * @returns 204 on success, 400 on malformed body or unknown op.
    */
-  private async handleRpc(request: Request): Promise<Response> {
-    const msg = (await request
-      .json()
-      .catch(() => null)) as BrokerMessage | null;
+  private async handleRpc(body: string): Promise<Response> {
+    let msg: BrokerMessage | null;
+    try {
+      msg = JSON.parse(body) as BrokerMessage;
+    } catch {
+      msg = null;
+    }
     if (!msg || typeof msg !== "object" || typeof msg.op !== "string") {
       return new Response("Bad request", { status: 400 });
     }
@@ -107,6 +200,14 @@ export class MymirBroker extends DurableObject<unknown> {
         return new Response(null, { status: 204 });
       case "dispatch":
         this.dispatch(msg.key, msg.payload);
+        return new Response(null, { status: 204 });
+      case "dispatch-many":
+        if (!Array.isArray(msg.items)) {
+          return new Response("dispatch-many: items must be an array", {
+            status: 400,
+          });
+        }
+        for (const item of msg.items) this.dispatch(item.key, item.payload);
         return new Response(null, { status: 204 });
       default:
         return new Response("Unknown op", { status: 400 });
@@ -146,14 +247,20 @@ export class MymirBroker extends DurableObject<unknown> {
    * `clearTaskSubs` used by `revokeOrgAccess` to ensure a removed member
    * stops receiving task events for their former org's tasks immediately.
    *
+   * Snapshots keys before mutation so deletions during iteration cannot
+   * skip entries due to V8/workerd's implementation-defined behavior on
+   * `Map#keys()` during `Map#delete()`.
+   *
    * @param userId - Caller user id.
    */
   private clearTaskSubs(userId: string): void {
     const userMap = this.subs.get(userId);
     if (!userMap) return;
+    const taskKeys: ResourceKey[] = [];
     for (const key of userMap.keys()) {
-      if (key.startsWith("task:")) userMap.delete(key);
+      if (key.startsWith("task:")) taskKeys.push(key);
     }
+    for (const key of taskKeys) userMap.delete(key);
   }
 
   /**
@@ -203,6 +310,15 @@ export class MymirBroker extends DurableObject<unknown> {
    * sockets remain for that user, clears their subscription map — matching
    * the self-host broker's "drop subs on last detach" semantics.
    *
+   * Lean on the workerd hibernation contract that the closing socket is
+   * already absent from `getWebSockets(userId)` by the time the callback
+   * runs — comparing identities directly is unreliable after rehydration
+   * because the deserialized `ws` handle may not be referentially equal to
+   * the entry that remains in the tag list. The trade-off: if a future
+   * runtime regression keeps the closing socket in the set, we skip the
+   * delete (subs persist until the next close for the same user) rather
+   * than wipe a user whose other connections are still live.
+   *
    * @param ws - The closing WebSocket.
    * @param _code - Close code (unused).
    * @param _reason - Close reason (unused).
@@ -217,10 +333,7 @@ export class MymirBroker extends DurableObject<unknown> {
     const tags = this.ctx.getTags(ws);
     const userId = tags[0];
     if (!userId) return;
-    const remaining = this.ctx
-      .getWebSockets(userId)
-      .filter((s) => s !== ws).length;
-    if (remaining === 0) {
+    if (this.ctx.getWebSockets(userId).length === 0) {
       this.subs.delete(userId);
     }
   }
