@@ -48,9 +48,9 @@ declare global {
 
 /** Per-request DB bundle seeded by `withRequestDb` on Cloudflare Workers. */
 export interface RequestScopedDb {
-  appDb: AppDb;
+  appDb: AppUserConn;
   authDb: AuthDb;
-  serviceRoleDb: AppDb;
+  serviceRoleDb: ServiceRoleConn;
 }
 
 /**
@@ -66,10 +66,16 @@ type GlobalKey = "__mymirAppDb" | "__mymirAuthDb" | "__mymirServiceRoleDb";
  * Resolve the active Drizzle client for a role: prefer the AsyncLocalStorage
  * frame (Workers), fall back to the `globalThis` cache (self-host).
  *
+ * On Cloudflare Workers (`DEPLOY_TARGET === "cloudflare"`) the globalThis
+ * fallback is forbidden — the Neon serverless `Pool`'s WebSocket cannot
+ * span requests, so missing the per-request frame is a programming error
+ * rather than a recoverable cache miss.
+ *
  * @param key - Which role to read from the request-scope bundle.
  * @param globalKey - Matching `globalThis.__mymir*` slot for self-host.
  * @param builder - Factory invoked at most once to populate the slot.
  * @returns Drizzle instance for the role.
+ * @throws Error on Cloudflare Workers when the ALS frame is missing.
  */
 function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
   key: keyof RequestScopedDb,
@@ -78,6 +84,13 @@ function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
 ): TDb {
   const scoped = requestDbStore.getStore();
   if (scoped) return scoped[key] as TDb;
+  if (process.env.DEPLOY_TARGET === "cloudflare") {
+    throw new Error(
+      `${key} accessed outside withRequestDb on Cloudflare Workers — ` +
+        `wrap the request handler with withRequestDb(() => ...). ` +
+        `The Neon serverless Pool cannot be cached across requests.`,
+    );
+  }
   const cached = globalThis[globalKey];
   if (cached) return cached as TDb;
   const built = builder().db;

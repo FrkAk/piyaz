@@ -14,9 +14,9 @@ import doQueue from "@opennextjs/cloudflare/overrides/queue/do-queue";
  *     `NEXT_TAG_CACHE_D1` D1 database.
  *   - `enableCacheInterception: true` — OpenNext-recommended default.
  *
- * Re-exports `MymirBroker` so the OpenNext build inlines the class into the
- * worker bundle and the `MYMIR_BROKER` Durable Object binding in
- * `wrangler.jsonc` can resolve it.
+ * `MymirBroker` is injected into `.open-next/worker.js` by
+ * `scripts/postbuild-cf.ts`; re-exporting it here is dead code because the
+ * OpenNext worker template does not consume user exports from this file.
  */
 export default defineCloudflareConfig({
   incrementalCache: r2IncrementalCache,
@@ -24,5 +24,3 @@ export default defineCloudflareConfig({
   tagCache: d1NextTagCache,
   enableCacheInterception: true,
 });
-
-export { MymirBroker } from "./lib/realtime/broker-do";

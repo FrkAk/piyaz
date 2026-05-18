@@ -67,8 +67,8 @@ export function buildCsp(opts: { isProd: boolean; nonce?: string }): string {
 /**
  * Static security response headers applied to every route.
  *
- * Excludes CSP (set per-request by `proxy.ts`) and HSTS (host-scoped, see
- * `headerRules`).
+ * Excludes CSP (set per-request by `middleware.ts`) and HSTS (host-scoped,
+ * see `headerRules`).
  *
  * @returns Header entries for a Next.js header rule.
  */

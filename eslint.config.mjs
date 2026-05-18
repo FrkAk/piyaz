@@ -110,6 +110,11 @@ const eslintConfig = [
               message:
                 "Application code must import from @/lib/data, not @/lib/db. The data layer is defined in lib/data/. Boundary documented in docs/superpowers/plans/2026-05-06-db-access-rework.md.",
             },
+            {
+              name: "@cloudflare/workers-types",
+              message:
+                "Importing @cloudflare/workers-types pulls its ambient declarations globally and clobbers DOM Request/Response types, breaking unrelated tests. Declare minimal local type stubs in the workers-only file that needs them (see lib/realtime/broker-do.ts for the pattern).",
+            },
           ],
         },
       ],

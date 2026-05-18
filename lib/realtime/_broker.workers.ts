@@ -1,21 +1,26 @@
 import "server-only";
 
 import type { BrokerMessage } from "./broker-do";
+import type { Connection, ResourceKey } from "./_broker.node";
 
 /**
  * Minimal structural shape of the Durable Object binding we depend on.
- * Avoids pulling `@cloudflare/workers-types` into global scope (which
- * would override DOM `Response` / `Request` types across the codebase
- * and break unrelated tests).
+ * Avoids pulling `@cloudflare/workers-types` into global scope (which would
+ * override DOM `Response` / `Request` types across the codebase and break
+ * unrelated tests). The ESLint config bans that import; the local stubs
+ * below cover every method this adapter calls.
  */
 interface DurableObjectStub {
-  fetch(url: string, init?: RequestInit): Promise<Response>;
+  fetch(url: string, init?: RequestInit): Promise<DurableObjectResponse>;
 }
 interface DurableObjectNamespace {
   idFromName(name: string): unknown;
   get(id: unknown): DurableObjectStub;
 }
-import type { Connection, ResourceKey } from "./_broker.node";
+interface DurableObjectResponse {
+  readonly status: number;
+  readonly webSocket: WebSocket | null;
+}
 
 export {
   MAX_CONNECTIONS_PER_USER,
@@ -23,49 +28,52 @@ export {
   type ResourceKey,
 } from "./_broker.node";
 
+/** Stable name for the single broker DO that owns every user's subs. */
+const BROKER_DO_NAME = "mymir-broker-global";
+
+/** Module-scoped flag so the missing-binding warning fires once per isolate. */
+let warnedMissingBinding = false;
+
 /**
- * Cloudflare Workers Durable Object adapter for the realtime broker.
- *
- * Mirrors the in-memory `Broker` surface used by the self-host code path
- * so call sites (lib/realtime/events.ts, lib/realtime/access.ts,
- * app/api/events/route.ts) stay identical. Each method forwards the
- * intent to the `MYMIR_BROKER` Durable Object via fetch. Connection
- * bookkeeping lives inside the DO; the adapter is stateless across
- * isolates.
- *
- * MYMR-164 ships the adapter as a skeleton — it compiles, binds, and
- * delivers requests to the DO, which returns 501 until the full pub/sub
- * implementation lands. The live realtime path on Workers is intentionally
- * deferred so MYMR-164 stays scoped to scaffolding.
+ * Cloudflare Workers Durable Object adapter for the realtime broker. Routes
+ * every subscription mutation and dispatch to a single global DO instance
+ * via fetch RPC; provides {@link WorkersBroker.connect} for SSE handlers to
+ * obtain a WebSocket end of the DO connection. Per-isolate stateless —
+ * authoritative state lives in the DO.
  */
 class WorkersBroker {
   /**
-   * Resolve the Durable Object stub for a user. Each user maps to a
-   * deterministic DO id so the same isolate handles every operation for
-   * that user's subscriptions.
+   * Resolve the stub for the broker-global DO. Logs once per isolate when
+   * the binding is missing so misconfigured deploys are diagnosable without
+   * spamming.
    *
-   * @param userId - Caller user id.
-   * @returns The DO stub keyed by `userId`, or `null` if the binding is
-   *   missing (skeleton case).
+   * @returns The DO stub, or `null` when `MYMIR_BROKER` is not bound.
    */
-  private stub(userId: string): DurableObjectStub | null {
+  private stub(): DurableObjectStub | null {
     const env = (globalThis as { MYMIR_BROKER?: DurableObjectNamespace })
       .MYMIR_BROKER;
-    if (!env) return null;
-    const id = env.idFromName(userId);
+    if (!env) {
+      if (!warnedMissingBinding) {
+        console.error(
+          "[realtime] MYMIR_BROKER binding missing — realtime fanout will silently no-op",
+        );
+        warnedMissingBinding = true;
+      }
+      return null;
+    }
+    const id = env.idFromName(BROKER_DO_NAME);
     return env.get(id);
   }
 
   /**
-   * Send a wire message to the DO. Errors are swallowed — the adapter is
-   * fire-and-forget so a single dispatch failure does not break the
-   * caller's mutation that already committed.
+   * Send a wire message to the broker DO. Errors are swallowed so a
+   * transient DO failure does not break the caller's mutation that already
+   * committed; the failing op is included in the log for diagnosis.
    *
-   * @param userId - DO key.
    * @param msg - Wire payload.
    */
-  private async send(userId: string, msg: BrokerMessage): Promise<void> {
-    const stub = this.stub(userId);
+  private async send(msg: BrokerMessage): Promise<void> {
+    const stub = this.stub();
     if (!stub) return;
     try {
       await stub.fetch("https://broker/", {
@@ -74,7 +82,7 @@ class WorkersBroker {
         headers: { "content-type": "application/json" },
       });
     } catch (err) {
-      console.error("[realtime] WorkersBroker.send failed:", err);
+      console.error("[realtime] broker send failed:", err, { op: msg.op });
     }
   }
 
@@ -86,7 +94,7 @@ class WorkersBroker {
    * @param ttlMs - Optional TTL in ms; omit for no expiry.
    */
   register(userId: string, key: ResourceKey, ttlMs?: number): void {
-    void this.send(userId, { op: "register", userId, key, ttlMs });
+    void this.send({ op: "register", userId, key, ttlMs });
   }
 
   /**
@@ -96,7 +104,7 @@ class WorkersBroker {
    * @param key - Resource key.
    */
   unregister(userId: string, key: ResourceKey): void {
-    void this.send(userId, { op: "unregister", userId, key });
+    void this.send({ op: "unregister", userId, key });
   }
 
   /**
@@ -105,102 +113,148 @@ class WorkersBroker {
    * @param userId - Caller user id.
    */
   clearTaskSubs(userId: string): void {
-    void this.send(userId, { op: "clear-task-subs", userId });
+    void this.send({ op: "clear-task-subs", userId });
   }
 
   /**
-   * Attach a live SSE connection for the user. The DO accepts the
-   * connection via a separate WebSocket upgrade path in the full
-   * implementation; the skeleton no-ops.
-   *
-   * @param _userId - Caller user id.
-   * @param _conn - SSE writer.
-   */
-  attach(_userId: string, _conn: Connection): void {
-    // Skeleton: SSE attach handled via DO WebSocket upgrade in later task.
-  }
-
-  /**
-   * Atomically check the per-user connection cap and add the connection
-   * when room remains.
-   *
-   * @param _userId - Caller user id.
-   * @param _conn - SSE writer.
-   * @returns Always `true` in the skeleton.
-   */
-  tryAttach(_userId: string, _conn: Connection): boolean {
-    return true;
-  }
-
-  /**
-   * Whether the user is at their connection cap.
-   *
-   * @param _userId - Caller user id.
-   * @returns Always `false` in the skeleton.
-   */
-  isAtConnectionLimit(_userId: string): boolean {
-    return false;
-  }
-
-  /**
-   * Whether the user currently holds at least one SSE connection.
-   *
-   * @param _userId - Caller user id.
-   * @returns Always `false` in the skeleton.
-   */
-  hasConnections(_userId: string): boolean {
-    return false;
-  }
-
-  /**
-   * Detach a live SSE connection.
+   * Notify the DO that an SSE handler is detaching a connection.
+   * Informational only — the DO discovers the real detach via
+   * `webSocketClose`. Forwarded so future diagnostic ops can hook in
+   * without changing the adapter API.
    *
    * @param userId - Caller user id.
-   * @param _conn - SSE writer to remove.
+   * @param _conn - SSE writer to remove (unused; identified DO-side).
    */
   detach(userId: string, _conn: Connection): void {
-    void this.send(userId, { op: "detach", userId });
+    void this.send({ op: "detach", userId });
   }
 
   /**
-   * Yield user ids currently subscribed to {@link key}. The DO holds the
-   * subscription map; the adapter cannot enumerate without an extra
-   * round-trip per call. The skeleton yields nothing.
-   *
-   * @param _key - Resource key to match.
-   * @yields Nothing in the skeleton.
-   */
-  *subscribers(_key: ResourceKey): Iterable<string> {
-    // Skeleton: DO-side enumeration RPC lands with the full implementation.
-  }
-
-  /**
-   * Prune expired subscriptions for the user.
-   *
-   * @param _userId - Caller user id.
-   */
-  pruneExpired(_userId: string): void {
-    // Skeleton: DO performs pruning internally on each op.
-  }
-
-  /**
-   * Dispatch a payload to every connection of every subscribed user.
-   * Fan-out happens DO-side; the adapter forwards the intent.
+   * Dispatch a payload to every connection of every subscribed user. The DO
+   * owns both the subscription map and the connected WebSockets, so the
+   * adapter forwards the intent without naming any recipient.
    *
    * @param key - Resource key.
    * @param payload - JSON-serializable event body.
    */
   dispatch(key: ResourceKey, payload: unknown): void {
-    void this.send("__broadcast__", { op: "dispatch", key, payload });
+    void this.send({ op: "dispatch", key, payload });
   }
 
-  /** Test-only — no-op on Workers (state lives in the DO). */
+  /**
+   * Open a WebSocket end of the broker DO for the given user. The caller
+   * (SSE route, deferred to MYMR-167) is expected to pipe the WebSocket's
+   * incoming frames into the SSE response stream.
+   *
+   * @param userId - Caller user id; attached as the DO-side tag.
+   * @returns The client end of the WebSocket pair.
+   * @throws When the binding is missing or the DO rejects the upgrade.
+   */
+  async connect(userId: string): Promise<WebSocket> {
+    const stub = this.stub();
+    if (!stub) {
+      throw new Error(
+        "MymirBroker binding missing — cannot open WebSocket to DO",
+      );
+    }
+    const resp = await stub.fetch("https://broker/", {
+      headers: {
+        Upgrade: "websocket",
+        "X-Mymir-User-Id": userId,
+      },
+    });
+    if (resp.status !== 101 || !resp.webSocket) {
+      throw new Error(`MymirBroker upgrade failed: status ${resp.status}`);
+    }
+    return resp.webSocket;
+  }
+
+  /**
+   * SSE-route attach surface — not callable on Workers. SSE handlers must
+   * obtain a DO-backed WebSocket via {@link connect} instead.
+   *
+   * @throws Always.
+   */
+  attach(_userId: string, _conn: Connection): void {
+    throw new Error(
+      "MymirBroker WorkersBroker: attach is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+    );
+  }
+
+  /**
+   * SSE-route attach surface — not callable on Workers. The DO enforces the
+   * per-user cap inside the upgrade handler.
+   *
+   * @throws Always.
+   */
+  tryAttach(_userId: string, _conn: Connection): boolean {
+    throw new Error(
+      "MymirBroker WorkersBroker: tryAttach is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+    );
+  }
+
+  /**
+   * SSE-route attach surface — not callable on Workers. The DO enforces the
+   * per-user cap inside the upgrade handler.
+   *
+   * @throws Always.
+   */
+  isAtConnectionLimit(_userId: string): boolean {
+    throw new Error(
+      "MymirBroker WorkersBroker: isAtConnectionLimit is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+    );
+  }
+
+  /**
+   * Connection-tracking surface — not callable on Workers. The DO owns the
+   * WebSocket set and would require an extra round-trip per call.
+   *
+   * @throws Always.
+   */
+  hasConnections(_userId: string): boolean {
+    throw new Error(
+      "MymirBroker WorkersBroker: hasConnections is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+    );
+  }
+
+  /**
+   * Subscriber enumeration — not callable on Workers. The DO performs
+   * fanout internally inside `dispatch`.
+   *
+   * @throws Always.
+   */
+  *subscribers(_key: ResourceKey): Iterable<string> {
+    throw new Error(
+      "MymirBroker WorkersBroker: subscribers is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+    );
+  }
+
+  /**
+   * SSE-heartbeat prune surface — not callable on Workers. The DO
+   * lazy-cleans expired entries during dispatch iteration.
+   *
+   * @throws Always.
+   */
+  pruneExpired(_userId: string): void {
+    throw new Error(
+      "MymirBroker WorkersBroker: pruneExpired is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+    );
+  }
+
+  /**
+   * Test-only reset — not callable on Workers. DO-side state is reset by
+   * the test harness fake; production code should never call this.
+   *
+   * @throws Always.
+   */
   _resetForTests(): void {
-    // Skeleton: covered by a DO `__reset` op in later task.
+    throw new Error(
+      "MymirBroker WorkersBroker: _resetForTests is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+    );
   }
 }
 
 export type Broker = WorkersBroker;
 
-/** Workers broker singleton — instances are cheap; the DO holds the state. */
+/** Workers broker singleton — instance is cheap; the DO holds the state. */
 export const broker: WorkersBroker = new WorkersBroker();
