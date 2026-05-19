@@ -1,9 +1,6 @@
 import "server-only";
 
-import {
-  buildDepAdjacency,
-  walkEffectiveDepsBounded,
-} from "@/lib/graph/effective-deps";
+import { loadBundleDeps } from "@/lib/graph/effective-deps";
 import {
   fetchDependencyTasks,
   fetchEdgeNotesBySource,
@@ -42,26 +39,10 @@ export async function buildAgentContext(
     const assignees = task.assignees;
     const links = task.links;
 
-    const [{ adj, taskStatus }, upstreamEdgeNotes] = await Promise.all([
-      buildDepAdjacency(task.projectId, tx),
+    const [{ deps, downstream }, upstreamEdgeNotes] = await Promise.all([
+      loadBundleDeps(task.projectId, taskId, 2, tx),
       fetchEdgeNotesBySource(task.projectId, taskId, tx),
     ]);
-
-    const reverseAdj = new Map<string, string[]>();
-    for (const [src, targets] of adj) {
-      for (const t of targets) {
-        const list = reverseAdj.get(t) ?? [];
-        list.push(src);
-        reverseAdj.set(t, list);
-      }
-    }
-
-    const deps = [
-      ...walkEffectiveDepsBounded(taskId, adj, taskStatus, 2).keys(),
-    ].map((id) => ({ id }));
-    const downstream = [
-      ...walkEffectiveDepsBounded(taskId, reverseAdj, taskStatus, 2).keys(),
-    ].map((id) => ({ id }));
 
     const prLink = links.find((l) => l.kind === "pull_request");
 

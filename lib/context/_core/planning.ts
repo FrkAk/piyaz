@@ -1,9 +1,6 @@
 import "server-only";
 
-import {
-  buildDepAdjacency,
-  walkEffectiveDepsBounded,
-} from "@/lib/graph/effective-deps";
+import { loadBundleDeps } from "@/lib/graph/effective-deps";
 import {
   fetchDependencyTasks,
   fetchEdgeNotesBySource,
@@ -35,21 +32,10 @@ export async function buildPlanningContext(
   return withUserContext(ctx.userId, async (tx) => {
     const task = await getTaskFullTx(tx, taskId);
 
-    const { adj, taskStatus } = await buildDepAdjacency(task.projectId, tx);
-    const reverseAdj = new Map<string, string[]>();
-    for (const [src, targets] of adj) {
-      for (const t of targets) {
-        const list = reverseAdj.get(t) ?? [];
-        list.push(src);
-        reverseAdj.set(t, list);
-      }
-    }
-    const deps = [
-      ...walkEffectiveDepsBounded(taskId, adj, taskStatus, 2).keys(),
-    ].map((id) => ({ id }));
-    const downstream = [
-      ...walkEffectiveDepsBounded(taskId, reverseAdj, taskStatus, 2).keys(),
-    ].map((id) => ({ id }));
+    const [{ deps, downstream }, upstreamEdgeNotes] = await Promise.all([
+      loadBundleDeps(task.projectId, taskId, 2, tx),
+      fetchEdgeNotesBySource(task.projectId, taskId, tx),
+    ]);
 
     const project = await getProjectHeader(task.projectId, tx);
     if (!project) {
@@ -96,12 +82,6 @@ export async function buildPlanningContext(
           task.implementationPlan,
       );
     }
-
-    const upstreamEdgeNotes = await fetchEdgeNotesBySource(
-      task.projectId,
-      taskId,
-      tx,
-    );
 
     if (deps.length > 0) {
       const prereqLines: string[] = [];

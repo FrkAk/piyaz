@@ -249,3 +249,50 @@ export function walkEffectiveDepsBounded(
 
   return result;
 }
+
+/**
+ * Walk the effective dependency graph from one source task and return its
+ * depth-bounded forward (prerequisites) and reverse (downstream) closures.
+ *
+ * Cancelled tasks are transparent and depth-free; both result lists contain
+ * only active task ids and never the source itself.
+ *
+ * @param projectId - UUID of the project the task belongs to.
+ * @param taskId - UUID of the source task; excluded from both results.
+ * @param maxDepth - Maximum active hops to include in each direction.
+ * @param conn - Drizzle client or transaction handle. Callers inside a
+ *   `withUserContext` transaction must pass the active `tx` so the reads
+ *   participate in the same RLS-scoped frame.
+ * @returns `deps` — active prerequisites; `downstream` — active dependents.
+ */
+export async function loadBundleDeps(
+  projectId: string,
+  taskId: string,
+  maxDepth: number,
+  conn: Conn,
+): Promise<{ deps: { id: string }[]; downstream: { id: string }[] }> {
+  const { adj, taskStatus } = await buildDepAdjacency(projectId, conn);
+
+  const reverseAdj = new Map<string, string[]>();
+  for (const [src, targets] of adj) {
+    for (const t of targets) {
+      const list = reverseAdj.get(t) ?? [];
+      list.push(src);
+      reverseAdj.set(t, list);
+    }
+  }
+
+  const deps = [
+    ...walkEffectiveDepsBounded(taskId, adj, taskStatus, maxDepth).keys(),
+  ].map((id) => ({ id }));
+  const downstream = [
+    ...walkEffectiveDepsBounded(
+      taskId,
+      reverseAdj,
+      taskStatus,
+      maxDepth,
+    ).keys(),
+  ].map((id) => ({ id }));
+
+  return { deps, downstream };
+}
