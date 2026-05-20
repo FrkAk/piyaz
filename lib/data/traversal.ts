@@ -6,13 +6,45 @@ import { withUserContext, type Tx } from "@/lib/db/rls";
 import { tasks, projects, taskEdges } from "@/lib/db/schema";
 import { fetchDownstream } from "@/lib/db/raw/fetch-downstream";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
-import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
+import {
+  buildEffectiveDepGraph,
+  type ActiveTaskInfo,
+} from "@/lib/graph/effective-deps";
 import { hasCriteriaExpr, deriveTaskStatesSlim } from "@/lib/data/task";
 import type { AuthContext } from "@/lib/auth/context";
+import type { Priority } from "@/lib/types";
 import {
   assertProjectAccessTx,
   assertTaskAccessTx,
 } from "@/lib/auth/authorization";
+
+// ---------------------------------------------------------------------------
+// Priority weighting for the critical-path DP
+// ---------------------------------------------------------------------------
+
+/**
+ * Doubling ladder so a single `urgent` node (8) dominates a chain of three
+ * `normal` nodes (6); a 2-chain of two `urgent` (16) outranks a 3-chain of
+ * three `backlog` (3). See MYMR-208.
+ */
+const PRIORITY_WEIGHTS = {
+  urgent: 8,
+  core: 4,
+  normal: 2,
+  backlog: 1,
+} as const satisfies Record<Priority, number>;
+
+const DEFAULT_PRIORITY_WEIGHT = PRIORITY_WEIGHTS.normal;
+
+/**
+ * Lookup the DP weight for a task's priority. Null or any string outside the
+ * recognized alphabet falls back to the `normal` weight (2) so the DP never
+ * sees `undefined`/`NaN`.
+ */
+function priorityWeight(p: ActiveTaskInfo["priority"]): number {
+  if (p === null) return DEFAULT_PRIORITY_WEIGHT;
+  return PRIORITY_WEIGHTS[p] ?? DEFAULT_PRIORITY_WEIGHT;
+}
 
 // ---------------------------------------------------------------------------
 // Ancestor traversal — internal helper
@@ -426,22 +458,30 @@ export type CriticalPathTask = {
 };
 
 /**
- * Find the longest chain of effective `depends_on` edges across active tasks.
+ * Find the most important remaining chain of effective `depends_on` edges
+ * across active, non-done tasks.
  *
- * Operates on the effective dependency graph — cancelled tasks are transparent,
- * so a chain `A → B → C` where B is cancelled is treated as the active chain
- * `A → C` (and contributes length 2, not 3). This avoids the orphan-bug where
- * tasks above a cancelled middle would be excluded from the chain entirely.
+ * Operates on the effective dependency graph: cancelled tasks are transparent
+ * (passed through inside the shared graph substrate) and done tasks are
+ * locally transparent here (filtered out of the DP node set), so a chain
+ * `A(done) → B(planned) → C(draft)` reports as `B → C`. Each DP node
+ * contributes weight by its `priority` (urgent=8, core=4, normal=2,
+ * backlog=1; null or unrecognized → 2) so a chain's score reflects priority
+ * mass, not raw length. A single `urgent` task (8) outranks a chain of three
+ * `normal` tasks (6); a 2-chain of two `urgent` tasks (16) outranks a
+ * 3-chain of three `backlog` tasks (3).
  *
- * Algorithm: Kahn's topological sort over active tasks (deps first) followed
- * by DP `longest[node] = 1 + max(longest[dep])`, then backtrack from the
- * highest-`longest` node to recover the chain in root-first order.
+ * Algorithm: Kahn's topological sort over not-done active tasks (deps first)
+ * followed by DP `longest[node] = max(longest[dep]) + priorityWeight(node)`,
+ * then backtrack from the highest-`longest` node to recover the chain in
+ * root-first order. Returns empty when no not-done active tasks exist or a
+ * cycle is detected.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @returns Ordered array of active tasks forming the longest effective chain
- *   (foundational task first, topmost dependent last). Empty when no active
- *   tasks exist or a cycle is detected.
+ * @returns Ordered array of active, not-done tasks forming the highest-weight
+ *   effective chain (foundational task first, topmost dependent last). Empty
+ *   when no not-done active tasks exist or a cycle is detected.
  */
 export async function getCriticalPath(
   ctx: AuthContext,
@@ -454,9 +494,39 @@ export async function getCriticalPath(
     const graph = await buildEffectiveDepGraph(projectId, tx);
     if (graph.activeTasks.size === 0) return [];
 
+    // Done-transparency, scoped locally: build a DP node set that excludes
+    // done tasks, then rebuild deps/dependents adjacency over that set. The
+    // shared graph substrate keeps done tasks (other analyzers depend on
+    // them); the filter happens here only.
+    const dpNodes = new Map<string, ActiveTaskInfo>();
+    for (const info of graph.activeTasks.values()) {
+      if (info.status === "done") continue;
+      dpNodes.set(info.id, info);
+    }
+    if (dpNodes.size === 0) return [];
+
+    const dpDeps = new Map<string, Set<string>>();
+    for (const id of dpNodes.keys()) {
+      const fullDeps = graph.effectiveDeps.get(id) ?? new Set<string>();
+      const filtered = new Set<string>();
+      for (const dep of fullDeps) {
+        if (dpNodes.has(dep)) filtered.add(dep);
+      }
+      dpDeps.set(id, filtered);
+    }
+
+    const dpDependents = new Map<string, Set<string>>();
+    for (const [src, deps] of dpDeps) {
+      for (const dep of deps) {
+        const set = dpDependents.get(dep) ?? new Set<string>();
+        set.add(src);
+        dpDependents.set(dep, set);
+      }
+    }
+
     const remaining = new Map<string, number>();
-    for (const id of graph.activeTasks.keys()) {
-      remaining.set(id, graph.effectiveDeps.get(id)?.size ?? 0);
+    for (const id of dpNodes.keys()) {
+      remaining.set(id, dpDeps.get(id)?.size ?? 0);
     }
 
     const topoOrder: string[] = [];
@@ -467,8 +537,7 @@ export async function getCriticalPath(
     while (queue.length > 0) {
       const cur = queue.shift()!;
       topoOrder.push(cur);
-      const dependents =
-        graph.effectiveDependents.get(cur) ?? new Set<string>();
+      const dependents = dpDependents.get(cur) ?? new Set<string>();
       for (const dependent of dependents) {
         const newCount = (remaining.get(dependent) ?? 0) - 1;
         remaining.set(dependent, newCount);
@@ -476,12 +545,12 @@ export async function getCriticalPath(
       }
     }
 
-    if (topoOrder.length < graph.activeTasks.size) return [];
+    if (topoOrder.length < dpNodes.size) return [];
 
     const longestTo = new Map<string, number>();
     const parent = new Map<string, string | null>();
     for (const node of topoOrder) {
-      const deps = graph.effectiveDeps.get(node) ?? new Set<string>();
+      const deps = dpDeps.get(node) ?? new Set<string>();
       let bestParent: string | null = null;
       let bestParentLen = 0;
       for (const dep of deps) {
@@ -491,7 +560,8 @@ export async function getCriticalPath(
           bestParent = dep;
         }
       }
-      longestTo.set(node, bestParentLen + 1);
+      const info = dpNodes.get(node)!;
+      longestTo.set(node, bestParentLen + priorityWeight(info.priority));
       parent.set(node, bestParent);
     }
 
@@ -514,7 +584,7 @@ export async function getCriticalPath(
     chain.reverse();
 
     return chain.map((id) => {
-      const info = graph.activeTasks.get(id)!;
+      const info = dpNodes.get(id)!;
       return {
         id: info.id,
         taskRef: composeTaskRef(identifier, info.sequenceNumber),

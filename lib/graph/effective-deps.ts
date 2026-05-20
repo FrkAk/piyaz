@@ -3,6 +3,7 @@ import "server-only";
 import type { Conn } from "@/lib/db/raw";
 import { listTasksForGraph } from "@/lib/data/task";
 import { listDependsOnEdges } from "@/lib/data/edge";
+import type { Priority } from "@/lib/types";
 
 /** Slim active-task info used by graph analyzers. */
 export type ActiveTaskInfo = {
@@ -11,6 +12,7 @@ export type ActiveTaskInfo = {
   status: string;
   sequenceNumber: number;
   tags: string[];
+  priority: Priority | null;
 };
 
 /**
@@ -71,6 +73,7 @@ export async function buildDepAdjacency(
         status: t.status,
         sequenceNumber: t.sequenceNumber,
         tags: t.tags,
+        priority: t.priority as Priority | null,
       });
     }
   }
