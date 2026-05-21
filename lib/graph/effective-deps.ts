@@ -3,6 +3,8 @@ import "server-only";
 import type { Conn } from "@/lib/db/raw";
 import { listTasksForGraph } from "@/lib/data/task";
 import { listDependsOnEdges } from "@/lib/data/edge";
+import { fetchEffectiveDepChain } from "@/lib/db/raw/fetch-effective-dep-chain";
+import { fetchEffectiveDownstream } from "@/lib/db/raw/fetch-effective-downstream";
 import type { Priority } from "@/lib/types";
 
 /** Slim active-task info used by graph analyzers. */
@@ -40,10 +42,10 @@ export type EffectiveDepGraph = {
  * cancelled included so the walks can pass through them), and the
  * active-only task info map (cancelled excluded).
  *
- * This is the exact substrate `buildEffectiveDepGraph` needs and the
- * depth-bounded bundle walks (`walkEffectiveDepsBounded`) also need, kept
- * as one source of truth so the analyze tools and the context bundles
- * derive their dependency graphs from identical data.
+ * This is the exact substrate `buildEffectiveDepGraph` needs, kept here
+ * so every analyzer that derives a dependency graph from the project as
+ * a whole (`getBlockedTasks`, `getCriticalPath`, `deriveTaskStatesSlim`)
+ * draws from identical data.
  *
  * @param projectId - UUID of the project.
  * @param conn - Drizzle client or transaction handle. Callers running under
@@ -188,77 +190,19 @@ function walkEffectiveDeps(
 }
 
 /**
- * Walk forward from an active source over the effective dependency graph,
- * stopping at maxDepth active "walls". Cancelled tasks are transparent and
- * depth-free: the walk passes through them without consuming a depth slot,
- * so A -> B(cancelled) -> C(active) yields C at effective depth 1.
- *
- * BFS by effective depth: the first time an active task is seen is at its
- * minimum effective depth, matching the shallowest-depth behaviour of the
- * old recursive CTE. The cancelled-frontier is drained at the current
- * active depth before BFS advances, so a chain of any number of cancelled
- * middles stays depth-free.
- *
- * @param source - Starting active task id (not included in the result).
- * @param adj - source -> targets adjacency map for depends_on edges.
- * @param taskStatus - task id -> status map for ALL project tasks.
- * @param maxDepth - Maximum number of active hops to include (e.g. 2).
- * @returns Map of active-task-id -> effective depth (1..maxDepth).
- */
-export function walkEffectiveDepsBounded(
-  source: string,
-  adj: Map<string, string[]>,
-  taskStatus: Map<string, string>,
-  maxDepth: number,
-): Map<string, number> {
-  const result = new Map<string, number>();
-  // Seed `visited` with `source` so a cycle back to it never records the
-  // source itself (the result is the set of deps, source-exclusive).
-  const visited = new Set<string>([source]);
-  const visitedCancelled = new Set<string>();
-  let queue: { id: string; depth: number }[] = [{ id: source, depth: 0 }];
-
-  while (queue.length > 0) {
-    const next: { id: string; depth: number }[] = [];
-
-    for (const node of queue) {
-      // Drain the cancelled frontier at this active depth before advancing,
-      // so passing through cancelled middles never consumes a depth slot.
-      const cancelledFrontier: string[] = [node.id];
-      while (cancelledFrontier.length > 0) {
-        const cur = cancelledFrontier.pop()!;
-        for (const target of adj.get(cur) ?? []) {
-          const status = taskStatus.get(target);
-          if (status === undefined) continue;
-          if (status === "cancelled") {
-            if (visitedCancelled.has(target)) continue;
-            visitedCancelled.add(target);
-            cancelledFrontier.push(target);
-            continue;
-          }
-          // Active wall at active depth node.depth + 1.
-          const wallDepth = node.depth + 1;
-          if (wallDepth > maxDepth) continue;
-          if (visited.has(target)) continue;
-          visited.add(target);
-          result.set(target, wallDepth);
-          next.push({ id: target, depth: wallDepth });
-        }
-      }
-    }
-
-    queue = next;
-  }
-
-  return result;
-}
-
-/**
  * Walk the effective dependency graph from one source task and return its
  * depth-bounded forward (prerequisites) and reverse (downstream) closures.
  *
  * Cancelled tasks are transparent and depth-free; both result lists contain
  * only active task ids and never the source itself.
+ *
+ * Delegated to two recursive CTEs ({@link fetchEffectiveDepChain} and
+ * {@link fetchEffectiveDownstream}) so the per-call data load stays
+ * proportional to the bounded result set rather than the whole project
+ * graph. The pre-this-rewrite JS implementation loaded every task and
+ * every `depends_on` edge for the project on every call, which became a
+ * memory regression on `mymir_context` at depths agent/planning/review
+ * once #85 routed those bundles through this helper.
  *
  * @param projectId - UUID of the project the task belongs to.
  * @param taskId - UUID of the source task; excluded from both results.
@@ -274,28 +218,12 @@ export async function loadBundleDeps(
   maxDepth: number,
   conn: Conn,
 ): Promise<{ deps: { id: string }[]; downstream: { id: string }[] }> {
-  const { adj, taskStatus } = await buildDepAdjacency(projectId, conn);
-
-  const reverseAdj = new Map<string, string[]>();
-  for (const [src, targets] of adj) {
-    for (const t of targets) {
-      const list = reverseAdj.get(t) ?? [];
-      list.push(src);
-      reverseAdj.set(t, list);
-    }
-  }
-
-  const deps = [
-    ...walkEffectiveDepsBounded(taskId, adj, taskStatus, maxDepth).keys(),
-  ].map((id) => ({ id }));
-  const downstream = [
-    ...walkEffectiveDepsBounded(
-      taskId,
-      reverseAdj,
-      taskStatus,
-      maxDepth,
-    ).keys(),
-  ].map((id) => ({ id }));
-
-  return { deps, downstream };
+  const [depRows, downstreamRows] = await Promise.all([
+    fetchEffectiveDepChain(conn, taskId, projectId, maxDepth),
+    fetchEffectiveDownstream(conn, taskId, projectId, maxDepth),
+  ]);
+  return {
+    deps: depRows.map((r) => ({ id: r.id })),
+    downstream: downstreamRows.map((r) => ({ id: r.id })),
+  };
 }
