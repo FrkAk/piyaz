@@ -8,20 +8,13 @@ export type EffectiveDepRow = { id: string; depth: number };
 /**
  * Walk forward `depends_on` edges from `taskId`, treating cancelled tasks
  * as transparent: a chain `A → B(cancelled) → C(active)` returns C at
- * effective depth 1 (passing through B does not consume a depth slot).
+ * effective depth 1. Cancelled middles do not consume a depth slot.
  *
- * Implemented as a recursive CTE bounded by `effective_depth < maxDepth`
- * on the active wall, with a `CYCLE` clause that terminates recursion
- * through cycles (cancelled loops included). Joins `tasks` at every step
- * and filters on `projectId` so a stale or hand-crafted cross-project
- * edge cannot leak into the result. The source task is excluded from
- * the result (a self-edge back to source is filtered out by the final
- * `id <> taskId` predicate).
- *
- * Replaces the pre-#85 raw-depth `fetchDependencyChain` for context
- * bundles, matching the analyzer's effective-dep semantics while keeping
- * the data load in SQL so the per-call memory cost stays proportional to
- * the bounded result set, not the whole project graph.
+ * Recursive CTE bounded by `effective_depth < maxDepth` on the active
+ * wall. The `CYCLE` clause terminates recursion on cycles, including
+ * cancelled-only loops. Joins `tasks` at every step and filters on
+ * `projectId` so a stale or hand-crafted cross-project edge cannot leak
+ * into the result. The source task is excluded from the result.
  *
  * @param conn - Drizzle client or transaction handle.
  * @param taskId - UUID of the starting task (excluded from the result).

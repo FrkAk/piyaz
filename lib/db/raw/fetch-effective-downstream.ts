@@ -11,11 +11,9 @@ export type EffectiveDownstreamRow = { id: string; depth: number };
  * `C(active) → B(cancelled) → A` returns A at effective depth 1 from C's
  * perspective.
  *
- * Mirror of {@link fetchEffectiveDepChain} with source/target swapped on
- * the join; bounded by `effective_depth < maxDepth` on the active wall,
- * `CYCLE` clause terminates recursion through cycles (cancelled loops
- * included). Joins `tasks` at every step and filters on `projectId`. The
- * source task is excluded from the result.
+ * Mirror of {@link fetchEffectiveDepChain} with source / target swapped
+ * on the join. Same `CYCLE`, `projectId` filter, and source-exclusion
+ * semantics.
  *
  * @param conn - Drizzle client or transaction handle.
  * @param taskId - UUID of the starting task (excluded from the result).

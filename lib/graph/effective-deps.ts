@@ -196,13 +196,10 @@ function walkEffectiveDeps(
  * Cancelled tasks are transparent and depth-free; both result lists contain
  * only active task ids and never the source itself.
  *
- * Delegated to two recursive CTEs ({@link fetchEffectiveDepChain} and
+ * Delegates to two recursive CTEs ({@link fetchEffectiveDepChain} and
  * {@link fetchEffectiveDownstream}) so the per-call data load stays
  * proportional to the bounded result set rather than the whole project
- * graph. The pre-this-rewrite JS implementation loaded every task and
- * every `depends_on` edge for the project on every call, which became a
- * memory regression on `mymir_context` at depths agent/planning/review
- * once #85 routed those bundles through this helper.
+ * graph.
  *
  * @param projectId - UUID of the project the task belongs to.
  * @param taskId - UUID of the source task; excluded from both results.
@@ -210,7 +207,8 @@ function walkEffectiveDeps(
  * @param conn - Drizzle client or transaction handle. Callers inside a
  *   `withUserContext` transaction must pass the active `tx` so the reads
  *   participate in the same RLS-scoped frame.
- * @returns `deps` — active prerequisites; `downstream` — active dependents.
+ * @returns `deps` for active prerequisites and `downstream` for active
+ *   dependents.
  */
 export async function loadBundleDeps(
   projectId: string,
