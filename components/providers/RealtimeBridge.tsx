@@ -80,7 +80,11 @@ export function RealtimeBridge() {
       es = new EventSource("/api/events");
       es.onmessage = (msg) => handle(msg.data);
       es.onopen = () => {
+        const isReconnect = backoff !== INITIAL_BACKOFF_MS;
         backoff = INITIAL_BACKOFF_MS;
+        if (isReconnect) {
+          qc.invalidateQueries();
+        }
       };
       es.onerror = () => {
         es?.close();
