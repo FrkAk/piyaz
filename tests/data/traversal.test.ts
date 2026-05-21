@@ -316,4 +316,54 @@ describe("getCriticalPath: done-transparency and priority weighting", () => {
     expect(chain[0].status).toBe("planned");
     expect(chain[1].status).toBe("planned");
   });
+
+  test("done middle fragments the chain: A → B(done) → C does not connect A and C", async () => {
+    // depends_on chain `C → B → A` with B done. Done-transparency is FILTER
+    // (drop B from the DP node set), NOT WALK (pass through B to connect A
+    // and C as a length-2 chain). Locks the semantic in: a future refactor
+    // that "makes done transparent like cancelled" would fail this test
+    // loudly. Both remaining single-node chains have equal priority mass
+    // (normal=2 each), so which fragment is picked is implementation-
+    // defined; assert only the fragmentation property.
+    const fx = await seedUserOrgProject("trav-done-middle");
+    const sr = serviceRoleConnect();
+    const a = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "A",
+      sequenceNumber: 1,
+      priority: "normal",
+    });
+    const b = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "B",
+      sequenceNumber: 2,
+      status: "done",
+      priority: "normal",
+    });
+    const c = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "C",
+      sequenceNumber: 3,
+      priority: "normal",
+    });
+
+    const ctx = makeAuthContext(fx.userId);
+    await createEdge(ctx, {
+      sourceTaskId: b,
+      targetTaskId: a,
+      edgeType: "depends_on",
+      note: "",
+    });
+    await createEdge(ctx, {
+      sourceTaskId: c,
+      targetTaskId: b,
+      edgeType: "depends_on",
+      note: "",
+    });
+
+    const chain = await getCriticalPath(ctx, fx.projectId);
+    expect(chain.length).toBe(1);
+    expect(chain.some((t) => t.id === b)).toBe(false);
+    expect([a, c]).toContain(chain[0].id);
+  });
 });
