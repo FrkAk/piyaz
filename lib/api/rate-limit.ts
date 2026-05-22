@@ -52,8 +52,20 @@ export interface RateLimitBackend {
  * `customRules` (`lib/auth.ts`) for defense-in-depth.
  */
 export const RATE_LIMIT_RULES: RateLimitRule[] = [
-  { pattern: "/api/auth/sign-in/*", max: 5, window: 60, keyStrategy: "session", bindingKey: "auth" },
-  { pattern: "/api/auth/sign-up/*", max: 3, window: 60, keyStrategy: "session", bindingKey: "auth" },
+  {
+    pattern: "/api/auth/sign-in/*",
+    max: 5,
+    window: 60,
+    keyStrategy: "session",
+    bindingKey: "auth",
+  },
+  {
+    pattern: "/api/auth/sign-up/*",
+    max: 3,
+    window: 60,
+    keyStrategy: "session",
+    bindingKey: "auth",
+  },
   { pattern: "/api/mcp", max: 60, window: 60, keyStrategy: "apikey" },
   { pattern: "/api/*", max: 100, window: 60, keyStrategy: "session" },
 ];
@@ -173,7 +185,8 @@ const MAX_WINDOW_MS = Math.max(...RATE_LIMIT_RULES.map((r) => r.window)) * 1000;
  * @returns The active rate limit backend for the slot.
  */
 export function getBackend(kind: BackendKind = "api"): RateLimitBackend {
-  if (!_backends[kind]) _backends[kind] = new MemoryRateLimitBackend(MAX_WINDOW_MS);
+  if (!_backends[kind])
+    _backends[kind] = new MemoryRateLimitBackend(MAX_WINDOW_MS);
   return _backends[kind];
 }
 
