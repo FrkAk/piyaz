@@ -45,9 +45,7 @@ export const AuthInput = forwardRef<HTMLInputElement, AuthInputProps>(
           aria-invalid={error ? true : undefined}
           aria-describedby={messageId}
           className={`block w-full border bg-surface px-3.5 text-[13px] text-text-primary placeholder:text-text-muted outline-none transition-colors ${
-            error
-              ? "border-danger"
-              : "border-border-strong focus:border-accent"
+            error ? "border-danger" : "border-border-strong focus:border-accent"
           } ${className}`}
           style={{
             height: 38,
