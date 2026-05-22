@@ -3,8 +3,21 @@
  *
  * Re-exports the Durable Object classes wrangler instantiates at runtime
  * (`MymirBroker`, `DOQueueHandler`) and delegates `fetch` to the
- * OpenNext-generated handler.
+ * OpenNext-generated handler. Before the first delegation, registers the
+ * Cloudflare rate-limit bindings against `lib/api/rate-limit.ts`'s singleton
+ * slots so middleware throttling uses the per-POP CF binding instead of the
+ * default per-isolate `MemoryRateLimitBackend`.
+ *
+ * Types are file-local because `cloudflare-env.d.ts` is excluded from the
+ * project typecheck (its `@cloudflare/workers-types` content clobbers DOM
+ * types); the bindings are structurally typed against the minimal shapes
+ * Cloudflare's runtime provides.
  */
+import { setBackend } from "./lib/api/rate-limit";
+import {
+  CloudflareRateLimitBackend,
+  type CloudflareRateLimitBinding,
+} from "./lib/api/rate-limit-cf";
 import { MymirBroker } from "./lib/realtime/broker-do";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- generated entry; tsc resolves it but @ts-expect-error trips "unused directive".
@@ -15,4 +28,62 @@ import { default as openNextHandler } from "./.open-next/worker.js";
 export { DOQueueHandler } from "./.open-next/worker.js";
 export { MymirBroker };
 
-export default openNextHandler;
+/**
+ * Minimal binding-shape mirror for the `env` argument workerd passes to
+ * `fetch`. Keeps the file independent of `cloudflare-env.d.ts` (excluded
+ * from typecheck) while still preventing implicit-any on `env.RATE_LIMIT_*`.
+ */
+interface WorkerEnv {
+  RATE_LIMIT_API?: CloudflareRateLimitBinding;
+  RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
+}
+
+/** Minimal `ExecutionContext` shape passed by workerd to `fetch`. */
+interface WorkerCtx {
+  waitUntil(promise: Promise<unknown>): void;
+  passThroughOnException(): void;
+}
+
+let _rateLimitInitialized = false;
+
+/**
+ * Register the Cloudflare rate-limit bindings with the shared rate-limit
+ * module exactly once per isolate. CF reuses isolates across requests, so the
+ * cost is amortized to a single binding-pointer assignment per isolate spawn.
+ *
+ * Missing bindings are tolerated (the slot stays on `MemoryRateLimitBackend`),
+ * which keeps `wrangler dev --no-bundle` and one-off scripts that don't bind
+ * rate-limits working.
+ *
+ * @param env - The Cloudflare-Workers `env` passed to `fetch`.
+ */
+function initRateLimitBindings(env: WorkerEnv): void {
+  if (_rateLimitInitialized) return;
+  if (env.RATE_LIMIT_API) {
+    setBackend("api", new CloudflareRateLimitBackend(env.RATE_LIMIT_API));
+  }
+  if (env.RATE_LIMIT_AUTH) {
+    setBackend("auth", new CloudflareRateLimitBackend(env.RATE_LIMIT_AUTH));
+  }
+  _rateLimitInitialized = true;
+  console.log(
+    JSON.stringify({
+      event: "rate_limit_init",
+      api: Boolean(env.RATE_LIMIT_API),
+      auth: Boolean(env.RATE_LIMIT_AUTH),
+    }),
+  );
+}
+
+const handler = {
+  async fetch(
+    request: Request,
+    env: WorkerEnv,
+    ctx: WorkerCtx,
+  ): Promise<Response> {
+    initRateLimitBindings(env);
+    return openNextHandler.fetch(request, env, ctx);
+  },
+};
+
+export default handler;
