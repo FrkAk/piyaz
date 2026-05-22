@@ -367,7 +367,7 @@ export function CommandPalette({ open, onClose, projects }: CommandPaletteProps)
                 aria-label="Search projects, tasks, and settings"
                 role="combobox"
                 aria-controls={listboxId}
-                aria-expanded
+                aria-expanded={options.length > 0}
                 aria-activedescendant={
                   options.length > 0
                     ? `${optionIdPrefix}-${activeIndex}`

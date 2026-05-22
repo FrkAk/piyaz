@@ -141,16 +141,29 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
   );
 
   /**
-   * One-shot: when the page mounts with a `?task=<id>` deep link (used by
-   * the global command palette to jump across projects), the param is
-   * consumed by `useState` initial value above and stripped here so a
-   * later back-navigation to the project doesn't keep re-selecting.
+   * Watch the `?task=<id>` deep-link param. The `useState` initial-value
+   * read above handles cross-project mounts (different `projectId`
+   * remounts this client). For same-project jumps from the global
+   * command palette, Next.js performs a soft re-render that keeps this
+   * client mounted, so the initial value never re-fires; the
+   * render-phase reset below promotes the param into `selectedTaskId`
+   * (mirrors the `prevSelectedTaskId` pattern further down), and the
+   * effect strips the param afterwards so back-navigation does not
+   * reselect a stale task.
    */
+  const [prevTaskParam, setPrevTaskParam] = useState<string | null>(
+    initialTaskParam,
+  );
+  const currentTaskParam = searchParams.get("task");
+  if (currentTaskParam !== prevTaskParam) {
+    setPrevTaskParam(currentTaskParam);
+    if (currentTaskParam) {
+      setSelectedTaskId(currentTaskParam);
+    }
+  }
   useEffect(() => {
-    if (searchParams.get("task")) updateParam("task", null);
-    // Run exactly once on mount; subsequent param changes are owned by `view`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (currentTaskParam) updateParam("task", null);
+  }, [currentTaskParam, updateParam]);
 
   /**
    * Select a task. At narrow viewports (`!isXl`), the graph canvas and
