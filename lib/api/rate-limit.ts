@@ -19,6 +19,13 @@ export type RateLimitResult = {
  * the Workers deploy (`'api'` → `RATE_LIMIT_API`, `'auth'` → `RATE_LIMIT_AUTH`).
  * Omitted defaults to `'api'`. Self-host ignores this field — both kinds resolve
  * to the same in-memory backend by absence of bindings.
+ *
+ * Invariant: when a CF binding backs the slot, `max` and `window` MUST equal
+ * the binding's `simple.limit` and `simple.period` declared in
+ * `wrangler.jsonc:ratelimits[]`. The binding enforces only its own
+ * `simple.limit` per composite key; `max` here only partitions counters and
+ * fills the IETF `RateLimit-Policy` header. A mismatch makes the response
+ * header advertise a limit the runtime does not enforce.
  */
 export type RateLimitRule = {
   pattern: string;
@@ -49,7 +56,10 @@ export interface RateLimitBackend {
  * collateral throttling, but `sign-in` and `sign-up` have no session cookie
  * yet — IP is the only available key. Brute-force defense by IP is the
  * field-standard exception. Layered on top of Better-Auth's in-memory
- * `customRules` (`lib/auth.ts`) for defense-in-depth.
+ * `customRules` (`lib/auth.ts`) for defense-in-depth — BA tightens sign-up
+ * to 3/60 in-process per isolate even though the CF binding only enforces
+ * 5/60 here. Follow-up: declare a dedicated 3/60 binding to tighten the
+ * middleware layer to match.
  */
 export const RATE_LIMIT_RULES: RateLimitRule[] = [
   {
@@ -61,12 +71,12 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
   },
   {
     pattern: "/api/auth/sign-up/*",
-    max: 3,
+    max: 5,
     window: 60,
     keyStrategy: "session",
     bindingKey: "auth",
   },
-  { pattern: "/api/mcp", max: 60, window: 60, keyStrategy: "apikey" },
+  { pattern: "/api/mcp", max: 100, window: 60, keyStrategy: "apikey" },
   { pattern: "/api/*", max: 100, window: 60, keyStrategy: "session" },
 ];
 
@@ -167,11 +177,19 @@ export function rateLimitHeaders(
   return headers;
 }
 
-type BackendKind = "api" | "auth";
+type BackendKind = "api" | "auth" | "actions";
 
+/**
+ * Backend slot table keyed by kind. `worker-cf.ts` wires `api` and `auth` to
+ * the matching Cloudflare bindings on first request; `actions` is
+ * intentionally never bound (server actions declare tighter `max` values
+ * than any single CF binding can enforce, so they stay on the per-isolate
+ * `MemoryRateLimitBackend` where rule limits are honored exactly).
+ */
 const _backends: Record<BackendKind, RateLimitBackend | null> = {
   api: null,
   auth: null,
+  actions: null,
 };
 
 const MAX_WINDOW_MS = Math.max(...RATE_LIMIT_RULES.map((r) => r.window)) * 1000;

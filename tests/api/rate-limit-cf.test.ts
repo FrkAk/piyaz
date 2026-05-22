@@ -1,5 +1,6 @@
-import { test, expect } from "bun:test";
+import { test, expect, beforeEach } from "bun:test";
 import { getBackend, setBackend, matchRule } from "@/lib/api/rate-limit";
+import { MemoryRateLimitBackend } from "@/lib/api/rate-limit-memory";
 import {
   CloudflareRateLimitBackend,
   type CloudflareRateLimitBinding,
@@ -30,11 +31,24 @@ function brokenBinding(): CloudflareRateLimitBinding {
   };
 }
 
-test("getBackend() defaults to the api kind", () => {
-  expect(getBackend()).toBe(getBackend("api"));
+/**
+ * Reset every backend slot to a fresh `MemoryRateLimitBackend` so each test
+ * starts from the same module-global state. Without this, a `setBackend`
+ * call in one test leaks into the next.
+ */
+beforeEach(() => {
+  setBackend("api", new MemoryRateLimitBackend(60_000));
+  setBackend("auth", new MemoryRateLimitBackend(60_000));
+  setBackend("actions", new MemoryRateLimitBackend(60_000));
 });
 
-test("api and auth backend slots stay independent after setBackend", () => {
+test("getBackend() defaults to the api kind and returns the memory backend", () => {
+  const backend = getBackend();
+  expect(backend).toBe(getBackend("api"));
+  expect(backend).toBeInstanceOf(MemoryRateLimitBackend);
+});
+
+test("api, auth, and actions backend slots stay independent after setBackend", () => {
   const apiBackend = new CloudflareRateLimitBackend(fakeBinding(true));
   const authBackend = new CloudflareRateLimitBackend(fakeBinding(false));
   setBackend("api", apiBackend);
@@ -42,6 +56,8 @@ test("api and auth backend slots stay independent after setBackend", () => {
   expect(getBackend("api")).toBe(apiBackend);
   expect(getBackend("auth")).toBe(authBackend);
   expect(getBackend("api")).not.toBe(getBackend("auth"));
+  expect(getBackend("actions")).not.toBe(getBackend("api"));
+  expect(getBackend("actions")).toBeInstanceOf(MemoryRateLimitBackend);
 });
 
 test("auth rules precede the catch-all api rule in RATE_LIMIT_RULES", () => {
@@ -52,11 +68,22 @@ test("auth rules precede the catch-all api rule in RATE_LIMIT_RULES", () => {
   expect(matchRule("/api/auth/get-session")?.bindingKey ?? "api").toBe("api");
 });
 
-test("CloudflareRateLimitBackend fails open on binding RPC error", async () => {
+test("CloudflareRateLimitBackend fails open by default on binding RPC error", async () => {
   const backend = new CloudflareRateLimitBackend(brokenBinding());
   const result = await backend.check("test-key", 100, 60);
   expect(result.allowed).toBe(true);
   expect(result.limit).toBe(100);
   expect(result.remaining).toBe(100);
+  expect(result.resetIn).toBe(60);
+});
+
+test("CloudflareRateLimitBackend fails closed on binding RPC error when failOpen=false", async () => {
+  const backend = new CloudflareRateLimitBackend(brokenBinding(), {
+    failOpen: false,
+  });
+  const result = await backend.check("test-key", 5, 60);
+  expect(result.allowed).toBe(false);
+  expect(result.limit).toBe(5);
+  expect(result.remaining).toBe(0);
   expect(result.resetIn).toBe(60);
 });

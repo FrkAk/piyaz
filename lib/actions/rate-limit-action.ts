@@ -51,9 +51,12 @@ async function getActionClientIp(): Promise<string> {
 /**
  * Apply two-key rate limiting (per-user AND per-IP) to a server action.
  * The first key to exceed its budget rejects the call; both buckets get
- * decremented on every successful pass. Reuses the singleton backend
- * from `lib/api/rate-limit.ts` so route- and action-level limits share
- * the same memory map.
+ * decremented on every successful pass. Uses the dedicated `"actions"`
+ * backend slot from `lib/api/rate-limit.ts`, which is intentionally never
+ * wired to a Cloudflare rate-limit binding — actions declare tighter
+ * `perUserMax`/`perIpMax` values (3-30) than the API binding's 100/60 cap
+ * could honor, so the per-isolate `MemoryRateLimitBackend` enforces them
+ * exactly instead of being silently relaxed to the binding limit.
  *
  * Both buckets are consulted (and incremented) atomically — when only
  * one rejects, the other has already counted the attempt. That tightens
@@ -69,7 +72,7 @@ export async function checkActionRateLimit(
   config: ActionRateLimitConfig,
   userId: string | null,
 ): Promise<ActionRateLimitOutcome> {
-  const backend = getBackend();
+  const backend = getBackend("actions");
   const ip = await getActionClientIp();
 
   const checks: Promise<RateLimitResult>[] = [

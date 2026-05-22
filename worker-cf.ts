@@ -29,27 +29,43 @@ export { DOQueueHandler } from "./.open-next/worker.js";
 export { MymirBroker };
 
 /**
- * Minimal binding-shape mirror for the `env` argument workerd passes to
- * `fetch`. Keeps the file independent of `cloudflare-env.d.ts` (excluded
- * from typecheck) while still preventing implicit-any on `env.RATE_LIMIT_*`.
+ * Subset of the auto-generated `CloudflareEnv` (`cloudflare-env.d.ts`) that
+ * this entry actually reads. Declared locally — not imported from
+ * `CloudflareEnv` — because that file is excluded from typecheck per
+ * `tsconfig.json:33` and the `@cloudflare/workers-types` package itself is
+ * banned by `no-restricted-imports` in `eslint.config.*`: its ambient
+ * declarations clobber DOM `Request` / `Response` and break unrelated
+ * browser tests. Project convention is file-local stubs (see
+ * `lib/realtime/broker-do.ts:30-36`).
  */
 interface WorkerEnv {
   RATE_LIMIT_API?: CloudflareRateLimitBinding;
   RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
 }
 
-/** Minimal `ExecutionContext` shape passed by workerd to `fetch`. */
+/**
+ * Minimal `ExecutionContext` shape passed by workerd to `fetch`. Same
+ * file-local-stub rationale as `WorkerEnv` above.
+ */
 interface WorkerCtx {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
 }
 
+// Binding-pointer state, not request-scoped — set once per isolate spawn and
+// read by every subsequent request through the same isolate. Safe to live at
+// module scope per Workers best practices.
 let _rateLimitInitialized = false;
 
 /**
  * Register the Cloudflare rate-limit bindings with the shared rate-limit
  * module exactly once per isolate. CF reuses isolates across requests, so the
  * cost is amortized to a single binding-pointer assignment per isolate spawn.
+ *
+ * The AUTH binding is wired `failOpen: false` so a binding outage cannot
+ * silently disable brute-force throttling on `/api/auth/sign-in/*` and
+ * `/api/auth/sign-up/*`. The API binding stays `failOpen: true` (default) —
+ * a rate-limit subsystem hiccup must not take the whole app offline.
  *
  * Missing bindings are tolerated (the slot stays on `MemoryRateLimitBackend`),
  * which keeps `wrangler dev --no-bundle` and one-off scripts that don't bind
@@ -63,7 +79,10 @@ function initRateLimitBindings(env: WorkerEnv): void {
     setBackend("api", new CloudflareRateLimitBackend(env.RATE_LIMIT_API));
   }
   if (env.RATE_LIMIT_AUTH) {
-    setBackend("auth", new CloudflareRateLimitBackend(env.RATE_LIMIT_AUTH));
+    setBackend(
+      "auth",
+      new CloudflareRateLimitBackend(env.RATE_LIMIT_AUTH, { failOpen: false }),
+    );
   }
   _rateLimitInitialized = true;
   console.log(

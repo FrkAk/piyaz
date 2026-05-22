@@ -71,7 +71,7 @@ export async function middleware(request: NextRequest) {
   if (rule) {
     const key = await extractKey(request, rule.keyStrategy);
     if (key) {
-      const result = await getBackend(rule.bindingKey ?? "api").check(
+      const result = await getBackend(rule.bindingKey).check(
         `${rule.pattern}:${key}`,
         rule.max,
         rule.window,
