@@ -31,6 +31,18 @@ export const auth = betterAuth({
     schema: authSchema,
   }),
   secret: process.env.BETTER_AUTH_SECRET,
+  // Close the non-admin invitee-email harvest bypass on BA 1.6.11's
+  // listInvitations route (`crud-invites.mjs:471-488`, membership-only
+  // guard). BA's HTTP dispatch (`api/index.mjs:163-165`) returns a
+  // plain `404 "Not Found"` for any path in `disabledPaths` BEFORE
+  // any plugin handler runs, while internal `auth.api.listInvitations()`
+  // calls (e.g. `lib/actions/team-invitations.ts:84`) bypass the HTTP
+  // layer and remain unaffected — so `listPendingInvitationsAction`
+  // (admin-gated) stays the only path that returns invitation rows.
+  // Path is the post-basePath normalized form: `normalizePathname`
+  // (`@better-auth/core/dist/utils/url.mjs:18-29`) strips `/api/auth`
+  // before the includes-check, so the string must NOT carry the prefix.
+  disabledPaths: ["/organization/list-invitations"],
   emailAndPassword: {
     enabled: true,
     revokeSessionsOnPasswordReset: true,
