@@ -1233,12 +1233,27 @@ export async function searchTasksAcrossProjects(
       clauses.push(eq(projects.identifier, refMatch[1].toUpperCase()));
       clauses.push(eq(tasks.sequenceNumber, Number(refMatch[2])));
     } else {
-      const pattern = `%${trimmed}%`;
-      const titleOrTag = or(
-        ilike(tasks.title, pattern),
-        sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`,
-      );
-      if (titleOrTag) clauses.push(titleOrTag);
+      // Tokenize on whitespace and dashes so "auth bug" AND-matches both
+      // tokens in any order, and partial taskRefs like "MYMR-" surface
+      // every task in that project. Each token must match somewhere:
+      // task title, any tag, project title, project identifier, or
+      // (numeric tokens only) sequence number.
+      const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
+      if (tokens.length === 0) return [];
+      for (const token of tokens) {
+        const pattern = `%${token}%`;
+        const orClauses = [
+          ilike(tasks.title, pattern),
+          sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`,
+          ilike(projects.title, pattern),
+          ilike(projects.identifier, pattern),
+        ];
+        if (/^\d+$/.test(token)) {
+          orClauses.push(eq(tasks.sequenceNumber, Number(token)));
+        }
+        const tokenClause = or(...orClauses);
+        if (tokenClause) clauses.push(tokenClause);
+      }
     }
 
     const rows = await tx

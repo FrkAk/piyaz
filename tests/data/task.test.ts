@@ -354,6 +354,118 @@ test("searchTasksAcrossProjects matches tag substring", async () => {
   expect(rows[0].title).toBe("No match in title");
 });
 
+test("searchTasksAcrossProjects AND-matches multiple whitespace-separated tokens", async () => {
+  const f = await seedUserOrgProject("XPROJTOK");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'Fix bug in auth login', 1, 1)
+    `;
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'Add login form', 2, 2)
+    `;
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'Unrelated crash report', 3, 3)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  // Tokens in any order: both "auth" and "bug" must appear somewhere.
+  const rows = await searchTasksAcrossProjects(ctx, "auth bug");
+  expect(rows.length).toBe(1);
+  expect(rows[0].title).toBe("Fix bug in auth login");
+
+  // "login form" matches "Add login form" directly (both tokens in title).
+  const rows2 = await searchTasksAcrossProjects(ctx, "login form");
+  expect(rows2.length).toBe(1);
+  expect(rows2[0].title).toBe("Add login form");
+
+  // Token that matches nothing collapses the result set.
+  const rows3 = await searchTasksAcrossProjects(ctx, "auth zzznope");
+  expect(rows3).toEqual([]);
+});
+
+test("searchTasksAcrossProjects surfaces tasks when the project title or identifier matches", async () => {
+  const f = await seedUserOrgProject("XPROJPROJMATCH");
+  const ctx = makeAuthContext(f.userId);
+
+  // Project from seed: title "Project XPROJPROJMATCH", identifier "PRJXPROJPROJMATCH".
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'Wholly unrelated title', 1, 1)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  // Query matches project title token.
+  const byTitle = await searchTasksAcrossProjects(ctx, "XPROJPROJMATCH");
+  expect(byTitle.length).toBe(1);
+  expect(byTitle[0].title).toBe("Wholly unrelated title");
+
+  // Query matches project identifier as a substring.
+  const byIdent = await searchTasksAcrossProjects(ctx, "PRJXPROJPROJMATCH");
+  expect(byIdent.length).toBe(1);
+  expect(byIdent[0].title).toBe("Wholly unrelated title");
+});
+
+test("searchTasksAcrossProjects matches a bare sequence number", async () => {
+  const f = await seedUserOrgProject("XPROJSEQ");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'Some title', 191, 1)
+    `;
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'Other title', 7, 2)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasksAcrossProjects(ctx, "191");
+  const seqs = rows.map((r) => r.taskRef);
+  expect(seqs).toContain("PRJXPROJSEQ-191");
+});
+
+test("searchTasksAcrossProjects accepts a partial taskRef with trailing dash", async () => {
+  const f = await seedUserOrgProject("XPROJPARTIAL");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'First in partial', 1, 1)
+    `;
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'Second in partial', 2, 2)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  // "PRJXPROJPARTIAL-" is a partial taskRef (no sequence number). Should
+  // surface every task in that project rather than returning empty.
+  const rows = await searchTasksAcrossProjects(ctx, "PRJXPROJPARTIAL-");
+  expect(rows.length).toBe(2);
+  const titles = rows.map((r) => r.title).sort();
+  expect(titles).toEqual(["First in partial", "Second in partial"]);
+});
+
 test("getTaskSlim returns the slim shape", async () => {
   const f = await seedUserOrgProject("taskslim");
   const ctx = makeAuthContext(f.userId);
