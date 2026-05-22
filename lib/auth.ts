@@ -42,6 +42,11 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
+    // Required when secondaryStorage is set AND any plugin needs DB-backed
+    // sessions. The oauthProvider plugin throws at boot without this. KV
+    // becomes the cache layer; the Drizzle adapter remains the source of
+    // truth (matches "stateless with secondary storage" pattern in BA docs).
+    storeSessionInDatabase: true,
     // Explicit defensive disable per better-auth#4203: cookieCache +
     // secondaryStorage forces re-login on cookie expiry. BA's current
     // default is already false; lock it so a future default flip cannot
