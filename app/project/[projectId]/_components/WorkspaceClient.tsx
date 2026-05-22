@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -62,7 +68,17 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     queryFn: fetchProjectGraph(qc, projectId),
   });
 
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  /**
+   * Initial task selection sourced from a `?task=<id>` query param — the
+   * deep-link shape the global command palette uses to jump into a task
+   * across projects. The param is consumed once: after seeding state, the
+   * effect below strips it from the URL so navigating back to the project
+   * doesn't reselect a stale task.
+   */
+  const initialTaskParam = searchParams.get("task");
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
+    initialTaskParam ?? null,
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [navigatorClosed, setNavigatorClosed] = useState(false);
   /**
@@ -123,6 +139,18 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     },
     [router, pathname, searchParams],
   );
+
+  /**
+   * One-shot: when the page mounts with a `?task=<id>` deep link (used by
+   * the global command palette to jump across projects), the param is
+   * consumed by `useState` initial value above and stripped here so a
+   * later back-navigation to the project doesn't keep re-selecting.
+   */
+  useEffect(() => {
+    if (searchParams.get("task")) updateParam("task", null);
+    // Run exactly once on mount; subsequent param changes are owned by `view`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * Select a task. At narrow viewports (`!isXl`), the graph canvas and

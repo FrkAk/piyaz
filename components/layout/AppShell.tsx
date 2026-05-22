@@ -12,6 +12,7 @@ import {
 } from "@/components/layout/Sidebar";
 import { WorkspaceLabelProvider } from "@/components/layout/WorkspaceLabelProvider";
 import { SidebarCollapseProvider } from "@/components/layout/SidebarCollapseProvider";
+import { CommandPaletteProvider } from "@/components/layout/CommandPaletteProvider";
 
 /** Cookie that persists the sidebar collapse preference. Mirrors the constant in `SidebarCollapseProvider`. */
 const SIDEBAR_COLLAPSE_COOKIE = "mymir-sidebar-collapsed";
@@ -73,17 +74,19 @@ export async function AppShell({ children }: AppShellProps) {
   return (
     <WorkspaceLabelProvider value={workspaceLabel}>
       <SidebarCollapseProvider initialCollapsed={initialSidebarCollapsed}>
-        <div className="flex h-[var(--viewport-height)] overflow-hidden">
-          <Sidebar
-            user={user}
-            workspaceLabel={workspaceLabel}
-            projects={sidebarProjects}
-            teams={sidebarTeams}
-          />
-          <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            {children}
-          </main>
-        </div>
+        <CommandPaletteProvider projects={sidebarProjects}>
+          <div className="flex h-[var(--viewport-height)] overflow-hidden">
+            <Sidebar
+              user={user}
+              workspaceLabel={workspaceLabel}
+              projects={sidebarProjects}
+              teams={sidebarTeams}
+            />
+            <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              {children}
+            </main>
+          </div>
+        </CommandPaletteProvider>
       </SidebarCollapseProvider>
     </WorkspaceLabelProvider>
   );

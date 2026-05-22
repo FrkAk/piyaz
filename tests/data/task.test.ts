@@ -8,6 +8,7 @@ import {
   updateTask,
   searchTasks,
   searchTasksPaged,
+  searchTasksAcrossProjects,
   getTaskSlim,
   getTaskFull,
 } from "@/lib/data/task";
@@ -268,6 +269,89 @@ test("searchTasks tags-only filter omits relevance rank to avoid ORDER BY 0", as
   const rows = await searchTasks(ctx, f.projectId, undefined, ["feature"]);
   expect(rows.length).toBe(1);
   expect(rows[0].tags).toEqual(["feature"]);
+});
+
+test("searchTasksAcrossProjects returns [] for empty / whitespace queries", async () => {
+  const f = await seedUserOrgProject("xprojempty");
+  const ctx = makeAuthContext(f.userId);
+
+  expect(await searchTasksAcrossProjects(ctx, "")).toEqual([]);
+  expect(await searchTasksAcrossProjects(ctx, "   ")).toEqual([]);
+});
+
+test("searchTasksAcrossProjects excludes tasks in orgs the caller is not a member of", async () => {
+  const me = await seedUserOrgProject("xprojme");
+  const other = await seedUserOrgProject("xprojother");
+  const ctx = makeAuthContext(me.userId);
+
+  // Seed one matching task in MY project and one in OTHER's project; both share the title.
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${me.projectId}, 'Crossproject palette query', 1, 1)
+    `;
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${other.projectId}, 'Crossproject palette query', 1, 1)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasksAcrossProjects(ctx, "palette");
+  expect(rows.length).toBe(1);
+  expect(rows[0].projectId).toBe(me.projectId);
+  expect(rows[0].organizationId).toBe(me.organizationId);
+  expect(rows[0].title).toBe("Crossproject palette query");
+});
+
+test("searchTasksAcrossProjects taskRef short-circuit hits the exact task", async () => {
+  const f = await seedUserOrgProject("XPROJREF");
+  const ctx = makeAuthContext(f.userId);
+
+  // `seedUserOrgProject` creates project identifier `PRJ<suffix>`; here PRJXPROJREF.
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'First', 1, 1)
+    `;
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${f.projectId}, 'Second', 2, 2)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasksAcrossProjects(ctx, "PRJXPROJREF-2");
+  expect(rows.length).toBe(1);
+  expect(rows[0].title).toBe("Second");
+  expect(rows[0].taskRef).toBe("PRJXPROJREF-2");
+
+  // Non-matching prefix returns empty (no fallback to title substring).
+  const miss = await searchTasksAcrossProjects(ctx, "OTHER-2");
+  expect(miss).toEqual([]);
+});
+
+test("searchTasksAcrossProjects matches tag substring", async () => {
+  const f = await seedUserOrgProject("xprojtag");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "tags")
+      VALUES (${f.projectId}, 'No match in title', 1, 1, '["palette-tag"]'::jsonb)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasksAcrossProjects(ctx, "palette-tag");
+  expect(rows.length).toBe(1);
+  expect(rows[0].title).toBe("No match in title");
 });
 
 test("getTaskSlim returns the slim shape", async () => {

@@ -6,8 +6,14 @@ import {
   getProjectGraphSlim as coreGetProjectGraphSlim,
   listProjectsSlim as coreListProjectsSlim,
 } from "@/lib/data/project";
+import { searchTasksAcrossProjects as coreSearchTasksAcrossProjects } from "@/lib/data/task";
 
-export type { TaskSlim, TaskState, SearchResult } from "@/lib/data/task";
+export type {
+  TaskSlim,
+  TaskState,
+  SearchResult,
+  CrossProjectSearchResult,
+} from "@/lib/data/task";
 export type { DetailedEdge } from "@/lib/data/edge";
 export type { ProjectTag } from "@/lib/data/project";
 export type {
@@ -53,4 +59,17 @@ export async function listProjectsSlim() {
 export async function getProjectGraphSlim(projectId: string) {
   const ctx = await getAuthContext();
   return coreGetProjectGraphSlim(ctx, projectId);
+}
+
+/**
+ * Server action wrapper — searches tasks across every project the caller
+ * is a member of. Constrained to `current_user_orgs()`; returns up to 10
+ * rows by default. Used by the global ⌘K command palette.
+ *
+ * @param query - Search string (taskRef, title, or tag substring).
+ * @returns Matching tasks with project crumb metadata.
+ */
+export async function searchTasksAcrossProjects(query: string) {
+  const ctx = await getAuthContext();
+  return coreSearchTasksAcrossProjects(ctx, query);
 }
