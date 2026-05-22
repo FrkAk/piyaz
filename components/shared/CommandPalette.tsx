@@ -88,7 +88,11 @@ function matches(haystack: string, needle: string): boolean {
  * @param props - Palette state + project source.
  * @returns Floating dialog rendered into the AppShell tree.
  */
-export function CommandPalette({ open, onClose, projects }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  onClose,
+  projects,
+}: CommandPaletteProps) {
   const router = useRouter();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();

@@ -69,11 +69,7 @@ export function CommandPaletteProvider({
   return (
     <CommandPaletteContext value={{ open, openPalette, closePalette }}>
       {children}
-      <CommandPalette
-        open={open}
-        onClose={closePalette}
-        projects={projects}
-      />
+      <CommandPalette open={open} onClose={closePalette} projects={projects} />
     </CommandPaletteContext>
   );
 }
