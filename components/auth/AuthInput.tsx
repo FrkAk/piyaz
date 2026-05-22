@@ -44,13 +44,14 @@ export const AuthInput = forwardRef<HTMLInputElement, AuthInputProps>(
           id={inputId}
           aria-invalid={error ? true : undefined}
           aria-describedby={messageId}
-          className={`block w-full bg-surface px-3.5 text-[13px] text-text-primary placeholder:text-text-muted outline-none transition-colors focus:border-accent ${className}`}
+          className={`block w-full border bg-surface px-3.5 text-[13px] text-text-primary placeholder:text-text-muted outline-none transition-colors ${
+            error
+              ? "border-danger"
+              : "border-border-strong focus:border-accent"
+          } ${className}`}
           style={{
             height: 38,
             borderRadius: 8,
-            border: error
-              ? "1px solid var(--color-danger)"
-              : "1px solid var(--color-border-strong)",
           }}
           {...rest}
         />
