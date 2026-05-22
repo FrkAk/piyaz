@@ -1344,7 +1344,8 @@ export async function listTasksForGraph(projectId: string, conn: Conn) {
       priority: tasks.priority,
     })
     .from(tasks)
-    .where(eq(tasks.projectId, projectId));
+    .where(eq(tasks.projectId, projectId))
+    .orderBy(asc(tasks.sequenceNumber));
 }
 
 // ---------------------------------------------------------------------------
