@@ -1341,6 +1341,7 @@ export async function listTasksForGraph(projectId: string, conn: Conn) {
       status: tasks.status,
       sequenceNumber: tasks.sequenceNumber,
       tags: tasks.tags,
+      priority: tasks.priority,
     })
     .from(tasks)
     .where(eq(tasks.projectId, projectId));
