@@ -38,14 +38,14 @@ mock.module("@opennextjs/cloudflare", () => ({
   }),
 }));
 
-const { getKvSecondaryStorage } = await import(
-  "@/lib/db/_auth-kv-storage.workers"
-);
+const { getKvSecondaryStorage, __resetMissingBindingWarnedForTest } =
+  await import("@/lib/db/_auth-kv-storage.workers");
 
 beforeEach(() => {
   _store.clear();
   _putCalls.length = 0;
   _envHasKv = true;
+  __resetMissingBindingWarnedForTest();
 });
 
 test("set clamps ttl < 60 to 60", async () => {
@@ -66,6 +66,16 @@ test("set with ttl > 60 passes through", async () => {
 test("set with no ttl omits expirationTtl", async () => {
   await getKvSecondaryStorage().set("k", "v");
   expect(_putCalls[0].opts).toBeUndefined();
+});
+
+test("set with ttl === 0 skips the write", async () => {
+  await getKvSecondaryStorage().set("k", "v", 0);
+  expect(_putCalls.length).toBe(0);
+});
+
+test("set with negative ttl skips the write", async () => {
+  await getKvSecondaryStorage().set("k", "v", -5);
+  expect(_putCalls.length).toBe(0);
 });
 
 test("get returns null on miss, value on hit", async () => {

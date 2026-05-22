@@ -13,10 +13,15 @@ const TARGET_FILES = [
   ["lib/realtime/_broker", `lib/realtime/_broker.${DRIVER_TARGET}`],
 ] as const;
 
+/**
+ * Each alternative pins the basename to its own parent directory so that
+ * an unrelated file with a matching basename in a sibling tree (e.g.
+ * `lib/realtime/_driver.ts` or `lib/db/_broker.ts`) is never silently
+ * aliased to the wrong sibling. The regex is rebuilt directly from
+ * `TARGET_FILES` so adding a new indirection only touches that constant.
+ */
 const REPLACEMENT_REGEX = new RegExp(
-  `(^|/)lib/(?:db|realtime)/(${TARGET_FILES.map(([from]) =>
-    from.split("/").pop(),
-  ).join("|")})(\\.[cm]?[tj]sx?)?$`,
+  `(^|/)(${TARGET_FILES.map(([from]) => from).join("|")})(\\.[cm]?[tj]sx?)?$`,
 );
 
 /**
@@ -34,8 +39,8 @@ const REPLACEMENT_REGEX = new RegExp(
 function rewriteDriverImport(resource: { request: string; context?: string }) {
   const match = resource.request.match(REPLACEMENT_REGEX);
   if (!match) return;
-  const baseName = match[2];
-  const replacement = TARGET_FILES.find(([from]) => from.endsWith(baseName));
+  const fullPath = match[2];
+  const replacement = TARGET_FILES.find(([from]) => from === fullPath);
   if (!replacement) return;
   resource.request = path.resolve(PROJECT_ROOT, `${replacement[1]}.ts`);
 }
