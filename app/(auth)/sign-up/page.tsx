@@ -5,15 +5,16 @@ import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignUpForm } from "@/components/auth/SignUpForm";
 
+const SIGNUPS_DISABLED = process.env.DEPLOY_TARGET === "cloudflare";
+
 /**
- * Sign-up page — mirrors the sign-in two-column shell with the
- * registration form. Same disabled-with-tooltip social buttons (no
- * backend providers wired) and the same static hero on the right.
+ * Sign-up page. Renders the registration form on self-host and an
+ * "invite only" notice on the hosted Cloudflare deploy. Post-create the
+ * user lands on `/`; `requireMembership` forwards to `/onboarding/team`
+ * because a fresh account has zero memberships.
  *
- * Post-create the user lands on `/`; `requireMembership` then forwards
- * to `/onboarding/team` because a fresh account has zero memberships.
- *
- * @returns Server-rendered auth shell composing the sign-up form.
+ * @returns Server-rendered auth shell with form or invite-only notice
+ *   depending on `DEPLOY_TARGET`.
  */
 export default function SignUpPage() {
   return (
@@ -25,21 +26,26 @@ export default function SignUpPage() {
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            Create an account.
+            {SIGNUPS_DISABLED ? "Invite only." : "Create an account."}
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"
             style={{ lineHeight: 1.55 }}
           >
-            Your project graph and decision history live here. Connect agents
-            through MCP from your CLI once you&rsquo;re in.
+            {SIGNUPS_DISABLED
+              ? "Mymir is in a closed beta. New accounts are opening soon — until then, sign-ups are invite-only."
+              : "Your project graph and decision history live here. Connect agents through MCP from your CLI once you’re in."}
           </p>
 
-          <SocialButtons />
-          <SignUpForm />
+          {SIGNUPS_DISABLED ? null : (
+            <>
+              <SocialButtons />
+              <SignUpForm />
+            </>
+          )}
 
           <p className="mt-3.5 text-center text-[12px] text-text-muted">
-            Already have an account?{" "}
+            {SIGNUPS_DISABLED ? "Already invited?" : "Already have an account?"}{" "}
             <Link
               href="/sign-in"
               className="hover:underline"

@@ -6,7 +6,6 @@ import {
   buildAuthPool,
   buildServicePool,
 } from "@/lib/db/_driver";
-import { autoSeedRequestDb } from "@/lib/db/request-scope";
 import type { AppDb, AuthDb } from "@/lib/db/_driver.node";
 
 export type { AppDb, AuthDb } from "@/lib/db/_driver.node";
@@ -56,35 +55,47 @@ export interface RequestScopedDb {
 
 /**
  * AsyncLocalStorage frame populated by the Workers request-scope helper.
- * On self-host the frame is never entered; the global-cached singletons
- * built lazily on first proxy access are used instead.
+ *
+ * Pinned to a `globalThis` slot keyed by `Symbol.for(...)` so every bundle
+ * that imports this module observes the same instance — on Workers the
+ * final artifact contains two copies of this file (one bundled by Next's
+ * webpack into `.open-next/worker.js`, another by wrangler's esbuild from
+ * `worker-cf.ts`), and without the global pin each would instantiate its
+ * own `AsyncLocalStorage`. OpenNext's `init.js` uses the same pattern for
+ * `__cloudflare-context__`.
  */
-export const requestDbStore = new AsyncLocalStorage<RequestScopedDb>();
+const REQUEST_DB_STORE_KEY = Symbol.for("@mymir/db/requestDbStore");
+const symbolKeyedGlobal = globalThis as Record<symbol, unknown>;
+if (!symbolKeyedGlobal[REQUEST_DB_STORE_KEY]) {
+  symbolKeyedGlobal[REQUEST_DB_STORE_KEY] =
+    new AsyncLocalStorage<RequestScopedDb>();
+}
+export const requestDbStore = symbolKeyedGlobal[
+  REQUEST_DB_STORE_KEY
+] as AsyncLocalStorage<RequestScopedDb>;
 
 type GlobalKey = "__mymirAppDb" | "__mymirAuthDb" | "__mymirServiceRoleDb";
 
 /**
- * Resolve the active Drizzle client for a role: prefer the AsyncLocalStorage
- * frame, fall back per-target (Workers lazy-seeds, self-host caches on
- * `globalThis`).
+ * Resolve the active Drizzle client for a role.
  *
- * On Cloudflare Workers, when the proxy is first read in a request without
- * an active `withRequestDb` frame, the {@link autoSeedRequestDb} hook builds
- * the three role pools, registers `ctx.waitUntil(pool.end())` for teardown,
- * and seeds the ALS store for the remainder of the request's async tree. The
- * `globalThis` cache is never consulted on Workers because the Neon
- * serverless `Pool`'s WebSocket cannot span requests.
+ * Both deploy targets use a `globalThis`-cached singleton built lazily on
+ * first read. On self-host the Node `Pool` warms up once and serves every
+ * request via standard pg pooling. On Cloudflare Workers the Neon Pool is
+ * configured with `maxUses: 1` (see `lib/db/_driver.workers.ts`), so each
+ * connection is single-use even though the Pool instance persists across
+ * requests within an isolate — the "WebSocket cannot outlive a request"
+ * constraint is honored at the connection level, not the Pool level.
  *
- * On self-host the seeder is a stub (throws); the `globalThis` cache holds
- * a single warm pool per role for the lifetime of the Node process.
+ * The {@link requestDbStore} ALS frame is consulted first for explicit
+ * scoping (e.g. tests that want to inject sentinel clients via
+ * `requestDbStore.run`). Production fetch paths simply hit the cache.
  *
- * @param key - Which role to read from the request-scope bundle.
- * @param globalKey - Matching `globalThis.__mymir*` slot for self-host.
+ * @param key - Which role to read from the request-scope bundle (used only
+ *   when an ALS frame is explicitly active).
+ * @param globalKey - Matching `globalThis.__mymir*` slot.
  * @param builder - Factory invoked at most once to populate the slot.
  * @returns Drizzle instance for the role.
- * @throws Error on Workers when the seeder cannot register teardown (no
- *   active fetch context, e.g. scheduled handler) — see
- *   `autoSeedRequestDb` for the remediation.
  */
 function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
   key: keyof RequestScopedDb,
@@ -93,10 +104,6 @@ function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
 ): TDb {
   const scoped = requestDbStore.getStore();
   if (scoped) return scoped[key] as TDb;
-  if (process.env.DEPLOY_TARGET === "cloudflare") {
-    const seeded = autoSeedRequestDb();
-    return seeded[key] as TDb;
-  }
   const cached = globalThis[globalKey];
   if (cached) return cached as TDb;
   const built = builder().db;

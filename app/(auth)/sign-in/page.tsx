@@ -42,14 +42,26 @@ export default function SignInPage() {
           <SignInForm />
 
           <p className="mt-3.5 text-center text-[12px] text-text-muted">
-            New to Mymir?{" "}
-            <Link
-              href="/sign-up"
-              className="text-accent-light hover:underline"
-              style={{ color: "var(--color-accent-light)" }}
-            >
-              Create an account
-            </Link>
+            {process.env.DEPLOY_TARGET === "cloudflare" ? (
+              <span
+                aria-disabled="true"
+                title="Sign-ups are invite-only during the hosted beta."
+                className="cursor-not-allowed opacity-60"
+              >
+                Sign-ups are invite-only
+              </span>
+            ) : (
+              <>
+                New to Mymir?{" "}
+                <Link
+                  href="/sign-up"
+                  className="text-accent-light hover:underline"
+                  style={{ color: "var(--color-accent-light)" }}
+                >
+                  Create an account
+                </Link>
+              </>
+            )}
           </p>
         </>
       }
