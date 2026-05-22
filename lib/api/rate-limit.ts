@@ -14,12 +14,25 @@ export type RateLimitResult = {
 
 /**
  * A rate limit rule matching a URL pattern to limits and key strategy.
+ *
+ * `bindingKey` selects which Cloudflare rate-limit binding backs the rule on
+ * the Workers deploy (`'api'` → `RATE_LIMIT_API`, `'auth'` → `RATE_LIMIT_AUTH`).
+ * Omitted defaults to `'api'`. Self-host ignores this field — both kinds resolve
+ * to the same in-memory backend by absence of bindings.
+ *
+ * Invariant: when a CF binding backs the slot, `max` and `window` MUST equal
+ * the binding's `simple.limit` and `simple.period` declared in
+ * `wrangler.jsonc:ratelimits[]`. The binding enforces only its own
+ * `simple.limit` per composite key; `max` here only partitions counters and
+ * fills the IETF `RateLimit-Policy` header. A mismatch makes the response
+ * header advertise a limit the runtime does not enforce.
  */
 export type RateLimitRule = {
   pattern: string;
   max: number;
   window: number;
   keyStrategy: "session" | "apikey";
+  bindingKey?: "api" | "auth";
 };
 
 /**
@@ -34,11 +47,36 @@ export interface RateLimitBackend {
 }
 
 /**
- * Rate limit rules ordered most-specific first.
- * matchRule returns the first match.
+ * Rate limit rules ordered most-specific first. `matchRule` returns the first
+ * match, so paths with concrete prefixes (e.g. `/api/auth/sign-in`) must
+ * precede the catch-all `/api/*`.
+ *
+ * Pre-auth IP keying on the two auth rules is intentional. CF docs discourage
+ * IP-based keys for general user throttling because shared NATs cause
+ * collateral throttling, but `sign-in` and `sign-up` have no session cookie
+ * yet — IP is the only available key. Brute-force defense by IP is the
+ * field-standard exception. Layered on top of Better-Auth's in-memory
+ * `customRules` (`lib/auth.ts`) for defense-in-depth — BA tightens sign-up
+ * to 3/60 in-process per isolate even though the CF binding only enforces
+ * 5/60 here. Follow-up: declare a dedicated 3/60 binding to tighten the
+ * middleware layer to match.
  */
 export const RATE_LIMIT_RULES: RateLimitRule[] = [
-  { pattern: "/api/mcp", max: 60, window: 60, keyStrategy: "apikey" },
+  {
+    pattern: "/api/auth/sign-in/*",
+    max: 5,
+    window: 60,
+    keyStrategy: "session",
+    bindingKey: "auth",
+  },
+  {
+    pattern: "/api/auth/sign-up/*",
+    max: 5,
+    window: 60,
+    keyStrategy: "session",
+    bindingKey: "auth",
+  },
+  { pattern: "/api/mcp", max: 100, window: 60, keyStrategy: "apikey" },
   { pattern: "/api/*", max: 100, window: 60, keyStrategy: "session" },
 ];
 
@@ -139,25 +177,46 @@ export function rateLimitHeaders(
   return headers;
 }
 
-let _backend: RateLimitBackend | null = null;
+type BackendKind = "api" | "auth" | "actions";
+
+/**
+ * Backend slot table keyed by kind. `worker-cf.ts` wires `api` and `auth` to
+ * the matching Cloudflare bindings on first request; `actions` is
+ * intentionally never bound (server actions declare tighter `max` values
+ * than any single CF binding can enforce, so they stay on the per-isolate
+ * `MemoryRateLimitBackend` where rule limits are honored exactly).
+ */
+const _backends: Record<BackendKind, RateLimitBackend | null> = {
+  api: null,
+  auth: null,
+  actions: null,
+};
 
 const MAX_WINDOW_MS = Math.max(...RATE_LIMIT_RULES.map((r) => r.window)) * 1000;
 
 /**
- * Get the singleton rate limit backend.
- * Returns in-memory by default. For CF Workers, call setBackend() with
- * a CloudflareRateLimitBackend instance initialized from the env binding.
- * @returns The active rate limit backend.
+ * Get the rate limit backend for the given kind. Lazy-init to
+ * `MemoryRateLimitBackend` on first read if no `setBackend` has run for that
+ * kind — preserves self-host behavior where neither CF binding exists.
+ *
+ * @param kind - Which binding slot to read; defaults to `'api'`.
+ * @returns The active rate limit backend for the slot.
  */
-export function getBackend(): RateLimitBackend {
-  if (!_backend) _backend = new MemoryRateLimitBackend(MAX_WINDOW_MS);
-  return _backend;
+export function getBackend(kind: BackendKind = "api"): RateLimitBackend {
+  if (!_backends[kind])
+    _backends[kind] = new MemoryRateLimitBackend(MAX_WINDOW_MS);
+  return _backends[kind];
 }
 
 /**
- * Override the rate limit backend (used by CF Workers to inject the binding).
- * @param backend - The backend to use for all subsequent rate limit checks.
+ * Override the rate limit backend for a specific kind. Called once per isolate
+ * from `worker-cf.ts` on first request to register the Cloudflare rate-limit
+ * binding-backed implementation. Self-host never calls this; the lazy memory
+ * backend in `getBackend` covers that path.
+ *
+ * @param kind - Binding slot to write (`'api'` or `'auth'`).
+ * @param backend - The backend instance to register for that slot.
  */
-export function setBackend(backend: RateLimitBackend): void {
-  _backend = backend;
+export function setBackend(kind: BackendKind, backend: RateLimitBackend): void {
+  _backends[kind] = backend;
 }

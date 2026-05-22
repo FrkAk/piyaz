@@ -3,8 +3,21 @@
  *
  * Re-exports the Durable Object classes wrangler instantiates at runtime
  * (`MymirBroker`, `DOQueueHandler`) and delegates `fetch` to the
- * OpenNext-generated handler.
+ * OpenNext-generated handler. Before the first delegation, registers the
+ * Cloudflare rate-limit bindings against `lib/api/rate-limit.ts`'s singleton
+ * slots so middleware throttling uses the per-POP CF binding instead of the
+ * default per-isolate `MemoryRateLimitBackend`.
+ *
+ * Types are file-local because `cloudflare-env.d.ts` is excluded from the
+ * project typecheck (its `@cloudflare/workers-types` content clobbers DOM
+ * types); the bindings are structurally typed against the minimal shapes
+ * Cloudflare's runtime provides.
  */
+import { setBackend } from "./lib/api/rate-limit";
+import {
+  CloudflareRateLimitBackend,
+  type CloudflareRateLimitBinding,
+} from "./lib/api/rate-limit-cf";
 import { MymirBroker } from "./lib/realtime/broker-do";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- generated entry; tsc resolves it but @ts-expect-error trips "unused directive".
@@ -15,4 +28,81 @@ import { default as openNextHandler } from "./.open-next/worker.js";
 export { DOQueueHandler } from "./.open-next/worker.js";
 export { MymirBroker };
 
-export default openNextHandler;
+/**
+ * Subset of the auto-generated `CloudflareEnv` (`cloudflare-env.d.ts`) that
+ * this entry actually reads. Declared locally — not imported from
+ * `CloudflareEnv` — because that file is excluded from typecheck per
+ * `tsconfig.json:33` and the `@cloudflare/workers-types` package itself is
+ * banned by `no-restricted-imports` in `eslint.config.*`: its ambient
+ * declarations clobber DOM `Request` / `Response` and break unrelated
+ * browser tests. Project convention is file-local stubs (see
+ * `lib/realtime/broker-do.ts:30-36`).
+ */
+interface WorkerEnv {
+  RATE_LIMIT_API?: CloudflareRateLimitBinding;
+  RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
+}
+
+/**
+ * Minimal `ExecutionContext` shape passed by workerd to `fetch`. Same
+ * file-local-stub rationale as `WorkerEnv` above.
+ */
+interface WorkerCtx {
+  waitUntil(promise: Promise<unknown>): void;
+  passThroughOnException(): void;
+}
+
+// Binding-pointer state, not request-scoped — set once per isolate spawn and
+// read by every subsequent request through the same isolate. Safe to live at
+// module scope per Workers best practices.
+let _rateLimitInitialized = false;
+
+/**
+ * Register the Cloudflare rate-limit bindings with the shared rate-limit
+ * module exactly once per isolate. CF reuses isolates across requests, so the
+ * cost is amortized to a single binding-pointer assignment per isolate spawn.
+ *
+ * The AUTH binding is wired `failOpen: false` so a binding outage cannot
+ * silently disable brute-force throttling on `/api/auth/sign-in/*` and
+ * `/api/auth/sign-up/*`. The API binding stays `failOpen: true` (default) —
+ * a rate-limit subsystem hiccup must not take the whole app offline.
+ *
+ * Missing bindings are tolerated (the slot stays on `MemoryRateLimitBackend`),
+ * which keeps `wrangler dev --no-bundle` and one-off scripts that don't bind
+ * rate-limits working.
+ *
+ * @param env - The Cloudflare-Workers `env` passed to `fetch`.
+ */
+function initRateLimitBindings(env: WorkerEnv): void {
+  if (_rateLimitInitialized) return;
+  if (env.RATE_LIMIT_API) {
+    setBackend("api", new CloudflareRateLimitBackend(env.RATE_LIMIT_API));
+  }
+  if (env.RATE_LIMIT_AUTH) {
+    setBackend(
+      "auth",
+      new CloudflareRateLimitBackend(env.RATE_LIMIT_AUTH, { failOpen: false }),
+    );
+  }
+  _rateLimitInitialized = true;
+  console.log(
+    JSON.stringify({
+      event: "rate_limit_init",
+      api: Boolean(env.RATE_LIMIT_API),
+      auth: Boolean(env.RATE_LIMIT_AUTH),
+    }),
+  );
+}
+
+const handler = {
+  async fetch(
+    request: Request,
+    env: WorkerEnv,
+    ctx: WorkerCtx,
+  ): Promise<Response> {
+    initRateLimitBindings(env);
+    return openNextHandler.fetch(request, env, ctx);
+  },
+};
+
+export default handler;
