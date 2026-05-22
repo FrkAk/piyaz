@@ -1,16 +1,23 @@
 /**
- * Pre-deploy guard: reject `bun run deploy:cf` while `wrangler.jsonc` still
- * carries placeholder binding IDs. MYMR-165 provisions the real Cloudflare
- * resources; until that lands, every `deploy:cf` should fail loudly here
- * rather than ship a Worker bound to non-existent KV / D1 / R2 resources.
+ * Pre-deploy guard: reject `bun run deploy:cf` while the production
+ * configuration in `wrangler.jsonc` is not ready. `deploy:cf` targets
+ * `--env production`; all production bindings live under `env.production`
+ * so the guard inspects that section (top-level config is reserved for
+ * `wrangler dev` and intentionally has no real binding IDs, which makes
+ * an accidental `wrangler deploy` without `--env` fail fast instead of
+ * misbinding production resources).
  *
  * Checked invariants:
- *   - No KV namespace `id` is all zeros.
- *   - No D1 `database_id` is the zero UUID.
- *   - No R2 binding still references the `mymir-placeholder-*` bucket name.
- *   - `BROKER_DO_SECRET` is registered as a Wrangler secret in the target
- *     environment (set via `wrangler secret put`). Cannot be checked from
- *     `wrangler.jsonc` alone, so the script shells out to `wrangler secret list`.
+ *   - `env.production` exists.
+ *   - No KV namespace `id` in `env.production` is all zeros.
+ *   - No D1 `database_id` in `env.production` is the zero UUID.
+ *   - No R2 binding in `env.production` references a `mymir-placeholder-*` bucket.
+ *   - Every required production secret is registered in the production
+ *     Wrangler env: BROKER_DO_SECRET (broker DO HMAC key), BETTER_AUTH_SECRET
+ *     (Better-auth signing key), DATABASE_URL / DATABASE_SERVICE_ROLE_URL /
+ *     DATABASE_AUTH_URL (Neon connection strings for the three DB roles).
+ *     Cannot be checked from `wrangler.jsonc` alone, so the script shells out
+ *     to `wrangler secret list --env production`.
  *
  * Run from the `deploy:cf` script chain. Exits with code 1 on any failure
  * and prints a remediation hint.
@@ -38,10 +45,13 @@ interface R2Binding {
   binding: string;
   bucket_name: string;
 }
-interface WranglerConfig {
+interface WranglerEnvBindings {
   kv_namespaces?: KvBinding[];
   d1_databases?: D1Binding[];
   r2_buckets?: R2Binding[];
+}
+interface WranglerConfig extends WranglerEnvBindings {
+  env?: { production?: WranglerEnvBindings };
 }
 
 /**
@@ -69,61 +79,122 @@ async function readWranglerConfig(): Promise<WranglerConfig> {
   return JSON.parse(stripJsonc(raw)) as WranglerConfig;
 }
 
-const failures: string[] = [];
+/**
+ * Print the accumulated failures and abort with exit code 1.
+ *
+ * @param failures - Non-empty list of failure messages.
+ */
+function abortWithFailures(failures: string[]): never {
+  console.error("\nDeploy aborted — wrangler.jsonc is not production-ready:\n");
+  for (const f of failures) console.error(`  - ${f}`);
+  console.error("");
+  process.exit(1);
+}
 
 const cfg = await readWranglerConfig();
+const prod = cfg.env?.production;
+if (!prod) {
+  abortWithFailures([
+    "No 'env.production' section found in wrangler.jsonc. " +
+      "'deploy:cf' targets '--env production' and the production bindings must live under that section.",
+  ]);
+}
 
-for (const kv of cfg.kv_namespaces ?? []) {
+const failures: string[] = [];
+
+for (const kv of prod.kv_namespaces ?? []) {
   if (kv.id === ZERO_KV_ID) {
     failures.push(
-      `KV namespace "${kv.binding}" still has placeholder id ${ZERO_KV_ID}. ` +
+      `KV namespace "${kv.binding}" in env.production still has placeholder id ${ZERO_KV_ID}. ` +
         `Provision via 'wrangler kv namespace create' then patch wrangler.jsonc.`,
     );
   }
 }
 
-for (const d1 of cfg.d1_databases ?? []) {
+for (const d1 of prod.d1_databases ?? []) {
   if (d1.database_id === ZERO_D1_ID) {
     failures.push(
-      `D1 database "${d1.binding}" still has placeholder database_id ${ZERO_D1_ID}. ` +
+      `D1 database "${d1.binding}" in env.production still has placeholder database_id ${ZERO_D1_ID}. ` +
         `Provision via 'wrangler d1 create ${d1.database_name ?? d1.binding}'.`,
     );
   }
 }
 
-for (const r2 of cfg.r2_buckets ?? []) {
+for (const r2 of prod.r2_buckets ?? []) {
   if (PLACEHOLDER_BUCKET_RE.test(r2.bucket_name)) {
     failures.push(
-      `R2 binding "${r2.binding}" still references placeholder bucket "${r2.bucket_name}". ` +
+      `R2 binding "${r2.binding}" in env.production still references placeholder bucket "${r2.bucket_name}". ` +
         `Provision via 'wrangler r2 bucket create' then patch wrangler.jsonc.`,
     );
   }
 }
 
-const proc = Bun.spawnSync({
-  cmd: ["bunx", "wrangler", "secret", "list", "--env", "production"],
-  stdout: "pipe",
-  stderr: "pipe",
-});
-const secretListStdout = proc.stdout.toString();
-if (proc.exitCode !== 0) {
-  failures.push(
-    `Failed to enumerate Wrangler secrets in 'production' env. ` +
-      `stderr: ${proc.stderr.toString().trim() || "(empty)"}`,
-  );
-} else if (!secretListStdout.includes("BROKER_DO_SECRET")) {
-  failures.push(
-    `BROKER_DO_SECRET is not registered in the 'production' Wrangler env. ` +
-      `Set it via 'wrangler secret put BROKER_DO_SECRET --env production'. ` +
-      `Generate a value with 'openssl rand -base64 48'.`,
-  );
+const REQUIRED_SECRETS = [
+  "BROKER_DO_SECRET",
+  "BETTER_AUTH_SECRET",
+  "DATABASE_URL",
+  "DATABASE_SERVICE_ROLE_URL",
+  "DATABASE_AUTH_URL",
+] as const;
+
+interface WranglerSecretEntry {
+  name: string;
+  type: string;
+}
+
+/**
+ * Resolve the production secret names registered with Wrangler.
+ *
+ * Parses `wrangler secret list --env production`'s JSON output and returns
+ * the exact secret names — substring matching against raw stdout (the
+ * previous approach) would treat a future `DATABASE_URL_BACKUP` as
+ * satisfying the `DATABASE_URL` check.
+ *
+ * @returns Set of secret names registered in the production env, or null
+ *   when the wrangler invocation failed (with reason appended to the
+ *   failure list out-of-band).
+ */
+function listProductionSecretNames(failures: string[]): Set<string> | null {
+  const cmdResult = Bun.spawnSync({
+    cmd: ["bunx", "wrangler", "secret", "list", "--env", "production"],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (cmdResult.exitCode !== 0) {
+    failures.push(
+      `Failed to enumerate Wrangler secrets in 'production' env. ` +
+        `stderr: ${cmdResult.stderr.toString().trim() || "(empty)"}`,
+    );
+    return null;
+  }
+  const stdout = cmdResult.stdout.toString().trim();
+  try {
+    const parsed = JSON.parse(stdout) as WranglerSecretEntry[];
+    return new Set(parsed.map((s) => s.name));
+  } catch (err) {
+    failures.push(
+      `Could not parse 'wrangler secret list' output as JSON. ` +
+        `Error: ${err instanceof Error ? err.message : String(err)}. ` +
+        `Raw stdout (first 200 chars): ${stdout.slice(0, 200)}`,
+    );
+    return null;
+  }
+}
+
+const presentSecrets = listProductionSecretNames(failures);
+if (presentSecrets) {
+  for (const name of REQUIRED_SECRETS) {
+    if (!presentSecrets.has(name)) {
+      failures.push(
+        `${name} is not registered in the 'production' Wrangler env. ` +
+          `Set it via 'wrangler secret put ${name} --env production'.`,
+      );
+    }
+  }
 }
 
 if (failures.length > 0) {
-  console.error("\nDeploy aborted — wrangler.jsonc is not production-ready:\n");
-  for (const f of failures) console.error(`  - ${f}`);
-  console.error("");
-  process.exit(1);
+  abortWithFailures(failures);
 }
 
 console.log("Deploy guard: wrangler.jsonc bindings + secrets look healthy.");

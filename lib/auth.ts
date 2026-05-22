@@ -10,6 +10,16 @@ import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 
+const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
+
+if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
+  throw new Error(
+    "BETTER_AUTH_URL is required on the Cloudflare deploy target. " +
+      "Without it, Better-auth's trustedOrigins falls back to [] and CSRF " +
+      "protection accepts any origin. Set it in wrangler.jsonc env.production.vars.",
+  );
+}
+
 /**
  * Better Auth server instance with email/password auth and
  * organization-based team management. Adapts the `neon_auth` schema via
@@ -24,6 +34,8 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     revokeSessionsOnPasswordReset: true,
+    // Invite-only on hosted Cloudflare; self-host stays open.
+    disableSignUp: IS_CLOUDFLARE,
   },
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
@@ -43,7 +55,7 @@ export const auth = betterAuth({
     ? [process.env.BETTER_AUTH_URL]
     : [],
   advanced: {
-    useSecureCookies: process.env.NODE_ENV === "production",
+    useSecureCookies: process.env.NODE_ENV === "production" || IS_CLOUDFLARE,
     defaultCookieAttributes: {
       httpOnly: true,
       sameSite: "lax",
