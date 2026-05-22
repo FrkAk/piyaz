@@ -9,6 +9,7 @@ import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
+import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -31,6 +32,7 @@ export const auth = betterAuth({
     schema: authSchema,
   }),
   secret: process.env.BETTER_AUTH_SECRET,
+  secondaryStorage: getKvSecondaryStorage(),
   emailAndPassword: {
     enabled: true,
     revokeSessionsOnPasswordReset: true,
@@ -40,6 +42,11 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
+    // Explicit defensive disable per better-auth#4203: cookieCache +
+    // secondaryStorage forces re-login on cookie expiry. BA's current
+    // default is already false; lock it so a future default flip cannot
+    // regress the KV-backed session-cache path.
+    cookieCache: { enabled: false },
   },
   rateLimit: {
     enabled: true,

@@ -9,6 +9,7 @@ const DRIVER_TARGET = isCloudflare ? "workers" : "node";
 const TARGET_FILES = [
   ["lib/db/_driver", `lib/db/_driver.${DRIVER_TARGET}`],
   ["lib/db/request-scope", `lib/db/request-scope.${DRIVER_TARGET}`],
+  ["lib/db/_auth-kv-storage", `lib/db/_auth-kv-storage.${DRIVER_TARGET}`],
   ["lib/realtime/_broker", `lib/realtime/_broker.${DRIVER_TARGET}`],
 ] as const;
 
