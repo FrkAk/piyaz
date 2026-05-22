@@ -63,27 +63,27 @@ export async function middleware(request: NextRequest) {
     return withCsp(NextResponse.redirect(new URL("/sign-in", request.url)));
   }
 
-  // Rate limiting — runs before auth so brute-force attempts are throttled
+  // Rate limiting — routed by rule.bindingKey so `/api/auth/*` paths hit the
+  // RATE_LIMIT_AUTH binding (defense-in-depth on top of Better-Auth's in-memory
+  // customRules) and the rest of `/api/*` hits RATE_LIMIT_API.
   let rlHeaders: Record<string, string> | null = null;
-  if (!pathname.startsWith("/api/auth/")) {
-    const rule = matchRule(pathname);
-    if (rule) {
-      const key = await extractKey(request, rule.keyStrategy);
-      if (key) {
-        const result = await getBackend().check(
-          `${rule.pattern}:${key}`,
-          rule.max,
-          rule.window,
+  const rule = matchRule(pathname);
+  if (rule) {
+    const key = await extractKey(request, rule.keyStrategy);
+    if (key) {
+      const result = await getBackend(rule.bindingKey).check(
+        `${rule.pattern}:${key}`,
+        rule.max,
+        rule.window,
+      );
+      rlHeaders = rateLimitHeaders(result, rule);
+      if (!result.allowed) {
+        return withCsp(
+          NextResponse.json(
+            { error: "Too many requests. Please try again later." },
+            { status: 429, headers: rlHeaders },
+          ),
         );
-        rlHeaders = rateLimitHeaders(result, rule);
-        if (!result.allowed) {
-          return withCsp(
-            NextResponse.json(
-              { error: "Too many requests. Please try again later." },
-              { status: 429, headers: rlHeaders },
-            ),
-          );
-        }
       }
     }
   }
