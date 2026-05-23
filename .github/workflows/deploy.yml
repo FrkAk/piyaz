@@ -50,6 +50,7 @@ jobs:
       - name: Deploy to Cloudflare Workers (production)
         env:
           DEPLOY_TARGET: cloudflare
+          BETTER_AUTH_URL: https://app.mymir.dev
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: bun run deploy:cf
