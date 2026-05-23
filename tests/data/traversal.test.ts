@@ -367,3 +367,68 @@ describe("getCriticalPath: done-transparency and priority weighting", () => {
     expect([a, c]).toContain(chain[0].id);
   });
 });
+
+/**
+ * Coverage for the MYMR-210 fix: `listTasksForGraph` returns rows in a
+ * deterministic `ORDER BY sequence_number` order, and `getCriticalPath`
+ * resolves equal-length ties on a deterministic secondary key
+ * (`sequenceNumber`) rather than Map/heap iteration order.
+ */
+describe("getCriticalPath: deterministic ordering and tie-break", () => {
+  test("AC 3: two equal-priority equal-length chains return the identical chain across repeated invocations", async () => {
+    // Two co-equal 2-chains (A1→A2 and B1→B2), all normal priority,
+    // weighted length 4 each. The lower-sequenceNumber chain (A) must win
+    // the tie-break, and `getCriticalPath` must return the identical chain
+    // across two back-to-back invocations.
+    const fx = await seedUserOrgProject("trav-determinism");
+    const sr = serviceRoleConnect();
+    const a1 = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "A1",
+      sequenceNumber: 1,
+      priority: "normal",
+    });
+    const a2 = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "A2",
+      sequenceNumber: 2,
+      priority: "normal",
+    });
+    const b1 = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "B1",
+      sequenceNumber: 3,
+      priority: "normal",
+    });
+    const b2 = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "B2",
+      sequenceNumber: 4,
+      priority: "normal",
+    });
+
+    const ctx = makeAuthContext(fx.userId);
+    await createEdge(ctx, {
+      sourceTaskId: a2,
+      targetTaskId: a1,
+      edgeType: "depends_on",
+      note: "",
+    });
+    await createEdge(ctx, {
+      sourceTaskId: b2,
+      targetTaskId: b1,
+      edgeType: "depends_on",
+      note: "",
+    });
+
+    const first = await getCriticalPath(ctx, fx.projectId);
+    const second = await getCriticalPath(ctx, fx.projectId);
+
+    // Lower-sequence chain wins the tie.
+    expect(first.map((t) => t.id)).toEqual([a1, a2]);
+    // And the result is identical across calls.
+    expect(second.map((t) => t.id)).toEqual(first.map((t) => t.id));
+    // Other chain is excluded.
+    expect(first.some((t) => t.id === b1 || t.id === b2)).toBe(false);
+  });
+});

@@ -558,6 +558,16 @@ export async function getCriticalPath(
         if (len > bestParentLen) {
           bestParentLen = len;
           bestParent = dep;
+        } else if (len === bestParentLen && len > 0 && bestParent !== null) {
+          // Deterministic tie-break: lower sequenceNumber wins. Sequence
+          // numbers are unique per project and immutable, so the comparison
+          // is total and survives any future change to dpNodes iteration
+          // order (MYMR-210).
+          const depSeq = dpNodes.get(dep)!.sequenceNumber;
+          const bestSeq = dpNodes.get(bestParent)!.sequenceNumber;
+          if (depSeq < bestSeq) {
+            bestParent = dep;
+          }
         }
       }
       const info = dpNodes.get(node)!;
@@ -571,6 +581,14 @@ export async function getCriticalPath(
       if (len > maxLen) {
         maxLen = len;
         endNode = node;
+      } else if (len === maxLen && endNode !== null) {
+        // Same tie-break as the bestParent loop: lower sequenceNumber wins
+        // when two chains share the longest weighted length (MYMR-210).
+        const nodeSeq = dpNodes.get(node)!.sequenceNumber;
+        const endSeq = dpNodes.get(endNode)!.sequenceNumber;
+        if (nodeSeq < endSeq) {
+          endNode = node;
+        }
       }
     }
     if (!endNode) return [];
