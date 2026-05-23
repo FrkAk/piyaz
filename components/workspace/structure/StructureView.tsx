@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { createTask, deleteTask } from "@/lib/graph/mutations";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
-import { IconSearch, IconX, IconPlus } from "@/components/shared/icons";
+import { IconSearch, IconX } from "@/components/shared/icons";
 import {
   StatusGlyph,
   STATUS_META,
@@ -15,7 +15,6 @@ import {
 } from "@/components/shared/StatusGlyph";
 import type { TaskEdge } from "@/lib/db/schema";
 import type { TaskGraphSlim, TaskFull } from "@/lib/data/views";
-import type { TaskStatus } from "@/lib/types";
 import { taskKeys } from "@/lib/query/keys";
 import { fetchTaskBody } from "@/lib/query/queries";
 import { listTeamMembersAction } from "@/lib/actions/team-members";
@@ -274,8 +273,6 @@ export function StructureView({
   const [search, setSearch] = useState<string>(
     () => searchParams.get(FILTER_PARAM_KEYS.search) ?? "",
   );
-  const [addingToGroup, setAddingToGroup] = useState<TaskGroupKey | null>(null);
-  const [addTitle, setAddTitle] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const pendingDeleteBodyRef = useRef<Map<string, Promise<TaskFull | null>>>(
     new Map(),
@@ -512,38 +509,6 @@ export function StructureView({
     setSearch("");
   }, []);
 
-  const handleStartNewTask = useCallback((groupKey: TaskGroupKey) => {
-    setAddingToGroup(groupKey);
-    setAddTitle("");
-  }, []);
-
-  const handleAddTask = useCallback(
-    async (groupKey: TaskGroupKey) => {
-      const trimmed = addTitle.trim();
-      if (!trimmed) {
-        setAddingToGroup(null);
-        return;
-      }
-      const status: TaskStatus =
-        groupKey === "ready"
-          ? "planned"
-          : groupKey === "plannable" || groupKey === "cancelled"
-            ? "draft"
-            : (groupKey as TaskStatus);
-      await createTask({
-        projectId,
-        title: trimmed,
-        description: "",
-        status,
-        order: tasks.length,
-      });
-      setAddingToGroup(null);
-      setAddTitle("");
-      onGraphChange?.();
-    },
-    [addTitle, projectId, tasks.length, onGraphChange],
-  );
-
   const handleRestore = useCallback(
     async (item: DeletedTask) => {
       const t = item.taskData;
@@ -658,19 +623,12 @@ export function StructureView({
           count: groupTasks.length,
         });
       }
-      if (section.kind === "status" && addingToGroup === section.key) {
-        items.push({
-          kind: "new-task-input",
-          key: `n:${section.key}`,
-          groupKey: section.key,
-        });
-      }
       for (const t of groupTasks) {
         items.push({ kind: "task", key: t.id, task: t });
       }
     }
     return items;
-  }, [groupedVisible, addingToGroup]);
+  }, [groupedVisible]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // Sizes include borders so positions stay pixel-accurate without needing
@@ -778,30 +736,6 @@ export function StructureView({
                     <TaskGroupHeader
                       section={item.section}
                       count={item.count}
-                      onAdd={
-                        item.section.kind === "status"
-                          ? () =>
-                              handleStartNewTask(
-                                (
-                                  item.section as Extract<
-                                    GroupSection,
-                                    { kind: "status" }
-                                  >
-                                ).key,
-                              )
-                          : undefined
-                      }
-                    />
-                  )}
-                  {item.kind === "new-task-input" && (
-                    <NewTaskRow
-                      value={addTitle}
-                      onChange={setAddTitle}
-                      onCommit={() => handleAddTask(item.groupKey)}
-                      onCancel={() => {
-                        setAddingToGroup(null);
-                        setAddTitle("");
-                      }}
                     />
                   )}
                   {item.kind === "task" && (
@@ -842,7 +776,6 @@ export function StructureView({
 /** Discriminated row item — drives the virtualised renderer's item heights and layout. */
 type RowItem =
   | { kind: "group-header"; key: string; section: GroupSection; count: number }
-  | { kind: "new-task-input"; key: string; groupKey: TaskGroupKey }
   | { kind: "task"; key: string; task: TaskWithRef };
 
 interface TaskGroupHeaderProps {
@@ -850,8 +783,6 @@ interface TaskGroupHeaderProps {
   section: GroupSection;
   /** Task count for this section. */
   count: number;
-  /** Optional add handler — only present for status groups. */
-  onAdd?: () => void;
 }
 
 /**
@@ -862,7 +793,7 @@ interface TaskGroupHeaderProps {
  * @param props - Section + count + optional add handler.
  * @returns 30px sticky-style header.
  */
-function TaskGroupHeader({ section, count, onAdd }: TaskGroupHeaderProps) {
+function TaskGroupHeader({ section, count }: TaskGroupHeaderProps) {
   if (section.kind === "flat") return null;
   if (section.kind === "status") {
     const meta = STATUS_META[section.key as GlyphStatus] ?? STATUS_META.draft;
@@ -882,17 +813,6 @@ function TaskGroupHeader({ section, count, onAdd }: TaskGroupHeaderProps) {
           {count}
         </span>
         <span className="flex-1" />
-        {onAdd && (
-          <button
-            type="button"
-            onClick={onAdd}
-            aria-label={`Add task to ${meta.label}`}
-            title={`Add task to ${meta.label}`}
-            className="inline-flex h-[18px] w-[18px] cursor-pointer items-center justify-center rounded text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
-          >
-            <IconPlus size={10} />
-          </button>
-        )}
       </div>
     );
   }
@@ -923,64 +843,6 @@ function sectionKey(section: GroupSection): string {
   if (section.kind === "flat") return "__flat__";
   if (section.kind === "status") return `status:${section.key}`;
   return `category:${section.key}`;
-}
-
-interface NewTaskRowProps {
-  /** Live input value. */
-  value: string;
-  /** Update the input. */
-  onChange: (next: string) => void;
-  /** Commit the new task on Enter / blur. */
-  onCommit: () => void;
-  /** Cancel without saving. */
-  onCancel: () => void;
-}
-
-/**
- * Inline new-task input rendered above the rows in the active group.
- *
- * @param props - Input configuration.
- * @returns Compact input row with a confirm hint.
- */
-function NewTaskRow({ value, onChange, onCommit, onCancel }: NewTaskRowProps) {
-  const cancelRef = useRef(false);
-  return (
-    <div className="flex h-[34px] items-center gap-2 border-b border-border bg-surface-raised/30 px-4">
-      <span
-        aria-hidden="true"
-        className="h-2 w-2 rounded-full border border-dashed border-border-strong"
-      />
-      <input
-        type="text"
-        autoFocus
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={() => {
-          if (cancelRef.current) {
-            cancelRef.current = false;
-            onCancel();
-          } else {
-            onCommit();
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            e.currentTarget.blur();
-          }
-          if (e.key === "Escape") {
-            cancelRef.current = true;
-            e.currentTarget.blur();
-          }
-        }}
-        placeholder="Task title…"
-        className="flex-1 bg-transparent text-[13px] text-text-primary placeholder:text-text-muted/60 outline-none"
-      />
-      <span className="font-mono text-[10px] text-text-faint">
-        ↵ to add · Esc to cancel
-      </span>
-    </div>
-  );
 }
 
 /**
