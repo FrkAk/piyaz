@@ -16,40 +16,30 @@ import { listPendingInvitationsAction } from "@/lib/actions/team-invitations";
 import type { BetterAuthInvitationRow } from "@/lib/actions/team-invitations-map";
 
 /**
- * AC #4 (MYMR-155): pin the two halves of the list-invitations security
- * contract.
+ * MYMR-155 security contract — two halves:
  *
- * (a) A non-admin org member hitting
- *     `GET /api/auth/organization/list-invitations` directly through the
- *     BA HTTP dispatcher receives a `404 "Not Found"` with no invitation
- *     rows in the body — `disabledPaths` short-circuits the route at
- *     `node_modules/better-auth/dist/api/index.mjs:163-165` BEFORE any
- *     plugin handler runs. This closes the bypass: BA's `listInvitations`
- *     route (`crud-invites.mjs:471-488`) only checks team membership,
- *     so without the disable any non-admin member could harvest invitee
- *     emails.
+ * (a) Non-admin HTTP harvest is closed. The catch-all allowlist at
+ *     `app/api/auth/[...all]/route.ts` 404s every `/organization/*`
+ *     path (and every other non-allowlisted BA path) before
+ *     `auth.handler` is invoked, so neither `list-invitations` nor the
+ *     sibling `get-full-organization` leak is reachable. Regressions
+ *     live in the first describe block below.
  *
- * (b) An admin call to `listPendingInvitationsAction` still returns the
- *     seeded invitation — the action uses the internal
- *     `auth.api.listInvitations()` callsite (`lib/actions/team-invitations.ts:84`)
- *     which bypasses the HTTP layer entirely. The admin gate at
- *     `lib/actions/team-invitations.ts:70-80` keeps non-admins out of
- *     this path; the action becomes the only supported way to list
- *     invitee emails.
+ * (b) Admin reads still work via `listPendingInvitationsAction`, which
+ *     uses the internal `auth.api.listInvitations()` callsite
+ *     (`lib/actions/team-invitations.ts:84`) — that path bypasses HTTP
+ *     entirely. The admin gate at `lib/actions/team-invitations.ts:70-80`
+ *     keeps non-admins out, making the action the only supported way
+ *     to list invitee emails. Pinned by the second describe block.
  *
  * `next/headers` is mocked at file-top so the action's internal
  * `headers()` call resolves under the test runtime (matches
  * `tests/auth/org-permissions.test.ts:37-39`). `auth.api.hasPermission`
- * is spied via `spyOn` in `beforeAll` and restored in `afterAll` —
- * `mock.module("@/lib/auth", ...)` is unrestoreable per Bun docs and
- * would block any test that needs the real BA handler (e.g.
- * `tests/auth/cookie-attributes.test.ts`) in the same `bun test` run.
- *
- * Loopback IPs `127.0.0.155` / `127.0.0.156` are unique within the
- * `127.0.0.x` range owned by `tests/auth/cookie-attributes.test.ts`,
- * so BA's in-memory `/sign-in/email` rate-limiter cannot
- * cross-contaminate with that file or with `tests/auth/rate-limit.test.ts`
- * (which owns `127.0.1.x`).
+ * and `auth.api.listInvitations` are spied via `spyOn` in `beforeAll`
+ * and restored in `afterAll` — `mock.module("@/lib/auth", ...)` is
+ * unrestoreable per Bun docs and would block any test that needs the
+ * real BA handler (e.g. `tests/auth/cookie-attributes.test.ts`) in the
+ * same `bun test` run.
  */
 
 mock.module("next/headers", () => ({
@@ -188,76 +178,8 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
   });
 });
 
-describe("list-invitations HTTP bypass (MYMR-155)", () => {
-  test("AC#4(a): non-admin member hitting GET /api/auth/organization/list-invitations directly receives 404", async () => {
-    const owner = await seedUserOrgProject("mymr155-owner");
-    await seedInvitation(
-      owner.organizationId,
-      owner.userId,
-      "invitee@test.local",
-    );
-
-    // Real sign-in pattern (`tests/auth/cookie-attributes.test.ts:90-103`):
-    // signUp then sign-in via auth.handler, extract the session_token
-    // Set-Cookie. Exercises the full HTTP auth stack — the exact surface
-    // the bypass test is meant to pin.
-    const memberEmail = "mymr155-member-session@test.local";
-    const memberPassword = "test-password-12345";
-    await auth.api.signUpEmail({
-      body: {
-        email: memberEmail,
-        name: "MYMR-155 Member",
-        password: memberPassword,
-      },
-    });
-    const signInResp = await auth.handler(
-      new Request("https://example.test/api/auth/sign-in/email", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "cf-connecting-ip": "127.0.0.155",
-        },
-        body: JSON.stringify({
-          email: memberEmail,
-          password: memberPassword,
-        }),
-      }),
-    );
-    expect(signInResp.status).toBe(200);
-    const sessionCookie = signInResp.headers
-      .getSetCookie()
-      .find((c) => c.toLowerCase().includes("session_token"));
-    expect(sessionCookie).toBeDefined();
-
-    // Direct hit on the BA endpoint. The catch-all route forwards
-    // `/api/auth/organization/list-invitations` to `auth.handler`
-    // verbatim; BA's `normalizePathname` strips the `/api/auth` basePath
-    // before the `disabledPaths.includes()` check at
-    // `node_modules/better-auth/dist/api/index.mjs:163-165`.
-    const resp = await auth.handler(
-      new Request(
-        `https://example.test/api/auth/organization/list-invitations?organizationId=${owner.organizationId}`,
-        {
-          method: "GET",
-          headers: {
-            Cookie: sessionCookie!,
-            "cf-connecting-ip": "127.0.0.156",
-          },
-        },
-      ),
-    );
-
-    // BA returns `new Response("Not Found", { status: 404 })` for
-    // disabled paths — plain text body, not JSON. The AC asserts both
-    // the status and the absence of invitation rows; reading the body
-    // as text and verifying it does not contain the seeded invitee
-    // email pins both.
-    expect(resp.status).toBe(404);
-    const body = await resp.text();
-    expect(body).not.toContain("invitee@test.local");
-  });
-
-  test("AC#4(b): admin call to listPendingInvitationsAction returns the seeded invitation", async () => {
+describe("listPendingInvitationsAction admin path (MYMR-155)", () => {
+  test("admin call returns the seeded invitation", async () => {
     const owner = await seedUserOrgProject("mymr155-admin");
     const seeded = await seedInvitation(
       owner.organizationId,

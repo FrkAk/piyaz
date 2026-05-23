@@ -33,21 +33,6 @@ export const auth = betterAuth({
   }),
   secret: process.env.BETTER_AUTH_SECRET,
   secondaryStorage: getKvSecondaryStorage(),
-  // Belt-and-braces against the non-admin `listInvitations` bypass
-  // (BA 1.6.11 `crud-invites.mjs:471-488`, membership-only guard). The
-  // primary gate is the catch-all allowlist at
-  // `app/api/auth/[...all]/route.ts`, which 404s every BA path that is
-  // not explicitly allowed — so the whole `organization/*` family is
-  // unreachable from the network. This line also rejects the route
-  // when callers reach `auth.handler` directly without going through
-  // the catch-all (the existing AC#4(a) regression in
-  // `tests/security/list-invitations-bypass.test.ts` exercises that
-  // path). Internal `auth.api.listInvitations()` calls (e.g.
-  // `lib/actions/team-invitations.ts:84`) bypass the HTTP layer and
-  // remain unaffected. Path is the post-basePath normalized form;
-  // `normalizePathname` (`@better-auth/core/dist/utils/url.mjs:18-29`)
-  // strips `/api/auth` before the includes-check.
-  disabledPaths: ["/organization/list-invitations"],
   emailAndPassword: {
     enabled: true,
     revokeSessionsOnPasswordReset: true,
