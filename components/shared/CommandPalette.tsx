@@ -15,6 +15,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { useRouter } from "next/navigation";
 import { IconSearch } from "@/components/shared/icons";
 import { Kbd } from "@/components/shared/Kbd";
+import { MonoId, type MonoIdTone } from "@/components/shared/MonoId";
+import { StatusGlyph } from "@/components/shared/StatusGlyph";
 import { useModalChrome } from "@/hooks/useModalChrome";
 import { projectColor } from "@/lib/ui/project-color";
 import type { SidebarProject } from "@/components/layout/Sidebar";
@@ -40,10 +42,10 @@ type Option =
       group: "tasks";
       id: string;
       label: string;
+      status: string;
       taskRef: string;
       projectTitle: string;
       projectIdentifier: string;
-      color: string;
       href: string;
     }
   | {
@@ -105,7 +107,10 @@ export function CommandPalette({
     [],
   );
   const [taskLoading, setTaskLoading] = useState(false);
-  const [taskError, setTaskError] = useState<string | null>(null);
+  /** Task-fetch failure code; `null` when no error. Maps to `ERROR_MESSAGES`. */
+  const [taskError, setTaskError] = useState<
+    "rate_limited" | "unauthorized" | "unknown" | null
+  >(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [, startTransition] = useTransition();
 
@@ -166,13 +171,18 @@ export function CommandPalette({
     let cancelled = false;
     startTransition(async () => {
       try {
-        const rows = await searchTasksAcrossProjects(debouncedQuery);
+        const payload = await searchTasksAcrossProjects(debouncedQuery);
         if (cancelled) return;
-        setTaskResults(rows);
+        if (payload.ok) {
+          setTaskResults(payload.rows);
+        } else {
+          setTaskResults([]);
+          setTaskError(payload.code);
+        }
       } catch (err) {
         if (cancelled) return;
         console.error("CommandPalette task search failed", err);
-        setTaskError("Couldn't load tasks. Try again.");
+        setTaskError("unknown");
         setTaskResults([]);
       } finally {
         if (!cancelled) setTaskLoading(false);
@@ -211,18 +221,20 @@ export function CommandPalette({
         group: "tasks",
         id: row.id,
         label: row.title,
+        status: row.status,
         taskRef: row.taskRef,
         projectTitle: row.projectTitle,
         projectIdentifier: row.projectIdentifier,
-        color: projectColor(row.projectIdentifier),
-        // Deep link into the project workspace with the task pre-selected.
         // `WorkspaceClient` consumes `?task=<id>` once and strips it.
         href: `/project/${row.projectId}?task=${row.id}`,
       });
     }
 
     for (const s of SETTINGS_ENTRIES) {
-      if (matches(s.label, debouncedQuery)) {
+      // Match both the visible label and the route — the row hints the
+      // href on the right, so power users typing `/settings` directly
+      // should land on it.
+      if (matches(s.label, debouncedQuery) || matches(s.href, debouncedQuery)) {
         out.push({
           group: "settings",
           id: s.id,
@@ -329,6 +341,7 @@ export function CommandPalette({
   const hasQuery = debouncedQuery.length > 0;
   const showZeroResults =
     hasQuery && options.length === 0 && !taskLoading && taskError === null;
+  const errorMessage = taskError ? ERROR_MESSAGES[taskError] : null;
 
   return (
     <AnimatePresence>
@@ -356,7 +369,7 @@ export function CommandPalette({
             transition={{ duration: 0.18, ease: [0.25, 0.46, 0.45, 0.94] }}
             className="relative flex max-h-[70vh] w-full max-w-xl flex-col rounded-[10px] border border-border bg-surface shadow-[var(--shadow-float)]"
           >
-            <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-4 py-3">
+            <div className="flex flex-shrink-0 items-center gap-2 px-4 py-3">
               <IconSearch
                 size={14}
                 className="text-text-muted"
@@ -371,7 +384,12 @@ export function CommandPalette({
                 aria-label="Search projects, tasks, and settings"
                 role="combobox"
                 aria-controls={listboxId}
-                aria-expanded={options.length > 0}
+                // The combobox popup is visible the moment the user has
+                // typed a query — even while showing the "No results" or
+                // "Searching…" placeholder. Tying `aria-expanded` to
+                // `hasQuery` rather than `options.length > 0` keeps the
+                // ARIA state in sync with what's actually on screen.
+                aria-expanded={hasQuery}
                 aria-activedescendant={
                   options.length > 0
                     ? `${optionIdPrefix}-${activeIndex}`
@@ -381,7 +399,6 @@ export function CommandPalette({
                 spellCheck={false}
                 className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none"
               />
-              <Kbd dim>Esc</Kbd>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto py-2">
@@ -390,12 +407,24 @@ export function CommandPalette({
                   Type to search projects, tasks, and settings…
                 </p>
               )}
-              {hasQuery && taskError !== null && (
+              {hasQuery && errorMessage !== null && (
                 <p
                   role="alert"
-                  className="mx-4 mb-2 rounded-md border border-border bg-base/40 px-3 py-1.5 text-[11px] text-text-secondary"
+                  className={`mx-4 mb-2 flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] ${
+                    taskError === "rate_limited"
+                      ? "border-progress/30 bg-progress/10 text-progress"
+                      : "border-border bg-base/40 text-text-secondary"
+                  }`}
                 >
-                  {taskError}
+                  <span
+                    aria-hidden="true"
+                    className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
+                      taskError === "rate_limited"
+                        ? "bg-progress"
+                        : "bg-text-muted"
+                    }`}
+                  />
+                  {errorMessage}
                 </p>
               )}
               {showZeroResults && (
@@ -434,7 +463,7 @@ export function CommandPalette({
               )}
             </div>
 
-            <div className="flex flex-shrink-0 items-center justify-end gap-3 border-t border-border px-4 py-2 text-[11px] text-text-muted">
+            <div className="flex flex-shrink-0 items-center justify-end gap-3 px-4 py-2 text-[11px] text-text-muted">
               <span className="inline-flex items-center gap-1.5">
                 <Kbd dim>↑↓</Kbd> navigate
               </span>
@@ -483,7 +512,7 @@ function ResultGroup({
       <li
         role="presentation"
         aria-hidden="true"
-        className="flex items-center gap-1.5 px-4 pt-2 pb-1 font-mono text-[10px] font-semibold uppercase tracking-[0.10em] text-text-muted"
+        className="flex items-center gap-1.5 px-4 pt-2 pb-1 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted"
       >
         <span>{GROUP_LABELS[group]}</span>
         {taskLoading && (
@@ -506,12 +535,22 @@ function ResultGroup({
             onMouseMove={() => onMouseMove(idx)}
             onMouseDown={onMouseDown}
             onClick={() => onClick(idx)}
-            className={`mx-2 flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[12px] transition-colors ${
+            className={`relative mx-2 flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[12px] transition-colors ${
               active
                 ? "bg-surface-hover text-text-primary"
                 : "text-text-secondary hover:bg-surface-hover/60"
             }`}
           >
+            {/* 2px accent-gradient strip on the active row's leading edge —
+                mirrors TaskRow's selected state so the palette feels like
+                a continuation of the workspace list. */}
+            {active && (
+              <span
+                aria-hidden="true"
+                className="absolute inset-y-1 left-0 w-[2px] rounded-r-[2px]"
+                style={{ background: "var(--color-accent-grad)" }}
+              />
+            )}
             <ResultRow option={opt} />
           </li>
         );
@@ -525,6 +564,16 @@ const GROUP_LABELS: Record<OptionGroup, string> = {
   projects: "Projects",
   tasks: "Tasks",
   settings: "Navigation",
+};
+
+/** Human copy for each task-fetch failure code. */
+const ERROR_MESSAGES: Record<
+  "rate_limited" | "unauthorized" | "unknown",
+  string
+> = {
+  rate_limited: "Slow down — too many searches. Try again in a moment.",
+  unauthorized: "Sign in to search tasks across your projects.",
+  unknown: "Couldn't load tasks. Try again.",
 };
 
 /** Visual content of one result row — varies by group. */
@@ -547,17 +596,26 @@ function ResultRow({ option }: { option: Option }) {
   if (option.group === "tasks") {
     return (
       <>
-        <span
-          aria-hidden="true"
-          className="h-2 w-2 flex-shrink-0 rounded-[2px]"
-          style={{ background: option.color }}
+        {/* Sole leading affordance, matches workspace TaskRow. */}
+        <StatusGlyph
+          status={option.status}
+          size={11}
+          className="flex-shrink-0"
         />
-        <span className="flex-1 truncate">{option.label}</span>
-        <span className="truncate text-[11px] text-text-muted">
-          {option.projectTitle}
+        {/* Fixed-width column so titles vertically align across rows
+            regardless of identifier length. 96px fits a 10-char project
+            prefix + dash + 4-digit sequence at 11px Geist Mono. */}
+        <span className="inline-flex w-24 flex-shrink-0 items-center">
+          <MonoId
+            id={option.taskRef}
+            tone={option.status as MonoIdTone}
+            dim={option.status === "done" || option.status === "cancelled"}
+            copyable={false}
+          />
         </span>
-        <span className="font-mono text-[10px] text-text-faint">
-          {option.taskRef}
+        <span className="flex-1 truncate">{option.label}</span>
+        <span className="truncate text-[11px] text-text-faint">
+          {option.projectTitle}
         </span>
       </>
     );

@@ -466,6 +466,38 @@ test("searchTasksAcrossProjects accepts a partial taskRef with trailing dash", a
   expect(titles).toEqual(["First in partial", "Second in partial"]);
 });
 
+test("searchTasksAcrossProjects orders results deterministically across calls", async () => {
+  const f = await seedUserOrgProject("xprojorder");
+  const ctx = makeAuthContext(f.userId);
+
+  // Seed 5 tasks that share an identical match rank (all substring matches,
+  // none are exact / prefix). With only `rankExpr` + `tasks.order` to sort
+  // by, two tasks with the same `order` would flip nondeterministically;
+  // the `asc(tasks.id)` tie-breaker pins them in place.
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES
+        (${f.projectId}, 'alpha keyword foo', 1, 100),
+        (${f.projectId}, 'beta keyword foo',  2, 100),
+        (${f.projectId}, 'gamma keyword foo', 3, 100),
+        (${f.projectId}, 'delta keyword foo', 4, 100),
+        (${f.projectId}, 'epsilon keyword foo', 5, 100)
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const a = await searchTasksAcrossProjects(ctx, "keyword");
+  const b = await searchTasksAcrossProjects(ctx, "keyword");
+  const c = await searchTasksAcrossProjects(ctx, "keyword");
+
+  expect(a.length).toBe(5);
+  expect(a.map((r) => r.id)).toEqual(b.map((r) => r.id));
+  expect(a.map((r) => r.id)).toEqual(c.map((r) => r.id));
+});
+
 test("getTaskSlim returns the slim shape", async () => {
   const f = await seedUserOrgProject("taskslim");
   const ctx = makeAuthContext(f.userId);

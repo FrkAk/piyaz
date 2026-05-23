@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -49,18 +50,36 @@ export function CommandPaletteProvider({
   const openPalette = useCallback(() => setOpen(true), []);
   const closePalette = useCallback(() => setOpen(false), []);
 
+  /** Mirrors `open` so the keydown listener reads the current value
+   *  without re-binding on every toggle. */
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const isModK =
-        (e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K");
+      // `e.code` is keyboard-layout independent — non-Latin layouts produce
+      // a different `e.key` for the physical K.
+      const isModK = (e.metaKey || e.ctrlKey) && e.code === "KeyK";
       if (!isModK) return;
+
+      // Close-when-open must short-circuit the input-skip; the palette
+      // input owns focus while open.
+      if (openRef.current) {
+        e.preventDefault();
+        setOpen(false);
+        return;
+      }
+
+      // Closed: skip when an editable element is focused.
       const active = document.activeElement as HTMLElement | null;
       const tag = active?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || active?.isContentEditable) {
         return;
       }
       e.preventDefault();
-      setOpen((prev) => !prev);
+      setOpen(true);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);

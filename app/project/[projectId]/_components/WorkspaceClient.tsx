@@ -73,11 +73,12 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
    * deep-link shape the global command palette uses to jump into a task
    * across projects. The param is consumed once: after seeding state, the
    * effect below strips it from the URL so navigating back to the project
-   * doesn't reselect a stale task.
+   * doesn't reselect a stale task. Empty-string values from a malformed
+   * `?task=` are coalesced to `null` so we never select an empty id.
    */
-  const initialTaskParam = searchParams.get("task");
+  const taskParam = searchParams.get("task") || null;
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
-    initialTaskParam ?? null,
+    taskParam,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [navigatorClosed, setNavigatorClosed] = useState(false);
@@ -151,19 +152,16 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
    * effect strips the param afterwards so back-navigation does not
    * reselect a stale task.
    */
-  const [prevTaskParam, setPrevTaskParam] = useState<string | null>(
-    initialTaskParam,
-  );
-  const currentTaskParam = searchParams.get("task");
-  if (currentTaskParam !== prevTaskParam) {
-    setPrevTaskParam(currentTaskParam);
-    if (currentTaskParam) {
-      setSelectedTaskId(currentTaskParam);
+  const [prevTaskParam, setPrevTaskParam] = useState<string | null>(taskParam);
+  if (taskParam !== prevTaskParam) {
+    setPrevTaskParam(taskParam);
+    if (taskParam) {
+      setSelectedTaskId(taskParam);
     }
   }
   useEffect(() => {
-    if (currentTaskParam) updateParam("task", null);
-  }, [currentTaskParam, updateParam]);
+    if (taskParam) updateParam("task", null);
+  }, [taskParam, updateParam]);
 
   /**
    * Select a task. At narrow viewports (`!isXl`), the graph canvas and

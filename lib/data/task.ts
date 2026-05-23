@@ -1187,14 +1187,19 @@ export type CrossProjectSearchResult = {
 };
 
 /**
- * Search tasks across every project the caller is a member of. Constrained
- * to `current_user_orgs()` (defense-in-depth on top of RLS), capped at 10
- * rows by default, ordered by title-match relevance then `tasks.order`.
- * Used by the global ⌘K command palette; the existing per-project
- * {@link searchTasks} stays in place for the StructureView use case.
+ * Cross-project task search for the ⌘K palette. Bounded by
+ * `current_user_orgs()` (defense-in-depth over RLS).
+ *
+ * Per-token OR match: `tasks.title`, any `tasks.tags` value,
+ * `projects.title`, `projects.identifier` (all case-insensitive substring),
+ * and `tasks.sequence_number` for digit-only tokens. Tokens AND-join.
+ * Full taskRef (`MYMR-191`) short-circuits to one row; partial (`MYMR-`)
+ * falls through and surfaces every task in the project.
+ *
+ * Ordered by rank → `tasks.order` → `tasks.id` (stable tie-breaker).
  *
  * @param ctx - Resolved auth context.
- * @param query - Search string (taskRef short-circuit, title substring, or tag substring).
+ * @param query - Search string.
  * @param opts - Optional limit (1-25, default 10).
  * @returns Up to `opts.limit` matching tasks with project crumb metadata.
  */
@@ -1270,7 +1275,7 @@ export async function searchTasksAcrossProjects(
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(and(...clauses))
-      .orderBy(rankExpr, asc(tasks.order))
+      .orderBy(rankExpr, asc(tasks.order), asc(tasks.id))
       .limit(limit);
 
     return rows.map((row) => ({
