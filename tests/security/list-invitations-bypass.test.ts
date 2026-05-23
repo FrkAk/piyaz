@@ -16,7 +16,7 @@ import { listPendingInvitationsAction } from "@/lib/actions/team-invitations";
 import type { BetterAuthInvitationRow } from "@/lib/actions/team-invitations-map";
 
 /**
- * MYMR-155 security contract — two halves:
+ * MYMR-155 security contract, two halves:
  *
  * (a) Non-admin HTTP harvest is closed. The catch-all allowlist at
  *     `app/api/auth/[...all]/route.ts` 404s every `/organization/*`
@@ -27,8 +27,8 @@ import type { BetterAuthInvitationRow } from "@/lib/actions/team-invitations-map
  *
  * (b) Admin reads still work via `listPendingInvitationsAction`, which
  *     uses the internal `auth.api.listInvitations()` callsite
- *     (`lib/actions/team-invitations.ts:84`) — that path bypasses HTTP
- *     entirely. The admin gate at `lib/actions/team-invitations.ts:70-80`
+ *     (`lib/actions/team-invitations.ts:84`), and that path bypasses
+ *     HTTP entirely. The admin gate at `lib/actions/team-invitations.ts:70-80`
  *     keeps non-admins out, making the action the only supported way
  *     to list invitee emails. Pinned by the second describe block.
  *
@@ -36,7 +36,7 @@ import type { BetterAuthInvitationRow } from "@/lib/actions/team-invitations-map
  * `headers()` call resolves under the test runtime (matches
  * `tests/auth/org-permissions.test.ts:37-39`). `auth.api.hasPermission`
  * and `auth.api.listInvitations` are spied via `spyOn` in `beforeAll`
- * and restored in `afterAll` — `mock.module("@/lib/auth", ...)` is
+ * and restored in `afterAll`. `mock.module("@/lib/auth", ...)` is
  * unrestoreable per Bun docs and would block any test that needs the
  * real BA handler (e.g. `tests/auth/cookie-attributes.test.ts`) in the
  * same `bun test` run.
@@ -127,9 +127,9 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
   // The route at `app/api/auth/[...all]/route.ts` is the primary gate:
   // anything not on the explicit allowlist returns 404 "Not Found"
   // BEFORE `auth.handler` is invoked, so the whole `/organization/*`
-  // family is unreachable from the network — closing the sibling
-  // `get-full-organization` leak that was equivalent in impact to the
-  // `list-invitations` bypass MYMR-155 originally targeted.
+  // family is unreachable from the network. That also closes the
+  // sibling `get-full-organization` leak that was equivalent in impact
+  // to the `list-invitations` bypass MYMR-155 originally targeted.
   test("GET /organization/get-full-organization is 404'd by the gate (sibling bypass closed)", async () => {
     const { GET } = await import("@/app/api/auth/[...all]/route");
     const resp = await GET(
@@ -181,7 +181,7 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
     // The exact role MYMR-155 closed: a non-admin org member trying to
     // harvest their own org's invitee emails. Without the gate, BA's
     // membership check would PASS for this caller (they ARE a member),
-    // and both routes would return invitation rows — that is the
+    // and both routes would return invitation rows; that is the
     // bypass. The gate short-circuits to 404 before BA's
     // session/membership middleware runs.
     //
@@ -267,7 +267,7 @@ describe("listPendingInvitationsAction (MYMR-155)", () => {
     // Same role as the gate test above, but via the server-action
     // path. The action's gate is `requireSession() + isOrgAdmin()`;
     // `isOrgAdmin()` resolves through `auth.api.hasPermission`, which
-    // is spied to return `{ success: false }` — matching what the real
+    // is spied to return `{ success: false }`, matching what the real
     // call would return for a non-admin member.
     const targetOrg = await seedUserOrgProject("mymr155-target-action");
     const su = superuserPool();
@@ -313,10 +313,10 @@ describe("listPendingInvitationsAction (MYMR-155)", () => {
     // Force `isOrgAdmin -> true` via the hasPermission spy armed in
     // beforeAll. Mirrors `tests/auth/org-permissions.test.ts:107-111`.
     nextHasPermission = async () => ({ success: true });
-    // Surface the seeded row through the BA listInvitations spy — the
-    // real BA call would need a live session cookie at the
-    // auth-api boundary, which the in-process test runtime does not
-    // supply (the `next/headers` mock returns an empty Headers).
+    // Surface the seeded row through the BA listInvitations spy. The
+    // real BA call would need a live session cookie at the auth-api
+    // boundary, which the in-process test runtime does not supply (the
+    // `next/headers` mock returns an empty Headers).
     nextListInvitations = async () => [
       {
         id: seeded.id,
