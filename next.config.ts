@@ -14,27 +14,23 @@ const TARGET_FILES = [
 ] as const;
 
 /**
- * Each alternative pins the basename to its own parent directory so that
- * an unrelated file with a matching basename in a sibling tree (e.g.
+ * Each alternative pins the basename to its own parent directory so an
+ * unrelated file with a matching basename in a sibling tree (e.g.
  * `lib/realtime/_driver.ts` or `lib/db/_broker.ts`) is never silently
- * aliased to the wrong sibling. The regex is rebuilt directly from
- * `TARGET_FILES` so adding a new indirection only touches that constant.
+ * aliased to the wrong sibling. Rebuilt directly from `TARGET_FILES` so
+ * adding a new indirection only touches that constant.
  */
 const REPLACEMENT_REGEX = new RegExp(
   `(^|/)(${TARGET_FILES.map(([from]) => from).join("|")})(\\.[cm]?[tj]sx?)?$`,
 );
 
 /**
- * Rewrites runtime imports of the driver / broker indirection files to
- * the per-target sibling. The regex is anchored on the `lib/db/` and
- * `lib/realtime/` parent directories so files with the same basename
- * elsewhere in the tree (test fixtures, transitive deps) are never
- * touched. Runs at module-resolution time so the imports are swapped
- * before any code from the unused target reaches the bundle.
+ * Rewrite a driver / broker indirection import to its per-target sibling.
+ * Anchored on the `lib/db/` and `lib/realtime/` parents so test fixtures or
+ * transitive deps sharing a basename are never touched. Runs at
+ * module-resolution time so the unused target never enters the bundle.
  *
- * Triggered by `next.config.ts`'s webpack hook below.
- *
- * @param resource - Module-resolution data webpack passes us in-place.
+ * @param resource - Module-resolution data mutated in place by webpack.
  */
 function rewriteDriverImport(resource: { request: string; context?: string }) {
   const match = resource.request.match(REPLACEMENT_REGEX);
@@ -47,11 +43,11 @@ function rewriteDriverImport(resource: { request: string; context?: string }) {
 
 /**
  * Async factory so the OpenNext dev-mode initializer can be `await`ed
- * without requiring top-level await in the config module (Next loads
- * the compiled config via `require()` which rejects async modules).
+ * without top-level await in the config module — Next loads the compiled
+ * config via `require()`, which rejects async modules.
  *
- * @returns The Next.js config object, with `output: "standalone"` gated
- *   on `DEPLOY_TARGET=cloudflare` and webpack aliases pointed at the
+ * @returns Next config with `output: "standalone"` gated on
+ *   `DEPLOY_TARGET=cloudflare` and webpack aliases pointed at the
  *   per-target driver / broker indirection files.
  */
 async function buildNextConfig(): Promise<NextConfig> {
@@ -65,6 +61,15 @@ async function buildNextConfig(): Promise<NextConfig> {
   return {
     ...(isCloudflare ? {} : { output: "standalone" }),
     poweredByHeader: false,
+    /**
+     * Surface the deploy target to client bundles so feature gates (e.g.
+     * the realtime bridge) can branch on it. `NEXT_PUBLIC_*` is inlined by
+     * Next at build time: self-host builds get an empty string, Cloudflare
+     * builds get `"cloudflare"` via the `build:cf` / `deploy:cf` scripts.
+     */
+    env: {
+      NEXT_PUBLIC_DEPLOY_TARGET: process.env.DEPLOY_TARGET ?? "",
+    },
     experimental: {
       serverActions: {
         bodySizeLimit: "2mb",
