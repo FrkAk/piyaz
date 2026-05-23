@@ -13,18 +13,24 @@ const audiences: [string, string] = [origin, `${origin}/api/mcp`];
 const issuer = `${baseUrl}/api/auth`;
 
 /**
- * jose error `name`s that mean the bearer token itself is bad. Anything else
+ * jose error `code`s that mean the bearer token itself is bad. Anything else
  * thrown from the verify path is treated as infrastructure failure (JWKS
  * fetch error, DB outage, shape drift) and re-thrown so the caller returns
  * a 5xx instead of a 401 — clients must not be told to re-authenticate when
  * the actual problem is the server side.
+ *
+ * `err.code` is a stable string literal on every jose error
+ * (`node_modules/jose/dist/webapi/util/errors.js`); `err.name` would be the
+ * class identifier, which webpack minifies in production builds and so
+ * cannot be matched reliably.
  */
-const JWT_ERROR_NAMES = new Set([
-  "JWSSignatureVerificationFailed",
-  "JWSInvalid",
-  "JWTExpired",
-  "JWTInvalid",
-  "JWTClaimValidationFailed",
+const JWT_ERROR_CODES = new Set([
+  "ERR_JWT_CLAIM_VALIDATION_FAILED",
+  "ERR_JWT_EXPIRED",
+  "ERR_JWT_INVALID",
+  "ERR_JWS_INVALID",
+  "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
+  "ERR_JWKS_NO_MATCHING_KEY",
 ]);
 
 /** Shape we require from a verified MCP access token payload. */
@@ -87,12 +93,24 @@ async function verifyMcpAuth(request: Request) {
     });
   } catch (err) {
     const name = err instanceof Error ? err.name : undefined;
-    const isJwtError = name !== undefined && JWT_ERROR_NAMES.has(name);
+    const code =
+      err instanceof Error
+        ? (err as Error & { code?: unknown }).code
+        : undefined;
+    const isJoseTokenError =
+      typeof code === "string" && JWT_ERROR_CODES.has(code);
+    // Better-Auth's local JWKS helper throws a plain `Error("Missing jwt kid")`
+    // (`@better-auth/core/dist/oauth2/verify.mjs:31`) when the bearer token's
+    // header lacks a `kid`. That is a token-shape problem, not infrastructure.
+    const isMissingKid =
+      err instanceof Error && err.message === "Missing jwt kid";
+    const isJwtError = isJoseTokenError || isMissingKid;
 
     console.warn(
       JSON.stringify({
         event: isJwtError ? "mcp_auth_verify_failed" : "mcp_auth_verify_error",
         name,
+        code: typeof code === "string" ? code : undefined,
         // Do NOT log `err.cause` — `JWTClaimValidationFailed` stores the
         // decoded JWT payload there.
         message: err instanceof Error ? err.message : String(err),
