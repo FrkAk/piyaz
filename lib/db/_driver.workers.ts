@@ -1,7 +1,7 @@
 import "server-only";
 
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
-import { Pool as NeonPool } from "@neondatabase/serverless";
+import { neonConfig, Pool as NeonPool } from "@neondatabase/serverless";
 import * as appSchema from "./schema";
 import * as authSchema from "./auth-schema";
 import type { AppDb, AuthDb, DbBundle } from "./_driver.node";
@@ -9,29 +9,83 @@ import type { AppDb, AuthDb, DbBundle } from "./_driver.node";
 export type { AppDb, AuthDb, DbBundle, ClosablePool } from "./_driver.node";
 
 /**
+ * Route non-transactional `pool.query()` calls over HTTP `fetch` instead of
+ * WebSocket. Transactions still open a WS (the SQL protocol requires the
+ * round-trip) but they become the exception.
+ *
+ * The Neon shim's WebSocket close fires in a `setTimeout(0)`
+ * (`@neondatabase/serverless` `index.mjs:421`) that runs after the
+ * originating Workers request returns, in a dead I/O context, and re-emits
+ * the resulting DOM `ErrorEvent` as a pool-level error (`index.mjs:401-403`).
+ * With `maxUses: 1` every connection is destroyed after one query, so the
+ * cascade fires on each query. Routing over `fetch` removes the WS for those
+ * queries entirely.
+ */
+neonConfig.poolQueryViaFetch = true;
+
+/**
+ * Disable the connect-time pipelined startup that batches the TLS handshake
+ * with the Postgres startup packet. On Workers the pipelined path produces
+ * "WebSocket closed before greeting" when the server side of the WS
+ * terminates in the narrow window between pipeline send and reply;
+ * sequential startup trades ~1 RTT for a quiet auth/app pool.
+ *
+ * Workers-only — this file is aliased out of the self-host build by
+ * `next.config.ts`'s `_driver` swap.
+ */
+neonConfig.pipelineConnect = false;
+
+/**
  * Per-isolate Neon Pool tuning. The Pool is shared across requests within
  * one isolate; each connection is single-use (`maxUses: 1`) so the
  * "WebSocket cannot outlive a single request" constraint is honored at the
- * connection level — a connection serves one query then is destroyed.
+ * connection level. `max` caps concurrent open connections per isolate.
+ * `connectionTimeoutMillis` bounds `pool.connect()` waits so a dead WS
+ * callback cannot stall a request to the Workers 30s wall-time.
  *
- * `max` caps concurrent open connections per isolate. The pattern is the
- * one recommended by OpenNext (https://opennext.js.org/cloudflare/howtos/db).
+ * Pattern from OpenNext (https://opennext.js.org/cloudflare/howtos/db).
  */
-const NEON_OPTS = { max: 5, maxUses: 1 } as const;
+const NEON_OPTS = {
+  max: 5,
+  maxUses: 1,
+  connectionTimeoutMillis: 5_000,
+} as const;
 
 /**
  * Attach a Pool-level error listener so unhandled idle-client errors from
- * `pg` do not surface as `EventEmitter` uncaught events (which terminate
- * the isolate and drop every in-flight request). Logged only; the Pool
- * itself recovers by creating a fresh connection on the next `connect()`.
+ * `pg` do not surface as `EventEmitter` uncaught events (which terminate the
+ * isolate and drop every in-flight request). Logged only; the Pool recovers
+ * by creating a fresh connection on the next `connect()`.
  *
  * @param pool - Neon pool to instrument.
- * @param role - Role tag included in the log prefix.
+ * @param role - Role tag included in the log payload.
  * @returns The same pool, with the listener attached.
  */
 function attachPoolErrorLogger<P extends NeonPool>(pool: P, role: string): P {
   pool.on("error", (err: unknown) => {
-    console.error(`[db:${role}] neon pool background error`, err);
+    // The Neon serverless shim re-emits the raw DOM `ErrorEvent` from a
+    // dying WebSocket (`@neondatabase/serverless` `index.mjs:401-403`);
+    // a plain stringify yields `"[object ErrorEvent]"`. Unpack the fields
+    // observability needs to filter on.
+    const evt = err as {
+      type?: string;
+      code?: string | number;
+      message?: string;
+      reason?: string;
+    } | null;
+    console.error(
+      JSON.stringify({
+        event: "neon_pool_background_error",
+        role,
+        name: err instanceof Error ? err.name : undefined,
+        message:
+          err instanceof Error
+            ? err.message
+            : (evt?.message ?? evt?.reason ?? String(err)),
+        type: evt?.type,
+        code: evt?.code,
+      }),
+    );
   });
   return pool;
 }

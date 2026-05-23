@@ -3,6 +3,8 @@ import { listAccessibleProjectIds } from "@/lib/data/project";
 import { broker, type Connection } from "@/lib/realtime/broker";
 import { error } from "@/lib/api/response";
 
+const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
+
 /**
  * Per-user SSE endpoint. One connection per browser tab; the broker keys
  * subscriptions on `userId` so a single user can hold many concurrent tabs
@@ -12,20 +14,34 @@ import { error } from "@/lib/api/response";
  * `GET /api/task/[id]` route on each task fetch with a 10 minute TTL.
  *
  * A per-user concurrent connection cap (`Broker.MAX_CONNECTIONS_PER_USER`)
- * bounds DoS exposure — without it a single authenticated user can open
- * unbounded EventSource streams. The check has a small TOCTOU window
- * between this read and the in-`start` `attach`; with cap=20 the worst
- * case is one extra connection, which is acceptable.
+ * bounds DoS exposure. The pre-`start` `isAtConnectionLimit` read is a
+ * fast-path 429; the in-`start` `tryAttach` is the authoritative gate, so
+ * concurrent requests cannot exceed the cap.
  *
  * Subscriptions are registered inside the stream's `start` callback (after
  * `attach`) so dispatches racing with the function return don't yield a
  * subscriber-without-connection.
  *
+ * The Cloudflare Workers target short-circuits to 204 with `Retry-After`:
+ * the self-host in-memory broker is single-process and leaks `subs`/`conns`
+ * on Workers because stream `cancel` fires in a dead I/O context so
+ * `detach` never runs; the Durable-Object-backed broker is the planned
+ * replacement. While disabled, data freshness comes from React Query's
+ * `staleTime` + focus-refetch.
+ *
  * @param req - Incoming request — only the abort signal is consumed.
- * @returns 200 with `text/event-stream`, 401 when unauthenticated, or 429
- *   when the user is at the per-user connection cap.
+ * @returns 200 with `text/event-stream`, 401 when unauthenticated, 429
+ *   when the user is at the per-user connection cap, or 204 with
+ *   `Retry-After` on the Cloudflare deploy.
  */
 export async function GET(req: Request): Promise<Response> {
+  if (IS_CLOUDFLARE) {
+    return new Response(null, {
+      status: 204,
+      headers: { "Retry-After": "300" },
+    });
+  }
+
   let ctx;
   try {
     ctx = await getAuthContext();
@@ -70,12 +86,11 @@ export async function GET(req: Request): Promise<Response> {
         },
       };
 
-      // Order matters: attach BEFORE register so any dispatch that fires
-      // while we're still wiring up sees a non-empty connection set for
-      // this user. `tryAttach` is the authoritative gate against
-      // MAX_CONNECTIONS_PER_USER — the outer `isAtConnectionLimit` check
-      // is a fast-path 429; concurrent requests can race past it, but
-      // only `cap` of them land here.
+      // `tryAttach` must precede `register` so a dispatch arriving during
+      // wiring sees a non-empty connection set for the user. It is also
+      // the authoritative cap gate: concurrent requests cannot exceed
+      // MAX_CONNECTIONS_PER_USER regardless of how many pass the
+      // out-of-band `isAtConnectionLimit` fast-path.
       if (!broker.tryAttach(userId, conn)) {
         try {
           controller.close();

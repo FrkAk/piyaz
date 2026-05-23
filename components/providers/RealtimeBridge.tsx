@@ -10,6 +10,22 @@ const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 
 /**
+ * Realtime is disabled on the Cloudflare Workers deploy target.
+ *
+ * The self-host SSE broker (`lib/realtime/_broker.node.ts`) is in-memory and
+ * single-process — what a long-lived `EventSource` needs. On Workers an SSE
+ * connection bills the wall-clock as compute time and isolates do not share
+ * broker state, so `/api/events` short-circuits to 204. The browser
+ * `EventSource` API closes on 204 and this component's `onerror` handler
+ * would reconnect with exponential backoff, producing a steady reconnect
+ * storm. Gating the provider here keeps the network panel clean until the
+ * Workers path moves to the Durable-Object-backed broker over the WebSocket
+ * Hibernation API. Data freshness on Workers comes from React Query's
+ * `staleTime` + focus-refetch.
+ */
+const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
+
+/**
  * Mounts a single `EventSource('/api/events')` for the authenticated user
  * and dispatches incoming events into the shared TanStack Query cache.
  *
@@ -37,6 +53,7 @@ export function RealtimeBridge() {
   const session = useSession();
 
   useEffect(() => {
+    if (IS_CLOUDFLARE) return;
     if (!session.data) return;
 
     let es: EventSource | null = null;
