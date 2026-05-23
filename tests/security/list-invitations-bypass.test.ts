@@ -133,6 +133,61 @@ async function seedInvitation(
   return row;
 }
 
+describe("catch-all HTTP allowlist (MYMR-155)", () => {
+  // The route at `app/api/auth/[...all]/route.ts` is the primary gate:
+  // anything not on the explicit allowlist returns 404 "Not Found"
+  // BEFORE `auth.handler` is invoked, so the whole `/organization/*`
+  // family is unreachable from the network — closing the sibling
+  // `get-full-organization` leak that was equivalent in impact to the
+  // `list-invitations` bypass MYMR-155 originally targeted.
+  test("GET /organization/get-full-organization is 404'd by the gate (sibling bypass closed)", async () => {
+    const { GET } = await import("@/app/api/auth/[...all]/route");
+    const resp = await GET(
+      new Request(
+        "https://example.test/api/auth/organization/get-full-organization?organizationId=anything",
+        { method: "GET" },
+      ),
+    );
+    expect(resp.status).toBe(404);
+    expect(await resp.text()).toBe("Not Found");
+  });
+
+  test("GET /organization/list-invitations is 404'd by the gate (defense-in-depth above BA disabledPaths)", async () => {
+    const { GET } = await import("@/app/api/auth/[...all]/route");
+    const resp = await GET(
+      new Request(
+        "https://example.test/api/auth/organization/list-invitations",
+        { method: "GET" },
+      ),
+    );
+    expect(resp.status).toBe(404);
+    expect(await resp.text()).toBe("Not Found");
+  });
+
+  test("trailing-slash variant of a blocked path stays blocked (mirrors BA's normalizePathname)", async () => {
+    const { GET } = await import("@/app/api/auth/[...all]/route");
+    const resp = await GET(
+      new Request(
+        "https://example.test/api/auth/organization/get-full-organization/",
+        { method: "GET" },
+      ),
+    );
+    expect(resp.status).toBe(404);
+  });
+
+  test("allowlisted path (`/get-session`) is forwarded to auth.handler, not 404'd by the gate", async () => {
+    const { GET } = await import("@/app/api/auth/[...all]/route");
+    const resp = await GET(
+      new Request("https://example.test/api/auth/get-session", {
+        method: "GET",
+      }),
+    );
+    // Gate over-block would return body "Not Found"; BA returns its
+    // own response for an unauthenticated get-session call.
+    expect(await resp.text()).not.toBe("Not Found");
+  });
+});
+
 describe("list-invitations HTTP bypass (MYMR-155)", () => {
   test("AC#4(a): non-admin member hitting GET /api/auth/organization/list-invitations directly receives 404", async () => {
     const owner = await seedUserOrgProject("mymr155-owner");
