@@ -9,6 +9,7 @@ import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
+import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -31,15 +32,43 @@ export const auth = betterAuth({
     schema: authSchema,
   }),
   secret: process.env.BETTER_AUTH_SECRET,
+  secondaryStorage: getKvSecondaryStorage(),
   emailAndPassword: {
     enabled: true,
     revokeSessionsOnPasswordReset: true,
     // Invite-only on hosted Cloudflare; self-host stays open.
     disableSignUp: IS_CLOUDFLARE,
   },
+  // Route OAuth authorization-code (and other single-use verification)
+  // consume through the DB-atomic `runWithTransaction` + `consumeOne` path
+  // (better-auth/db/internal-adapter.mjs:671-697) instead of the cache-only
+  // get-then-delete branch (line 642-664). KV `secondaryStorage` here has
+  // no `getAndDelete` and BA's fallback lock is per-isolate Map-based, so
+  // without this flag two concurrent requests for the same auth code on
+  // different Workers isolates could each mint an access token
+  // (RFC 6749 §4.1.2 violation). KV continues to serve as a read cache for
+  // non-consume verification lookups.
+  verification: {
+    storeInDatabase: true,
+  },
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
+    // BA writes every session to Drizzle AND KV. Required for oauthProvider
+    // (which throws at boot without DB-backed sessions). KV is the per-POP
+    // read cache; Drizzle is the durable store. NOTE: BA's `findSession`
+    // returns from KV without DB validation on cache hit
+    // (internal-adapter.mjs:222-241), so revoked sessions remain valid for
+    // the KV delete propagation window (~60s globally) on other POPs.
+    // Mitigated by `revokeSessionsOnPasswordReset` + explicit `delete()` on
+    // sign-out; absolute revocation requires DB-source-of-truth re-check at
+    // the route layer, which is intentionally out of scope here.
+    storeSessionInDatabase: true,
+    // Explicit defensive disable per better-auth#4203: cookieCache +
+    // secondaryStorage forces re-login on cookie expiry. BA's current
+    // default is already false; lock it so a future default flip cannot
+    // regress the KV-backed session-cache path.
+    cookieCache: { enabled: false },
   },
   rateLimit: {
     enabled: true,
