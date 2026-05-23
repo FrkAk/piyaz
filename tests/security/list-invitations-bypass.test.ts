@@ -177,17 +177,46 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
     expect(await resp.text()).not.toBe("Not Found");
   });
 
-  test("signed-in non-admin gets 404 from the gate on both list-invitations and get-full-organization", async () => {
+  test("non-admin member of the target org gets 404 from the gate on both list-invitations and get-full-organization", async () => {
+    // The exact role MYMR-155 closed: a non-admin org member trying to
+    // harvest their own org's invitee emails. Without the gate, BA's
+    // membership check would PASS for this caller (they ARE a member),
+    // and both routes would return invitation rows — that is the
+    // bypass. The gate short-circuits to 404 before BA's
+    // session/membership middleware runs.
+    //
     // Loopback IPs `127.0.0.155` / `127.0.0.156` are unique within the
     // `127.0.0.x` range owned by `tests/auth/cookie-attributes.test.ts`,
     // so BA's in-memory `/sign-in/email` rate-limiter cannot
     // cross-contaminate with that file or with
     // `tests/auth/rate-limit.test.ts` (which owns `127.0.1.x`).
-    const email = "mymr155-nonadmin-gate@test.local";
-    const password = "test-password-12345";
+    const targetOrg = await seedUserOrgProject("mymr155-target");
+    await seedInvitation(
+      targetOrg.organizationId,
+      targetOrg.userId,
+      "victim-invitee@test.local",
+    );
+
+    const attackerEmail = "mymr155-nonadmin-member@test.local";
+    const attackerPassword = "test-password-12345";
     await auth.api.signUpEmail({
-      body: { email, name: "MYMR-155 Non-admin", password },
+      body: {
+        email: attackerEmail,
+        name: "MYMR-155 Non-admin Member",
+        password: attackerPassword,
+      },
     });
+    const su = superuserPool();
+    const [attacker] = await su<{ id: string }[]>`
+      SELECT id FROM neon_auth."user" WHERE email = ${attackerEmail}
+    `;
+    await su`
+      INSERT INTO neon_auth."member"
+        ("organizationId", "userId", "role", "createdAt")
+      VALUES
+        (${targetOrg.organizationId}, ${attacker.id}, 'member', now())
+    `;
+
     const signInResp = await auth.handler(
       new Request("https://example.test/api/auth/sign-in/email", {
         method: "POST",
@@ -195,7 +224,10 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
           "content-type": "application/json",
           "cf-connecting-ip": "127.0.0.155",
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email: attackerEmail,
+          password: attackerPassword,
+        }),
       }),
     );
     expect(signInResp.status).toBe(200);
@@ -206,13 +238,9 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
 
     const { GET } = await import("@/app/api/auth/[...all]/route");
 
-    // Gate is path-only: an authenticated request with no admin role
-    // (the signed-in user is not even an org member here) still gets
-    // short-circuited to 404 before BA's session / membership
-    // middleware runs.
     for (const path of [
-      "/api/auth/organization/list-invitations?organizationId=anything",
-      "/api/auth/organization/get-full-organization?organizationId=anything",
+      `/api/auth/organization/list-invitations?organizationId=${targetOrg.organizationId}`,
+      `/api/auth/organization/get-full-organization?organizationId=${targetOrg.organizationId}`,
     ]) {
       const resp = await GET(
         new Request(`https://example.test${path}`, {
@@ -224,22 +252,45 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
         }),
       );
       expect(resp.status).toBe(404);
-      expect(await resp.text()).toBe("Not Found");
+      const body = await resp.text();
+      expect(body).toBe("Not Found");
+      // Belt-and-braces: invitee email must never appear in any
+      // response returned to a non-admin member, regardless of body
+      // format.
+      expect(body).not.toContain("victim-invitee@test.local");
     }
   });
 });
 
 describe("listPendingInvitationsAction (MYMR-155)", () => {
-  test("non-admin call returns forbidden", async () => {
-    const owner = await seedUserOrgProject("mymr155-nonadmin-action");
-
-    // Drive `requireSession()` so the action reaches the admin gate.
-    // `nextHasPermission` is reset to `{ success: false }` in afterEach
-    // (and that is the initial value), so `isOrgAdmin -> false` here.
-    setSession({ user: { id: owner.userId } });
+  test("non-admin member of the target org gets forbidden", async () => {
+    // Same role as the gate test above, but via the server-action
+    // path. The action's gate is `requireSession() + isOrgAdmin()`;
+    // `isOrgAdmin()` resolves through `auth.api.hasPermission`, which
+    // is spied to return `{ success: false }` — matching what the real
+    // call would return for a non-admin member.
+    const targetOrg = await seedUserOrgProject("mymr155-target-action");
+    const su = superuserPool();
+    const [member] = await su<{ id: string }[]>`
+      INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      VALUES (
+        'MYMR-155 Non-admin Member',
+        'mymr155-nonadmin-member-action@test.local',
+        true,
+        now()
+      )
+      RETURNING id
+    `;
+    await su`
+      INSERT INTO neon_auth."member"
+        ("organizationId", "userId", "role", "createdAt")
+      VALUES
+        (${targetOrg.organizationId}, ${member.id}, 'member', now())
+    `;
+    setSession({ user: { id: member.id } });
 
     const result = await listPendingInvitationsAction({
-      organizationId: owner.organizationId,
+      organizationId: targetOrg.organizationId,
     });
 
     expect(result.ok).toBe(false);
