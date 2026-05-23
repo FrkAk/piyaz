@@ -44,9 +44,9 @@ test("classifyVerifyError: JWTInvalid is token-class", () => {
 });
 
 test("classifyVerifyError: JWTClaimValidationFailed is token-class", () => {
-  expect(
-    classifyVerifyError(new JWTClaimValidationFailed("aud", {})),
-  ).toBe("token");
+  expect(classifyVerifyError(new JWTClaimValidationFailed("aud", {}))).toBe(
+    "token",
+  );
 });
 
 test("classifyVerifyError: JWSInvalid is token-class", () => {
@@ -54,9 +54,9 @@ test("classifyVerifyError: JWSInvalid is token-class", () => {
 });
 
 test("classifyVerifyError: JWSSignatureVerificationFailed is token-class", () => {
-  expect(
-    classifyVerifyError(new JWSSignatureVerificationFailed()),
-  ).toBe("token");
+  expect(classifyVerifyError(new JWSSignatureVerificationFailed())).toBe(
+    "token",
+  );
 });
 
 test("classifyVerifyError: JWKSNoMatchingKey is token-class", () => {
@@ -65,7 +65,9 @@ test("classifyVerifyError: JWKSNoMatchingKey is token-class", () => {
 
 test("classifyVerifyError: plain Error without code is infrastructure", () => {
   expect(
-    classifyVerifyError(new Error("auth.api.getJwks returned unexpected shape")),
+    classifyVerifyError(
+      new Error("auth.api.getJwks returned unexpected shape"),
+    ),
   ).toBe("infrastructure");
 });
 
