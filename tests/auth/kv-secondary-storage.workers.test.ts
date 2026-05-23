@@ -10,16 +10,20 @@ interface FakeOpts {
 
 const _store = new Map<string, string>();
 const _putCalls: Array<{ key: string; value: string; opts?: FakeOpts }> = [];
+const _throwOn = new Set<"get" | "put" | "delete">();
 
 const fakeKv = {
   async get(key: string, _type: "text") {
+    if (_throwOn.has("get")) throw new Error("kv get boom");
     return _store.get(key) ?? null;
   },
   async put(key: string, value: string, opts?: FakeOpts) {
+    if (_throwOn.has("put")) throw new Error("kv put boom");
     _store.set(key, value);
     _putCalls.push({ key, value, opts });
   },
   async delete(key: string) {
+    if (_throwOn.has("delete")) throw new Error("kv delete boom");
     _store.delete(key);
   },
 };
@@ -29,10 +33,13 @@ let _envHasKv = true;
 /**
  * Mock `@opennextjs/cloudflare`'s `getCloudflareContext` before the SUT
  * imports it. Pattern lifted from `tests/realtime/broker-do.test.ts:17-26`.
- * `_envHasKv` flips per test to exercise the graceful-no-op path.
+ * `_envHasKv` flips per test to exercise the graceful-no-op path. The
+ * `_opts` parameter mirrors the production call signature
+ * (`{ async: false }`) so a future option-validating runtime would not
+ * silently diverge from the mock.
  */
 mock.module("@opennextjs/cloudflare", () => ({
-  getCloudflareContext: () => ({
+  getCloudflareContext: (_opts?: { async?: boolean }) => ({
     env: _envHasKv ? { AUTH_KV: fakeKv } : {},
     ctx: { waitUntil: () => {} },
   }),
@@ -44,6 +51,7 @@ const { getKvSecondaryStorage, __resetMissingBindingWarnedForTest } =
 beforeEach(() => {
   _store.clear();
   _putCalls.length = 0;
+  _throwOn.clear();
   _envHasKv = true;
   __resetMissingBindingWarnedForTest();
 });
@@ -99,4 +107,26 @@ test("missing AUTH_KV: get returns null, set/delete no-op", async () => {
   await s.set("k", "v");
   expect(_putCalls.length).toBe(0);
   await s.delete("k");
+});
+
+test("kv get throws: adapter swallows and returns null", async () => {
+  _throwOn.add("get");
+  await expect(getKvSecondaryStorage().get("k")).resolves.toBeNull();
+});
+
+test("kv put throws: adapter swallows (no rethrow)", async () => {
+  _throwOn.add("put");
+  await expect(
+    getKvSecondaryStorage().set("k", "v", 120),
+  ).resolves.toBeUndefined();
+});
+
+test("kv put throws with no ttl: adapter swallows", async () => {
+  _throwOn.add("put");
+  await expect(getKvSecondaryStorage().set("k", "v")).resolves.toBeUndefined();
+});
+
+test("kv delete throws: adapter swallows", async () => {
+  _throwOn.add("delete");
+  await expect(getKvSecondaryStorage().delete("k")).resolves.toBeUndefined();
 });

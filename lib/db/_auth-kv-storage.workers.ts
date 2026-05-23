@@ -25,6 +25,11 @@ interface WorkerEnv {
 /** KV's documented minimum `expirationTtl`. Source: Cloudflare docs Jan 2026. */
 const KV_TTL_FLOOR_SECONDS = 60;
 
+/**
+ * Per-isolate dedupe flag for the missing-binding warning. Resets when an
+ * isolate cold-starts, so misconfigurations log once per isolate boot
+ * (intended — quicker detection than a globally-once flag would give).
+ */
 let _missingBindingWarned = false;
 
 /**
@@ -94,6 +99,11 @@ function getAuthKv(): KvNamespace | null {
  * (`better-auth/db/internal-adapter.mjs:671-697`) instead of the
  * per-isolate `withVerificationConsumeLock` fallback at line 651.
  *
+ * KV operation failures are swallowed and logged (see `warnKvError`):
+ * Drizzle is the source of truth and BA falls through to the DB on a
+ * `get` returning `null`, so degrading to cache-miss on KV outage is
+ * preferable to 500-ing auth-gated requests.
+ *
  * @returns A `SecondaryStorage` adapter; calls no-op when `AUTH_KV` is unbound.
  */
 export function getKvSecondaryStorage(): SecondaryStorage {
@@ -101,24 +111,62 @@ export function getKvSecondaryStorage(): SecondaryStorage {
     async get(key) {
       const kv = getAuthKv();
       if (!kv) return null;
-      return kv.get(key, "text");
+      try {
+        return await kv.get(key, "text");
+      } catch (err) {
+        warnKvError("get", err);
+        return null;
+      }
     },
     async set(key, value, ttl) {
       const kv = getAuthKv();
       if (!kv) return;
       if (ttl === undefined) {
-        await kv.put(key, value);
+        try {
+          await kv.put(key, value);
+        } catch (err) {
+          warnKvError("set", err);
+        }
         return;
       }
       if (ttl <= 0) return;
-      await kv.put(key, value, {
-        expirationTtl: Math.max(ttl, KV_TTL_FLOOR_SECONDS),
-      });
+      try {
+        await kv.put(key, value, {
+          expirationTtl: Math.max(ttl, KV_TTL_FLOOR_SECONDS),
+        });
+      } catch (err) {
+        warnKvError("set", err);
+      }
     },
     async delete(key) {
       const kv = getAuthKv();
       if (!kv) return;
-      await kv.delete(key);
+      try {
+        await kv.delete(key);
+      } catch (err) {
+        warnKvError("delete", err);
+      }
     },
   };
+}
+
+/**
+ * Emit a structured warning for a KV operation failure. Errors are
+ * intentionally not rethrown: Drizzle is the source of truth, so a KV
+ * outage degrades to a cache miss (`get`) or a stale entry held for the
+ * existing ~60s propagation window (`set`/`delete`). Surfacing errors
+ * instead would let a single-POP KV blip 500 auth-gated requests while
+ * the DB is healthy.
+ *
+ * @param op - The adapter operation that failed (`get` / `set` / `delete`).
+ * @param err - The underlying error thrown by the KV binding.
+ */
+function warnKvError(op: "get" | "set" | "delete", err: unknown): void {
+  console.warn(
+    JSON.stringify({
+      event: "auth_kv_op_failed",
+      op,
+      err: err instanceof Error ? err.message : String(err),
+    }),
+  );
 }
