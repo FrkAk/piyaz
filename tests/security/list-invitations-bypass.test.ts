@@ -176,9 +176,77 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
     // own response for an unauthenticated get-session call.
     expect(await resp.text()).not.toBe("Not Found");
   });
+
+  test("signed-in non-admin gets 404 from the gate on both list-invitations and get-full-organization", async () => {
+    // Loopback IPs `127.0.0.155` / `127.0.0.156` are unique within the
+    // `127.0.0.x` range owned by `tests/auth/cookie-attributes.test.ts`,
+    // so BA's in-memory `/sign-in/email` rate-limiter cannot
+    // cross-contaminate with that file or with
+    // `tests/auth/rate-limit.test.ts` (which owns `127.0.1.x`).
+    const email = "mymr155-nonadmin-gate@test.local";
+    const password = "test-password-12345";
+    await auth.api.signUpEmail({
+      body: { email, name: "MYMR-155 Non-admin", password },
+    });
+    const signInResp = await auth.handler(
+      new Request("https://example.test/api/auth/sign-in/email", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-connecting-ip": "127.0.0.155",
+        },
+        body: JSON.stringify({ email, password }),
+      }),
+    );
+    expect(signInResp.status).toBe(200);
+    const sessionCookie = signInResp.headers
+      .getSetCookie()
+      .find((c) => c.toLowerCase().includes("session_token"));
+    expect(sessionCookie).toBeDefined();
+
+    const { GET } = await import("@/app/api/auth/[...all]/route");
+
+    // Gate is path-only: an authenticated request with no admin role
+    // (the signed-in user is not even an org member here) still gets
+    // short-circuited to 404 before BA's session / membership
+    // middleware runs.
+    for (const path of [
+      "/api/auth/organization/list-invitations?organizationId=anything",
+      "/api/auth/organization/get-full-organization?organizationId=anything",
+    ]) {
+      const resp = await GET(
+        new Request(`https://example.test${path}`, {
+          method: "GET",
+          headers: {
+            Cookie: sessionCookie!,
+            "cf-connecting-ip": "127.0.0.156",
+          },
+        }),
+      );
+      expect(resp.status).toBe(404);
+      expect(await resp.text()).toBe("Not Found");
+    }
+  });
 });
 
-describe("listPendingInvitationsAction admin path (MYMR-155)", () => {
+describe("listPendingInvitationsAction (MYMR-155)", () => {
+  test("non-admin call returns forbidden", async () => {
+    const owner = await seedUserOrgProject("mymr155-nonadmin-action");
+
+    // Drive `requireSession()` so the action reaches the admin gate.
+    // `nextHasPermission` is reset to `{ success: false }` in afterEach
+    // (and that is the initial value), so `isOrgAdmin -> false` here.
+    setSession({ user: { id: owner.userId } });
+
+    const result = await listPendingInvitationsAction({
+      organizationId: owner.organizationId,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable: ok asserted above");
+    expect(result.code).toBe("forbidden");
+  });
+
   test("admin call returns the seeded invitation", async () => {
     const owner = await seedUserOrgProject("mymr155-admin");
     const seeded = await seedInvitation(
