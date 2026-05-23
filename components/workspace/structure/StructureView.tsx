@@ -226,8 +226,8 @@ function sortTasks(items: TaskWithRef[], key: SortKey): TaskWithRef[] {
 
 /**
  * Linear-density structure view — flat task list grouped by status with a
- * filter sheet, sort cycler, and inline new-task input. Owns its own URL
- * sync for filter state so deep-links and refresh reproduce the same view.
+ * filter sheet and sort cycler. Owns its own URL sync for filter state so
+ * deep-links and refresh reproduce the same view.
  *
  * @param props - Structure view configuration.
  * @returns Filter bar + task list inside a flex column.
@@ -611,7 +611,7 @@ export function StructureView({
 
   // Flatten the grouped sections into a single sequence so the virtualizer
   // can size and position each visible row independently. Group headers
-  // sit at 30px; the new-task input and task rows at 34px.
+  // sit at 30px; task rows at 34px.
   const flatItems = useMemo<RowItem[]>(() => {
     const items: RowItem[] = [];
     for (const [section, groupTasks] of groupedVisible) {
@@ -633,7 +633,7 @@ export function StructureView({
   const scrollRef = useRef<HTMLDivElement>(null);
   // Sizes include borders so positions stay pixel-accurate without needing
   // `measureElement`. Group headers ship `border-y` (+2px) on a 30px row;
-  // task and new-task rows ship `border-b` (+1px) on a 34px row.
+  // task rows ship `border-b` (+1px) on a 34px row.
   //
   // `useVirtualizer` uses interior mutability; React Compiler auto-skip is safe.
   // https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library
@@ -790,7 +790,7 @@ interface TaskGroupHeaderProps {
  * inline header from the (removed) `TaskGroup` component for status groups
  * and the category-section header for category groups.
  *
- * @param props - Section + count + optional add handler.
+ * @param props - Section + count.
  * @returns 30px sticky-style header.
  */
 function TaskGroupHeader({ section, count }: TaskGroupHeaderProps) {
