@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useTheme } from "@/components/layout/ThemeProvider";
 import { ProjectBreadcrumb } from "@/components/layout/ProjectBreadcrumb";
+import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
 import { Kbd } from "@/components/shared/Kbd";
 import { IconMoon, IconSearch, IconSun } from "@/components/shared/icons";
 
@@ -39,6 +40,7 @@ export function TopBar({
   pageLabel,
 }: TopBarProps) {
   const { theme, setTheme } = useTheme();
+  const { openPalette } = useCommandPalette();
   const pathname = usePathname() ?? "/";
 
   const derivedPageLabel = derivePageLabel({
@@ -84,10 +86,10 @@ export function TopBar({
       <div className="flex items-center gap-1">
         <button
           type="button"
-          disabled
-          aria-label="Jump — coming soon"
-          title="Jump — coming soon"
-          className="flex h-7 cursor-not-allowed items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium text-text-muted opacity-80"
+          onClick={openPalette}
+          aria-label="Search or jump (⌘K)"
+          title="Search or jump (⌘K)"
+          className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
         >
           <IconSearch size={12} />
           <span className="hidden sm:inline">Jump</span>

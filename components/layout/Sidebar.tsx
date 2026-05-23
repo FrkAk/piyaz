@@ -9,6 +9,7 @@ import { Kbd } from "@/components/shared/Kbd";
 import { projectColor } from "@/lib/ui/project-color";
 import { getTeamColor } from "@/lib/ui/team-color";
 import { useSidebarCollapse } from "@/components/layout/SidebarCollapseProvider";
+import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
 import {
   IconChevronRight,
   IconInbox,
@@ -81,6 +82,7 @@ export function Sidebar({
   const pathname = usePathname() ?? "/";
   const activeProjectId = pathname.match(/^\/project\/([^/]+)/)?.[1];
   const { collapsed, toggle } = useSidebarCollapse();
+  const { openPalette } = useCommandPalette();
 
   const projectGroups = useMemo(
     () => groupProjectsByTeam(projects, teams),
@@ -115,6 +117,7 @@ export function Sidebar({
           activeProjectId={activeProjectId}
           settingsActive={pathname.startsWith("/settings")}
           onExpand={toggle}
+          onOpenPalette={openPalette}
         />
       ) : (
         <>
@@ -143,10 +146,10 @@ export function Sidebar({
           <div className="px-2 pb-2 pt-1">
             <button
               type="button"
-              disabled
-              aria-label="Search or jump (coming soon)"
-              title="Search or jump — coming soon"
-              className="flex h-7 w-full cursor-not-allowed items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[12px] text-text-muted opacity-80"
+              onClick={openPalette}
+              aria-label="Search or jump (⌘K)"
+              title="Search or jump (⌘K)"
+              className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[12px] text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
             >
               <IconSearch size={12} />
               <span className="flex-1 text-left">Search or jump</span>
@@ -243,6 +246,8 @@ interface CompactSidebarProps {
   settingsActive: boolean;
   /** Click the chevron-right to expand the sidebar. */
   onExpand: () => void;
+  /** Open the global command palette (wired by the parent's hook call). */
+  onOpenPalette: () => void;
 }
 
 /**
@@ -262,6 +267,7 @@ function CompactSidebar({
   activeProjectId,
   settingsActive,
   onExpand,
+  onOpenPalette,
 }: CompactSidebarProps) {
   const router = useRouter();
   const displayName = user.name?.trim() || user.email;
@@ -296,8 +302,8 @@ function CompactSidebar({
       <nav className="flex flex-col items-center gap-1 px-2 pt-1">
         <CompactNavIcon
           icon={<IconSearch size={14} />}
-          label="Search or jump — coming soon"
-          disabled
+          label="Search or jump (⌘K)"
+          onClick={onOpenPalette}
         />
         <CompactNavIcon
           icon={<IconInbox size={14} />}
@@ -379,21 +385,30 @@ interface CompactNavIconProps {
   label: string;
   /** Whether the row is rendered disabled. */
   disabled?: boolean;
+  /** Click handler for live rows (e.g. search opens the command palette). */
+  onClick?: () => void;
 }
 
 /**
  * Small square icon button used as a top-level nav row in {@link CompactSidebar}.
  * Renders disabled rows with a `coming soon` tooltip so muscle memory still
- * works without the labels.
+ * works without the labels; live rows accept an `onClick` (e.g. the search
+ * icon opens the global command palette).
  *
  * @param props - Icon configuration.
  * @returns Icon-shaped button.
  */
-function CompactNavIcon({ icon, label, disabled }: CompactNavIconProps) {
+function CompactNavIcon({
+  icon,
+  label,
+  disabled,
+  onClick,
+}: CompactNavIconProps) {
   return (
     <button
       type="button"
       disabled={disabled}
+      onClick={onClick}
       title={label}
       aria-label={label}
       className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${

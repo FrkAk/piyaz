@@ -1,0 +1,132 @@
+import { test, expect, beforeEach, mock } from "bun:test";
+
+/**
+ * Captured `expirationTtl` shape passed to the fake KV's `put`. Mirrors the
+ * Cloudflare KV binding's `put` options surface.
+ */
+interface FakeOpts {
+  expirationTtl?: number;
+}
+
+const _store = new Map<string, string>();
+const _putCalls: Array<{ key: string; value: string; opts?: FakeOpts }> = [];
+const _throwOn = new Set<"get" | "put" | "delete">();
+
+const fakeKv = {
+  async get(key: string, _type: "text") {
+    if (_throwOn.has("get")) throw new Error("kv get boom");
+    return _store.get(key) ?? null;
+  },
+  async put(key: string, value: string, opts?: FakeOpts) {
+    if (_throwOn.has("put")) throw new Error("kv put boom");
+    _store.set(key, value);
+    _putCalls.push({ key, value, opts });
+  },
+  async delete(key: string) {
+    if (_throwOn.has("delete")) throw new Error("kv delete boom");
+    _store.delete(key);
+  },
+};
+
+let _envHasKv = true;
+
+/**
+ * Mock `@opennextjs/cloudflare`'s `getCloudflareContext` before the SUT
+ * imports it. Pattern lifted from `tests/realtime/broker-do.test.ts:17-26`.
+ * `_envHasKv` flips per test to exercise the graceful-no-op path. The
+ * `_opts` parameter mirrors the production call signature
+ * (`{ async: false }`) so a future option-validating runtime would not
+ * silently diverge from the mock.
+ */
+mock.module("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: (_opts?: { async?: boolean }) => ({
+    env: _envHasKv ? { AUTH_KV: fakeKv } : {},
+    ctx: { waitUntil: () => {} },
+  }),
+}));
+
+const { getKvSecondaryStorage, __resetMissingBindingWarnedForTest } =
+  await import("@/lib/db/_auth-kv-storage.workers");
+
+beforeEach(() => {
+  _store.clear();
+  _putCalls.length = 0;
+  _throwOn.clear();
+  _envHasKv = true;
+  __resetMissingBindingWarnedForTest();
+});
+
+test("set clamps ttl < 60 to 60", async () => {
+  await getKvSecondaryStorage().set("k", "v", 10);
+  expect(_putCalls[0].opts?.expirationTtl).toBe(60);
+});
+
+test("set with ttl === 60 stays 60", async () => {
+  await getKvSecondaryStorage().set("k", "v", 60);
+  expect(_putCalls[0].opts?.expirationTtl).toBe(60);
+});
+
+test("set with ttl > 60 passes through", async () => {
+  await getKvSecondaryStorage().set("k", "v", 3600);
+  expect(_putCalls[0].opts?.expirationTtl).toBe(3600);
+});
+
+test("set with no ttl omits expirationTtl", async () => {
+  await getKvSecondaryStorage().set("k", "v");
+  expect(_putCalls[0].opts).toBeUndefined();
+});
+
+test("set with ttl === 0 skips the write", async () => {
+  await getKvSecondaryStorage().set("k", "v", 0);
+  expect(_putCalls.length).toBe(0);
+});
+
+test("set with negative ttl skips the write", async () => {
+  await getKvSecondaryStorage().set("k", "v", -5);
+  expect(_putCalls.length).toBe(0);
+});
+
+test("get returns null on miss, value on hit", async () => {
+  const s = getKvSecondaryStorage();
+  expect(await s.get("missing")).toBeNull();
+  await s.set("k", "v");
+  expect(await s.get("k")).toBe("v");
+});
+
+test("delete removes the key", async () => {
+  const s = getKvSecondaryStorage();
+  await s.set("k", "v");
+  await s.delete("k");
+  expect(await s.get("k")).toBeNull();
+});
+
+test("missing AUTH_KV: get returns null, set/delete no-op", async () => {
+  _envHasKv = false;
+  const s = getKvSecondaryStorage();
+  expect(await s.get("k")).toBeNull();
+  await s.set("k", "v");
+  expect(_putCalls.length).toBe(0);
+  await s.delete("k");
+});
+
+test("kv get throws: adapter swallows and returns null", async () => {
+  _throwOn.add("get");
+  await expect(getKvSecondaryStorage().get("k")).resolves.toBeNull();
+});
+
+test("kv put throws: adapter swallows (no rethrow)", async () => {
+  _throwOn.add("put");
+  await expect(
+    getKvSecondaryStorage().set("k", "v", 120),
+  ).resolves.toBeUndefined();
+});
+
+test("kv put throws with no ttl: adapter swallows", async () => {
+  _throwOn.add("put");
+  await expect(getKvSecondaryStorage().set("k", "v")).resolves.toBeUndefined();
+});
+
+test("kv delete throws: adapter swallows", async () => {
+  _throwOn.add("delete");
+  await expect(getKvSecondaryStorage().delete("k")).resolves.toBeUndefined();
+});

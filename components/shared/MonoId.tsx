@@ -17,6 +17,7 @@ export type MonoIdTone =
   | "planned"
   | "ready"
   | "in_progress"
+  | "in_review"
   | "blocked"
   | "done"
   | "cancelled";
@@ -67,6 +68,8 @@ function toneColor(dim: boolean, tone: MonoIdTone): string {
     case "ready":
     case "in_progress":
       return "var(--color-glyph-progress)";
+    case "in_review":
+      return "var(--color-glyph-review)";
     case "blocked":
       return "var(--color-glyph-blocked)";
     case "done":
