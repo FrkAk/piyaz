@@ -1163,6 +1163,138 @@ export async function searchTasksPaged(
 }
 
 // ---------------------------------------------------------------------------
+// Cross-project search (command palette)
+// ---------------------------------------------------------------------------
+
+/** A search result returned by {@link searchTasksAcrossProjects}. */
+export type CrossProjectSearchResult = {
+  /** Task UUID. */
+  id: string;
+  /** Composed taskRef, e.g. `MYMR-191`. */
+  taskRef: string;
+  /** Task title. */
+  title: string;
+  /** Task lifecycle status. */
+  status: string;
+  /** Owning project UUID — drives the deep link. */
+  projectId: string;
+  /** Owning project identifier (prefix shown in the taskRef). */
+  projectIdentifier: string;
+  /** Owning project title — shown as the project crumb in the palette row. */
+  projectTitle: string;
+  /** Owning team UUID. */
+  organizationId: string;
+};
+
+/**
+ * Cross-project task search for the ⌘K palette. Bounded by
+ * `current_user_orgs()` (defense-in-depth over RLS).
+ *
+ * Per-token OR match: `tasks.title`, any `tasks.tags` value,
+ * `projects.title`, `projects.identifier` (all case-insensitive substring),
+ * and `tasks.sequence_number` for digit-only tokens. Tokens AND-join.
+ * Full taskRef (`MYMR-191`) short-circuits to one row; partial (`MYMR-`)
+ * falls through and surfaces every task in the project.
+ *
+ * Ordered by rank → `tasks.order` → `tasks.id` (stable tie-breaker).
+ *
+ * @param ctx - Resolved auth context.
+ * @param query - Search string.
+ * @param opts - Optional limit (1-25, default 10).
+ * @returns Up to `opts.limit` matching tasks with project crumb metadata.
+ */
+export async function searchTasksAcrossProjects(
+  ctx: AuthContext,
+  query: string,
+  opts: { limit?: number } = {},
+): Promise<CrossProjectSearchResult[]> {
+  const trimmed = query.trim();
+  if (trimmed.length === 0) return [];
+
+  const limit = Math.min(Math.max(opts.limit ?? 10, 1), 25);
+  const lower = trimmed.toLowerCase();
+  const rankExpr = sql<number>`CASE
+      WHEN LOWER(${tasks.title}) = ${lower} THEN 0
+      WHEN LOWER(${tasks.title}) LIKE ${lower + "%"} THEN 1
+      WHEN LOWER(${tasks.title}) LIKE ${"%" + lower + "%"} THEN 2
+      ELSE 3
+    END`;
+
+  return withUserContext(ctx.userId, async (tx) => {
+    const orgRows = await executeRaw<{ org_id: string }>(
+      tx,
+      sql`SELECT org_id FROM public.current_user_orgs()`,
+    );
+    const orgIds = orgRows.map((r) => r.org_id);
+    if (orgIds.length === 0) return [];
+
+    const clauses = [inArray(projects.organizationId, orgIds)];
+
+    const refMatch = trimmed.match(TASK_REF_PATTERN);
+    if (refMatch) {
+      // taskRef short-circuit — match exact project identifier + sequence.
+      // No fallback to title substring when the pattern matches, so a query
+      // like "FOO-1" that doesn't resolve returns empty rather than confusing.
+      clauses.push(eq(projects.identifier, refMatch[1].toUpperCase()));
+      clauses.push(eq(tasks.sequenceNumber, Number(refMatch[2])));
+    } else {
+      // Tokenize on whitespace and dashes so "auth bug" AND-matches both
+      // tokens in any order, and partial taskRefs like "MYMR-" surface
+      // every task in that project. Each token must match somewhere:
+      // task title, any tag, project title, project identifier, or
+      // (numeric tokens only) sequence number.
+      const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
+      if (tokens.length === 0) return [];
+      for (const token of tokens) {
+        const pattern = `%${token}%`;
+        const orClauses = [
+          ilike(tasks.title, pattern),
+          sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`,
+          ilike(projects.title, pattern),
+          ilike(projects.identifier, pattern),
+        ];
+        if (/^\d+$/.test(token)) {
+          orClauses.push(eq(tasks.sequenceNumber, Number(token)));
+        }
+        const tokenClause = or(...orClauses);
+        if (tokenClause) clauses.push(tokenClause);
+      }
+    }
+
+    const rows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        sequenceNumber: tasks.sequenceNumber,
+        projectId: tasks.projectId,
+        projectIdentifier: projects.identifier,
+        projectTitle: projects.title,
+        organizationId: projects.organizationId,
+      })
+      .from(tasks)
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(and(...clauses))
+      .orderBy(rankExpr, asc(tasks.order), asc(tasks.id))
+      .limit(limit);
+
+    return rows.map((row) => ({
+      id: row.id,
+      taskRef: composeTaskRef(
+        asIdentifier(row.projectIdentifier),
+        row.sequenceNumber,
+      ),
+      title: row.title,
+      status: row.status,
+      projectId: row.projectId,
+      projectIdentifier: row.projectIdentifier,
+      projectTitle: row.projectTitle,
+      organizationId: row.organizationId,
+    }));
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Edge notes — internal helpers (caller asserted access already)
 // ---------------------------------------------------------------------------
 
