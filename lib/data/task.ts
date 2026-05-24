@@ -908,11 +908,14 @@ export type SearchResult = {
 const TASK_REF_PATTERN = /^([A-Z0-9]+)-(\d+)$/i;
 
 /**
- * Search tasks by taskRef, title, or tags within a project.
+ * Search tasks by taskRef, title, tags, or category within a project.
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
  * @param query - Optional search string.
  * @param tags - Optional exact tag filter (OR-within).
+ * @param category - Optional exact project-category filter (AND-narrows with
+ *   query and tags). Caller is responsible for validating against the
+ *   project's vocabulary before passing.
  * @returns Up to 20 matching tasks with derived state.
  */
 export async function searchTasks(
@@ -920,10 +923,17 @@ export async function searchTasks(
   projectId: string,
   query?: string,
   tags?: string[],
+  category?: string,
 ): Promise<SearchResult[]> {
   const trimmedQuery = query?.trim() ?? "";
   const tagFilter = normalizeTags(tags);
-  if (trimmedQuery.length === 0 && tagFilter.length === 0) return [];
+  const trimmedCategory = category?.trim() ?? "";
+  if (
+    trimmedQuery.length === 0 &&
+    tagFilter.length === 0 &&
+    trimmedCategory.length === 0
+  )
+    return [];
 
   const lower = trimmedQuery.toLowerCase();
   const rankExpr =
@@ -961,6 +971,10 @@ export async function searchTasks(
         clauses.push(
           sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
         );
+      }
+
+      if (trimmedCategory.length > 0) {
+        clauses.push(eq(tasks.category, trimmedCategory));
       }
 
       // Inlining a literal `0` in ORDER BY is parsed as a positional column

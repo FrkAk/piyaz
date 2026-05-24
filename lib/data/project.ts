@@ -437,6 +437,27 @@ export async function getProjectTagsTx(
   return aggregateProjectTags(tx, projectId);
 }
 
+/**
+ * Slim accessor returning just the project's declared category vocabulary.
+ * Used by handlers that need to validate a user-supplied category without
+ * paying for the full {@link getProjectMeta} payload (tag aggregation,
+ * status counts). Authorization is enforced via `assertProjectAccessTx`.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @returns The project's category list (may be empty).
+ * @throws ForbiddenError on missing or cross-team project.
+ */
+export async function getProjectCategories(
+  ctx: AuthContext,
+  projectId: string,
+): Promise<string[]> {
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    return project.categories;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Project metadata (slim — no tasks, no edges)
 // ---------------------------------------------------------------------------

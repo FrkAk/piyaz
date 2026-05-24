@@ -16,6 +16,7 @@ import {
   listUserTeams,
   getProjectTags,
   getProjectMeta,
+  getProjectCategories,
 } from "@/lib/data/project";
 import {
   createTask,
@@ -699,7 +700,7 @@ export const DESCRIPTIONS = {
     "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with mymir_query type='edges'.",
   mymir_query:
     "Search and browse project data. Pick the slim tool first; reserve overview for unfamiliar projects. " +
-    "search=tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass tags=[...] for exact tag match (OR-within); combine with `query` to AND-narrow. Single-result responses include a state hint pointing to the right next call. " +
+    "search=tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass tags=[...] for exact tag match (OR-within); combine with `query` to AND-narrow. Pass category='...' for exact project-category match (closed vocabulary; unknown values rejected with the valid list inline); combines with query/tags via AND. Single-result responses include a state hint pointing to the right next call. " +
     "list=every task in the project (slim, ordered by position). " +
     "edges=relationships on one task (connected title, status, direction, note). " +
     "meta=slim project metadata: header, description, status, categories, tag vocabulary (with usage counts), progress + status counts. No task list, no edges. Use this to look up categories before setting one, or the tag vocabulary before coining new tags. " +
@@ -785,6 +786,7 @@ export type QueryParams = {
   projectId?: string;
   query?: string;
   tags?: string[];
+  category?: string;
   taskId?: string;
 };
 
@@ -1359,10 +1361,24 @@ export async function handleQuery(
           );
         const hasQuery = (p.query?.trim() ?? "").length > 0;
         const tagFilter = normalizeTags(p.tags);
-        if (!hasQuery && tagFilter.length === 0) {
+        const trimmedCategory = p.category?.trim() ?? "";
+        if (
+          !hasQuery &&
+          tagFilter.length === 0 &&
+          trimmedCategory.length === 0
+        ) {
           return fail(
-            "query or tags required for search. Pass `query` (taskRef, title or tag substring) or `tags=[...]` (exact tag, OR-within).",
+            "query, tags, or category required for search. Pass `query` (taskRef, title or tag substring), `tags=[...]` (exact tag, OR-within), or `category` (exact project category).",
           );
+        }
+
+        if (trimmedCategory.length > 0) {
+          const categories = await getProjectCategories(ctx, p.projectId);
+          if (!categories.includes(trimmedCategory)) {
+            return fail(
+              `Category "${trimmedCategory}" not in this project's categories: [${categories.join(", ")}]. Run mymir_query type='meta' for the current list.`,
+            );
+          }
         }
 
         const variantHints =
@@ -1373,7 +1389,13 @@ export async function handleQuery(
               )
             : [];
 
-        const results = await searchTasks(ctx, p.projectId, p.query, tagFilter);
+        const results = await searchTasks(
+          ctx,
+          p.projectId,
+          p.query,
+          tagFilter,
+          trimmedCategory || undefined,
+        );
         const hintParts: string[] = [...variantHints];
         if (results.length === 1) hintParts.push(stateHint(results[0].state));
         const hint = hintParts.length > 0 ? hintParts.join("\n> ") : undefined;

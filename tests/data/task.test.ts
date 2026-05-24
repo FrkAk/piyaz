@@ -271,6 +271,104 @@ test("searchTasks tags-only filter omits relevance rank to avoid ORDER BY 0", as
   expect(rows[0].tags).toEqual(["feature"]);
 });
 
+test("searchTasks category-only filter returns tasks in that category ordered by tasks.order ASC", async () => {
+  const f = await seedUserOrgProject("searchcatonly");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "tags", "category")
+      VALUES
+        (${f.projectId}, 'C2', 1, 20, '[]'::jsonb, 'MCP'),
+        (${f.projectId}, 'C0', 2, 10, '[]'::jsonb, 'MCP'),
+        (${f.projectId}, 'C1', 3, 30, '[]'::jsonb, 'Data'),
+        (${f.projectId}, 'C3', 4, 40, '[]'::jsonb, 'MCP')
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasks(ctx, f.projectId, undefined, undefined, "MCP");
+  expect(rows.map((r) => r.title)).toEqual(["C0", "C2", "C3"]);
+  for (const r of rows) expect(r.category).toBe("MCP");
+});
+
+test("searchTasks category + tags AND-narrows", async () => {
+  const f = await seedUserOrgProject("searchcattags");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "tags", "category")
+      VALUES
+        (${f.projectId}, 'A', 1, 10, '["feature"]'::jsonb, 'MCP'),
+        (${f.projectId}, 'B', 2, 20, '["bug"]'::jsonb, 'MCP'),
+        (${f.projectId}, 'C', 3, 30, '["feature"]'::jsonb, 'Data'),
+        (${f.projectId}, 'D', 4, 40, '["bug"]'::jsonb, 'Data')
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasks(
+    ctx,
+    f.projectId,
+    undefined,
+    ["feature"],
+    "MCP",
+  );
+  expect(rows.map((r) => r.title)).toEqual(["A"]);
+});
+
+test("searchTasks category + query AND-narrows", async () => {
+  const f = await seedUserOrgProject("searchcatquery");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "tags", "category")
+      VALUES
+        (${f.projectId}, 'auth refactor', 1, 10, '[]'::jsonb, 'MCP'),
+        (${f.projectId}, 'auth refactor', 2, 20, '[]'::jsonb, 'Data'),
+        (${f.projectId}, 'storage tweak', 3, 30, '[]'::jsonb, 'MCP')
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasks(ctx, f.projectId, "auth", undefined, "MCP");
+  expect(rows.length).toBe(1);
+  expect(rows[0].title).toBe("auth refactor");
+  expect(rows[0].category).toBe("MCP");
+});
+
+test("searchTasks category-only with no matches returns empty array", async () => {
+  const f = await seedUserOrgProject("searchcatnomatch");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "tags", "category")
+      VALUES (${f.projectId}, 'X', 1, 1, '[]'::jsonb, 'MCP')
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await searchTasks(
+    ctx,
+    f.projectId,
+    undefined,
+    undefined,
+    "Data",
+  );
+  expect(rows).toEqual([]);
+});
+
 test("searchTasksAcrossProjects returns [] for empty / whitespace queries", async () => {
   const f = await seedUserOrgProject("xprojempty");
   const ctx = makeAuthContext(f.userId);
