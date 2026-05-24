@@ -23,8 +23,8 @@ export default async function MyTasksPage() {
   if (!session) redirect("/sign-in");
 
   const qc = getServerQueryClient();
-  const rows = await listTasksAssignedToUser();
-  qc.setQueryData(myTasksKeys.list(), rows);
+  const payload = await listTasksAssignedToUser();
+  qc.setQueryData(myTasksKeys.list(), payload.ok ? payload.rows : []);
 
   return (
     <AppShell>

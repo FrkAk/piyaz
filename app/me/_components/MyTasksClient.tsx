@@ -29,7 +29,11 @@ export function MyTasksClient() {
   const [showAll, setShowAll] = useState(false);
   const { data } = useQuery<AssignedTaskRow[]>({
     queryKey: myTasksKeys.list(),
-    queryFn: () => listTasksAssignedToUser(),
+    queryFn: async () => {
+      const payload = await listTasksAssignedToUser();
+      if (!payload.ok) throw new Error(payload.code);
+      return payload.rows;
+    },
   });
 
   const rows = useMemo(() => data ?? [], [data]);

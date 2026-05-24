@@ -11,6 +11,7 @@ import {
 import {
   searchTasksAcrossProjects as coreSearchTasksAcrossProjects,
   listTasksAssignedToUser as coreListTasksAssignedToUser,
+  type AssignedTaskRow,
   type CrossProjectSearchResult,
 } from "@/lib/data/task";
 
@@ -40,6 +41,17 @@ export type CrossProjectSearchFailureCode =
 export type CrossProjectSearchResultPayload =
   | { ok: true; rows: CrossProjectSearchResult[] }
   | { ok: false; code: CrossProjectSearchFailureCode };
+
+/** Closed set of failure codes for `listTasksAssignedToUser`. */
+export type MyTasksListFailureCode =
+  | "unauthorized"
+  | "rate_limited"
+  | "unknown";
+
+/** Discriminated result for the `/me` cross-project assigned-tasks fetch. */
+export type MyTasksListResultPayload =
+  | { ok: true; rows: AssignedTaskRow[] }
+  | { ok: false; code: MyTasksListFailureCode };
 
 /**
  * Server action wrapper — fetches the chrome view of a project (header
@@ -122,14 +134,36 @@ export async function searchTasksAcrossProjects(
  * Server action wrapper — fetches every task assigned to the signed-in
  * user across every team they belong to. Membership-gated via
  * `current_user_orgs()`; cross-team rows are filtered at the SQL layer.
+ * Throttled at 30/min per-user and 60/min per-IP via the shared
+ * `actions` slot; unauth callers throttle by IP only.
  *
- * No rate limit. This action is invoked at most once per `/me` page
- * render from the server; the client component reuses the dehydrated
- * cache. Attack surface matches {@link listProjectsSlim}.
- *
- * @returns Assigned task rows ordered by `updatedAt DESC, id ASC`.
+ * @returns `{ ok: true, rows }` or a typed failure.
  */
-export async function listTasksAssignedToUser() {
-  const ctx = await getAuthContext();
-  return coreListTasksAssignedToUser(ctx);
+export async function listTasksAssignedToUser(): Promise<MyTasksListResultPayload> {
+  // Resolve user id before the rate-limit check so authed callers throttle
+  // per-user, not per-IP (IP keys collide on shared NATs).
+  const session = await getSession();
+  const userId = session?.user.id ?? null;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "my-tasks.list",
+      windowSeconds: 60,
+      perUserMax: 30,
+      perIpMax: 60,
+    },
+    userId,
+  );
+  if (!limit.ok) return { ok: false, code: "rate_limited" };
+
+  if (!userId) return { ok: false, code: "unauthorized" };
+
+  try {
+    const ctx = await getAuthContext();
+    const rows = await coreListTasksAssignedToUser(ctx);
+    return { ok: true, rows };
+  } catch (err) {
+    console.error("listTasksAssignedToUser failed", err);
+    return { ok: false, code: "unknown" };
+  }
 }
