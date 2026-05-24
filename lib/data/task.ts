@@ -1294,6 +1294,100 @@ export async function searchTasksAcrossProjects(
   });
 }
 
+/** A task row surfaced by {@link listTasksAssignedToUser}. */
+export type AssignedTaskRow = {
+  /** Task UUID. */
+  id: string;
+  /** Composed task identifier (e.g. `MYMR-217`). */
+  taskRef: string;
+  /** Display title. */
+  title: string;
+  /** Schema task status. */
+  status: TaskStatus;
+  /** Task priority, or null when unset. */
+  priority: Priority | null;
+  /** Owning project identifier (prefix shown in the taskRef). */
+  projectIdentifier: string;
+  /** Owning project title — shown as the group header. */
+  projectTitle: string;
+  /** Owning project UUID — drives the deep link from the row. */
+  projectId: string;
+  /** Owning team UUID. */
+  organizationId: string;
+  /** Last-updated timestamp from `tasks.updated_at`, ISO string — used for stable ordering. */
+  updatedAt: string;
+};
+
+/**
+ * List every task assigned to the signed-in user across every team they
+ * belong to. Bounded by `current_user_orgs()` (defense-in-depth over RLS).
+ *
+ * Returns the slim row shape the cross-project "My tasks" view needs:
+ * task identity + status + priority + owning project crumb metadata.
+ * Ordered by `tasks.updated_at` descending so the most-recently-touched
+ * rows surface first; ties resolve on `tasks.id` ascending for stable
+ * output across calls.
+ *
+ * No pagination in v1 (mirrors {@link searchTasksAcrossProjects} and
+ * `listProjectsSlim`); if any caller approaches a few hundred assigned
+ * rows this will need a paginated variant.
+ *
+ * @param ctx - Resolved auth context.
+ * @returns Assigned task rows ordered `updatedAt DESC, id ASC`.
+ */
+export async function listTasksAssignedToUser(
+  ctx: AuthContext,
+): Promise<AssignedTaskRow[]> {
+  return withUserContext(ctx.userId, async (tx) => {
+    const orgRows = await executeRaw<{ org_id: string }>(
+      tx,
+      sql`SELECT org_id FROM public.current_user_orgs()`,
+    );
+    const orgIds = orgRows.map((r) => r.org_id);
+    if (orgIds.length === 0) return [];
+
+    const rows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        priority: tasks.priority,
+        sequenceNumber: tasks.sequenceNumber,
+        updatedAt: tasks.updatedAt,
+        projectId: tasks.projectId,
+        projectIdentifier: projects.identifier,
+        projectTitle: projects.title,
+        organizationId: projects.organizationId,
+      })
+      .from(taskAssignees)
+      .innerJoin(tasks, eq(tasks.id, taskAssignees.taskId))
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(
+        and(
+          eq(taskAssignees.userId, ctx.userId),
+          inArray(projects.organizationId, orgIds),
+        ),
+      )
+      .orderBy(desc(tasks.updatedAt), asc(tasks.id));
+
+    return rows.map((row) => ({
+      id: row.id,
+      taskRef: composeTaskRef(
+        asIdentifier(row.projectIdentifier),
+        row.sequenceNumber,
+      ),
+      title: row.title,
+      status: row.status,
+      priority: row.priority,
+      projectId: row.projectId,
+      projectIdentifier: row.projectIdentifier,
+      projectTitle: row.projectTitle,
+      organizationId: row.organizationId,
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Edge notes — internal helpers (caller asserted access already)
 // ---------------------------------------------------------------------------

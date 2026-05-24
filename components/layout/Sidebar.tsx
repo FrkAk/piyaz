@@ -81,6 +81,7 @@ export function Sidebar({
   const [openProjects, setOpenProjects] = useState(true);
   const pathname = usePathname() ?? "/";
   const activeProjectId = pathname.match(/^\/project\/([^/]+)/)?.[1];
+  const myTasksActive = pathname.startsWith("/me");
   const { collapsed, toggle } = useSidebarCollapse();
   const { openPalette } = useCommandPalette();
 
@@ -116,6 +117,7 @@ export function Sidebar({
           projects={projects}
           activeProjectId={activeProjectId}
           settingsActive={pathname.startsWith("/settings")}
+          myTasksActive={myTasksActive}
           onExpand={toggle}
           onOpenPalette={openPalette}
         />
@@ -166,7 +168,8 @@ export function Sidebar({
             <NavItem
               icon={<IconUser size={12} />}
               label="My tasks"
-              disabledHint="Coming soon"
+              href="/me"
+              active={myTasksActive}
             />
           </nav>
 
@@ -244,6 +247,8 @@ interface CompactSidebarProps {
   activeProjectId: string | undefined;
   /** Whether the settings route is active. */
   settingsActive: boolean;
+  /** Whether the `/me` (My tasks) route is active. */
+  myTasksActive: boolean;
   /** Click the chevron-right to expand the sidebar. */
   onExpand: () => void;
   /** Open the global command palette (wired by the parent's hook call). */
@@ -266,6 +271,7 @@ function CompactSidebar({
   projects,
   activeProjectId,
   settingsActive,
+  myTasksActive,
   onExpand,
   onOpenPalette,
 }: CompactSidebarProps) {
@@ -312,8 +318,9 @@ function CompactSidebar({
         />
         <CompactNavIcon
           icon={<IconUser size={14} />}
-          label="My tasks — coming soon"
-          disabled
+          label="My tasks"
+          href="/me"
+          active={myTasksActive}
         />
       </nav>
 
@@ -383,27 +390,49 @@ interface CompactNavIconProps {
   icon: React.ReactNode;
   /** Tooltip text shown on hover. */
   label: string;
-  /** Whether the row is rendered disabled. */
+  /** When set, the row renders as a `<Link>` to this href instead of a button. */
+  href?: string;
+  /** Whether the row is the active route — highlights when set. Ignored without `href`. */
+  active?: boolean;
+  /** Whether the row is rendered disabled. Ignored when `href` is set. */
   disabled?: boolean;
-  /** Click handler for live rows (e.g. search opens the command palette). */
+  /** Click handler for live rows that don't navigate (e.g. search opens the palette). */
   onClick?: () => void;
 }
 
 /**
- * Small square icon button used as a top-level nav row in {@link CompactSidebar}.
- * Renders disabled rows with a `coming soon` tooltip so muscle memory still
- * works without the labels; live rows accept an `onClick` (e.g. the search
- * icon opens the global command palette).
+ * Small square icon used as a top-level nav row in {@link CompactSidebar}.
+ * Renders three modes based on the props:
+ * - `href` set → a Next.js `<Link>` with the active-route highlight.
+ * - `disabled` true → a non-interactive button with a `coming soon` tooltip.
+ * - otherwise → a live `<button>` that calls `onClick` (e.g. search opens the palette).
  *
  * @param props - Icon configuration.
- * @returns Icon-shaped button.
+ * @returns Icon-shaped link or button.
  */
 function CompactNavIcon({
   icon,
   label,
+  href,
+  active,
   disabled,
   onClick,
 }: CompactNavIconProps) {
+  const className = `inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+    disabled
+      ? "cursor-not-allowed text-text-muted opacity-80"
+      : active
+        ? "bg-surface-hover text-text-primary"
+        : "cursor-pointer text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+  }`;
+
+  if (href) {
+    return (
+      <Link href={href} title={label} aria-label={label} className={className}>
+        {icon}
+      </Link>
+    );
+  }
   return (
     <button
       type="button"
@@ -411,11 +440,7 @@ function CompactNavIcon({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-        disabled
-          ? "cursor-not-allowed text-text-muted opacity-80"
-          : "cursor-pointer text-text-secondary hover:bg-surface-hover hover:text-text-primary"
-      }`}
+      className={className}
     >
       {icon}
     </button>
@@ -447,17 +472,40 @@ interface NavItemProps {
   icon: React.ReactNode;
   /** Row label. */
   label: string;
-  /** When set, row is rendered disabled with this title attribute. */
+  /** When set, the row renders as a `<Link>` to this href instead of a disabled button. */
+  href?: string;
+  /** Whether the row is the active route — surfaces the highlight state. */
+  active?: boolean;
+  /** When `href` is unset, row is rendered disabled with this title attribute. */
   disabledHint?: string;
 }
 
 /**
- * Top-level sidebar nav row — placeholder rows are disabled with a
- * "Coming soon" hint until the matching backend route lands.
+ * Top-level sidebar nav row. When `href` is set the row renders as a live
+ * Next.js `<Link>` with the active-route highlight; otherwise it falls back
+ * to a disabled button carrying the `disabledHint` tooltip (placeholder rows
+ * whose backend route has not landed yet).
+ *
  * @param props - Row configuration.
- * @returns Disabled button row matching the design spec.
+ * @returns Linked nav row or disabled button row.
  */
-function NavItem({ icon, label, disabledHint }: NavItemProps) {
+function NavItem({ icon, label, href, active, disabledHint }: NavItemProps) {
+  if (href) {
+    return (
+      <Link
+        href={href}
+        aria-label={label}
+        className={`flex h-7 w-full items-center gap-2 rounded-md border-none px-2 text-left text-[12px] font-medium transition-colors ${
+          active
+            ? "bg-surface-hover text-text-primary"
+            : "bg-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+        }`}
+      >
+        <span className="inline-flex text-text-muted">{icon}</span>
+        <span className="flex-1">{label}</span>
+      </Link>
+    );
+  }
   return (
     <button
       type="button"

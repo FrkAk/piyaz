@@ -9,6 +9,7 @@ import {
   searchTasks,
   searchTasksPaged,
   searchTasksAcrossProjects,
+  listTasksAssignedToUser,
   getTaskSlim,
   getTaskFull,
 } from "@/lib/data/task";
@@ -496,6 +497,76 @@ test("searchTasksAcrossProjects orders results deterministically across calls", 
   expect(a.length).toBe(5);
   expect(a.map((r) => r.id)).toEqual(b.map((r) => r.id));
   expect(a.map((r) => r.id)).toEqual(c.map((r) => r.id));
+});
+
+test("listTasksAssignedToUser returns rows assigned to the caller's user in the caller's team", async () => {
+  const f = await seedUserOrgProject("mytaskshappy");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  let taskId = "";
+  try {
+    const [row] = await sqlc<{ id: string }[]>`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "status")
+      VALUES (${f.projectId}, 'My assigned task', 1, 1, 'in_progress')
+      RETURNING id
+    `;
+    taskId = row.id;
+    await sqlc`
+      INSERT INTO task_assignees ("task_id", "user_id")
+      VALUES (${taskId}, ${f.userId})
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listTasksAssignedToUser(ctx);
+  expect(rows.length).toBe(1);
+  expect(rows[0].id).toBe(taskId);
+  expect(rows[0].title).toBe("My assigned task");
+  expect(rows[0].status).toBe("in_progress");
+  expect(rows[0].projectId).toBe(f.projectId);
+  expect(rows[0].organizationId).toBe(f.organizationId);
+});
+
+test("listTasksAssignedToUser excludes tasks in teams the caller is not a member of", async () => {
+  const me = await seedUserOrgProject("mytasksisome");
+  const other = await seedUserOrgProject("mytasksisoother");
+  const ctx = makeAuthContext(me.userId);
+
+  const sqlc = superuserPool();
+  try {
+    // Foreign-team task that happens to carry MY user-id in task_assignees —
+    // the row exists in the DB (seeded with BYPASSRLS); the data function
+    // must NOT surface it because my user is not a member of the other team.
+    const [foreign] = await sqlc<{ id: string }[]>`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${other.projectId}, 'Foreign-team task', 1, 1)
+      RETURNING id
+    `;
+    await sqlc`
+      INSERT INTO task_assignees ("task_id", "user_id")
+      VALUES (${foreign.id}, ${me.userId})
+    `;
+
+    // My own assigned task in MY team — should be the only row returned.
+    const [mine] = await sqlc<{ id: string }[]>`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order")
+      VALUES (${me.projectId}, 'My own task', 1, 1)
+      RETURNING id
+    `;
+    await sqlc`
+      INSERT INTO task_assignees ("task_id", "user_id")
+      VALUES (${mine.id}, ${me.userId})
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listTasksAssignedToUser(ctx);
+  expect(rows.length).toBe(1);
+  expect(rows[0].title).toBe("My own task");
+  expect(rows[0].organizationId).toBe(me.organizationId);
 });
 
 test("getTaskSlim returns the slim shape", async () => {

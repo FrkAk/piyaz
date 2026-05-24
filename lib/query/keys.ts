@@ -34,3 +34,11 @@ export const teamKeys = {
   members: (organizationId: string) =>
     ["team", organizationId, "members"] as const,
 } as const;
+
+/** "My tasks" cross-project view query keys. */
+export const myTasksKeys = {
+  /** All my-tasks queries. */
+  all: () => ["my-tasks"] as const,
+  /** Flat list of every task assigned to the signed-in user. */
+  list: () => ["my-tasks", "list"] as const,
+} as const;

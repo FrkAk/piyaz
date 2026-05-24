@@ -10,6 +10,7 @@ import {
 } from "@/lib/data/project";
 import {
   searchTasksAcrossProjects as coreSearchTasksAcrossProjects,
+  listTasksAssignedToUser as coreListTasksAssignedToUser,
   type CrossProjectSearchResult,
 } from "@/lib/data/task";
 
@@ -18,6 +19,7 @@ export type {
   TaskState,
   SearchResult,
   CrossProjectSearchResult,
+  AssignedTaskRow,
 } from "@/lib/data/task";
 export type { DetailedEdge } from "@/lib/data/edge";
 export type { ProjectTag } from "@/lib/data/project";
@@ -114,4 +116,20 @@ export async function searchTasksAcrossProjects(
     console.error("searchTasksAcrossProjects failed", err);
     return { ok: false, code: "unknown" };
   }
+}
+
+/**
+ * Server action wrapper — fetches every task assigned to the signed-in
+ * user across every team they belong to. Membership-gated via
+ * `current_user_orgs()`; cross-team rows are filtered at the SQL layer.
+ *
+ * No rate limit. This action is invoked at most once per `/me` page
+ * render from the server; the client component reuses the dehydrated
+ * cache. Attack surface matches {@link listProjectsSlim}.
+ *
+ * @returns Assigned task rows ordered by `updatedAt DESC, id ASC`.
+ */
+export async function listTasksAssignedToUser() {
+  const ctx = await getAuthContext();
+  return coreListTasksAssignedToUser(ctx);
 }
