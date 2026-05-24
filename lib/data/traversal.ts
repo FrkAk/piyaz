@@ -4,7 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { type Conn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import { tasks, projects, taskEdges } from "@/lib/db/schema";
-import { fetchDownstream } from "@/lib/db/raw/fetch-downstream";
+import { fetchEffectiveDownstream } from "@/lib/db/raw/fetch-effective-downstream";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import {
   buildEffectiveDepGraph,
@@ -179,7 +179,7 @@ export async function getDownstreamTx(
   const rootTask = await assertTaskAccessTx(tx, taskId);
   const projectId = rootTask.projectId;
 
-  const raw = await fetchDownstream(tx, taskId, projectId, maxDepth);
+  const raw = await fetchEffectiveDownstream(tx, taskId, projectId, maxDepth);
   if (raw.length === 0) return [];
 
   const ids = raw.map((r) => r.id);
