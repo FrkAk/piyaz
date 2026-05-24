@@ -27,11 +27,10 @@ async function seedProjectWithCategories(
 }
 
 test("handleQuery search rejects unknown category with project vocabulary inline", async () => {
-  const { userId, projectId } = await seedProjectWithCategories("queryunknown", [
-    "MCP",
-    "Data",
-    "UI",
-  ]);
+  const { userId, projectId } = await seedProjectWithCategories(
+    "queryunknown",
+    ["MCP", "Data", "UI"],
+  );
   const ctx = makeAuthContext(userId);
 
   const result = await handleQuery(
