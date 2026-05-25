@@ -49,7 +49,7 @@ export type TaskFullRawRow = {
  *
  * UNCHECKED: this helper performs NO authorization. The caller must
  * assert task access (`assertTaskAccess`) before invoking. Sibling of
- * `fetch-dependency-chain.ts` and `fetch-downstream.ts`.
+ * `fetch-dependency-chain.ts` and `fetch-effective-downstream.ts`.
  *
  * @param conn - Drizzle client or transaction handle.
  * @param taskId - UUID of the task.
