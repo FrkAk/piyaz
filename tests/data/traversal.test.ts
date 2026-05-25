@@ -436,18 +436,12 @@ describe("getCriticalPath: deterministic ordering and tie-break", () => {
 });
 
 /**
- * Coverage for the MYMR-209 fix: `getDownstream` consumes the
- * cancelled-transparent `fetchEffectiveDownstream` CTE, so cancelled tasks
- * never appear as dependents and cancelled middles do not consume depth
- * slots. The analyze surface and the context-bundle downstream section
- * share the same CTE substrate and so cannot diverge.
+ * Coverage for the MYMR-209 fix: `getDownstream` uses
+ * `fetchEffectiveDownstream`, so cancelled tasks never appear as
+ * dependents and cancelled middles contribute 0 to depth.
  */
 describe("getDownstream: cancelled-transparency for the analyze surface", () => {
   test("AC 1: cancelled task is never reported as a dependent (A → B(cancelled) directly under C)", async () => {
-    // Topology: A(planned) `depends_on` C, B(cancelled) `depends_on` C.
-    // `getDownstream(ctx, cId)` must return A only; B is filtered at the SQL
-    // level by `status <> 'cancelled'` in fetchEffectiveDownstream's outer
-    // SELECT.
     const fx = await seedUserOrgProject("trav-downstream-cancelled-direct");
     const sr = serviceRoleConnect();
     const aId = await insertTask(sr, {
@@ -493,10 +487,6 @@ describe("getDownstream: cancelled-transparency for the analyze surface", () => 
   });
 
   test("AC 2: A depends_on B(cancelled) depends_on C reports A at effective depth 1, B absent", async () => {
-    // Topology: A(planned) `depends_on` B(cancelled) `depends_on` C(planned).
-    // `getDownstream(ctx, cId)` must return [A] with A.depth === 1 (effective
-    // depth, not raw hops): the cancelled middle B contributes 0 to the
-    // running depth in fetchEffectiveDownstream's CASE branch.
     const fx = await seedUserOrgProject("trav-downstream-cancelled-middle");
     const sr = serviceRoleConnect();
     const aId = await insertTask(sr, {
@@ -542,10 +532,6 @@ describe("getDownstream: cancelled-transparency for the analyze surface", () => 
   });
 
   test("AC 3: analyze downstream and the context bundle's effective downstream return the same id set", async () => {
-    // Same A → B(cancelled) → C topology as the AC 2 case. Both surfaces
-    // must consume the same CTE substrate (fetchEffectiveDownstream); this
-    // test pins that invariant by comparing the analyze-tool result against
-    // a direct call of fetchEffectiveDownstream under withUserContext.
     const fx = await seedUserOrgProject("trav-downstream-mutual-consistency");
     const sr = serviceRoleConnect();
     const aId = await insertTask(sr, {
