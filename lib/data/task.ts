@@ -12,6 +12,7 @@ import {
   taskDecisions,
   taskLinks,
   type NewTask,
+  type Project,
   type TaskLink,
 } from "@/lib/db/schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
@@ -907,27 +908,68 @@ export type SearchResult = {
 /** Match a full taskRef like "MYMR-83" (case-insensitive). */
 const TASK_REF_PATTERN = /^([A-Z0-9]+)-(\d+)$/i;
 
+/** Filter options for {@link searchTasks} and {@link searchTasksTx}. */
+export type SearchTasksOpts = {
+  /** Optional search string (taskRef, title, or tag substring). */
+  query?: string;
+  /** Optional exact tag filter (OR-within). */
+  tags?: string[];
+  /** Optional exact project-category filter (AND-narrows). Caller validates. */
+  category?: string;
+};
+
 /**
  * Search tasks by taskRef, title, tags, or category within a project.
+ * Thin wrapper that opens one RLS-scoped transaction and delegates to
+ * {@link searchTasksTx}; prefer the `*Tx` variant when the caller already
+ * owns a `withUserContext` frame.
+ *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @param query - Optional search string.
- * @param tags - Optional exact tag filter (OR-within).
- * @param category - Optional exact project-category filter (AND-narrows with
- *   query and tags). Caller is responsible for validating against the
- *   project's vocabulary before passing.
+ * @param opts - Filter options.
  * @returns Up to 20 matching tasks with derived state.
+ * @throws ForbiddenError on missing or cross-team project.
  */
 export async function searchTasks(
   ctx: AuthContext,
   projectId: string,
-  query?: string,
-  tags?: string[],
-  category?: string,
+  opts: SearchTasksOpts = {},
 ): Promise<SearchResult[]> {
-  const trimmedQuery = query?.trim() ?? "";
-  const tagFilter = normalizeTags(tags);
-  const trimmedCategory = category?.trim() ?? "";
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    return searchTasksTx(tx, project, opts);
+  });
+}
+
+/** The slice of {@link Project} that {@link searchTasksTx} reads. */
+export type SearchTasksProject = Pick<
+  Project,
+  "id" | "identifier" | "categories"
+>;
+
+/**
+ * {@link searchTasks} on a caller-supplied tx and pre-resolved project.
+ *
+ * The caller MUST have invoked `assertProjectAccessTx` for `project.id` on
+ * the same `tx` before calling this. RLS still gates every row read, so a
+ * missing assert never bypasses authorization — it would only mute the
+ * explicit `Forbidden` error path. The pre-resolved `project` lets the
+ * search share authorization with surrounding work (e.g. tag-vocab fetch
+ * and category validation in the handler) without a second access check.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param project - Pre-resolved project slice (caller already authorized).
+ * @param opts - Filter options.
+ * @returns Up to 20 matching tasks with derived state.
+ */
+export async function searchTasksTx(
+  tx: Tx,
+  project: SearchTasksProject,
+  opts: SearchTasksOpts = {},
+): Promise<SearchResult[]> {
+  const trimmedQuery = opts.query?.trim() ?? "";
+  const tagFilter = normalizeTags(opts.tags);
+  const trimmedCategory = opts.category?.trim() ?? "";
   if (
     trimmedQuery.length === 0 &&
     tagFilter.length === 0 &&
@@ -946,77 +988,69 @@ export async function searchTasks(
         END`
       : null;
 
-  const { project, trimmed, stateMap } = await withUserContext(
-    ctx.userId,
-    async (tx) => {
-      const { project } = await assertProjectAccessTx(tx, projectId);
+  const clauses = [eq(tasks.projectId, project.id)];
 
-      const clauses = [eq(tasks.projectId, projectId)];
+  if (trimmedQuery.length > 0) {
+    const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
+    const seqClause =
+      refMatch && refMatch[1].toUpperCase() === project.identifier
+        ? eq(tasks.sequenceNumber, Number(refMatch[2]))
+        : null;
 
-      if (trimmedQuery.length > 0) {
-        const refMatch = trimmedQuery.match(TASK_REF_PATTERN);
-        const seqClause =
-          refMatch && refMatch[1].toUpperCase() === project.identifier
-            ? eq(tasks.sequenceNumber, Number(refMatch[2]))
-            : null;
+    const pattern = `%${trimmedQuery}%`;
+    const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
+    const queryClause =
+      seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
+    if (queryClause) clauses.push(queryClause);
+  }
 
-        const pattern = `%${trimmedQuery}%`;
-        const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
-        const queryClause =
-          seqClause ?? or(ilike(tasks.title, pattern), tagSubstring);
-        if (queryClause) clauses.push(queryClause);
-      }
+  if (tagFilter.length > 0) {
+    clauses.push(
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
+    );
+  }
 
-      if (tagFilter.length > 0) {
-        clauses.push(
-          sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t IN ${tagFilter})`,
-        );
-      }
+  if (trimmedCategory.length > 0) {
+    clauses.push(eq(tasks.category, trimmedCategory));
+  }
 
-      if (trimmedCategory.length > 0) {
-        clauses.push(eq(tasks.category, trimmedCategory));
-      }
-
-      // Inlining a literal `0` in ORDER BY is parsed as a positional column
-      // reference, not a constant — Postgres rejects it with 42P10.
-      const orderByCols = rankExpr
-        ? [rankExpr, asc(tasks.order)]
-        : [asc(tasks.order)];
-      const trimmedRows = await tx
-        .select({
-          id: tasks.id,
-          title: tasks.title,
-          status: tasks.status,
-          tags: tasks.tags,
-          category: tasks.category,
-          priority: tasks.priority,
-          estimate: tasks.estimate,
-          hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
-          hasCriteria: hasCriteriaExpr(),
-          sequenceNumber: tasks.sequenceNumber,
-          order: tasks.order,
-          assigneeCount: assigneeCountExpr(),
-        })
-        .from(tasks)
-        .where(and(...clauses))
-        .orderBy(...orderByCols)
-        .limit(20);
-      const states = await deriveTaskStatesSlim(
-        projectId,
-        trimmedRows.map((t) => ({
-          id: t.id,
-          status: t.status,
-          hasDescription: t.hasDescription,
-          hasCriteria: t.hasCriteria,
-        })),
-        tx,
-      );
-      return { project, trimmed: trimmedRows, stateMap: states };
-    },
+  // Inlining a literal `0` in ORDER BY is parsed as a positional column
+  // reference, not a constant — Postgres rejects it with 42P10.
+  const orderByCols = rankExpr
+    ? [rankExpr, asc(tasks.order)]
+    : [asc(tasks.order)];
+  const trimmedRows = await tx
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      tags: tasks.tags,
+      category: tasks.category,
+      priority: tasks.priority,
+      estimate: tasks.estimate,
+      hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+      hasCriteria: hasCriteriaExpr(),
+      sequenceNumber: tasks.sequenceNumber,
+      order: tasks.order,
+      assigneeCount: assigneeCountExpr(),
+    })
+    .from(tasks)
+    .where(and(...clauses))
+    .orderBy(...orderByCols)
+    .limit(20);
+  const stateMap = await deriveTaskStatesSlim(
+    project.id,
+    trimmedRows.map((t) => ({
+      id: t.id,
+      status: t.status,
+      hasDescription: t.hasDescription,
+      hasCriteria: t.hasCriteria,
+    })),
+    tx,
   );
 
   const identifier = asIdentifier(project.identifier);
-  return enrichWithTaskRef(trimmed, identifier).map((t) => ({
+  return enrichWithTaskRef(trimmedRows, identifier).map((t) => ({
     id: t.id,
     taskRef: t.taskRef,
     title: t.title,

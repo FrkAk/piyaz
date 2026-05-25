@@ -266,7 +266,7 @@ test("searchTasks tags-only filter omits relevance rank to avoid ORDER BY 0", as
     await sqlc.end({ timeout: 5 });
   }
 
-  const rows = await searchTasks(ctx, f.projectId, undefined, ["feature"]);
+  const rows = await searchTasks(ctx, f.projectId, { tags: ["feature"] });
   expect(rows.length).toBe(1);
   expect(rows[0].tags).toEqual(["feature"]);
 });
@@ -289,7 +289,7 @@ test("searchTasks category-only filter returns tasks in that category ordered by
     await sqlc.end({ timeout: 5 });
   }
 
-  const rows = await searchTasks(ctx, f.projectId, undefined, undefined, "MCP");
+  const rows = await searchTasks(ctx, f.projectId, { category: "MCP" });
   expect(rows.map((r) => r.title)).toEqual(["C0", "C2", "C3"]);
   for (const r of rows) expect(r.category).toBe("MCP");
 });
@@ -312,13 +312,10 @@ test("searchTasks category + tags AND-narrows", async () => {
     await sqlc.end({ timeout: 5 });
   }
 
-  const rows = await searchTasks(
-    ctx,
-    f.projectId,
-    undefined,
-    ["feature"],
-    "MCP",
-  );
+  const rows = await searchTasks(ctx, f.projectId, {
+    tags: ["feature"],
+    category: "MCP",
+  });
   expect(rows.map((r) => r.title)).toEqual(["A"]);
 });
 
@@ -339,7 +336,10 @@ test("searchTasks category + query AND-narrows", async () => {
     await sqlc.end({ timeout: 5 });
   }
 
-  const rows = await searchTasks(ctx, f.projectId, "auth", undefined, "MCP");
+  const rows = await searchTasks(ctx, f.projectId, {
+    query: "auth",
+    category: "MCP",
+  });
   expect(rows.length).toBe(1);
   expect(rows[0].title).toBe("auth refactor");
   expect(rows[0].category).toBe("MCP");
@@ -359,13 +359,7 @@ test("searchTasks category-only with no matches returns empty array", async () =
     await sqlc.end({ timeout: 5 });
   }
 
-  const rows = await searchTasks(
-    ctx,
-    f.projectId,
-    undefined,
-    undefined,
-    "Data",
-  );
+  const rows = await searchTasks(ctx, f.projectId, { category: "Data" });
   expect(rows).toEqual([]);
 });
 
