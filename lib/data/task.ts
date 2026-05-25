@@ -920,9 +920,8 @@ export type SearchTasksOpts = {
 
 /**
  * Search tasks by taskRef, title, tags, or category within a project.
- * Thin wrapper that opens one RLS-scoped transaction and delegates to
- * {@link searchTasksTx}; prefer the `*Tx` variant when the caller already
- * owns a `withUserContext` frame.
+ * Prefer {@link searchTasksTx} when the caller already owns a
+ * `withUserContext` frame.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -954,8 +953,8 @@ export type SearchTasksProject = Pick<
  * the same `tx` before calling this. RLS still gates every row read, so a
  * missing assert never bypasses authorization — it would only mute the
  * explicit `Forbidden` error path. The pre-resolved `project` lets the
- * search share authorization with surrounding work (e.g. tag-vocab fetch
- * and category validation in the handler) without a second access check.
+ * search share authorization with surrounding work without a second access
+ * check.
  *
  * @param tx - Active RLS transaction handle.
  * @param project - Pre-resolved project slice (caller already authorized).

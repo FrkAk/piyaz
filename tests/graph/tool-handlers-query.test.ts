@@ -70,6 +70,13 @@ test("handleQuery search accepts a known category alone and returns matching tas
     ctx,
   );
   expect(result.ok).toBe(true);
+  if (result.ok === true) {
+    const data = result.data as string;
+    expect(data).toContain("Found 1 result");
+    expect(data).toContain("Alpha");
+    expect(data).toContain("MCP");
+    expect(data).not.toContain("Beta");
+  }
 });
 
 test("handleQuery search rejects when no filter is provided", async () => {
