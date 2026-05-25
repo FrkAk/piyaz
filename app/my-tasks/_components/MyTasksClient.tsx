@@ -7,28 +7,27 @@ import { useQuery } from "@tanstack/react-query";
 import { MonoId } from "@/components/shared/MonoId";
 import { PriorityIcon } from "@/components/shared/PriorityIcon";
 import { STATUS_META, StatusGlyph } from "@/components/shared/StatusGlyph";
-import type { AssignedTaskRow } from "@/lib/graph/queries";
+import type { AssignedTaskRow, MyTasksListFailureCode } from "@/lib/graph/queries";
 import { listTasksAssignedToUser } from "@/lib/graph/queries";
 import { myTasksKeys } from "@/lib/query/keys";
 import type { TaskStatus } from "@/lib/types";
+import {
+  DEFAULT_ACTIVE,
+  STATUS_OPTIONS,
+  countByStatus,
+  parseStatusParam,
+  serializeStatusSet,
+  setsEqual,
+} from "./status-filter";
 
-const STATUS_OPTIONS: readonly TaskStatus[] = [
-  "draft",
-  "planned",
-  "in_progress",
-  "in_review",
-  "done",
-  "cancelled",
-];
-
-const STATUS_OPTION_SET = new Set<TaskStatus>(STATUS_OPTIONS);
-
-/** Default selection when `?status=` is absent — the active middle of the lifecycle. */
-const DEFAULT_ACTIVE: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
-  "planned",
-  "in_progress",
-  "in_review",
-]);
+interface MyTasksClientProps {
+  /**
+   * Failure code from the RSC prefetch, when the server-side load returned !ok.
+   * Surfaces as an inline banner above the pill row; the data still hydrates
+   * as an empty list so the rest of the chrome renders normally.
+   */
+  initialError?: MyTasksListFailureCode | null;
+}
 
 /**
  * Cross-project assigned-tasks view. Reads server-dehydrated rows from
@@ -38,7 +37,7 @@ const DEFAULT_ACTIVE: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
  *
  * @returns The status pill row plus the grouped task list.
  */
-export function MyTasksClient() {
+export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname() ?? "/my-tasks";
@@ -85,6 +84,7 @@ export function MyTasksClient() {
         <h1 className="text-[15px] font-semibold text-text-primary">
           My tasks
         </h1>
+        {initialError !== null && <ErrorBanner code={initialError} />}
         <div
           className="flex flex-wrap gap-1.5"
           role="group"
@@ -102,64 +102,116 @@ export function MyTasksClient() {
         </div>
       </header>
 
-      {rows.length === 0 ? (
-        <p className="text-[12px] italic text-text-muted">
-          You have no assigned tasks yet.
-        </p>
-      ) : activeStatuses.size === 0 ? (
-        <p className="text-[12px] italic text-text-muted">
-          Select a status above to see tasks.
-        </p>
-      ) : groups.length === 0 ? (
-        <p className="text-[12px] italic text-text-muted">
-          No tasks match the selected statuses.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-6">
-          {groups.map((group) => (
-            <section key={group.projectId} className="flex flex-col gap-1">
-              <h2 className="flex items-baseline gap-2 px-2 text-[11px] font-semibold uppercase tracking-[0.10em] text-text-muted">
-                <Link
-                  href={`/project/${group.projectId}`}
-                  className="text-text-secondary hover:text-text-primary"
-                >
-                  {group.projectTitle}
-                </Link>
-                <span className="font-mono tabular-nums text-text-faint">
-                  {group.rows.length}
-                </span>
-              </h2>
-              <ul className="flex flex-col">
-                {group.rows.map((row) => (
-                  <li key={row.id}>
-                    <Link
-                      href={`/project/${row.projectId}?task=${row.id}`}
-                      className="flex h-[34px] items-center gap-2.5 border-b border-border pl-4 pr-3 transition-colors hover:bg-surface-raised/40"
-                    >
-                      <StatusGlyph status={row.status} size={14} />
-                      <MonoId
-                        id={row.taskRef}
-                        dim={
-                          row.status === "done" || row.status === "cancelled"
-                        }
-                      />
-                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
-                        {row.title}
-                      </span>
-                      {row.priority && (
-                        <span className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center">
-                          <PriorityIcon priority={row.priority} />
-                        </span>
-                      )}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
+      <Body
+        rows={rows}
+        groups={groups}
+        activeStatusCount={activeStatuses.size}
+      />
     </div>
+  );
+}
+
+interface BodyProps {
+  rows: AssignedTaskRow[];
+  groups: ProjectGroup[];
+  activeStatusCount: number;
+}
+
+function Body({ rows, groups, activeStatusCount }: BodyProps) {
+  if (rows.length === 0) {
+    return (
+      <p className="text-[12px] italic text-text-muted">
+        You have no assigned tasks yet.
+      </p>
+    );
+  }
+  if (activeStatusCount === 0) {
+    return (
+      <p className="text-[12px] italic text-text-muted">
+        Select a status above to see tasks.
+      </p>
+    );
+  }
+  if (groups.length === 0) {
+    return (
+      <p className="text-[12px] italic text-text-muted">
+        No tasks match the selected statuses.
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-6">
+      {groups.map((group) => (
+        <ProjectGroupSection key={group.projectId} group={group} />
+      ))}
+    </div>
+  );
+}
+
+interface ProjectGroupSectionProps {
+  group: ProjectGroup;
+}
+
+function ProjectGroupSection({ group }: ProjectGroupSectionProps) {
+  return (
+    <section className="flex flex-col gap-1">
+      <h2 className="flex items-baseline gap-2 px-2 text-[11px] font-semibold uppercase tracking-[0.10em] text-text-muted">
+        <Link
+          href={`/project/${group.projectId}`}
+          className="text-text-secondary hover:text-text-primary"
+        >
+          {group.projectTitle}
+        </Link>
+        <span className="font-mono tabular-nums text-text-faint">
+          {group.rows.length}
+        </span>
+      </h2>
+      <ul className="flex flex-col">
+        {group.rows.map((row) => (
+          <li key={row.id}>
+            <Link
+              href={`/project/${row.projectId}?task=${row.id}`}
+              className="flex h-[34px] items-center gap-2.5 border-b border-border pl-4 pr-3 transition-colors hover:bg-surface-raised/40"
+            >
+              <StatusGlyph status={row.status} size={14} />
+              <MonoId
+                id={row.taskRef}
+                dim={row.status === "done" || row.status === "cancelled"}
+              />
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
+                {row.title}
+              </span>
+              {row.priority && (
+                <span className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center">
+                  <PriorityIcon priority={row.priority} />
+                </span>
+              )}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const ERROR_COPY: Record<MyTasksListFailureCode, string> = {
+  unauthorized: "You are not signed in. Refresh to sign back in.",
+  rate_limited: "You are hitting the rate limit. Try again in a minute.",
+  unknown: "Could not load your assigned tasks. Try reloading the page.",
+};
+
+interface ErrorBannerProps {
+  code: MyTasksListFailureCode;
+}
+
+function ErrorBanner({ code }: ErrorBannerProps) {
+  return (
+    <p
+      role="alert"
+      className="rounded-md border border-border bg-surface-raised px-3 py-2 text-[12px] text-text-secondary"
+    >
+      {ERROR_COPY[code]}
+    </p>
   );
 }
 
@@ -171,7 +223,6 @@ interface StatusPillProps {
 }
 
 function StatusPill({ status, count, active, onToggle }: StatusPillProps) {
-  const label = STATUS_META[status]?.label ?? status;
   return (
     <button
       type="button"
@@ -185,7 +236,7 @@ function StatusPill({ status, count, active, onToggle }: StatusPillProps) {
       ].join(" ")}
     >
       <StatusGlyph status={status} size={12} />
-      <span>{label}</span>
+      <span>{STATUS_META[status].label}</span>
       <span className="font-mono tabular-nums text-text-faint">{count}</span>
     </button>
   );
@@ -212,47 +263,4 @@ function groupByProject(rows: AssignedTaskRow[]): ProjectGroup[] {
     }
   }
   return [...buckets.values()];
-}
-
-function countByStatus(rows: AssignedTaskRow[]): Record<TaskStatus, number> {
-  const counts: Record<TaskStatus, number> = {
-    draft: 0,
-    planned: 0,
-    in_progress: 0,
-    in_review: 0,
-    done: 0,
-    cancelled: 0,
-  };
-  for (const row of rows) counts[row.status] += 1;
-  return counts;
-}
-
-/**
- * Resolve the `?status=` param into a status set.
- * - absent (`null`) → default active set
- * - present-but-empty (`""`) → empty set (deliberate "show nothing")
- * - present CSV → exactly the listed statuses (unknown tokens dropped)
- */
-function parseStatusParam(raw: string | null): ReadonlySet<TaskStatus> {
-  if (raw === null) return DEFAULT_ACTIVE;
-  if (raw === "") return new Set<TaskStatus>();
-  const parts = raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p): p is TaskStatus => STATUS_OPTION_SET.has(p as TaskStatus));
-  return new Set(parts);
-}
-
-/** Serialize in canonical lifecycle order so the URL is stable across toggles. */
-function serializeStatusSet(set: ReadonlySet<TaskStatus>): string {
-  return STATUS_OPTIONS.filter((s) => set.has(s)).join(",");
-}
-
-function setsEqual(
-  a: ReadonlySet<TaskStatus>,
-  b: ReadonlySet<TaskStatus>,
-): boolean {
-  if (a.size !== b.size) return false;
-  for (const v of a) if (!b.has(v)) return false;
-  return true;
 }

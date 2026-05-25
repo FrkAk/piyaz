@@ -30,7 +30,7 @@ export default async function MyTasksPage() {
     <AppShell>
       <TopBar pageLabel="My tasks" />
       <HydrationBoundary state={dehydrate(qc)}>
-        <MyTasksClient />
+        <MyTasksClient initialError={payload.ok ? null : payload.code} />
       </HydrationBoundary>
     </AppShell>
   );
