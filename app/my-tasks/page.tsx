@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
  * signed-in user, grouped by project. Default filter hides terminal /
  * draft statuses; a client-side toggle reveals them without a refetch.
  *
- * @returns Hydrated `/me` shell.
+ * @returns Hydrated `/my-tasks` shell.
  */
 export default async function MyTasksPage() {
   const session = await getSession();

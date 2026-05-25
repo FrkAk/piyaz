@@ -81,7 +81,7 @@ export function Sidebar({
   const [openProjects, setOpenProjects] = useState(true);
   const pathname = usePathname() ?? "/";
   const activeProjectId = pathname.match(/^\/project\/([^/]+)/)?.[1];
-  const myTasksActive = pathname.startsWith("/me");
+  const myTasksActive = pathname.startsWith("/my-tasks");
   const { collapsed, toggle } = useSidebarCollapse();
   const { openPalette } = useCommandPalette();
 
@@ -168,7 +168,7 @@ export function Sidebar({
             <NavItem
               icon={<IconUser size={12} />}
               label="My tasks"
-              href="/me"
+              href="/my-tasks"
               active={myTasksActive}
             />
           </nav>
@@ -247,7 +247,7 @@ interface CompactSidebarProps {
   activeProjectId: string | undefined;
   /** Whether the settings route is active. */
   settingsActive: boolean;
-  /** Whether the `/me` (My tasks) route is active. */
+  /** Whether the `/my-tasks` route is active. */
   myTasksActive: boolean;
   /** Click the chevron-right to expand the sidebar. */
   onExpand: () => void;
@@ -319,7 +319,7 @@ function CompactSidebar({
         <CompactNavIcon
           icon={<IconUser size={14} />}
           label="My tasks"
-          href="/me"
+          href="/my-tasks"
           active={myTasksActive}
         />
       </nav>

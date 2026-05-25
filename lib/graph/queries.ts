@@ -48,7 +48,7 @@ export type MyTasksListFailureCode =
   | "rate_limited"
   | "unknown";
 
-/** Discriminated result for the `/me` cross-project assigned-tasks fetch. */
+/** Discriminated result for the `/my-tasks` cross-project assigned-tasks fetch. */
 export type MyTasksListResultPayload =
   | { ok: true; rows: AssignedTaskRow[] }
   | { ok: false; code: MyTasksListFailureCode };
