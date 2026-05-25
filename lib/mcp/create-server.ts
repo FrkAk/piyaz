@@ -514,6 +514,12 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           .describe(
             "Filter to tasks containing ANY of these exact tags (OR-within). Combine with `query` to narrow further. Pick from the tag vocabulary in `type='meta'`.",
           ),
+        category: z
+          .string()
+          .optional()
+          .describe(
+            "Filter to tasks in exactly this category (AND with `query`/`tags`). Must be one of the project's categories (closed vocabulary); unknown values are rejected. Run mymir_query type='meta' for the current list.",
+          ),
         taskId: z.uuid().optional().describe("Task UUID for type='edges'."),
         projectId: z
           .uuid()

@@ -14,7 +14,7 @@ export function makeQueryClient(): QueryClient {
       queries: {
         staleTime: 30_000,
         gcTime: 5 * 60_000,
-        refetchOnWindowFocus: "always",
+        refetchOnWindowFocus: true,
         retry: 1,
       },
     },

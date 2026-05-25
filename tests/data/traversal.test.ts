@@ -3,7 +3,9 @@ import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createEdge } from "@/lib/data/edge";
-import { getCriticalPath } from "@/lib/data/traversal";
+import { getCriticalPath, getDownstream } from "@/lib/data/traversal";
+import { withUserContext } from "@/lib/db/rls";
+import { fetchEffectiveDownstream } from "@/lib/db/raw/fetch-effective-downstream";
 
 /**
  * Coverage for the MYMR-208 fix: `getCriticalPath` filters done tasks
@@ -430,5 +432,152 @@ describe("getCriticalPath: deterministic ordering and tie-break", () => {
     expect(second.map((t) => t.id)).toEqual(first.map((t) => t.id));
     // Other chain is excluded.
     expect(first.some((t) => t.id === b1 || t.id === b2)).toBe(false);
+  });
+});
+
+/**
+ * Coverage for the MYMR-209 fix: `getDownstream` uses
+ * `fetchEffectiveDownstream`, so cancelled tasks never appear as
+ * dependents and cancelled middles contribute 0 to depth.
+ */
+describe("getDownstream: cancelled-transparency for the analyze surface", () => {
+  test("AC 1: cancelled task is never reported as a dependent (A → B(cancelled) directly under C)", async () => {
+    const fx = await seedUserOrgProject("trav-downstream-cancelled-direct");
+    const sr = serviceRoleConnect();
+    const aId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "A",
+      sequenceNumber: 1,
+      status: "planned",
+      priority: "normal",
+    });
+    const bId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "B",
+      sequenceNumber: 2,
+      status: "cancelled",
+      priority: "normal",
+    });
+    const cId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "C",
+      sequenceNumber: 3,
+      status: "planned",
+      priority: "normal",
+    });
+
+    const ctx = makeAuthContext(fx.userId);
+    await createEdge(ctx, {
+      sourceTaskId: aId,
+      targetTaskId: cId,
+      edgeType: "depends_on",
+      note: "",
+    });
+    await createEdge(ctx, {
+      sourceTaskId: bId,
+      targetTaskId: cId,
+      edgeType: "depends_on",
+      note: "",
+    });
+
+    const downstream = await getDownstream(ctx, cId);
+    expect(downstream.map((n) => n.id)).toEqual([aId]);
+    expect(downstream.some((n) => n.id === bId)).toBe(false);
+    expect(downstream[0].depth).toBe(1);
+  });
+
+  test("AC 2: A depends_on B(cancelled) depends_on C reports A at effective depth 1, B absent", async () => {
+    const fx = await seedUserOrgProject("trav-downstream-cancelled-middle");
+    const sr = serviceRoleConnect();
+    const aId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "A",
+      sequenceNumber: 1,
+      status: "planned",
+      priority: "normal",
+    });
+    const bId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "B",
+      sequenceNumber: 2,
+      status: "cancelled",
+      priority: "normal",
+    });
+    const cId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "C",
+      sequenceNumber: 3,
+      status: "planned",
+      priority: "normal",
+    });
+
+    const ctx = makeAuthContext(fx.userId);
+    await createEdge(ctx, {
+      sourceTaskId: aId,
+      targetTaskId: bId,
+      edgeType: "depends_on",
+      note: "",
+    });
+    await createEdge(ctx, {
+      sourceTaskId: bId,
+      targetTaskId: cId,
+      edgeType: "depends_on",
+      note: "",
+    });
+
+    const downstream = await getDownstream(ctx, cId);
+    expect(downstream.map((n) => n.id)).toEqual([aId]);
+    expect(downstream.some((n) => n.id === bId)).toBe(false);
+    expect(downstream[0].depth).toBe(1);
+  });
+
+  test("AC 3: analyze downstream and the context bundle's effective downstream return the same id set", async () => {
+    const fx = await seedUserOrgProject("trav-downstream-mutual-consistency");
+    const sr = serviceRoleConnect();
+    const aId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "A",
+      sequenceNumber: 1,
+      status: "planned",
+      priority: "normal",
+    });
+    const bId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "B",
+      sequenceNumber: 2,
+      status: "cancelled",
+      priority: "normal",
+    });
+    const cId = await insertTask(sr, {
+      projectId: fx.projectId,
+      title: "C",
+      sequenceNumber: 3,
+      status: "planned",
+      priority: "normal",
+    });
+
+    const ctx = makeAuthContext(fx.userId);
+    await createEdge(ctx, {
+      sourceTaskId: aId,
+      targetTaskId: bId,
+      edgeType: "depends_on",
+      note: "",
+    });
+    await createEdge(ctx, {
+      sourceTaskId: bId,
+      targetTaskId: cId,
+      edgeType: "depends_on",
+      note: "",
+    });
+
+    const analyze = await getDownstream(ctx, cId);
+    const bundle = await withUserContext(ctx.userId, (tx) =>
+      fetchEffectiveDownstream(tx, cId, fx.projectId, 10),
+    );
+
+    const analyzeIds = analyze.map((n) => n.id).sort();
+    const bundleIds = bundle.map((r) => r.id).sort();
+    expect(analyzeIds).toEqual(bundleIds);
+    expect(analyzeIds).toEqual([aId]);
   });
 });
