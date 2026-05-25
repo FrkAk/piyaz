@@ -7,7 +7,10 @@ import { useQuery } from "@tanstack/react-query";
 import { MonoId } from "@/components/shared/MonoId";
 import { PriorityIcon } from "@/components/shared/PriorityIcon";
 import { STATUS_META, StatusGlyph } from "@/components/shared/StatusGlyph";
-import type { AssignedTaskRow, MyTasksListFailureCode } from "@/lib/graph/queries";
+import type {
+  AssignedTaskRow,
+  MyTasksListFailureCode,
+} from "@/lib/graph/queries";
 import { listTasksAssignedToUser } from "@/lib/graph/queries";
 import { myTasksKeys } from "@/lib/query/keys";
 import type { TaskStatus } from "@/lib/types";
