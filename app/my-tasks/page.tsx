@@ -13,8 +13,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * My tasks — flat cross-project list of every task assigned to the
- * signed-in user, grouped by project. Default filter hides terminal /
- * draft statuses; a client-side toggle reveals them without a refetch.
+ * signed-in user, grouped by project.
  *
  * @returns Hydrated `/my-tasks` shell.
  */

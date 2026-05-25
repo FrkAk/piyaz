@@ -1343,25 +1343,18 @@ export async function searchTasksAcrossProjects(
 
 /** A task row surfaced by {@link listTasksAssignedToUser}. */
 export type AssignedTaskRow = {
-  /** Task UUID. */
   id: string;
   /** Composed task identifier (e.g. `MYMR-217`). */
   taskRef: string;
-  /** Display title. */
   title: string;
-  /** Schema task status. */
   status: TaskStatus;
-  /** Task priority, or null when unset. */
   priority: Priority | null;
   /** Owning project identifier (prefix shown in the taskRef). */
   projectIdentifier: string;
-  /** Owning project title — shown as the group header. */
   projectTitle: string;
-  /** Owning project UUID — drives the deep link from the row. */
   projectId: string;
-  /** Owning team UUID. */
   organizationId: string;
-  /** Last-updated timestamp from `tasks.updated_at`, ISO string — used for stable ordering. */
+  /** ISO string from `tasks.updated_at`, used for stable ordering. */
   updatedAt: string;
 };
 

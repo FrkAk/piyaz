@@ -23,6 +23,8 @@ import {
   setsEqual,
 } from "./status-filter";
 
+const EMPTY_ROWS: AssignedTaskRow[] = [];
+
 interface MyTasksClientProps {
   /**
    * Failure code from the RSC prefetch, when the server-side load returned !ok.
@@ -37,8 +39,6 @@ interface MyTasksClientProps {
  * `myTasksKeys.list()` and renders them grouped by project. The status
  * pill row above the list filters in-process; the selection is mirrored
  * to `?status=<csv>` so reloads and deep-links preserve it.
- *
- * @returns The status pill row plus the grouped task list.
  */
 export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   const searchParams = useSearchParams();
@@ -59,7 +59,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     },
   });
 
-  const rows = useMemo(() => data ?? [], [data]);
+  const rows = data ?? EMPTY_ROWS;
   const counts = useMemo(() => countByStatus(rows), [rows]);
   const visibleRows = useMemo(
     () => rows.filter((r) => activeStatuses.has(r.status)),

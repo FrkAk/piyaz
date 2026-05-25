@@ -418,21 +418,26 @@ function CompactNavIcon({
   disabled,
   onClick,
 }: CompactNavIconProps) {
-  const className = `inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-    disabled
-      ? "cursor-not-allowed text-text-muted opacity-80"
-      : active
-        ? "bg-surface-hover text-text-primary"
-        : "cursor-pointer text-text-secondary hover:bg-surface-hover hover:text-text-primary"
-  }`;
+  const base =
+    "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors";
 
   if (href) {
+    const linkClass = `${base} ${
+      active
+        ? "bg-surface-hover text-text-primary"
+        : "cursor-pointer text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+    }`;
     return (
-      <Link href={href} title={label} aria-label={label} className={className}>
+      <Link href={href} title={label} aria-label={label} className={linkClass}>
         {icon}
       </Link>
     );
   }
+  const buttonClass = `${base} ${
+    disabled
+      ? "cursor-not-allowed text-text-muted opacity-80"
+      : "cursor-pointer text-text-secondary hover:bg-surface-hover hover:text-text-primary"
+  }`;
   return (
     <button
       type="button"
@@ -440,7 +445,7 @@ function CompactNavIcon({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={className}
+      className={buttonClass}
     >
       {icon}
     </button>
