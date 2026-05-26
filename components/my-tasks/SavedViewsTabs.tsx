@@ -1,5 +1,6 @@
 "use client";
 
+import { TabSwitcher } from "@/components/shared/TabSwitcher";
 import { SAVED_VIEWS, SAVED_VIEW_LABEL, type SavedView } from "./predicates";
 
 interface SavedViewsTabsProps {
@@ -12,13 +13,16 @@ interface SavedViewsTabsProps {
 }
 
 /**
- * Segmented control with five fixed presets (open / today / stale / done /
- * all). Tabs render in fixed order; per-tab count chips swap to the accent
- * tone on the active tab. Keyboard `1`-`5` switching is wired by the
- * parent — this component only surfaces click handling.
+ * Saved-view segmented control on `/my-tasks`. Five fixed presets (open /
+ * today / stale / done / all). Renders through the shared `TabSwitcher` so
+ * the sliding indicator, arrow-key navigation, and pill styling stay in
+ * lockstep with every other segmented surface (onboarding, primitives,
+ * future agent feed). The wrapper adds a horizontal-scroll bleed below `sm`
+ * so the strip can swipe-scroll within the page padding without horizontal
+ * page overflow.
  *
  * @param props - Active view + counts + onChange.
- * @returns Segmented control row.
+ * @returns Mobile-scrolling segmented control row.
  */
 export function SavedViewsTabs({
   value,
@@ -27,40 +31,15 @@ export function SavedViewsTabs({
 }: SavedViewsTabsProps) {
   return (
     <div className="-mx-8 overflow-x-auto px-8 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
-      <div
-        role="tablist"
-        aria-label="Saved views"
-        className="inline-flex w-max gap-0.5 rounded-lg border border-border bg-surface-raised/60 p-1"
-      >
-        {SAVED_VIEWS.map((view) => {
-          const active = view === value;
-          return (
-            <button
-              key={view}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => onChange(view)}
-              className={`inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-[12.5px] font-medium transition-colors duration-150 ${
-                active
-                  ? "border-border bg-surface text-text-primary shadow-[var(--shadow-button)]"
-                  : "border-transparent bg-transparent text-text-muted hover:bg-surface-hover/70 hover:text-text-secondary"
-              }`}
-            >
-              <span>{SAVED_VIEW_LABEL[view]}</span>
-              <span
-                className={`inline-flex items-center rounded px-1.5 py-px font-mono text-[10.5px] tabular-nums ${
-                  active
-                    ? "bg-accent/12 text-accent-light"
-                    : "bg-surface/70 text-text-faint"
-                }`}
-              >
-                {counts[view]}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      <TabSwitcher
+        activeTab={value}
+        onTabChange={(id) => onChange(id as SavedView)}
+        tabs={SAVED_VIEWS.map((view) => ({
+          id: view,
+          label: SAVED_VIEW_LABEL[view],
+          count: counts[view],
+        }))}
+      />
     </div>
   );
 }

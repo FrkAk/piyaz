@@ -6,6 +6,8 @@ import { useRef, useCallback } from "react";
 interface Tab {
   id: string;
   label: string;
+  /** Optional count rendered as a small mono chip next to the label. */
+  count?: number;
   /** Decorative pulse dot on the tab corner (e.g. a tab with new activity). */
   glow?: boolean;
 }
@@ -115,8 +117,23 @@ export function TabSwitcher({
                 transition={{ type: "spring", stiffness: 420, damping: 32 }}
               />
             ) : null}
-            <span className="relative z-[1] whitespace-nowrap">
-              {tab.label}
+            <span className="relative z-[1] inline-flex items-center gap-1.5">
+              <span className="whitespace-nowrap">{tab.label}</span>
+              {tab.count !== undefined && (
+                <span
+                  className="inline-flex items-center rounded px-1.5 py-px font-mono text-[10px] tabular-nums"
+                  style={{
+                    background: active
+                      ? "color-mix(in srgb, var(--color-accent) 12%, transparent)"
+                      : "color-mix(in srgb, var(--color-surface) 70%, transparent)",
+                    color: active
+                      ? "var(--color-accent-light)"
+                      : "var(--color-text-faint)",
+                  }}
+                >
+                  {tab.count}
+                </span>
+              )}
             </span>
             {tab.glow && !active ? (
               <span
