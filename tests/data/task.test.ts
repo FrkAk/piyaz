@@ -9,7 +9,8 @@ import {
   searchTasks,
   searchTasksPaged,
   searchTasksAcrossProjects,
-  listTasksAssignedToUser,
+  listMyTasks,
+  deriveLifecycleStage,
   getTaskSlim,
   getTaskFull,
 } from "@/lib/data/task";
@@ -591,7 +592,7 @@ test("searchTasksAcrossProjects orders results deterministically across calls", 
   expect(a.map((r) => r.id)).toEqual(c.map((r) => r.id));
 });
 
-test("listTasksAssignedToUser returns rows assigned to the caller's user in the caller's team", async () => {
+test("listMyTasks returns the cross-project MyTask shape for rows assigned to the caller", async () => {
   const f = await seedUserOrgProject("mytaskshappy");
   const ctx = makeAuthContext(f.userId);
 
@@ -612,16 +613,25 @@ test("listTasksAssignedToUser returns rows assigned to the caller's user in the 
     await sqlc.end({ timeout: 5 });
   }
 
-  const rows = await listTasksAssignedToUser(ctx);
+  const rows = await listMyTasks(ctx);
   expect(rows.length).toBe(1);
-  expect(rows[0].id).toBe(taskId);
-  expect(rows[0].title).toBe("My assigned task");
-  expect(rows[0].status).toBe("in_progress");
-  expect(rows[0].projectId).toBe(f.projectId);
-  expect(rows[0].organizationId).toBe(f.organizationId);
+  const row = rows[0];
+  expect(row.id).toBe(taskId);
+  expect(row.title).toBe("My assigned task");
+  expect(row.status).toBe("in_progress");
+  expect(row.state).toBe("in_progress");
+  expect(row.stage).toBe("working");
+  expect(row.upstreamCount).toBe(0);
+  expect(row.downstreamCount).toBe(0);
+  expect(row.blockedBy).toBeNull();
+  expect(row.agentActive).toBe(false);
+  expect(row.project.id).toBe(f.projectId);
+  expect(row.project.identifier.length).toBeGreaterThan(0);
+  expect(row.project.color).toMatch(/^hsl\(/);
+  expect(row.taskRef).toContain(row.project.identifier);
 });
 
-test("listTasksAssignedToUser excludes tasks in teams the caller is not a member of", async () => {
+test("listMyTasks excludes tasks in teams the caller is not a member of", async () => {
   const me = await seedUserOrgProject("mytasksisome");
   const other = await seedUserOrgProject("mytasksisoother");
   const ctx = makeAuthContext(me.userId);
@@ -655,10 +665,63 @@ test("listTasksAssignedToUser excludes tasks in teams the caller is not a member
     await sqlc.end({ timeout: 5 });
   }
 
-  const rows = await listTasksAssignedToUser(ctx);
+  const rows = await listMyTasks(ctx);
   expect(rows.length).toBe(1);
   expect(rows[0].title).toBe("My own task");
-  expect(rows[0].organizationId).toBe(me.organizationId);
+  expect(rows[0].project.id).toBe(me.projectId);
+});
+
+test("listMyTasks surfaces blockedBy + upstream count for a planned row with an unmet dep", async () => {
+  const f = await seedUserOrgProject("mytasksblocked");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    // Two tasks in the same project; the planned task `target` depends on
+    // the in-progress task `block`. listMyTasks should mark target as
+    // `state="blocked"`, `blockedBy=<block ref>`, `upstreamCount=1`.
+    const [block] = await sqlc<{ id: string; sequence_number: number }[]>`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "status")
+      VALUES (${f.projectId}, 'Upstream block', 1, 1, 'in_progress')
+      RETURNING id, sequence_number
+    `;
+    const [target] = await sqlc<{ id: string }[]>`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "status")
+      VALUES (${f.projectId}, 'Downstream target', 2, 2, 'planned')
+      RETURNING id
+    `;
+    await sqlc`
+      INSERT INTO task_edges ("source_task_id", "target_task_id", "edge_type")
+      VALUES (${target.id}, ${block.id}, 'depends_on')
+    `;
+    await sqlc`
+      INSERT INTO task_assignees ("task_id", "user_id")
+      VALUES (${target.id}, ${f.userId})
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listMyTasks(ctx);
+  expect(rows.length).toBe(1);
+  expect(rows[0].title).toBe("Downstream target");
+  expect(rows[0].state).toBe("blocked");
+  expect(rows[0].stage).toBe("planning");
+  expect(rows[0].upstreamCount).toBe(1);
+  expect(rows[0].downstreamCount).toBe(0);
+  expect(rows[0].blockedBy).toContain(rows[0].project.identifier);
+});
+
+test("deriveLifecycleStage covers every state branch", () => {
+  expect(deriveLifecycleStage("done", false)).toBe("execution");
+  expect(deriveLifecycleStage("in_progress", false)).toBe("working");
+  expect(deriveLifecycleStage("in_review", false)).toBe("working");
+  expect(deriveLifecycleStage("ready", false)).toBe("planning");
+  expect(deriveLifecycleStage("ready", true)).toBe("agent");
+  expect(deriveLifecycleStage("plannable", false)).toBe("planning");
+  expect(deriveLifecycleStage("blocked", false)).toBe("planning");
+  expect(deriveLifecycleStage("draft", false)).toBe("draft");
+  expect(deriveLifecycleStage("cancelled", false)).toBe("draft");
 });
 
 test("getTaskSlim returns the slim shape", async () => {

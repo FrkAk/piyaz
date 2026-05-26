@@ -49,10 +49,13 @@ import {
 } from "@/lib/data/cursor";
 import type {
   AssigneeRef,
+  LifecycleStage,
+  MyTask,
   TaskFull,
   TaskLinkRef,
   TaskSlim,
 } from "@/lib/data/views";
+import { projectColor } from "@/lib/ui/project-color";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
 
@@ -1341,43 +1344,45 @@ export async function searchTasksAcrossProjects(
   });
 }
 
-/** A task row surfaced by {@link listTasksAssignedToUser}. */
-export type AssignedTaskRow = {
-  id: string;
-  /** Composed task identifier (e.g. `MYMR-217`). */
-  taskRef: string;
-  title: string;
-  status: TaskStatus;
-  priority: Priority | null;
-  /** Owning project identifier (prefix shown in the taskRef). */
-  projectIdentifier: string;
-  projectTitle: string;
-  projectId: string;
-  organizationId: string;
-  /** ISO string from `tasks.updated_at`, used for stable ordering. */
-  updatedAt: string;
-};
+/**
+ * Map a derived task state to the lifecycle stage label rendered on the
+ * `/my-tasks` row pill. Exported so unit tests can pin every branch.
+ *
+ * @param state - Server-derived task state.
+ * @param agentActive - True when an agent run is open for this task.
+ * @returns Lifecycle stage for the row's mono pill.
+ */
+export function deriveLifecycleStage(
+  state: TaskState,
+  agentActive: boolean,
+): LifecycleStage {
+  if (state === "done") return "execution";
+  if (state === "in_progress" || state === "in_review") return "working";
+  if (state === "ready") return agentActive ? "agent" : "planning";
+  if (state === "plannable" || state === "blocked") return "planning";
+  return "draft";
+}
 
 /**
  * List every task assigned to the signed-in user across every team they
- * belong to. Bounded by `current_user_orgs()` (defense-in-depth over RLS).
+ * belong to, decorated with the owning project's chrome plus the derived
+ * cross-task signals the `/my-tasks` view renders (state, lifecycle stage,
+ * upstream / downstream counts, blocking ref).
  *
- * Returns the slim row shape the cross-project "My tasks" view needs:
- * task identity + status + priority + owning project crumb metadata.
- * Ordered by `tasks.updated_at` descending so the most-recently-touched
- * rows surface first; ties resolve on `tasks.id` ascending for stable
- * output across calls.
+ * Bounded by `current_user_orgs()` (defense-in-depth over RLS). One SQL
+ * roundtrip pulls tasks + project crumb + `hasDescription` / `hasCriteria`
+ * boolean projections; one {@link buildEffectiveDepGraph} pass per unique
+ * project hydrates state + deps signals without N+1.
  *
- * No pagination in v1 (mirrors {@link searchTasksAcrossProjects} and
- * `listProjectsSlim`); if any caller approaches a few hundred assigned
- * rows this will need a paginated variant.
+ * `agentActive` is hardcoded `false` until the `agent_runs` table lands;
+ * `blockedBy` resolves to the first non-done effective upstream ref. Rows
+ * order by `tasks.updated_at` desc, ties resolve on `tasks.id` asc for
+ * stable output across calls.
  *
  * @param ctx - Resolved auth context.
- * @returns Assigned task rows ordered `updatedAt DESC, id ASC`.
+ * @returns Cross-project assigned-task rows ordered `updatedAt DESC, id ASC`.
  */
-export async function listTasksAssignedToUser(
-  ctx: AuthContext,
-): Promise<AssignedTaskRow[]> {
+export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
   return withUserContext(ctx.userId, async (tx) => {
     const orgRows = await executeRaw<{ org_id: string }>(
       tx,
@@ -1391,13 +1396,18 @@ export async function listTasksAssignedToUser(
         id: tasks.id,
         title: tasks.title,
         status: tasks.status,
+        category: tasks.category,
+        tags: tasks.tags,
         priority: tasks.priority,
+        estimate: tasks.estimate,
+        order: tasks.order,
         sequenceNumber: tasks.sequenceNumber,
         updatedAt: tasks.updatedAt,
+        hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+        hasCriteria: hasCriteriaExpr(),
         projectId: tasks.projectId,
         projectIdentifier: projects.identifier,
         projectTitle: projects.title,
-        organizationId: projects.organizationId,
       })
       .from(taskAssignees)
       .innerJoin(tasks, eq(tasks.id, taskAssignees.taskId))
@@ -1410,21 +1420,80 @@ export async function listTasksAssignedToUser(
       )
       .orderBy(desc(tasks.updatedAt), asc(tasks.id));
 
-    return rows.map((row) => ({
-      id: row.id,
-      taskRef: composeTaskRef(
-        asIdentifier(row.projectIdentifier),
-        row.sequenceNumber,
+    if (rows.length === 0) return [];
+
+    // One effective-deps pass per unique project — see DESIGN.md § 3.2.
+    // Decorates every row in that project with state + counts + blockedBy
+    // without re-walking the graph per row.
+    const uniqueProjectIds = [...new Set(rows.map((r) => r.projectId))];
+    const graphByProject = new Map(
+      await Promise.all(
+        uniqueProjectIds.map(
+          async (pid) =>
+            [pid, await buildEffectiveDepGraph(pid, tx)] as const,
+        ),
       ),
-      title: row.title,
-      status: row.status,
-      priority: row.priority,
-      projectId: row.projectId,
-      projectIdentifier: row.projectIdentifier,
-      projectTitle: row.projectTitle,
-      organizationId: row.organizationId,
-      updatedAt: row.updatedAt.toISOString(),
-    }));
+    );
+
+    return rows.map((row) => {
+      const graph = graphByProject.get(row.projectId);
+      const effectiveDeps = graph?.effectiveDeps.get(row.id) ?? new Set<string>();
+      const effectiveDependents =
+        graph?.effectiveDependents.get(row.id) ?? new Set<string>();
+
+      const projectIdentifier = asIdentifier(row.projectIdentifier);
+      const state = deriveTaskState(
+        {
+          id: row.id,
+          status: row.status,
+          hasDescription: row.hasDescription,
+          hasCriteria: row.hasCriteria,
+        },
+        graph ?? { activeTasks: new Map(), effectiveDeps: new Map() },
+      );
+
+      let blockedBy: string | null = null;
+      if (graph) {
+        for (const depId of effectiveDeps) {
+          const dep = graph.activeTasks.get(depId);
+          if (dep && dep.status !== "done") {
+            blockedBy = composeTaskRef(projectIdentifier, dep.sequenceNumber);
+            break;
+          }
+        }
+      }
+
+      const agentActive = false;
+
+      return {
+        id: row.id,
+        taskRef: composeTaskRef(projectIdentifier, row.sequenceNumber),
+        title: row.title,
+        status: row.status,
+        state,
+        category: row.category,
+        tags: row.tags,
+        priority: row.priority,
+        estimate: row.estimate,
+        order: row.order,
+        updatedAt: row.updatedAt,
+        hasDescription: row.hasDescription,
+        hasCriteria: row.hasCriteria,
+        assigneeCount: 1,
+        assigneeUserIds: [ctx.userId],
+        project: {
+          id: row.projectId,
+          identifier: row.projectIdentifier,
+          title: row.projectTitle,
+          color: projectColor(row.projectIdentifier),
+        },
+        stage: deriveLifecycleStage(state, agentActive),
+        upstreamCount: effectiveDeps.size,
+        downstreamCount: effectiveDependents.size,
+        blockedBy,
+        agentActive,
+      };
+    });
   });
 }
 

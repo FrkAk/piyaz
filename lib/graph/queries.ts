@@ -10,18 +10,18 @@ import {
 } from "@/lib/data/project";
 import {
   searchTasksAcrossProjects as coreSearchTasksAcrossProjects,
-  listTasksAssignedToUser as coreListTasksAssignedToUser,
-  type AssignedTaskRow,
+  listMyTasks as coreListMyTasks,
   type CrossProjectSearchResult,
 } from "@/lib/data/task";
+import type { MyTask } from "@/lib/data/views";
 
 export type {
   TaskSlim,
   TaskState,
   SearchResult,
   CrossProjectSearchResult,
-  AssignedTaskRow,
 } from "@/lib/data/task";
+export type { LifecycleStage, MyTask } from "@/lib/data/views";
 export type { DetailedEdge } from "@/lib/data/edge";
 export type { ProjectTag } from "@/lib/data/project";
 export type {
@@ -50,7 +50,7 @@ export type MyTasksListFailureCode =
 
 /** Discriminated result for the `/my-tasks` cross-project assigned-tasks fetch. */
 export type MyTasksListResultPayload =
-  | { ok: true; rows: AssignedTaskRow[] }
+  | { ok: true; rows: MyTask[] }
   | { ok: false; code: MyTasksListFailureCode };
 
 /**
@@ -132,14 +132,15 @@ export async function searchTasksAcrossProjects(
 
 /**
  * Server action wrapper — fetches every task assigned to the signed-in
- * user across every team they belong to. Membership-gated via
- * `current_user_orgs()`; cross-team rows are filtered at the SQL layer.
- * Throttled at 30/min per-user and 60/min per-IP via the shared
- * `actions` slot; unauth callers throttle by IP only.
+ * user across every team they belong to, decorated with project chrome
+ * plus derived state, lifecycle stage, and effective-deps counts.
+ * Membership-gated via `current_user_orgs()`; cross-team rows are filtered
+ * at the SQL layer. Throttled at 30/min per-user and 60/min per-IP via
+ * the shared `actions` slot; unauth callers throttle by IP only.
  *
  * @returns `{ ok: true, rows }` or a typed failure.
  */
-export async function listTasksAssignedToUser(): Promise<MyTasksListResultPayload> {
+export async function listMyTasks(): Promise<MyTasksListResultPayload> {
   // Resolve user id before the rate-limit check so authed callers throttle
   // per-user, not per-IP (IP keys collide on shared NATs).
   const session = await getSession();
@@ -160,10 +161,10 @@ export async function listTasksAssignedToUser(): Promise<MyTasksListResultPayloa
 
   try {
     const ctx = await getAuthContext();
-    const rows = await coreListTasksAssignedToUser(ctx);
+    const rows = await coreListMyTasks(ctx);
     return { ok: true, rows };
   } catch (err) {
-    console.error("listTasksAssignedToUser failed", err);
+    console.error("listMyTasks failed", err);
     return { ok: false, code: "unknown" };
   }
 }
