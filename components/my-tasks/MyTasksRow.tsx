@@ -60,11 +60,13 @@ function MyTasksRowImpl({ row, meName }: MyTasksRowProps) {
         size={14}
         className={row.state === "in_progress" ? "status-pulse" : undefined}
       />
-      <ProjectMark
-        initial={(row.project.identifier[0] ?? "?").toUpperCase()}
-        color={row.project.color}
-        size={16}
-      />
+      <span className="hidden shrink-0 sm:inline-flex">
+        <ProjectMark
+          initial={(row.project.identifier[0] ?? "?").toUpperCase()}
+          color={row.project.color}
+          size={16}
+        />
+      </span>
       <MonoId
         id={row.taskRef}
         tone={row.state as MonoIdTone}
@@ -106,7 +108,9 @@ function MyTasksRowImpl({ row, meName }: MyTasksRowProps) {
 
       {row.category && <CategoryDot name={row.category} />}
 
-      <LifecycleStagePill stage={row.stage} />
+      <span className="hidden shrink-0 sm:inline-flex">
+        <LifecycleStagePill stage={row.stage} />
+      </span>
 
       {row.priority && (
         <span className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center">

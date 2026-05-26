@@ -36,13 +36,13 @@ export function MyTasksEmpty() {
         project and assigned to you, it lands here automatically.
       </p>
 
-      <span className="inline-flex items-center gap-2 rounded-lg border border-border-strong bg-surface px-4 py-2.5 font-mono text-[12.5px] whitespace-nowrap shadow-[var(--shadow-card)]">
-        <span className="text-text-faint">$</span>
-        <span className="font-semibold text-accent-light">/mymir</span>
+      <span className="inline-block max-w-full rounded-lg border border-border-strong bg-surface px-4 py-2.5 text-left font-mono text-[12.5px] shadow-[var(--shadow-card)]">
+        <span className="text-text-faint">$</span>{" "}
+        <span className="font-semibold text-accent-light">/mymir</span>{" "}
         <span className="italic tracking-[0.002em] text-text-secondary">
           what&apos;s the next task or critical path I should pick up?
         </span>
-        <span aria-hidden="true" className="animate-pulse text-accent-light">
+        <span aria-hidden="true" className="ml-1 animate-pulse text-accent-light">
           ▌
         </span>
       </span>
