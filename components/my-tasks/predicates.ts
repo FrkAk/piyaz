@@ -154,17 +154,50 @@ export function pickPickupTask(rows: readonly MyTask[]): MyTask | null {
   return anyReady ?? null;
 }
 
+/** Full-taskRef pattern (case-insensitive): `MYMR-101`, `ORAS-42`. */
+const TASK_REF_PATTERN = /^[a-z0-9]+-\d+$/;
+
 /**
- * Case-insensitive substring match against `title` and `taskRef`. Empty /
- * whitespace query matches every row.
+ * Multi-field, multi-token search match. Mirrors `searchTasksAcrossProjects`
+ * server-side semantics for the in-memory row set:
+ *
+ * - **TaskRef short-circuit** — a query that parses as a full taskRef
+ *   (e.g. `MYMR-101`) matches exactly the row with that identifier; nothing
+ *   else surfaces. Lets the operator paste a ref into the box and land
+ *   directly on the row.
+ * - **Multi-token AND** — whitespace-separated tokens AND-join. Each token
+ *   must match somewhere across the row's searchable fields. Tokens
+ *   themselves retain punctuation so a partial ref like `mymr-1` stays
+ *   intact instead of fragmenting into `mymr` + `1`.
+ * - **Wide field coverage** — title, taskRef, project title + identifier,
+ *   category, and every tag. Matches the command palette's reach within
+ *   the cap of "no server round-trip".
+ *
+ * An empty / whitespace-only query passes every row through.
  */
 export function matchesSearch(row: MyTask, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (q.length === 0) return true;
-  return (
-    row.title.toLowerCase().includes(q) ||
-    row.taskRef.toLowerCase().includes(q)
-  );
+  const trimmed = query.trim();
+  if (trimmed.length === 0) return true;
+  const lower = trimmed.toLowerCase();
+
+  if (TASK_REF_PATTERN.test(lower)) {
+    return row.taskRef.toLowerCase() === lower;
+  }
+
+  const tokens = lower.split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return true;
+
+  const fields: string[] = [
+    row.title,
+    row.taskRef,
+    row.project.title,
+    row.project.identifier,
+    row.category ?? "",
+    ...row.tags,
+  ];
+  const fieldLowers = fields.map((f) => f.toLowerCase());
+
+  return tokens.every((t) => fieldLowers.some((f) => f.includes(t)));
 }
 
 /** Multi-select status filter — URL-serialized as a comma-separated list. */

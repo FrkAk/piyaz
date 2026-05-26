@@ -177,6 +177,56 @@ test("matchesSearch matches title and taskRef case-insensitively", () => {
   expect(matchesSearch(r, "nope")).toBe(false);
 });
 
+test("matchesSearch short-circuits on a full taskRef", () => {
+  const target = row({ id: "12", state: "ready" });
+  const other = row({ id: "13", state: "ready" });
+  // The two rows share `task` in their title; the full-ref query should
+  // surface ONLY the exact match and skip the title substring fallback.
+  expect(matchesSearch(target, "MYMR-12")).toBe(true);
+  expect(matchesSearch(other, "MYMR-12")).toBe(false);
+});
+
+test("matchesSearch tokens AND-join across fields", () => {
+  const r: MyTask = {
+    ...row({ id: "1", state: "ready" }),
+    title: "Fix the auth race",
+    tags: ["backend", "race-condition"],
+    category: "Bug",
+  };
+  // Both tokens hit different fields — should match.
+  expect(matchesSearch(r, "auth backend")).toBe(true);
+  // First token hits, second misses everywhere — should not match.
+  expect(matchesSearch(r, "auth frontend")).toBe(false);
+  // Project identifier matches the second token.
+  expect(matchesSearch(r, "auth mymr")).toBe(true);
+});
+
+test("matchesSearch sees tags and category in addition to title", () => {
+  const r: MyTask = {
+    ...row({ id: "1", state: "ready" }),
+    title: "totally unrelated",
+    tags: ["kafka"],
+    category: "Infra",
+  };
+  expect(matchesSearch(r, "kafka")).toBe(true);
+  expect(matchesSearch(r, "infra")).toBe(true);
+  expect(matchesSearch(r, "missing")).toBe(false);
+});
+
+test("matchesSearch sees project title and identifier", () => {
+  const r: MyTask = {
+    ...row({ id: "1", state: "ready" }),
+    project: {
+      id: "p",
+      identifier: "ORAS",
+      title: "Oracle Service",
+      color: "hsl(0 0% 50%)",
+    },
+  };
+  expect(matchesSearch(r, "oras")).toBe(true);
+  expect(matchesSearch(r, "oracle")).toBe(true);
+});
+
 test("lifecycleStageToneClass returns a non-empty class string for every stage", () => {
   for (const stage of ["draft", "planning", "working", "agent", "execution"] as const) {
     expect(lifecycleStageToneClass(stage).length).toBeGreaterThan(0);

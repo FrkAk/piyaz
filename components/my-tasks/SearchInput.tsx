@@ -31,7 +31,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="Search by title or ID…"
+          placeholder="Search title, ID, project, tag…"
           aria-label="Search assigned tasks"
           className="min-w-0 flex-1 border-none bg-transparent font-mono text-[12px] text-text-primary outline-none placeholder:text-text-muted"
         />
