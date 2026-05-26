@@ -59,7 +59,9 @@ export function PickupBanner({ task }: PickupBannerProps) {
           <StatusGlyph
             status={task.state}
             size={18}
-            className={task.state === "in_progress" ? "status-pulse" : undefined}
+            className={
+              task.state === "in_progress" ? "status-pulse" : undefined
+            }
           />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">

@@ -42,7 +42,10 @@ export function MyTasksEmpty() {
         <span className="italic tracking-[0.002em] text-text-secondary">
           what&apos;s the next task or critical path I should pick up?
         </span>
-        <span aria-hidden="true" className="ml-1 animate-pulse text-accent-light">
+        <span
+          aria-hidden="true"
+          className="ml-1 animate-pulse text-accent-light"
+        >
           ▌
         </span>
       </span>
