@@ -110,9 +110,17 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     () => parsePrioritySet(searchParams.get("priority")),
     [searchParams],
   );
-  const query = searchParams.get("q") ?? "";
   const sort = parseSort(searchParams.get("sort"));
   const group = parseGroup(searchParams.get("group"));
+
+  // Search lives in local state so the input renders character-by-character
+  // without waiting on a `router.replace` round-trip. The URL `?q=` syncs
+  // via a debounced effect below so deep-links + back/forward still work,
+  // and every other consumer (filter, active chips, hotkeys) reads `query`
+  // directly for instant feedback.
+  const [query, setQuery] = useState<string>(
+    () => searchParams.get("q") ?? "",
+  );
 
   const [collapsedDone, setCollapsedDone] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -191,15 +199,21 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     [priorityFilter, writePrioritySet],
   );
 
-  const setQuery = useCallback(
-    (next: string) => {
+  // Debounced URL mirror — fires 250ms after the last keystroke. Skips
+  // the write when the URL already matches `query` (avoids redundant
+  // `router.replace` calls on mount and on bursts of repeat values).
+  useEffect(() => {
+    const trimmed = query.trim();
+    const current = searchParams.get("q") ?? "";
+    if (trimmed === current.trim()) return;
+    const handle = setTimeout(() => {
       updateParams((p) => {
-        if (next.length === 0) p.delete("q");
-        else p.set("q", next);
+        if (trimmed.length === 0) p.delete("q");
+        else p.set("q", trimmed);
       });
-    },
-    [updateParams],
-  );
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [query, searchParams, updateParams]);
 
   const setSort = useCallback(
     (next: SortKey) => {
@@ -359,6 +373,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   );
 
   const handleClearAll = useCallback(() => {
+    setQuery("");
     updateParams((p) => {
       p.delete("view");
       p.delete("status");
@@ -368,6 +383,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   }, [updateParams]);
 
   const handleResetFromNoMatch = useCallback(() => {
+    setQuery("");
     updateParams((p) => {
       p.delete("status");
       p.delete("priority");
