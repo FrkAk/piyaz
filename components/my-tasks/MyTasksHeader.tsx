@@ -34,7 +34,7 @@ export function MyTasksHeader({
   return (
     <header className="mb-3 flex flex-col gap-3.5">
       <div className="flex items-center gap-3.5">
-        <h1 className="text-[22px] font-semibold tracking-[-0.01em] text-text-primary">
+        <h1 className="text-[26px] font-semibold leading-[1.15] tracking-[-0.01em] text-text-primary">
           My tasks
         </h1>
         <span

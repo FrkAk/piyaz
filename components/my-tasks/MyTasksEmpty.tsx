@@ -70,7 +70,7 @@ export function MyTasksEmpty() {
         </Link>
       </div>
 
-      <div className="mt-[18px] text-[12px] text-text-muted">
+      <div className="mt-5 text-[12px] text-text-muted">
         Use the <Kbd>⌘K</Kbd> palette to jump to any project.
       </div>
     </section>

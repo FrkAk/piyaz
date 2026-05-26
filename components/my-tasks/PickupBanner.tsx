@@ -32,7 +32,7 @@ export function PickupBanner({ task }: PickupBannerProps) {
   return (
     <Link
       href={`/project/${task.project.id}?task=${task.id}`}
-      className="group relative mt-5 mb-[22px] flex items-center gap-3 rounded-[10px] border border-accent/20 bg-surface py-3.5 pl-[22px] pr-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:-translate-y-px hover:border-accent/30 hover:shadow-[var(--shadow-card-hover)]"
+      className="group relative mt-5 mb-6 flex items-center gap-3 rounded-[10px] border border-accent/20 bg-surface py-3.5 pl-6 pr-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:-translate-y-px hover:border-accent/30 hover:shadow-[var(--shadow-card-hover)]"
       style={{
         backgroundImage:
           "linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 7%, transparent), color-mix(in srgb, var(--color-accent-2) 4%, transparent))",

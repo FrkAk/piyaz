@@ -29,7 +29,7 @@ export function SavedViewsTabs({
     <div
       role="tablist"
       aria-label="Saved views"
-      className="inline-flex w-max gap-0.5 rounded-lg border border-border bg-surface-raised/60 p-[3px]"
+      className="inline-flex w-max gap-0.5 rounded-lg border border-border bg-surface-raised/60 p-1"
     >
       {SAVED_VIEWS.map((view) => {
         const active = view === value;

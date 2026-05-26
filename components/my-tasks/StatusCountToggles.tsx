@@ -46,7 +46,7 @@ export function StatusCountToggles({
             type="button"
             aria-pressed={isActive}
             onClick={() => onToggle(state)}
-            className={`inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-full border px-[9px] text-[11.5px] transition-colors duration-150 ${
+            className={`inline-flex h-[26px] cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] transition-colors duration-150 ${
               isActive
                 ? "border-accent/30 bg-accent/10 text-accent-light"
                 : "border-border text-text-secondary hover:border-border-strong hover:bg-surface-hover hover:text-text-primary"

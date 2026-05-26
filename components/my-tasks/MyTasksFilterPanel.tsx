@@ -138,7 +138,7 @@ function PriorityChipButton({
       type="button"
       onClick={onToggle}
       aria-pressed={active}
-      className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-[3px] font-mono text-[10px] transition-colors ${
+      className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[10px] transition-colors ${
         active
           ? "border-accent/30 bg-accent/10 font-semibold text-accent-light"
           : "border-border bg-surface-raised/40 text-text-secondary hover:border-border-strong hover:bg-surface-hover hover:text-text-primary"
