@@ -8,9 +8,9 @@ interface MyTasksHeaderProps {
   totalCount: number;
   /** Per-state counts derived from the active view. */
   viewCounts: Record<TaskState, number>;
-  /** Active single-select status filter. */
-  statusFilter: TaskState | null;
-  /** Toggle the status filter. */
+  /** Active multi-select status filter set. */
+  statusFilter: ReadonlySet<TaskState>;
+  /** Toggle the status filter — adds or removes one state. */
   onToggleStatus: (state: TaskState) => void;
   /** When true, the total badge renders dimmed (empty-state hint). */
   dimTotal?: boolean;

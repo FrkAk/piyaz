@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/providers/SessionProvider";
+import { STATUS_META } from "@/components/shared/StatusGlyph";
 import type { TaskState } from "@/lib/data/task";
 import type { MyTask } from "@/lib/data/views";
 import {
@@ -11,13 +12,14 @@ import {
   type MyTasksListFailureCode,
 } from "@/lib/graph/queries";
 import { myTasksKeys } from "@/lib/query/keys";
-import { STATUS_META } from "@/components/shared/StatusGlyph";
+import { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 import {
   ActiveFilters,
   type ActiveFilterChip,
 } from "./ActiveFilters";
 import { ErrorBanner } from "./ErrorBanner";
 import { MyTasksEmpty } from "./MyTasksEmpty";
+import { MyTasksFilterPanel } from "./MyTasksFilterPanel";
 import { MyTasksFooter } from "./MyTasksFooter";
 import { MyTasksHeader } from "./MyTasksHeader";
 import { MyTasksList } from "./MyTasksList";
@@ -28,12 +30,20 @@ import { SavedViewsTabs } from "./SavedViewsTabs";
 import {
   SAVED_VIEWS,
   SAVED_VIEW_LABEL,
+  applyGrouping,
   countByState,
-  groupByState,
+  matchesPriority,
   matchesSearch,
+  parsePrioritySet,
+  parseStatusSet,
   pickPickupTask,
-  type SavedView,
+  serializePrioritySet,
+  serializeStatusSet,
+  sortRows,
   viewPredicate,
+  type GroupKey,
+  type SavedView,
+  type SortKey,
 } from "./predicates";
 
 const VIEW_HOTKEYS: Record<string, SavedView> = {
@@ -44,16 +54,25 @@ const VIEW_HOTKEYS: Record<string, SavedView> = {
   "5": "all",
 };
 
-const VALID_STATUS_FILTERS: ReadonlySet<TaskState> = new Set<TaskState>([
-  "in_progress",
-  "in_review",
-  "blocked",
-  "ready",
-  "plannable",
-  "draft",
-  "done",
-  "cancelled",
+const VALID_SORTS: ReadonlySet<SortKey> = new Set<SortKey>([
+  "updated",
+  "priority",
+  "status",
+  "id",
 ]);
+
+const VALID_GROUPS: ReadonlySet<GroupKey> = new Set<GroupKey>([
+  "status",
+  "project",
+  "none",
+]);
+
+const PRIORITY_CHIP_TONE: Record<string, string> = {
+  urgent: "var(--color-danger)",
+  core: "var(--color-progress)",
+  normal: "var(--color-text-secondary)",
+  backlog: "var(--color-text-muted)",
+};
 
 interface MyTasksClientProps {
   /**
@@ -67,9 +86,10 @@ interface MyTasksClientProps {
 
 /**
  * Top-level interactive client for `/my-tasks`. Owns the URL-persisted
- * filter state (view, status, search), the local collapse state for the
- * `done` group, and the keyboard hotkey map. Renders every page surface
- * documented in DESIGN.md by composing the smaller sub-components.
+ * filter state (view, multi-select status, multi-select priority, search,
+ * sort, group), the local collapse state for the `done` group, and the
+ * filter-panel open state. Composes every page surface from
+ * `components/my-tasks/`.
  *
  * @param props - Optional SSR prefetch failure code.
  * @returns The full `/my-tasks` page body.
@@ -82,10 +102,20 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const view = parseView(searchParams.get("view"));
-  const statusFilter = parseStatus(searchParams.get("status"));
+  const statusFilter = useMemo(
+    () => parseStatusSet(searchParams.get("status")),
+    [searchParams],
+  );
+  const priorityFilter = useMemo(
+    () => parsePrioritySet(searchParams.get("priority")),
+    [searchParams],
+  );
   const query = searchParams.get("q") ?? "";
+  const sort = parseSort(searchParams.get("sort"));
+  const group = parseGroup(searchParams.get("group"));
 
   const [collapsedDone, setCollapsedDone] = useState(true);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const { data, error } = useQuery<MyTask[]>({
     queryKey: myTasksKeys.list(),
@@ -115,26 +145,50 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
         if (next === "open") p.delete("view");
         else p.set("view", next);
         p.delete("status");
+        p.delete("priority");
       });
     },
     [updateParams],
   );
 
-  const setStatusFilter = useCallback(
-    (next: TaskState | null) => {
+  const writeStatusSet = useCallback(
+    (next: ReadonlySet<TaskState>) => {
       updateParams((p) => {
-        if (next === null) p.delete("status");
-        else p.set("status", next);
+        if (next.size === 0) p.delete("status");
+        else p.set("status", serializeStatusSet(next));
       });
     },
     [updateParams],
   );
 
   const toggleStatus = useCallback(
-    (next: TaskState) => {
-      setStatusFilter(statusFilter === next ? null : next);
+    (state: TaskState) => {
+      const next = new Set(statusFilter);
+      if (next.has(state)) next.delete(state);
+      else next.add(state);
+      writeStatusSet(next);
     },
-    [statusFilter, setStatusFilter],
+    [statusFilter, writeStatusSet],
+  );
+
+  const writePrioritySet = useCallback(
+    (next: ReadonlySet<string>) => {
+      updateParams((p) => {
+        if (next.size === 0) p.delete("priority");
+        else p.set("priority", serializePrioritySet(next));
+      });
+    },
+    [updateParams],
+  );
+
+  const togglePriority = useCallback(
+    (value: string) => {
+      const next = new Set(priorityFilter);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      writePrioritySet(next);
+    },
+    [priorityFilter, writePrioritySet],
   );
 
   const setQuery = useCallback(
@@ -142,6 +196,26 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
       updateParams((p) => {
         if (next.length === 0) p.delete("q");
         else p.set("q", next);
+      });
+    },
+    [updateParams],
+  );
+
+  const setSort = useCallback(
+    (next: SortKey) => {
+      updateParams((p) => {
+        if (next === "updated") p.delete("sort");
+        else p.set("sort", next);
+      });
+    },
+    [updateParams],
+  );
+
+  const setGroup = useCallback(
+    (next: GroupKey) => {
+      updateParams((p) => {
+        if (next === "status") p.delete("group");
+        else p.set("group", next);
       });
     },
     [updateParams],
@@ -156,14 +230,43 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   const viewCounts = useMemo(() => countByState(viewRows), [viewRows]);
 
+  // Priority counts derive from view-only (no status / search / priority
+  // narrowing) so the panel keeps showing how many urgent rows exist even
+  // when the operator has already drilled in.
+  const priorityCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      urgent: 0,
+      core: 0,
+      normal: 0,
+      backlog: 0,
+      [UNPRIORITIZED_KEY]: 0,
+    };
+    for (const row of viewRows) {
+      const key = row.priority ?? UNPRIORITIZED_KEY;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }, [viewRows]);
+
   const filteredRows = useMemo(() => {
     let list: MyTask[] = viewRows;
-    if (statusFilter) list = list.filter((r) => r.state === statusFilter);
+    if (statusFilter.size > 0)
+      list = list.filter((r) => statusFilter.has(r.state));
+    if (priorityFilter.size > 0)
+      list = list.filter((r) => matchesPriority(r, priorityFilter));
     if (query.trim()) list = list.filter((r) => matchesSearch(r, query));
     return list;
-  }, [viewRows, statusFilter, query]);
+  }, [viewRows, statusFilter, priorityFilter, query]);
 
-  const groups = useMemo(() => groupByState(filteredRows), [filteredRows]);
+  const sortedRows = useMemo(
+    () => sortRows(filteredRows, sort),
+    [filteredRows, sort],
+  );
+
+  const displayGroups = useMemo(
+    () => applyGrouping(sortedRows, group),
+    [sortedRows, group],
+  );
 
   const pickupTask = useMemo(() => pickPickupTask(rows), [rows]);
 
@@ -179,18 +282,26 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     const chips: ActiveFilterChip[] = [];
     if (view !== "open" && view !== "all") {
       chips.push({
-        id: "view",
+        id: `view:${view}`,
         key: "View",
         value: SAVED_VIEW_LABEL[view],
         tone: "var(--color-accent)",
       });
     }
-    if (statusFilter) {
+    for (const state of statusFilter) {
       chips.push({
-        id: "status",
+        id: `status:${state}`,
         key: "Status",
-        value: STATUS_META[statusFilter].label,
-        tone: STATUS_META[statusFilter].cssVar,
+        value: STATUS_META[state].label,
+        tone: STATUS_META[state].cssVar,
+      });
+    }
+    for (const priority of priorityFilter) {
+      chips.push({
+        id: `priority:${priority}`,
+        key: "Priority",
+        value: priority === UNPRIORITIZED_KEY ? "Unprioritized" : priority,
+        tone: PRIORITY_CHIP_TONE[priority] ?? "var(--color-text-secondary)",
       });
     }
     if (query.trim()) {
@@ -202,27 +313,56 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
       });
     }
     return chips;
-  }, [view, statusFilter, query]);
+  }, [view, statusFilter, priorityFilter, query]);
 
-  const collapsedStates = useMemo(() => {
-    const set = new Set<TaskState>();
+  // Filter chip count: every priority chip + every status chip + search.
+  // View chips are presentation only; the workspace's count matches this.
+  const filterCount =
+    statusFilter.size + priorityFilter.size + (query.trim() ? 1 : 0);
+
+  const collapsedKeys = useMemo(() => {
+    const set = new Set<string>();
     if (collapsedDone) set.add("done");
     return set;
   }, [collapsedDone]);
 
   const handleClearChip = useCallback(
     (id: string) => {
-      if (id === "view") setView("open");
-      else if (id === "status") setStatusFilter(null);
-      else if (id === "search") setQuery("");
+      if (id.startsWith("view:")) {
+        setView("open");
+        return;
+      }
+      if (id.startsWith("status:")) {
+        const state = id.slice("status:".length) as TaskState;
+        const next = new Set(statusFilter);
+        next.delete(state);
+        writeStatusSet(next);
+        return;
+      }
+      if (id.startsWith("priority:")) {
+        const value = id.slice("priority:".length);
+        const next = new Set(priorityFilter);
+        next.delete(value);
+        writePrioritySet(next);
+        return;
+      }
+      if (id === "search") setQuery("");
     },
-    [setQuery, setStatusFilter, setView],
+    [
+      priorityFilter,
+      setQuery,
+      setView,
+      statusFilter,
+      writePrioritySet,
+      writeStatusSet,
+    ],
   );
 
   const handleClearAll = useCallback(() => {
     updateParams((p) => {
       p.delete("view");
       p.delete("status");
+      p.delete("priority");
       p.delete("q");
     });
   }, [updateParams]);
@@ -230,13 +370,17 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   const handleResetFromNoMatch = useCallback(() => {
     updateParams((p) => {
       p.delete("status");
+      p.delete("priority");
       p.delete("q");
     });
   }, [updateParams]);
 
+  const handleToggleCollapsed = useCallback((key: string) => {
+    if (key === "done") setCollapsedDone((c) => !c);
+  }, []);
+
   // Keyboard map per DESIGN.md § 10 — `/`, `Escape`, and `1`-`5` view swap.
-  // Row-focus shortcuts (`↑↓ ↵`) are handled natively by the `<Link>` rows
-  // already in the tab order, so we don't reimplement focus management.
+  // Row-focus shortcuts (`↑↓ ↵`) are handled natively by the `<Link>` rows.
   useEffect(() => {
     const isEditableTarget = (el: EventTarget | null): boolean => {
       if (!(el instanceof HTMLElement)) return false;
@@ -257,9 +401,9 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
           if (query.length > 0) {
             e.preventDefault();
             setQuery("");
-          } else if (statusFilter) {
+          } else if (statusFilter.size > 0) {
             e.preventDefault();
-            setStatusFilter(null);
+            writeStatusSet(new Set());
             searchInputRef.current.blur();
           } else {
             searchInputRef.current.blur();
@@ -278,7 +422,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [query, setQuery, setStatusFilter, setView, statusFilter]);
+  }, [query, setQuery, setView, statusFilter, writeStatusSet]);
 
   const errorCode: MyTasksListFailureCode | null = error
     ? toFailureCode(error)
@@ -292,7 +436,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
         <MyTasksHeader
           totalCount={0}
           viewCounts={countByState([])}
-          statusFilter={null}
+          statusFilter={EMPTY_STATUS_SET}
           onToggleStatus={() => {}}
           dimTotal
         />
@@ -319,9 +463,23 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
       <div className="mt-3.5">
         <MyTasksToolbar
           ref={searchInputRef}
-          filterCount={activeChips.length}
+          filterOpen={filterOpen}
+          onToggleFilter={() => setFilterOpen((v) => !v)}
+          filterCount={filterCount}
+          group={group}
+          onGroupChange={setGroup}
+          sort={sort}
+          onSortChange={setSort}
           query={query}
           onQueryChange={setQuery}
+        />
+        <MyTasksFilterPanel
+          open={filterOpen}
+          activePriorities={priorityFilter}
+          priorityCounts={priorityCounts}
+          onPriorityToggle={togglePriority}
+          totalActive={filterCount}
+          onClearAll={handleClearAll}
         />
         <ActiveFilters
           chips={activeChips}
@@ -329,20 +487,18 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
           onClearAll={handleClearAll}
         />
       </div>
-      {groups.length === 0 ? (
+      {displayGroups.length === 0 ? (
         <NoMatch onReset={handleResetFromNoMatch} />
       ) : (
         <MyTasksList
-          groups={groups}
-          collapsedStates={collapsedStates}
-          onToggleCollapsed={(state) => {
-            if (state === "done") setCollapsedDone((c) => !c);
-          }}
+          groups={displayGroups}
+          collapsedKeys={collapsedKeys}
+          onToggleCollapsed={handleToggleCollapsed}
           meName={meName}
         />
       )}
       <MyTasksFooter
-        shown={filteredRows.length}
+        shown={sortedRows.length}
         total={rows.length}
         view={view}
       />
@@ -351,6 +507,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 }
 
 const EMPTY_ROWS: MyTask[] = [];
+const EMPTY_STATUS_SET: ReadonlySet<TaskState> = new Set();
 
 /** Pin the URL `?view=` param to a known SavedView; fall back to `open`. */
 function parseView(raw: string | null): SavedView {
@@ -358,10 +515,16 @@ function parseView(raw: string | null): SavedView {
   return "open";
 }
 
-/** Pin the URL `?status=` param to a known TaskState; fall back to `null`. */
-function parseStatus(raw: string | null): TaskState | null {
-  if (raw && VALID_STATUS_FILTERS.has(raw as TaskState)) return raw as TaskState;
-  return null;
+/** Pin the URL `?sort=` param to a known SortKey; fall back to `updated`. */
+function parseSort(raw: string | null): SortKey {
+  if (raw && VALID_SORTS.has(raw as SortKey)) return raw as SortKey;
+  return "updated";
+}
+
+/** Pin the URL `?group=` param to a known GroupKey; fall back to `status`. */
+function parseGroup(raw: string | null): GroupKey {
+  if (raw && VALID_GROUPS.has(raw as GroupKey)) return raw as GroupKey;
+  return "status";
 }
 
 /** Coerce the queryFn error message back into the discriminated failure code. */
@@ -374,3 +537,4 @@ function toFailureCode(err: unknown): MyTasksListFailureCode {
   }
   return "unknown";
 }
+

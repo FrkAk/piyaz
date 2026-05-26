@@ -1,5 +1,7 @@
 import type { TaskState } from "@/lib/data/task";
 import type { LifecycleStage, MyTask } from "@/lib/data/views";
+import type { Priority } from "@/lib/types";
+import { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 
 /** Identifier for one of the five hardcoded saved views on `/my-tasks`. */
 export type SavedView = "open" | "today" | "stale" | "done" | "all";
@@ -164,6 +166,206 @@ export function matchesSearch(row: MyTask, query: string): boolean {
     row.taskRef.toLowerCase().includes(q)
   );
 }
+
+/** Multi-select status filter — URL-serialized as a comma-separated list. */
+export function parseStatusSet(raw: string | null): ReadonlySet<TaskState> {
+  if (!raw) return new Set();
+  const parts = raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p): p is TaskState =>
+      STATUS_TOGGLE_ORDER.includes(p as TaskState),
+    );
+  return new Set(parts);
+}
+
+/** Serialize the active status set in canonical {@link STATUS_TOGGLE_ORDER}. */
+export function serializeStatusSet(set: ReadonlySet<TaskState>): string {
+  return STATUS_TOGGLE_ORDER.filter((s) => set.has(s)).join(",");
+}
+
+const PRIORITY_FILTER_VALUES = new Set<string>([
+  "urgent",
+  "core",
+  "normal",
+  "backlog",
+  UNPRIORITIZED_KEY,
+]);
+
+/**
+ * Multi-select priority filter — same CSV pattern as status. Allowlists to
+ * the four schema priorities plus {@link UNPRIORITIZED_KEY} for null rows.
+ */
+export function parsePrioritySet(raw: string | null): ReadonlySet<string> {
+  if (!raw) return new Set();
+  const parts = raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => PRIORITY_FILTER_VALUES.has(p));
+  return new Set(parts);
+}
+
+export function serializePrioritySet(set: ReadonlySet<string>): string {
+  const order = ["urgent", "core", "normal", "backlog", UNPRIORITIZED_KEY];
+  return order.filter((p) => set.has(p)).join(",");
+}
+
+/** Match a row against the active priority filter (empty set passes through). */
+export function matchesPriority(
+  row: MyTask,
+  active: ReadonlySet<string>,
+): boolean {
+  if (active.size === 0) return true;
+  if (row.priority === null) return active.has(UNPRIORITIZED_KEY);
+  return active.has(row.priority);
+}
+
+/** Sort key surfaced in the toolbar's Sort dropdown. */
+export type SortKey = "updated" | "priority" | "status" | "id";
+
+export const SORT_OPTIONS: ReadonlyArray<{ value: SortKey; label: string }> = [
+  { value: "updated", label: "Updated" },
+  { value: "priority", label: "Priority" },
+  { value: "status", label: "Status" },
+  { value: "id", label: "ID" },
+];
+
+const STATE_ORDER_INDEX: Record<TaskState, number> = (() => {
+  const map = {} as Record<TaskState, number>;
+  GROUP_ORDER.forEach((s, i) => {
+    map[s] = i;
+  });
+  return map;
+})();
+
+const PRIORITY_RANK_MAP: Record<Priority, number> = {
+  urgent: 0,
+  core: 1,
+  normal: 2,
+  backlog: 3,
+};
+
+/**
+ * Comparator-driven sort over a defensive copy. `updated` matches the
+ * server's `updatedAt DESC, id ASC`. `priority` puts urgent first; rows
+ * without a priority trail. Ties resolve on `taskRef` for stability.
+ */
+export function sortRows(rows: readonly MyTask[], key: SortKey): MyTask[] {
+  const copy = rows.slice();
+  switch (key) {
+    case "updated": {
+      copy.sort((a, b) => {
+        const at = a.updatedAt instanceof Date ? a.updatedAt.getTime() : Date.parse(String(a.updatedAt));
+        const bt = b.updatedAt instanceof Date ? b.updatedAt.getTime() : Date.parse(String(b.updatedAt));
+        if (bt !== at) return bt - at;
+        return a.id.localeCompare(b.id);
+      });
+      return copy;
+    }
+    case "priority": {
+      copy.sort((a, b) => {
+        const ar = a.priority ? PRIORITY_RANK_MAP[a.priority] : 4;
+        const br = b.priority ? PRIORITY_RANK_MAP[b.priority] : 4;
+        if (ar !== br) return ar - br;
+        return a.taskRef.localeCompare(b.taskRef);
+      });
+      return copy;
+    }
+    case "status": {
+      copy.sort((a, b) => {
+        const ai = STATE_ORDER_INDEX[a.state];
+        const bi = STATE_ORDER_INDEX[b.state];
+        if (ai !== bi) return ai - bi;
+        return a.taskRef.localeCompare(b.taskRef);
+      });
+      return copy;
+    }
+    case "id": {
+      copy.sort((a, b) => a.taskRef.localeCompare(b.taskRef));
+      return copy;
+    }
+  }
+}
+
+/** Group key surfaced in the toolbar's Group dropdown. */
+export type GroupKey = "status" | "project" | "none";
+
+export const GROUP_OPTIONS: ReadonlyArray<{ value: GroupKey; label: string }> = [
+  { value: "status", label: "Status" },
+  { value: "project", label: "Project" },
+  { value: "none", label: "None" },
+];
+
+/** Per-project bundle returned by {@link groupByProject}. */
+export interface ProjectGroup {
+  projectId: string;
+  projectTitle: string;
+  projectIdentifier: string;
+  projectColor: string;
+  rows: MyTask[];
+}
+
+export function groupByProject(rows: readonly MyTask[]): ProjectGroup[] {
+  const buckets = new Map<string, ProjectGroup>();
+  for (const row of rows) {
+    const existing = buckets.get(row.project.id);
+    if (existing) {
+      existing.rows.push(row);
+    } else {
+      buckets.set(row.project.id, {
+        projectId: row.project.id,
+        projectTitle: row.project.title,
+        projectIdentifier: row.project.identifier,
+        projectColor: row.project.color,
+        rows: [row],
+      });
+    }
+  }
+  return [...buckets.values()].sort((a, b) =>
+    a.projectTitle.localeCompare(b.projectTitle),
+  );
+}
+
+/** Discriminated group payload consumed by `<MyTasksList>`. */
+export type DisplayGroup =
+  | { kind: "status"; key: TaskState; rows: MyTask[] }
+  | {
+      kind: "project";
+      key: string;
+      projectTitle: string;
+      projectIdentifier: string;
+      projectColor: string;
+      rows: MyTask[];
+    }
+  | { kind: "none"; key: "all"; rows: MyTask[] };
+
+export function applyGrouping(
+  rows: readonly MyTask[],
+  key: GroupKey,
+): DisplayGroup[] {
+  if (key === "status") {
+    return groupByState(rows).map((g) => ({
+      kind: "status" as const,
+      key: g.state,
+      rows: g.rows,
+    }));
+  }
+  if (key === "project") {
+    return groupByProject(rows).map((g) => ({
+      kind: "project" as const,
+      key: g.projectId,
+      projectTitle: g.projectTitle,
+      projectIdentifier: g.projectIdentifier,
+      projectColor: g.projectColor,
+      rows: g.rows,
+    }));
+  }
+  if (rows.length === 0) return [];
+  return [{ kind: "none", key: "all", rows: rows.slice() }];
+}
+
+export { PRIORITY_DISPLAY_ORDER } from "@/lib/ui/priority";
+export { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 
 /**
  * Tailwind class string for the row's lifecycle stage pill. Colors come

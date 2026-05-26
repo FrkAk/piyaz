@@ -51,7 +51,7 @@ function titleClass(state: MyTask["state"]): string {
 function MyTasksRowImpl({ row, meName }: MyTasksRowProps) {
   return (
     <Link
-      href={`/project/${row.project.id}?task=${row.taskRef}`}
+      href={`/project/${row.project.id}?task=${row.id}`}
       data-task-id={row.id}
       className="group relative flex h-[34px] cursor-pointer items-center gap-2.5 border-b border-border pl-4 pr-2 transition-colors duration-100 hover:bg-surface-raised/40"
     >

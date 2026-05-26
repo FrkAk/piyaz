@@ -3,16 +3,25 @@ import {
   GROUP_ORDER,
   SAVED_VIEWS,
   STATUS_TOGGLE_ORDER,
+  applyGrouping,
   countByState,
   emptyStateCounts,
+  groupByProject,
   groupByState,
   lifecycleStageToneClass,
+  matchesPriority,
   matchesSearch,
+  parsePrioritySet,
+  parseStatusSet,
   pickPickupTask,
+  serializePrioritySet,
+  serializeStatusSet,
+  sortRows,
   viewPredicate,
 } from "@/components/my-tasks/predicates";
 import type { TaskState } from "@/lib/data/task";
 import type { MyTask } from "@/lib/data/views";
+import { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 
 const NOW = new Date("2026-05-26T12:00:00Z");
 const HOURS = 60 * 60 * 1000;
@@ -178,4 +187,167 @@ test("constants are aligned for the UI to import", () => {
   expect(SAVED_VIEWS.length).toBe(5);
   expect(STATUS_TOGGLE_ORDER.length).toBeGreaterThan(0);
   expect(GROUP_ORDER.length).toBe(8);
+});
+
+test("parseStatusSet allowlists tokens and drops unknown", () => {
+  const set = parseStatusSet("in_progress,bogus,ready,done");
+  expect([...set].sort()).toEqual(["done", "in_progress", "ready"]);
+});
+
+test("parseStatusSet(null) returns an empty set", () => {
+  expect(parseStatusSet(null).size).toBe(0);
+});
+
+test("serializeStatusSet emits canonical STATUS_TOGGLE_ORDER", () => {
+  const set = new Set<TaskState>(["done", "in_progress", "ready"]);
+  expect(serializeStatusSet(set)).toBe("in_progress,ready,done");
+});
+
+test("parsePrioritySet allowlists schema priorities + Unprioritized sentinel", () => {
+  const set = parsePrioritySet("urgent,bogus,core,Unprioritized");
+  expect([...set].sort()).toEqual([UNPRIORITIZED_KEY, "core", "urgent"]);
+});
+
+test("serializePrioritySet emits canonical order", () => {
+  const set = new Set<string>(["core", "urgent", UNPRIORITIZED_KEY]);
+  expect(serializePrioritySet(set)).toBe(`urgent,core,${UNPRIORITIZED_KEY}`);
+});
+
+test("matchesPriority(empty set) passes every row through", () => {
+  const r = row({ id: "1", state: "ready", priority: "core" });
+  expect(matchesPriority(r, new Set())).toBe(true);
+});
+
+test("matchesPriority(set) filters by exact value and Unprioritized maps to null", () => {
+  const urgent = row({ id: "1", state: "in_progress", priority: "urgent" });
+  const noPrio = row({ id: "2", state: "ready", priority: null });
+  expect(matchesPriority(urgent, new Set(["urgent"]))).toBe(true);
+  expect(matchesPriority(urgent, new Set(["core"]))).toBe(false);
+  expect(matchesPriority(noPrio, new Set([UNPRIORITIZED_KEY]))).toBe(true);
+  expect(matchesPriority(noPrio, new Set(["urgent"]))).toBe(false);
+});
+
+test("sortRows(priority) orders urgent → core → normal → backlog → null", () => {
+  const rows = [
+    row({ id: "a", state: "in_progress", priority: "normal" }),
+    row({ id: "b", state: "in_progress", priority: "urgent" }),
+    row({ id: "c", state: "in_progress", priority: null }),
+    row({ id: "d", state: "in_progress", priority: "backlog" }),
+    row({ id: "e", state: "in_progress", priority: "core" }),
+  ];
+  const sorted = sortRows(rows, "priority");
+  expect(sorted.map((r) => r.id)).toEqual(["b", "e", "a", "d", "c"]);
+});
+
+test("sortRows(id) orders by taskRef ascending", () => {
+  const rows = [
+    row({ id: "10", state: "ready" }),
+    row({ id: "2", state: "ready" }),
+    row({ id: "100", state: "ready" }),
+  ];
+  // taskRef strings sort lexicographically: MYMR-10, MYMR-100, MYMR-2.
+  const sorted = sortRows(rows, "id");
+  expect(sorted.map((r) => r.taskRef)).toEqual([
+    "MYMR-10",
+    "MYMR-100",
+    "MYMR-2",
+  ]);
+});
+
+test("sortRows(status) follows GROUP_ORDER", () => {
+  const rows = [
+    row({ id: "1", state: "done" }),
+    row({ id: "2", state: "in_progress" }),
+    row({ id: "3", state: "ready" }),
+    row({ id: "4", state: "draft" }),
+  ];
+  const sorted = sortRows(rows, "status");
+  expect(sorted.map((r) => r.state)).toEqual([
+    "in_progress",
+    "ready",
+    "draft",
+    "done",
+  ]);
+});
+
+test("sortRows(updated) puts newer first, ties resolve on id", () => {
+  const base = new Date("2026-05-01T00:00:00Z");
+  const day = 24 * 60 * 60 * 1000;
+  const rows = [
+    row({ id: "a", state: "ready", updatedAt: new Date(base.getTime()) }),
+    row({
+      id: "b",
+      state: "ready",
+      updatedAt: new Date(base.getTime() + 2 * day),
+    }),
+    row({
+      id: "c",
+      state: "ready",
+      updatedAt: new Date(base.getTime() + day),
+    }),
+  ];
+  const sorted = sortRows(rows, "updated");
+  expect(sorted.map((r) => r.id)).toEqual(["b", "c", "a"]);
+});
+
+test("groupByProject buckets rows and orders groups alphabetically", () => {
+  const rows: MyTask[] = [
+    {
+      ...row({ id: "1", state: "ready" }),
+      project: {
+        id: "proj-z",
+        identifier: "ZULU",
+        title: "Zulu",
+        color: "hsl(0 0% 50%)",
+      },
+    },
+    {
+      ...row({ id: "2", state: "ready" }),
+      project: {
+        id: "proj-a",
+        identifier: "ALFA",
+        title: "Alfa",
+        color: "hsl(0 0% 50%)",
+      },
+    },
+    {
+      ...row({ id: "3", state: "ready" }),
+      project: {
+        id: "proj-a",
+        identifier: "ALFA",
+        title: "Alfa",
+        color: "hsl(0 0% 50%)",
+      },
+    },
+  ];
+  const groups = groupByProject(rows);
+  expect(groups.map((g) => g.projectTitle)).toEqual(["Alfa", "Zulu"]);
+  expect(groups[0].rows.map((r) => r.id)).toEqual(["2", "3"]);
+});
+
+test("applyGrouping(none) returns a single bundle when rows are non-empty", () => {
+  const rows = [
+    row({ id: "1", state: "in_progress" }),
+    row({ id: "2", state: "ready" }),
+  ];
+  const groups = applyGrouping(rows, "none");
+  expect(groups.length).toBe(1);
+  expect(groups[0].kind).toBe("none");
+  expect(groups[0].rows.length).toBe(2);
+});
+
+test("applyGrouping(status) returns the same shape as groupByState", () => {
+  const rows = [
+    row({ id: "1", state: "ready" }),
+    row({ id: "2", state: "in_progress" }),
+  ];
+  const groups = applyGrouping(rows, "status");
+  expect(groups.map((g) => g.kind)).toEqual(["status", "status"]);
+  expect(groups.map((g) => g.key)).toEqual(["in_progress", "ready"]);
+});
+
+test("applyGrouping([], any) returns an empty array", () => {
+  expect(applyGrouping([], "status").length).toBe(0);
+  expect(applyGrouping([], "project").length).toBe(0);
+  expect(applyGrouping([], "none").length).toBe(0);
 });

@@ -8,19 +8,20 @@ import { STATUS_TOGGLE_ORDER } from "./predicates";
 interface StatusCountTogglesProps {
   /** Per-state counts derived from the currently-filtered view. */
   viewCounts: Record<TaskState, number>;
-  /** Currently-selected status filter (null when no filter is active). */
-  active: TaskState | null;
-  /** Toggle handler — repeats select unsets to null. */
+  /** Active status filter set — chips for states in the set render as pressed. */
+  active: ReadonlySet<TaskState>;
+  /** Toggle handler — clicking a chip adds the state when absent, removes when present. */
   onToggle: (state: TaskState) => void;
 }
 
 /**
- * Clickable status-count chips. Single-select per DESIGN.md § 2: clicking
- * an already-active chip clears the filter. Only chips with at least one
- * task in the active view are rendered so the operator never sees `0 done`
- * while looking at Open.
+ * Clickable status-count chips. Multi-select per HOTL preference: clicking
+ * a chip toggles its membership in the active set. Only chips with at
+ * least one task in the active view are rendered so the operator never
+ * sees `0 done` while looking at Open. The set state is owned by the
+ * parent and mirrored to the URL.
  *
- * @param props - View counts + active state + toggle handler.
+ * @param props - View counts + active set + toggle handler.
  * @returns Row of pill buttons.
  */
 export function StatusCountToggles({
@@ -37,7 +38,7 @@ export function StatusCountToggles({
       aria-label="Filter by status"
     >
       {visible.map((state) => {
-        const isActive = active === state;
+        const isActive = active.has(state);
         const meta = STATUS_META[state];
         return (
           <button

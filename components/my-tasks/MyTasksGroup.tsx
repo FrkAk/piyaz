@@ -1,67 +1,83 @@
 "use client";
 
+import { ProjectMark } from "@/components/shared/ProjectMark";
 import { STATUS_META } from "@/components/shared/StatusGlyph";
 import { StatusGlyph } from "@/components/shared/StatusGlyph";
 import { IconChevronDown } from "@/components/shared/icons";
 import type { TaskState } from "@/lib/data/task";
 
-interface MyTasksGroupProps {
-  /** Derived state shared by every row inside the group. */
-  state: TaskState;
-  /** Row count rendered as a mono tail count. */
-  count: number;
-  /** Whether the group body is currently collapsed. */
-  collapsed: boolean;
-  /**
-   * Toggle handler. When `null`, the chevron does not render — the parent
-   * locks the open state (every group except `done` is always open in v1).
-   */
-  onToggle: (() => void) | null;
-}
+export type MyTasksGroupProps =
+  | {
+      kind: "status";
+      state: TaskState;
+      count: number;
+      collapsed: boolean;
+      onToggle: (() => void) | null;
+    }
+  | {
+      kind: "project";
+      projectIdentifier: string;
+      projectTitle: string;
+      projectColor: string;
+      count: number;
+    };
 
 /**
- * Sticky 30px group header inside the list card. Mono uppercase label,
- * leading `<StatusGlyph>`, trailing row count, chevron that rotates on
- * collapse. The container is `sticky top-0` so the header pins to the top
- * of the page scroll container while its rows scroll past.
+ * Sticky 30px group header inside the list card. Status groups render the
+ * uppercase mono label + StatusGlyph; project groups render the project's
+ * mark + title. Only status groups support collapse — the parent passes a
+ * null `onToggle` to lock a group open.
  *
- * @param props - State + count + collapse state and handler.
+ * @param props - Discriminated header configuration.
  * @returns Group header row.
  */
-export function MyTasksGroup({
-  state,
-  count,
-  collapsed,
-  onToggle,
-}: MyTasksGroupProps) {
-  const meta = STATUS_META[state];
+export function MyTasksGroup(props: MyTasksGroupProps) {
+  if (props.kind === "project") {
+    return (
+      <div className="sticky top-0 z-10 flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur">
+        <ProjectMark
+          initial={(props.projectIdentifier[0] ?? "?").toUpperCase()}
+          color={props.projectColor}
+          size={14}
+        />
+        <span className="truncate text-[12px] font-medium text-text-secondary">
+          {props.projectTitle}
+        </span>
+        <span className="font-mono text-[10px] tabular-nums text-text-muted">
+          {props.count}
+        </span>
+      </div>
+    );
+  }
+
+  const meta = STATUS_META[props.state];
   const content = (
     <>
-      {onToggle && (
+      {props.onToggle && (
         <span
           aria-hidden="true"
           className="inline-flex text-text-muted transition-transform duration-150"
-          style={{ transform: collapsed ? "rotate(-90deg)" : "none" }}
+          style={{ transform: props.collapsed ? "rotate(-90deg)" : "none" }}
         >
           <IconChevronDown size={9} />
         </span>
       )}
-      <StatusGlyph status={state} size={11} />
+      <StatusGlyph status={props.state} size={11} />
       <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-text-secondary">
         {meta.label}
       </span>
       <span className="font-mono text-[10px] tabular-nums text-text-muted">
-        {count}
+        {props.count}
       </span>
     </>
   );
 
-  if (onToggle) {
+  if (props.onToggle) {
     return (
       <button
         type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
+        onClick={props.onToggle}
+        aria-expanded={!props.collapsed}
         className="sticky top-0 z-10 flex h-[30px] w-full cursor-pointer items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur transition-colors hover:bg-surface-hover/70"
       >
         {content}
