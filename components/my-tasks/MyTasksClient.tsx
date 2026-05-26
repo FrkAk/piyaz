@@ -7,16 +7,10 @@ import { useAuth } from "@/components/providers/SessionProvider";
 import { STATUS_META } from "@/components/shared/StatusGlyph";
 import type { TaskState } from "@/lib/data/task";
 import type { MyTask } from "@/lib/data/views";
-import {
-  listMyTasks,
-  type MyTasksListFailureCode,
-} from "@/lib/graph/queries";
+import { listMyTasks, type MyTasksListFailureCode } from "@/lib/graph/queries";
 import { myTasksKeys } from "@/lib/query/keys";
 import { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
-import {
-  ActiveFilters,
-  type ActiveFilterChip,
-} from "./ActiveFilters";
+import { ActiveFilters, type ActiveFilterChip } from "./ActiveFilters";
 import { ErrorBanner } from "./ErrorBanner";
 import { MyTasksEmpty } from "./MyTasksEmpty";
 import { MyTasksFilterPanel } from "./MyTasksFilterPanel";
@@ -118,9 +112,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   // via a debounced effect below so deep-links + back/forward still work,
   // and every other consumer (filter, active chips, hotkeys) reads `query`
   // directly for instant feedback.
-  const [query, setQuery] = useState<string>(
-    () => searchParams.get("q") ?? "",
-  );
+  const [query, setQuery] = useState<string>(() => searchParams.get("q") ?? "");
 
   const [collapsedDone, setCollapsedDone] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -543,10 +535,13 @@ function parseGroup(raw: string | null): GroupKey {
 function toFailureCode(err: unknown): MyTasksListFailureCode {
   if (err instanceof Error) {
     const code = err.message;
-    if (code === "unauthorized" || code === "rate_limited" || code === "unknown") {
+    if (
+      code === "unauthorized" ||
+      code === "rate_limited" ||
+      code === "unknown"
+    ) {
       return code;
     }
   }
   return "unknown";
 }
-

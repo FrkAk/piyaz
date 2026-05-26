@@ -65,8 +65,13 @@ const WEEK_MS = 7 * DAY_MS;
  * - `done`: row is terminal-success.
  * - `all`: every row.
  */
-export function viewPredicate(view: SavedView, row: MyTask, now: Date): boolean {
-  const updated = row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
+export function viewPredicate(
+  view: SavedView,
+  row: MyTask,
+  now: Date,
+): boolean {
+  const updated =
+    row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
   const age = now.getTime() - updated.getTime();
   switch (view) {
     case "open":
@@ -288,8 +293,14 @@ export function sortRows(rows: readonly MyTask[], key: SortKey): MyTask[] {
   switch (key) {
     case "updated": {
       copy.sort((a, b) => {
-        const at = a.updatedAt instanceof Date ? a.updatedAt.getTime() : Date.parse(String(a.updatedAt));
-        const bt = b.updatedAt instanceof Date ? b.updatedAt.getTime() : Date.parse(String(b.updatedAt));
+        const at =
+          a.updatedAt instanceof Date
+            ? a.updatedAt.getTime()
+            : Date.parse(String(a.updatedAt));
+        const bt =
+          b.updatedAt instanceof Date
+            ? b.updatedAt.getTime()
+            : Date.parse(String(b.updatedAt));
         if (bt !== at) return bt - at;
         return a.id.localeCompare(b.id);
       });
@@ -323,11 +334,12 @@ export function sortRows(rows: readonly MyTask[], key: SortKey): MyTask[] {
 /** Group key surfaced in the toolbar's Group dropdown. */
 export type GroupKey = "status" | "project" | "none";
 
-export const GROUP_OPTIONS: ReadonlyArray<{ value: GroupKey; label: string }> = [
-  { value: "status", label: "Status" },
-  { value: "project", label: "Project" },
-  { value: "none", label: "None" },
-];
+export const GROUP_OPTIONS: ReadonlyArray<{ value: GroupKey; label: string }> =
+  [
+    { value: "status", label: "Status" },
+    { value: "project", label: "Project" },
+    { value: "none", label: "None" },
+  ];
 
 /** Per-project bundle returned by {@link groupByProject}. */
 export interface ProjectGroup {

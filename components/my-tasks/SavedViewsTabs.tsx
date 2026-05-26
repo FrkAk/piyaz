@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  SAVED_VIEWS,
-  SAVED_VIEW_LABEL,
-  type SavedView,
-} from "./predicates";
+import { SAVED_VIEWS, SAVED_VIEW_LABEL, type SavedView } from "./predicates";
 
 interface SavedViewsTabsProps {
   /** Currently-active view. */
@@ -24,7 +20,11 @@ interface SavedViewsTabsProps {
  * @param props - Active view + counts + onChange.
  * @returns Segmented control row.
  */
-export function SavedViewsTabs({ value, counts, onChange }: SavedViewsTabsProps) {
+export function SavedViewsTabs({
+  value,
+  counts,
+  onChange,
+}: SavedViewsTabsProps) {
   return (
     <div
       role="tablist"

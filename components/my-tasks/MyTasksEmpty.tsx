@@ -20,10 +20,7 @@ import {
 export function MyTasksEmpty() {
   return (
     <section className="flex flex-1 flex-col items-center justify-center gap-3.5 px-6 pt-14 pb-20 text-center">
-      <div
-        aria-hidden="true"
-        className="relative h-24 w-24 [&_*]:absolute"
-      >
+      <div aria-hidden="true" className="relative h-24 w-24 [&_*]:absolute">
         <span className="inset-0 m-auto inline-flex h-[54px] w-[54px] items-center justify-center rounded-[14px] border border-border-strong bg-surface-raised text-accent-light shadow-[var(--shadow-card)]">
           <IconInbox size={28} />
         </span>

@@ -21,7 +21,8 @@ export function DepsHint({ icon, count }: DepsHintProps) {
     >
       <span
         style={{
-          color: icon === "up" ? "var(--color-depends)" : "var(--color-relates)",
+          color:
+            icon === "up" ? "var(--color-depends)" : "var(--color-relates)",
         }}
       >
         {icon === "up" ? "↑" : "↓"}

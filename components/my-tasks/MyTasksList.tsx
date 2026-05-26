@@ -51,7 +51,9 @@ export function MyTasksList({
                 state={group.key}
                 count={group.rows.length}
                 collapsed={collapsed}
-                onToggle={isDoneStatus ? () => onToggleCollapsed(group.key) : null}
+                onToggle={
+                  isDoneStatus ? () => onToggleCollapsed(group.key) : null
+                }
               />
             )}
             {group.kind === "project" && (

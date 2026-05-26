@@ -56,7 +56,8 @@ export function MyTasksFilterPanel({
             {totalActive > 0 && (
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-accent-light">
-                  {totalActive} {totalActive === 1 ? "filter" : "filters"} active
+                  {totalActive} {totalActive === 1 ? "filter" : "filters"}{" "}
+                  active
                 </span>
                 <button
                   type="button"

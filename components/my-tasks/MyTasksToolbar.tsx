@@ -3,11 +3,7 @@
 import { forwardRef } from "react";
 import { Dropdown } from "@/components/shared/Dropdown";
 import { ChipButton, ChipTrigger } from "@/components/shared/FilterChip";
-import {
-  IconFilter,
-  IconList,
-  IconSort,
-} from "@/components/shared/icons";
+import { IconFilter, IconList, IconSort } from "@/components/shared/icons";
 import {
   GROUP_OPTIONS,
   SORT_OPTIONS,

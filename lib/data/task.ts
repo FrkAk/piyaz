@@ -1429,15 +1429,15 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
     const graphByProject = new Map(
       await Promise.all(
         uniqueProjectIds.map(
-          async (pid) =>
-            [pid, await buildEffectiveDepGraph(pid, tx)] as const,
+          async (pid) => [pid, await buildEffectiveDepGraph(pid, tx)] as const,
         ),
       ),
     );
 
     return rows.map((row) => {
       const graph = graphByProject.get(row.projectId);
-      const effectiveDeps = graph?.effectiveDeps.get(row.id) ?? new Set<string>();
+      const effectiveDeps =
+        graph?.effectiveDeps.get(row.id) ?? new Set<string>();
       const effectiveDependents =
         graph?.effectiveDependents.get(row.id) ?? new Set<string>();
 

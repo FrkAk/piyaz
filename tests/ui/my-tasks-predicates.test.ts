@@ -27,7 +27,9 @@ const NOW = new Date("2026-05-26T12:00:00Z");
 const HOURS = 60 * 60 * 1000;
 
 /** Build a deterministic MyTask fixture overlaying onto a baseline shape. */
-function row(overrides: Partial<MyTask> & { id: string; state: TaskState }): MyTask {
+function row(
+  overrides: Partial<MyTask> & { id: string; state: TaskState },
+): MyTask {
   return {
     id: overrides.id,
     taskRef: `MYMR-${overrides.id}`,
@@ -59,10 +61,18 @@ function row(overrides: Partial<MyTask> & { id: string; state: TaskState }): MyT
 }
 
 test("viewPredicate(open) excludes done and cancelled", () => {
-  expect(viewPredicate("open", row({ id: "1", state: "in_progress" }), NOW)).toBe(true);
-  expect(viewPredicate("open", row({ id: "2", state: "ready" }), NOW)).toBe(true);
-  expect(viewPredicate("open", row({ id: "3", state: "done" }), NOW)).toBe(false);
-  expect(viewPredicate("open", row({ id: "4", state: "cancelled" }), NOW)).toBe(false);
+  expect(
+    viewPredicate("open", row({ id: "1", state: "in_progress" }), NOW),
+  ).toBe(true);
+  expect(viewPredicate("open", row({ id: "2", state: "ready" }), NOW)).toBe(
+    true,
+  );
+  expect(viewPredicate("open", row({ id: "3", state: "done" }), NOW)).toBe(
+    false,
+  );
+  expect(viewPredicate("open", row({ id: "4", state: "cancelled" }), NOW)).toBe(
+    false,
+  );
 });
 
 test("viewPredicate(today) includes in-flight states regardless of age", () => {
@@ -111,8 +121,12 @@ test("viewPredicate(stale) requires 7+ days of inactivity and not terminal", () 
 });
 
 test("viewPredicate(done) only matches done", () => {
-  expect(viewPredicate("done", row({ id: "1", state: "done" }), NOW)).toBe(true);
-  expect(viewPredicate("done", row({ id: "2", state: "in_progress" }), NOW)).toBe(false);
+  expect(viewPredicate("done", row({ id: "1", state: "done" }), NOW)).toBe(
+    true,
+  );
+  expect(
+    viewPredicate("done", row({ id: "2", state: "in_progress" }), NOW),
+  ).toBe(false);
 });
 
 test("viewPredicate(all) matches every row", () => {
@@ -228,7 +242,13 @@ test("matchesSearch sees project title and identifier", () => {
 });
 
 test("lifecycleStageToneClass returns a non-empty class string for every stage", () => {
-  for (const stage of ["draft", "planning", "working", "agent", "execution"] as const) {
+  for (const stage of [
+    "draft",
+    "planning",
+    "working",
+    "agent",
+    "execution",
+  ] as const) {
     expect(lifecycleStageToneClass(stage).length).toBeGreaterThan(0);
   }
 });
