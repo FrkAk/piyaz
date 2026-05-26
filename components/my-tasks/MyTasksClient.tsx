@@ -513,11 +513,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
           meName={meName}
         />
       )}
-      <MyTasksFooter
-        shown={sortedRows.length}
-        total={rows.length}
-        view={view}
-      />
+      <MyTasksFooter shown={sortedRows.length} total={rows.length} />
     </>
   );
 }
