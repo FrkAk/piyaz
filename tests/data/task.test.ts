@@ -708,6 +708,221 @@ test("listMyTasks surfaces blockedBy + upstream count for a planned row with an 
   expect(rows[0].blockedBy).toContain(rows[0].project.identifier);
 });
 
+// --- listMyTasks direct-dependency stats coverage ---
+// These lock the direct-edge semantics: counts and blocking come from
+// direct `depends_on` edges only (matching the structure view's
+// `buildDepsMap`), with no transitive / cancelled-transparent walk.
+
+type SeededTask = { id: string; sequence_number: number };
+
+async function insertTask(
+  sqlc: ReturnType<typeof superuserPool>,
+  projectId: string,
+  title: string,
+  seq: number,
+  status = "planned",
+): Promise<SeededTask> {
+  const [row] = await sqlc<SeededTask[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number", "order", "status")
+    VALUES (${projectId}, ${title}, ${seq}, ${seq}, ${status})
+    RETURNING id, sequence_number
+  `;
+  return row;
+}
+
+async function insertDep(
+  sqlc: ReturnType<typeof superuserPool>,
+  dependentId: string,
+  prereqId: string,
+): Promise<void> {
+  await sqlc`
+    INSERT INTO task_edges ("source_task_id", "target_task_id", "edge_type")
+    VALUES (${dependentId}, ${prereqId}, 'depends_on')
+  `;
+}
+
+async function assignTask(
+  sqlc: ReturnType<typeof superuserPool>,
+  taskId: string,
+  userId: string,
+): Promise<void> {
+  await sqlc`
+    INSERT INTO task_assignees ("task_id", "user_id")
+    VALUES (${taskId}, ${userId})
+  `;
+}
+
+test("listMyTasks counts only direct deps — a done dep's own unmet dep is invisible", async () => {
+  const f = await seedUserOrgProject("mytasksdirect");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    // A → B(done) → C(in_progress). Only the direct edge A→B is counted;
+    // C is never reached. B is done, so A is ready.
+    const a = await insertTask(sqlc, f.projectId, "A", 1, "planned");
+    const b = await insertTask(sqlc, f.projectId, "B", 2, "done");
+    const c = await insertTask(sqlc, f.projectId, "C", 3, "in_progress");
+    await insertDep(sqlc, a.id, b.id);
+    await insertDep(sqlc, b.id, c.id);
+    await assignTask(sqlc, a.id, f.userId);
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listMyTasks(ctx);
+  expect(rows.length).toBe(1);
+  expect(rows[0].upstreamCount).toBe(1);
+  expect(rows[0].blockedBy).toBeNull();
+  expect(rows[0].state).toBe("ready");
+});
+
+test("listMyTasks does not walk transitively — the blocker is the direct dep, not its dep", async () => {
+  const f = await seedUserOrgProject("mytaskstrans");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  let bSeq = 0;
+  try {
+    // A → B(in_progress) → C(in_progress). A's only direct dep is B, so the
+    // count is 1 (not 2) and B is the blocker (C is never considered).
+    const a = await insertTask(sqlc, f.projectId, "A", 1, "planned");
+    const b = await insertTask(sqlc, f.projectId, "B", 2, "in_progress");
+    const c = await insertTask(sqlc, f.projectId, "C", 3, "in_progress");
+    bSeq = b.sequence_number;
+    await insertDep(sqlc, a.id, b.id);
+    await insertDep(sqlc, b.id, c.id);
+    await assignTask(sqlc, a.id, f.userId);
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listMyTasks(ctx);
+  expect(rows.length).toBe(1);
+  expect(rows[0].upstreamCount).toBe(1);
+  expect(rows[0].state).toBe("blocked");
+  expect(rows[0].blockedBy).toBe(`${rows[0].project.identifier}-${bSeq}`);
+});
+
+test("listMyTasks counts a cancelled direct dep but never lets it block", async () => {
+  const f = await seedUserOrgProject("mytaskscancel");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    // A → B(cancelled) → C(in_progress). The direct edge to B is counted,
+    // but a cancelled dep can never block, and C behind it is never reached.
+    const a = await insertTask(sqlc, f.projectId, "A", 1, "planned");
+    const b = await insertTask(sqlc, f.projectId, "B", 2, "cancelled");
+    const c = await insertTask(sqlc, f.projectId, "C", 3, "in_progress");
+    await insertDep(sqlc, a.id, b.id);
+    await insertDep(sqlc, b.id, c.id);
+    await assignTask(sqlc, a.id, f.userId);
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listMyTasks(ctx);
+  expect(rows.length).toBe(1);
+  expect(rows[0].upstreamCount).toBe(1);
+  expect(rows[0].blockedBy).toBeNull();
+  expect(rows[0].state).toBe("ready");
+});
+
+test("listMyTasks counts direct downstream dependents", async () => {
+  const f = await seedUserOrgProject("mytasksdown");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    // A(in_progress) depends on the assigned B(in_progress): B has one
+    // active downstream dependent.
+    const b = await insertTask(sqlc, f.projectId, "B", 1, "in_progress");
+    const a = await insertTask(sqlc, f.projectId, "A", 2, "in_progress");
+    await insertDep(sqlc, a.id, b.id);
+    await assignTask(sqlc, b.id, f.userId);
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listMyTasks(ctx);
+  expect(rows.length).toBe(1);
+  expect(rows[0].upstreamCount).toBe(0);
+  expect(rows[0].downstreamCount).toBe(1);
+});
+
+test("listMyTasks picks the lowest-sequence non-done upstream as the blocker", async () => {
+  const f = await seedUserOrgProject("mytasksblockseq");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  let bSeq = 0;
+  try {
+    // A depends on both B(seq 2) and C(seq 3), both unmet. The blocker is
+    // the lowest-sequence one (B) — deterministic, not insertion-order.
+    const a = await insertTask(sqlc, f.projectId, "A", 1, "planned");
+    const b = await insertTask(sqlc, f.projectId, "B", 2, "in_progress");
+    const c = await insertTask(sqlc, f.projectId, "C", 3, "in_progress");
+    bSeq = b.sequence_number;
+    await insertDep(sqlc, a.id, c.id);
+    await insertDep(sqlc, a.id, b.id);
+    await assignTask(sqlc, a.id, f.userId);
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listMyTasks(ctx);
+  expect(rows.length).toBe(1);
+  expect(rows[0].upstreamCount).toBe(2);
+  expect(rows[0].state).toBe("blocked");
+  expect(rows[0].blockedBy).toBe(`${rows[0].project.identifier}-${bSeq}`);
+});
+
+test("listMyTasks computes per-anchor stats independently across a shared subgraph and multiple projects", async () => {
+  const f = await seedUserOrgProject("mytasksmulti");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  let p2Id = "";
+  try {
+    // Project 1 shared subgraph: A and D both depend on B(in_progress).
+    // Project 2: X depends on Y(in_progress). All three anchors are the
+    // caller's; each must get its own stats with no cross-project bleed.
+    // (A genuine cross-project edge is rejected by the DB trigger
+    // `reject_task_edges_cross_project`, so it can't be staged here.)
+    const [p2] = await sqlc<{ id: string }[]>`
+      INSERT INTO projects ("organization_id", "title", "identifier")
+      VALUES (${f.organizationId}, 'Project 2', 'PRJTWO')
+      RETURNING id
+    `;
+    p2Id = p2.id;
+    const a = await insertTask(sqlc, f.projectId, "A", 1, "planned");
+    const b = await insertTask(sqlc, f.projectId, "B", 2, "in_progress");
+    const d = await insertTask(sqlc, f.projectId, "D", 3, "planned");
+    const y = await insertTask(sqlc, p2.id, "Y", 1, "in_progress");
+    const x = await insertTask(sqlc, p2.id, "X", 2, "planned");
+    await insertDep(sqlc, a.id, b.id);
+    await insertDep(sqlc, d.id, b.id);
+    await insertDep(sqlc, x.id, y.id);
+    await assignTask(sqlc, a.id, f.userId);
+    await assignTask(sqlc, d.id, f.userId);
+    await assignTask(sqlc, x.id, f.userId);
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listMyTasks(ctx);
+  expect(rows.length).toBe(3);
+  for (const row of rows) {
+    expect(row.upstreamCount).toBe(1);
+    expect(row.downstreamCount).toBe(0);
+  }
+  // Both projects are represented and the anchors keep their own project.
+  expect(new Set(rows.map((r) => r.project.id))).toEqual(
+    new Set([f.projectId, p2Id]),
+  );
+});
+
 test("getTaskSlim returns the slim shape", async () => {
   const f = await seedUserOrgProject("taskslim");
   const ctx = makeAuthContext(f.userId);

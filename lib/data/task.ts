@@ -867,16 +867,12 @@ function deriveTaskState(
 }
 
 /**
- * State-derivation variant that takes a precomputed `allDepsDone` flag.
- * Lets `listMyTasks` reuse the iron-law gate logic above without paying
- * to materialize the full project graph just to peek at it.
- *
- * Same semantics as {@link deriveTaskState}; the only difference is the
- * shape of the input.
+ * State-derivation variant taking a precomputed `allDepsDone` flag, so
+ * `listMyTasks` can reuse the iron-law gate without building a project graph.
  *
  * @param task - Slim state input (status + hasDescription + hasCriteria).
- * @param allDepsDone - Whether every effective dependency has shipped.
- *   Callers that have no upstream edges should pass `true`.
+ * @param allDepsDone - Whether every direct dependency is done or
+ *   cancelled. Callers that have no upstream edges should pass `true`.
  * @returns Derived TaskState.
  */
 function deriveTaskStateWithDepsDone(
@@ -1414,12 +1410,9 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
 
     if (rows.length === 0) return [];
 
-    // Batched per-anchor stats via two recursive CTEs in a single round-trip,
-    // keyed on the user's assigned task ids. Replaces the prior per-project
-    // full-graph build (`O(Σ project sizes)` + ~2 round-trips per project),
-    // so the cost now scales with the user's anchor set and its bounded
-    // effective closure rather than with the total size of every project
-    // they're assigned in.
+    // Batched per-anchor direct-dependency counts in a single round-trip,
+    // keyed on the user's assigned task ids — direct `depends_on` edges
+    // only, matching the workspace structure view's `buildDepsMap`.
     const stats = await fetchMyTaskDepStats(
       tx,
       rows.map((r) => r.id),
@@ -1427,8 +1420,7 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
 
     return rows.map((row) => {
       const rowStats = stats.get(row.id);
-      // A row with no edges in either direction doesn't appear in the
-      // stats map — treat as zero / all-deps-done.
+      // Defensive defaults; no-edge anchors already return zeroed stats.
       const upstreamCount = rowStats?.upstreamCount ?? 0;
       const downstreamCount = rowStats?.downstreamCount ?? 0;
       const allDepsDone = rowStats?.allDepsDone ?? true;

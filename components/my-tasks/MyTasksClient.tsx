@@ -443,9 +443,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   const meName = session.data?.user.name ?? session.data?.user.email ?? "You";
 
-  // Owns the scroll element so `MyTasksList` can attach a virtualizer to
-  // the same DOM node — virtualization needs the scroll container to
-  // compute which rows are in view.
+  // Scroll container for the `MyTasksList` virtualizer (see page.tsx).
   const scrollRef = useRef<HTMLDivElement>(null);
 
   if (isFullyEmpty) {

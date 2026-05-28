@@ -165,9 +165,11 @@ export type ProjectMeta = Pick<
  * the session user directly. Fetch the task through a non-personal
  * surface (e.g. project graph) when the true assignee set is required.
  *
- * `blockedBy` carries the taskRef of the first non-done effective
- * upstream whenever such an upstream exists, regardless of the row's
- * own state.
+ * `upstreamCount` / `downstreamCount` count direct `depends_on` edges
+ * only (no transitive walk), matching the workspace structure view.
+ * `state` and `blockedBy` are likewise derived from direct dependencies:
+ * `blockedBy` carries the taskRef of the lowest-sequence direct upstream
+ * that is neither done nor cancelled, when one exists.
  */
 export type MyTask = Omit<
   TaskGraphSlim,
@@ -179,7 +181,9 @@ export type MyTask = Omit<
     title: string;
     color: string;
   };
+  /** Count of direct `depends_on` edges the task is the source of. */
   upstreamCount: number;
+  /** Count of direct `depends_on` edges the task is the target of. */
   downstreamCount: number;
   blockedBy: string | null;
 };
