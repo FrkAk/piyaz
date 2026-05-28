@@ -19,6 +19,7 @@
   --color-text-primary: #f9f9f9;
   --color-text-secondary: #cecece;
   --color-text-muted: #6a6b6c;
+  --color-text-faint: #4a4b4c;
 
   --color-accent: #818cf8;
   --color-accent-2: #6ee7d8;
@@ -95,6 +96,7 @@ html.light {
   --color-text-primary: #1a1a1a;
   --color-text-secondary: #5a5a5a;
   --color-text-muted: #9a9a9a;
+  --color-text-faint: #b8b8b8;
 
   --color-accent: #6366f1;
   --color-accent-2: #14b8a6;

@@ -12,7 +12,7 @@ import { StatusGlyph } from "@/components/shared/StatusGlyph";
 import { IconArrowRight, IconChevronRight } from "@/components/shared/icons";
 import type { MyTask } from "@/lib/data/views";
 import { formatRelative } from "@/components/workspace/structure/relativeTime";
-import { LifecycleStagePill } from "./LifecycleStagePill";
+import { TaskStatePill } from "./TaskStatePill";
 
 interface MyTasksRowProps {
   row: MyTask;
@@ -77,7 +77,7 @@ function MyTasksRowImpl({ row, meName }: MyTasksRowProps) {
       {row.category && <CategoryDot name={row.category} />}
 
       <span className="hidden shrink-0 sm:inline-flex">
-        <LifecycleStagePill stage={row.stage} />
+        <TaskStatePill state={row.state} />
       </span>
 
       {row.priority && (

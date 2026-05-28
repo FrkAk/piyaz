@@ -8,8 +8,8 @@ import {
   emptyStateCounts,
   groupByProject,
   groupByState,
-  lifecycleStageToneClass,
   matchesPriority,
+  taskStateToneClass,
   matchesSearch,
   parsePrioritySet,
   parseStatusSet,
@@ -44,15 +44,12 @@ function row(
     updatedAt: overrides.updatedAt ?? NOW,
     hasDescription: false,
     hasCriteria: false,
-    assigneeCount: 1,
-    assigneeUserIds: ["user"],
     project: {
       id: "p",
       identifier: "MYMR",
       title: "Mymir",
       color: "hsl(0 0% 50%)",
     },
-    stage: overrides.stage ?? "draft",
     upstreamCount: overrides.upstreamCount ?? 0,
     downstreamCount: overrides.downstreamCount ?? 0,
     blockedBy: overrides.blockedBy ?? null,
@@ -240,9 +237,19 @@ test("matchesSearch sees project title and identifier", () => {
   expect(matchesSearch(r, "oracle")).toBe(true);
 });
 
-test("lifecycleStageToneClass returns a non-empty class string for every stage", () => {
-  for (const stage of ["draft", "planning", "working", "done"] as const) {
-    expect(lifecycleStageToneClass(stage).length).toBeGreaterThan(0);
+test("taskStateToneClass returns a non-empty class string for every state", () => {
+  const states: readonly TaskState[] = [
+    "draft",
+    "plannable",
+    "ready",
+    "blocked",
+    "in_progress",
+    "in_review",
+    "done",
+    "cancelled",
+  ];
+  for (const state of states) {
+    expect(taskStateToneClass(state).length).toBeGreaterThan(0);
   }
 });
 

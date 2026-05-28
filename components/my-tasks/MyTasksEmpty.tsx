@@ -5,7 +5,7 @@ import { Kbd } from "@/components/shared/Kbd";
 import {
   IconArrowRight,
   IconBundle,
-  IconInbox,
+  IconUser,
 } from "@/components/shared/icons";
 
 export function MyTasksEmpty() {
@@ -13,7 +13,7 @@ export function MyTasksEmpty() {
     <section className="flex flex-1 flex-col items-center justify-center gap-3.5 px-6 pt-14 pb-20 text-center">
       <div aria-hidden="true" className="relative h-24 w-24 [&_*]:absolute">
         <span className="inset-0 m-auto inline-flex h-[54px] w-[54px] items-center justify-center rounded-[14px] border border-border-strong bg-surface-raised text-accent-light shadow-[var(--shadow-card)]">
-          <IconInbox size={28} />
+          <IconUser size={28} />
         </span>
         <span className="inset-0 m-auto h-[78px] w-[78px] rounded-full border border-dashed border-accent/25" />
         <span className="inset-0 m-auto h-24 w-24 rounded-full border border-dashed border-border" />

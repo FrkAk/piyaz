@@ -12,7 +12,7 @@ interface SearchInputProps {
 export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
   function SearchInput({ value, onChange }, ref) {
     return (
-      <div className="flex h-9 items-center gap-2.5 px-3.5 text-text-muted">
+      <div className="flex h-9 items-center gap-2.5 px-3 text-text-muted transition-colors focus-within:bg-surface-hover/40 focus-within:text-text-secondary">
         <IconSearch size={12} />
         <input
           ref={ref}

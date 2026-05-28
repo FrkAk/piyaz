@@ -29,7 +29,7 @@ export function MyTasksGroup(props: MyTasksGroupProps) {
     return (
       <div
         id={props.headerId}
-        className="sticky top-0 z-10 flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur"
+        className="flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-4 backdrop-blur"
       >
         <ProjectMark
           initial={(props.projectIdentifier[0] ?? "?").toUpperCase()}
@@ -75,7 +75,7 @@ export function MyTasksGroup(props: MyTasksGroupProps) {
         id={props.headerId}
         onClick={props.onToggle}
         aria-expanded={!props.collapsed}
-        className="sticky top-0 z-10 flex h-[30px] w-full cursor-pointer items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur transition-colors hover:bg-surface-hover/70"
+        className="flex h-[30px] w-full cursor-pointer items-center gap-2 border-b border-border bg-surface/70 px-4 backdrop-blur transition-colors hover:bg-surface-hover/70"
       >
         {content}
       </button>
@@ -84,7 +84,7 @@ export function MyTasksGroup(props: MyTasksGroupProps) {
   return (
     <div
       id={props.headerId}
-      className="sticky top-0 z-10 flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur"
+      className="flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-4 backdrop-blur"
     >
       {content}
     </div>

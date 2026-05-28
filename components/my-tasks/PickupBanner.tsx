@@ -29,7 +29,7 @@ export function PickupBanner({ task }: PickupBannerProps) {
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: "easeOut" }}
-        className="group relative flex items-center gap-3 rounded-xl border border-accent/20 bg-surface py-3.5 pl-6 pr-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:-translate-y-px hover:border-accent/30 hover:shadow-[var(--shadow-card-hover)]"
+        className="group relative flex items-center gap-3 overflow-hidden rounded-xl border border-accent/20 bg-surface py-3.5 pl-5 pr-4 shadow-[var(--shadow-card)] transition-all duration-150 hover:-translate-y-px hover:border-accent/30 hover:shadow-[var(--shadow-card-hover)]"
         style={{
           backgroundImage:
             "linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 7%, transparent), color-mix(in srgb, var(--color-accent-2) 4%, transparent))",
@@ -37,10 +37,10 @@ export function PickupBanner({ task }: PickupBannerProps) {
       >
         <span
           aria-hidden="true"
-          className="absolute inset-y-0 left-0 w-[3px] rounded-l-xl"
+          className="absolute inset-y-0 left-0 w-[3px]"
           style={{ background: "var(--color-accent-grad)" }}
         />
-        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border-strong bg-surface-raised text-accent-light shadow-[var(--shadow-button)]">
+        <span className="ml-1 inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[9px] border border-border-strong bg-surface-raised text-accent-light">
           <StatusGlyph
             status={task.state}
             size={18}

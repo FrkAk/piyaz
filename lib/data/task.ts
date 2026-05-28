@@ -32,6 +32,7 @@ import {
   enrichWithTaskRef,
 } from "@/lib/graph/identifier";
 import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
+import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
@@ -49,7 +50,6 @@ import {
 } from "@/lib/data/cursor";
 import type {
   AssigneeRef,
-  LifecycleStage,
   MyTask,
   TaskFull,
   TaskLinkRef,
@@ -867,6 +867,32 @@ function deriveTaskState(
 }
 
 /**
+ * State-derivation variant that takes a precomputed `allDepsDone` flag.
+ * Lets `listMyTasks` reuse the iron-law gate logic above without paying
+ * to materialize the full project graph just to peek at it.
+ *
+ * Same semantics as {@link deriveTaskState}; the only difference is the
+ * shape of the input.
+ *
+ * @param task - Slim state input (status + hasDescription + hasCriteria).
+ * @param allDepsDone - Whether every effective dependency has shipped.
+ *   Callers that have no upstream edges should pass `true`.
+ * @returns Derived TaskState.
+ */
+function deriveTaskStateWithDepsDone(
+  task: Pick<TaskStateInput, "status" | "hasDescription" | "hasCriteria">,
+  allDepsDone: boolean,
+): TaskState {
+  if (task.status === "done") return "done";
+  if (task.status === "cancelled") return "cancelled";
+  if (task.status === "in_progress") return "in_progress";
+  if (task.status === "in_review") return "in_review";
+  if (task.status === "planned") return allDepsDone ? "ready" : "blocked";
+  if (!allDepsDone) return "blocked";
+  return task.hasDescription && task.hasCriteria ? "plannable" : "draft";
+}
+
+/**
  * Batch state derivation against the slim payload shape — the path the UI
  * fetches via `getProjectGraphSlim`. Avoids selecting `description` and
  * `acceptanceCriteria` from the database just to compute boolean flags;
@@ -1344,14 +1370,6 @@ export async function searchTasksAcrossProjects(
   });
 }
 
-export function deriveLifecycleStage(state: TaskState): LifecycleStage {
-  if (state === "done") return "done";
-  if (state === "in_progress" || state === "in_review") return "working";
-  if (state === "ready" || state === "plannable" || state === "blocked")
-    return "planning";
-  return "draft";
-}
-
 /**
  * Bounded by `current_user_orgs()` for defense-in-depth over RLS.
  * Tie-break on `tasks.id` asc for stable output across calls.
@@ -1396,43 +1414,40 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
 
     if (rows.length === 0) return [];
 
-    const uniqueProjectIds = [...new Set(rows.map((r) => r.projectId))];
-    const graphByProject = new Map(
-      await Promise.all(
-        uniqueProjectIds.map(
-          async (pid) => [pid, await buildEffectiveDepGraph(pid, tx)] as const,
-        ),
-      ),
+    // Batched per-anchor stats via two recursive CTEs in a single round-trip,
+    // keyed on the user's assigned task ids. Replaces the prior per-project
+    // full-graph build (`O(Σ project sizes)` + ~2 round-trips per project),
+    // so the cost now scales with the user's anchor set and its bounded
+    // effective closure rather than with the total size of every project
+    // they're assigned in.
+    const stats = await fetchMyTaskDepStats(
+      tx,
+      rows.map((r) => r.id),
     );
 
     return rows.map((row) => {
-      const graph = graphByProject.get(row.projectId);
-      const effectiveDeps =
-        graph?.effectiveDeps.get(row.id) ?? new Set<string>();
-      const effectiveDependents =
-        graph?.effectiveDependents.get(row.id) ?? new Set<string>();
+      const rowStats = stats.get(row.id);
+      // A row with no edges in either direction doesn't appear in the
+      // stats map — treat as zero / all-deps-done.
+      const upstreamCount = rowStats?.upstreamCount ?? 0;
+      const downstreamCount = rowStats?.downstreamCount ?? 0;
+      const allDepsDone = rowStats?.allDepsDone ?? true;
+      const blockerSeq = rowStats?.blockerSequenceNumber ?? null;
 
       const projectIdentifier = asIdentifier(row.projectIdentifier);
-      const state = deriveTaskState(
+      const state = deriveTaskStateWithDepsDone(
         {
-          id: row.id,
           status: row.status,
           hasDescription: row.hasDescription,
           hasCriteria: row.hasCriteria,
         },
-        graph ?? { activeTasks: new Map(), effectiveDeps: new Map() },
+        allDepsDone,
       );
 
-      let blockedBy: string | null = null;
-      if (graph) {
-        for (const depId of effectiveDeps) {
-          const dep = graph.activeTasks.get(depId);
-          if (dep && dep.status !== "done") {
-            blockedBy = composeTaskRef(projectIdentifier, dep.sequenceNumber);
-            break;
-          }
-        }
-      }
+      const blockedBy =
+        blockerSeq === null
+          ? null
+          : composeTaskRef(projectIdentifier, blockerSeq);
 
       return {
         id: row.id,
@@ -1448,17 +1463,14 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
         updatedAt: row.updatedAt,
         hasDescription: row.hasDescription,
         hasCriteria: row.hasCriteria,
-        assigneeCount: 1,
-        assigneeUserIds: [ctx.userId],
         project: {
           id: row.projectId,
           identifier: row.projectIdentifier,
           title: row.projectTitle,
           color: projectColor(row.projectIdentifier),
         },
-        stage: deriveLifecycleStage(state),
-        upstreamCount: effectiveDeps.size,
-        downstreamCount: effectiveDependents.size,
+        upstreamCount,
+        downstreamCount,
         blockedBy,
       };
     });

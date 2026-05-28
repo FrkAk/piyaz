@@ -21,7 +21,7 @@ export type {
   SearchResult,
   CrossProjectSearchResult,
 } from "@/lib/data/task";
-export type { LifecycleStage, MyTask } from "@/lib/data/views";
+export type { MyTask } from "@/lib/data/views";
 export type { DetailedEdge } from "@/lib/data/edge";
 export type { ProjectTag } from "@/lib/data/project";
 export type {

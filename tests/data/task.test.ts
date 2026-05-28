@@ -10,7 +10,6 @@ import {
   searchTasksPaged,
   searchTasksAcrossProjects,
   listMyTasks,
-  deriveLifecycleStage,
   getTaskSlim,
   getTaskFull,
 } from "@/lib/data/task";
@@ -620,7 +619,6 @@ test("listMyTasks returns the cross-project MyTask shape for rows assigned to th
   expect(row.title).toBe("My assigned task");
   expect(row.status).toBe("in_progress");
   expect(row.state).toBe("in_progress");
-  expect(row.stage).toBe("working");
   expect(row.upstreamCount).toBe(0);
   expect(row.downstreamCount).toBe(0);
   expect(row.blockedBy).toBeNull();
@@ -705,21 +703,9 @@ test("listMyTasks surfaces blockedBy + upstream count for a planned row with an 
   expect(rows.length).toBe(1);
   expect(rows[0].title).toBe("Downstream target");
   expect(rows[0].state).toBe("blocked");
-  expect(rows[0].stage).toBe("planning");
   expect(rows[0].upstreamCount).toBe(1);
   expect(rows[0].downstreamCount).toBe(0);
   expect(rows[0].blockedBy).toContain(rows[0].project.identifier);
-});
-
-test("deriveLifecycleStage covers every state branch", () => {
-  expect(deriveLifecycleStage("done")).toBe("done");
-  expect(deriveLifecycleStage("in_progress")).toBe("working");
-  expect(deriveLifecycleStage("in_review")).toBe("working");
-  expect(deriveLifecycleStage("ready")).toBe("planning");
-  expect(deriveLifecycleStage("plannable")).toBe("planning");
-  expect(deriveLifecycleStage("blocked")).toBe("planning");
-  expect(deriveLifecycleStage("draft")).toBe("draft");
-  expect(deriveLifecycleStage("cancelled")).toBe("draft");
 });
 
 test("getTaskSlim returns the slim shape", async () => {

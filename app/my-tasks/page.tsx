@@ -10,8 +10,10 @@ import { myTasksKeys } from "@/lib/query/keys";
 
 export const dynamic = "force-dynamic";
 
-// Owns its own scroll container because AppShell's `<main>` is
-// `overflow-hidden` and the column is wider than PageShell's default cap.
+// `MyTasksClient` owns its own scroll container (`flex-1 overflow-y-auto`)
+// so the virtualizer in `MyTasksList` can reference the same DOM node — the
+// scroll element has to live on the client side. AppShell's `<main>` is
+// `overflow-hidden` so the inner scroll is the only one on the page.
 export default async function MyTasksPage() {
   const session = await getSession();
   if (!session) redirect("/sign-in");
@@ -28,13 +30,9 @@ export default async function MyTasksPage() {
   return (
     <AppShell>
       <TopBar pageLabel="My tasks" />
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1080px] px-8 pt-7 pb-20">
-          <HydrationBoundary state={dehydrate(qc)}>
-            <MyTasksClient initialError={payload.ok ? null : payload.code} />
-          </HydrationBoundary>
-        </div>
-      </div>
+      <HydrationBoundary state={dehydrate(qc)}>
+        <MyTasksClient initialError={payload.ok ? null : payload.code} />
+      </HydrationBoundary>
     </AppShell>
   );
 }

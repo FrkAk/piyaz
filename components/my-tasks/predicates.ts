@@ -1,5 +1,5 @@
 import type { TaskState } from "@/lib/data/task";
-import type { LifecycleStage, MyTask } from "@/lib/data/views";
+import type { MyTask } from "@/lib/data/views";
 import type { Priority } from "@/lib/types";
 import { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 
@@ -133,9 +133,41 @@ export function pickPickupTask(rows: readonly MyTask[]): MyTask | null {
 
 const TASK_REF_PATTERN = /^[a-z0-9]+-\d+$/;
 
+// One lowercased blob per row, computed once and reused for every keystroke.
+// Field boundary is `\n` so `mymr` in the project identifier can't bleed into
+// the title of the same row (`includes` is substring, not token-bounded — the
+// newline keeps adjacent fields independent).
+function buildHaystack(row: MyTask): string {
+  return [
+    row.title,
+    row.taskRef,
+    row.project.title,
+    row.project.identifier,
+    row.category ?? "",
+    ...row.tags,
+  ]
+    .join("\n")
+    .toLowerCase();
+}
+
+export function buildSearchHaystacks(
+  rows: readonly MyTask[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const row of rows) out.set(row.id, buildHaystack(row));
+  return out;
+}
+
 // Tokens split on whitespace only (not punctuation) so a partial ref like
 // `mymr-1` stays intact rather than fragmenting into `mymr` + `1`.
-export function matchesSearch(row: MyTask, query: string): boolean {
+// Production callers pass the precomputed `haystack` from
+// `buildSearchHaystacks` to avoid per-keystroke allocations; tests may
+// omit it and pay the per-call rebuild.
+export function matchesSearch(
+  row: MyTask,
+  query: string,
+  haystack?: string,
+): boolean {
   const trimmed = query.trim();
   if (trimmed.length === 0) return true;
   const lower = trimmed.toLowerCase();
@@ -147,17 +179,8 @@ export function matchesSearch(row: MyTask, query: string): boolean {
   const tokens = lower.split(/\s+/).filter((t) => t.length > 0);
   if (tokens.length === 0) return true;
 
-  const fields: string[] = [
-    row.title,
-    row.taskRef,
-    row.project.title,
-    row.project.identifier,
-    row.category ?? "",
-    ...row.tags,
-  ];
-  const fieldLowers = fields.map((f) => f.toLowerCase());
-
-  return tokens.every((t) => fieldLowers.some((f) => f.includes(t)));
+  const blob = haystack ?? buildHaystack(row);
+  return tokens.every((t) => blob.includes(t));
 }
 
 export function parseStatusSet(raw: string | null): ReadonlySet<TaskState> {
@@ -354,15 +377,23 @@ export function applyGrouping(
 export { PRIORITY_DISPLAY_ORDER } from "@/lib/ui/priority";
 export { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 
-export function lifecycleStageToneClass(stage: LifecycleStage): string {
-  switch (stage) {
-    case "planning":
-      return "text-glyph-planned bg-glyph-planned/12 border border-glyph-planned/22";
-    case "working":
+export function taskStateToneClass(state: TaskState): string {
+  switch (state) {
+    case "in_progress":
       return "text-glyph-progress bg-glyph-progress/12 border border-glyph-progress/22";
+    case "in_review":
+      return "text-glyph-review bg-glyph-review/12 border border-glyph-review/22";
+    case "ready":
+      return "text-glyph-ready bg-glyph-ready/12 border border-glyph-ready/22";
+    case "blocked":
+      return "text-glyph-blocked bg-glyph-blocked/12 border border-glyph-blocked/22";
+    case "plannable":
+      return "text-glyph-planned bg-glyph-planned/12 border border-glyph-planned/22";
     case "done":
       return "text-glyph-done bg-glyph-done/12 border border-glyph-done/22";
+    case "cancelled":
+      return "text-glyph-cancelled bg-glyph-cancelled/12 border border-glyph-cancelled/22";
     case "draft":
-      return "text-text-muted bg-surface-raised border border-border";
+      return "text-text-secondary bg-surface-raised border border-border";
   }
 }

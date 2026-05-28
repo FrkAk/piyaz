@@ -25,6 +25,7 @@ import {
   SAVED_VIEWS,
   SAVED_VIEW_LABEL,
   applyGrouping,
+  buildSearchHaystacks,
   countByState,
   matchesPriority,
   matchesSearch,
@@ -61,11 +62,14 @@ const VALID_GROUPS: ReadonlySet<GroupKey> = new Set<GroupKey>([
   "none",
 ]);
 
+// `backlog` uses `--color-text-secondary` (not muted) so the chip clears
+// the WCAG AA 4.5:1 contrast bar on its own 12% tint — `--color-text-muted`
+// computed to 2.8:1 in light mode.
 const PRIORITY_CHIP_TONE: Record<string, string> = {
   urgent: "var(--color-danger)",
   core: "var(--color-progress)",
   normal: "var(--color-text-secondary)",
-  backlog: "var(--color-text-muted)",
+  backlog: "var(--color-text-secondary)",
 };
 
 interface MyTasksClientProps {
@@ -235,15 +239,24 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     return counts;
   }, [viewRows]);
 
+  // Memoised off `rows` (not `query`) so every keystroke reuses the same
+  // lowercased blob per row instead of re-allocating the field array and
+  // re-lowercasing inside the matcher.
+  const haystacks = useMemo(() => buildSearchHaystacks(rows), [rows]);
+
   const filteredRows = useMemo(() => {
     let list: MyTask[] = viewRows;
     if (statusFilter.size > 0)
       list = list.filter((r) => statusFilter.has(r.state));
     if (priorityFilter.size > 0)
       list = list.filter((r) => matchesPriority(r, priorityFilter));
-    if (query.trim()) list = list.filter((r) => matchesSearch(r, query));
+    if (query.trim()) {
+      list = list.filter((r) =>
+        matchesSearch(r, query, haystacks.get(r.id) ?? ""),
+      );
+    }
     return list;
-  }, [viewRows, statusFilter, priorityFilter, query]);
+  }, [viewRows, statusFilter, priorityFilter, query, haystacks]);
 
   const sortedRows = useMemo(
     () => sortRows(filteredRows, sort),
@@ -430,75 +443,85 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   const meName = session.data?.user.name ?? session.data?.user.email ?? "You";
 
+  // Owns the scroll element so `MyTasksList` can attach a virtualizer to
+  // the same DOM node — virtualization needs the scroll container to
+  // compute which rows are in view.
+  const scrollRef = useRef<HTMLDivElement>(null);
+
   if (isFullyEmpty) {
     return (
-      <>
-        <MyTasksHeader
-          totalCount={0}
-          viewCounts={countByState([])}
-          statusFilter={EMPTY_STATUS_SET}
-          onToggleStatus={() => {}}
-          dimTotal
-        />
-        <MyTasksEmpty />
-      </>
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[1080px] px-8 pt-7 pb-20">
+          <MyTasksHeader
+            totalCount={0}
+            viewCounts={countByState([])}
+            statusFilter={EMPTY_STATUS_SET}
+            onToggleStatus={() => {}}
+            dimTotal
+          />
+          <MyTasksEmpty />
+        </div>
+      </div>
     );
   }
 
   return (
-    <>
-      {errorCode && <ErrorBanner code={errorCode} />}
-      <MyTasksHeader
-        totalCount={rows.length}
-        viewCounts={viewCounts}
-        statusFilter={statusFilter}
-        onToggleStatus={toggleStatus}
-      />
-      {pickupTask && view !== "done" && <PickupBanner task={pickupTask} />}
-      <SavedViewsTabs
-        value={view}
-        counts={viewCountsByKey}
-        onChange={setView}
-      />
-      <div className="mt-3.5">
-        <MyTasksToolbar
-          ref={searchInputRef}
-          filterOpen={filterOpen}
-          onToggleFilter={() => setFilterOpen((v) => !v)}
-          filterCount={filterCount}
-          group={group}
-          onGroupChange={setGroup}
-          sort={sort}
-          onSortChange={setSort}
-          query={query}
-          onQueryChange={setQuery}
+    <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-[1080px] px-8 pt-7 pb-20">
+        {errorCode && <ErrorBanner code={errorCode} />}
+        <MyTasksHeader
+          totalCount={rows.length}
+          viewCounts={viewCounts}
+          statusFilter={statusFilter}
+          onToggleStatus={toggleStatus}
         />
-        <MyTasksFilterPanel
-          open={filterOpen}
-          activePriorities={priorityFilter}
-          priorityCounts={priorityCounts}
-          onPriorityToggle={togglePriority}
-          totalActive={filterCount}
-          onClearAll={handleClearAll}
+        {pickupTask && view !== "done" && <PickupBanner task={pickupTask} />}
+        <SavedViewsTabs
+          value={view}
+          counts={viewCountsByKey}
+          onChange={setView}
         />
-        <ActiveFilters
-          chips={activeChips}
-          onClear={handleClearChip}
-          onClearAll={handleClearAll}
-        />
+        <div className="mt-3.5">
+          <MyTasksToolbar
+            ref={searchInputRef}
+            filterOpen={filterOpen}
+            onToggleFilter={() => setFilterOpen((v) => !v)}
+            filterCount={filterCount}
+            group={group}
+            onGroupChange={setGroup}
+            sort={sort}
+            onSortChange={setSort}
+            query={query}
+            onQueryChange={setQuery}
+          />
+          <MyTasksFilterPanel
+            open={filterOpen}
+            activePriorities={priorityFilter}
+            priorityCounts={priorityCounts}
+            onPriorityToggle={togglePriority}
+            totalActive={filterCount}
+            onClearAll={handleClearAll}
+          />
+          <ActiveFilters
+            chips={activeChips}
+            onClear={handleClearChip}
+            onClearAll={handleClearAll}
+          />
+        </div>
+        {displayGroups.length === 0 ? (
+          <NoMatch onReset={handleResetFromNoMatch} />
+        ) : (
+          <MyTasksList
+            groups={displayGroups}
+            collapsedKeys={collapsedKeys}
+            onToggleCollapsed={handleToggleCollapsed}
+            meName={meName}
+            scrollRef={scrollRef}
+          />
+        )}
+        <MyTasksFooter shown={sortedRows.length} total={rows.length} />
       </div>
-      {displayGroups.length === 0 ? (
-        <NoMatch onReset={handleResetFromNoMatch} />
-      ) : (
-        <MyTasksList
-          groups={displayGroups}
-          collapsedKeys={collapsedKeys}
-          onToggleCollapsed={handleToggleCollapsed}
-          meName={meName}
-        />
-      )}
-      <MyTasksFooter shown={sortedRows.length} total={rows.length} />
-    </>
+    </div>
   );
 }
 

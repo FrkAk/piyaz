@@ -158,28 +158,27 @@ export type ProjectMeta = Pick<
   progress: number;
 };
 
-/** Derived from `state`, not a schema column. */
-export type LifecycleStage = "draft" | "planning" | "working" | "done";
-
 /**
- * `blockedBy` carries the taskRef of the first non-done effective upstream
- * when the row is blocked.
+ * Personal task projection. Drops `assigneeCount` / `assigneeUserIds`
+ * because `listMyTasks` does not join co-assignees in — every row is the
+ * caller's by construction, so the avatar slot in `MyTasksRow` renders
+ * the session user directly. Fetch the task through a non-personal
+ * surface (e.g. project graph) when the true assignee set is required.
  *
- * `MyTask` inherits `assigneeCount` and `assigneeUserIds` from
- * {@link TaskGraphSlim}, but `listMyTasks` only ever fills them with the
- * caller's own user; co-assignees are not joined in. Treat both fields as
- * projection-local: do NOT use them to render an assignee stack or to count
- * collaborators on the task. If you need the true assignee set, fetch the
- * task through a non-personal surface (e.g. project graph).
+ * `blockedBy` carries the taskRef of the first non-done effective
+ * upstream whenever such an upstream exists, regardless of the row's
+ * own state.
  */
-export type MyTask = TaskGraphSlim & {
+export type MyTask = Omit<
+  TaskGraphSlim,
+  "assigneeCount" | "assigneeUserIds"
+> & {
   project: {
     id: string;
     identifier: string;
     title: string;
     color: string;
   };
-  stage: LifecycleStage;
   upstreamCount: number;
   downstreamCount: number;
   blockedBy: string | null;
