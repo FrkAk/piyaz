@@ -23,7 +23,8 @@ export function MyTasksEmpty() {
         Nothing assigned.
       </h2>
       <p className="max-w-[460px] text-[13.5px] leading-[1.55] text-text-muted">
-        Once a task is created in any project and assigned to you, it lands here automatically.
+        Once a task is created in any project and assigned to you, it lands here
+        automatically.
       </p>
 
       <span className="inline-block max-w-full rounded-lg border border-border-strong bg-surface px-4 py-2.5 text-left font-mono text-[12.5px] shadow-[var(--shadow-card)]">
