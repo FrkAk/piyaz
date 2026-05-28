@@ -3,10 +3,9 @@ import type { LifecycleStage, MyTask } from "@/lib/data/views";
 import type { Priority } from "@/lib/types";
 import { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 
-/** Identifier for one of the five hardcoded saved views on `/my-tasks`. */
 export type SavedView = "open" | "today" | "stale" | "done" | "all";
 
-/** Tabs render in this order; `useSavedView` also keys hotkeys 1-5 off it. */
+// Order drives hotkeys 1-5 in useSavedView.
 export const SAVED_VIEWS: readonly SavedView[] = [
   "open",
   "today",
@@ -15,7 +14,6 @@ export const SAVED_VIEWS: readonly SavedView[] = [
   "all",
 ];
 
-/** Human label for each saved view (sentence case per UX_PRINCIPLES § 1). */
 export const SAVED_VIEW_LABEL: Record<SavedView, string> = {
   open: "Open",
   today: "Today",
@@ -24,11 +22,7 @@ export const SAVED_VIEW_LABEL: Record<SavedView, string> = {
   all: "All",
 };
 
-/**
- * Status-count toggle order shown under the H1. Mirrors the row group order
- * inside the list. `cancelled` is intentionally absent — cancelled rows
- * are surfaced via the `all` saved view, not the per-status toggle row.
- */
+// `cancelled` omitted: surfaced via the `all` view, not the toggle row.
 export const STATUS_TOGGLE_ORDER: readonly TaskState[] = [
   "in_progress",
   "in_review",
@@ -39,7 +33,6 @@ export const STATUS_TOGGLE_ORDER: readonly TaskState[] = [
   "done",
 ];
 
-/** Row group order inside `<MyTasksList>`. Cancelled trails after done. */
 export const GROUP_ORDER: readonly TaskState[] = [
   "in_progress",
   "in_review",
@@ -54,17 +47,6 @@ export const GROUP_ORDER: readonly TaskState[] = [
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 
-/**
- * Saved-view predicate. Pure function — same `(view, row, now)` always
- * returns the same boolean.
- *
- * - `open`: row is not done or cancelled.
- * - `today`: row is in flight (`in_progress` / `in_review`) OR was touched
- *   in the last 24 hours.
- * - `stale`: row is still open AND has not been touched in 7+ days.
- * - `done`: row is terminal-success.
- * - `all`: every row.
- */
 export function viewPredicate(
   view: SavedView,
   row: MyTask,
@@ -90,7 +72,6 @@ export function viewPredicate(
   }
 }
 
-/** Initialise a `Record<TaskState, number>` with every bucket at 0. */
 export function emptyStateCounts(): Record<TaskState, number> {
   return {
     draft: 0,
@@ -104,7 +85,6 @@ export function emptyStateCounts(): Record<TaskState, number> {
   };
 }
 
-/** Tally rows by derived state. Every bucket present, zero-initialised. */
 export function countByState(
   rows: readonly MyTask[],
 ): Record<TaskState, number> {
@@ -113,16 +93,12 @@ export function countByState(
   return counts;
 }
 
-/** One group of rows sharing a derived state, ready for `<MyTasksList>`. */
 export interface StateGroup {
   state: TaskState;
   rows: MyTask[];
 }
 
-/**
- * Group rows by derived `state` and return groups in {@link GROUP_ORDER}.
- * Empty states are skipped so the list doesn't render empty headers.
- */
+// Empty states omitted so the list doesn't render empty headers.
 export function groupByState(rows: readonly MyTask[]): StateGroup[] {
   const buckets = new Map<TaskState, MyTask[]>();
   for (const row of rows) {
@@ -140,12 +116,8 @@ export function groupByState(rows: readonly MyTask[]): StateGroup[] {
   return out;
 }
 
-/**
- * Pickup-banner candidate selection per DESIGN.md § 3 — first urgent
- * in-progress, else first core ready, else any ready, else null. Selection
- * is done against the *full* payload, not the active-view subset, so the
- * banner stays visible even when the user filters the list.
- */
+// Runs against the full payload, not the active view, so the banner
+// stays visible when the user filters the list.
 export function pickPickupTask(rows: readonly MyTask[]): MyTask | null {
   const urgentInProgress = rows.find(
     (r) => r.state === "in_progress" && r.priority === "urgent",
@@ -159,27 +131,10 @@ export function pickPickupTask(rows: readonly MyTask[]): MyTask | null {
   return anyReady ?? null;
 }
 
-/** Full-taskRef pattern (case-insensitive): `MYMR-101`, `ORAS-42`. */
 const TASK_REF_PATTERN = /^[a-z0-9]+-\d+$/;
 
-/**
- * Multi-field, multi-token search match. Mirrors `searchTasksAcrossProjects`
- * server-side semantics for the in-memory row set:
- *
- * - **TaskRef short-circuit** — a query that parses as a full taskRef
- *   (e.g. `MYMR-101`) matches exactly the row with that identifier; nothing
- *   else surfaces. Lets the operator paste a ref into the box and land
- *   directly on the row.
- * - **Multi-token AND** — whitespace-separated tokens AND-join. Each token
- *   must match somewhere across the row's searchable fields. Tokens
- *   themselves retain punctuation so a partial ref like `mymr-1` stays
- *   intact instead of fragmenting into `mymr` + `1`.
- * - **Wide field coverage** — title, taskRef, project title + identifier,
- *   category, and every tag. Matches the command palette's reach within
- *   the cap of "no server round-trip".
- *
- * An empty / whitespace-only query passes every row through.
- */
+// Tokens split on whitespace only (not punctuation) so a partial ref like
+// `mymr-1` stays intact rather than fragmenting into `mymr` + `1`.
 export function matchesSearch(row: MyTask, query: string): boolean {
   const trimmed = query.trim();
   if (trimmed.length === 0) return true;
@@ -205,7 +160,6 @@ export function matchesSearch(row: MyTask, query: string): boolean {
   return tokens.every((t) => fieldLowers.some((f) => f.includes(t)));
 }
 
-/** Multi-select status filter — URL-serialized as a comma-separated list. */
 export function parseStatusSet(raw: string | null): ReadonlySet<TaskState> {
   if (!raw) return new Set();
   const parts = raw
@@ -217,7 +171,6 @@ export function parseStatusSet(raw: string | null): ReadonlySet<TaskState> {
   return new Set(parts);
 }
 
-/** Serialize the active status set in canonical {@link STATUS_TOGGLE_ORDER}. */
 export function serializeStatusSet(set: ReadonlySet<TaskState>): string {
   return STATUS_TOGGLE_ORDER.filter((s) => set.has(s)).join(",");
 }
@@ -230,10 +183,6 @@ const PRIORITY_FILTER_VALUES = new Set<string>([
   UNPRIORITIZED_KEY,
 ]);
 
-/**
- * Multi-select priority filter — same CSV pattern as status. Allowlists to
- * the four schema priorities plus {@link UNPRIORITIZED_KEY} for null rows.
- */
 export function parsePrioritySet(raw: string | null): ReadonlySet<string> {
   if (!raw) return new Set();
   const parts = raw
@@ -248,7 +197,7 @@ export function serializePrioritySet(set: ReadonlySet<string>): string {
   return order.filter((p) => set.has(p)).join(",");
 }
 
-/** Match a row against the active priority filter (empty set passes through). */
+// Empty set passes every row through.
 export function matchesPriority(
   row: MyTask,
   active: ReadonlySet<string>,
@@ -258,7 +207,6 @@ export function matchesPriority(
   return active.has(row.priority);
 }
 
-/** Sort key surfaced in the toolbar's Sort dropdown. */
 export type SortKey = "updated" | "priority" | "status" | "id";
 
 export const SORT_OPTIONS: ReadonlyArray<{ value: SortKey; label: string }> = [
@@ -283,11 +231,8 @@ const PRIORITY_RANK_MAP: Record<Priority, number> = {
   backlog: 3,
 };
 
-/**
- * Comparator-driven sort over a defensive copy. `updated` matches the
- * server's `updatedAt DESC, id ASC`. `priority` puts urgent first; rows
- * without a priority trail. Ties resolve on `taskRef` for stability.
- */
+// `updated` mirrors the server's `updatedAt DESC, id ASC`. Other keys
+// tie-break on `taskRef` for a stable order across calls.
 export function sortRows(rows: readonly MyTask[], key: SortKey): MyTask[] {
   const copy = rows.slice();
   switch (key) {
@@ -331,7 +276,6 @@ export function sortRows(rows: readonly MyTask[], key: SortKey): MyTask[] {
   }
 }
 
-/** Group key surfaced in the toolbar's Group dropdown. */
 export type GroupKey = "status" | "project" | "none";
 
 export const GROUP_OPTIONS: ReadonlyArray<{ value: GroupKey; label: string }> =
@@ -341,7 +285,6 @@ export const GROUP_OPTIONS: ReadonlyArray<{ value: GroupKey; label: string }> =
     { value: "none", label: "None" },
   ];
 
-/** Per-project bundle returned by {@link groupByProject}. */
 export interface ProjectGroup {
   projectId: string;
   projectTitle: string;
@@ -371,7 +314,6 @@ export function groupByProject(rows: readonly MyTask[]): ProjectGroup[] {
   );
 }
 
-/** Discriminated group payload consumed by `<MyTasksList>`. */
 export type DisplayGroup =
   | { kind: "status"; key: TaskState; rows: MyTask[] }
   | {
@@ -412,20 +354,13 @@ export function applyGrouping(
 export { PRIORITY_DISPLAY_ORDER } from "@/lib/ui/priority";
 export { UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 
-/**
- * Tailwind class string for the row's lifecycle stage pill. Colors come
- * from existing `--color-glyph-*` tokens — no new tokens introduced per
- * UX_PRINCIPLES § 14.3.
- */
 export function lifecycleStageToneClass(stage: LifecycleStage): string {
   switch (stage) {
-    case "agent":
-      return "text-accent-light bg-accent/12 border border-accent/22";
     case "planning":
       return "text-glyph-planned bg-glyph-planned/12 border border-glyph-planned/22";
     case "working":
       return "text-glyph-progress bg-glyph-progress/12 border border-glyph-progress/22";
-    case "execution":
+    case "done":
       return "text-glyph-done bg-glyph-done/12 border border-glyph-done/22";
     case "draft":
       return "text-text-muted bg-surface-raised border border-border";

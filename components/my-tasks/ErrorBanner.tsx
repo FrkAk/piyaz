@@ -7,18 +7,9 @@ const ERROR_COPY: Record<MyTasksListFailureCode, string> = {
 };
 
 interface ErrorBannerProps {
-  /** Failure code from the SSR prefetch or a client refetch. */
   code: MyTasksListFailureCode;
 }
 
-/**
- * Inline failure banner above the header. Surfaces RSC-prefetch failures
- * and TanStack Query refetch errors with the same copy table so the user
- * sees a consistent message regardless of which path failed.
- *
- * @param props - Failure code.
- * @returns Banner element.
- */
 export function ErrorBanner({ code }: ErrorBannerProps) {
   return (
     <p

@@ -5,18 +5,9 @@ import { Kbd } from "@/components/shared/Kbd";
 import {
   IconArrowRight,
   IconBundle,
-  IconGraph,
   IconInbox,
 } from "@/components/shared/icons";
 
-/**
- * Empty-state hero shown when the signed-in user has zero assigned tasks
- * across every team. The graphic stack is purely decorative (orbit rings
- * + Inbox glyph); the operative affordances are the animated CLI hint and
- * the two route buttons routing back to home and the command palette.
- *
- * @returns Centred empty-state block.
- */
 export function MyTasksEmpty() {
   return (
     <section className="flex flex-1 flex-col items-center justify-center gap-3.5 px-6 pt-14 pb-20 text-center">
@@ -32,8 +23,7 @@ export function MyTasksEmpty() {
         Nothing assigned.
       </h2>
       <p className="max-w-[460px] text-[13.5px] leading-[1.55] text-text-muted">
-        Ask an agent to plan your next move. Once a task is created in any
-        project and assigned to you, it lands here automatically.
+        Once a task is created in any project and assigned to you, it lands here automatically.
       </p>
 
       <span className="inline-block max-w-full rounded-lg border border-border-strong bg-surface px-4 py-2.5 text-left font-mono text-[12.5px] shadow-[var(--shadow-card)]">
@@ -58,23 +48,13 @@ export function MyTasksEmpty() {
           <span className="text-accent-light">
             <IconBundle size={12} />
           </span>
-          <span>Browse plannable</span>
-          <IconArrowRight size={11} />
-        </Link>
-        <Link
-          href="/"
-          className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-strong bg-surface-raised px-3 text-[12px] font-medium text-text-secondary shadow-[var(--shadow-button)] transition-colors hover:bg-surface-hover hover:text-text-primary"
-        >
-          <span className="text-accent-light">
-            <IconGraph size={12} />
-          </span>
-          <span>Open project graph</span>
+          <span>Browse projects</span>
           <IconArrowRight size={11} />
         </Link>
       </div>
 
       <div className="mt-5 text-[12px] text-text-muted">
-        Use the <Kbd>⌘K</Kbd> palette to jump to any project.
+        Use the <Kbd>⌘K</Kbd> to search for tasks and projects.
       </div>
     </section>
   );

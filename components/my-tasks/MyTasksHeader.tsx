@@ -4,26 +4,13 @@ import type { TaskState } from "@/lib/data/task";
 import { StatusCountToggles } from "./StatusCountToggles";
 
 interface MyTasksHeaderProps {
-  /** Total count rendered in the badge. */
   totalCount: number;
-  /** Per-state counts derived from the active view. */
   viewCounts: Record<TaskState, number>;
-  /** Active multi-select status filter set. */
   statusFilter: ReadonlySet<TaskState>;
-  /** Toggle the status filter — adds or removes one state. */
   onToggleStatus: (state: TaskState) => void;
-  /** When true, the total badge renders dimmed (empty-state hint). */
   dimTotal?: boolean;
 }
 
-/**
- * Page header — `<h1>My tasks</h1>` plus the `[ N ASSIGNED ]` mono badge,
- * followed by the clickable status-count toggle row. The badge dims to
- * `opacity-55` when the user has zero tasks (empty state surface).
- *
- * @param props - Header configuration.
- * @returns Header block.
- */
 export function MyTasksHeader({
   totalCount,
   viewCounts,

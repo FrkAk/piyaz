@@ -69,25 +69,9 @@ const PRIORITY_CHIP_TONE: Record<string, string> = {
 };
 
 interface MyTasksClientProps {
-  /**
-   * Failure code from the RSC prefetch when the server-side load returned
-   * `!ok`. Surfaces as an inline banner above the header; the rest of the
-   * chrome still hydrates so the user can read pre-fetched chrome rather
-   * than seeing a blank page.
-   */
   initialError?: MyTasksListFailureCode | null;
 }
 
-/**
- * Top-level interactive client for `/my-tasks`. Owns the URL-persisted
- * filter state (view, multi-select status, multi-select priority, search,
- * sort, group), the local collapse state for the `done` group, and the
- * filter-panel open state. Composes every page surface from
- * `components/my-tasks/`.
- *
- * @param props - Optional SSR prefetch failure code.
- * @returns The full `/my-tasks` page body.
- */
 export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -107,11 +91,8 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   const sort = parseSort(searchParams.get("sort"));
   const group = parseGroup(searchParams.get("group"));
 
-  // Search lives in local state so the input renders character-by-character
-  // without waiting on a `router.replace` round-trip. The URL `?q=` syncs
-  // via a debounced effect below so deep-links + back/forward still work,
-  // and every other consumer (filter, active chips, hotkeys) reads `query`
-  // directly for instant feedback.
+  // Local state, not URL, so the input renders without a router round-trip.
+  // A debounced effect below mirrors to `?q=` for deep-links and back/forward.
   const [query, setQuery] = useState<string>(() => searchParams.get("q") ?? "");
 
   const [collapsedDone, setCollapsedDone] = useState(true);
@@ -191,9 +172,6 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     [priorityFilter, writePrioritySet],
   );
 
-  // Debounced URL mirror — fires 250ms after the last keystroke. Skips
-  // the write when the URL already matches `query` (avoids redundant
-  // `router.replace` calls on mount and on bursts of repeat values).
   useEffect(() => {
     const trimmed = query.trim();
     const current = searchParams.get("q") ?? "";
@@ -236,9 +214,8 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   const viewCounts = useMemo(() => countByState(viewRows), [viewRows]);
 
-  // Priority counts derive from view-only (no status / search / priority
-  // narrowing) so the panel keeps showing how many urgent rows exist even
-  // when the operator has already drilled in.
+  // Counts over view-only rows so the panel still shows totals after the
+  // operator has narrowed status / search / priority.
   const priorityCounts = useMemo(() => {
     const counts: Record<string, number> = {
       urgent: 0,
@@ -321,8 +298,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     return chips;
   }, [view, statusFilter, priorityFilter, query]);
 
-  // Filter chip count: every priority chip + every status chip + search.
-  // View chips are presentation only; the workspace's count matches this.
+  // View chips are presentation-only, not counted.
   const filterCount =
     statusFilter.size + priorityFilter.size + (query.trim() ? 1 : 0);
 
@@ -387,8 +363,6 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     if (key === "done") setCollapsedDone((c) => !c);
   }, []);
 
-  // Keyboard map per DESIGN.md § 10 — `/`, `Escape`, and `1`-`5` view swap.
-  // Row-focus shortcuts (`↑↓ ↵`) are handled natively by the `<Link>` rows.
   useEffect(() => {
     const isEditableTarget = (el: EventTarget | null): boolean => {
       if (!(el instanceof HTMLElement)) return false;
@@ -513,25 +487,21 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 const EMPTY_ROWS: MyTask[] = [];
 const EMPTY_STATUS_SET: ReadonlySet<TaskState> = new Set();
 
-/** Pin the URL `?view=` param to a known SavedView; fall back to `open`. */
 function parseView(raw: string | null): SavedView {
   if (raw && SAVED_VIEWS.includes(raw as SavedView)) return raw as SavedView;
   return "open";
 }
 
-/** Pin the URL `?sort=` param to a known SortKey; fall back to `updated`. */
 function parseSort(raw: string | null): SortKey {
   if (raw && VALID_SORTS.has(raw as SortKey)) return raw as SortKey;
   return "updated";
 }
 
-/** Pin the URL `?group=` param to a known GroupKey; fall back to `status`. */
 function parseGroup(raw: string | null): GroupKey {
   if (raw && VALID_GROUPS.has(raw as GroupKey)) return raw as GroupKey;
   return "status";
 }
 
-/** Coerce the queryFn error message back into the discriminated failure code. */
 function toFailureCode(err: unknown): MyTasksListFailureCode {
   if (err instanceof Error) {
     const code = err.message;

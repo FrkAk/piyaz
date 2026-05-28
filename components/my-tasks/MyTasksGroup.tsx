@@ -22,15 +22,7 @@ export type MyTasksGroupProps =
       count: number;
     };
 
-/**
- * Sticky 30px group header inside the list card. Status groups render the
- * uppercase mono label + StatusGlyph; project groups render the project's
- * mark + title. Only status groups support collapse — the parent passes a
- * null `onToggle` to lock a group open.
- *
- * @param props - Discriminated header configuration.
- * @returns Group header row.
- */
+// `onToggle: null` locks a status group open.
 export function MyTasksGroup(props: MyTasksGroupProps) {
   if (props.kind === "project") {
     return (

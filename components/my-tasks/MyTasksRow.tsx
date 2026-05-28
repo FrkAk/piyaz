@@ -9,45 +9,23 @@ import { MonoId, type MonoIdTone } from "@/components/shared/MonoId";
 import { PriorityIcon } from "@/components/shared/PriorityIcon";
 import { ProjectMark } from "@/components/shared/ProjectMark";
 import { StatusGlyph } from "@/components/shared/StatusGlyph";
-import {
-  IconAgent,
-  IconArrowRight,
-  IconChevronRight,
-} from "@/components/shared/icons";
+import { IconArrowRight, IconChevronRight } from "@/components/shared/icons";
 import type { MyTask } from "@/lib/data/views";
 import { formatRelative } from "@/components/workspace/structure/relativeTime";
 import { LifecycleStagePill } from "./LifecycleStagePill";
 
 interface MyTasksRowProps {
-  /** Row payload — see {@link MyTask}. */
   row: MyTask;
-  /** Display name for the signed-in user's avatar slot. */
   meName: string;
 }
 
-/**
- * Format the title with the right de-emphasis for non-active states.
- *
- * @param state - Derived task state.
- * @returns Tailwind class string.
- */
 function titleClass(state: MyTask["state"]): string {
   if (state === "cancelled") return "text-text-muted line-through";
   if (state === "done") return "text-text-muted";
   return "text-text-primary";
 }
 
-/**
- * 34px cross-project row used inside `<MyTasksList>`. Renders the slots
- * specified by DESIGN.md § 6b: glyph, ProjectMark, MonoId, title, agent
- * badge, blocked-by chip, deps hints, category dot, lifecycle stage pill,
- * priority, last-touched timestamp, signed-in user avatar, and a
- * chevron-on-hover. The whole row is a `<Link>` so middle-click and
- * right-click work without extra JS.
- *
- * @param props - Row payload + signed-in user's display name.
- * @returns Linked row element.
- */
+// Whole row is a `<Link>` so middle-click and right-click work without JS.
 function MyTasksRowImpl({ row, meName }: MyTasksRowProps) {
   return (
     <Link
@@ -78,16 +56,6 @@ function MyTasksRowImpl({ row, meName }: MyTasksRowProps) {
       >
         {row.title}
       </span>
-
-      {row.agentActive && (
-        <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full border border-accent-2/24 bg-accent-2/12 px-1.5 text-accent-2">
-          <span
-            aria-hidden="true"
-            className="status-pulse inline-block h-[5px] w-[5px] rounded-full bg-accent-2"
-          />
-          <IconAgent size={10} />
-        </span>
-      )}
 
       {row.blockedBy && (
         <span

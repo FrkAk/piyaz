@@ -8,18 +8,10 @@ import { listMyTasks } from "@/lib/graph/queries";
 import { getServerQueryClient } from "@/lib/query/client";
 import { myTasksKeys } from "@/lib/query/keys";
 
-/** Force dynamic rendering — this page reads the session and DB. */
 export const dynamic = "force-dynamic";
 
-/**
- * My tasks — cross-project assigned-task list. RSC prefetches `listMyTasks`
- * into the per-request QueryClient and dehydrates into the client so the
- * first paint is server-rendered. Owns the page scroll container because
- * `AppShell`'s `<main>` is `overflow-hidden` and the design specifies a
- * fixed 1080px content column wider than `PageShell`'s default cap.
- *
- * @returns Hydrated `/my-tasks` shell.
- */
+// Owns its own scroll container because AppShell's `<main>` is
+// `overflow-hidden` and the column is wider than PageShell's default cap.
 export default async function MyTasksPage() {
   const session = await getSession();
   if (!session) redirect("/sign-in");

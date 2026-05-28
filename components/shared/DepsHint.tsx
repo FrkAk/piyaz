@@ -1,18 +1,8 @@
 interface DepsHintProps {
-  /** `up` for upstream `depends_on`, `down` for downstream. */
   icon: "up" | "down";
-  /** Edge count to render. */
   count: number;
 }
 
-/**
- * Tiny mono dependency hint — `↑3` for upstream, `↓1` for downstream. The
- * arrow color cues the edge category (depends-on vs related-to). Hidden
- * below `sm` so dense list rows stay readable on narrow viewports.
- *
- * @param props - Direction and count.
- * @returns Inline-flex span rendering arrow + count.
- */
 export function DepsHint({ icon, count }: DepsHintProps) {
   return (
     <span

@@ -1344,43 +1344,17 @@ export async function searchTasksAcrossProjects(
   });
 }
 
-/**
- * Map a derived task state to the lifecycle stage label rendered on the
- * `/my-tasks` row pill. Exported so unit tests can pin every branch.
- *
- * @param state - Server-derived task state.
- * @param agentActive - True when an agent run is open for this task.
- * @returns Lifecycle stage for the row's mono pill.
- */
-export function deriveLifecycleStage(
-  state: TaskState,
-  agentActive: boolean,
-): LifecycleStage {
-  if (state === "done") return "execution";
+export function deriveLifecycleStage(state: TaskState): LifecycleStage {
+  if (state === "done") return "done";
   if (state === "in_progress" || state === "in_review") return "working";
-  if (state === "ready") return agentActive ? "agent" : "planning";
-  if (state === "plannable" || state === "blocked") return "planning";
+  if (state === "ready" || state === "plannable" || state === "blocked")
+    return "planning";
   return "draft";
 }
 
 /**
- * List every task assigned to the signed-in user across every team they
- * belong to, decorated with the owning project's chrome plus the derived
- * cross-task signals the `/my-tasks` view renders (state, lifecycle stage,
- * upstream / downstream counts, blocking ref).
- *
- * Bounded by `current_user_orgs()` (defense-in-depth over RLS). One SQL
- * roundtrip pulls tasks + project crumb + `hasDescription` / `hasCriteria`
- * boolean projections; one {@link buildEffectiveDepGraph} pass per unique
- * project hydrates state + deps signals without N+1.
- *
- * `agentActive` is hardcoded `false` until the `agent_runs` table lands;
- * `blockedBy` resolves to the first non-done effective upstream ref. Rows
- * order by `tasks.updated_at` desc, ties resolve on `tasks.id` asc for
- * stable output across calls.
- *
- * @param ctx - Resolved auth context.
- * @returns Cross-project assigned-task rows ordered `updatedAt DESC, id ASC`.
+ * Bounded by `current_user_orgs()` for defense-in-depth over RLS.
+ * Tie-break on `tasks.id` asc for stable output across calls.
  */
 export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
   return withUserContext(ctx.userId, async (tx) => {
@@ -1422,9 +1396,6 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
 
     if (rows.length === 0) return [];
 
-    // One effective-deps pass per unique project — see DESIGN.md § 3.2.
-    // Decorates every row in that project with state + counts + blockedBy
-    // without re-walking the graph per row.
     const uniqueProjectIds = [...new Set(rows.map((r) => r.projectId))];
     const graphByProject = new Map(
       await Promise.all(
@@ -1463,8 +1434,6 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
         }
       }
 
-      const agentActive = false;
-
       return {
         id: row.id,
         taskRef: composeTaskRef(projectIdentifier, row.sequenceNumber),
@@ -1487,11 +1456,10 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
           title: row.projectTitle,
           color: projectColor(row.projectIdentifier),
         },
-        stage: deriveLifecycleStage(state, agentActive),
+        stage: deriveLifecycleStage(state),
         upstreamCount: effectiveDeps.size,
         downstreamCount: effectiveDependents.size,
         blockedBy,
-        agentActive,
       };
     });
   });

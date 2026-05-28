@@ -13,23 +13,14 @@ import {
 import { SearchInput } from "./SearchInput";
 
 interface MyTasksToolbarProps {
-  /** Whether the filter sheet below the toolbar is open. */
   filterOpen: boolean;
-  /** Toggle the filter sheet (the Filter chip is the trigger). */
   onToggleFilter: () => void;
-  /** Number of active filter dimensions (status + priority + search). */
   filterCount: number;
-  /** Active group key. */
   group: GroupKey;
-  /** Update the group key. */
   onGroupChange: (next: GroupKey) => void;
-  /** Active sort key. */
   sort: SortKey;
-  /** Update the sort key. */
   onSortChange: (next: SortKey) => void;
-  /** Current search query. */
   query: string;
-  /** Search query handler. */
   onQueryChange: (next: string) => void;
 }
 
@@ -46,17 +37,6 @@ const GROUP_LABEL: Record<GroupKey, string> = {
   none: "None",
 };
 
-/**
- * 2-row toolbar wrapped in a bordered container. Mirrors the workspace's
- * `<FilterBar>` chip API: Filter button toggles a slide-out sheet
- * (`MyTasksFilterPanel`), Group dropdown swaps the row grouping (Status /
- * Project / None), Sort dropdown swaps the comparator (Updated / Priority
- * / Status / ID). Bottom row hosts the search input.
- *
- * @param props - Filter/group/sort/search state + handlers.
- * @param ref - Forwarded search input ref, focused on `/` from the parent.
- * @returns Bordered toolbar element.
- */
 export const MyTasksToolbar = forwardRef<HTMLInputElement, MyTasksToolbarProps>(
   function MyTasksToolbar(
     {

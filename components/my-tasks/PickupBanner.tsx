@@ -11,24 +11,9 @@ import type { MyTask } from "@/lib/data/views";
 import { formatRelative } from "@/components/workspace/structure/relativeTime";
 
 interface PickupBannerProps {
-  /** Task selected by `pickPickupTask`. */
   task: MyTask;
 }
 
-/**
- * Hero strip suggesting the next task to pick up. Selection happens
- * upstream via `pickPickupTask` (urgent in-progress → core ready → any
- * ready → null). The eyebrow text keys off the chosen task's state.
- * Whole banner navigates to `/project/${id}?task=${ref}`.
- *
- * Visual treatment intentionally mirrors `<ContinueBanner>` from the home
- * grid — same 3px accent strip, same indigo→teal gradient surface, same
- * 12px outer radius, same fade+slide entry animation, and the same
- * responsive Open pill (hidden below `sm` since the whole row is tappable).
- *
- * @param props - Selected task.
- * @returns Clickable banner element.
- */
 export function PickupBanner({ task }: PickupBannerProps) {
   const eyebrow =
     task.state === "in_progress"
@@ -95,18 +80,6 @@ export function PickupBanner({ task }: PickupBannerProps) {
             )}
             <span aria-hidden="true">·</span>
             <span>updated {formatRelative(task.updatedAt)} ago</span>
-            {task.agentActive && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="inline-flex items-center gap-1 text-accent-2">
-                  <span
-                    aria-hidden="true"
-                    className="status-pulse inline-block h-[5px] w-[5px] rounded-full bg-accent-2"
-                  />
-                  agent running
-                </span>
-              </>
-            )}
           </span>
         </span>
         <span className="hidden shrink-0 items-center gap-1.5 rounded-md border border-border-strong bg-surface-raised/80 px-3 py-1 text-[12px] font-medium text-text-primary shadow-[var(--shadow-button)] transition-colors group-hover:border-accent/40 sm:inline-flex">

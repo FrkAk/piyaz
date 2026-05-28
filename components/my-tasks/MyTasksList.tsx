@@ -5,29 +5,12 @@ import { MyTasksGroup } from "./MyTasksGroup";
 import { MyTasksRow } from "./MyTasksRow";
 
 interface MyTasksListProps {
-  /** Discriminated group bundle (status / project / none). */
   groups: DisplayGroup[];
-  /**
-   * Set of collapsed group keys. Status keys are the `TaskState` value;
-   * project keys are the project UUID; the `none` group has key `"all"`
-   * and is never collapsible.
-   */
   collapsedKeys: ReadonlySet<string>;
-  /** Toggle a group's collapsed flag. Pass a no-op to lock collapse off. */
   onToggleCollapsed: (key: string) => void;
-  /** Display name for the signed-in user's avatar slot. */
   meName: string;
 }
 
-/**
- * Card-wrapped grouped row list. Each group header sticks to the top of
- * the page scroll container; only status groups (and only `done` by
- * default) ship with a toggle. Project groups never collapse — operators
- * scan them by project name, and a collapsed project hides too much.
- *
- * @param props - Group payload + collapse state + signed-in user name.
- * @returns List card with one section per group.
- */
 export function MyTasksList({
   groups,
   collapsedKeys,

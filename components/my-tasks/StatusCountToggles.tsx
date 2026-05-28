@@ -6,24 +6,12 @@ import type { TaskState } from "@/lib/data/task";
 import { STATUS_TOGGLE_ORDER } from "./predicates";
 
 interface StatusCountTogglesProps {
-  /** Per-state counts derived from the currently-filtered view. */
   viewCounts: Record<TaskState, number>;
-  /** Active status filter set — chips for states in the set render as pressed. */
   active: ReadonlySet<TaskState>;
-  /** Toggle handler — clicking a chip adds the state when absent, removes when present. */
   onToggle: (state: TaskState) => void;
 }
 
-/**
- * Clickable status-count chips. Multi-select per HOTL preference: clicking
- * a chip toggles its membership in the active set. Only chips with at
- * least one task in the active view are rendered so the operator never
- * sees `0 done` while looking at Open. The set state is owned by the
- * parent and mirrored to the URL.
- *
- * @param props - View counts + active set + toggle handler.
- * @returns Row of pill buttons.
- */
+// Skip zero-count chips so `0 done` never shows up while viewing Open.
 export function StatusCountToggles({
   viewCounts,
   active,

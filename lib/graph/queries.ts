@@ -42,13 +42,11 @@ export type CrossProjectSearchResultPayload =
   | { ok: true; rows: CrossProjectSearchResult[] }
   | { ok: false; code: CrossProjectSearchFailureCode };
 
-/** Closed set of failure codes for `listTasksAssignedToUser`. */
 export type MyTasksListFailureCode =
   | "unauthorized"
   | "rate_limited"
   | "unknown";
 
-/** Discriminated result for the `/my-tasks` cross-project assigned-tasks fetch. */
 export type MyTasksListResultPayload =
   | { ok: true; rows: MyTask[] }
   | { ok: false; code: MyTasksListFailureCode };
@@ -130,19 +128,9 @@ export async function searchTasksAcrossProjects(
   }
 }
 
-/**
- * Server action wrapper — fetches every task assigned to the signed-in
- * user across every team they belong to, decorated with project chrome
- * plus derived state, lifecycle stage, and effective-deps counts.
- * Membership-gated via `current_user_orgs()`; cross-team rows are filtered
- * at the SQL layer. Throttled at 30/min per-user and 60/min per-IP via
- * the shared `actions` slot; unauth callers throttle by IP only.
- *
- * @returns `{ ok: true, rows }` or a typed failure.
- */
 export async function listMyTasks(): Promise<MyTasksListResultPayload> {
-  // Resolve user id before the rate-limit check so authed callers throttle
-  // per-user, not per-IP (IP keys collide on shared NATs).
+  // Resolve user id first so authed callers throttle per-user, not per-IP
+  // (IP keys collide on shared NATs).
   const session = await getSession();
   const userId = session?.user.id ?? null;
 

@@ -5,22 +5,10 @@ import { Kbd } from "@/components/shared/Kbd";
 import { IconSearch, IconX } from "@/components/shared/icons";
 
 interface SearchInputProps {
-  /** Current input value. */
   value: string;
-  /** Update handler. */
   onChange: (next: string) => void;
 }
 
-/**
- * Borderless mono search input with a leading IconSearch, a clear button
- * (only when the input has content), and a trailing `<Kbd>/</Kbd>` hint.
- * The `/` hotkey is wired by the parent — this component only owns the
- * focusable `<input>` element via the forwarded ref.
- *
- * @param props - Value + onChange.
- * @param ref - Forwarded input ref the parent can focus.
- * @returns Inline-flex search row.
- */
 export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
   function SearchInput({ value, onChange }, ref) {
     return (

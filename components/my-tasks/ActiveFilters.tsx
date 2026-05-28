@@ -2,36 +2,19 @@
 
 import { IconX } from "@/components/shared/icons";
 
-/** One applied-filter chip. `tone` is a CSS color reference or null. */
 export interface ActiveFilterChip {
-  /** Stable identifier for keying + clear handler dispatch. */
   id: string;
-  /** Filter dimension label rendered in uppercase. */
   key: string;
-  /** Filter value rendered after the key. */
   value: string;
-  /** Optional CSS color reference (e.g. `var(--color-accent)`). */
   tone: string | null;
 }
 
 interface ActiveFiltersProps {
-  /** Applied-filter chips, in render order. */
   chips: ActiveFilterChip[];
-  /** Per-chip clear handler. */
   onClear: (id: string) => void;
-  /** Clear-all handler. */
   onClearAll: () => void;
 }
 
-/**
- * "Filtered by" chip row that appears under the toolbar whenever the user
- * has applied any combination of view + status + search filters. Each chip
- * has its own clear handle; a trailing `Clear all` button resets the whole
- * set in one click. Tone color keys off the filter dimension.
- *
- * @param props - Chips + clear handlers.
- * @returns Wrapped chip row, or `null` if no filters are active.
- */
 export function ActiveFilters({
   chips,
   onClear,

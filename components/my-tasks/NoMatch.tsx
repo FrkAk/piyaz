@@ -3,18 +3,9 @@
 import { IconSearch } from "@/components/shared/icons";
 
 interface NoMatchProps {
-  /** Reset handler — clears status filter and search but keeps the saved view. */
   onReset: () => void;
 }
 
-/**
- * Centred dashed-border callout shown when the active filter combination
- * matches zero rows. The reset button clears status + search but preserves
- * the active saved view per DESIGN.md § 8.
- *
- * @param props - Reset handler.
- * @returns Centred callout element.
- */
 export function NoMatch({ onReset }: NoMatchProps) {
   return (
     <div className="mt-3.5 flex flex-col items-center justify-center gap-2.5 rounded-[10px] border border-dashed border-border-strong bg-surface/30 px-6 py-14 text-text-muted">

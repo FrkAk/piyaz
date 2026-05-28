@@ -56,7 +56,6 @@ function row(
     upstreamCount: overrides.upstreamCount ?? 0,
     downstreamCount: overrides.downstreamCount ?? 0,
     blockedBy: overrides.blockedBy ?? null,
-    agentActive: overrides.agentActive ?? false,
   };
 }
 
@@ -242,13 +241,7 @@ test("matchesSearch sees project title and identifier", () => {
 });
 
 test("lifecycleStageToneClass returns a non-empty class string for every stage", () => {
-  for (const stage of [
-    "draft",
-    "planning",
-    "working",
-    "agent",
-    "execution",
-  ] as const) {
+  for (const stage of ["draft", "planning", "working", "done"] as const) {
     expect(lifecycleStageToneClass(stage).length).toBeGreaterThan(0);
   }
 });

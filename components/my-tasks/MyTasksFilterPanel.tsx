@@ -6,34 +6,16 @@ import type { Priority } from "@/lib/types";
 import { PRIORITY_DISPLAY_ORDER, UNPRIORITIZED_KEY } from "@/lib/ui/priority";
 
 interface MyTasksFilterPanelProps {
-  /** Whether the panel is open — drives the height/opacity transition. */
   open: boolean;
-  /** Active priority filter set, including `Unprioritized` when active. */
   activePriorities: ReadonlySet<string>;
-  /**
-   * Per-priority counts derived from the *unfiltered* active view (status
-   * filter does not narrow these — the operator should still see how many
-   * urgent rows exist even while another priority is selected).
-   */
+  // Counts span the unfiltered view so a selected priority does not zero
+  // out the others' counts.
   priorityCounts: Record<string, number>;
-  /** Toggle a single priority value in the active set. */
   onPriorityToggle: (value: string) => void;
-  /** Total active filter count across every dimension (status + priority + search). */
   totalActive: number;
-  /** Clear every active filter at once. */
   onClearAll: () => void;
 }
 
-/**
- * Animated slide-out chip sheet, mirroring `components/workspace/structure/
- * FilterPanel.tsx`. The `/my-tasks` variant ships Priority only — Status
- * lives in the header pill row and Category vocabularies vary per project
- * so a unified chip list would balloon. Add Category / Tags as a follow-up
- * if the team needs them.
- *
- * @param props - Panel state + handlers.
- * @returns Animated panel container.
- */
 export function MyTasksFilterPanel({
   open,
   activePriorities,

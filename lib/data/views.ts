@@ -158,23 +158,12 @@ export type ProjectMeta = Pick<
   progress: number;
 };
 
-/**
- * Lifecycle stage label rendered as a per-row mono pill on `/my-tasks`.
- * Derived from `state` (+ `agentActive`) — not a schema column.
- */
-export type LifecycleStage =
-  | "draft"
-  | "planning"
-  | "working"
-  | "agent"
-  | "execution";
+/** Derived from `state`, not a schema column. */
+export type LifecycleStage = "draft" | "planning" | "working" | "done";
 
 /**
- * Cross-project row returned by `listMyTasks`. Extends {@link TaskGraphSlim}
- * with the owning project's chrome plus the deps/stage/agent fields the
- * `/my-tasks` view renders. `agentActive` is wired to `false` until the
- * `agent_runs` table lands; `blockedBy` carries the taskRef of the first
- * non-done effective upstream when the row is blocked.
+ * `blockedBy` carries the taskRef of the first non-done effective upstream
+ * when the row is blocked.
  */
 export type MyTask = TaskGraphSlim & {
   project: {
@@ -187,7 +176,6 @@ export type MyTask = TaskGraphSlim & {
   upstreamCount: number;
   downstreamCount: number;
   blockedBy: string | null;
-  agentActive: boolean;
 };
 
 /** Slim view of a project for list/search surfaces. */
