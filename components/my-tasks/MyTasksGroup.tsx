@@ -6,7 +6,7 @@ import { StatusGlyph } from "@/components/shared/StatusGlyph";
 import { IconChevronDown } from "@/components/shared/icons";
 import type { TaskState } from "@/lib/data/task";
 
-export type MyTasksGroupProps =
+export type MyTasksGroupProps = { headerId: string } & (
   | {
       kind: "status";
       state: TaskState;
@@ -20,13 +20,17 @@ export type MyTasksGroupProps =
       projectTitle: string;
       projectColor: string;
       count: number;
-    };
+    }
+);
 
 // `onToggle: null` locks a status group open.
 export function MyTasksGroup(props: MyTasksGroupProps) {
   if (props.kind === "project") {
     return (
-      <div className="sticky top-0 z-10 flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur">
+      <div
+        id={props.headerId}
+        className="sticky top-0 z-10 flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur"
+      >
         <ProjectMark
           initial={(props.projectIdentifier[0] ?? "?").toUpperCase()}
           color={props.projectColor}
@@ -68,6 +72,7 @@ export function MyTasksGroup(props: MyTasksGroupProps) {
     return (
       <button
         type="button"
+        id={props.headerId}
         onClick={props.onToggle}
         aria-expanded={!props.collapsed}
         className="sticky top-0 z-10 flex h-[30px] w-full cursor-pointer items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur transition-colors hover:bg-surface-hover/70"
@@ -77,7 +82,10 @@ export function MyTasksGroup(props: MyTasksGroupProps) {
     );
   }
   return (
-    <div className="sticky top-0 z-10 flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur">
+    <div
+      id={props.headerId}
+      className="sticky top-0 z-10 flex h-[30px] w-full items-center gap-2 border-b border-border bg-surface/70 px-3.5 backdrop-blur"
+    >
       {content}
     </div>
   );

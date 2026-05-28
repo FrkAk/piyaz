@@ -164,6 +164,13 @@ export type LifecycleStage = "draft" | "planning" | "working" | "done";
 /**
  * `blockedBy` carries the taskRef of the first non-done effective upstream
  * when the row is blocked.
+ *
+ * `MyTask` inherits `assigneeCount` and `assigneeUserIds` from
+ * {@link TaskGraphSlim}, but `listMyTasks` only ever fills them with the
+ * caller's own user; co-assignees are not joined in. Treat both fields as
+ * projection-local: do NOT use them to render an assignee stack or to count
+ * collaborators on the task. If you need the true assignee set, fetch the
+ * task through a non-personal surface (e.g. project graph).
  */
 export type MyTask = TaskGraphSlim & {
   project: {

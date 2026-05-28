@@ -18,7 +18,12 @@ export default async function MyTasksPage() {
 
   const qc = getServerQueryClient();
   const payload = await listMyTasks();
-  qc.setQueryData(myTasksKeys.list(), payload.ok ? payload.rows : []);
+  // Only prime the cache on success. Seeding `[]` on failure would flip
+  // useQuery to `isSuccess=true` and suppress the SSR error banner; leaving
+  // the cache empty lets the client refetch and surface a real error state.
+  if (payload.ok) {
+    qc.setQueryData(myTasksKeys.list(), payload.rows);
+  }
 
   return (
     <AppShell>

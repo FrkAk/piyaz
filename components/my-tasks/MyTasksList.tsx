@@ -23,14 +23,16 @@ export function MyTasksList({
         const isDoneStatus = group.kind === "status" && group.key === "done";
         const collapsed =
           group.kind === "status" && collapsedKeys.has(group.key);
+        const headerId = `my-tasks-group-${group.kind}-${group.key}`;
         return (
           <section
             key={`${group.kind}:${group.key}`}
-            aria-labelledby={`group-${group.key}`}
+            aria-labelledby={headerId}
           >
             {group.kind === "status" && (
               <MyTasksGroup
                 kind="status"
+                headerId={headerId}
                 state={group.key}
                 count={group.rows.length}
                 collapsed={collapsed}
@@ -42,6 +44,7 @@ export function MyTasksList({
             {group.kind === "project" && (
               <MyTasksGroup
                 kind="project"
+                headerId={headerId}
                 projectIdentifier={group.projectIdentifier}
                 projectTitle={group.projectTitle}
                 projectColor={group.projectColor}

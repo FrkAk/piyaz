@@ -98,13 +98,17 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   const [collapsedDone, setCollapsedDone] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
 
-  const { data, error } = useQuery<MyTask[]>({
+  const { data, error, isSuccess } = useQuery<MyTask[]>({
     queryKey: myTasksKeys.list(),
     queryFn: async () => {
       const payload = await listMyTasks();
       if (!payload.ok) throw new Error(payload.code);
       return payload.rows;
     },
+    // SSR primes the cache via setQueryData in app/my-tasks/page.tsx; trust
+    // that snapshot on mount so we don't burn a second rate-limit slot just
+    // to re-fetch what we already have. SSE invalidations still refetch.
+    staleTime: 30_000,
   });
 
   const rows = data ?? EMPTY_ROWS;
@@ -397,6 +401,17 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
       if (isEditableTarget(e.target)) return;
       const hotkeyView = VIEW_HOTKEYS[e.key];
       if (hotkeyView) {
+        // Don't hijack number keys while a popover or modal owns focus.
+        // Dropdowns, command palette, and confirm dialogs all use these
+        // ARIA roles, and a digit press inside them should reach their own
+        // handlers (or simply do nothing) rather than swap the saved view.
+        if (
+          document.querySelector(
+            '[role="listbox"], [role="menu"], [role="dialog"], [aria-modal="true"]',
+          )
+        ) {
+          return;
+        }
         e.preventDefault();
         setView(hotkeyView);
       }
@@ -406,9 +421,12 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [query, setQuery, setView, statusFilter, writeStatusSet]);
 
+  // Once the client has a successful fetch the SSR error is stale, so clear it.
   const errorCode: MyTasksListFailureCode | null = error
     ? toFailureCode(error)
-    : initialError;
+    : isSuccess
+      ? null
+      : initialError;
 
   const meName = session.data?.user.name ?? session.data?.user.email ?? "You";
 
