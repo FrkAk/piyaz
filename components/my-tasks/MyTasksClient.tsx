@@ -443,8 +443,11 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   const meName = session.data?.user.name ?? session.data?.user.email ?? "You";
 
-  // Scroll container for the `MyTasksList` virtualizer (see page.tsx).
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // Scroll container for the `MyTasksList` virtualizer. State, not a ref, so
+  // attaching the node re-renders and the virtualizer re-measures it after
+  // layout settles; a plain ref measured only in the mount commit can read
+  // height 0 on client navigation and never recover.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
 
   if (isFullyEmpty) {
     return (
@@ -464,7 +467,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   }
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto">
+    <div ref={setScrollEl} className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[1080px] px-8 pt-7 pb-20">
         {errorCode && <ErrorBanner code={errorCode} />}
         <MyTasksHeader
@@ -514,7 +517,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
             collapsedKeys={collapsedKeys}
             onToggleCollapsed={handleToggleCollapsed}
             meName={meName}
-            scrollRef={scrollRef}
+            scrollEl={scrollEl}
           />
         )}
         <MyTasksFooter shown={sortedRows.length} total={rows.length} />

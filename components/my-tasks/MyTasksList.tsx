@@ -1,7 +1,7 @@
 "use client";
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMemo, type RefObject } from "react";
+import { useMemo } from "react";
 import type { TaskState } from "@/lib/data/task";
 import type { MyTask } from "@/lib/data/views";
 import { MyTasksGroup } from "./MyTasksGroup";
@@ -14,7 +14,7 @@ interface MyTasksListProps {
   onToggleCollapsed: (key: string) => void;
   meName: string;
   /** Page scroll container owned by `MyTasksClient` — drives virtualization. */
-  scrollRef: RefObject<HTMLDivElement | null>;
+  scrollEl: HTMLDivElement | null;
 }
 
 // Header heights match `MyTasksGroup` (h-[30px] + border-b = 31px) and
@@ -98,7 +98,7 @@ export function MyTasksList({
   collapsedKeys,
   onToggleCollapsed,
   meName,
-  scrollRef,
+  scrollEl,
 }: MyTasksListProps) {
   const flatItems = useMemo(
     () => flattenGroups(groups, collapsedKeys),
@@ -110,7 +110,7 @@ export function MyTasksList({
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: flatItems.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => scrollEl,
     estimateSize: (index) =>
       flatItems[index]?.kind === "row" ? ROW_HEIGHT : HEADER_HEIGHT,
     getItemKey: (index) => flatItems[index]?.key ?? index,
