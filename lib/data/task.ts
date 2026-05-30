@@ -32,6 +32,7 @@ import {
   enrichWithTaskRef,
 } from "@/lib/graph/identifier";
 import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
+import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
@@ -49,10 +50,12 @@ import {
 } from "@/lib/data/cursor";
 import type {
   AssigneeRef,
+  MyTask,
   TaskFull,
   TaskLinkRef,
   TaskSlim,
 } from "@/lib/data/views";
+import { projectColor } from "@/lib/ui/project-color";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
 
@@ -864,6 +867,28 @@ function deriveTaskState(
 }
 
 /**
+ * State-derivation variant taking a precomputed `allDepsDone` flag, so
+ * `listMyTasks` can reuse the iron-law gate without building a project graph.
+ *
+ * @param task - Slim state input (status + hasDescription + hasCriteria).
+ * @param allDepsDone - Whether every direct dependency is done or
+ *   cancelled. Callers that have no upstream edges should pass `true`.
+ * @returns Derived TaskState.
+ */
+function deriveTaskStateWithDepsDone(
+  task: Pick<TaskStateInput, "status" | "hasDescription" | "hasCriteria">,
+  allDepsDone: boolean,
+): TaskState {
+  if (task.status === "done") return "done";
+  if (task.status === "cancelled") return "cancelled";
+  if (task.status === "in_progress") return "in_progress";
+  if (task.status === "in_review") return "in_review";
+  if (task.status === "planned") return allDepsDone ? "ready" : "blocked";
+  if (!allDepsDone) return "blocked";
+  return task.hasDescription && task.hasCriteria ? "plannable" : "draft";
+}
+
+/**
  * Batch state derivation against the slim payload shape — the path the UI
  * fetches via `getProjectGraphSlim`. Avoids selecting `description` and
  * `acceptanceCriteria` from the database just to compute boolean flags;
@@ -1338,6 +1363,109 @@ export async function searchTasksAcrossProjects(
       projectTitle: row.projectTitle,
       organizationId: row.organizationId,
     }));
+  });
+}
+
+/**
+ * Bounded by `current_user_orgs()` for defense-in-depth over RLS.
+ * Tie-break on `tasks.id` asc for stable output across calls.
+ */
+export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
+  return withUserContext(ctx.userId, async (tx) => {
+    const orgRows = await executeRaw<{ org_id: string }>(
+      tx,
+      sql`SELECT org_id FROM public.current_user_orgs()`,
+    );
+    const orgIds = orgRows.map((r) => r.org_id);
+    if (orgIds.length === 0) return [];
+
+    const rows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        category: tasks.category,
+        tags: tasks.tags,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        order: tasks.order,
+        sequenceNumber: tasks.sequenceNumber,
+        updatedAt: tasks.updatedAt,
+        hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+        hasCriteria: hasCriteriaExpr(),
+        projectId: tasks.projectId,
+        projectIdentifier: projects.identifier,
+        projectTitle: projects.title,
+      })
+      .from(taskAssignees)
+      .innerJoin(tasks, eq(tasks.id, taskAssignees.taskId))
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(
+        and(
+          eq(taskAssignees.userId, ctx.userId),
+          inArray(projects.organizationId, orgIds),
+        ),
+      )
+      .orderBy(desc(tasks.updatedAt), asc(tasks.id));
+
+    if (rows.length === 0) return [];
+
+    // Batched per-anchor direct-dependency counts in a single round-trip,
+    // keyed on the user's assigned task ids — direct `depends_on` edges
+    // only, matching the workspace structure view's `buildDepsMap`.
+    const stats = await fetchMyTaskDepStats(
+      tx,
+      rows.map((r) => r.id),
+    );
+
+    return rows.map((row) => {
+      const rowStats = stats.get(row.id);
+      // Defensive defaults; no-edge anchors already return zeroed stats.
+      const upstreamCount = rowStats?.upstreamCount ?? 0;
+      const downstreamCount = rowStats?.downstreamCount ?? 0;
+      const allDepsDone = rowStats?.allDepsDone ?? true;
+      const blockerSeq = rowStats?.blockerSequenceNumber ?? null;
+
+      const projectIdentifier = asIdentifier(row.projectIdentifier);
+      const state = deriveTaskStateWithDepsDone(
+        {
+          status: row.status,
+          hasDescription: row.hasDescription,
+          hasCriteria: row.hasCriteria,
+        },
+        allDepsDone,
+      );
+
+      const blockedBy =
+        blockerSeq === null
+          ? null
+          : composeTaskRef(projectIdentifier, blockerSeq);
+
+      return {
+        id: row.id,
+        taskRef: composeTaskRef(projectIdentifier, row.sequenceNumber),
+        title: row.title,
+        status: row.status,
+        state,
+        category: row.category,
+        tags: row.tags,
+        priority: row.priority,
+        estimate: row.estimate,
+        order: row.order,
+        updatedAt: row.updatedAt,
+        hasDescription: row.hasDescription,
+        hasCriteria: row.hasCriteria,
+        project: {
+          id: row.projectId,
+          identifier: row.projectIdentifier,
+          title: row.projectTitle,
+          color: projectColor(row.projectIdentifier),
+        },
+        upstreamCount,
+        downstreamCount,
+        blockedBy,
+      };
+    });
   });
 }
 

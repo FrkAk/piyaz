@@ -10,8 +10,10 @@ import {
 } from "@/lib/data/project";
 import {
   searchTasksAcrossProjects as coreSearchTasksAcrossProjects,
+  listMyTasks as coreListMyTasks,
   type CrossProjectSearchResult,
 } from "@/lib/data/task";
+import type { MyTask } from "@/lib/data/views";
 
 export type {
   TaskSlim,
@@ -19,6 +21,7 @@ export type {
   SearchResult,
   CrossProjectSearchResult,
 } from "@/lib/data/task";
+export type { MyTask } from "@/lib/data/views";
 export type { DetailedEdge } from "@/lib/data/edge";
 export type { ProjectTag } from "@/lib/data/project";
 export type {
@@ -38,6 +41,15 @@ export type CrossProjectSearchFailureCode =
 export type CrossProjectSearchResultPayload =
   | { ok: true; rows: CrossProjectSearchResult[] }
   | { ok: false; code: CrossProjectSearchFailureCode };
+
+export type MyTasksListFailureCode =
+  | "unauthorized"
+  | "rate_limited"
+  | "unknown";
+
+export type MyTasksListResultPayload =
+  | { ok: true; rows: MyTask[] }
+  | { ok: false; code: MyTasksListFailureCode };
 
 /**
  * Server action wrapper — fetches the chrome view of a project (header
@@ -112,6 +124,35 @@ export async function searchTasksAcrossProjects(
     return { ok: true, rows };
   } catch (err) {
     console.error("searchTasksAcrossProjects failed", err);
+    return { ok: false, code: "unknown" };
+  }
+}
+
+export async function listMyTasks(): Promise<MyTasksListResultPayload> {
+  // Resolve user id first so authed callers throttle per-user, not per-IP
+  // (IP keys collide on shared NATs).
+  const session = await getSession();
+  const userId = session?.user.id ?? null;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "my-tasks.list",
+      windowSeconds: 60,
+      perUserMax: 30,
+      perIpMax: 60,
+    },
+    userId,
+  );
+  if (!limit.ok) return { ok: false, code: "rate_limited" };
+
+  if (!userId) return { ok: false, code: "unauthorized" };
+
+  try {
+    const ctx = await getAuthContext();
+    const rows = await coreListMyTasks(ctx);
+    return { ok: true, rows };
+  } catch (err) {
+    console.error("listMyTasks failed", err);
     return { ok: false, code: "unknown" };
   }
 }

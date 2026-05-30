@@ -34,3 +34,8 @@ export const teamKeys = {
   members: (organizationId: string) =>
     ["team", organizationId, "members"] as const,
 } as const;
+
+export const myTasksKeys = {
+  all: () => ["my-tasks"] as const,
+  list: () => ["my-tasks", "list"] as const,
+} as const;

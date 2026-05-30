@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
-import { projectKeys, taskKeys } from "@/lib/query/keys";
+import { myTasksKeys, projectKeys, taskKeys } from "@/lib/query/keys";
 import type { RealtimeEvent } from "@/lib/realtime/types";
 
 const INITIAL_BACKOFF_MS = 1_000;
@@ -73,6 +73,7 @@ export function RealtimeBridge() {
       switch (ev.kind) {
         case "project":
           qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
+          qc.invalidateQueries({ queryKey: myTasksKeys.list() });
           break;
         case "task":
           qc.invalidateQueries({

@@ -158,6 +158,36 @@ export type ProjectMeta = Pick<
   progress: number;
 };
 
+/**
+ * Personal task projection. Drops `assigneeCount` / `assigneeUserIds`
+ * because `listMyTasks` does not join co-assignees in — every row is the
+ * caller's by construction, so the avatar slot in `MyTasksRow` renders
+ * the session user directly. Fetch the task through a non-personal
+ * surface (e.g. project graph) when the true assignee set is required.
+ *
+ * `upstreamCount` / `downstreamCount` count direct `depends_on` edges
+ * only (no transitive walk), matching the workspace structure view.
+ * `state` and `blockedBy` are likewise derived from direct dependencies:
+ * `blockedBy` carries the taskRef of the lowest-sequence direct upstream
+ * that is neither done nor cancelled, when one exists.
+ */
+export type MyTask = Omit<
+  TaskGraphSlim,
+  "assigneeCount" | "assigneeUserIds"
+> & {
+  project: {
+    id: string;
+    identifier: string;
+    title: string;
+    color: string;
+  };
+  /** Count of direct `depends_on` edges the task is the source of. */
+  upstreamCount: number;
+  /** Count of direct `depends_on` edges the task is the target of. */
+  downstreamCount: number;
+  blockedBy: string | null;
+};
+
 /** Slim view of a project for list/search surfaces. */
 export type ProjectSlim = {
   id: string;
