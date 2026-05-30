@@ -315,12 +315,11 @@ test("sortRows(id) orders by taskRef ascending", () => {
     row({ id: "2", state: "ready" }),
     row({ id: "100", state: "ready" }),
   ];
-  // taskRef strings sort lexicographically: MYMR-10, MYMR-100, MYMR-2.
   const sorted = sortRows(rows, "id");
   expect(sorted.map((r) => r.taskRef)).toEqual([
+    "MYMR-2",
     "MYMR-10",
     "MYMR-100",
-    "MYMR-2",
   ]);
 });
 

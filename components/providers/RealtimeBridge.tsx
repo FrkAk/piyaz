@@ -82,7 +82,6 @@ export function RealtimeBridge() {
           qc.invalidateQueries({
             queryKey: taskKeys.context(ev.projectId, ev.taskId),
           });
-          qc.invalidateQueries({ queryKey: myTasksKeys.list() });
           break;
         case "project-list":
           qc.invalidateQueries({ queryKey: projectKeys.list() });

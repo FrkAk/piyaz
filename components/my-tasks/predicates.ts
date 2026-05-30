@@ -279,7 +279,7 @@ export function sortRows(rows: readonly MyTask[], key: SortKey): MyTask[] {
         const ar = a.priority ? PRIORITY_RANK_MAP[a.priority] : 4;
         const br = b.priority ? PRIORITY_RANK_MAP[b.priority] : 4;
         if (ar !== br) return ar - br;
-        return a.taskRef.localeCompare(b.taskRef);
+        return a.taskRef.localeCompare(b.taskRef, undefined, { numeric: true });
       });
       return copy;
     }
@@ -288,12 +288,14 @@ export function sortRows(rows: readonly MyTask[], key: SortKey): MyTask[] {
         const ai = STATE_ORDER_INDEX[a.state];
         const bi = STATE_ORDER_INDEX[b.state];
         if (ai !== bi) return ai - bi;
-        return a.taskRef.localeCompare(b.taskRef);
+        return a.taskRef.localeCompare(b.taskRef, undefined, { numeric: true });
       });
       return copy;
     }
     case "id": {
-      copy.sort((a, b) => a.taskRef.localeCompare(b.taskRef));
+      copy.sort((a, b) =>
+        a.taskRef.localeCompare(b.taskRef, undefined, { numeric: true }),
+      );
       return copy;
     }
   }

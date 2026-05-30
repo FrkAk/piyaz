@@ -20,6 +20,12 @@ export function PickupBanner({ task }: PickupBannerProps) {
       ? "PICK UP WHERE YOU LEFT OFF"
       : "READY TO PICK UP";
 
+  const relativeUpdated = formatRelative(task.updatedAt);
+  const updatedLabel =
+    relativeUpdated === "now"
+      ? "updated just now"
+      : `updated ${relativeUpdated} ago`;
+
   return (
     <Link
       href={`/project/${task.project.id}?task=${task.id}`}
@@ -79,7 +85,7 @@ export function PickupBanner({ task }: PickupBannerProps) {
               </>
             )}
             <span aria-hidden="true">·</span>
-            <span>updated {formatRelative(task.updatedAt)} ago</span>
+            <span>{updatedLabel}</span>
           </span>
         </span>
         <span className="hidden shrink-0 items-center gap-1.5 rounded-md border border-border-strong bg-surface-raised/80 px-3 py-1 text-[12px] font-medium text-text-primary shadow-[var(--shadow-button)] transition-colors group-hover:border-accent/40 sm:inline-flex">

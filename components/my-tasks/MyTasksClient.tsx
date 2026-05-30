@@ -98,6 +98,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   // Local state, not URL, so the input renders without a router round-trip.
   // A debounced effect below mirrors to `?q=` for deep-links and back/forward.
   const [query, setQuery] = useState<string>(() => searchParams.get("q") ?? "");
+  const lastSyncedQ = useRef<string>(searchParams.get("q") ?? "");
 
   const [collapsedDone, setCollapsedDone] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -116,7 +117,12 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   });
 
   const rows = data ?? EMPTY_ROWS;
-  const isFullyEmpty = rows.length === 0 && initialError === null && !error;
+  const errorCode: MyTasksListFailureCode | null = error
+    ? toFailureCode(error)
+    : isSuccess
+      ? null
+      : initialError;
+  const isFullyEmpty = rows.length === 0 && errorCode === null;
 
   const updateParams = useCallback(
     (mutate: (params: URLSearchParams) => void) => {
@@ -182,16 +188,23 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   useEffect(() => {
     const trimmed = query.trim();
-    const current = searchParams.get("q") ?? "";
-    if (trimmed === current.trim()) return;
+    if (trimmed === lastSyncedQ.current) return;
     const handle = setTimeout(() => {
+      lastSyncedQ.current = trimmed;
       updateParams((p) => {
         if (trimmed.length === 0) p.delete("q");
         else p.set("q", trimmed);
       });
     }, 250);
     return () => clearTimeout(handle);
-  }, [query, searchParams, updateParams]);
+  }, [query, updateParams]);
+
+  useEffect(() => {
+    const urlQ = searchParams.get("q") ?? "";
+    if (urlQ === lastSyncedQ.current) return;
+    lastSyncedQ.current = urlQ;
+    setQuery(urlQ);
+  }, [searchParams]);
 
   const setSort = useCallback(
     (next: SortKey) => {
@@ -213,7 +226,12 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     [updateParams],
   );
 
-  const now = useMemo(() => new Date(), []);
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const viewRows = useMemo(
     () => rows.filter((r) => viewPredicate(view, r, now)),
@@ -321,9 +339,9 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   const collapsedKeys = useMemo(() => {
     const set = new Set<string>();
-    if (collapsedDone) set.add("done");
+    if (collapsedDone && view !== "done") set.add("done");
     return set;
-  }, [collapsedDone]);
+  }, [collapsedDone, view]);
 
   const handleClearChip = useCallback(
     (id: string) => {
@@ -434,13 +452,6 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [query, setQuery, setView, statusFilter, writeStatusSet]);
 
-  // Once the client has a successful fetch the SSR error is stale, so clear it.
-  const errorCode: MyTasksListFailureCode | null = error
-    ? toFailureCode(error)
-    : isSuccess
-      ? null
-      : initialError;
-
   const meName = session.data?.user.name ?? session.data?.user.email ?? "You";
 
   // Scroll container for the `MyTasksList` virtualizer. State, not a ref, so
@@ -451,8 +462,8 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   if (isFullyEmpty) {
     return (
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1080px] px-8 pt-7 pb-20">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="mx-auto w-full max-w-[1080px] px-8 pt-7">
           <MyTasksHeader
             totalCount={0}
             viewCounts={countByState([])}
@@ -460,15 +471,19 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
             onToggleStatus={() => {}}
             dimTotal
           />
-          <MyTasksEmpty />
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-[1080px] px-8 pb-20">
+            <MyTasksEmpty />
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div ref={setScrollEl} className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-[1080px] px-8 pt-7 pb-20">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mx-auto w-full max-w-[1080px] shrink-0 overflow-y-auto px-8 pt-7 [scrollbar-gutter:stable]">
         {errorCode && <ErrorBanner code={errorCode} />}
         <MyTasksHeader
           totalCount={rows.length}
@@ -509,18 +524,25 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
             onClearAll={handleClearAll}
           />
         </div>
-        {displayGroups.length === 0 ? (
-          <NoMatch onReset={handleResetFromNoMatch} />
-        ) : (
-          <MyTasksList
-            groups={displayGroups}
-            collapsedKeys={collapsedKeys}
-            onToggleCollapsed={handleToggleCollapsed}
-            meName={meName}
-            scrollEl={scrollEl}
-          />
-        )}
-        <MyTasksFooter shown={sortedRows.length} total={rows.length} />
+      </div>
+      <div
+        ref={setScrollEl}
+        className="flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+      >
+        <div className="mx-auto w-full max-w-[1080px] px-8 pb-20">
+          {displayGroups.length === 0 ? (
+            <NoMatch onReset={handleResetFromNoMatch} />
+          ) : (
+            <MyTasksList
+              groups={displayGroups}
+              collapsedKeys={collapsedKeys}
+              onToggleCollapsed={handleToggleCollapsed}
+              meName={meName}
+              scrollEl={scrollEl}
+            />
+          )}
+          <MyTasksFooter shown={sortedRows.length} total={rows.length} />
+        </div>
       </div>
     </div>
   );
