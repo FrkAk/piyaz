@@ -25,9 +25,19 @@ test("authorization-server metadata advertises offline_access in scopes_supporte
   );
 });
 
-test("protected-resource metadata does not advertise offline_access", async () => {
+test("protected-resource metadata is populated and does not advertise offline_access", async () => {
   const response = await protectedResourceMetadata();
-  const body = (await response.json()) as { scopes_supported?: string[] };
+  expect(response.ok).toBe(true);
 
-  expect(body.scopes_supported ?? []).not.toContain("offline_access");
+  const raw = await response.text();
+  const body = JSON.parse(raw) as {
+    resource?: string;
+    authorization_servers?: string[];
+  };
+
+  // Confirm real metadata was returned so the negative assertion below is
+  // not vacuously true against an empty or errored body.
+  expect(body.resource?.endsWith("/api/mcp")).toBe(true);
+  expect(body.authorization_servers?.length ?? 0).toBeGreaterThan(0);
+  expect(raw).not.toContain("offline_access");
 });
