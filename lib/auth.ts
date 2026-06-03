@@ -167,6 +167,17 @@ export const auth = betterAuth({
         "email",
         "offline_access",
       ],
+      // Advertise the grantable scopes in the authorization-server metadata
+      // (`/.well-known/oauth-authorization-server`). Per the MCP authorization
+      // spec (Refresh Tokens) and SEP-2207, a compliant client only adds
+      // `offline_access` to its authorize request when the AS lists it in
+      // `scopes_supported`. Without this the client never asks, no refresh
+      // token is issued, and MCP sessions die at `accessTokenExpiresIn` (#108).
+      // Protected-resource metadata deliberately omits it — the spec says
+      // resources SHOULD NOT advertise `offline_access`.
+      advertisedMetadata: {
+        scopes_supported: ["openid", "profile", "email", "offline_access"],
+      },
       validAudiences: process.env.BETTER_AUTH_URL
         ? [
             process.env.BETTER_AUTH_URL,
