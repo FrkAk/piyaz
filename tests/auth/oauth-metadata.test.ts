@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { GET as authServerMetadata } from "@/app/.well-known/oauth-authorization-server/route";
 import { GET as protectedResourceMetadata } from "@/app/.well-known/oauth-protected-resource/route";
+import { GET as pathAwareResourceMetadata } from "@/app/.well-known/oauth-protected-resource/api/mcp/route";
 
 /**
  * Regression guard for #108 (MYMR-225). MCP clients only add
@@ -40,4 +41,12 @@ test("protected-resource metadata is populated and does not advertise offline_ac
   expect(body.resource?.endsWith("/api/mcp")).toBe(true);
   expect(body.authorization_servers?.length ?? 0).toBeGreaterThan(0);
   expect(raw).not.toContain("offline_access");
+});
+
+test("protected-resource metadata is also served at the RFC 9728 path-aware location", async () => {
+  const response = await pathAwareResourceMetadata();
+  expect(response.ok).toBe(true);
+
+  const body = (await response.json()) as { resource?: string };
+  expect(body.resource?.endsWith("/api/mcp")).toBe(true);
 });
