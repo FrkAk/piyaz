@@ -20,7 +20,12 @@ const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
  * metadata advertises (`advertisedMetadata.scopes_supported`), so the two
  * cannot drift. `offline_access` gates refresh-token issuance (#108).
  */
-const GRANTABLE_OAUTH_SCOPES = ["openid", "profile", "email", "offline_access"];
+const GRANTABLE_OAUTH_SCOPES = [
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+] as const;
 
 if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
   throw new Error(
@@ -170,7 +175,7 @@ export const auth = betterAuth({
       allowUnauthenticatedClientRegistration: true,
       accessTokenExpiresIn: 60 * 60, // 1h
       refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7 days
-      clientRegistrationAllowedScopes: GRANTABLE_OAUTH_SCOPES,
+      clientRegistrationAllowedScopes: [...GRANTABLE_OAUTH_SCOPES],
       // Advertise the grantable scopes in the authorization-server metadata
       // (`/.well-known/oauth-authorization-server`). Per the MCP authorization
       // spec (Refresh Tokens) and SEP-2207, a compliant client only adds
@@ -180,7 +185,7 @@ export const auth = betterAuth({
       // Protected-resource metadata deliberately omits it — the spec says
       // resources SHOULD NOT advertise `offline_access`.
       advertisedMetadata: {
-        scopes_supported: GRANTABLE_OAUTH_SCOPES,
+        scopes_supported: [...GRANTABLE_OAUTH_SCOPES],
       },
       validAudiences: process.env.BETTER_AUTH_URL
         ? [

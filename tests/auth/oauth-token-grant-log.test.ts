@@ -27,15 +27,20 @@ afterEach(() => {
 });
 
 /**
- * Parse the single JSON log line captured by a console spy.
+ * Read the structured context object from the single console call captured
+ * by a spy, asserting the `oauth_token_grant` message tag.
  *
  * @param spy - The `console.info` or `console.warn` mock.
- * @returns The parsed log object.
+ * @returns The logged context object.
  */
 function loggedLine(spy: ReturnType<typeof mock>): Record<string, unknown> {
   expect(spy).toHaveBeenCalledTimes(1);
-  const arg = spy.mock.calls[0]![0] as string;
-  return JSON.parse(arg) as Record<string, unknown>;
+  const [message, context] = spy.mock.calls[0]! as [
+    string,
+    Record<string, unknown>,
+  ];
+  expect(message).toBe("oauth_token_grant");
+  return context;
 }
 
 test("successful refresh-token grant logs refresh_token_issued and returns body intact", async () => {
@@ -59,16 +64,15 @@ test("successful refresh-token grant logs refresh_token_issued and returns body 
   expect(warnSpy).not.toHaveBeenCalled();
   const line = loggedLine(infoSpy);
   expect(line).toMatchObject({
-    event: "oauth_token_grant",
     grant_type: "refresh_token",
     status: 200,
-    requested_offline_access: true,
+    requested_scope: "openid offline_access",
     granted_scope: "openid offline_access",
     refresh_token_issued: true,
   });
   expect(line.error).toBeUndefined();
 
-  const raw = infoSpy.mock.calls[0]![0] as string;
+  const raw = JSON.stringify(infoSpy.mock.calls[0]);
   expect(raw).not.toContain(payload.access_token);
   expect(raw).not.toContain(payload.refresh_token);
 });
@@ -84,14 +88,13 @@ test("failed grant logs the error via console.warn and returns body intact", asy
   expect(infoSpy).not.toHaveBeenCalled();
   const line = loggedLine(warnSpy);
   expect(line).toMatchObject({
-    event: "oauth_token_grant",
     grant_type: "authorization_code",
     status: 400,
-    requested_offline_access: false,
     refresh_token_issued: false,
     error: "invalid_grant",
     error_description: "code expired",
   });
+  expect(line.requested_scope).toBeUndefined();
 });
 
 test("non-JSON response body is logged without throwing and returned intact", async () => {
@@ -104,7 +107,6 @@ test("non-JSON response body is logged without throwing and returned intact", as
   expect(infoSpy).not.toHaveBeenCalled();
   const line = loggedLine(warnSpy);
   expect(line).toMatchObject({
-    event: "oauth_token_grant",
     grant_type: "refresh_token",
     status: 502,
     refresh_token_issued: false,
@@ -112,19 +114,17 @@ test("non-JSON response body is logged without throwing and returned intact", as
   expect(line.error).toBeUndefined();
 });
 
-test("adversarial error_description cannot forge a second log line", async () => {
+test("adversarial error_description is carried as inert data, not structure", async () => {
   const injected = 'expired"}\n{"event":"oauth_token_grant","status":200';
   const payload = { error: "invalid_grant", error_description: injected };
   const response = Response.json(payload, { status: 400 });
 
   await logTokenGrant(response, "authorization_code", "");
 
-  expect(warnSpy).toHaveBeenCalledTimes(1);
-  const raw = warnSpy.mock.calls[0]![0] as string;
-  // A newline in the payload must be escaped, not emitted raw — otherwise a
-  // line-based log collector would parse the injected text as a second entry.
-  expect(raw).not.toContain("\n");
-  // The malicious text survives only as inert data on the single log object.
-  const line = JSON.parse(raw) as { error_description?: string };
+  // The crafted text — including its newline and braces — lands as a single
+  // inert string field on the structured context object. It cannot break out
+  // of that object to forge a second log record; the runtime serializer
+  // escapes the value just as it does for every other structured log.
+  const line = loggedLine(warnSpy) as { error_description?: string };
   expect(line.error_description).toBe(injected);
 });

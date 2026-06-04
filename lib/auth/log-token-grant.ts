@@ -16,39 +16,26 @@ export async function logTokenGrant(
   grantType: string,
   requestScope: string,
 ): Promise<Response> {
-  let refreshTokenIssued = false;
-  let grantedScope: string | undefined;
-  let error: string | undefined;
-  let errorDescription: string | undefined;
+  const data = (await response
+    .clone()
+    .json()
+    .catch(() => ({}))) as Record<string, unknown>;
 
-  try {
-    const data = (await response.clone().json()) as Record<string, unknown>;
-    refreshTokenIssued = typeof data.refresh_token === "string";
-    grantedScope = typeof data.scope === "string" ? data.scope : undefined;
-    error = typeof data.error === "string" ? data.error : undefined;
-    errorDescription =
-      typeof data.error_description === "string"
-        ? data.error_description
-        : undefined;
-  } catch {
-    // Non-JSON body (not expected for the token endpoint).
-  }
-
-  const line = JSON.stringify({
-    event: "oauth_token_grant",
+  const context = {
     grant_type: grantType,
     status: response.status,
-    requested_offline_access: requestScope
-      .split(" ")
-      .includes("offline_access"),
-    granted_scope: grantedScope,
-    refresh_token_issued: refreshTokenIssued,
-    error,
-    error_description: errorDescription,
-  });
+    requested_scope: requestScope || undefined,
+    granted_scope: typeof data.scope === "string" ? data.scope : undefined,
+    refresh_token_issued: typeof data.refresh_token === "string",
+    error: typeof data.error === "string" ? data.error : undefined,
+    error_description:
+      typeof data.error_description === "string"
+        ? data.error_description
+        : undefined,
+  };
 
-  if (response.ok && !error) console.info(line);
-  else console.warn(line);
+  if (response.ok && !context.error) console.info("oauth_token_grant", context);
+  else console.warn("oauth_token_grant", context);
 
   return response;
 }
