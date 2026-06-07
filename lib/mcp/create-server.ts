@@ -639,7 +639,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "mymir", version: "1.7.2" },
+    { name: "mymir", version: "1.7.3" },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);

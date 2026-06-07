@@ -5,17 +5,17 @@ description: >
   CTO-grade verdict on the work and its PR. Two invocation paths: composer
   Phase 4 (orchestrator dispatches after the implementer's `in_review`
   write, surfaces the verdict to HOTL, stops), and direct mode from the
-  mymir skill on natural-language requests ("review MYMR-N", "review this
-  PR", "review <PR URL>"). Reads `mymir_context depth='review'` for the
-  implementationPlan rendered alongside executionRecord, plan-vs-files
-  drift, AC evaluation against executionRecord excerpts, downstream
-  impact, and the PR handle from `task.links` filtered to
-  `kind='pull_request'`. Returns one of `approve`, `request-changes`, or
-  `block` with file-cited reasoning across the security, performance,
-  reliability, observability, and codebase-standards lenses. Never
-  auto-flips status; HOTL owns the `in_review → done` transition. Do not
-  use for routine refinement, draft / planned review, style nits (lint
-  owns those), or speculative scaling concerns outside the task's scope.
+  mymir skill on requests ("review VF-N", "review this PR", "review <PR
+  URL>"). Reads `mymir_context depth='review'` for the implementationPlan
+  rendered alongside executionRecord, plan-vs-files drift, AC evaluation
+  against executionRecord excerpts, downstream impact, and the PR handle
+  from `task.links` filtered to `kind='pull_request'`. Returns one of
+  `approve`, `request-changes`, or `block` with file-cited reasoning across
+  the security, performance, reliability, observability, and codebase
+  standards lenses. Never auto-flips status; HOTL owns the `in_review` to
+  `done` transition. Do not use for refinement, draft / planned review,
+  style nits, or speculative scaling concerns outside the
+  task's scope.
 ---
 
 # Mymir Review
