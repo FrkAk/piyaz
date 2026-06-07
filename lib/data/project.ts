@@ -1,15 +1,7 @@
 import "server-only";
 
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  getTableColumns,
-  inArray,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
+import { unionAll } from "drizzle-orm/pg-core";
 import { serviceRoleDb } from "@/lib/db";
 import { executeRaw, type Conn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
@@ -90,8 +82,8 @@ function makeHistoryEntry(
  * via `GET /api/task/[id]`.
  *
  * Two column-projected selects run under `Promise.all`; the edges select
- * uses a subquery over `tasks.project_id` so it can fire concurrently with
- * the tasks select on different pool connections.
+ * uses `UNION ALL` over source/target task ids so each arm can use the
+ * matching endpoint index.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -126,17 +118,37 @@ export async function getProjectGraphSlim(
       .where(eq(tasks.projectId, projectId))
       .orderBy(asc(tasks.order));
 
-    const edgesQ = tx
-      .select()
-      .from(taskEdges)
-      .where(
-        or(
-          sql`${taskEdges.sourceTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
-          sql`${taskEdges.targetTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
-        ),
-      );
+    const projectTaskIdsQ = tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.projectId, projectId));
 
-    const [taskRows, edges] = await Promise.all([tasksQ, edgesQ]);
+    const sourceEdgesQ = tx
+      .select({
+        id: taskEdges.id,
+        sourceTaskId: taskEdges.sourceTaskId,
+        targetTaskId: taskEdges.targetTaskId,
+        edgeType: taskEdges.edgeType,
+      })
+      .from(taskEdges)
+      .where(inArray(taskEdges.sourceTaskId, projectTaskIdsQ));
+
+    const targetEdgesQ = tx
+      .select({
+        id: taskEdges.id,
+        sourceTaskId: taskEdges.sourceTaskId,
+        targetTaskId: taskEdges.targetTaskId,
+        edgeType: taskEdges.edgeType,
+      })
+      .from(taskEdges)
+      .where(inArray(taskEdges.targetTaskId, projectTaskIdsQ));
+
+    const edgesQ = unionAll(sourceEdgesQ, targetEdgesQ);
+
+    const [taskRows, edgeRows] = await Promise.all([tasksQ, edgesQ]);
+    const edges = [
+      ...new Map(edgeRows.map((edge) => [edge.id, edge])).values(),
+    ];
     const enriched = enrichWithTaskRef(
       taskRows,
       asIdentifier(project.identifier),

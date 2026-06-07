@@ -2,7 +2,12 @@
 
 import { useMemo } from "react";
 import type { TaskEdge } from "@/lib/db/schema";
-import type { TaskFull, TaskGraphSlim, TaskLinkRef } from "@/lib/data/views";
+import type {
+  TaskFull,
+  TaskGraphEdge,
+  TaskGraphSlim,
+  TaskLinkRef,
+} from "@/lib/data/views";
 import type { TaskStatus } from "@/lib/types";
 import { BundlePreview } from "@/components/workspace/BundlePreview";
 import { DetailHeader } from "./DetailHeader";
@@ -30,8 +35,8 @@ interface DetailViewProps {
   projectId: string;
   /** Project display name for the breadcrumb. */
   projectName: string;
-  /** All project edges — used by the bundle preview to derive neighbors. */
-  allEdges: TaskEdge[];
+  /** All slim project edges — used by the bundle preview to derive neighbors. */
+  allEdges: TaskGraphEdge[];
   /** Edges connected to this task. */
   edges: TaskEdge[];
   /** All tasks in the project (slim) — feeds the status map for ready/plannable derivation. */
@@ -260,13 +265,13 @@ interface BundleNeighbor {
  * Build the upstream bundle neighbors (`depends_on` outgoing).
  *
  * @param taskId - Current task UUID.
- * @param edges - All project edges.
+ * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
  * @returns List of upstream bundle neighbors.
  */
 function buildPrerequisites(
   taskId: string,
-  edges: TaskEdge[],
+  edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
 ): BundleNeighbor[] {
   const out: BundleNeighbor[] = [];
@@ -289,13 +294,13 @@ function buildPrerequisites(
  * Build `relates_to` 1-hop siblings — surfaces the agent's "neighbors" lane.
  *
  * @param taskId - Current task UUID.
- * @param edges - All project edges.
+ * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
  * @returns List of related siblings.
  */
 function buildNeighbors(
   taskId: string,
-  edges: TaskEdge[],
+  edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
 ): BundleNeighbor[] {
   const out: BundleNeighbor[] = [];
@@ -326,13 +331,13 @@ function buildNeighbors(
  * Build downstream `depends_on` consumers — the tasks blocked by this one.
  *
  * @param taskId - Current task UUID.
- * @param edges - All project edges.
+ * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
  * @returns List of downstream consumers.
  */
 function buildDownstream(
   taskId: string,
-  edges: TaskEdge[],
+  edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
 ): BundleNeighbor[] {
   const out: BundleNeighbor[] = [];

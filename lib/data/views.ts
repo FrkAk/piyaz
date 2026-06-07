@@ -112,8 +112,14 @@ export type TaskGraphSlim = Pick<
   assigneeUserIds: string[];
 };
 
-/** Slim project graph for the workspace canvas + list. Edges are returned
- * in full (they have no heavy fields), tasks are slim. */
+/** Slim edge entry returned by the project graph payload. */
+export type TaskGraphEdge = Pick<
+  TaskEdge,
+  "id" | "sourceTaskId" | "targetTaskId" | "edgeType"
+>;
+
+/** Slim project graph for the workspace canvas + list. Edges and tasks are
+ * projected down to the fields the graph surfaces render. */
 export type ProjectGraphSlim = {
   project: Pick<
     Project,
@@ -126,7 +132,7 @@ export type ProjectGraphSlim = {
     | "categories"
   >;
   tasks: TaskGraphSlim[];
-  edges: TaskEdge[];
+  edges: TaskGraphEdge[];
 };
 
 /**
@@ -225,4 +231,5 @@ export type TaskFull = Task & {
   acceptanceCriteria: AcceptanceCriterion[];
   decisions: Decision[];
   links: TaskLinkRef[];
+  edges: TaskEdge[];
 };

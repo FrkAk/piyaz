@@ -421,7 +421,7 @@ export function hasCriteriaExpr() {
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task.
  * @returns Full task row with composed `taskRef`, assignees, criteria,
- *   decisions, and links.
+ *   decisions, links, and connected edges.
  * @throws ForbiddenError when the caller is not a member of the task's team.
  */
 export async function getTaskFull(
@@ -437,12 +437,23 @@ export async function getTaskFull(
  * @param tx - Active RLS transaction handle.
  * @param taskId - UUID of the task.
  * @returns Full task row with composed `taskRef`, assignees, criteria,
- *   decisions, and links.
+ *   decisions, links, and connected edges.
  * @throws ForbiddenError when the caller is not a member of the task's team.
  */
 export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
   await assertTaskAccessTx(tx, taskId);
-  const rows = await fetchTaskFull(tx, taskId);
+  const [rows, edges] = await Promise.all([
+    fetchTaskFull(tx, taskId),
+    tx
+      .select()
+      .from(taskEdges)
+      .where(
+        or(
+          eq(taskEdges.sourceTaskId, taskId),
+          eq(taskEdges.targetTaskId, taskId),
+        ),
+      ),
+  ]);
   if (rows.length === 0) {
     throw new Error(
       `getTaskFull: task ${taskId} disappeared after access check`,
@@ -487,6 +498,7 @@ export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
       label: l.label,
       createdAt: new Date(l.createdAt),
     })),
+    edges,
   };
 }
 

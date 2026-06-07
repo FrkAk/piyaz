@@ -13,8 +13,7 @@ import {
   STATUS_META,
   type TaskStatus as GlyphStatus,
 } from "@/components/shared/StatusGlyph";
-import type { TaskEdge } from "@/lib/db/schema";
-import type { TaskGraphSlim, TaskFull } from "@/lib/data/views";
+import type { TaskFull, TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
 import { taskKeys } from "@/lib/query/keys";
 import { fetchTaskBody } from "@/lib/query/queries";
 import { listTeamMembersAction } from "@/lib/actions/team-members";
@@ -64,8 +63,8 @@ type GroupSection =
 interface StructureViewProps {
   /** All project tasks, augmented with composed `taskRef`. */
   tasks: TaskWithRef[];
-  /** All project edges. */
-  edges: TaskEdge[];
+  /** All project edges in slim graph shape. */
+  edges: TaskGraphEdge[];
   /** Project UUID. */
   projectId: string;
   /** Organization UUID — feeds the team-member fetch used for row avatars. */
@@ -167,7 +166,7 @@ interface DepsMap {
  * @param edges - Project edges.
  * @returns Maps keyed by task ID.
  */
-function buildDepsMap(edges: TaskEdge[]): DepsMap {
+function buildDepsMap(edges: TaskGraphEdge[]): DepsMap {
   const upstream = new Map<string, number>();
   const downstream = new Map<string, number>();
   for (const edge of edges) {

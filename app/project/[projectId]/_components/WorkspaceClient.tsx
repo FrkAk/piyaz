@@ -348,15 +348,9 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
     queryFn: fetchTaskBody(qc, projectId, taskId),
   });
 
-  const taskEdges = useMemo(
-    () =>
-      graph.edges.filter(
-        (e) => e.sourceTaskId === taskId || e.targetTaskId === taskId,
-      ),
-    [graph.edges, taskId],
-  );
-
   const taskFullMatches = selectedTaskFull && selectedTaskFull.id === taskId;
+  const taskEdges =
+    taskFullMatches && selectedTaskFull ? selectedTaskFull.edges : [];
 
   const detail =
     taskFullMatches && selectedTaskFull ? (

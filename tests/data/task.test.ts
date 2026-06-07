@@ -1099,6 +1099,38 @@ test("getTaskFull returns empty arrays (not null) when no children exist", async
   expect(full.decisions).toEqual([]);
   expect(full.assignees).toEqual([]);
   expect(full.links).toEqual([]);
+  expect(full.edges).toEqual([]);
+});
+
+test("getTaskFull returns connected edges with notes", async () => {
+  const f = await seedUserOrgProject("full-edges");
+  const ctx = makeAuthContext(f.userId);
+  const source = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "Source",
+  });
+  const target = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "Target",
+  });
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO task_edges ("source_task_id", "target_task_id", "edge_type", "note")
+      VALUES (${source.id}, ${target.id}, 'depends_on', 'full edge note')
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const full = await getTaskFull(ctx, source.id);
+
+  expect(full.edges.length).toBe(1);
+  expect(full.edges[0].sourceTaskId).toBe(source.id);
+  expect(full.edges[0].targetTaskId).toBe(target.id);
+  expect(full.edges[0].edgeType).toBe("depends_on");
+  expect(full.edges[0].note).toBe("full edge note");
 });
 
 test("searchTasksPaged reports hasCriteria correctly via correlated EXISTS", async () => {

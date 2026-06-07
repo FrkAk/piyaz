@@ -5,8 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { ViewTabs } from "@/components/shared/ViewTabs";
 import { IconGraph, IconList } from "@/components/shared/icons";
-import type { TaskEdge } from "@/lib/db/schema";
-import type { TaskGraphSlim } from "@/lib/data/views";
+import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
 import { MiniTaskRail } from "./MiniTaskRail";
 import { GraphHoverCard } from "./GraphHoverCard";
 import {
@@ -35,8 +34,8 @@ interface WorkspaceGraphViewProps {
   projectId: string;
   /** @param tasks - Project tasks (slim, already enriched with `taskRef`). */
   tasks: TaskGraphSlim[];
-  /** @param edges - Project edges. */
-  edges: TaskEdge[];
+  /** @param edges - Project edges in slim graph shape. */
+  edges: TaskGraphEdge[];
   /** @param selectedNodeId - Currently selected task id. */
   selectedNodeId: string | null;
   /** @param onSelectNode - Open a task — mirrors the structure-view handler. */

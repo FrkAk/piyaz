@@ -10,8 +10,7 @@ import {
 import type { Simulation } from "d3-force";
 import { quadtree } from "d3-quadtree";
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import type { TaskEdge } from "@/lib/db/schema";
-import type { TaskGraphSlim } from "@/lib/data/views";
+import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
 import type { GraphNode, GraphLink, GraphTierConfig } from "./graphConstants";
 import {
   getNodeSize,
@@ -147,7 +146,7 @@ interface BuildResult {
  * remount with cached positions paints in the same place.
  *
  * @param taskList - Task records.
- * @param edges - TaskEdge records.
+ * @param edges - Slim edge records.
  * @param cx - Initial-ring centre X (used only for uncached nodes).
  * @param cy - Initial-ring centre Y.
  * @param saved - Per-project position cache.
@@ -155,7 +154,7 @@ interface BuildResult {
  */
 function buildGraph(
   taskList: GraphTask[],
-  edges: TaskEdge[],
+  edges: TaskGraphEdge[],
   cx: number,
   cy: number,
   saved: Map<string, { x: number; y: number }>,
@@ -485,7 +484,7 @@ interface UseForceSimulationReturn {
 export function useForceSimulation(
   projectId: string,
   taskList: GraphTask[],
-  edges: TaskEdge[],
+  edges: TaskGraphEdge[],
   width: number,
   height: number,
   selectedNodeId: string | null,

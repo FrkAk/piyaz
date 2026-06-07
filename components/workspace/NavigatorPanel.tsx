@@ -9,14 +9,13 @@ import {
   type WorkspaceView,
 } from "./structure/FilterBar";
 import { StructureView } from "./structure/StructureView";
-import type { TaskEdge } from "@/lib/db/schema";
-import type { TaskGraphSlim } from "@/lib/data/views";
+import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
 
 interface NavigatorPanelProps {
   /** All project tasks (slim, augmented with composed `taskRef`). */
   tasks: TaskGraphSlim[];
-  /** All project edges. */
-  edges: TaskEdge[];
+  /** All project edges in slim graph shape. */
+  edges: TaskGraphEdge[];
   /** Project-level categories. */
   categories: string[];
   /** Project UUID. */
