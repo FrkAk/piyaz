@@ -10,6 +10,8 @@ updates:
       all-npm:
         patterns: ["*"]
     ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "eslint"
         versions: [">=10"]
       - dependency-name: "typescript"
