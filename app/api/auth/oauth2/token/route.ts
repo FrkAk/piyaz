@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { logTokenGrant } from "@/lib/auth/log-token-grant";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const origin = new URL(baseUrl).origin;
@@ -18,6 +19,10 @@ const grantsNeedingResource = new Set(["authorization_code", "refresh_token"]);
  *
  * Original request headers are forwarded so confidential clients using
  * HTTP Basic auth for `client_id:client_secret` continue to authenticate.
+ *
+ * The grant outcome (grant type, whether a refresh token was issued, and
+ * the error reason on failure) is logged for diagnosability; token values
+ * are never logged.
  * @param request - Incoming POST to `/api/auth/oauth2/token`.
  * @returns Better Auth token response.
  */
@@ -43,5 +48,6 @@ export async function POST(request: Request): Promise<Response> {
     body: body.toString(),
   });
 
-  return auth.handler(forwarded);
+  const response = await auth.handler(forwarded);
+  return logTokenGrant(response, grantType, body.get("scope") ?? "");
 }
