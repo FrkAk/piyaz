@@ -355,9 +355,7 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
     taskFullMatches && selectedTaskFull
       ? selectedTaskFull.edges
       : graph.edges
-          .filter(
-            (e) => e.sourceTaskId === taskId || e.targetTaskId === taskId,
-          )
+          .filter((e) => e.sourceTaskId === taskId || e.targetTaskId === taskId)
           .map((e) => ({ ...e, note: "" }));
 
   const detail =
