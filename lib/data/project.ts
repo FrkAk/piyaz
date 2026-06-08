@@ -11,6 +11,7 @@ import {
   assigneeUserIdsExpr,
   hasCriteriaExpr,
 } from "@/lib/data/task";
+import { slimEdgeColumns } from "@/lib/data/edge-columns";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
 import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
@@ -123,20 +124,13 @@ export async function getProjectGraphSlim(
       .from(tasks)
       .where(eq(tasks.projectId, projectId));
 
-    const edgeColumns = {
-      id: taskEdges.id,
-      sourceTaskId: taskEdges.sourceTaskId,
-      targetTaskId: taskEdges.targetTaskId,
-      edgeType: taskEdges.edgeType,
-    };
-
     const sourceEdgesQ = tx
-      .select(edgeColumns)
+      .select(slimEdgeColumns)
       .from(taskEdges)
       .where(inArray(taskEdges.sourceTaskId, projectTaskIdsQ));
 
     const targetEdgesQ = tx
-      .select(edgeColumns)
+      .select(slimEdgeColumns)
       .from(taskEdges)
       .where(inArray(taskEdges.targetTaskId, projectTaskIdsQ));
 

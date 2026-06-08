@@ -55,6 +55,7 @@ import type {
   TaskLinkRef,
   TaskSlim,
 } from "@/lib/data/views";
+import { edgeRefColumns } from "@/lib/data/edge-columns";
 import { projectColor } from "@/lib/ui/project-color";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
@@ -445,13 +446,7 @@ export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
   const [rows, edges] = await Promise.all([
     fetchTaskFull(tx, taskId),
     tx
-      .select({
-        id: taskEdges.id,
-        sourceTaskId: taskEdges.sourceTaskId,
-        targetTaskId: taskEdges.targetTaskId,
-        edgeType: taskEdges.edgeType,
-        note: taskEdges.note,
-      })
+      .select(edgeRefColumns)
       .from(taskEdges)
       .where(
         or(
