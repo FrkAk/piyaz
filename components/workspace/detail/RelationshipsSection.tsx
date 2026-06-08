@@ -7,7 +7,7 @@ import { MonoId } from "@/components/shared/MonoId";
 import { StatusGlyph } from "@/components/shared/StatusGlyph";
 import { IconPlus, IconX } from "@/components/shared/icons";
 import { createEdge, removeEdge } from "@/lib/graph/mutations";
-import type { TaskEdge } from "@/lib/db/schema";
+import type { TaskEdgeRef } from "@/lib/data/views";
 import { SectionHeader } from "./SectionHeader";
 
 /** User-facing relationship modes — each maps to an edge type + direction. */
@@ -42,7 +42,7 @@ interface RelationshipsSectionProps {
   /** Current task UUID. */
   taskId: string;
   /** Edges connected to this task. */
-  edges: TaskEdge[];
+  edges: TaskEdgeRef[];
   /** Map of every task in the project. */
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   /** Click an edge target to open it. */
@@ -69,7 +69,7 @@ interface DirectionalEdge {
  * @param taskId - Current task UUID.
  * @returns Direction key.
  */
-function directionFor(edge: TaskEdge, taskId: string): EdgeDirection {
+function directionFor(edge: TaskEdgeRef, taskId: string): EdgeDirection {
   if (edge.edgeType === "relates_to") return "related_to";
   return edge.sourceTaskId === taskId ? "blocked_by" : "blocks";
 }

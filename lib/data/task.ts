@@ -445,7 +445,13 @@ export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
   const [rows, edges] = await Promise.all([
     fetchTaskFull(tx, taskId),
     tx
-      .select()
+      .select({
+        id: taskEdges.id,
+        sourceTaskId: taskEdges.sourceTaskId,
+        targetTaskId: taskEdges.targetTaskId,
+        edgeType: taskEdges.edgeType,
+        note: taskEdges.note,
+      })
       .from(taskEdges)
       .where(
         or(

@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import type { TaskEdge } from "@/lib/db/schema";
 import type {
+  TaskEdgeRef,
   TaskFull,
   TaskGraphEdge,
   TaskGraphSlim,
@@ -38,7 +38,7 @@ interface DetailViewProps {
   /** All slim project edges — used by the bundle preview to derive neighbors. */
   allEdges: TaskGraphEdge[];
   /** Edges connected to this task. */
-  edges: TaskEdge[];
+  edges: TaskEdgeRef[];
   /** All tasks in the project (slim) — feeds the status map for ready/plannable derivation. */
   allTasks: TaskGraphSlim[];
   /** Map of task IDs to title/status/taskRef. */

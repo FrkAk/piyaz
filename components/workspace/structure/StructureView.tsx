@@ -163,7 +163,7 @@ interface DepsMap {
 /**
  * Pre-compute per-task dependency counts in one pass over edges.
  *
- * @param edges - Project edges.
+ * @param edges - All slim project edges.
  * @returns Maps keyed by task ID.
  */
 function buildDepsMap(edges: TaskGraphEdge[]): DepsMap {

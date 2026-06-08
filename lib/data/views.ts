@@ -118,6 +118,11 @@ export type TaskGraphEdge = Pick<
   "id" | "sourceTaskId" | "targetTaskId" | "edgeType"
 >;
 
+/** Connected edge carried on {@link TaskFull} — slim graph edge plus the
+ * `note` the detail relationships list renders. Omits the timestamp fields
+ * so the JSON shape matches the type across the API boundary. */
+export type TaskEdgeRef = TaskGraphEdge & Pick<TaskEdge, "note">;
+
 /** Slim project graph for the workspace canvas + list. Edges and tasks are
  * projected down to the fields the graph surfaces render. */
 export type ProjectGraphSlim = {
@@ -231,5 +236,5 @@ export type TaskFull = Task & {
   acceptanceCriteria: AcceptanceCriterion[];
   decisions: Decision[];
   links: TaskLinkRef[];
-  edges: TaskEdge[];
+  edges: TaskEdgeRef[];
 };

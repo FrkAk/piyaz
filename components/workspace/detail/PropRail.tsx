@@ -28,9 +28,13 @@ import {
   IconUser,
   IconX,
 } from "@/components/shared/icons";
-import type { TaskEdge } from "@/lib/db/schema";
 import type { Priority, Estimate, TaskStatus } from "@/lib/types";
-import type { AssigneeRef, ProjectGraphSlim, TaskFull } from "@/lib/data/views";
+import type {
+  AssigneeRef,
+  ProjectGraphSlim,
+  TaskEdgeRef,
+  TaskFull,
+} from "@/lib/data/views";
 
 /**
  * Subset of task fields safe to patch onto both the `TaskFull` and
@@ -87,7 +91,7 @@ interface PropRailProps {
   /** Project tag vocabulary — every tag used by any task in the project. */
   projectTags: string[];
   /** Edges connected to this task. */
-  edges: TaskEdge[];
+  edges: TaskEdgeRef[];
   /** Map of every task in the project. */
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   /** File paths the task touches. */

@@ -21,7 +21,6 @@ import { DeferredLoadingSpinner } from "@/components/shared/DeferredLoadingSpinn
 import { projectKeys, taskKeys } from "@/lib/query/keys";
 import { fetchProjectGraph, fetchTaskBody } from "@/lib/query/queries";
 import type { ProjectGraphSlim, TaskGraphSlim } from "@/lib/data/views";
-import type { TaskEdge } from "@/lib/db/schema";
 
 /** Workspace view identifier — mirrors the navigator's FilterBar value. */
 type WorkspaceView = "structure" | "graph";
@@ -273,7 +272,6 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
       taskSlim={null}
       detail={<EmptyDetail />}
       propRail={null}
-      taskEdges={[]}
     />
   );
 }
@@ -411,7 +409,6 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
       taskSlim={taskSlim}
       detail={detail}
       propRail={propRail}
-      taskEdges={taskEdges}
     />
   );
 }
@@ -420,7 +417,6 @@ interface WorkspaceLayoutProps extends SharedLayoutProps {
   taskSlim: TaskGraphSlim | null;
   detail: React.ReactNode;
   propRail: React.ReactNode;
-  taskEdges: TaskEdge[];
 }
 
 /**
