@@ -1,7 +1,7 @@
 import { getAuthContext } from "@/lib/auth/context";
 import { ForbiddenError, assertTaskAccess } from "@/lib/auth/authorization";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
-import { getTaskFull } from "@/lib/data/task";
+import { getTaskFullWithEdges } from "@/lib/data/task";
 import { broker } from "@/lib/realtime/broker";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
@@ -41,9 +41,9 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   try {
     // Cheap timestamp probe first — gates the conditional-GET path so
     // HEAD and `If-None-Match` matches short-circuit before paying the
-    // join + JSON-agg cost of `getTaskFull`. The 200 fall-through goes
-    // through the ctx-taking `getTaskFull` (which re-asserts) so the
-    // route stays on the canonical pattern: every public data-layer
+    // join + JSON-agg cost of `getTaskFullWithEdges`. The 200 fall-through
+    // goes through the ctx-taking `getTaskFullWithEdges` (which re-asserts)
+    // so the route stays on the canonical pattern: every public data-layer
     // call authorizes itself.
     const access = await assertTaskAccess(taskId, ctx);
 
@@ -51,7 +51,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
       return conditionalRespond(req, null, access.updatedAt);
     }
 
-    const task = await getTaskFull(ctx, taskId);
+    const task = await getTaskFullWithEdges(ctx, taskId);
 
     if (broker.hasConnections(ctx.userId)) {
       broker.register(ctx.userId, `task:${taskId}`, TASK_SUBSCRIPTION_TTL_MS);

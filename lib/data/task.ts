@@ -51,10 +51,13 @@ import {
 import type {
   AssigneeRef,
   MyTask,
+  TaskEdgeRef,
   TaskFull,
+  TaskFullWithEdges,
   TaskLinkRef,
   TaskSlim,
 } from "@/lib/data/views";
+import { edgeRefColumns } from "@/lib/data/edge-columns";
 import { projectColor } from "@/lib/ui/project-color";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
@@ -488,6 +491,57 @@ export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
       createdAt: new Date(l.createdAt),
     })),
   };
+}
+
+/**
+ * Fetch a task's connected edges in the slim `note`-carrying shape the
+ * detail relationships list renders. RLS scopes the rows to edges whose
+ * endpoints are both member-visible.
+ *
+ * UNCHECKED: no `assertTaskAccessTx` call — callers must assert access before
+ * invoking. The `Unchecked` suffix is the contract; do not strip it when
+ * wrapping or re-exporting.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param taskId - UUID of the task (matched on either endpoint).
+ * @returns Connected edges projected to {@link TaskEdgeRef}.
+ */
+function fetchTaskEdgeRefsUnchecked(
+  tx: Tx,
+  taskId: string,
+): Promise<TaskEdgeRef[]> {
+  return tx
+    .select(edgeRefColumns)
+    .from(taskEdges)
+    .where(
+      or(
+        eq(taskEdges.sourceTaskId, taskId),
+        eq(taskEdges.targetTaskId, taskId),
+      ),
+    );
+}
+
+/**
+ * {@link getTaskFull} plus the task's connected edges. Only the task-detail
+ * endpoint renders relationships, so the universal `getTaskFull(Tx)` stays
+ * lean and this variant layers the edge fetch on for that single caller.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @returns Full task row plus connected edges (slim + `note`).
+ * @throws ForbiddenError when the caller is not a member of the task's team.
+ */
+export async function getTaskFullWithEdges(
+  ctx: AuthContext,
+  taskId: string,
+): Promise<TaskFullWithEdges> {
+  return withUserContext(ctx.userId, async (tx) => {
+    const [full, edges] = await Promise.all([
+      getTaskFullTx(tx, taskId),
+      fetchTaskEdgeRefsUnchecked(tx, taskId),
+    ]);
+    return { ...full, edges };
+  });
 }
 
 /**

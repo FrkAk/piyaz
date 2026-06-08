@@ -42,13 +42,19 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
 
   const sqlc = superuserPool();
   try {
-    await sqlc`
+    const [t1] = await sqlc<{ id: string }[]>`
       INSERT INTO tasks ("project_id", "title", "sequence_number", "description", "implementation_plan")
       VALUES (${f.projectId}, 'T1', 1, 'desc body', 'plan body')
+      RETURNING id
     `;
-    await sqlc`
+    const [t2] = await sqlc<{ id: string }[]>`
       INSERT INTO tasks ("project_id", "title", "sequence_number")
       VALUES (${f.projectId}, 'T2', 2)
+      RETURNING id
+    `;
+    await sqlc`
+      INSERT INTO task_edges ("source_task_id", "target_task_id", "edge_type", "note")
+      VALUES (${t1.id}, ${t2.id}, 'relates_to', 'large edge note')
     `;
   } finally {
     await sqlc.end({ timeout: 5 });
@@ -97,6 +103,13 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
   // that `getProjectGraphSlim` actually invokes the server-side derivation.
   expect(t1?.state).toBe("draft");
   expect(t2?.state).toBe("draft");
+  expect(g.edges.length).toBe(1);
+  expect(Object.keys(g.edges[0]).sort()).toEqual([
+    "edgeType",
+    "id",
+    "sourceTaskId",
+    "targetTaskId",
+  ]);
 });
 
 test("getProjectChrome returns header fields plus task count", async () => {

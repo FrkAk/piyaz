@@ -112,8 +112,19 @@ export type TaskGraphSlim = Pick<
   assigneeUserIds: string[];
 };
 
-/** Slim project graph for the workspace canvas + list. Edges are returned
- * in full (they have no heavy fields), tasks are slim. */
+/** Slim edge entry returned by the project graph payload. */
+export type TaskGraphEdge = Pick<
+  TaskEdge,
+  "id" | "sourceTaskId" | "targetTaskId" | "edgeType"
+>;
+
+/** Connected edge carried on {@link TaskFullWithEdges} — slim graph edge plus
+ * the `note` the detail relationships list renders. Omits the timestamp fields
+ * so the JSON shape matches the type across the API boundary. */
+export type TaskEdgeRef = TaskGraphEdge & Pick<TaskEdge, "note">;
+
+/** Slim project graph for the workspace canvas + list. Edges and tasks are
+ * projected down to the fields the graph surfaces render. */
 export type ProjectGraphSlim = {
   project: Pick<
     Project,
@@ -126,7 +137,7 @@ export type ProjectGraphSlim = {
     | "categories"
   >;
   tasks: TaskGraphSlim[];
-  edges: TaskEdge[];
+  edges: TaskGraphEdge[];
 };
 
 /**
@@ -226,3 +237,8 @@ export type TaskFull = Task & {
   decisions: Decision[];
   links: TaskLinkRef[];
 };
+
+/** {@link TaskFull} plus the task's connected edges (slim + `note`). Only the
+ * task-detail endpoint needs edges, so they are layered on here rather than on
+ * the universal {@link TaskFull} that every `getTaskFull` caller pays for. */
+export type TaskFullWithEdges = TaskFull & { edges: TaskEdgeRef[] };

@@ -20,8 +20,11 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { DeferredLoadingSpinner } from "@/components/shared/DeferredLoadingSpinner";
 import { projectKeys, taskKeys } from "@/lib/query/keys";
 import { fetchProjectGraph, fetchTaskBody } from "@/lib/query/queries";
-import type { ProjectGraphSlim, TaskGraphSlim } from "@/lib/data/views";
-import type { TaskEdge } from "@/lib/db/schema";
+import type {
+  ProjectGraphSlim,
+  TaskEdgeRef,
+  TaskGraphSlim,
+} from "@/lib/data/views";
 
 /** Workspace view identifier — mirrors the navigator's FilterBar value. */
 type WorkspaceView = "structure" | "graph";
@@ -273,7 +276,6 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
       taskSlim={null}
       detail={<EmptyDetail />}
       propRail={null}
-      taskEdges={[]}
     />
   );
 }
@@ -348,15 +350,13 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
     queryFn: fetchTaskBody(qc, projectId, taskId),
   });
 
-  const taskEdges = useMemo(
-    () =>
-      graph.edges.filter(
-        (e) => e.sourceTaskId === taskId || e.targetTaskId === taskId,
-      ),
-    [graph.edges, taskId],
-  );
-
   const taskFullMatches = selectedTaskFull && selectedTaskFull.id === taskId;
+  const taskEdges: TaskEdgeRef[] =
+    taskFullMatches && selectedTaskFull
+      ? selectedTaskFull.edges
+      : graph.edges
+          .filter((e) => e.sourceTaskId === taskId || e.targetTaskId === taskId)
+          .map((e) => ({ ...e, note: "" }));
 
   const detail =
     taskFullMatches && selectedTaskFull ? (
@@ -417,7 +417,6 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
       taskSlim={taskSlim}
       detail={detail}
       propRail={propRail}
-      taskEdges={taskEdges}
     />
   );
 }
@@ -426,7 +425,6 @@ interface WorkspaceLayoutProps extends SharedLayoutProps {
   taskSlim: TaskGraphSlim | null;
   detail: React.ReactNode;
   propRail: React.ReactNode;
-  taskEdges: TaskEdge[];
 }
 
 /**

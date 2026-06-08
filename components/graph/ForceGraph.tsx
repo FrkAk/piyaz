@@ -9,8 +9,7 @@ import {
   useMemo,
 } from "react";
 import { quadtree } from "d3-quadtree";
-import type { TaskEdge } from "@/lib/db/schema";
-import type { TaskGraphSlim } from "@/lib/data/views";
+import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
 import type { EdgeType } from "@/lib/types";
 import { useForceSimulation } from "./useForceSimulation";
 import { GraphControls } from "./GraphControls";
@@ -42,8 +41,8 @@ interface ForceGraphProps {
   projectId: string;
   /** @param tasks - Slim task records (augmented with taskRef) to visualize. */
   tasks: TaskGraphSlim[];
-  /** @param edges - TaskEdge records defining relationships. */
-  edges: TaskEdge[];
+  /** @param edges - Slim edge records defining relationships. */
+  edges: TaskGraphEdge[];
   /** @param selectedNodeId - Currently selected node ID, or null. */
   selectedNodeId: string | null;
   /** @param onSelectNode - Called when a graph node is clicked. */

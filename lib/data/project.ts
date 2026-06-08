@@ -1,15 +1,6 @@
 import "server-only";
 
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  getTableColumns,
-  inArray,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
 import { executeRaw, type Conn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
@@ -19,6 +10,7 @@ import {
   assigneeUserIdsExpr,
   hasCriteriaExpr,
 } from "@/lib/data/task";
+import { slimEdgeColumns } from "@/lib/data/edge-columns";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
 import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
@@ -89,9 +81,11 @@ function makeHistoryEntry(
  * that only the per-task detail surface needs — those are fetched lazily
  * via `GET /api/task/[id]`.
  *
- * Two column-projected selects run under `Promise.all`; the edges select
- * uses a subquery over `tasks.project_id` so it can fire concurrently with
- * the tasks select on different pool connections.
+ * Two column-projected selects run under `Promise.all`. The edges select
+ * filters on `source_task_id` alone: the `task_edges_same_project_immutable`
+ * trigger guarantees both endpoints share a project, so the source-side
+ * index scan returns every intra-project edge exactly once — no second arm
+ * or de-dupe needed.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -127,14 +121,10 @@ export async function getProjectGraphSlim(
       .orderBy(asc(tasks.order));
 
     const edgesQ = tx
-      .select()
+      .select(slimEdgeColumns)
       .from(taskEdges)
-      .where(
-        or(
-          sql`${taskEdges.sourceTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
-          sql`${taskEdges.targetTaskId} IN (SELECT id FROM ${tasks} WHERE ${tasks.projectId} = ${projectId})`,
-        ),
-      );
+      .innerJoin(tasks, eq(taskEdges.sourceTaskId, tasks.id))
+      .where(eq(tasks.projectId, projectId));
 
     const [taskRows, edges] = await Promise.all([tasksQ, edgesQ]);
     const enriched = enrichWithTaskRef(

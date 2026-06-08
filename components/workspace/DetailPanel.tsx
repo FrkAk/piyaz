@@ -1,8 +1,12 @@
 "use client";
 
 import { DetailView } from "./detail/DetailView";
-import type { TaskEdge } from "@/lib/db/schema";
-import type { TaskFull, TaskGraphSlim } from "@/lib/data/views";
+import type {
+  TaskEdgeRef,
+  TaskFull,
+  TaskGraphEdge,
+  TaskGraphSlim,
+} from "@/lib/data/views";
 
 interface DetailPanelProps {
   /** Task UUID. */
@@ -14,9 +18,9 @@ interface DetailPanelProps {
   /** Project display name (breadcrumb). */
   parentName: string;
   /** Edges connected to this task. */
-  edges: TaskEdge[];
-  /** All edges in the project — used by the bundle preview to derive neighbors. */
-  allEdges: TaskEdge[];
+  edges: TaskEdgeRef[];
+  /** All slim edges in the project — used by the bundle preview to derive neighbors. */
+  allEdges: TaskGraphEdge[];
   /** All tasks in the project (slim) — feeds the bundle preview's ready/plannable derivation. */
   allTasks: TaskGraphSlim[];
   /** Map of task IDs to title/status/taskRef. */
