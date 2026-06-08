@@ -498,11 +498,18 @@ export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
  * detail relationships list renders. RLS scopes the rows to edges whose
  * endpoints are both member-visible.
  *
+ * UNCHECKED: no `assertTaskAccessTx` call — callers must assert access before
+ * invoking. The `Unchecked` suffix is the contract; do not strip it when
+ * wrapping or re-exporting.
+ *
  * @param tx - Active RLS transaction handle.
  * @param taskId - UUID of the task (matched on either endpoint).
  * @returns Connected edges projected to {@link TaskEdgeRef}.
  */
-function fetchTaskEdgeRefsTx(tx: Tx, taskId: string): Promise<TaskEdgeRef[]> {
+function fetchTaskEdgeRefsUnchecked(
+  tx: Tx,
+  taskId: string,
+): Promise<TaskEdgeRef[]> {
   return tx
     .select(edgeRefColumns)
     .from(taskEdges)
@@ -531,7 +538,7 @@ export async function getTaskFullWithEdges(
   return withUserContext(ctx.userId, async (tx) => {
     const [full, edges] = await Promise.all([
       getTaskFullTx(tx, taskId),
-      fetchTaskEdgeRefsTx(tx, taskId),
+      fetchTaskEdgeRefsUnchecked(tx, taskId),
     ]);
     return { ...full, edges };
   });

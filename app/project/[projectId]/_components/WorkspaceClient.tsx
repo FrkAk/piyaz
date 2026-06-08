@@ -20,7 +20,11 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { DeferredLoadingSpinner } from "@/components/shared/DeferredLoadingSpinner";
 import { projectKeys, taskKeys } from "@/lib/query/keys";
 import { fetchProjectGraph, fetchTaskBody } from "@/lib/query/queries";
-import type { ProjectGraphSlim, TaskGraphSlim } from "@/lib/data/views";
+import type {
+  ProjectGraphSlim,
+  TaskEdgeRef,
+  TaskGraphSlim,
+} from "@/lib/data/views";
 
 /** Workspace view identifier — mirrors the navigator's FilterBar value. */
 type WorkspaceView = "structure" | "graph";
@@ -347,8 +351,14 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
   });
 
   const taskFullMatches = selectedTaskFull && selectedTaskFull.id === taskId;
-  const taskEdges =
-    taskFullMatches && selectedTaskFull ? selectedTaskFull.edges : [];
+  const taskEdges: TaskEdgeRef[] =
+    taskFullMatches && selectedTaskFull
+      ? selectedTaskFull.edges
+      : graph.edges
+          .filter(
+            (e) => e.sourceTaskId === taskId || e.targetTaskId === taskId,
+          )
+          .map((e) => ({ ...e, note: "" }));
 
   const detail =
     taskFullMatches && selectedTaskFull ? (

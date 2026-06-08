@@ -278,6 +278,7 @@ function buildPrerequisites(
   for (const edge of edges) {
     if (edge.sourceTaskId !== taskId || edge.edgeType !== "depends_on")
       continue;
+    if (edge.targetTaskId === taskId) continue;
     const info = taskMap.get(edge.targetTaskId);
     if (!info) continue;
     out.push({
@@ -313,7 +314,7 @@ function buildNeighbors(
         : edge.targetTaskId === taskId
           ? edge.sourceTaskId
           : null;
-    if (!otherId || seen.has(otherId)) continue;
+    if (!otherId || otherId === taskId || seen.has(otherId)) continue;
     const info = taskMap.get(otherId);
     if (!info) continue;
     seen.add(otherId);
@@ -344,6 +345,7 @@ function buildDownstream(
   for (const edge of edges) {
     if (edge.edgeType !== "depends_on" || edge.targetTaskId !== taskId)
       continue;
+    if (edge.sourceTaskId === taskId) continue;
     const info = taskMap.get(edge.sourceTaskId);
     if (!info) continue;
     out.push({

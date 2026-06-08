@@ -120,15 +120,11 @@ export async function getProjectGraphSlim(
       .where(eq(tasks.projectId, projectId))
       .orderBy(asc(tasks.order));
 
-    const projectTaskIdsQ = tx
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(eq(tasks.projectId, projectId));
-
     const edgesQ = tx
       .select(slimEdgeColumns)
       .from(taskEdges)
-      .where(inArray(taskEdges.sourceTaskId, projectTaskIdsQ));
+      .innerJoin(tasks, eq(taskEdges.sourceTaskId, tasks.id))
+      .where(eq(tasks.projectId, projectId));
 
     const [taskRows, edges] = await Promise.all([tasksQ, edgesQ]);
     const enriched = enrichWithTaskRef(
