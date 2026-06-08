@@ -118,8 +118,8 @@ export type TaskGraphEdge = Pick<
   "id" | "sourceTaskId" | "targetTaskId" | "edgeType"
 >;
 
-/** Connected edge carried on {@link TaskFull} — slim graph edge plus the
- * `note` the detail relationships list renders. Omits the timestamp fields
+/** Connected edge carried on {@link TaskFullWithEdges} — slim graph edge plus
+ * the `note` the detail relationships list renders. Omits the timestamp fields
  * so the JSON shape matches the type across the API boundary. */
 export type TaskEdgeRef = TaskGraphEdge & Pick<TaskEdge, "note">;
 
@@ -236,5 +236,9 @@ export type TaskFull = Task & {
   acceptanceCriteria: AcceptanceCriterion[];
   decisions: Decision[];
   links: TaskLinkRef[];
-  edges: TaskEdgeRef[];
 };
+
+/** {@link TaskFull} plus the task's connected edges (slim + `note`). Only the
+ * task-detail endpoint needs edges, so they are layered on here rather than on
+ * the universal {@link TaskFull} that every `getTaskFull` caller pays for. */
+export type TaskFullWithEdges = TaskFull & { edges: TaskEdgeRef[] };

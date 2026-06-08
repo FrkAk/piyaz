@@ -1,7 +1,6 @@
 import "server-only";
 
 import { and, asc, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
-import { union } from "drizzle-orm/pg-core";
 import { serviceRoleDb } from "@/lib/db";
 import { executeRaw, type Conn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
@@ -82,9 +81,11 @@ function makeHistoryEntry(
  * that only the per-task detail surface needs — those are fetched lazily
  * via `GET /api/task/[id]`.
  *
- * Two column-projected selects run under `Promise.all`; the edges select
- * uses `UNION` over source/target task ids so each arm can use the matching
- * endpoint index while intra-project edges are de-duplicated in SQL.
+ * Two column-projected selects run under `Promise.all`. The edges select
+ * filters on `source_task_id` alone: the `task_edges_same_project_immutable`
+ * trigger guarantees both endpoints share a project, so the source-side
+ * index scan returns every intra-project edge exactly once — no second arm
+ * or de-dupe needed.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -124,17 +125,10 @@ export async function getProjectGraphSlim(
       .from(tasks)
       .where(eq(tasks.projectId, projectId));
 
-    const sourceEdgesQ = tx
+    const edgesQ = tx
       .select(slimEdgeColumns)
       .from(taskEdges)
       .where(inArray(taskEdges.sourceTaskId, projectTaskIdsQ));
-
-    const targetEdgesQ = tx
-      .select(slimEdgeColumns)
-      .from(taskEdges)
-      .where(inArray(taskEdges.targetTaskId, projectTaskIdsQ));
-
-    const edgesQ = union(sourceEdgesQ, targetEdgesQ);
 
     const [taskRows, edges] = await Promise.all([tasksQ, edgesQ]);
     const enriched = enrichWithTaskRef(

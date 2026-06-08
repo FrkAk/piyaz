@@ -4,7 +4,7 @@ import { projectKeys, taskKeys } from "@/lib/query/keys";
 import type {
   ProjectGraphSlim,
   ProjectListEntry,
-  TaskFull,
+  TaskFullWithEdges,
 } from "@/lib/data/views";
 
 /** Three-bundle markdown payload returned by `/api/task/[id]/context`. */
@@ -64,9 +64,9 @@ export function fetchTaskBody(
   qc: QueryClient,
   projectId: string,
   taskId: string,
-): Fn<TaskFull> {
+): Fn<TaskFullWithEdges> {
   return (ctx) =>
-    conditionalFetch<TaskFull>({
+    conditionalFetch<TaskFullWithEdges>({
       url: `/api/task/${taskId}`,
       queryKey: taskKeys.detail(projectId, taskId),
       queryClient: qc,

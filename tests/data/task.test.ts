@@ -12,6 +12,7 @@ import {
   listMyTasks,
   getTaskSlim,
   getTaskFull,
+  getTaskFullWithEdges,
 } from "@/lib/data/task";
 import { getProjectMaxUpdatedAt } from "@/lib/data/project";
 import { makeAuthContext } from "@/lib/auth/context";
@@ -1099,10 +1100,12 @@ test("getTaskFull returns empty arrays (not null) when no children exist", async
   expect(full.decisions).toEqual([]);
   expect(full.assignees).toEqual([]);
   expect(full.links).toEqual([]);
-  expect(full.edges).toEqual([]);
+
+  const withEdges = await getTaskFullWithEdges(ctx, created.id);
+  expect(withEdges.edges).toEqual([]);
 });
 
-test("getTaskFull returns connected edges with notes", async () => {
+test("getTaskFullWithEdges returns connected edges with notes", async () => {
   const f = await seedUserOrgProject("full-edges");
   const ctx = makeAuthContext(f.userId);
   const source = await createTask(ctx, {
@@ -1124,7 +1127,7 @@ test("getTaskFull returns connected edges with notes", async () => {
     await sqlc.end({ timeout: 5 });
   }
 
-  const full = await getTaskFull(ctx, source.id);
+  const full = await getTaskFullWithEdges(ctx, source.id);
 
   expect(full.edges.length).toBe(1);
   expect(full.edges[0].sourceTaskId).toBe(source.id);
