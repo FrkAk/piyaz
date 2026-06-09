@@ -48,6 +48,7 @@ import {
   assertProjectAccess,
   assertProjectAccessTx,
   isUuid,
+  type ProjectAccess,
 } from "@/lib/auth/authorization";
 import {
   emitProjectDeleted,
@@ -89,15 +90,19 @@ function makeHistoryEntry(
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
+ * @param access - Optional pre-resolved access row so the workspace render
+ *   reuses one project-access read across the layout and page instead of
+ *   reading the row again here. Omit to resolve it in-frame.
  * @returns Slim project metadata + slim tasks + slim edges.
  * @throws ForbiddenError on missing or cross-team project.
  */
 export async function getProjectGraphSlim(
   ctx: AuthContext,
   projectId: string,
+  access?: ProjectAccess,
 ): Promise<ProjectGraphSlim> {
   return withUserContext(ctx.userId, async (tx) => {
-    const { project } = await assertProjectAccessTx(tx, projectId);
+    const { project } = access ?? (await assertProjectAccessTx(tx, projectId));
 
     const tasksQ = tx
       .select({
@@ -183,19 +188,23 @@ export async function getProjectGraphSlim(
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
+ * @param access - Optional pre-resolved access row so the workspace render
+ *   reuses one project-access read across the layout and page instead of
+ *   reading the row again here. Omit to resolve it in-frame.
  * @returns Chrome view of the project.
  * @throws ForbiddenError on missing or cross-team project.
  */
 export async function getProjectChrome(
   ctx: AuthContext,
   projectId: string,
+  access?: ProjectAccess,
 ): Promise<ProjectChrome> {
   return withUserContext(ctx.userId, async (tx) => {
     const {
       project,
       memberRole,
       organization: org,
-    } = await assertProjectAccessTx(tx, projectId);
+    } = access ?? (await assertProjectAccessTx(tx, projectId));
 
     const [{ count }] = await tx
       .select({ count: sql<number>`count(*)::int` })

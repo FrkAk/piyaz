@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import type { AuthContext } from "@/lib/auth/context";
 import type { Tx } from "@/lib/db/rls";
 import {
@@ -131,6 +132,31 @@ export async function assertProjectAccess(
   }
   return access;
 }
+
+/**
+ * Membership-gated project access row, memoized for the lifetime of one RSC
+ * request. Keyed on `(userId, projectId)` strings — not the per-call
+ * `AuthContext` object — so the workspace layout and page share a single
+ * project-access read per navigation. Same access boundary as
+ * {@link assertProjectAccess}: RLS still scopes the read and the membership
+ * JOIN still gates it; missing or cross-team projects raise
+ * {@link ForbiddenError} (anti-enumeration 404).
+ *
+ * @param userId - Verified user id from the request's auth context.
+ * @param projectId - UUID of the project to authorize.
+ * @returns The access row with the project, caller role, and owning team.
+ * @throws ForbiddenError on malformed, missing, or cross-team project.
+ */
+export const loadProjectAccess = cache(
+  async (userId: string, projectId: string): Promise<ProjectAccess> => {
+    if (!isUuid(projectId)) {
+      throw new ForbiddenError("Forbidden", "project", projectId);
+    }
+    const access = await findProjectAccess(userId, projectId);
+    if (!access) throw new ForbiddenError("Forbidden", "project", projectId);
+    return access;
+  },
+);
 
 /**
  * {@link assertProjectAccess} on a caller-supplied tx so the access
