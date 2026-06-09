@@ -164,22 +164,6 @@ const shared: SharedGroup[] = [
 
 const fieldSyncs: FieldSync[] = [
   {
-    name: "version",
-    canonicalPath: "plugins/claude-code/.claude-plugin/plugin.json",
-    canonicalJsonPath: ["version"],
-    copies: [
-      {
-        path: "plugins/codex/.codex-plugin/plugin.json",
-        jsonPath: ["version"],
-      },
-      {
-        path: "plugins/cursor/.cursor-plugin/plugin.json",
-        jsonPath: ["version"],
-      },
-      { path: "plugins/antigravity/plugin.json", jsonPath: ["version"] },
-    ],
-  },
-  {
     name: "description",
     canonicalPath: "plugins/claude-code/.claude-plugin/plugin.json",
     canonicalJsonPath: ["description"],

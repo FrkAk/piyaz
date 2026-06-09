@@ -25,11 +25,7 @@
     "longDescription": "Use Mymir to keep Codex oriented across project sessions. It tracks projects, tasks, dependency edges, implementation decisions, execution records, and stage-specific context so agents can find what is ready, what is blocked, and what to do next.",
     "developerName": "Mymir",
     "category": "Coding",
-    "capabilities": [
-      "Interactive",
-      "Read",
-      "Write"
-    ],
+    "capabilities": ["Interactive", "Read", "Write"],
     "websiteURL": "https://www.mymir.dev",
     "defaultPrompt": [
       "Use $mymir to show what's ready, blocked, and next.",
