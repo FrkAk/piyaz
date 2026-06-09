@@ -79,7 +79,9 @@ describe("buildAgentContext under app_user", () => {
     const fx = await seedRichContextTask("agent-ctx-golden");
     const ctx = makeAuthContext(fx.userId);
     const result = await buildAgentContext(ctx, fx.taskId);
-    expect(normalizeContextGolden(result, "agent-ctx-golden")).toMatchSnapshot();
+    expect(
+      normalizeContextGolden(result, "agent-ctx-golden"),
+    ).toMatchSnapshot();
   });
 
   test("rejects cross-team callers (RLS isolation)", async () => {

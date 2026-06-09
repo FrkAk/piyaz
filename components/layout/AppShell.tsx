@@ -2,7 +2,10 @@ import { type ReactNode } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
-import { loadSidebarProjects, loadUserTeams } from "@/lib/server/request-loaders";
+import {
+  loadSidebarProjects,
+  loadUserTeams,
+} from "@/lib/server/request-loaders";
 import {
   Sidebar,
   type SidebarProject,

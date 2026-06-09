@@ -84,7 +84,5 @@ const UUID_PATTERN =
  * @returns The normalized string.
  */
 export function normalizeContextGolden(s: string, suffix: string): string {
-  return s
-    .replaceAll(`PRJ${suffix}`, "PRJ")
-    .replace(UUID_PATTERN, "<uuid>");
+  return s.replaceAll(`PRJ${suffix}`, "PRJ").replace(UUID_PATTERN, "<uuid>");
 }

@@ -1,5 +1,8 @@
 import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
-import { loadSidebarProjects, loadUserTeams } from "@/lib/server/request-loaders";
+import {
+  loadSidebarProjects,
+  loadUserTeams,
+} from "@/lib/server/request-loaders";
 import { requireMembership } from "@/lib/auth/membership";
 import { TopBar } from "@/components/layout/TopBar";
 import { AppShell } from "@/components/layout/AppShell";
