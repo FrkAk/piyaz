@@ -104,6 +104,14 @@ interface PropRailProps {
   onSelectNode: (taskId: string) => void;
   /** Refresh the graph after a mutation. */
   onGraphChange?: () => void;
+  /**
+   * True while the detail query is serving seeded placeholder data. The
+   * `assignees` and `files` props are empty placeholders in this window, so
+   * their rows render as skeletons and the assignee picker is not mounted —
+   * preventing a mutation that would read the empty placeholder and drop the
+   * task's real assignees.
+   */
+  isBodyLoading?: boolean;
 }
 
 /**
@@ -133,6 +141,7 @@ export function PropRail({
   projectName,
   onSelectNode,
   onGraphChange,
+  isBodyLoading = false,
 }: PropRailProps) {
   // Walk `edges` once and produce both directions plus the pre-mapped
   // DepGroup items. Filtering twice per render — once per direction — was
@@ -456,11 +465,15 @@ export function PropRail({
           </RailRow>
 
           <RailRow icon={<IconUser size={11} />} label="Assignees">
-            <AssigneePicker
-              organizationId={organizationId}
-              assignees={assignees}
-              onChange={handleAssigneesChange}
-            />
+            {isBodyLoading ? (
+              <span className="block h-5 w-20 animate-pulse rounded bg-surface-raised/60" />
+            ) : (
+              <AssigneePicker
+                organizationId={organizationId}
+                assignees={assignees}
+                onChange={handleAssigneesChange}
+              />
+            )}
           </RailRow>
 
           <RailRow icon={<IconTag size={11} />} label="Category">
@@ -528,9 +541,14 @@ export function PropRail({
 
         <RailGroup
           label="Files touched"
-          count={files.length > 0 ? files.length : undefined}
+          count={!isBodyLoading && files.length > 0 ? files.length : undefined}
         >
-          {files.length > 0 ? (
+          {isBodyLoading ? (
+            <div className="space-y-1">
+              <div className="h-5 w-full animate-pulse rounded bg-surface-raised/60" />
+              <div className="h-5 w-2/3 animate-pulse rounded bg-surface-raised/60" />
+            </div>
+          ) : files.length > 0 ? (
             <ul className="space-y-1">
               {files.map((path) => (
                 <FileChip key={path} path={path} />

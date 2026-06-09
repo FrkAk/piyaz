@@ -61,6 +61,12 @@ interface DetailViewProps {
   propRailOpen?: boolean;
   /** Toggle the properties rail open/closed; when omitted the toggle is hidden. */
   onTogglePropRail?: () => void;
+  /**
+   * When true the header is rendered from seeded placeholder data and the
+   * body sections are replaced with skeleton blocks while the full task
+   * fetch resolves. Set from `isPlaceholderData` on the detail `useQuery`.
+   */
+  isBodyLoading?: boolean;
 }
 
 /**
@@ -89,6 +95,7 @@ export function DetailView({
   onToggleNavigator,
   propRailOpen,
   onTogglePropRail,
+  isBodyLoading = false,
 }: DetailViewProps) {
   // Read the server-derived `state` for this task off the slim payload —
   // the same projection the canvas, rail, and structure list see. Falls
@@ -133,73 +140,79 @@ export function DetailView({
       />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
-          <DescriptionSection
-            taskId={taskId}
-            description={task.description}
-            onGraphChange={onGraphChange}
-          />
-
-          <CriteriaSection
-            taskId={taskId}
-            criteria={task.acceptanceCriteria}
-            onGraphChange={onGraphChange}
-          />
-
-          <section className="mb-7">
-            <SectionHeader
-              label="Context bundle preview"
-              badge={
-                <BundleStageBadge
-                  status={task.status}
-                  isReady={ready}
-                  isPlannable={plannable}
-                />
-              }
-            />
-            <BundlePreview
+        {isBodyLoading ? (
+          <DetailBodySkeleton />
+        ) : (
+          <div className="mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
+            <DescriptionSection
               taskId={taskId}
-              projectId={projectId}
-              status={task.status}
-              isReady={ready}
-              isPlannable={plannable}
-              spec={task.description}
-              criteria={task.acceptanceCriteria ?? []}
-              plan={task.implementationPlan}
-              prerequisites={prerequisites}
-              neighbors={neighbors}
-              downstream={downstream}
-              decisions={task.decisions ?? []}
-              files={Array.from(new Set((task.files as string[] | null) ?? []))}
-              executionRecord={task.executionRecord}
-              onSelectTask={onSelectNode}
+              description={task.description}
+              onGraphChange={onGraphChange}
             />
-          </section>
 
-          <DecisionsSection
-            taskId={taskId}
-            decisions={task.decisions}
-            onGraphChange={onGraphChange}
-          />
+            <CriteriaSection
+              taskId={taskId}
+              criteria={task.acceptanceCriteria}
+              onGraphChange={onGraphChange}
+            />
 
-          <RelationshipsSection
-            taskId={taskId}
-            edges={edges}
-            taskMap={taskMap}
-            onSelectNode={onSelectNode}
-            onGraphChange={onGraphChange}
-          />
+            <section className="mb-7">
+              <SectionHeader
+                label="Context bundle preview"
+                badge={
+                  <BundleStageBadge
+                    status={task.status}
+                    isReady={ready}
+                    isPlannable={plannable}
+                  />
+                }
+              />
+              <BundlePreview
+                taskId={taskId}
+                projectId={projectId}
+                status={task.status}
+                isReady={ready}
+                isPlannable={plannable}
+                spec={task.description}
+                criteria={task.acceptanceCriteria ?? []}
+                plan={task.implementationPlan}
+                prerequisites={prerequisites}
+                neighbors={neighbors}
+                downstream={downstream}
+                decisions={task.decisions ?? []}
+                files={Array.from(
+                  new Set((task.files as string[] | null) ?? []),
+                )}
+                executionRecord={task.executionRecord}
+                onSelectTask={onSelectNode}
+              />
+            </section>
 
-          <LinksSection
-            taskId={taskId}
-            links={(task.links as TaskLinkRef[] | undefined) ?? []}
-            onGraphChange={onGraphChange}
-          />
+            <DecisionsSection
+              taskId={taskId}
+              decisions={task.decisions}
+              onGraphChange={onGraphChange}
+            />
 
-          <ExecutionSection record={task.executionRecord} />
+            <RelationshipsSection
+              taskId={taskId}
+              edges={edges}
+              taskMap={taskMap}
+              onSelectNode={onSelectNode}
+              onGraphChange={onGraphChange}
+            />
 
-          <ActivitySection history={task.history} />
-        </div>
+            <LinksSection
+              taskId={taskId}
+              links={(task.links as TaskLinkRef[] | undefined) ?? []}
+              onGraphChange={onGraphChange}
+            />
+
+            <ExecutionSection record={task.executionRecord} />
+
+            <ActivitySection history={task.history} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -356,6 +369,37 @@ function buildDownstream(
     });
   }
   return out;
+}
+
+/**
+ * Skeleton placeholder for the detail body while `isPlaceholderData` is
+ * true. Mirrors the rough height/rhythm of the real body sections so the
+ * layout stays stable when the full fetch resolves. Uses the same
+ * `animate-pulse bg-surface-raised` pattern as the settings loading shell.
+ *
+ * @returns Skeleton element rendered inside the scrollable body area.
+ */
+function DetailBodySkeleton() {
+  return (
+    <div className="mx-auto max-w-[720px] space-y-7 px-8 pt-6 pb-[60px]">
+      <div className="space-y-2">
+        <div className="h-3 w-20 animate-pulse rounded bg-surface-raised/60" />
+        <div className="h-24 animate-pulse rounded-[10px] bg-surface-raised/60" />
+      </div>
+      <div className="space-y-2">
+        <div className="h-3 w-28 animate-pulse rounded bg-surface-raised/60" />
+        <div className="h-16 animate-pulse rounded-[10px] bg-surface-raised/60" />
+      </div>
+      <div className="space-y-2">
+        <div className="h-3 w-36 animate-pulse rounded bg-surface-raised/60" />
+        <div className="h-20 animate-pulse rounded-[10px] bg-surface-raised/60" />
+      </div>
+      <div className="space-y-2">
+        <div className="h-3 w-24 animate-pulse rounded bg-surface-raised/60" />
+        <div className="h-12 animate-pulse rounded-[10px] bg-surface-raised/60" />
+      </div>
+    </div>
+  );
 }
 
 export default DetailView;

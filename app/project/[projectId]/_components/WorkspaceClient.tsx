@@ -23,6 +23,7 @@ import { fetchProjectGraph, fetchTaskBody } from "@/lib/query/queries";
 import type {
   ProjectGraphSlim,
   TaskEdgeRef,
+  TaskFullWithEdges,
   TaskGraphSlim,
 } from "@/lib/data/views";
 
@@ -345,14 +346,46 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
   const qc = useQueryClient();
   const taskId = taskSlim.id;
 
-  const { data: selectedTaskFull } = useQuery({
+  const { data: selectedTaskFull, isPlaceholderData } = useQuery({
     queryKey: taskKeys.detail(projectId, taskId),
     queryFn: fetchTaskBody(qc, projectId, taskId),
+    placeholderData: (): TaskFullWithEdges | undefined => {
+      const cached = qc.getQueryData<ProjectGraphSlim>(
+        projectKeys.graph(projectId),
+      );
+      const slim = cached?.tasks.find((t) => t.id === taskId);
+      if (!slim) return undefined;
+      return {
+        id: slim.id,
+        projectId,
+        title: slim.title,
+        sequenceNumber: 0,
+        description: "",
+        status: slim.status,
+        order: slim.order,
+        category: slim.category ?? null,
+        implementationPlan: null,
+        executionRecord: null,
+        tags: slim.tags ?? [],
+        priority: slim.priority ?? null,
+        estimate: slim.estimate ?? null,
+        files: [],
+        history: [],
+        createdAt: new Date(),
+        updatedAt: slim.updatedAt,
+        taskRef: slim.taskRef,
+        assignees: [],
+        acceptanceCriteria: [],
+        decisions: [],
+        links: [],
+        edges: [],
+      };
+    },
   });
 
   const taskFullMatches = selectedTaskFull && selectedTaskFull.id === taskId;
   const taskEdges: TaskEdgeRef[] =
-    taskFullMatches && selectedTaskFull
+    taskFullMatches && selectedTaskFull && !isPlaceholderData
       ? selectedTaskFull.edges
       : graph.edges
           .filter((e) => e.sourceTaskId === taskId || e.targetTaskId === taskId)
@@ -382,6 +415,7 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
         onTogglePropRail={
           showPropRailToggle ? () => setPropRailOpen((v) => !v) : undefined
         }
+        isBodyLoading={isPlaceholderData}
       />
     ) : (
       <DetailLoading />
@@ -408,6 +442,7 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
         projectName={graph.project.title}
         onSelectNode={handleSelectNode}
         onGraphChange={refreshAll}
+        isBodyLoading={isPlaceholderData}
       />
     ) : null;
 
