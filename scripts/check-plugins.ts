@@ -49,6 +49,14 @@ const platformSubs: PlatformSubs[] = [
       AskUserQuestion: "ask question tool",
     },
   },
+  {
+    pathPrefix: "plugins/antigravity/",
+    subs: {
+      "the AskUserQuestion tool":
+        "the ask_user tool (prefer type:'choice'; type:'yesno' for confirmations; type:'text' only when the answer is genuinely open)",
+      AskUserQuestion: "ask_user",
+    },
+  },
 ];
 
 const shared: SharedGroup[] = [
@@ -59,6 +67,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/mymir/SKILL.md",
       "plugins/gemini/skills/mymir/SKILL.md",
       "plugins/cursor/skills/mymir/SKILL.md",
+      "plugins/antigravity/skills/mymir/SKILL.md",
     ],
   },
   {
@@ -68,6 +77,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/mymir/references/conventions.md",
       "plugins/gemini/skills/mymir/references/conventions.md",
       "plugins/cursor/skills/mymir/references/conventions.md",
+      "plugins/antigravity/skills/mymir/references/conventions.md",
     ],
   },
   {
@@ -77,6 +87,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/mymir/references/artifacts.md",
       "plugins/gemini/skills/mymir/references/artifacts.md",
       "plugins/cursor/skills/mymir/references/artifacts.md",
+      "plugins/antigravity/skills/mymir/references/artifacts.md",
     ],
   },
   {
@@ -86,6 +97,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/mymir/references/lifecycle.md",
       "plugins/gemini/skills/mymir/references/lifecycle.md",
       "plugins/cursor/skills/mymir/references/lifecycle.md",
+      "plugins/antigravity/skills/mymir/references/lifecycle.md",
     ],
   },
   {
@@ -95,6 +107,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/mymir/references/resilience.md",
       "plugins/gemini/skills/mymir/references/resilience.md",
       "plugins/cursor/skills/mymir/references/resilience.md",
+      "plugins/antigravity/skills/mymir/references/resilience.md",
     ],
   },
   {
@@ -104,6 +117,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/brainstorm/SKILL.md",
       "plugins/gemini/skills/brainstorm/SKILL.md",
       "plugins/cursor/skills/brainstorm/SKILL.md",
+      "plugins/antigravity/skills/brainstorm/SKILL.md",
     ],
   },
   {
@@ -113,6 +127,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/decompose/SKILL.md",
       "plugins/gemini/skills/decompose/SKILL.md",
       "plugins/cursor/skills/decompose/SKILL.md",
+      "plugins/antigravity/skills/decompose/SKILL.md",
     ],
   },
   {
@@ -122,6 +137,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/decompose-task/SKILL.md",
       "plugins/gemini/skills/decompose-task/SKILL.md",
       "plugins/cursor/skills/decompose-task/SKILL.md",
+      "plugins/antigravity/skills/decompose-task/SKILL.md",
     ],
   },
   {
@@ -131,6 +147,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/decompose-feature/SKILL.md",
       "plugins/gemini/skills/decompose-feature/SKILL.md",
       "plugins/cursor/skills/decompose-feature/SKILL.md",
+      "plugins/antigravity/skills/decompose-feature/SKILL.md",
     ],
   },
   {
@@ -140,6 +157,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/manage/SKILL.md",
       "plugins/gemini/skills/manage/SKILL.md",
       "plugins/cursor/skills/manage/SKILL.md",
+      "plugins/antigravity/skills/manage/SKILL.md",
     ],
   },
   {
@@ -149,6 +167,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/onboarding/SKILL.md",
       "plugins/gemini/skills/onboarding/SKILL.md",
       "plugins/cursor/skills/onboarding/SKILL.md",
+      "plugins/antigravity/skills/onboarding/SKILL.md",
     ],
   },
   {
@@ -158,6 +177,7 @@ const shared: SharedGroup[] = [
       "plugins/codex/skills/review/SKILL.md",
       "plugins/gemini/skills/review/SKILL.md",
       "plugins/cursor/skills/review/SKILL.md",
+      "plugins/antigravity/skills/review/SKILL.md",
     ],
   },
 ];
@@ -177,6 +197,7 @@ const fieldSyncs: FieldSync[] = [
         path: "plugins/cursor/.cursor-plugin/plugin.json",
         jsonPath: ["version"],
       },
+      { path: "plugins/antigravity/plugin.json", jsonPath: ["version"] },
     ],
   },
   {
@@ -196,6 +217,7 @@ const fieldSyncs: FieldSync[] = [
         path: "plugins/cursor/.cursor-plugin/plugin.json",
         jsonPath: ["description"],
       },
+      { path: "plugins/antigravity/plugin.json", jsonPath: ["description"] },
     ],
   },
 ];
