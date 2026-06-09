@@ -37,10 +37,10 @@ Then run `/mcp`, select **mymir**, and complete the browser sign-in.
 ### Codex
 
 ```bash
-codex plugin marketplace add FrkAk/mymir --sparse plugins
+codex plugin marketplace add FrkAk/mymir
 ```
 
-Open Codex, run `/plugin`, install **Mymir**, restart, and authenticate when prompted. Invoke the main skill with `$mymir`.
+Open Codex, run `/plugin`, install **Mymir**, restart, and authenticate when prompted. Invoke the main skill with `$mymir`. (If your Codex build can't resolve the root marketplace, append `--sparse plugins`.)
 
 ### Cursor
 

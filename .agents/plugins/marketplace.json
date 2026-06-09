@@ -1,14 +1,15 @@
 {
-  "name": "mymir-local",
+  "name": "mymir",
   "interface": {
-    "displayName": "Mymir Local"
+    "displayName": "Mymir"
   },
   "plugins": [
     {
       "name": "mymir",
       "source": {
-        "source": "local",
-        "path": "./codex"
+        "source": "git-subdir",
+        "url": "https://github.com/FrkAk/mymir.git",
+        "path": "plugins/codex"
       },
       "policy": {
         "installation": "AVAILABLE",

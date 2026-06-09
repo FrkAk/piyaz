@@ -16,10 +16,20 @@ test("Claude root marketplace sources the claude-code subdir via git-subdir", ()
   expect(plugin.source.path).toBe("plugins/claude-code");
 });
 
-test("Codex marketplace is named Mymir and sources the codex subdir", () => {
-  const mkt = readJson("plugins/.agents/plugins/marketplace.json");
+test("Codex root marketplace sources the codex subdir via git-subdir", () => {
+  const mkt = readJson(".agents/plugins/marketplace.json");
   expect(mkt.name).toBe("mymir");
   expect(mkt.interface?.displayName).toBe("Mymir");
+  const plugin = mkt.plugins.find((p: { name: string }) => p.name === "mymir");
+  expect(plugin).toBeDefined();
+  expect(plugin.source.source).toBe("git-subdir");
+  expect(plugin.source.url).toBe("https://github.com/FrkAk/mymir.git");
+  expect(plugin.source.path).toBe("plugins/codex");
+});
+
+test("Codex contributor marketplace is mymir-local sourcing ./codex", () => {
+  const mkt = readJson("plugins/.agents/plugins/marketplace.json");
+  expect(mkt.name).toBe("mymir-local");
   const plugin = mkt.plugins.find((p: { name: string }) => p.name === "mymir");
   expect(plugin).toBeDefined();
   expect(plugin.source.path).toBe("./codex");
