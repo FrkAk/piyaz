@@ -54,13 +54,16 @@ test("Antigravity mcp_config uses serverUrl (never url/httpUrl) for both servers
   expect(local.serverUrl).toContain("localhost:3000");
 });
 
-test("Antigravity bundles the core skills", () => {
+test("Antigravity bundles every shared skill", () => {
   for (const s of [
     "mymir",
     "brainstorm",
     "decompose",
+    "decompose-task",
+    "decompose-feature",
     "manage",
     "onboarding",
+    "review",
   ]) {
     expect(
       existsSync(join(root, `plugins/antigravity/skills/${s}/SKILL.md`)),
