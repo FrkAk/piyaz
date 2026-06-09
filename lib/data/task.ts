@@ -435,6 +435,28 @@ export async function getTaskFull(
 }
 
 /**
+ * Slim membership-gated lookup of a task's `projectId`. Routes through the
+ * {@link assertTaskAccessTx} gate, which both authorizes the caller and
+ * returns `projectId` in one slim row, with no full-task read. Used by the
+ * conditional-GET validator on the context bundle endpoint so the HEAD/304
+ * path never pays for the full task.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @returns The task's `projectId`.
+ * @throws ForbiddenError when the caller cannot access the task.
+ */
+export async function getTaskProjectId(
+  ctx: AuthContext,
+  taskId: string,
+): Promise<string> {
+  return withUserContext(ctx.userId, async (tx) => {
+    const gate = await assertTaskAccessTx(tx, taskId);
+    return gate.projectId;
+  });
+}
+
+/**
  * {@link getTaskFull} on a caller-supplied tx.
  *
  * @param tx - Active RLS transaction handle.
