@@ -771,30 +771,34 @@ export async function getTaskSlim(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch all tasks for a project, ordered by `order`.
- * @param ctx - Resolved auth context.
- * @param projectId - UUID of the project.
- * @returns Ordered array of tasks.
- */
-export async function getProjectTasks(ctx: AuthContext, projectId: string) {
-  return withUserContext(ctx.userId, async (tx) => {
-    await assertProjectAccessTx(tx, projectId);
-    return listProjectTasks(projectId, tx);
-  });
-}
-
-/**
- * Fetch all tasks for a project, ordered by `order`. Internal helper —
- * caller must assert project access before invoking. Used by context
- * assemblers that have already authorized the parent project.
+ * Fetch a slim task projection for project overview assembly, ordered by
+ * `order`. Description is capped at 101 characters in SQL to reduce egress
+ * while preserving the caller's `compress(_, 100)` behavior byte-for-byte:
+ * any source description longer than 100 chars stays longer than 100 after
+ * the cap, so the downstream ellipsis truncation is unchanged. Internal
+ * helper -- caller must assert project access before invoking.
  *
  * @param projectId - UUID of the project.
  * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Ordered array of tasks.
+ * @returns Ordered array of slim task rows with a 101-char description cap.
  */
-export async function listProjectTasks(projectId: string, conn: Conn) {
+export async function listProjectTasksForOverview(
+  projectId: string,
+  conn: Conn,
+) {
   return conn
-    .select()
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      sequenceNumber: tasks.sequenceNumber,
+      order: tasks.order,
+      tags: tasks.tags,
+      category: tasks.category,
+      priority: tasks.priority,
+      estimate: tasks.estimate,
+      description: sql<string>`substring(${tasks.description} from 1 for 101)`,
+    })
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.order));
