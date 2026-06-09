@@ -1,0 +1,63 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`buildAgentContext under app_user golden: fully-populated task renders byte-identical agent context 1`] = `
+"# \`PRJ-2\` Central task
+Tags: \`alpha\`, \`beta\`
+Priority: \`high\`
+Estimate: 3 pts
+PR: https://example.test/pr/1
+
+Central description
+
+
+## Implementation Plan
+
+Step one then step two
+
+
+## Prerequisites (context only — do NOT implement these)
+
+- \`PRJ-1\` **Prereq task** [done] — needs prereq output
+
+
+## Upstream Execution Records
+
+### \`PRJ-1\` Prereq task
+Prereq execution record
+
+
+## Constraints
+
+- [explicit] Use approach X
+
+
+## Done Means
+
+- [ ] It works
+
+
+## Files
+
+- lib/a.ts
+- lib/b.ts
+
+
+## Assignees
+
+- User agent-ctx-golden <useragent-ctx-golden@test.local>
+
+
+## Links
+
+- [pull_request] PR 1 (https://example.test/pr/1)
+
+
+## Execution Record
+
+Built the thing
+
+
+## Downstream (what depends on this task's output)
+
+- \`PRJ-3\` **Downstream task** [draft] — consumes central"
+`;

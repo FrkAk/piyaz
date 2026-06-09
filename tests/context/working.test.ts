@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
-import { buildWorkingContext } from "@/lib/context/_core/working";
+import { seedRichContextTask, normalizeContextGolden } from "./fixtures";
+import {
+  buildWorkingContext,
+  formatWorkingContext,
+} from "@/lib/context/_core/working";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
 
@@ -62,6 +66,16 @@ describe("buildWorkingContext under app_user", () => {
     expect(result.edges[0].edgeType).toBe("relates_to");
     expect(result.edges[0].direction).toBe("outgoing");
     expect(result.edges[0].note).toBe("shares the same auth surface");
+  });
+
+  test("golden: fully-populated task renders byte-identical working context", async () => {
+    const fx = await seedRichContextTask("working-ctx-golden");
+    const ctx = makeAuthContext(fx.userId);
+    const raw = await buildWorkingContext(ctx, fx.taskId);
+    const result = await formatWorkingContext(raw);
+    expect(
+      normalizeContextGolden(result, "working-ctx-golden"),
+    ).toMatchSnapshot();
   });
 
   test("rejects cross-team callers (RLS isolation under app_user)", async () => {

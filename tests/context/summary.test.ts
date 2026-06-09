@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
+import { seedRichContextTask, normalizeContextGolden } from "./fixtures";
 import { buildSummaryContext } from "@/lib/context/_core/summary";
+import { formatSummary } from "@/lib/graph/format-responses";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
 
@@ -39,6 +41,16 @@ describe("buildSummaryContext under app_user", () => {
     expect(result.edgeCount.depends_on).toBe(1);
     expect(result.edges.length).toBe(1);
     expect(result.edges[0].connectedTaskTitle).toBe("Other task");
+  });
+
+  test("golden: fully-populated task renders byte-identical summary (has plan)", async () => {
+    const fx = await seedRichContextTask("summary-ctx-golden");
+    const ctx = makeAuthContext(fx.userId);
+    const result = formatSummary(await buildSummaryContext(ctx, fx.taskId));
+    expect(result).toContain("has plan");
+    expect(
+      normalizeContextGolden(result, "summary-ctx-golden"),
+    ).toMatchSnapshot();
   });
 
   test("rejects cross-team callers (RLS isolation under app_user)", async () => {

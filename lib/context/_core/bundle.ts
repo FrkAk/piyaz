@@ -6,13 +6,14 @@ import {
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
-  getTaskFullTx,
+  getTaskForDepthTx,
   type DependencyTaskInfo,
 } from "@/lib/data/task";
 import { getProjectHeader, type ProjectHeader } from "@/lib/data/project";
 import { getAncestors } from "@/lib/data/traversal";
 import { getTaskEdgesDetailedTx, type DetailedEdge } from "@/lib/data/edge";
 import type { TaskFull } from "@/lib/data/views";
+import type { TaskFetchDepth } from "@/lib/db/raw/fetch-task-full";
 import type { Tx } from "@/lib/db/rls";
 
 /** Downstream-task summary projection shared by the agent + planning cores. */
@@ -78,19 +79,26 @@ export type ContextBundle = PlanningContextData & WorkingContextData;
 /**
  * Resolve the shared dependency closure for a task in one task read and one
  * dependency/downstream traversal. The secondary closure lookups run in
- * parallel off that shared substrate. `getTaskFullTx` asserts access, so
+ * parallel off that shared substrate. `getTaskForDepthTx` asserts access, so
  * callers need no prior gate.
+ *
+ * `depth` scopes ONLY the main task-row column projection — the agent core
+ * fetches at `agent`, the planning core at `planning`. The traversal and every
+ * secondary lookup (dep-task execution records, edge notes, downstream
+ * summaries) are depth-independent and identical across both cores.
  *
  * @param tx Active RLS transaction handle from a `withUserContext` frame.
  * @param taskId UUID of the task.
+ * @param depth Column projection for the main task-row fetch.
  * @returns The resolved closure feeding the agent and planning cores.
  * @throws ForbiddenError When the caller cannot access the task.
  */
 export async function resolveDependencyClosure(
   tx: Tx,
   taskId: string,
+  depth: TaskFetchDepth,
 ): Promise<DependencyClosureData> {
-  const task = await getTaskFullTx(tx, taskId);
+  const task = await getTaskForDepthTx(tx, taskId, depth);
   const { projectId } = task;
 
   const [{ deps, downstream }, upstreamEdgeNotes] = await Promise.all([
@@ -125,7 +133,7 @@ export async function resolvePlanningData(
   tx: Tx,
   taskId: string,
 ): Promise<PlanningContextData> {
-  const closure = await resolveDependencyClosure(tx, taskId);
+  const closure = await resolveDependencyClosure(tx, taskId, "planning");
   const project = await getProjectHeader(closure.task.projectId, tx);
   return { ...closure, project };
 }
@@ -143,7 +151,7 @@ export async function resolveWorkingData(
   tx: Tx,
   taskId: string,
 ): Promise<WorkingContextData> {
-  const task = await getTaskFullTx(tx, taskId);
+  const task = await getTaskForDepthTx(tx, taskId, "working");
   const [detailedEdges, ancestors] = await Promise.all([
     getTaskEdgesDetailedTx(tx, taskId),
     getAncestors(taskId, tx),
@@ -154,7 +162,9 @@ export async function resolveWorkingData(
 /**
  * Resolve the full {@link ContextBundle} for a task in one task read and one
  * dependency traversal, sharing every lookup across the three cores. Used by
- * the route, which feeds all three cores from this single bundle.
+ * the route, which feeds all three cores from this single bundle. Fetches at
+ * `agent` depth, the column superset of the agent, planning, and working
+ * cores, so one read serves all three.
  *
  * @param tx Active RLS transaction handle from a `withUserContext` frame.
  * @param taskId UUID of the task.
@@ -165,7 +175,7 @@ export async function resolveContextBundle(
   tx: Tx,
   taskId: string,
 ): Promise<ContextBundle> {
-  const task = await getTaskFullTx(tx, taskId);
+  const task = await getTaskForDepthTx(tx, taskId, "agent");
   const { projectId } = task;
 
   const [

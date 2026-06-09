@@ -168,7 +168,7 @@ export async function buildAgentContext(
   taskId: string,
 ): Promise<string> {
   return withUserContext(ctx.userId, async (tx) => {
-    const data = await resolveDependencyClosure(tx, taskId);
+    const data = await resolveDependencyClosure(tx, taskId, "agent");
     return buildAgentContextFrom(data);
   });
 }

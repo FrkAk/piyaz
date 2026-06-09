@@ -1,0 +1,83 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`buildReviewContext under app_user golden: fully-populated task renders byte-identical review context 1`] = `
+"# \`PRJ-2\` Central task
+Tags: \`alpha\`, \`beta\`
+Priority: \`high\`
+Estimate: 3 pts
+Status: \`in_review\`
+PR: https://example.test/pr/1
+
+
+## Project Context
+
+Project: Project review-ctx-golden
+
+
+## Description
+
+Central description
+
+
+## Acceptance Criteria (as evaluated by implementer)
+
+- [ ] It works
+
+
+## Implementation Plan (as planned)
+
+Step one then step two
+
+
+## Execution Record (as built)
+
+Built the thing
+
+
+## Files
+
+- lib/a.ts
+- lib/b.ts
+
+
+## Plan-vs-Files Drift
+
+Skipped: no path-like tokens extracted from plan.
+
+
+## Decisions
+
+- [explicit] Use approach X
+
+
+## Links
+
+- [pull_request] PR 1 (https://example.test/pr/1)
+
+
+## Prerequisites
+
+- \`PRJ-1\` **Prereq task** [done] — needs prereq output
+
+
+## Upstream Execution Records
+
+### \`PRJ-1\` Prereq task
+Prereq execution record
+
+
+## Downstream Impact (edges to refresh after merge)
+
+- \`PRJ-3\` **Downstream task** [draft] — consumes central
+
+
+## Review Lens Prompts
+
+When producing the structured verdict, address each lens against the diff and the executionRecord above. Cite real file paths and line numbers; \`no findings\` is a valid answer.
+
+- **Security**: trust-boundary input validation, authn / authz on new endpoints, secret handling, SQL or command injection surfaces, deserialization of untrusted data.
+- **Performance**: N+1 query patterns, unbounded memory growth, synchronous I/O on hot paths, missing indexes implied by new query shapes.
+- **Reliability**: failure modes the plan listed vs the diff's handling, silent error swallowing, idempotency on retry-eligible paths, transactional boundaries.
+- **Observability**: logs / metrics / traces consistent with the rest of the codebase, no high-cardinality dimensions that blow the metrics backend.
+- **Codebase standards**: project conventions from \`CLAUDE.md\` and the patterns upstream executionRecord entries cite. Lint and formatting belong to the toolchain; flag substantive deviations only."
+`;

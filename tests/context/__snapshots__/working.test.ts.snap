@@ -1,0 +1,34 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`buildWorkingContext under app_user golden: fully-populated task renders byte-identical working context 1`] = `
+"# \`PRJ-2\` "Central task" (in_review)
+
+## Description
+Central description
+
+## Meta
+- Priority: \`high\`
+- Estimate: 3 pts
+- Assignees: User working-ctx-golden
+- PR: https://example.test/pr/1
+
+## Tags
+\`alpha\`, \`beta\`
+
+## Acceptance Criteria
+
+- [ ] It works
+
+## Hierarchy
+project: "Project working-ctx-golden" > task: "Central task"
+
+## Decisions
+- [explicit] Use approach X (2026-05-16)
+
+## Connected Tasks
+- depends_on → \`PRJ-1\` "Prereq task" (done) — needs prereq output
+- depends_on ← \`PRJ-3\` "Downstream task" (draft) — consumes central
+
+## Links
+- [pull_request] PR 1 — https://example.test/pr/1"
+`;

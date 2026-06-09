@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
+import { seedRichContextTask, normalizeContextGolden } from "./fixtures";
 import { buildAgentContext } from "@/lib/context/_core/agent";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
@@ -72,6 +73,13 @@ describe("buildAgentContext under app_user", () => {
     const result = await buildAgentContext(ctx, aTaskId);
     expect(result).toContain("Active wall C");
     expect(result).not.toContain("Cancelled middle B");
+  });
+
+  test("golden: fully-populated task renders byte-identical agent context", async () => {
+    const fx = await seedRichContextTask("agent-ctx-golden");
+    const ctx = makeAuthContext(fx.userId);
+    const result = await buildAgentContext(ctx, fx.taskId);
+    expect(normalizeContextGolden(result, "agent-ctx-golden")).toMatchSnapshot();
   });
 
   test("rejects cross-team callers (RLS isolation)", async () => {

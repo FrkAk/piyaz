@@ -211,7 +211,7 @@ test("GET /api/task/[id]/context — golden bundle for a fully-populated task", 
 test("GET /api/task/[id]/context — one full-task read and one traversal", async () => {
   const fx = await seedRichTask("ctx-counts");
 
-  const fetchSpy = spyOn(taskData, "getTaskFullTx");
+  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
   const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
 
   try {
@@ -235,7 +235,7 @@ test("GET /api/task/[id]/context — validator path skips the full-task read", a
   const etag = first.headers.get("ETag");
   expect(etag).toBeTruthy();
 
-  const fetchSpy = spyOn(taskData, "getTaskFullTx");
+  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
   const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
 
   try {
@@ -258,7 +258,7 @@ test("MCP buildWorkingContext fetches per depth: no dependency closure", async (
   const fx = await seedRichTask("ctx-mcp-working");
   const ctx = makeAuthContext(fx.userId);
 
-  const fetchSpy = spyOn(taskData, "getTaskFullTx");
+  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
   const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
   const projectSpy = spyOn(projectData, "getProjectHeader");
 
@@ -278,7 +278,7 @@ test("MCP buildAgentContext fetches per depth: closure but no project header", a
   const fx = await seedRichTask("ctx-mcp-agent");
   const ctx = makeAuthContext(fx.userId);
 
-  const fetchSpy = spyOn(taskData, "getTaskFullTx");
+  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
   const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
   const projectSpy = spyOn(projectData, "getProjectHeader");
 
@@ -298,7 +298,7 @@ test("MCP buildPlanningContext fetches per depth: closure plus project header", 
   const fx = await seedRichTask("ctx-mcp-planning");
   const ctx = makeAuthContext(fx.userId);
 
-  const fetchSpy = spyOn(taskData, "getTaskFullTx");
+  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
   const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
   const projectSpy = spyOn(projectData, "getProjectHeader");
 

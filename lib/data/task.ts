@@ -16,7 +16,12 @@ import {
   type TaskLink,
 } from "@/lib/db/schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
-import { fetchTaskFull } from "@/lib/db/raw/fetch-task-full";
+import {
+  fetchTaskFull,
+  fetchTaskForDepth,
+  type TaskFetchDepth,
+  type TaskFullRawRow,
+} from "@/lib/db/raw/fetch-task-full";
 import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
 import type {
   AcceptanceCriterion,
@@ -473,7 +478,48 @@ export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
       `getTaskFull: task ${taskId} disappeared after access check`,
     );
   }
-  const r = rows[0];
+  return mapTaskFullRow(rows[0]);
+}
+
+/**
+ * Membership-gated single-round-trip task fetch narrowed to the columns the
+ * supplied {@link TaskFetchDepth} renders. Mirrors {@link getTaskFullTx} but
+ * routes through {@link fetchTaskForDepth}, so each MCP context builder pays
+ * egress only for the task-row columns and child aggregates its formatter
+ * reads. Columns the depth omits arrive as type-stable empty values, keeping
+ * the returned {@link TaskFull} shape identical across depths.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param taskId - UUID of the task.
+ * @param depth - Context depth selecting the column projection.
+ * @returns Task row (depth-projected) with composed `taskRef` and aggregates.
+ * @throws ForbiddenError when the caller is not a member of the task's team.
+ */
+export async function getTaskForDepthTx(
+  tx: Tx,
+  taskId: string,
+  depth: TaskFetchDepth,
+): Promise<TaskFull> {
+  await assertTaskAccessTx(tx, taskId);
+  const rows = await fetchTaskForDepth(tx, taskId, depth);
+  if (rows.length === 0) {
+    throw new Error(
+      `getTaskForDepth: task ${taskId} disappeared after access check`,
+    );
+  }
+  return mapTaskFullRow(rows[0]);
+}
+
+/**
+ * Map a {@link TaskFullRawRow} to the camelCase {@link TaskFull} shape,
+ * composing `taskRef` and narrowing the decision `source` union. Shared by
+ * {@link getTaskFullTx} and {@link getTaskForDepthTx} so both surfaces map
+ * identically.
+ *
+ * @param r - Raw row from `fetchTaskFull` or `fetchTaskForDepth`.
+ * @returns The mapped {@link TaskFull}.
+ */
+function mapTaskFullRow(r: TaskFullRawRow): TaskFull {
   const taskRef = composeTaskRef(
     asIdentifier(r.project_identifier),
     r.sequence_number,
