@@ -44,14 +44,14 @@ Open Codex, run `/plugin`, install **Mymir**, restart, and authenticate when pro
 
 ### Cursor
 
-Search for **Mymir** in the [Cursor Marketplace](https://cursor.com/marketplace) and click Install (skills + MCP).
-
-- **Team/Enterprise:** *Settings → Plugins → Import*, paste `https://github.com/FrkAk/mymir`. GitHub-URL import (Team Marketplaces) is a Teams/Enterprise feature.
 - **MCP only, any plan (quick start):** open the install deeplink, then sign in on the first tool call:
 
   ```text
   cursor://anysphere.cursor-deeplink/mcp/install?name=mymir&config=eyJ1cmwiOiJodHRwczovL2FwcC5teW1pci5kZXYvYXBpL21jcCJ9
   ```
+
+- **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/mymir`. Team Marketplaces is a Teams/Enterprise feature.
+- **Public Marketplace:** listing in the [Cursor Marketplace](https://cursor.com/marketplace) requires submission and manual review — search-and-install lands once Mymir is published.
 
 ### Antigravity
 
