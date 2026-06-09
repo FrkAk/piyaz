@@ -19,10 +19,17 @@ export type TaskAccessGate = Pick<
   "id" | "projectId" | "title" | "status" | "files" | "updatedAt"
 >;
 
+/**
+ * Project columns the access check returns. Drops the unread `history` and `createdAt` to
+ * reduce DB egress; callers only need id, organizationId, identifier, title, status,
+ * description, categories, updatedAt.
+ */
+export type ProjectAccessProject = Omit<Project, "history" | "createdAt">;
+
 /** Resolved project access returned when a caller can read a project. */
 export type ProjectAccessRow = {
-  /** The authorized project row. */
-  project: Project;
+  /** The authorized project row — only the 8 columns callers read. */
+  project: ProjectAccessProject;
   /** Caller's `member.role` string from the same JOIN. */
   memberRole: string;
   /** Owning team — projected from the same lookup to save a round-trip. */
@@ -55,7 +62,16 @@ export async function findProjectAccessTx(
   projectId: string,
 ): Promise<ProjectAccessRow | null> {
   const [projectRow] = await tx
-    .select()
+    .select({
+      id: projects.id,
+      organizationId: projects.organizationId,
+      title: projects.title,
+      identifier: projects.identifier,
+      description: projects.description,
+      status: projects.status,
+      categories: projects.categories,
+      updatedAt: projects.updatedAt,
+    })
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);
