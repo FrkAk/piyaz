@@ -3,7 +3,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession } from "@/lib/auth/session";
 import { listOAuthSessionsAction } from "@/lib/actions/oauth-session";
-import { listUserTeamsAction } from "@/lib/actions/team-list";
+import { loadUserTeams } from "@/lib/server/request-loaders";
 import { SettingsView } from "./_components/SettingsView";
 
 /** Force dynamic rendering — this page reads the session and DB. */
@@ -23,7 +23,7 @@ export default async function SettingsPage() {
 
   const [sessionsResult, teamsResult] = await Promise.all([
     listOAuthSessionsAction(),
-    listUserTeamsAction(),
+    loadUserTeams(),
   ]);
 
   const initialSessions = sessionsResult.ok ? sessionsResult.data : [];
