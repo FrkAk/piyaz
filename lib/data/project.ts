@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
 import { executeRaw, type Conn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
@@ -616,7 +616,15 @@ export async function listProjectsSlim(
         sql`SELECT org_id, name, slug, member_role FROM public.current_user_orgs()`,
       ),
       tx
-        .select(getTableColumns(projects))
+        .select({
+          id: projects.id,
+          organizationId: projects.organizationId,
+          title: projects.title,
+          identifier: projects.identifier,
+          description: projects.description,
+          status: projects.status,
+          updatedAt: projects.updatedAt,
+        })
         .from(projects)
         .where(cursorClause)
         .orderBy(desc(projects.updatedAt), desc(projects.id))
