@@ -13,6 +13,12 @@ import { executeRaw } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import type { ProjectListOrganization } from "@/lib/data/views";
 
+/** Slim task row returned by the membership gate. Only the columns callers read. */
+export type TaskAccessGate = Pick<
+  Task,
+  "id" | "projectId" | "title" | "status" | "files" | "updatedAt"
+>;
+
 /** Resolved project access returned when a caller can read a project. */
 export type ProjectAccessRow = {
   /** The authorized project row. */
@@ -80,12 +86,12 @@ export async function findProjectAccessTx(
  *
  * @param userId - Verified user id.
  * @param taskId - UUID of the task.
- * @returns Task row when accessible, null otherwise.
+ * @returns Gate row with only the columns callers read, or null when inaccessible.
  */
 export async function findTaskAccess(
   userId: string,
   taskId: string,
-): Promise<Task | null> {
+): Promise<TaskAccessGate | null> {
   return withUserContext(userId, (tx) => findTaskAccessTx(tx, taskId));
 }
 
@@ -94,14 +100,21 @@ export async function findTaskAccess(
  *
  * @param tx - Active RLS transaction handle.
  * @param taskId - UUID of the task.
- * @returns Task row when accessible, null otherwise.
+ * @returns Gate row with only the columns callers read, or null when inaccessible.
  */
 export async function findTaskAccessTx(
   tx: Tx,
   taskId: string,
-): Promise<Task | null> {
+): Promise<TaskAccessGate | null> {
   const [row] = await tx
-    .select()
+    .select({
+      id: tasks.id,
+      projectId: tasks.projectId,
+      title: tasks.title,
+      status: tasks.status,
+      files: tasks.files,
+      updatedAt: tasks.updatedAt,
+    })
     .from(tasks)
     .where(eq(tasks.id, taskId))
     .limit(1);

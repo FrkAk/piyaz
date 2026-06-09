@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
-import { seedUserOrgProject } from "@/tests/setup/seed";
+import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import {
   createTask,
   deleteTask,
@@ -14,6 +14,7 @@ import {
   getTaskFull,
   getTaskFullWithEdges,
 } from "@/lib/data/task";
+import { findTaskAccess } from "@/lib/data/access";
 import { getProjectMaxUpdatedAt } from "@/lib/data/project";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
@@ -1413,4 +1414,23 @@ test("foreign key rejects orphan decision insert", async () => {
   } finally {
     await sqlc.end({ timeout: 5 });
   }
+});
+
+test("findTaskAccess returns only the gate columns", async () => {
+  const fx = await seedUserOrgProject("access-gate");
+  const sr = serviceRoleConnect();
+  let taskId: string;
+  try {
+    const [t] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, description, implementation_plan)
+      VALUES (${fx.projectId}, 'T', 1, repeat('x', 4000), repeat('y', 4000))
+      RETURNING id`;
+    taskId = t.id;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+  const row = await findTaskAccess(fx.userId, taskId);
+  expect(Object.keys(row ?? {}).sort()).toEqual(
+    ["files", "id", "projectId", "status", "title", "updatedAt"].sort(),
+  );
 });

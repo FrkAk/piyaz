@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { Task } from "@/lib/db/schema";
 import type { AuthContext } from "@/lib/auth/context";
 import type { Tx } from "@/lib/db/rls";
 import {
@@ -9,6 +8,7 @@ import {
   findTaskAccess,
   findTaskAccessTx,
   type ProjectAccessRow,
+  type TaskAccessGate,
 } from "@/lib/data/access";
 import {
   roleHasProjectPermission,
@@ -163,20 +163,20 @@ export async function assertProjectAccessTx(
 }
 
 /**
- * Verify the caller can access the task and return its full row. Joins
+ * Verify the caller can access the task and return its gate row. Joins
  * through the parent project to confirm the caller is a member of the
  * project's organization. The active organization is not part of the gate
  * — membership in the resource's team is the boundary.
  *
  * @param taskId - UUID of the task to authorize.
  * @param ctx - Resolved auth context.
- * @returns The full task row.
+ * @returns The slim gate row for the task.
  * @throws ForbiddenError on missing task or cross-team access.
  */
 export async function assertTaskAccess(
   taskId: string,
   ctx: AuthContext,
-): Promise<Task> {
+): Promise<TaskAccessGate> {
   if (!isUuid(taskId)) {
     throw new ForbiddenError("Forbidden", "task", taskId);
   }
@@ -190,13 +190,13 @@ export async function assertTaskAccess(
  *
  * @param tx - Active RLS transaction handle.
  * @param taskId - UUID of the task to authorize.
- * @returns The full task row.
+ * @returns The slim gate row for the task.
  * @throws ForbiddenError on missing task or cross-team access.
  */
 export async function assertTaskAccessTx(
   tx: Tx,
   taskId: string,
-): Promise<Task> {
+): Promise<TaskAccessGate> {
   if (!isUuid(taskId)) {
     throw new ForbiddenError("Forbidden", "task", taskId);
   }
