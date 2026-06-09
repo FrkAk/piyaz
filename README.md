@@ -68,9 +68,9 @@ Add the Mymir MCP server to your global config and authenticate (Antigravity han
 }
 ```
 
-Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. For the workflow skills too, install the bundled plugin: `agy plugin install ./plugins/antigravity` (clone first), or drop `plugins/antigravity/` into `~/.gemini/antigravity-cli/plugins/`.
+Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. For the workflow skills too, install the bundled plugin: `agy plugin install ./plugins/antigravity` (clone first), or drop `plugins/antigravity/` into `~/.gemini/antigravity-cli/plugins/`. The bundled `mcp_config.json` also includes a `mymir-local` server for self-host.
 
-> **Gemini CLI (legacy).** Gemini CLI is being replaced by Antigravity; consumer access ended 2026-06-18. The `plugins/gemini/` extension remains for users still on Gemini CLI and will be removed in a later release. New users should use Antigravity above.
+> **Coming from Gemini CLI?** Gemini CLI is replaced by Antigravity (consumer access ended 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
 
 ---
 
@@ -103,7 +103,7 @@ Contributors install from the local checkout: `claude plugin marketplace add ./p
 
 ## How it runs
 
-Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Codex, Cursor, and Gemini. Each plugin bundles 6 MCP tools, the four core workflows (brainstorm, onboarding, decompose, manage), and a `/mymir` skill that auto-invokes when you talk about projects, tasks, or planning. Claude Code adds end-to-end task orchestration via `/mymir:composer` plus `decompose-task` and `decompose-feature` for surgical decomposition within active projects. You don't call tools manually, you just talk.
+Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Codex, Cursor, and Antigravity. Each plugin bundles 6 MCP tools, the four core workflows (brainstorm, onboarding, decompose, manage), and a `/mymir` skill that auto-invokes when you talk about projects, tasks, or planning. Claude Code adds end-to-end task orchestration via `/mymir:composer` plus `decompose-task` and `decompose-feature` for surgical decomposition within active projects. You don't call tools manually, you just talk.
 
 **Three entry paths, one graph.**
 
@@ -135,7 +135,7 @@ Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 **Add and refine mid-flow.** Spot something missing, describe it, and push back until it's right:
 
 ```text
-❯ Add a task for an onboarding agent that records shipped work as done tasks. Relate it to the codex/gemini support task.
+❯ Add a task for an onboarding agent that records shipped work as done tasks. Relate it to the codex/antigravity support task.
 ```
 
 ```text

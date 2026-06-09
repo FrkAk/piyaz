@@ -1,2 +1,0 @@
-description = "Manage project context with Mymir — tasks, dependencies, decisions across sessions"
-prompt = """Use the mymir skill to handle the following intent: {{args}}"""

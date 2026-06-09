@@ -33,10 +33,10 @@ const CLI_INSTALLS: readonly CliInstall[] = [
       "Run /plugin, search for mymir, install, then restart Codex. Invoke the skill explicitly with $mymir.",
   },
   {
-    name: "Gemini",
-    install: "gemini extensions install ./plugins/gemini",
+    name: "Antigravity",
+    install: "agy plugin install ./plugins/antigravity",
     setupNote:
-      "Authenticate with /mcp auth mymir and complete the browser sign-in.",
+      "Run /mcp, Authenticate, and complete the browser sign-in. The bundle ships both the hosted and mymir-local servers.",
   },
   {
     name: "Cursor",
@@ -46,7 +46,8 @@ const CLI_INSTALLS: readonly CliInstall[] = [
   },
 ];
 
-const README_SETUP_URL = "https://github.com/FrkAk/mymir#how-to-set-it-up";
+const README_SETUP_URL =
+  "https://github.com/FrkAk/mymir#use-the-hosted-version-no-clone";
 
 const SECTION_LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted";
