@@ -1,7 +1,7 @@
 {
-  "name": "mymir-local",
+  "name": "mymir",
   "interface": {
-    "displayName": "Mymir Local"
+    "displayName": "Mymir"
   },
   "plugins": [
     {
