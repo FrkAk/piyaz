@@ -23,7 +23,7 @@ Mymir replaces that cycle. It's not just a context layer your agents read from, 
 
 ## Use the hosted version (no clone)
 
-Mymir is hosted at [app.mymir.dev](https://app.mymir.dev). The plugin installs into your coding agent **once, at the user level**, then works in every project you open — you never clone this repo. Pick your agent, run the one-time install, and sign in when prompted (OAuth, once per machine).
+Mymir is hosted at [app.mymir.dev](https://app.mymir.dev). The plugin installs into your coding agent once, at the user level, and works in every project you open, no clone required. Run the one-time install for your agent and sign in when prompted (OAuth, once per machine).
 
 ### Claude Code
 
@@ -51,7 +51,7 @@ Open Codex, run `/plugin`, install **Mymir**, restart, and authenticate when pro
   ```
 
 - **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/mymir`. Team Marketplaces is a Teams/Enterprise feature.
-- **Public Marketplace:** listing in the [Cursor Marketplace](https://cursor.com/marketplace) requires submission and manual review — search-and-install lands once Mymir is published.
+- **Public Marketplace:** listing in the [Cursor Marketplace](https://cursor.com/marketplace) requires submission and manual review. Search-and-install lands once Mymir is published.
 
 ### Antigravity
 
@@ -70,13 +70,13 @@ Add the Mymir MCP server to your global config and authenticate (Antigravity han
 
 Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. For the workflow skills too, install the bundled plugin: `agy plugin install ./plugins/antigravity` (clone first), or drop `plugins/antigravity/` into `~/.gemini/antigravity-cli/plugins/`. The bundled `mcp_config.json` also includes a `mymir-local` server for self-host.
 
-> **Coming from Gemini CLI?** Gemini CLI is replaced by Antigravity (consumer access ended 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
+> **Gemini CLI users:** Antigravity replaces Gemini CLI (consumer access ended 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
 
 ---
 
 ## Self-host / contribute
 
-Self-hosting is free under AGPL-3.0. You run the Mymir server yourself and point the plugin's **`mymir-local`** server at it — no env vars on any OS.
+Self-hosting is free under AGPL-3.0. You run the Mymir server yourself and point the plugin's **`mymir-local`** server at it, no env vars required.
 
 You need [Bun](https://bun.sh) (v1.0+) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Linux, macOS, or Windows with WSL2.
 
@@ -87,7 +87,7 @@ bun install --production
 cp .env.local.example .env.local
 ```
 
-Fill in `.env.local` by following the numbered steps at the top of `.env.local.example`. Then bring up Postgres, build, and start, and open [localhost:3000](http://localhost:3000):
+Fill in `.env.local` by following the numbered steps at the top of `.env.local.example`. Then bring up Postgres, build, start, and open [localhost:3000](http://localhost:3000):
 
 ```bash
 bun run db:setup
