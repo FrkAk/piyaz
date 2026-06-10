@@ -23,8 +23,16 @@ const eslintConfig = [
   {
     // Generated outputs: wrangler env types and OpenNext / Wrangler build
     // artifacts. Linting these adds no value and surfaces noise from
-    // generated code.
-    ignores: ["cloudflare-env.d.ts", ".open-next/**", ".wrangler/**"],
+    // generated code. `.claude/**` excludes nested git worktrees: they are
+    // separate checkouts that lint themselves, and the root-relative exempt
+    // globs below (e.g. `lib/data/account.ts`) do not match their prefixed
+    // paths, so scanning them re-flags already-audited RLS bypass sites.
+    ignores: [
+      "cloudflare-env.d.ts",
+      ".open-next/**",
+      ".wrangler/**",
+      ".claude/**",
+    ],
   },
   {
     files: ["**/*.{ts,tsx}"],
