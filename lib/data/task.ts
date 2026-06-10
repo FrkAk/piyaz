@@ -843,7 +843,7 @@ export async function getTaskSlim(
  * `order`. Description is capped at 101 characters in SQL to reduce egress
  * while preserving the caller's `compress(_, 100)` behavior byte-for-byte:
  * any source description longer than 100 chars stays longer than 100 after
- * the cap, so the downstream ellipsis truncation is unchanged. Internal
+ * the cap, so the downstream ellipsis truncation is unaffected. Internal
  * helper -- caller must assert project access before invoking.
  *
  * @param projectId - UUID of the project.

@@ -73,7 +73,7 @@ type DepthProjection = {
 
 /**
  * The exact column set each depth's formatter reads. `category` and `history`
- * are dropped at every depth (no formatter reads them). `implementationPlan`
+ * are omitted at every depth (no formatter reads them). `implementationPlan`
  * is true for `summary` because `buildSummaryContext` reads its presence
  * (`hasImplementationPlan`) even though it never renders the plan text.
  *
@@ -199,7 +199,7 @@ function depthAggregate(keep: boolean, agg: SQL, alias: string): SQL {
  *
  * UNCHECKED: this helper performs NO authorization. The caller must assert
  * task access (`assertTaskAccess`) before invoking. Depth-aware sibling of
- * {@link fetchTaskFull}, which the web detail path still uses unchanged.
+ * {@link fetchTaskFull}, which the web detail path uses.
  *
  * @param conn - Drizzle client or transaction handle.
  * @param taskId - UUID of the task.

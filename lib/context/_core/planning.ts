@@ -136,9 +136,9 @@ export function buildPlanningContextFrom(data: PlanningContextData): string {
 /**
  * Build planning-optimized context for a task.
  *
- * Resolves only the planning data this depth renders, then delegates to the
- * pure {@link buildPlanningContextFrom} assembler. Retained as the MCP
- * `mymir_context` entry point.
+ * The MCP `mymir_context` entry point. Resolves only the planning data this
+ * depth renders, then delegates to the pure {@link buildPlanningContextFrom}
+ * assembler.
  *
  * @param ctx Resolved auth context.
  * @param taskId UUID of the task.

@@ -138,8 +138,8 @@ export async function assertProjectAccess(
  * request. Keyed on `(userId, projectId)` strings — not the per-call
  * `AuthContext` object — so the workspace layout and page share a single
  * project-access read per navigation. Same access boundary as
- * {@link assertProjectAccess}: RLS still scopes the read and the membership
- * JOIN still gates it; missing or cross-team projects raise
+ * {@link assertProjectAccess}: RLS scopes the read and the membership
+ * JOIN gates it; missing or cross-team projects raise
  * {@link ForbiddenError} (anti-enumeration 404).
  *
  * @param userId - Verified user id from the request's auth context.

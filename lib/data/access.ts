@@ -20,9 +20,9 @@ export type TaskAccessGate = Pick<
 >;
 
 /**
- * Project columns the access check returns. Drops the unread `history` and `createdAt` to
- * reduce DB egress; callers only need id, organizationId, identifier, title, status,
- * description, categories, updatedAt.
+ * Project columns the access check returns. Omits `history` and `createdAt`
+ * to reduce DB egress; callers only read id, organizationId, identifier,
+ * title, status, description, categories, updatedAt.
  */
 export type ProjectAccessProject = Omit<Project, "history" | "createdAt">;
 

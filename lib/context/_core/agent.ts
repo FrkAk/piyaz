@@ -155,9 +155,9 @@ export function buildAgentContextFrom(data: AgentContextData): string {
 /**
  * Build lean, position-optimized context for external coding agents.
  *
- * Resolves only the dependency-closure data this depth renders, then delegates
- * to the pure {@link buildAgentContextFrom} assembler. Retained as the MCP
- * `mymir_context` entry point.
+ * The MCP `mymir_context` entry point. Resolves only the dependency-closure
+ * data this depth renders, then delegates to the pure
+ * {@link buildAgentContextFrom} assembler.
  *
  * @param ctx Resolved auth context.
  * @param taskId UUID of the task.

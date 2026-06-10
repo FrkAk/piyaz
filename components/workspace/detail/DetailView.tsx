@@ -393,8 +393,8 @@ function skeletonVars(
 }
 
 /**
- * The five §3.9 bundle-preview section tints (spec / prerequisites /
- * neighbors / decisions / files), previewed by the bundle skeleton bars.
+ * The five bundle-preview section tints (spec / prerequisites / neighbors /
+ * decisions / files), previewed by the bundle skeleton bars.
  */
 const BUNDLE_SKELETON_BARS: { tint: string; width: string }[] = [
   { tint: "var(--color-accent)", width: "w-full" },
@@ -409,7 +409,7 @@ const BUNDLE_SKELETON_BARS: { tint: string; width: string }[] = [
  * true. Mirrors the anatomy of the real body — description lines, criteria
  * checklist rows, the color-coded bundle-preview card, decisions, and
  * relationship chips — so the layout stays stable when the full fetch
- * resolves. Sections rise in staggered (fade + 4px y-slide per §6.4) and a
+ * resolves. Sections rise in staggered (fade + 4px y-slide) and a
  * shared sheen wave travels down the bars via `--skeleton-delay`.
  *
  * @returns Skeleton element rendered inside the scrollable body area.
