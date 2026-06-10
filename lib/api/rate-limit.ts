@@ -60,6 +60,12 @@ export interface RateLimitBackend {
  * to 3/60 in-process per isolate even though the CF binding only enforces
  * 5/60 here. Follow-up: declare a dedicated 3/60 binding to tighten the
  * middleware layer to match.
+ *
+ * The `/oauth2/register` rule throttles open unauthenticated dynamic client
+ * registration (`lib/auth.ts`) on the strict `auth` binding so anonymous
+ * callers cannot loop `oauthClient` inserts. The key is pattern-namespaced,
+ * keeping its counter independent of sign-in/sign-up; `max`/`window` mirror
+ * the auth binding per the invariant above.
  */
 export const RATE_LIMIT_RULES: RateLimitRule[] = [
   {
@@ -71,6 +77,13 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
   },
   {
     pattern: "/api/auth/sign-up/*",
+    max: 5,
+    window: 60,
+    keyStrategy: "session",
+    bindingKey: "auth",
+  },
+  {
+    pattern: "/api/auth/oauth2/register",
     max: 5,
     window: 60,
     keyStrategy: "session",

@@ -20,3 +20,14 @@ test("keeps unknown OAuth client names while removing plugin metadata", () => {
   );
   expect(formatOAuthClientName("Custom Client")).toBe("Custom Client");
 });
+
+test("unverified clients are shown verbatim without brand laundering", () => {
+  // A spoofed name must NOT collapse onto a trusted brand on the consent
+  // screen: no suffix stripping, no brand-label match.
+  expect(formatOAuthClientName("Claude Code (plugin:evil)", false)).toBe(
+    "Claude Code (plugin:evil)",
+  );
+  expect(formatOAuthClientName("Codex", false)).toBe("Codex");
+  // Only whitespace is tidied.
+  expect(formatOAuthClientName("  Evil   Client  ", false)).toBe("Evil Client");
+});

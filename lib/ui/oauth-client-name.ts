@@ -22,12 +22,29 @@ function stripClientMetadata(clientName: string): string {
 }
 
 /**
- * Format an OAuth client name for the devices UI.
+ * Format an OAuth client name for display.
+ *
+ * Brand normalization (stripping the `(plugin:…)` suffix and collapsing a
+ * name onto a canonical brand label) is only safe for clients we trust,
+ * because dynamic client registration lets anyone register an arbitrary name.
+ * When `verified` is false the raw registered name is returned with only
+ * whitespace tidied — no suffix stripping, no brand collapse — so a spoofed
+ * `"Claude Code (plugin:evil)"` is shown verbatim rather than laundered into
+ * "Claude Code". Callers on the security-sensitive consent screen MUST pass
+ * the real verified flag (see `isVerifiedOAuthClient`); the post-authorization
+ * devices list, where the user already approved the client, defaults to the
+ * polished label.
  *
  * @param clientName - Raw OAuth client name from Better Auth.
- * @returns Stable user-facing client label.
+ * @param verified - Whether the client_id is on the verified allowlist.
+ *   Defaults to true (polished) for the post-auth devices UI.
+ * @returns User-facing client label.
  */
-export function formatOAuthClientName(clientName: string): string {
+export function formatOAuthClientName(
+  clientName: string,
+  verified = true,
+): string {
+  if (!verified) return clientName.trim().replace(/\s+/g, " ");
   const baseName = stripClientMetadata(clientName).replace(/\s+/g, " ");
   const brand = CLIENT_BRAND_LABELS.find(({ match }) => match.test(baseName));
   return brand?.label ?? baseName;

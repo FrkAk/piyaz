@@ -99,3 +99,33 @@ export async function checkActionRateLimit(
   }
   return { ok: true };
 }
+
+/**
+ * Thrown by {@link assertActionRateLimit} when a caller exceeds an action's
+ * budget. Wrapper actions in `lib/graph/mutations.ts` already throw typed
+ * errors (`ForbiddenError`, `ProjectNotFoundError`) that their client callers
+ * catch, so throwing here keeps the same contract instead of forcing every
+ * wrapper to a discriminated-union return type.
+ */
+export class RateLimitError extends Error {
+  /** @param retryAfter - Seconds until the caller may retry. */
+  constructor(public readonly retryAfter: number) {
+    super("Too many requests. Please slow down and try again shortly.");
+    this.name = "RateLimitError";
+  }
+}
+
+/**
+ * Throwing variant of {@link checkActionRateLimit} for the mutation wrappers.
+ * @param config - Rate-limit policy for this action.
+ * @param userId - Caller's user id, or `null` for unauth flows.
+ * @returns Resolves when the caller is within budget.
+ * @throws RateLimitError when either the per-user or per-IP budget is exceeded.
+ */
+export async function assertActionRateLimit(
+  config: ActionRateLimitConfig,
+  userId: string | null,
+): Promise<void> {
+  const outcome = await checkActionRateLimit(config, userId);
+  if (!outcome.ok) throw new RateLimitError(outcome.retryAfter);
+}
