@@ -1,6 +1,10 @@
 import { test, expect, afterEach, spyOn } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
+import {
+  seedRichContextTask,
+  normalizeContextGolden,
+} from "@/tests/context/fixtures";
 import { superuserPool } from "@/tests/setup/global";
 import { GET } from "@/app/api/task/[taskId]/context/route";
 import * as taskData from "@/lib/data/task";
@@ -31,68 +35,6 @@ async function addTask(projectId: string, suffix: string): Promise<string> {
       RETURNING id
     `;
     return t.id;
-  } finally {
-    await sql.end({ timeout: 5 });
-  }
-}
-
-/** A fully-populated task plus one upstream dependency and one downstream. */
-type RichTaskFixture = { taskId: string; userId: string };
-
-/**
- * Seed a task carrying every field the three context bundles read: description,
- * implementation plan, execution record, files, a criterion, a decision, a
- * link, an assignee, an upstream dependency, and a downstream dependent.
- *
- * @param suffix - Slug/email suffix so fixtures don't collide.
- * @returns The central task id and the owner user id.
- */
-async function seedRichTask(suffix: string): Promise<RichTaskFixture> {
-  const f = await seedUserOrgProject(suffix);
-  const sql = superuserPool();
-  try {
-    const [main] = await sql<{ id: string }[]>`
-      INSERT INTO tasks
-        ("project_id", "title", "sequence_number", "description", "status",
-         "implementation_plan", "execution_record", "files", "tags", "priority")
-      VALUES
-        (${f.projectId}, 'Central task', 2, 'Central description', 'in_review',
-         'Step one then step two', 'Built the thing',
-         '["lib/a.ts", "lib/b.ts"]'::jsonb, '["alpha", "beta"]'::jsonb,
-         'high')
-      RETURNING id`;
-    const [prereq] = await sql<{ id: string }[]>`
-      INSERT INTO tasks
-        ("project_id", "title", "sequence_number", "description", "status",
-         "execution_record")
-      VALUES
-        (${f.projectId}, 'Prereq task', 1, 'Prereq description', 'done',
-         'Prereq execution record')
-      RETURNING id`;
-    const [downstream] = await sql<{ id: string }[]>`
-      INSERT INTO tasks
-        ("project_id", "title", "sequence_number", "description")
-      VALUES (${f.projectId}, 'Downstream task', 3, 'Downstream description')
-      RETURNING id`;
-    await sql`
-      INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
-      VALUES (${main.id}, ${prereq.id}, 'depends_on', 'needs prereq output')`;
-    await sql`
-      INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
-      VALUES (${downstream.id}, ${main.id}, 'depends_on', 'consumes central')`;
-    await sql`
-      INSERT INTO task_acceptance_criteria (id, task_id, position, text, checked)
-      VALUES (gen_random_uuid(), ${main.id}, 0, 'It works', false)`;
-    await sql`
-      INSERT INTO task_decisions (id, task_id, position, text, source, decision_date)
-      VALUES (gen_random_uuid(), ${main.id}, 0, 'Use approach X', 'explicit', '2026-05-16')`;
-    await sql`
-      INSERT INTO task_links (task_id, url, kind, label)
-      VALUES (${main.id}, 'https://example.test/pr/1', 'pull_request', 'PR 1')`;
-    await sql`
-      INSERT INTO task_assignees (task_id, user_id)
-      VALUES (${main.id}, ${f.userId})`;
-    return { taskId: main.id, userId: f.userId };
   } finally {
     await sql.end({ timeout: 5 });
   }
@@ -195,21 +137,18 @@ test("GET /api/task/[id]/context — 304 when If-None-Match matches", async () =
 });
 
 test("GET /api/task/[id]/context — golden bundle for a fully-populated task", async () => {
-  const fx = await seedRichTask("ctx-golden");
+  const fx = await seedRichContextTask("ctx-golden");
   const body = await fetchBundle(fx.taskId, fx.userId);
 
-  const normalize = (s: string): string =>
-    s.replace(/`PRJctx-golden-\d+`/g, "`PRJctx-golden-N`");
-
   expect({
-    agent: normalize(body.agent),
-    planning: normalize(body.planning),
-    working: normalize(body.working),
+    agent: normalizeContextGolden(body.agent, "ctx-golden"),
+    planning: normalizeContextGolden(body.planning, "ctx-golden"),
+    working: normalizeContextGolden(body.working, "ctx-golden"),
   }).toMatchSnapshot();
 });
 
 test("GET /api/task/[id]/context — one full-task read and one traversal", async () => {
-  const fx = await seedRichTask("ctx-counts");
+  const fx = await seedRichContextTask("ctx-counts");
 
   const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
   const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
@@ -225,7 +164,7 @@ test("GET /api/task/[id]/context — one full-task read and one traversal", asyn
 });
 
 test("GET /api/task/[id]/context — validator path skips the full-task read", async () => {
-  const fx = await seedRichTask("ctx-validator");
+  const fx = await seedRichContextTask("ctx-validator");
 
   setSession({ user: { id: fx.userId } });
   const first = await GET(
@@ -255,7 +194,7 @@ test("GET /api/task/[id]/context — validator path skips the full-task read", a
 });
 
 test("MCP buildWorkingContext fetches per depth: no dependency closure", async () => {
-  const fx = await seedRichTask("ctx-mcp-working");
+  const fx = await seedRichContextTask("ctx-mcp-working");
   const ctx = makeAuthContext(fx.userId);
 
   const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
@@ -275,7 +214,7 @@ test("MCP buildWorkingContext fetches per depth: no dependency closure", async (
 });
 
 test("MCP buildAgentContext fetches per depth: closure but no project header", async () => {
-  const fx = await seedRichTask("ctx-mcp-agent");
+  const fx = await seedRichContextTask("ctx-mcp-agent");
   const ctx = makeAuthContext(fx.userId);
 
   const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
@@ -295,7 +234,7 @@ test("MCP buildAgentContext fetches per depth: closure but no project header", a
 });
 
 test("MCP buildPlanningContext fetches per depth: closure plus project header", async () => {
-  const fx = await seedRichTask("ctx-mcp-planning");
+  const fx = await seedRichContextTask("ctx-mcp-planning");
   const ctx = makeAuthContext(fx.userId);
 
   const fetchSpy = spyOn(taskData, "getTaskForDepthTx");

@@ -3,9 +3,10 @@
 exports[`GET /api/task/[id]/context — golden bundle for a fully-populated task 1`] = `
 {
   "agent": 
-"# \`PRJctx-golden-N\` Central task
+"# \`PRJ-2\` Central task
 Tags: \`alpha\`, \`beta\`
 Priority: \`high\`
+Estimate: 3 pts
 PR: https://example.test/pr/1
 
 Central description
@@ -18,12 +19,12 @@ Step one then step two
 
 ## Prerequisites (context only — do NOT implement these)
 
-- \`PRJctx-golden-N\` **Prereq task** [done] — needs prereq output
+- \`PRJ-1\` **Prereq task** [done] — needs prereq output
 
 
 ## Upstream Execution Records
 
-### \`PRJctx-golden-N\` Prereq task
+### \`PRJ-1\` Prereq task
 Prereq execution record
 
 
@@ -60,12 +61,13 @@ Built the thing
 
 ## Downstream (what depends on this task's output)
 
-- \`PRJctx-golden-N\` **Downstream task** [draft] — consumes central"
+- \`PRJ-3\` **Downstream task** [draft] — consumes central"
 ,
   "planning": 
-"# \`PRJctx-golden-N\` Central task
+"# \`PRJ-2\` Central task
 Tags: \`alpha\`, \`beta\`
 Priority: \`high\`
+Estimate: 3 pts
 
 
 ## Project Context
@@ -90,12 +92,12 @@ Step one then step two
 
 ## Prerequisites (context only — do NOT implement these)
 
-- \`PRJctx-golden-N\` **Prereq task** [done] — needs prereq output
+- \`PRJ-1\` **Prereq task** [done] — needs prereq output
 
 
 ## What's Been Built (from done prerequisites)
 
-### \`PRJctx-golden-N\` Prereq task
+### \`PRJ-1\` Prereq task
 Prereq execution record
 
 
@@ -106,17 +108,18 @@ Prereq execution record
 
 ## Downstream (tasks that depend on this task's output)
 
-- \`PRJctx-golden-N\` **Downstream task** [draft] — consumes central
+- \`PRJ-3\` **Downstream task** [draft] — consumes central
   Downstream description"
 ,
   "working": 
-"# \`PRJctx-golden-N\` "Central task" (in_review)
+"# \`PRJ-2\` "Central task" (in_review)
 
 ## Description
 Central description
 
 ## Meta
 - Priority: \`high\`
+- Estimate: 3 pts
 - Assignees: User ctx-golden
 - PR: https://example.test/pr/1
 
@@ -134,8 +137,8 @@ project: "Project ctx-golden" > task: "Central task"
 - [explicit] Use approach X (2026-05-16)
 
 ## Connected Tasks
-- depends_on → \`PRJctx-golden-N\` "Prereq task" (done) — needs prereq output
-- depends_on ← \`PRJctx-golden-N\` "Downstream task" (draft) — consumes central
+- depends_on → \`PRJ-1\` "Prereq task" (done) — needs prereq output
+- depends_on ← \`PRJ-3\` "Downstream task" (draft) — consumes central
 
 ## Links
 - [pull_request] PR 1 — https://example.test/pr/1"
