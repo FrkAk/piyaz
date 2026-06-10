@@ -90,14 +90,14 @@ const MULTI_TEAM_HINT =
   "If you belong to more than one team, your coding agent will ask which team a new project belongs to before creating it.";
 
 interface FirstTimeBodyProps {
-  /** @param cliInstalls - Target-specific install snippets to render. */
+  /** Target-specific install snippets to render. */
   cliInstalls: readonly CliInstall[];
-  /** @param readmeSetupUrl - Target-specific README setup anchor. */
+  /** Target-specific README setup anchor. */
   readmeSetupUrl: string;
 }
 
 interface ReturningBodyProps {
-  /** @param readmeSetupUrl - Target-specific README setup anchor. */
+  /** Target-specific README setup anchor. */
   readmeSetupUrl: string;
 }
 
@@ -239,9 +239,8 @@ export function GetStartedModal({
   onClose,
   hasProjects = false,
 }: GetStartedModalProps) {
-  const deployTarget = process.env.NEXT_PUBLIC_DEPLOY_TARGET;
-  const cliInstalls = getCliInstalls(deployTarget);
-  const readmeSetupUrl = getReadmeSetupUrl(deployTarget);
+  const cliInstalls = getCliInstalls();
+  const readmeSetupUrl = getReadmeSetupUrl();
 
   return (
     <Modal
