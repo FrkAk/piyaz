@@ -48,8 +48,9 @@ next-env.d.ts
 *.swp
 *.swo
 
-# Claude Code local files
-.claude/
+# Claude Code local files (settings.json is shared so cloud sessions load plugins)
+.claude/*
+!.claude/settings.json
 CLAUDE.md
 DESIGN.md
 DESIGN_2.md

@@ -6,11 +6,7 @@
   "plugins": [
     {
       "name": "mymir",
-      "source": {
-        "source": "git-subdir",
-        "url": "https://github.com/FrkAk/mymir.git",
-        "path": "plugins/claude-code"
-      },
+      "source": "./plugins/claude-code",
       "description": "Persistent context network for coding projects. Tracks tasks, dependencies, and decisions across sessions."
     }
   ]
