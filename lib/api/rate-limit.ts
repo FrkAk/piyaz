@@ -76,6 +76,18 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     keyStrategy: "session",
     bindingKey: "auth",
   },
+  // Open unauthenticated DCR (`lib/auth.ts`): throttle on the strict `auth`
+  // binding so anonymous callers cannot loop `oauthClient` inserts. The key is
+  // pattern-namespaced, so this counter is independent of sign-in/sign-up.
+  // Must precede `/api/*`; `max`/`window` mirror the auth binding per the
+  // invariant above.
+  {
+    pattern: "/api/auth/oauth2/register",
+    max: 5,
+    window: 60,
+    keyStrategy: "session",
+    bindingKey: "auth",
+  },
   { pattern: "/api/mcp", max: 100, window: 60, keyStrategy: "apikey" },
   { pattern: "/api/*", max: 100, window: 60, keyStrategy: "session" },
 ];

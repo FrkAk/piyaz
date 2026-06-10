@@ -1,6 +1,11 @@
 import "server-only";
 
-import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
+import {
+  section,
+  formatCriteria,
+  formatDecisions,
+  untrustedContentNotice,
+} from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
 import { withUserContext } from "@/lib/db/rls";
 import {
@@ -45,7 +50,7 @@ export function buildAgentContextFrom(data: AgentContextData): string {
   headerLines.push("");
   headerLines.push(task.description);
 
-  const parts: string[] = [headerLines.join("\n")];
+  const parts: string[] = [untrustedContentNotice(), headerLines.join("\n")];
 
   if (task.implementationPlan && status !== "done" && status !== "cancelled") {
     parts.push(section("Implementation Plan") + "\n" + task.implementationPlan);

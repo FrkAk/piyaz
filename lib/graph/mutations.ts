@@ -23,12 +23,71 @@ import {
 } from "@/lib/data/edge";
 import type { Identifier } from "@/lib/graph/identifier";
 import type { NewTaskEdge } from "@/lib/db/schema";
+import {
+  assertActionRateLimit,
+  type ActionRateLimitConfig,
+} from "@/lib/actions/rate-limit-action";
 
 export type { CreateProjectInput, ProjectUpdate } from "@/lib/data/project";
 export type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
 
 // Wrappers exist on demand for client-component callers. MCP and route
 // handlers import lib/data/* directly with their own ctx.
+
+/**
+ * Per-action budgets for the web write path. These wrappers are the single
+ * chokepoint for browser-originated mutations (MCP writes hit lib/data
+ * directly and are throttled at the `/api/mcp` route instead), so without a
+ * limit here a scripted client behind one logged-in account could loop
+ * create/update calls — server actions POST to the page route, NOT `/api/*`,
+ * so the middleware limiter never sees them. Budgets are generous for a human
+ * editing in the UI (toggling criteria, dragging, renaming) and tight enough
+ * to stop automated row/egress inflation. Window is 60s.
+ */
+const WRITE_BUDGETS = {
+  taskCreate: {
+    action: "task.create",
+    windowSeconds: 60,
+    perUserMax: 60,
+    perIpMax: 120,
+  },
+  taskUpdate: {
+    action: "task.update",
+    windowSeconds: 60,
+    perUserMax: 180,
+    perIpMax: 300,
+  },
+  taskDelete: {
+    action: "task.delete",
+    windowSeconds: 60,
+    perUserMax: 60,
+    perIpMax: 120,
+  },
+  edgeWrite: {
+    action: "edge.write",
+    windowSeconds: 60,
+    perUserMax: 60,
+    perIpMax: 120,
+  },
+  taskLink: {
+    action: "task.link",
+    windowSeconds: 60,
+    perUserMax: 60,
+    perIpMax: 120,
+  },
+  projectUpdate: {
+    action: "project.update",
+    windowSeconds: 60,
+    perUserMax: 60,
+    perIpMax: 120,
+  },
+  categoryWrite: {
+    action: "category.write",
+    windowSeconds: 60,
+    perUserMax: 60,
+    perIpMax: 120,
+  },
+} satisfies Record<string, ActionRateLimitConfig>;
 
 /**
  * Server action wrapper — update a project's fields.
@@ -38,6 +97,7 @@ export type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
  */
 export async function updateProject(projectId: string, changes: ProjectUpdate) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.projectUpdate, ctx.userId);
   return coreUpdateProject(ctx, projectId, changes);
 }
 
@@ -52,6 +112,7 @@ export async function renameProjectIdentifier(
   identifier: Identifier,
 ) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.projectUpdate, ctx.userId);
   return coreRenameProjectIdentifier(ctx, projectId, identifier);
 }
 
@@ -62,6 +123,7 @@ export async function renameProjectIdentifier(
  */
 export async function createTask(data: CreateTaskInput) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.taskCreate, ctx.userId);
   return coreCreateTask(ctx, data);
 }
 
@@ -78,6 +140,7 @@ export async function updateTask(
   overwriteArrays = false,
 ) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.taskUpdate, ctx.userId);
   return coreUpdateTask(ctx, taskId, changes, overwriteArrays);
 }
 
@@ -88,6 +151,7 @@ export async function updateTask(
  */
 export async function deleteTask(taskId: string) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.taskDelete, ctx.userId);
   return coreDeleteTask(ctx, taskId);
 }
 
@@ -98,6 +162,7 @@ export async function deleteTask(taskId: string) {
  */
 export async function createEdge(data: Omit<NewTaskEdge, "id">) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.edgeWrite, ctx.userId);
   return coreCreateEdge(ctx, data);
 }
 
@@ -107,6 +172,7 @@ export async function createEdge(data: Omit<NewTaskEdge, "id">) {
  */
 export async function removeEdge(edgeId: string) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.edgeWrite, ctx.userId);
   return coreRemoveEdge(ctx, edgeId);
 }
 
@@ -120,6 +186,7 @@ export async function removeEdge(edgeId: string) {
  */
 export async function addTaskLink(taskId: string, url: string) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.taskLink, ctx.userId);
   return coreAddTaskLink(ctx, taskId, url);
 }
 
@@ -132,6 +199,7 @@ export async function addTaskLink(taskId: string, url: string) {
  */
 export async function removeTaskLink(linkId: string) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.taskLink, ctx.userId);
   return coreRemoveTaskLink(ctx, linkId);
 }
 
@@ -146,6 +214,7 @@ export async function removeTaskLink(linkId: string) {
  */
 export async function updateTaskLink(linkId: string, url: string) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.taskLink, ctx.userId);
   return coreUpdateTaskLink(ctx, linkId, url);
 }
 
@@ -161,6 +230,7 @@ export async function renameCategory(
   newName: string,
 ) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.categoryWrite, ctx.userId);
   return coreRenameCategory(ctx, projectId, oldName, newName);
 }
 
@@ -171,5 +241,6 @@ export async function renameCategory(
  */
 export async function deleteCategory(projectId: string, categoryName: string) {
   const ctx = await getAuthContext();
+  await assertActionRateLimit(WRITE_BUDGETS.categoryWrite, ctx.userId);
   return coreDeleteCategory(ctx, projectId, categoryName);
 }

@@ -16,6 +16,7 @@ import {
   ForbiddenError,
   InsufficientRoleError,
 } from "@/lib/auth/authorization";
+import { RateLimitError } from "@/lib/actions/rate-limit-action";
 import { isUniqueViolation } from "@/lib/db/errors";
 
 /** Statuses the web app is allowed to set. Coding agents handle brainstorming/decomposing via MCP. */
@@ -214,6 +215,9 @@ export async function updateProjectStatus(
     if (err instanceof ProjectNotFoundError) {
       return { ok: false, code: "not_found", message: "Project not found." };
     }
+    if (err instanceof RateLimitError) {
+      return { ok: false, code: "unknown", message: err.message };
+    }
     console.error("updateProjectStatus failed", {
       projectId: idParsed.data,
       err,
@@ -296,6 +300,9 @@ export async function updateProjectSettings(
         message: "That identifier is already in use by another project",
       };
     }
+    if (err instanceof RateLimitError) {
+      return { ok: false, code: "unknown", message: err.message };
+    }
     console.error("updateProjectSettings failed", {
       projectId: idParsed.data,
       err,
@@ -344,6 +351,9 @@ export async function renameProjectCategory(
     if (err instanceof ProjectNotFoundError) {
       return { ok: false, code: "not_found", message: "Project not found." };
     }
+    if (err instanceof RateLimitError) {
+      return { ok: false, code: "unknown", message: err.message };
+    }
     console.error("renameProjectCategory failed", {
       projectId: idParsed.data,
       err,
@@ -384,6 +394,9 @@ export async function deleteProjectCategory(
     }
     if (err instanceof ProjectNotFoundError) {
       return { ok: false, code: "not_found", message: "Project not found." };
+    }
+    if (err instanceof RateLimitError) {
+      return { ok: false, code: "unknown", message: err.message };
     }
     console.error("deleteProjectCategory failed", {
       projectId: idParsed.data,

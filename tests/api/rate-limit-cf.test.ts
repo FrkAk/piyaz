@@ -68,6 +68,14 @@ test("auth rules precede the catch-all api rule in RATE_LIMIT_RULES", () => {
   expect(matchRule("/api/auth/get-session")?.bindingKey ?? "api").toBe("api");
 });
 
+test("open DCR registration is throttled by the strict auth binding", () => {
+  const rule = matchRule("/api/auth/oauth2/register");
+  expect(rule?.bindingKey).toBe("auth");
+  expect(rule?.max).toBe(5);
+  // Must not fall through to the loose /api/* catch-all.
+  expect(rule?.pattern).toBe("/api/auth/oauth2/register");
+});
+
 test("CloudflareRateLimitBackend fails open by default on binding RPC error", async () => {
   const backend = new CloudflareRateLimitBackend(brokenBinding());
   const result = await backend.check("test-key", 100, 60);

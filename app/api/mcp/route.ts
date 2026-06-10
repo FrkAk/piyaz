@@ -13,6 +13,32 @@ const resourceMetadataUrl = `${origin}/.well-known/oauth-protected-resource`;
 const audiences: [string, string] = [origin, `${origin}/api/mcp`];
 const issuer = `${baseUrl}/api/auth`;
 
+/**
+ * Maximum accepted MCP JSON-RPC request body, in bytes. The Next.js server-
+ * action `bodySizeLimit` does NOT apply to this route handler, so without an
+ * explicit cap a token holder could POST a multi-megabyte body that persists
+ * to the DB and is then re-served verbatim into every teammate's agent
+ * context (storage + egress amplification). 1 MB comfortably fits the largest
+ * legitimate payload — a full unabridged implementation plan is tens of KB —
+ * while bounding worst-case cost. Tunable via MCP_MAX_BODY_BYTES.
+ */
+const MAX_MCP_BODY_BYTES = Number(process.env.MCP_MAX_BODY_BYTES) || 1_000_000;
+
+/**
+ * MCP-spec 413 response for an over-limit request body.
+ * @returns 413 JSON-RPC error response.
+ */
+function payloadTooLarge() {
+  return Response.json(
+    {
+      jsonrpc: "2.0",
+      error: { code: -32600, message: "Request body too large." },
+      id: null,
+    },
+    { status: 413 },
+  );
+}
+
 /** Shape we require from a verified MCP access token payload. */
 const accessTokenClaimsSchema = z.looseObject({
   sub: z.uuid(),
@@ -158,12 +184,26 @@ export async function POST(request: Request) {
   const ctx = authContextFromPayload(payload);
   if (!ctx) return unauthorized();
 
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_MCP_BODY_BYTES) {
+    return payloadTooLarge();
+  }
+  const body = await request.arrayBuffer();
+  if (body.byteLength > MAX_MCP_BODY_BYTES) {
+    return payloadTooLarge();
+  }
+  const boundedRequest = new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body,
+  });
+
   const server = createMcpServer(ctx);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
   await server.connect(transport);
-  return transport.handleRequest(request);
+  return transport.handleRequest(boundedRequest);
 }
 
 /**

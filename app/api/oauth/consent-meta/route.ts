@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { APIError } from "better-auth/api";
 import { auth } from "@/lib/auth";
 import { userHasConsentedTo } from "@/lib/data/oauth-session";
+import { isVerifiedOAuthClient } from "@/lib/auth/verified-oauth-clients";
 import { getAuthContext } from "@/lib/auth/context";
 import { error } from "@/lib/api/response";
 import { internalError } from "@/lib/api/error";
@@ -21,6 +22,13 @@ type ConsentMeta = {
   tos_uri?: string;
   policy_uri?: string;
   isFirstTime: boolean;
+  /**
+   * Whether the client_id is on the verified allowlist. The consent page
+   * only renders the polished brand label when true; otherwise it shows the
+   * raw registered `client_name`, so an unverified DCR client cannot present
+   * itself under a trusted brand.
+   */
+  verified: boolean;
 };
 
 /**
@@ -75,6 +83,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       tos_uri: client.tos_uri,
       policy_uri: client.policy_uri,
       isFirstTime: !previouslyConsented,
+      verified: isVerifiedOAuthClient(client.client_id),
     };
     return NextResponse.json(meta, {
       status: 200,
