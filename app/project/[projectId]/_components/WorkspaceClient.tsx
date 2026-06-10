@@ -388,7 +388,7 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
     },
   });
 
-  const showBodySkeleton = useSkeletonVisibility(isPlaceholderData);
+  const showBodySkeleton = useSkeletonVisibility(isPlaceholderData, taskId);
 
   const taskFullMatches = selectedTaskFull && selectedTaskFull.id === taskId;
   const taskEdges: TaskEdgeRef[] =

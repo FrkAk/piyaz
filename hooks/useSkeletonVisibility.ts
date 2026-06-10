@@ -15,18 +15,31 @@ import { useEffect, useRef, useState } from "react";
  *   `minVisibleMs` so it cannot flash-swap away mid-entrance when content
  *   lands just after the delay threshold.
  *
+ * A `resetKey` change (e.g. the selected task id) drops visibility in the
+ * same render, so a skeleton held for one subject never lingers over the
+ * next subject's already-available content; the show delay re-arms from
+ * zero for the new subject.
+ *
  * @param loading - Raw loading flag (e.g. `isPlaceholderData`).
+ * @param resetKey - Identity of the loading subject; a change resets state.
  * @param showDelayMs - Delay before the skeleton may appear.
  * @param minVisibleMs - Minimum time the skeleton stays visible once shown.
  * @returns True while the skeleton should render.
  */
 export function useSkeletonVisibility(
   loading: boolean,
+  resetKey?: unknown,
   showDelayMs = 200,
   minVisibleMs = 400,
 ): boolean {
   const [visible, setVisible] = useState(false);
+  const [prevKey, setPrevKey] = useState(resetKey);
   const shownAtRef = useRef(0);
+
+  if (prevKey !== resetKey) {
+    setPrevKey(resetKey);
+    setVisible(false);
+  }
 
   useEffect(() => {
     if (loading && !visible) {
@@ -48,7 +61,7 @@ export function useSkeletonVisibility(
       const timer = setTimeout(() => setVisible(false), remaining);
       return () => clearTimeout(timer);
     }
-  }, [loading, visible, showDelayMs, minVisibleMs]);
+  }, [loading, visible, resetKey, showDelayMs, minVisibleMs]);
 
   return visible;
 }
