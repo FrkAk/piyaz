@@ -32,7 +32,7 @@
     "db:test:down": "docker compose -f docker-compose.test.yml down -v"
   },
   "dependencies": {
-    "@better-auth/oauth-provider": "1.6.14",
+    "@better-auth/oauth-provider": "1.6.15",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@fontsource-variable/inter": "^5.2.8",
     "@modelcontextprotocol/sdk": "1.29.0",
@@ -45,7 +45,7 @@
     "@types/d3-force": "^3.0.10",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
-    "better-auth": "1.6.14",
+    "better-auth": "1.6.15",
     "d3-force": "^3.0.0",
     "d3-quadtree": "^3.0.1",
     "drizzle-orm": "0.45.2",
