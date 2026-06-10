@@ -8,7 +8,7 @@ import {
   type SortKey,
   type WorkspaceView,
 } from "./structure/FilterBar";
-import { StructureView } from "./structure/StructureView";
+import { StructureView, type DeletedTask } from "./structure/StructureView";
 import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
 
 interface NavigatorPanelProps {
@@ -28,6 +28,12 @@ interface NavigatorPanelProps {
   onSelectNode: (taskId: string) => void;
   /** Refresh the graph after a mutation. */
   onGraphChange?: () => void;
+  /** Whether a deleted task is available to restore — owned by WorkspaceClient. */
+  canUndo: boolean;
+  /** Restore the most recently deleted task. */
+  onUndo: () => void;
+  /** Record a deleted task so it can be restored. */
+  pushUndo: (item: DeletedTask) => void;
   /** Additional CSS classes. */
   className?: string;
 }
@@ -103,6 +109,9 @@ export function NavigatorPanel({
   selectedNodeId,
   onSelectNode,
   onGraphChange,
+  canUndo,
+  onUndo,
+  pushUndo,
   className = "",
 }: NavigatorPanelProps) {
   const router = useRouter();
@@ -185,6 +194,9 @@ export function NavigatorPanel({
           sort={sort}
           group={group}
           categories={categories}
+          canUndo={canUndo}
+          onUndo={onUndo}
+          pushUndo={pushUndo}
         />
       </div>
     </div>
