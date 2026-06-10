@@ -76,8 +76,12 @@ type DepthProjection = {
  * are dropped at every depth (no formatter reads them). `implementationPlan`
  * is true for `summary` because `buildSummaryContext` reads its presence
  * (`hasImplementationPlan`) even though it never renders the plan text.
+ *
+ * Invariant: `agent` must keep every flag `planning` and `working` keep —
+ * `resolveContextBundle` fetches once at `agent` depth and feeds all three
+ * cores. Exported so the invariant test can pin this.
  */
-const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
+export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   summary: {
     tags: false,
     implementationPlan: true,
@@ -156,14 +160,15 @@ const LINKS_AGG = sql`(SELECT json_agg(json_build_object('id', l.id, 'kind', l.k
  * @param keep - Whether the depth reads the column.
  * @param column - Bare `tasks` column name (already quoted as `t.<col>`).
  * @param alias - Output column alias.
- * @param nullCast - Postgres cast applied to the `NULL` fallback.
+ * @param nullCast - Postgres cast applied to the `NULL` fallback. Restricted
+ *   to known cast literals because the value reaches `sql.raw`.
  * @returns SQL fragment for the SELECT list.
  */
 function depthColumn(
   keep: boolean,
   column: SQL,
   alias: string,
-  nullCast: string,
+  nullCast: "text" | "jsonb",
 ): SQL {
   const aliasId = sql.identifier(alias);
   return keep
