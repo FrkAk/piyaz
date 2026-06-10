@@ -53,6 +53,15 @@ test("writeVersion throws when the field is absent", () => {
   expect(() => writeVersion({ path, field: "version" }, "2.0.0")).toThrow();
 });
 
+test("writeVersion refuses a nested field that precedes the top-level one", () => {
+  const original = `{\n  "engines": { "version": "9.9.9" },\n  "version": "1.0.0"\n}\n`;
+  const path = tempFile("plugin.json", original);
+  expect(() => writeVersion({ path, field: "version" }, "2.0.0")).toThrow(
+    /nested/,
+  );
+  expect(readFileSync(path, "utf8")).toBe(original);
+});
+
 test("pattern round-trips and leaves surrounding code untouched", () => {
   const path = tempFile(
     "create-server.ts",

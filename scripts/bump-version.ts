@@ -91,7 +91,8 @@ export function readVersion(entry: Entry): string {
  * Write a new version into one config entry, preserving file formatting.
  * @param entry - Field or pattern entry.
  * @param version - New version string.
- * @throws Error when the field or pattern is absent.
+ * @throws Error when the field or pattern is absent, or when the textual
+ * replacement would update a nested occurrence instead of the top-level field.
  */
 export function writeVersion(entry: Entry, version: string): void {
   const content = readFileSync(entry.path, "utf8");
@@ -100,7 +101,14 @@ export function writeVersion(entry: Entry, version: string): void {
     if (!re.test(content)) {
       throw new Error(`${entry.path} has no ${entry.field} field to bump`);
     }
-    writeFileSync(entry.path, content.replace(re, `$1${version}$2`));
+    const next = content.replace(re, `$1${version}$2`);
+    const topLevel = (JSON.parse(next) as Record<string, unknown>)[entry.field];
+    if (topLevel !== version) {
+      throw new Error(
+        `${entry.path}: a nested ${entry.field} occurrence precedes the top-level field; refusing to write`,
+      );
+    }
+    writeFileSync(entry.path, next);
     return;
   }
   const next = content.replace(patternToRegExp(entry.pattern), () =>
