@@ -70,7 +70,7 @@ Add the Mymir MCP server to your global config and authenticate (Antigravity han
 
 Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. For the workflow skills too, install the bundled plugin: `agy plugin install ./plugins/antigravity` (clone first), or drop `plugins/antigravity/` into `~/.gemini/antigravity-cli/plugins/`. The bundled `mcp_config.json` also includes a `mymir-local` server for self-host.
 
-> **Gemini CLI users:** Antigravity replaces Gemini CLI (consumer access ended 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
+> **Gemini CLI users:** Antigravity replaces Gemini CLI (consumer access ends 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
 
 ---
 
