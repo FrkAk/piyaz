@@ -1,6 +1,11 @@
 import "server-only";
 
-import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
+import {
+  section,
+  formatCriteria,
+  formatDecisions,
+  untrustedContentNotice,
+} from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
 import { withUserContext } from "@/lib/db/rls";
 import {
@@ -43,7 +48,7 @@ export function buildPlanningContextFrom(data: PlanningContextData): string {
   if (priority) headerLines.push(`Priority: \`${priority}\``);
   if (estimate) headerLines.push(`Estimate: ${estimate} pts`);
 
-  const parts: string[] = [headerLines.join("\n")];
+  const parts: string[] = [untrustedContentNotice(), headerLines.join("\n")];
 
   if (project) {
     const projectLines = [`Project: ${project.title}`];

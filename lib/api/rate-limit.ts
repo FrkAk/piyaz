@@ -31,7 +31,7 @@ export type RateLimitRule = {
   pattern: string;
   max: number;
   window: number;
-  keyStrategy: "session" | "apikey";
+  keyStrategy: "session" | "apikey" | "ip";
   bindingKey?: "api" | "auth";
 };
 
@@ -51,11 +51,17 @@ export interface RateLimitBackend {
  * match, so paths with concrete prefixes (e.g. `/api/auth/sign-in`) must
  * precede the catch-all `/api/*`.
  *
- * Pre-auth IP keying on the two auth rules is intentional. CF docs discourage
- * IP-based keys for general user throttling because shared NATs cause
- * collateral throttling, but `sign-in` and `sign-up` have no session cookie
- * yet — IP is the only available key. Brute-force defense by IP is the
- * field-standard exception. Layered on top of Better-Auth's in-memory
+ * The three pre-auth `auth` rules (`sign-in`, `sign-up`, `oauth2/register`)
+ * use the `"ip"` key strategy, NOT `"session"`. These endpoints are reached
+ * by unauthenticated callers, so any session cookie on the request is either
+ * absent or attacker-supplied: `getSessionCookie` returns the raw cookie value
+ * with no signature/DB validation, so a `"session"` key would let a caller mint
+ * a fresh rate-limit bucket per request by rotating a forged cookie and bypass
+ * the limit entirely. Keying on the client IP (set by the CF edge via
+ * `cf-connecting-ip`) is the only un-forgeable identifier here. CF docs
+ * discourage IP keys for general user throttling because shared NATs cause
+ * collateral throttling, but brute-force / registration-flood defense by IP is
+ * the field-standard exception. Layered on top of Better-Auth's in-memory
  * `customRules` (`lib/auth.ts`) for defense-in-depth — BA tightens sign-up
  * to 3/60 in-process per isolate even though the CF binding only enforces
  * 5/60 here. Follow-up: declare a dedicated 3/60 binding to tighten the
@@ -72,21 +78,21 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     pattern: "/api/auth/sign-in/*",
     max: 5,
     window: 60,
-    keyStrategy: "session",
+    keyStrategy: "ip",
     bindingKey: "auth",
   },
   {
     pattern: "/api/auth/sign-up/*",
     max: 5,
     window: 60,
-    keyStrategy: "session",
+    keyStrategy: "ip",
     bindingKey: "auth",
   },
   {
     pattern: "/api/auth/oauth2/register",
     max: 5,
     window: 60,
-    keyStrategy: "session",
+    keyStrategy: "ip",
     bindingKey: "auth",
   },
   { pattern: "/api/mcp", max: 100, window: 60, keyStrategy: "apikey" },
@@ -138,6 +144,8 @@ export async function extractKey(
       if (auth?.startsWith("Bearer ")) return hashKey(auth.slice(7));
       return getClientIp(request);
     }
+    case "ip":
+      return getClientIp(request);
   }
 }
 

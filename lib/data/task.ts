@@ -41,6 +41,7 @@ import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
+import { parseEnvInt } from "@/lib/config/env";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccessTx,
@@ -1972,7 +1973,7 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
       .from(tasks)
       .where(eq(tasks.projectId, taskFields.projectId));
 
-    const maxTasks = Number(process.env.MAX_TASKS_PER_PROJECT) || 50_000;
+    const maxTasks = parseEnvInt(process.env.MAX_TASKS_PER_PROJECT, 50_000);
     if (Number(maxRow?.liveCount ?? 0) >= maxTasks) {
       throw new ForbiddenError(
         `Project has reached the ${maxTasks}-task limit`,

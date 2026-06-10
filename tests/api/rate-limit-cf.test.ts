@@ -74,6 +74,15 @@ test("open DCR registration is throttled by the strict auth binding", () => {
   expect(rule?.max).toBe(5);
   // Must not fall through to the loose /api/* catch-all.
   expect(rule?.pattern).toBe("/api/auth/oauth2/register");
+  // Must key on IP, not the unvalidated session cookie: the register endpoint
+  // is unauthenticated, so a `"session"` key lets a caller rotate a forged
+  // cookie to mint a fresh bucket per request and bypass the limit.
+  expect(rule?.keyStrategy).toBe("ip");
+});
+
+test("pre-auth endpoints key on IP, not the forgeable session cookie", () => {
+  expect(matchRule("/api/auth/sign-in/email")?.keyStrategy).toBe("ip");
+  expect(matchRule("/api/auth/sign-up/email")?.keyStrategy).toBe("ip");
 });
 
 test("CloudflareRateLimitBackend fails open by default on binding RPC error", async () => {

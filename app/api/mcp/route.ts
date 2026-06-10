@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { createMcpServer } from "@/lib/mcp/create-server";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
 import { makeAuthContext, type AuthContext } from "@/lib/auth/context";
+import { parseEnvInt } from "@/lib/config/env";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const origin = new URL(baseUrl).origin;
@@ -22,7 +23,10 @@ const issuer = `${baseUrl}/api/auth`;
  * legitimate payload — a full unabridged implementation plan is tens of KB —
  * while bounding worst-case cost. Tunable via MCP_MAX_BODY_BYTES.
  */
-const MAX_MCP_BODY_BYTES = Number(process.env.MCP_MAX_BODY_BYTES) || 1_000_000;
+const MAX_MCP_BODY_BYTES = parseEnvInt(
+  process.env.MCP_MAX_BODY_BYTES,
+  1_000_000,
+);
 
 /**
  * MCP-spec 413 response for an over-limit request body.
@@ -196,6 +200,7 @@ export async function POST(request: Request) {
     method: request.method,
     headers: request.headers,
     body,
+    signal: request.signal,
   });
 
   const server = createMcpServer(ctx);

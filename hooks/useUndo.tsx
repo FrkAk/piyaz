@@ -9,8 +9,13 @@ import { IconUndo } from "@/components/shared/icons";
 // ---------------------------------------------------------------------------
 
 interface UseUndoOptions<T> {
-  /** @param onUndo - Called with the popped item when undo is triggered. */
-  onUndo: (item: T) => void;
+  /**
+   * @param onUndo - Called with the popped item when undo is triggered. May
+   *   return a promise; if it rejects, the item is pushed back onto the stack
+   *   so a failed undo (e.g. a rate-limited or rejected server write) does not
+   *   silently discard the entry and lose the user's only recovery path.
+   */
+  onUndo: (item: T) => void | Promise<void>;
   /** @param resetOn - Auto-clear the stack when this value changes. */
   resetOn?: unknown;
   /** @param keyboard - Enable Ctrl+Z / Cmd+Z. Pass object with panelSelector for focus-scoping. */
@@ -49,7 +54,9 @@ export function useUndo<T>(opts: UseUndoOptions<T>): {
     if (current.length === 0) return;
     const last = current[current.length - 1];
     setStack(current.slice(0, -1));
-    onUndoRef.current(last);
+    Promise.resolve(onUndoRef.current(last)).catch(() => {
+      setStack((prev) => [...prev, last]);
+    });
   }, []);
 
   // Auto-clear on resetOn change
