@@ -1,0 +1,15 @@
+{
+  "files": [
+    {
+      "path": "plugins/claude-code/.claude-plugin/plugin.json",
+      "field": "version"
+    },
+    { "path": "plugins/codex/.codex-plugin/plugin.json", "field": "version" },
+    { "path": "plugins/cursor/.cursor-plugin/plugin.json", "field": "version" },
+    { "path": "plugins/antigravity/plugin.json", "field": "version" },
+    {
+      "path": "lib/mcp/create-server.ts",
+      "pattern": "name: \"mymir\", version: \"{version}\""
+    }
+  ]
+}

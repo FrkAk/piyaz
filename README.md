@@ -8,7 +8,7 @@
   &nbsp;&nbsp;
   <a href="#cursor"><img alt="Cursor" src="https://img.shields.io/badge/Cursor-000000?style=flat-square&logo=cursor&logoColor=white" /></a>
   &nbsp;&nbsp;
-  <a href="#gemini"><img alt="Gemini CLI" src="https://img.shields.io/badge/Gemini_CLI-4285F4?style=flat-square&logo=googlegemini&logoColor=white" /></a>
+  <a href="#antigravity"><img alt="Antigravity" src="https://img.shields.io/badge/Antigravity-4285F4?style=flat-square&logo=google&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -21,11 +21,61 @@ Mymir replaces that cycle. It's not just a context layer your agents read from, 
 
 ---
 
-## How to set it up
+## Use the hosted version (no clone)
 
-You need [Bun](https://bun.sh) (v1.0+) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Linux or macOS or Windows with WSL2.
+Mymir is hosted at [app.mymir.dev](https://app.mymir.dev). The plugin installs into your coding agent once, at the user level, and works in every project you open, no clone required. Run the one-time install for your agent and sign in when prompted (OAuth, once per machine).
 
-Clone the repo and install dependencies:
+### Claude Code
+
+```bash
+claude plugin marketplace add FrkAk/mymir
+claude plugin install mymir@mymir
+```
+
+Then run `/mcp`, select **mymir**, and complete the browser sign-in.
+
+### Codex
+
+```bash
+codex plugin marketplace add FrkAk/mymir
+```
+
+Open Codex, run `/plugin`, install **Mymir**, restart, and authenticate when prompted. Invoke the main skill with `$mymir`. (If your Codex build can't resolve the root marketplace, append `--sparse plugins`.)
+
+### Cursor
+
+- **MCP only, any plan (quick start):** open the install deeplink, then sign in on the first tool call:
+
+  ```text
+  cursor://anysphere.cursor-deeplink/mcp/install?name=mymir&config=eyJ1cmwiOiJodHRwczovL2FwcC5teW1pci5kZXYvYXBpL21jcCJ9
+  ```
+
+- **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/mymir`. Team Marketplaces is a Teams/Enterprise feature.
+- **Public Marketplace:** listing in the [Cursor Marketplace](https://cursor.com/marketplace) requires submission and manual review. Search-and-install lands once Mymir is published.
+
+### Antigravity
+
+Add the Mymir MCP server to your global config and authenticate (Antigravity handles OAuth automatically). The IDE and the CLI share one config at `~/.gemini/config/mcp_config.json` (in the IDE: MCP Store → Manage MCP Servers → View raw config):
+
+```json
+{
+  "mcpServers": {
+    "mymir": { "serverUrl": "https://app.mymir.dev/api/mcp" }
+  }
+}
+```
+
+Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. The workflow skills ship as a bundled plugin: clone this repo and copy `plugins/antigravity/` into `~/.gemini/config/plugins/` (global) or `.agents/plugins/` at your workspace root. The bundled `mcp_config.json` also includes a `mymir-local` server for self-host.
+
+> **Gemini CLI users:** Antigravity replaces Gemini CLI (consumer access ends 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
+
+---
+
+## Self-host / contribute
+
+Self-hosting is free under AGPL-3.0. You run the Mymir server yourself and point the plugin's **`mymir-local`** server at it, no env vars required.
+
+You need [Bun](https://bun.sh) (v1.0+) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Linux, macOS, or Windows with WSL2.
 
 ```bash
 git clone git@github.com:FrkAk/mymir.git
@@ -34,65 +84,21 @@ bun install --production
 cp .env.local.example .env.local
 ```
 
-**Bring your own coding agent.** Mymir works directly inside the coding agent you already use: Claude Code, Codex, Cursor, or Gemini CLI. Brainstorm, decompose, and project activation happen there. The web app is for refining specs, planning, and tracking progress on `active` projects from the browser.
-
-Fill in `.env.local` by following the numbered steps at the top of `.env.local.example`. You generate three `openssl rand -hex 32` passwords for the Postgres roles (same value in each `*_PASSWORD` and its matching URL) and one `openssl rand -base64 32` for `BETTER_AUTH_SECRET`.
-
-Spin up Postgres and push the schema:
+Fill in `.env.local` by following the numbered steps at the top of `.env.local.example`. Then bring up Postgres, build, start, and open [localhost:3000](http://localhost:3000):
 
 ```bash
 bun run db:setup
-```
-
-Build and start the server and open [localhost:3000](http://localhost:3000):
-
-```bash
 bun run build
 bun run start
 ```
 
-Mymir ships as four standalone plugin/extension dirs, one per supported CLI under `plugins/<cli>/`. With the dev server running, install the one that matches your tool.
+Install the plugin for your agent as above, but select the **`mymir-local`** server (it points at `http://localhost:3000/api/mcp`). Advanced self-hosters on a custom domain can set `MYMIR_URL` to repoint the default `mymir` server in Claude Code; Codex and Cursor read a hardcoded hosted URL, so edit their `mcp.json` directly if you need a custom domain.
 
-### Claude Code
+Contributors install from the local checkout: `claude plugin marketplace add ./plugins/claude-code` (Claude Code), `codex plugin marketplace add ./plugins` (Codex), or copy `plugins/cursor` into `~/.cursor/plugins/local/`. Shared skills live in `plugins/claude-code/` (canonical); after editing them run `bun run sync:plugins` to regenerate every brand's copy (`bun run check:plugins` is CI-enforced).
 
-```bash
-claude plugin marketplace add ./plugins/claude-code
-claude plugin install mymir@mymir-local
-```
+---
 
-Authenticate with `/mcp`, select **mymir**, and complete the browser sign-in (once per machine).
-
-Update with `claude plugin update mymir@mymir-local` and restart Claude Code. MCP server changes (`lib/mcp/`) apply immediately without an update.
-
-### Codex
-
-```bash
-codex plugin marketplace add ./plugins
-```
-
-Open Codex, run `/plugin`, search for **Mymir**, install, then restart. Invoke the main skill explicitly with `$mymir` when needed.
-
-### Gemini
-
-```bash
-gemini extensions install ./plugins/gemini
-```
-
-Authenticate with `/mcp auth mymir` and complete the browser sign-in.
-
-Update with `gemini extensions update mymir`; remove with `gemini extensions uninstall mymir`.
-
-### Cursor
-
-```bash
-ln -s "$(pwd)/plugins/cursor" ~/.cursor/plugins/local/mymir
-```
-
-Restart Cursor (or run **Developer: Reload Window**). The MCP server and five skills (`mymir`, `brainstorm`, `decompose`, `manage`, `onboarding`) load automatically. First MCP tool call triggers OAuth in your browser. Trigger a skill with `/mymir`, `/brainstorm`, etc., or let the agent auto-invoke based on your prompt.
-
-Self-hosted: edit `plugins/cursor/mcp.json` to point at your deployment URL before symlinking.
-
-### What gets installed
+## What gets installed
 
 All four plugins bundle the shared components:
 
@@ -105,7 +111,7 @@ All four plugins bundle the shared components:
 | **Decompose workflow** | Break a project brief into a dependency graph |
 | **Manage workflow** | Strategic CTO-mode review: rebalance the graph, audit dependencies, prune orphans, consolidate categories |
 
-In Codex, Cursor, and Gemini each workflow is a skill invoked by slash command. In Claude Code each is also available as a dispatchable agent (via the Task tool) so the main `/mymir` skill can hand off work in a clean per-agent context.
+In Codex, Cursor, and Antigravity each workflow is a skill invoked by slash command. In Claude Code each is also available as a dispatchable agent (via the Task tool) so the main `/mymir` skill can hand off work in a clean per-agent context.
 
 **Claude Code additionally bundles:**
 
@@ -116,13 +122,13 @@ In Codex, Cursor, and Gemini each workflow is a skill invoked by slash command. 
 | **`mymir:decompose-task` agent** | Splits an existing oversize task in an active project into 2 to N children, rewires every dependency edge touching the parent, cancels the parent with rationale citing the children. Composer's oversize handler routes here. |
 | **`mymir:decompose-feature` agent** | Adds a new feature or capability cluster to an active project. Reuses existing categories and tag vocabulary; creates 5 to 20 tasks plus internal and integration edges. |
 
-(Composer depends on a subagent dispatch primitive for clean per-phase contexts and tool-restriction enforcement. Codex, Cursor, and Gemini do not yet have an equivalent, so composer is Claude Code only for now.)
+(Composer depends on a subagent dispatch primitive for clean per-phase contexts and tool-restriction enforcement. Codex, Cursor, and Antigravity do not yet have an equivalent, so composer is Claude Code only for now.)
 
 ---
 
 ## How it runs
 
-Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Codex, Cursor, and Gemini. Each plugin bundles 6 MCP tools, the four core workflows (brainstorm, onboarding, decompose, manage), and a `/mymir` skill that auto-invokes when you talk about projects, tasks, or planning. Claude Code adds end-to-end task orchestration via `/mymir:composer` plus `decompose-task` and `decompose-feature` for surgical decomposition within active projects. You don't call tools manually, you just talk.
+Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Codex, Cursor, and Antigravity. Each plugin bundles 6 MCP tools, the four core workflows (brainstorm, onboarding, decompose, manage), and a `/mymir` skill that auto-invokes when you talk about projects, tasks, or planning. Claude Code adds end-to-end task orchestration via `/mymir:composer` plus `decompose-task` and `decompose-feature` for surgical decomposition within active projects. You don't call tools manually, you just talk.
 
 **Three entry paths, one graph.**
 
@@ -154,7 +160,7 @@ Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 **Add and refine mid-flow.** Spot something missing, describe it, and push back until it's right:
 
 ```text
-❯ Add a task for an onboarding agent that records shipped work as done tasks. Relate it to the codex/gemini support task.
+❯ Add a task for an onboarding agent that records shipped work as done tasks. Relate it to the codex/antigravity support task.
 ```
 
 ```text

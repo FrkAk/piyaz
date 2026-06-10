@@ -35,18 +35,18 @@ const platformSubs: PlatformSubs[] = [
     },
   },
   {
-    pathPrefix: "plugins/gemini/",
-    subs: {
-      "the AskUserQuestion tool":
-        "the ask_user tool (prefer type:'choice'; type:'yesno' for confirmations; type:'text' only when the answer is genuinely open)",
-      AskUserQuestion: "ask_user",
-    },
-  },
-  {
     pathPrefix: "plugins/cursor/",
     subs: {
       "the AskUserQuestion tool": "the ask question tool",
       AskUserQuestion: "ask question tool",
+    },
+  },
+  {
+    pathPrefix: "plugins/antigravity/",
+    subs: {
+      "the AskUserQuestion tool":
+        "the ask_user tool (prefer type:'choice'; type:'yesno' for confirmations; type:'text' only when the answer is genuinely open)",
+      AskUserQuestion: "ask_user",
     },
   },
 ];
@@ -57,8 +57,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/skills/mymir/SKILL.md",
     copies: [
       "plugins/codex/skills/mymir/SKILL.md",
-      "plugins/gemini/skills/mymir/SKILL.md",
       "plugins/cursor/skills/mymir/SKILL.md",
+      "plugins/antigravity/skills/mymir/SKILL.md",
     ],
   },
   {
@@ -66,8 +66,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/skills/mymir/references/conventions.md",
     copies: [
       "plugins/codex/skills/mymir/references/conventions.md",
-      "plugins/gemini/skills/mymir/references/conventions.md",
       "plugins/cursor/skills/mymir/references/conventions.md",
+      "plugins/antigravity/skills/mymir/references/conventions.md",
     ],
   },
   {
@@ -75,8 +75,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/skills/mymir/references/artifacts.md",
     copies: [
       "plugins/codex/skills/mymir/references/artifacts.md",
-      "plugins/gemini/skills/mymir/references/artifacts.md",
       "plugins/cursor/skills/mymir/references/artifacts.md",
+      "plugins/antigravity/skills/mymir/references/artifacts.md",
     ],
   },
   {
@@ -84,8 +84,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/skills/mymir/references/lifecycle.md",
     copies: [
       "plugins/codex/skills/mymir/references/lifecycle.md",
-      "plugins/gemini/skills/mymir/references/lifecycle.md",
       "plugins/cursor/skills/mymir/references/lifecycle.md",
+      "plugins/antigravity/skills/mymir/references/lifecycle.md",
     ],
   },
   {
@@ -93,8 +93,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/skills/mymir/references/resilience.md",
     copies: [
       "plugins/codex/skills/mymir/references/resilience.md",
-      "plugins/gemini/skills/mymir/references/resilience.md",
       "plugins/cursor/skills/mymir/references/resilience.md",
+      "plugins/antigravity/skills/mymir/references/resilience.md",
     ],
   },
   {
@@ -102,8 +102,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/agents/brainstorm.md",
     copies: [
       "plugins/codex/skills/brainstorm/SKILL.md",
-      "plugins/gemini/skills/brainstorm/SKILL.md",
       "plugins/cursor/skills/brainstorm/SKILL.md",
+      "plugins/antigravity/skills/brainstorm/SKILL.md",
     ],
   },
   {
@@ -111,8 +111,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/agents/decompose.md",
     copies: [
       "plugins/codex/skills/decompose/SKILL.md",
-      "plugins/gemini/skills/decompose/SKILL.md",
       "plugins/cursor/skills/decompose/SKILL.md",
+      "plugins/antigravity/skills/decompose/SKILL.md",
     ],
   },
   {
@@ -120,8 +120,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/agents/decompose-task.md",
     copies: [
       "plugins/codex/skills/decompose-task/SKILL.md",
-      "plugins/gemini/skills/decompose-task/SKILL.md",
       "plugins/cursor/skills/decompose-task/SKILL.md",
+      "plugins/antigravity/skills/decompose-task/SKILL.md",
     ],
   },
   {
@@ -129,8 +129,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/agents/decompose-feature.md",
     copies: [
       "plugins/codex/skills/decompose-feature/SKILL.md",
-      "plugins/gemini/skills/decompose-feature/SKILL.md",
       "plugins/cursor/skills/decompose-feature/SKILL.md",
+      "plugins/antigravity/skills/decompose-feature/SKILL.md",
     ],
   },
   {
@@ -138,8 +138,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/agents/manage.md",
     copies: [
       "plugins/codex/skills/manage/SKILL.md",
-      "plugins/gemini/skills/manage/SKILL.md",
       "plugins/cursor/skills/manage/SKILL.md",
+      "plugins/antigravity/skills/manage/SKILL.md",
     ],
   },
   {
@@ -147,8 +147,8 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/agents/onboarding.md",
     copies: [
       "plugins/codex/skills/onboarding/SKILL.md",
-      "plugins/gemini/skills/onboarding/SKILL.md",
       "plugins/cursor/skills/onboarding/SKILL.md",
+      "plugins/antigravity/skills/onboarding/SKILL.md",
     ],
   },
   {
@@ -156,29 +156,13 @@ const shared: SharedGroup[] = [
     canonical: "plugins/claude-code/agents/review.md",
     copies: [
       "plugins/codex/skills/review/SKILL.md",
-      "plugins/gemini/skills/review/SKILL.md",
       "plugins/cursor/skills/review/SKILL.md",
+      "plugins/antigravity/skills/review/SKILL.md",
     ],
   },
 ];
 
 const fieldSyncs: FieldSync[] = [
-  {
-    name: "version",
-    canonicalPath: "plugins/claude-code/.claude-plugin/plugin.json",
-    canonicalJsonPath: ["version"],
-    copies: [
-      {
-        path: "plugins/codex/.codex-plugin/plugin.json",
-        jsonPath: ["version"],
-      },
-      { path: "plugins/gemini/gemini-extension.json", jsonPath: ["version"] },
-      {
-        path: "plugins/cursor/.cursor-plugin/plugin.json",
-        jsonPath: ["version"],
-      },
-    ],
-  },
   {
     name: "description",
     canonicalPath: "plugins/claude-code/.claude-plugin/plugin.json",
@@ -189,13 +173,10 @@ const fieldSyncs: FieldSync[] = [
         jsonPath: ["description"],
       },
       {
-        path: "plugins/gemini/gemini-extension.json",
-        jsonPath: ["description"],
-      },
-      {
         path: "plugins/cursor/.cursor-plugin/plugin.json",
         jsonPath: ["description"],
       },
+      { path: "plugins/antigravity/plugin.json", jsonPath: ["description"] },
     ],
   },
 ];
@@ -396,4 +377,4 @@ if (failures > 0) {
   process.exit(1);
 }
 
-console.log(`\nAll shared content and versions are in sync.`);
+console.log(`\nAll shared plugin content is in sync.`);

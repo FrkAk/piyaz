@@ -64,3 +64,5 @@ jobs:
         run: bun run test
       - name: Check plugin drift
         run: bun run check:plugins
+      - name: Check version drift
+        run: bun run check:version
