@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import type {
   TaskEdgeRef,
   TaskFull,
@@ -143,7 +143,7 @@ export function DetailView({
         {isBodyLoading ? (
           <DetailBodySkeleton />
         ) : (
-          <div className="mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
+          <div className="rise-in mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
             <DescriptionSection
               taskId={taskId}
               description={task.description}
@@ -372,32 +372,136 @@ function buildDownstream(
 }
 
 /**
+ * Build an inline style from skeleton CSS custom properties
+ * (`--skeleton-delay`, `--skeleton-radius`, `--skeleton-base`).
+ *
+ * @param vars - Custom-property map applied to a skeleton element.
+ * @returns The map typed as a React inline style.
+ */
+function skeletonVars(
+  vars: Record<`--skeleton-${string}`, string>,
+): CSSProperties {
+  return vars as CSSProperties;
+}
+
+/**
+ * The five §3.9 bundle-preview section tints (spec / prerequisites /
+ * neighbors / decisions / files), previewed by the bundle skeleton bars.
+ */
+const BUNDLE_SKELETON_BARS: { tint: string; width: string }[] = [
+  { tint: "var(--color-accent)", width: "w-full" },
+  { tint: "var(--color-planned)", width: "w-5/6" },
+  { tint: "var(--color-relates)", width: "w-2/3" },
+  { tint: "var(--color-progress)", width: "w-1/2" },
+  { tint: "var(--color-accent-2)", width: "w-2/5" },
+];
+
+/**
  * Skeleton placeholder for the detail body while `isPlaceholderData` is
- * true. Mirrors the rough height/rhythm of the real body sections so the
- * layout stays stable when the full fetch resolves. Uses the same
- * `animate-pulse bg-surface-raised` pattern as the settings loading shell.
+ * true. Mirrors the anatomy of the real body — description lines, criteria
+ * checklist rows, the color-coded bundle-preview card, decisions, and
+ * relationship chips — so the layout stays stable when the full fetch
+ * resolves. Sections rise in staggered (fade + 4px y-slide per §6.4) and a
+ * shared sheen wave travels down the bars via `--skeleton-delay`.
  *
  * @returns Skeleton element rendered inside the scrollable body area.
  */
 function DetailBodySkeleton() {
   return (
-    <div className="mx-auto max-w-[720px] space-y-7 px-8 pt-6 pb-[60px]">
-      <div className="space-y-2">
-        <div className="h-3 w-20 animate-pulse rounded bg-surface-raised/60" />
-        <div className="h-24 animate-pulse rounded-[10px] bg-surface-raised/60" />
-      </div>
-      <div className="space-y-2">
-        <div className="h-3 w-28 animate-pulse rounded bg-surface-raised/60" />
-        <div className="h-16 animate-pulse rounded-[10px] bg-surface-raised/60" />
-      </div>
-      <div className="space-y-2">
-        <div className="h-3 w-36 animate-pulse rounded bg-surface-raised/60" />
-        <div className="h-20 animate-pulse rounded-[10px] bg-surface-raised/60" />
-      </div>
-      <div className="space-y-2">
-        <div className="h-3 w-24 animate-pulse rounded bg-surface-raised/60" />
-        <div className="h-12 animate-pulse rounded-[10px] bg-surface-raised/60" />
-      </div>
+    <div className="mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
+      <section
+        className="rise-in mb-7"
+        style={skeletonVars({ "--skeleton-delay": "0ms" })}
+      >
+        <div className="skeleton-bar mb-3 h-2.5 w-20" />
+        <div className="space-y-2">
+          <div className="skeleton-bar h-3 w-full" />
+          <div className="skeleton-bar h-3 w-11/12" />
+          <div className="skeleton-bar h-3 w-2/3" />
+        </div>
+      </section>
+
+      <section
+        className="rise-in mb-7"
+        style={skeletonVars({ "--skeleton-delay": "70ms" })}
+      >
+        <div className="skeleton-bar mb-3 h-2.5 w-32" />
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <div
+              className="skeleton-bar h-3.5 w-3.5 shrink-0"
+              style={skeletonVars({ "--skeleton-radius": "9999px" })}
+            />
+            <div className="skeleton-bar h-3 w-3/5" />
+          </div>
+          <div className="flex items-center gap-2">
+            <div
+              className="skeleton-bar h-3.5 w-3.5 shrink-0"
+              style={skeletonVars({ "--skeleton-radius": "9999px" })}
+            />
+            <div className="skeleton-bar h-3 w-2/5" />
+          </div>
+        </div>
+      </section>
+
+      <section
+        className="rise-in mb-7"
+        style={skeletonVars({ "--skeleton-delay": "140ms" })}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <div className="skeleton-bar h-2.5 w-36" />
+          <div
+            className="skeleton-bar h-4 w-14"
+            style={skeletonVars({ "--skeleton-radius": "9999px" })}
+          />
+        </div>
+        <div className="rounded-lg border border-border bg-surface/40 p-4">
+          <div className="space-y-3">
+            {BUNDLE_SKELETON_BARS.map((bar, i) => (
+              <div
+                key={bar.tint}
+                className={`skeleton-bar h-2 ${bar.width}`}
+                style={skeletonVars({
+                  "--skeleton-delay": `${140 + i * 40}ms`,
+                  "--skeleton-base": `color-mix(in srgb, ${bar.tint} 16%, transparent)`,
+                })}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        className="rise-in mb-7"
+        style={skeletonVars({ "--skeleton-delay": "210ms" })}
+      >
+        <div className="skeleton-bar mb-3 h-2.5 w-24" />
+        <div className="space-y-2">
+          <div className="skeleton-bar h-3 w-4/5" />
+          <div className="skeleton-bar h-3 w-1/2" />
+        </div>
+      </section>
+
+      <section
+        className="rise-in"
+        style={skeletonVars({ "--skeleton-delay": "280ms" })}
+      >
+        <div className="skeleton-bar mb-3 h-2.5 w-32" />
+        <div className="flex items-center gap-2">
+          <div
+            className="skeleton-bar h-6 w-24"
+            style={skeletonVars({ "--skeleton-radius": "6px" })}
+          />
+          <div
+            className="skeleton-bar h-6 w-28"
+            style={skeletonVars({ "--skeleton-radius": "6px" })}
+          />
+          <div
+            className="skeleton-bar h-6 w-20"
+            style={skeletonVars({ "--skeleton-radius": "6px" })}
+          />
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -466,7 +473,7 @@ export function PropRail({
 
           <RailRow icon={<IconUser size={11} />} label="Assignees">
             {isBodyLoading ? (
-              <span className="block h-5 w-20 animate-pulse rounded bg-surface-raised/60" />
+              <span className="skeleton-bar block h-5 w-20" />
             ) : (
               <AssigneePicker
                 organizationId={organizationId}
@@ -545,8 +552,11 @@ export function PropRail({
         >
           {isBodyLoading ? (
             <div className="space-y-1">
-              <div className="h-5 w-full animate-pulse rounded bg-surface-raised/60" />
-              <div className="h-5 w-2/3 animate-pulse rounded bg-surface-raised/60" />
+              <div className="skeleton-bar h-5 w-full" />
+              <div
+                className="skeleton-bar h-5 w-2/3"
+                style={{ "--skeleton-delay": "70ms" } as CSSProperties}
+              />
             </div>
           ) : files.length > 0 ? (
             <ul className="space-y-1">
