@@ -17,6 +17,7 @@ import { PropRail } from "@/components/workspace/detail/PropRail";
 import { PropRailDrawer } from "@/components/workspace/detail/PropRailDrawer";
 import { WorkspaceGraphView } from "@/components/workspace/graph/WorkspaceGraphView";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useSkeletonVisibility } from "@/hooks/useSkeletonVisibility";
 import { DeferredLoadingSpinner } from "@/components/shared/DeferredLoadingSpinner";
 import { projectKeys, taskKeys } from "@/lib/query/keys";
 import { fetchProjectGraph, fetchTaskBody } from "@/lib/query/queries";
@@ -387,6 +388,8 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
     },
   });
 
+  const showBodySkeleton = useSkeletonVisibility(isPlaceholderData);
+
   const taskFullMatches = selectedTaskFull && selectedTaskFull.id === taskId;
   const taskEdges: TaskEdgeRef[] =
     taskFullMatches && selectedTaskFull && !isPlaceholderData
@@ -420,6 +423,7 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
           showPropRailToggle ? () => setPropRailOpen((v) => !v) : undefined
         }
         isBodyLoading={isPlaceholderData}
+        showBodySkeleton={showBodySkeleton}
       />
     ) : (
       <DetailLoading />

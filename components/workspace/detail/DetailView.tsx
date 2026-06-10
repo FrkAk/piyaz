@@ -63,10 +63,17 @@ interface DetailViewProps {
   onTogglePropRail?: () => void;
   /**
    * When true the header is rendered from seeded placeholder data and the
-   * body sections are replaced with skeleton blocks while the full task
-   * fetch resolves. Set from `isPlaceholderData` on the detail `useQuery`.
+   * body withholds its content while the full task fetch resolves. Set
+   * from `isPlaceholderData` on the detail `useQuery`.
    */
   isBodyLoading?: boolean;
+  /**
+   * When true the body renders skeleton blocks. Lags `isBodyLoading` via
+   * `useSkeletonVisibility`: fast fetches resolve before the show delay
+   * and swap straight to content; slow fetches hold the skeleton for a
+   * minimum beat so it never flash-swaps mid-entrance.
+   */
+  showBodySkeleton?: boolean;
 }
 
 /**
@@ -96,6 +103,7 @@ export function DetailView({
   propRailOpen,
   onTogglePropRail,
   isBodyLoading = false,
+  showBodySkeleton = false,
 }: DetailViewProps) {
   // Read the server-derived `state` for this task off the slim payload —
   // the same projection the canvas, rail, and structure list see. Falls
@@ -140,9 +148,9 @@ export function DetailView({
       />
 
       <div className="flex-1 overflow-y-auto">
-        {isBodyLoading ? (
+        {showBodySkeleton ? (
           <DetailBodySkeleton />
-        ) : (
+        ) : isBodyLoading ? null : (
           <div className="rise-in mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
             <DescriptionSection
               taskId={taskId}
