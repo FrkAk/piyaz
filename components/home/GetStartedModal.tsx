@@ -39,7 +39,7 @@ const HOSTED_CLI_INSTALLS: readonly CliInstall[] = [
     install:
       '{\n  "mcpServers": {\n    "mymir": { "serverUrl": "https://app.mymir.dev/api/mcp" }\n  }\n}',
     setupNote:
-      "Add this to your global MCP config, then run /mcp and Authenticate. Antigravity handles OAuth automatically.",
+      "Add this to ~/.gemini/config/mcp_config.json, then run /mcp and Authenticate. Antigravity handles OAuth automatically.",
   },
   {
     name: "Cursor",
@@ -66,7 +66,7 @@ const SELF_HOST_CLI_INSTALLS: readonly CliInstall[] = [
   },
   {
     name: "Antigravity",
-    install: "agy plugin install ./plugins/antigravity",
+    install: "cp -r ./plugins/antigravity ~/.gemini/config/plugins/mymir",
     setupNote:
       "Run /mcp, select mymir-local, Authenticate, and complete the browser sign-in against http://localhost:3000.",
   },

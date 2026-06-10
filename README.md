@@ -55,10 +55,7 @@ Open Codex, run `/plugin`, install **Mymir**, restart, and authenticate when pro
 
 ### Antigravity
 
-Add the Mymir MCP server to your global config and authenticate (Antigravity handles OAuth automatically):
-
-- CLI (`agy`): `~/.gemini/antigravity-cli/mcp_config.json`
-- IDE: `~/.gemini/config/mcp_config.json` (or the MCP Store → Manage MCP Servers → View raw config)
+Add the Mymir MCP server to your global config and authenticate (Antigravity handles OAuth automatically). The IDE and the CLI share one config at `~/.gemini/config/mcp_config.json` (in the IDE: MCP Store → Manage MCP Servers → View raw config):
 
 ```json
 {
@@ -68,7 +65,7 @@ Add the Mymir MCP server to your global config and authenticate (Antigravity han
 }
 ```
 
-Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. For the workflow skills too, install the bundled plugin: `agy plugin install ./plugins/antigravity` (clone first), or drop `plugins/antigravity/` into `~/.gemini/antigravity-cli/plugins/`. The bundled `mcp_config.json` also includes a `mymir-local` server for self-host.
+Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. The workflow skills ship as a bundled plugin: clone this repo and copy `plugins/antigravity/` into `~/.gemini/config/plugins/` (global) or `.agents/plugins/` at your workspace root. The bundled `mcp_config.json` also includes a `mymir-local` server for self-host.
 
 > **Gemini CLI users:** Antigravity replaces Gemini CLI (consumer access ends 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
 
