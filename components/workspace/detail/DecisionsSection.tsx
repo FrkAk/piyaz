@@ -61,6 +61,7 @@ export function DecisionsSection({
   const suppressTimerRef = useRef<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const cancelRef = useRef(false);
 
   useEffect(() => {
@@ -112,24 +113,41 @@ export function DecisionsSection({
         setEditingId(null);
         return;
       }
-      const next = localRef.current.map((d) =>
+      const prev = localRef.current;
+      const next = prev.map((d) =>
         d.id === id ? { ...d, text: trimmed } : d,
       );
       setLocal(next);
       setEditingId(null);
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { decisions: next }, true);
+      try {
+        await updateTask(taskId, { decisions: next }, true);
+      } catch {
+        setLocal(prev);
+        setSaveError("Couldn't save changes. Try again in a moment.");
+      }
     },
     [taskId],
   );
 
   const handleRestore = useCallback(
     async (item: { decision: Decision; index: number }) => {
-      const next = [...localRef.current];
+      const prev = localRef.current;
+      const next = [...prev];
       next.splice(item.index, 0, item.decision);
       setLocal(next);
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { decisions: next }, true);
+      try {
+        await updateTask(taskId, { decisions: next }, true);
+      } catch (err) {
+        // Revert the optimistic insert and rethrow so useUndo re-pushes the
+        // item — the entry stays recoverable instead of vanishing.
+        setLocal(prev);
+        setSaveError("Couldn't undo. Try again in a moment.");
+        throw err;
+      }
     },
     [taskId],
   );
@@ -145,15 +163,22 @@ export function DecisionsSection({
 
   const handleDelete = useCallback(
     async (id: string) => {
-      const index = localRef.current.findIndex((d) => d.id === id);
+      const prev = localRef.current;
+      const index = prev.findIndex((d) => d.id === id);
       if (index === -1) return;
-      const removed = localRef.current[index];
-      const next = localRef.current.filter((d) => d.id !== id);
+      const removed = prev[index];
+      const next = prev.filter((d) => d.id !== id);
       setLocal(next);
       setEditingId(null);
-      pushUndo({ decision: removed, index });
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { decisions: next }, true);
+      try {
+        await updateTask(taskId, { decisions: next }, true);
+        pushUndo({ decision: removed, index });
+      } catch {
+        setLocal(prev);
+        setSaveError("Couldn't delete. Try again in a moment.");
+      }
     },
     [taskId, pushUndo],
   );
@@ -171,12 +196,19 @@ export function DecisionsSection({
         date: new Date().toISOString().slice(0, 10),
         source: "refinement",
       };
-      const next = [...localRef.current, newDecision];
+      const prev = localRef.current;
+      const next = [...prev, newDecision];
       setLocal(next);
       setAdding(false);
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { decisions: next }, true);
-      onGraphChange?.();
+      try {
+        await updateTask(taskId, { decisions: next }, true);
+        onGraphChange?.();
+      } catch {
+        setLocal(prev);
+        setSaveError("Couldn't add the decision. Try again in a moment.");
+      }
     },
     [taskId, onGraphChange],
   );
@@ -203,6 +235,9 @@ export function DecisionsSection({
           </span>
         }
       />
+      {saveError && (
+        <p className="mb-2 text-[11px] text-danger">{saveError}</p>
+      )}
       <div className="space-y-1.5">
         {local.map((d) => (
           <DecisionCard

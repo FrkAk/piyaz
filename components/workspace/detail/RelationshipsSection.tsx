@@ -220,8 +220,13 @@ export function RelationshipsSection({
   };
 
   const handleDelete = async (edgeId: string) => {
-    await removeEdge(edgeId);
-    onGraphChange?.();
+    try {
+      setError(null);
+      await removeEdge(edgeId);
+      onGraphChange?.();
+    } catch {
+      setError("Couldn't remove the relationship. Try again in a moment.");
+    }
   };
 
   const totalEdges = edges.length;
@@ -246,6 +251,9 @@ export function RelationshipsSection({
         }
       />
 
+      {!adding && error && (
+        <p className="mb-2 text-[11px] text-danger">{error}</p>
+      )}
       <div className="space-y-3">
         {(["blocked_by", "blocks", "related_to"] as const).map((direction) => {
           const items = grouped[direction];

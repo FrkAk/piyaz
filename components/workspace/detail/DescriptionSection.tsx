@@ -30,6 +30,7 @@ export function DescriptionSection({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(description);
   const [prevDescription, setPrevDescription] = useState(description);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const cancelRef = useRef(false);
 
   if (description !== prevDescription) {
@@ -40,14 +41,25 @@ export function DescriptionSection({
   const handleSave = useCallback(async () => {
     setEditing(false);
     if (draft !== description) {
-      await updateTask(taskId, { description: draft });
-      onGraphChange?.();
+      try {
+        setSaveError(null);
+        await updateTask(taskId, { description: draft });
+        onGraphChange?.();
+      } catch {
+        // Server actions mask error details in production; reopen the editor
+        // with the draft intact so the user's text is not silently dropped.
+        setSaveError("Couldn't save the description. Try again in a moment.");
+        setEditing(true);
+      }
     }
   }, [draft, description, taskId, onGraphChange]);
 
   return (
     <section className="mb-7">
       <SectionHeader label="Description" />
+      {saveError && (
+        <p className="mb-2 text-[11px] text-danger">{saveError}</p>
+      )}
       {editing ? (
         <AutoGrowTextarea
           value={draft}

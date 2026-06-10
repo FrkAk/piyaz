@@ -11,9 +11,12 @@ import { IconUndo } from "@/components/shared/icons";
 interface UseUndoOptions<T> {
   /**
    * @param onUndo - Called with the popped item when undo is triggered. May
-   *   return a promise; if it rejects, the item is pushed back onto the stack
-   *   so a failed undo (e.g. a rate-limited or rejected server write) does not
-   *   silently discard the entry and lose the user's only recovery path.
+   *   return a promise; if it rejects (or throws synchronously), the item is
+   *   pushed back onto the stack so a failed undo (e.g. a rate-limited or
+   *   rejected server write) does not silently discard the entry and lose the
+   *   user's only recovery path. The push-back is skipped when `resetOn`
+   *   changed while the undo was in flight — the item belongs to the old
+   *   context.
    */
   onUndo: (item: T) => void | Promise<void>;
   /** @param resetOn - Auto-clear the stack when this value changes. */
@@ -35,6 +38,10 @@ export function useUndo<T>(opts: UseUndoOptions<T>): {
   const [stack, setStack] = useState<T[]>([]);
   const stackRef = useRef(stack);
   const onUndoRef = useRef(opts.onUndo);
+  // Bumped whenever `resetOn` clears the stack, so a slow onUndo that
+  // rejects AFTER the user switched context cannot re-push its stale item
+  // into the new context's stack.
+  const generationRef = useRef(0);
 
   useEffect(() => {
     stackRef.current = stack;
@@ -53,16 +60,32 @@ export function useUndo<T>(opts: UseUndoOptions<T>): {
     const current = stackRef.current;
     if (current.length === 0) return;
     const last = current[current.length - 1];
+    const generation = generationRef.current;
     setStack(current.slice(0, -1));
-    Promise.resolve(onUndoRef.current(last)).catch(() => {
-      setStack((prev) => [...prev, last]);
-    });
+    // The async wrapper (not `Promise.resolve(fn())`) converts a synchronous
+    // throw in onUndo into a rejection, so the restore path below covers it
+    // instead of the exception escaping to the keyboard/click handler.
+    void (async () => {
+      try {
+        await onUndoRef.current(last);
+      } catch {
+        if (generationRef.current === generation) {
+          setStack((prev) => [...prev, last]);
+        }
+      }
+    })();
   }, []);
 
   // Auto-clear on resetOn change
   const [prevResetOn, setPrevResetOn] = useState(opts.resetOn);
   if (opts.resetOn !== prevResetOn) {
     setPrevResetOn(opts.resetOn);
+    // The bump must be synchronous with the render-phase stack clear below;
+    // deferring it to an effect reopens a window where an in-flight undo
+    // rejection re-pushes a stale item into the just-cleared stack.
+    // Double-firing under StrictMode only advances the counter, harmless.
+    // eslint-disable-next-line react-hooks/refs
+    generationRef.current += 1;
     setStack([]);
   }
 

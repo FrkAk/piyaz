@@ -24,9 +24,12 @@ import {
 import type { Identifier } from "@/lib/graph/identifier";
 import type { NewTaskEdge } from "@/lib/db/schema";
 import {
-  assertActionRateLimit,
+  checkActionIpRateLimit,
+  checkActionUserRateLimit,
+  RateLimitError,
   type ActionRateLimitConfig,
 } from "@/lib/actions/rate-limit-action";
+import type { AuthContext } from "@/lib/auth/context";
 
 export type { CreateProjectInput, ProjectUpdate } from "@/lib/data/project";
 export type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
@@ -44,50 +47,50 @@ export type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
  * editing in the UI (toggling criteria, dragging, renaming) and tight enough
  * to stop automated row/egress inflation. Window is 60s.
  */
+const DEFAULT_WRITE_BUDGET = {
+  windowSeconds: 60,
+  perUserMax: 60,
+  perIpMax: 120,
+} as const;
+
 const WRITE_BUDGETS = {
-  taskCreate: {
-    action: "task.create",
-    windowSeconds: 60,
-    perUserMax: 60,
-    perIpMax: 120,
-  },
+  taskCreate: { ...DEFAULT_WRITE_BUDGET, action: "task.create" },
   taskUpdate: {
     action: "task.update",
     windowSeconds: 60,
     perUserMax: 180,
     perIpMax: 300,
   },
-  taskDelete: {
-    action: "task.delete",
-    windowSeconds: 60,
-    perUserMax: 60,
-    perIpMax: 120,
-  },
-  edgeWrite: {
-    action: "edge.write",
-    windowSeconds: 60,
-    perUserMax: 60,
-    perIpMax: 120,
-  },
-  taskLink: {
-    action: "task.link",
-    windowSeconds: 60,
-    perUserMax: 60,
-    perIpMax: 120,
-  },
-  projectUpdate: {
-    action: "project.update",
-    windowSeconds: 60,
-    perUserMax: 60,
-    perIpMax: 120,
-  },
-  categoryWrite: {
-    action: "category.write",
-    windowSeconds: 60,
-    perUserMax: 60,
-    perIpMax: 120,
-  },
+  taskDelete: { ...DEFAULT_WRITE_BUDGET, action: "task.delete" },
+  edgeWrite: { ...DEFAULT_WRITE_BUDGET, action: "edge.write" },
+  taskLink: { ...DEFAULT_WRITE_BUDGET, action: "task.link" },
+  projectUpdate: { ...DEFAULT_WRITE_BUDGET, action: "project.update" },
+  categoryWrite: { ...DEFAULT_WRITE_BUDGET, action: "category.write" },
 } satisfies Record<string, ActionRateLimitConfig>;
+
+/**
+ * Enforce a write budget and resolve the caller's auth context, in
+ * flood-safe order: the per-IP limb runs BEFORE the session lookup so an
+ * unauthenticated flood is counted and blocked by IP instead of farming
+ * a free DB session lookup per request; the per-user limb runs after
+ * auth, once the user id is trustworthy. Each limb is counted exactly
+ * once, so a legitimate caller costs the same two in-memory checks as
+ * the previous combined check.
+ *
+ * @param config - Rate-limit policy for this write action.
+ * @returns The caller's auth context.
+ * @throws RateLimitError when either limb's budget is exceeded.
+ */
+async function authorizeWrite(
+  config: ActionRateLimitConfig,
+): Promise<AuthContext> {
+  const ipOutcome = await checkActionIpRateLimit(config);
+  if (!ipOutcome.ok) throw new RateLimitError(ipOutcome.retryAfter);
+  const ctx = await getAuthContext();
+  const userOutcome = await checkActionUserRateLimit(config, ctx.userId);
+  if (!userOutcome.ok) throw new RateLimitError(userOutcome.retryAfter);
+  return ctx;
+}
 
 /**
  * Server action wrapper — update a project's fields.
@@ -96,8 +99,7 @@ const WRITE_BUDGETS = {
  * @returns The updated project row.
  */
 export async function updateProject(projectId: string, changes: ProjectUpdate) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.projectUpdate, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.projectUpdate);
   return coreUpdateProject(ctx, projectId, changes);
 }
 
@@ -111,8 +113,7 @@ export async function renameProjectIdentifier(
   projectId: string,
   identifier: Identifier,
 ) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.projectUpdate, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.projectUpdate);
   return coreRenameProjectIdentifier(ctx, projectId, identifier);
 }
 
@@ -122,8 +123,7 @@ export async function renameProjectIdentifier(
  * @returns Task summary with composed taskRef.
  */
 export async function createTask(data: CreateTaskInput) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.taskCreate, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.taskCreate);
   return coreCreateTask(ctx, data);
 }
 
@@ -139,8 +139,7 @@ export async function updateTask(
   changes: TaskUpdate,
   overwriteArrays = false,
 ) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.taskUpdate, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.taskUpdate);
   return coreUpdateTask(ctx, taskId, changes, overwriteArrays);
 }
 
@@ -150,8 +149,7 @@ export async function updateTask(
  * @returns Deletion summary.
  */
 export async function deleteTask(taskId: string) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.taskDelete, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.taskDelete);
   return coreDeleteTask(ctx, taskId);
 }
 
@@ -161,8 +159,7 @@ export async function deleteTask(taskId: string) {
  * @returns The created edge.
  */
 export async function createEdge(data: Omit<NewTaskEdge, "id">) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.edgeWrite, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.edgeWrite);
   return coreCreateEdge(ctx, data);
 }
 
@@ -171,8 +168,7 @@ export async function createEdge(data: Omit<NewTaskEdge, "id">) {
  * @param edgeId - UUID of the edge.
  */
 export async function removeEdge(edgeId: string) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.edgeWrite, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.edgeWrite);
   return coreRemoveEdge(ctx, edgeId);
 }
 
@@ -185,8 +181,7 @@ export async function removeEdge(edgeId: string) {
  * @returns The new (or pre-existing) link row.
  */
 export async function addTaskLink(taskId: string, url: string) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.taskLink, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.taskLink);
   return coreAddTaskLink(ctx, taskId, url);
 }
 
@@ -198,8 +193,7 @@ export async function addTaskLink(taskId: string, url: string) {
  * @returns Deletion summary with the removed link id.
  */
 export async function removeTaskLink(linkId: string) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.taskLink, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.taskLink);
   return coreRemoveTaskLink(ctx, linkId);
 }
 
@@ -213,8 +207,7 @@ export async function removeTaskLink(linkId: string) {
  * @returns The updated link row.
  */
 export async function updateTaskLink(linkId: string, url: string) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.taskLink, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.taskLink);
   return coreUpdateTaskLink(ctx, linkId, url);
 }
 
@@ -229,8 +222,7 @@ export async function renameCategory(
   oldName: string,
   newName: string,
 ) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.categoryWrite, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.categoryWrite);
   return coreRenameCategory(ctx, projectId, oldName, newName);
 }
 
@@ -240,7 +232,6 @@ export async function renameCategory(
  * @param categoryName - Category to remove.
  */
 export async function deleteCategory(projectId: string, categoryName: string) {
-  const ctx = await getAuthContext();
-  await assertActionRateLimit(WRITE_BUDGETS.categoryWrite, ctx.userId);
+  const ctx = await authorizeWrite(WRITE_BUDGETS.categoryWrite);
   return coreDeleteCategory(ctx, projectId, categoryName);
 }

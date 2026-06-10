@@ -29,18 +29,70 @@ const MAX_MCP_BODY_BYTES = parseEnvInt(
 );
 
 /**
+ * Build a JSON-RPC error envelope response.
+ * @param code - JSON-RPC error code.
+ * @param message - Human-readable error message.
+ * @param status - HTTP status code.
+ * @param headers - Optional extra response headers.
+ * @returns JSON-RPC error response.
+ */
+function jsonRpcError(
+  code: number,
+  message: string,
+  status: number,
+  headers?: HeadersInit,
+) {
+  return Response.json(
+    { jsonrpc: "2.0", error: { code, message }, id: null },
+    { status, headers },
+  );
+}
+
+/**
  * MCP-spec 413 response for an over-limit request body.
  * @returns 413 JSON-RPC error response.
  */
 function payloadTooLarge() {
-  return Response.json(
-    {
-      jsonrpc: "2.0",
-      error: { code: -32600, message: "Request body too large." },
-      id: null,
-    },
-    { status: 413 },
-  );
+  return jsonRpcError(-32600, "Request body too large.", 413);
+}
+
+/**
+ * Read a request body up to `maxBytes`, cancelling the stream as soon as
+ * the cap is crossed. `request.arrayBuffer()` would buffer the ENTIRE
+ * stream into isolate memory before any size check could run — a chunked
+ * (length-less) over-limit body would then defeat the cap's purpose on
+ * memory-bounded runtimes (Workers isolates). Legitimate bodies cost the
+ * same single buffering pass as before.
+ *
+ * @param request - Incoming request.
+ * @param maxBytes - Inclusive byte ceiling.
+ * @returns Body bytes, or null when the body exceeds `maxBytes`.
+ */
+async function readBodyBounded(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 /** Shape we require from a verified MCP access token payload. */
@@ -159,20 +211,10 @@ function authContextFromPayload(payload: unknown): AuthContext | null {
  * @returns 401 JSON-RPC error response.
  */
 function unauthorized() {
-  return Response.json(
-    {
-      jsonrpc: "2.0",
-      error: { code: -32000, message: "Unauthorized" },
-      id: null,
-    },
-    {
-      status: 401,
-      headers: {
-        "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
-        "Access-Control-Expose-Headers": "WWW-Authenticate",
-      },
-    },
-  );
+  return jsonRpcError(-32000, "Unauthorized", 401, {
+    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+    "Access-Control-Expose-Headers": "WWW-Authenticate",
+  });
 }
 
 /**
@@ -192,8 +234,8 @@ export async function POST(request: Request) {
   if (Number.isFinite(contentLength) && contentLength > MAX_MCP_BODY_BYTES) {
     return payloadTooLarge();
   }
-  const body = await request.arrayBuffer();
-  if (body.byteLength > MAX_MCP_BODY_BYTES) {
+  const body = await readBodyBounded(request, MAX_MCP_BODY_BYTES);
+  if (body === null) {
     return payloadTooLarge();
   }
   const boundedRequest = new Request(request.url, {

@@ -106,8 +106,14 @@ export function DetailHeader({
       return;
     }
     if (trimmed !== title) {
-      await updateTask(taskId, { title: trimmed });
-      onGraphChange?.();
+      try {
+        await updateTask(taskId, { title: trimmed });
+        onGraphChange?.();
+      } catch {
+        // Server actions mask error details in production; reopen the editor
+        // with the draft intact so the user's text is not silently dropped.
+        setEditing(true);
+      }
     }
   };
 

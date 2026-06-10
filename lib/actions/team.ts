@@ -13,6 +13,7 @@ import {
   teamFail,
   type TeamActionResult,
 } from "@/lib/actions/team-errors";
+import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
 import {
   demoteMemberWithGuard,
   findMemberById,
@@ -127,13 +128,21 @@ export async function createTeamAction(input: {
   name: string;
   slug: string;
 }): Promise<TeamActionResult<{ organizationId: string }>> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail("unauthorized");
   }
   const parsed = parseOrFail(createTeamSchema, input);
   if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    { action: "team.create", windowSeconds: 60, perUserMax: 5, perIpMax: 10 },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
 
   try {
     const reqHeaders = await headers();
@@ -175,13 +184,21 @@ export async function inviteMemberAction(input: {
   email: string;
   role?: "member" | "admin" | "owner";
 }): Promise<TeamActionResult> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail("unauthorized");
   }
   const parsed = parseOrFail(inviteMemberSchema, input);
   if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    { action: "team.invite", windowSeconds: 60, perUserMax: 20, perIpMax: 40 },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
 
   let isAdmin: boolean;
   try {
@@ -236,13 +253,26 @@ export async function removeMemberAction(input: {
   organizationId: string;
   memberIdOrEmail: string;
 }): Promise<TeamActionResult> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail("unauthorized");
   }
   const parsed = parseOrFail(removeMemberSchema, input);
   if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.member_remove",
+      windowSeconds: 60,
+      perUserMax: 20,
+      perIpMax: 40,
+    },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
 
   let isAdmin: boolean;
   try {
@@ -323,6 +353,17 @@ export async function updateMemberRoleAction(input: {
   }
   const parsed = parseOrFail(updateMemberRoleSchema, input);
   if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.member_role",
+      windowSeconds: 60,
+      perUserMax: 20,
+      perIpMax: 40,
+    },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
 
   let isAdmin: boolean;
   try {
@@ -407,6 +448,12 @@ export async function leaveTeamAction(input: {
   const parsed = parseOrFail(leaveTeamSchema, input);
   if (!parsed.ok) return parsed;
 
+  const limit = await checkActionRateLimit(
+    { action: "team.leave", windowSeconds: 60, perUserMax: 5, perIpMax: 10 },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
+
   try {
     const reqHeaders = await headers();
     await auth.api.leaveOrganization({
@@ -457,13 +504,26 @@ export async function leaveTeamAction(input: {
 export async function acceptEmailInvitationAction(input: {
   invitationId: string;
 }): Promise<TeamActionResult<{ organizationId: string }>> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail("unauthorized");
   }
   const parsed = parseOrFail(acceptInvitationSchema, input);
   if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.invite_accept",
+      windowSeconds: 60,
+      perUserMax: 10,
+      perIpMax: 20,
+    },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
 
   try {
     const reqHeaders = await headers();
@@ -514,13 +574,21 @@ export async function updateTeamAction(input: {
   name?: string;
   slug?: string;
 }): Promise<TeamActionResult> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail("unauthorized");
   }
   const parsed = parseOrFail(updateTeamSchema, input);
   if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    { action: "team.update", windowSeconds: 60, perUserMax: 20, perIpMax: 40 },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
 
   let isAdmin: boolean;
   try {
@@ -573,13 +641,21 @@ export async function updateTeamAction(input: {
 export async function deleteTeamAction(input: {
   organizationId: string;
 }): Promise<TeamActionResult> {
+  let userId: string;
   try {
-    await requireSession();
+    const session = await requireSession();
+    userId = session.user.id;
   } catch {
     return teamFail("unauthorized");
   }
   const parsed = parseOrFail(deleteTeamSchema, input);
   if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    { action: "team.delete", windowSeconds: 60, perUserMax: 5, perIpMax: 10 },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
 
   let isOwner: boolean;
   try {

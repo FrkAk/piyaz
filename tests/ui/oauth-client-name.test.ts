@@ -31,3 +31,15 @@ test("unverified clients are shown verbatim without brand laundering", () => {
   // Only whitespace is tidied.
   expect(formatOAuthClientName("  Evil   Client  ", false)).toBe("Evil Client");
 });
+
+test("invisible Unicode is stripped so lookalike names cannot render", () => {
+  // Zero-width space (U+200B) must not let "Claude<zwsp>Code" render as a
+  // visual "Claude Code" while comparing unequal to it.
+  expect(formatOAuthClientName("Claude​Code", false)).toBe("ClaudeCode");
+  // RTL override (U+202E) and zero-width joiner (U+200D) are stripped in
+  // both verified and unverified modes.
+  expect(formatOAuthClientName("Claude‮ Code", false)).toBe("Claude Code");
+  expect(formatOAuthClientName("Cla‍ude Code")).toBe("Claude Code");
+  // Whitespace-class controls still collapse to plain spaces, not deletion.
+  expect(formatOAuthClientName("Claude\tCode", false)).toBe("Claude Code");
+});

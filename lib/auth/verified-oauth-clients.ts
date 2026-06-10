@@ -13,19 +13,26 @@ import "server-only";
  * verbatim so the user sees exactly what asked for access.
  *
  * Populated from `MYMIR_VERIFIED_OAUTH_CLIENT_IDS` (comma-separated client
- * ids). Empty by default: with pure dynamic registration there are no
+ * ids), parsed once per process/isolate — env vars are fixed per deploy on
+ * both Workers and self-host, so per-call re-parsing buys nothing.
+ * Empty by default: with pure dynamic registration there are no
  * pre-trusted clients, so the safe default is to polish none. If official
  * clients are ever pre-registered with stable ids, list them here.
+ */
+let verifiedClientIds: ReadonlySet<string> | null = null;
+
+/**
+ * Check whether a client id is on the verified allowlist.
  *
  * @param clientId - The OAuth client id from the authorization request.
  * @returns True when the client is on the verified allowlist.
  */
 export function isVerifiedOAuthClient(clientId: string): boolean {
-  const raw = process.env.MYMIR_VERIFIED_OAUTH_CLIENT_IDS;
-  if (!raw) return false;
-  return raw
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean)
-    .includes(clientId);
+  verifiedClientIds ??= new Set(
+    (process.env.MYMIR_VERIFIED_OAUTH_CLIENT_IDS ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean),
+  );
+  return verifiedClientIds.has(clientId);
 }

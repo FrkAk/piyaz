@@ -62,6 +62,7 @@ import type { Project } from "@/lib/db/schema";
 import {
   MultiTeamAmbiguityError,
   NoTeamMembershipError,
+  TaskLimitError,
 } from "@/lib/graph/errors";
 import {
   formatSummary,
@@ -623,6 +624,11 @@ function translateError(e: unknown): ToolResult {
   if (e instanceof NoTeamMembershipError) {
     return fail(
       "No team membership: the caller does not belong to any team. Ask the user to sign in to the web app and create or join a team, then retry.",
+    );
+  }
+  if (e instanceof TaskLimitError) {
+    return fail(
+      `${e.message}. Do not retry; clean up cancelled or obsolete tasks in project '${e.projectId}', or ask the operator to raise MAX_TASKS_PER_PROJECT.`,
     );
   }
   if (e instanceof ForbiddenError) {

@@ -106,17 +106,27 @@ const SSE_PATTERN = /^\/api\/events$/;
 /**
  * Find the first matching rate limit rule for a pathname.
  * SSE paths are excluded (single long-lived stream per user).
+ *
+ * Trailing slashes are stripped before matching, mirroring the auth
+ * route handler's normalization (`app/api/auth/[...all]/route.ts`) and
+ * Better Auth's `normalizePathname`. Without this, an exact-pattern rule
+ * like `/api/auth/oauth2/register` would miss `/register/` — a path the
+ * handler still serves — dropping the request onto the looser `/api/*`
+ * catch-all whose session-cookie key an unauthenticated caller can mint
+ * at will.
+ *
  * @param pathname - URL pathname to match against rules.
  * @returns The first matching rule, or null if no match.
  */
 export function matchRule(pathname: string): RateLimitRule | null {
-  if (SSE_PATTERN.test(pathname)) return null;
+  const path = pathname.replace(/\/+$/, "") || "/";
+  if (SSE_PATTERN.test(path)) return null;
 
   for (const rule of RATE_LIMIT_RULES) {
     if (rule.pattern.endsWith("/*")) {
       const prefix = rule.pattern.slice(0, -1);
-      if (pathname.startsWith(prefix)) return rule;
-    } else if (pathname === rule.pattern) {
+      if (path.startsWith(prefix)) return rule;
+    } else if (path === rule.pattern) {
       return rule;
     }
   }

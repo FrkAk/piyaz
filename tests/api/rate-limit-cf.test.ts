@@ -85,6 +85,17 @@ test("pre-auth endpoints key on IP, not the forgeable session cookie", () => {
   expect(matchRule("/api/auth/sign-up/email")?.keyStrategy).toBe("ip");
 });
 
+test("trailing slashes cannot dodge an exact-pattern rule", () => {
+  // The auth route handler strips trailing slashes before dispatch, so the
+  // limiter must normalize the same way or `/register/` escapes the strict
+  // 5/60 ip rule onto the forgeable session-keyed catch-all.
+  expect(matchRule("/api/auth/oauth2/register/")?.pattern).toBe(
+    "/api/auth/oauth2/register",
+  );
+  expect(matchRule("/api/auth/oauth2/register///")?.keyStrategy).toBe("ip");
+  expect(matchRule("/api/events/")).toBeNull();
+});
+
 test("CloudflareRateLimitBackend fails open by default on binding RPC error", async () => {
   const backend = new CloudflareRateLimitBackend(brokenBinding());
   const result = await backend.check("test-key", 100, 60);

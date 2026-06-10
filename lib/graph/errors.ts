@@ -61,3 +61,26 @@ export class NoTeamMembershipError extends Error {
     this.name = "NoTeamMembershipError";
   }
 }
+
+/**
+ * Thrown by `createTask` when a project is at its task-count cap
+ * (`MAX_TASKS_PER_PROJECT`). A dedicated type — not `ForbiddenError` —
+ * because the MCP error translator renders `ForbiddenError` as an
+ * anti-enumeration "not found", which would mislead an agent hitting
+ * the quota into retrying lookups instead of stopping.
+ */
+export class TaskLimitError extends Error {
+  /**
+   * @param projectId - Project that is at the cap.
+   * @param limit - Configured maximum live tasks per project.
+   */
+  constructor(
+    public readonly projectId: string,
+    public readonly limit: number,
+  ) {
+    super(
+      `Project has reached its ${limit}-task limit; no new tasks can be created`,
+    );
+    this.name = "TaskLimitError";
+  }
+}
