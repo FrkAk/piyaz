@@ -377,4 +377,4 @@ if (failures > 0) {
   process.exit(1);
 }
 
-console.log(`\nAll shared content and versions are in sync.`);
+console.log(`\nAll shared plugin content is in sync.`);
