@@ -1,6 +1,8 @@
 import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
-import { listProjectsSlim } from "@/lib/graph/queries";
-import { listUserTeamsAction } from "@/lib/actions/team-list";
+import {
+  loadSidebarProjects,
+  loadUserTeams,
+} from "@/lib/server/request-loaders";
 import { requireMembership } from "@/lib/auth/membership";
 import { TopBar } from "@/components/layout/TopBar";
 import { AppShell } from "@/components/layout/AppShell";
@@ -24,8 +26,8 @@ export default async function HomePage() {
   await requireMembership();
 
   const [projects, teamsResult] = await Promise.all([
-    listProjectsSlim(),
-    listUserTeamsAction(),
+    loadSidebarProjects(),
+    loadUserTeams(),
   ]);
 
   const teams = teamsResult.ok ? teamsResult.data : [];

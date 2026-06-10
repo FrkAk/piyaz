@@ -12,6 +12,7 @@ import {
   listProjectsSlim,
   listProjectsForMcp,
 } from "@/lib/data/project";
+import { findProjectAccess } from "@/lib/data/access";
 import { makeAuthContext } from "@/lib/auth/context";
 
 afterEach(async () => {
@@ -454,4 +455,50 @@ test("listProjectsForMcp skips teams with zero projects", async () => {
   expect(
     rows.find((r) => r.organization.name === "Empty Team Mcp"),
   ).toBeUndefined();
+});
+
+test("findProjectAccess access row omits history and createdAt", async () => {
+  const f = await seedUserOrgProject("access-projection");
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      UPDATE projects
+      SET history = ${'[{"kind":"status_change","from":"brainstorming","to":"active","at":"2025-01-01T00:00:00Z"}]'}::jsonb
+      WHERE id = ${f.projectId}
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const access = await findProjectAccess(f.userId, f.projectId);
+
+  expect(access).not.toBeNull();
+  const keys = Object.keys(access!.project);
+  expect(keys).not.toContain("history");
+  expect(keys).not.toContain("createdAt");
+  expect(keys.sort()).toEqual([
+    "categories",
+    "description",
+    "id",
+    "identifier",
+    "organizationId",
+    "status",
+    "title",
+    "updatedAt",
+  ]);
+});
+
+test("graph and chrome reads reject a pre-resolved access row for another project", async () => {
+  const a = await seedUserOrgProject("access-mismatch-a");
+  const b = await seedUserOrgProject("access-mismatch-b");
+  const access = await findProjectAccess(a.userId, a.projectId);
+  expect(access).not.toBeNull();
+
+  const ctx = makeAuthContext(a.userId);
+  await expect(getProjectGraphSlim(ctx, b.projectId, access!)).rejects.toThrow(
+    "pre-resolved access row",
+  );
+  await expect(getProjectChrome(ctx, b.projectId, access!)).rejects.toThrow(
+    "pre-resolved access row",
+  );
 });

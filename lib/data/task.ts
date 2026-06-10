@@ -16,7 +16,12 @@ import {
   type TaskLink,
 } from "@/lib/db/schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
-import { fetchTaskFull } from "@/lib/db/raw/fetch-task-full";
+import {
+  fetchTaskFull,
+  fetchTaskForDepth,
+  type TaskFetchDepth,
+  type TaskFullRawRow,
+} from "@/lib/db/raw/fetch-task-full";
 import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
 import type {
   AcceptanceCriterion,
@@ -435,6 +440,28 @@ export async function getTaskFull(
 }
 
 /**
+ * Slim membership-gated lookup of a task's `projectId`. Routes through the
+ * {@link assertTaskAccessTx} gate, which both authorizes the caller and
+ * returns `projectId` in one slim row, with no full-task read. Used by the
+ * conditional-GET validator on the context bundle endpoint so the HEAD/304
+ * path never pays for the full task.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @returns The task's `projectId`.
+ * @throws ForbiddenError when the caller cannot access the task.
+ */
+export async function getTaskProjectId(
+  ctx: AuthContext,
+  taskId: string,
+): Promise<string> {
+  return withUserContext(ctx.userId, async (tx) => {
+    const gate = await assertTaskAccessTx(tx, taskId);
+    return gate.projectId;
+  });
+}
+
+/**
  * {@link getTaskFull} on a caller-supplied tx.
  *
  * @param tx - Active RLS transaction handle.
@@ -451,7 +478,48 @@ export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
       `getTaskFull: task ${taskId} disappeared after access check`,
     );
   }
-  const r = rows[0];
+  return mapTaskFullRow(rows[0]);
+}
+
+/**
+ * Membership-gated single-round-trip task fetch narrowed to the columns the
+ * supplied {@link TaskFetchDepth} renders. Mirrors {@link getTaskFullTx} but
+ * routes through {@link fetchTaskForDepth}, so each MCP context builder pays
+ * egress only for the task-row columns and child aggregates its formatter
+ * reads. Columns the depth omits arrive as type-stable empty values, keeping
+ * the returned {@link TaskFull} shape identical across depths.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param taskId - UUID of the task.
+ * @param depth - Context depth selecting the column projection.
+ * @returns Task row (depth-projected) with composed `taskRef` and aggregates.
+ * @throws ForbiddenError when the caller is not a member of the task's team.
+ */
+export async function getTaskForDepthTx(
+  tx: Tx,
+  taskId: string,
+  depth: TaskFetchDepth,
+): Promise<TaskFull> {
+  await assertTaskAccessTx(tx, taskId);
+  const rows = await fetchTaskForDepth(tx, taskId, depth);
+  if (rows.length === 0) {
+    throw new Error(
+      `getTaskForDepth: task ${taskId} disappeared after access check`,
+    );
+  }
+  return mapTaskFullRow(rows[0]);
+}
+
+/**
+ * Map a {@link TaskFullRawRow} to the camelCase {@link TaskFull} shape,
+ * composing `taskRef` and narrowing the decision `source` union. Shared by
+ * {@link getTaskFullTx} and {@link getTaskForDepthTx} so both surfaces map
+ * identically.
+ *
+ * @param r - Raw row from `fetchTaskFull` or `fetchTaskForDepth`.
+ * @returns The mapped {@link TaskFull}.
+ */
+function mapTaskFullRow(r: TaskFullRawRow): TaskFull {
   const taskRef = composeTaskRef(
     asIdentifier(r.project_identifier),
     r.sequence_number,
@@ -771,30 +839,34 @@ export async function getTaskSlim(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch all tasks for a project, ordered by `order`.
- * @param ctx - Resolved auth context.
- * @param projectId - UUID of the project.
- * @returns Ordered array of tasks.
- */
-export async function getProjectTasks(ctx: AuthContext, projectId: string) {
-  return withUserContext(ctx.userId, async (tx) => {
-    await assertProjectAccessTx(tx, projectId);
-    return listProjectTasks(projectId, tx);
-  });
-}
-
-/**
- * Fetch all tasks for a project, ordered by `order`. Internal helper —
- * caller must assert project access before invoking. Used by context
- * assemblers that have already authorized the parent project.
+ * Fetch a slim task projection for project overview assembly, ordered by
+ * `order`. Description is capped at 101 characters in SQL to reduce egress
+ * while preserving the caller's `compress(_, 100)` behavior byte-for-byte:
+ * any source description longer than 100 chars stays longer than 100 after
+ * the cap, so the downstream ellipsis truncation is unaffected. Internal
+ * helper -- caller must assert project access before invoking.
  *
  * @param projectId - UUID of the project.
  * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Ordered array of tasks.
+ * @returns Ordered array of slim task rows with a 101-char description cap.
  */
-export async function listProjectTasks(projectId: string, conn: Conn) {
+export async function listProjectTasksForOverview(
+  projectId: string,
+  conn: Conn,
+) {
   return conn
-    .select()
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      sequenceNumber: tasks.sequenceNumber,
+      order: tasks.order,
+      tags: tasks.tags,
+      category: tasks.category,
+      priority: tasks.priority,
+      estimate: tasks.estimate,
+      description: sql<string>`substring(${tasks.description} from 1 for 101)`,
+    })
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.order));

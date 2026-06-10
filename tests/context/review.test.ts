@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
+import { seedRichContextTask, normalizeContextGolden } from "./fixtures";
 import { buildReviewContext } from "@/lib/context/_core/review";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
@@ -70,6 +71,15 @@ describe("buildReviewContext under app_user", () => {
     const result = await buildReviewContext(ctx, aTaskId);
     expect(result).toContain("Active wall C");
     expect(result).not.toContain("Cancelled middle B");
+  });
+
+  test("golden: fully-populated task renders byte-identical review context", async () => {
+    const fx = await seedRichContextTask("review-ctx-golden");
+    const ctx = makeAuthContext(fx.userId);
+    const result = await buildReviewContext(ctx, fx.taskId);
+    expect(
+      normalizeContextGolden(result, "review-ctx-golden"),
+    ).toMatchSnapshot();
   });
 
   test("rejects cross-team callers (RLS isolation under app_user)", async () => {

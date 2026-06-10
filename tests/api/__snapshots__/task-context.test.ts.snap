@@ -1,0 +1,147 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`GET /api/task/[id]/context — golden bundle for a fully-populated task 1`] = `
+{
+  "agent": 
+"# \`PRJ-2\` Central task
+Tags: \`alpha\`, \`beta\`
+Priority: \`high\`
+Estimate: 3 pts
+PR: https://example.test/pr/1
+
+Central description
+
+
+## Implementation Plan
+
+Step one then step two
+
+
+## Prerequisites (context only — do NOT implement these)
+
+- \`PRJ-1\` **Prereq task** [done] — needs prereq output
+
+
+## Upstream Execution Records
+
+### \`PRJ-1\` Prereq task
+Prereq execution record
+
+
+## Constraints
+
+- [explicit] Use approach X
+
+
+## Done Means
+
+- [ ] It works
+
+
+## Files
+
+- lib/a.ts
+- lib/b.ts
+
+
+## Assignees
+
+- User ctx-golden <userctx-golden@test.local>
+
+
+## Links
+
+- [pull_request] PR 1 (https://example.test/pr/1)
+
+
+## Execution Record
+
+Built the thing
+
+
+## Downstream (what depends on this task's output)
+
+- \`PRJ-3\` **Downstream task** [draft] — consumes central"
+,
+  "planning": 
+"# \`PRJ-2\` Central task
+Tags: \`alpha\`, \`beta\`
+Priority: \`high\`
+Estimate: 3 pts
+
+
+## Project Context
+
+Project: Project ctx-golden
+
+
+## Description
+
+Central description
+
+
+## Acceptance Criteria
+
+- [ ] It works
+
+
+## Existing Implementation Plan
+
+Step one then step two
+
+
+## Prerequisites (context only — do NOT implement these)
+
+- \`PRJ-1\` **Prereq task** [done] — needs prereq output
+
+
+## What's Been Built (from done prerequisites)
+
+### \`PRJ-1\` Prereq task
+Prereq execution record
+
+
+## Decisions
+
+- [explicit] Use approach X
+
+
+## Downstream (tasks that depend on this task's output)
+
+- \`PRJ-3\` **Downstream task** [draft] — consumes central
+  Downstream description"
+,
+  "working": 
+"# \`PRJ-2\` "Central task" (in_review)
+
+## Description
+Central description
+
+## Meta
+- Priority: \`high\`
+- Estimate: 3 pts
+- Assignees: User ctx-golden
+- PR: https://example.test/pr/1
+
+## Tags
+\`alpha\`, \`beta\`
+
+## Acceptance Criteria
+
+- [ ] It works
+
+## Hierarchy
+project: "Project ctx-golden" > task: "Central task"
+
+## Decisions
+- [explicit] Use approach X (2026-05-16)
+
+## Connected Tasks
+- depends_on → \`PRJ-1\` "Prereq task" (done) — needs prereq output
+- depends_on ← \`PRJ-3\` "Downstream task" (draft) — consumes central
+
+## Links
+- [pull_request] PR 1 — https://example.test/pr/1"
+,
+}
+`;

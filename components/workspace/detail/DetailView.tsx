@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import type {
   TaskEdgeRef,
   TaskFull,
@@ -61,6 +61,19 @@ interface DetailViewProps {
   propRailOpen?: boolean;
   /** Toggle the properties rail open/closed; when omitted the toggle is hidden. */
   onTogglePropRail?: () => void;
+  /**
+   * When true the header is rendered from seeded placeholder data and the
+   * body withholds its content while the full task fetch resolves. Set
+   * from `isPlaceholderData` on the detail `useQuery`.
+   */
+  isBodyLoading?: boolean;
+  /**
+   * When true the body renders skeleton blocks. Lags `isBodyLoading` via
+   * `useSkeletonVisibility`: fast fetches resolve before the show delay
+   * and swap straight to content; slow fetches hold the skeleton for a
+   * minimum beat so it never flash-swaps mid-entrance.
+   */
+  showBodySkeleton?: boolean;
 }
 
 /**
@@ -89,6 +102,8 @@ export function DetailView({
   onToggleNavigator,
   propRailOpen,
   onTogglePropRail,
+  isBodyLoading = false,
+  showBodySkeleton = false,
 }: DetailViewProps) {
   // Read the server-derived `state` for this task off the slim payload —
   // the same projection the canvas, rail, and structure list see. Falls
@@ -133,73 +148,79 @@ export function DetailView({
       />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
-          <DescriptionSection
-            taskId={taskId}
-            description={task.description}
-            onGraphChange={onGraphChange}
-          />
-
-          <CriteriaSection
-            taskId={taskId}
-            criteria={task.acceptanceCriteria}
-            onGraphChange={onGraphChange}
-          />
-
-          <section className="mb-7">
-            <SectionHeader
-              label="Context bundle preview"
-              badge={
-                <BundleStageBadge
-                  status={task.status}
-                  isReady={ready}
-                  isPlannable={plannable}
-                />
-              }
-            />
-            <BundlePreview
+        {showBodySkeleton ? (
+          <DetailBodySkeleton />
+        ) : isBodyLoading ? null : (
+          <div className="rise-in mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
+            <DescriptionSection
               taskId={taskId}
-              projectId={projectId}
-              status={task.status}
-              isReady={ready}
-              isPlannable={plannable}
-              spec={task.description}
-              criteria={task.acceptanceCriteria ?? []}
-              plan={task.implementationPlan}
-              prerequisites={prerequisites}
-              neighbors={neighbors}
-              downstream={downstream}
-              decisions={task.decisions ?? []}
-              files={Array.from(new Set((task.files as string[] | null) ?? []))}
-              executionRecord={task.executionRecord}
-              onSelectTask={onSelectNode}
+              description={task.description}
+              onGraphChange={onGraphChange}
             />
-          </section>
 
-          <DecisionsSection
-            taskId={taskId}
-            decisions={task.decisions}
-            onGraphChange={onGraphChange}
-          />
+            <CriteriaSection
+              taskId={taskId}
+              criteria={task.acceptanceCriteria}
+              onGraphChange={onGraphChange}
+            />
 
-          <RelationshipsSection
-            taskId={taskId}
-            edges={edges}
-            taskMap={taskMap}
-            onSelectNode={onSelectNode}
-            onGraphChange={onGraphChange}
-          />
+            <section className="mb-7">
+              <SectionHeader
+                label="Context bundle preview"
+                badge={
+                  <BundleStageBadge
+                    status={task.status}
+                    isReady={ready}
+                    isPlannable={plannable}
+                  />
+                }
+              />
+              <BundlePreview
+                taskId={taskId}
+                projectId={projectId}
+                status={task.status}
+                isReady={ready}
+                isPlannable={plannable}
+                spec={task.description}
+                criteria={task.acceptanceCriteria ?? []}
+                plan={task.implementationPlan}
+                prerequisites={prerequisites}
+                neighbors={neighbors}
+                downstream={downstream}
+                decisions={task.decisions ?? []}
+                files={Array.from(
+                  new Set((task.files as string[] | null) ?? []),
+                )}
+                executionRecord={task.executionRecord}
+                onSelectTask={onSelectNode}
+              />
+            </section>
 
-          <LinksSection
-            taskId={taskId}
-            links={(task.links as TaskLinkRef[] | undefined) ?? []}
-            onGraphChange={onGraphChange}
-          />
+            <DecisionsSection
+              taskId={taskId}
+              decisions={task.decisions}
+              onGraphChange={onGraphChange}
+            />
 
-          <ExecutionSection record={task.executionRecord} />
+            <RelationshipsSection
+              taskId={taskId}
+              edges={edges}
+              taskMap={taskMap}
+              onSelectNode={onSelectNode}
+              onGraphChange={onGraphChange}
+            />
 
-          <ActivitySection history={task.history} />
-        </div>
+            <LinksSection
+              taskId={taskId}
+              links={(task.links as TaskLinkRef[] | undefined) ?? []}
+              onGraphChange={onGraphChange}
+            />
+
+            <ExecutionSection record={task.executionRecord} />
+
+            <ActivitySection history={task.history} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -356,6 +377,141 @@ function buildDownstream(
     });
   }
   return out;
+}
+
+/**
+ * Build an inline style from skeleton CSS custom properties
+ * (`--skeleton-delay`, `--skeleton-radius`, `--skeleton-base`).
+ *
+ * @param vars - Custom-property map applied to a skeleton element.
+ * @returns The map typed as a React inline style.
+ */
+function skeletonVars(
+  vars: Record<`--skeleton-${string}`, string>,
+): CSSProperties {
+  return vars as CSSProperties;
+}
+
+/**
+ * The five bundle-preview section tints (spec / prerequisites / neighbors /
+ * decisions / files), previewed by the bundle skeleton bars.
+ */
+const BUNDLE_SKELETON_BARS: { tint: string; width: string }[] = [
+  { tint: "var(--color-accent)", width: "w-full" },
+  { tint: "var(--color-planned)", width: "w-5/6" },
+  { tint: "var(--color-relates)", width: "w-2/3" },
+  { tint: "var(--color-progress)", width: "w-1/2" },
+  { tint: "var(--color-accent-2)", width: "w-2/5" },
+];
+
+/**
+ * Skeleton placeholder for the detail body while `isPlaceholderData` is
+ * true. Mirrors the anatomy of the real body — description lines, criteria
+ * checklist rows, the color-coded bundle-preview card, decisions, and
+ * relationship chips — so the layout stays stable when the full fetch
+ * resolves. Sections rise in staggered (fade + 4px y-slide) and a
+ * shared sheen wave travels down the bars via `--skeleton-delay`.
+ *
+ * @returns Skeleton element rendered inside the scrollable body area.
+ */
+function DetailBodySkeleton() {
+  return (
+    <div className="mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
+      <section
+        className="rise-in mb-7"
+        style={skeletonVars({ "--skeleton-delay": "0ms" })}
+      >
+        <div className="skeleton-bar mb-3 h-2.5 w-20" />
+        <div className="space-y-2">
+          <div className="skeleton-bar h-3 w-full" />
+          <div className="skeleton-bar h-3 w-11/12" />
+          <div className="skeleton-bar h-3 w-2/3" />
+        </div>
+      </section>
+
+      <section
+        className="rise-in mb-7"
+        style={skeletonVars({ "--skeleton-delay": "70ms" })}
+      >
+        <div className="skeleton-bar mb-3 h-2.5 w-32" />
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <div
+              className="skeleton-bar h-3.5 w-3.5 shrink-0"
+              style={skeletonVars({ "--skeleton-radius": "9999px" })}
+            />
+            <div className="skeleton-bar h-3 w-3/5" />
+          </div>
+          <div className="flex items-center gap-2">
+            <div
+              className="skeleton-bar h-3.5 w-3.5 shrink-0"
+              style={skeletonVars({ "--skeleton-radius": "9999px" })}
+            />
+            <div className="skeleton-bar h-3 w-2/5" />
+          </div>
+        </div>
+      </section>
+
+      <section
+        className="rise-in mb-7"
+        style={skeletonVars({ "--skeleton-delay": "140ms" })}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <div className="skeleton-bar h-2.5 w-36" />
+          <div
+            className="skeleton-bar h-4 w-14"
+            style={skeletonVars({ "--skeleton-radius": "9999px" })}
+          />
+        </div>
+        <div className="rounded-lg border border-border bg-surface/40 p-4">
+          <div className="space-y-3">
+            {BUNDLE_SKELETON_BARS.map((bar, i) => (
+              <div
+                key={bar.tint}
+                className={`skeleton-bar h-2 ${bar.width}`}
+                style={skeletonVars({
+                  "--skeleton-delay": `${140 + i * 40}ms`,
+                  "--skeleton-base": `color-mix(in srgb, ${bar.tint} 16%, transparent)`,
+                })}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        className="rise-in mb-7"
+        style={skeletonVars({ "--skeleton-delay": "210ms" })}
+      >
+        <div className="skeleton-bar mb-3 h-2.5 w-24" />
+        <div className="space-y-2">
+          <div className="skeleton-bar h-3 w-4/5" />
+          <div className="skeleton-bar h-3 w-1/2" />
+        </div>
+      </section>
+
+      <section
+        className="rise-in"
+        style={skeletonVars({ "--skeleton-delay": "280ms" })}
+      >
+        <div className="skeleton-bar mb-3 h-2.5 w-32" />
+        <div className="flex items-center gap-2">
+          <div
+            className="skeleton-bar h-6 w-24"
+            style={skeletonVars({ "--skeleton-radius": "6px" })}
+          />
+          <div
+            className="skeleton-bar h-6 w-28"
+            style={skeletonVars({ "--skeleton-radius": "6px" })}
+          />
+          <div
+            className="skeleton-bar h-6 w-20"
+            style={skeletonVars({ "--skeleton-radius": "6px" })}
+          />
+        </div>
+      </section>
+    </div>
+  );
 }
 
 export default DetailView;

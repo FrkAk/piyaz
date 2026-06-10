@@ -43,6 +43,17 @@ interface DetailPanelProps {
   propRailOpen?: boolean;
   /** Toggle the properties rail open/closed; when omitted the toggle is hidden. */
   onTogglePropRail?: () => void;
+  /**
+   * When true the header is rendered from placeholder data and the body
+   * withholds its content until the full detail fetch resolves.
+   */
+  isBodyLoading?: boolean;
+  /**
+   * When true the body renders skeleton blocks. Derived from
+   * `isBodyLoading` via `useSkeletonVisibility` (show delay + minimum
+   * visible hold) so fast fetches never flash a skeleton.
+   */
+  showBodySkeleton?: boolean;
   /** Additional CSS classes. */
   className?: string;
 }
@@ -73,6 +84,8 @@ export function DetailPanel({
   onToggleNavigator,
   propRailOpen,
   onTogglePropRail,
+  isBodyLoading = false,
+  showBodySkeleton = false,
   className = "",
 }: DetailPanelProps) {
   return (
@@ -95,6 +108,8 @@ export function DetailPanel({
         onToggleNavigator={onToggleNavigator}
         propRailOpen={propRailOpen}
         onTogglePropRail={onTogglePropRail}
+        isBodyLoading={isBodyLoading}
+        showBodySkeleton={showBodySkeleton}
       />
     </div>
   );

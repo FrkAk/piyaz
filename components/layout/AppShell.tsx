@@ -2,8 +2,10 @@ import { type ReactNode } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
-import { listProjectsSlim } from "@/lib/graph/queries";
-import { listUserTeamsAction } from "@/lib/actions/team-list";
+import {
+  loadSidebarProjects,
+  loadUserTeams,
+} from "@/lib/server/request-loaders";
 import {
   Sidebar,
   type SidebarProject,
@@ -40,8 +42,8 @@ export async function AppShell({ children }: AppShellProps) {
   if (!session) redirect("/sign-in");
 
   const [projects, teamsResult, cookieStore] = await Promise.all([
-    listProjectsSlim(),
-    listUserTeamsAction(),
+    loadSidebarProjects(),
+    loadUserTeams(),
     cookies(),
   ]);
   const initialSidebarCollapsed =

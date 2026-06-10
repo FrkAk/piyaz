@@ -17,12 +17,14 @@ import { PropRail } from "@/components/workspace/detail/PropRail";
 import { PropRailDrawer } from "@/components/workspace/detail/PropRailDrawer";
 import { WorkspaceGraphView } from "@/components/workspace/graph/WorkspaceGraphView";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useSkeletonVisibility } from "@/hooks/useSkeletonVisibility";
 import { DeferredLoadingSpinner } from "@/components/shared/DeferredLoadingSpinner";
 import { projectKeys, taskKeys } from "@/lib/query/keys";
 import { fetchProjectGraph, fetchTaskBody } from "@/lib/query/queries";
 import type {
   ProjectGraphSlim,
   TaskEdgeRef,
+  TaskFullWithEdges,
   TaskGraphSlim,
 } from "@/lib/data/views";
 
@@ -345,14 +347,52 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
   const qc = useQueryClient();
   const taskId = taskSlim.id;
 
-  const { data: selectedTaskFull } = useQuery({
+  const { data: selectedTaskFull, isPlaceholderData } = useQuery({
     queryKey: taskKeys.detail(projectId, taskId),
     queryFn: fetchTaskBody(qc, projectId, taskId),
+    placeholderData: (): TaskFullWithEdges | undefined => {
+      const cached = qc.getQueryData<ProjectGraphSlim>(
+        projectKeys.graph(projectId),
+      );
+      const slim = cached?.tasks.find((t) => t.id === taskId);
+      if (!slim) return undefined;
+      // Fields the slim projection lacks (description, sequenceNumber,
+      // createdAt, files, assignees, ...) are fabricated empties below.
+      // Anything that renders or mutates them must stay gated on
+      // `isPlaceholderData` until the real detail fetch resolves.
+      return {
+        id: slim.id,
+        projectId,
+        title: slim.title,
+        sequenceNumber: 0,
+        description: "",
+        status: slim.status,
+        order: slim.order,
+        category: slim.category ?? null,
+        implementationPlan: null,
+        executionRecord: null,
+        tags: slim.tags ?? [],
+        priority: slim.priority ?? null,
+        estimate: slim.estimate ?? null,
+        files: [],
+        history: [],
+        createdAt: new Date(),
+        updatedAt: slim.updatedAt,
+        taskRef: slim.taskRef,
+        assignees: [],
+        acceptanceCriteria: [],
+        decisions: [],
+        links: [],
+        edges: [],
+      };
+    },
   });
+
+  const showBodySkeleton = useSkeletonVisibility(isPlaceholderData, taskId);
 
   const taskFullMatches = selectedTaskFull && selectedTaskFull.id === taskId;
   const taskEdges: TaskEdgeRef[] =
-    taskFullMatches && selectedTaskFull
+    taskFullMatches && selectedTaskFull && !isPlaceholderData
       ? selectedTaskFull.edges
       : graph.edges
           .filter((e) => e.sourceTaskId === taskId || e.targetTaskId === taskId)
@@ -382,6 +422,8 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
         onTogglePropRail={
           showPropRailToggle ? () => setPropRailOpen((v) => !v) : undefined
         }
+        isBodyLoading={isPlaceholderData}
+        showBodySkeleton={showBodySkeleton}
       />
     ) : (
       <DetailLoading />
@@ -408,6 +450,7 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
         projectName={graph.project.title}
         onSelectNode={handleSelectNode}
         onGraphChange={refreshAll}
+        isBodyLoading={isPlaceholderData}
       />
     ) : null;
 

@@ -30,6 +30,20 @@ test("GET /api/projects — 200 with body and ETag for an authenticated caller",
   expect(body.some((p) => p.id === f.projectId)).toBe(true);
 });
 
+test("GET /api/projects — list entry has no history, categories, or createdAt keys", async () => {
+  const f = await seedUserOrgProject("projlist-keys");
+  setSession({ user: { id: f.userId } });
+
+  const res = await GET(new Request("http://test/api/projects"));
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as Array<Record<string, unknown>>;
+  const entry = body.find((p) => p.id === f.projectId);
+  expect(entry).toBeDefined();
+  expect(Object.keys(entry!)).not.toContain("history");
+  expect(Object.keys(entry!)).not.toContain("categories");
+  expect(Object.keys(entry!)).not.toContain("createdAt");
+});
+
 test("GET /api/projects — 304 when If-None-Match matches the current ETag", async () => {
   const f = await seedUserOrgProject("projlist-304");
   setSession({ user: { id: f.userId } });

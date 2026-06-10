@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { buildProjectOverview } from "@/lib/context/_core/overview";
+import { compress } from "@/lib/context/format";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
 
@@ -38,6 +39,45 @@ describe("buildProjectOverview under app_user", () => {
     expect(taskA?.assigneeCount).toBe(1);
     expect(result.edges.length).toBe(1);
     expect(result.edges[0].edgeType).toBe("depends_on");
+  });
+
+  test("truncates description byte-identically to compress and preserves titles, counts, edges", async () => {
+    const fx = await seedUserOrgProject("overview-ctx-trunc");
+    const longDesc = "x".repeat(4000);
+    const astralDesc = "😀".repeat(2000);
+    const sr = serviceRoleConnect();
+    try {
+      const [a] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number, description)
+        VALUES (${fx.projectId}, 'Long', 1, ${longDesc})
+        RETURNING id`;
+      const [b] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number)
+        VALUES (${fx.projectId}, 'Short', 2)
+        RETURNING id`;
+      await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number, description)
+        VALUES (${fx.projectId}, 'Astral', 3, ${astralDesc})
+        RETURNING id`;
+      await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+               VALUES (${b.id}, ${a.id}, 'depends_on')`;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const ctx = makeAuthContext(fx.userId);
+    const result = await buildProjectOverview(ctx, fx.projectId);
+    expect(result.totalTasks).toBe(3);
+    expect(result.tasks.map((t) => t.title).sort()).toEqual([
+      "Astral",
+      "Long",
+      "Short",
+    ]);
+    expect(result.edges.length).toBe(1);
+    const taskLong = result.tasks.find((t) => t.title === "Long");
+    expect(taskLong?.description).toBe(compress(longDesc, 100));
+    const taskAstral = result.tasks.find((t) => t.title === "Astral");
+    expect(taskAstral?.description).toBe(compress(astralDesc, 100));
   });
 
   test("rejects cross-team callers (RLS isolation under app_user)", async () => {

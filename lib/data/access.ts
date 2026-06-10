@@ -13,10 +13,23 @@ import { executeRaw } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import type { ProjectListOrganization } from "@/lib/data/views";
 
+/** Slim task row returned by the membership gate. Only the columns callers read. */
+export type TaskAccessGate = Pick<
+  Task,
+  "id" | "projectId" | "title" | "status" | "files" | "updatedAt"
+>;
+
+/**
+ * Project columns the access check returns. Omits `history` and `createdAt`
+ * to reduce DB egress; callers only read id, organizationId, identifier,
+ * title, status, description, categories, updatedAt.
+ */
+export type ProjectAccessProject = Omit<Project, "history" | "createdAt">;
+
 /** Resolved project access returned when a caller can read a project. */
 export type ProjectAccessRow = {
-  /** The authorized project row. */
-  project: Project;
+  /** The authorized project row — only the 8 columns callers read. */
+  project: ProjectAccessProject;
   /** Caller's `member.role` string from the same JOIN. */
   memberRole: string;
   /** Owning team — projected from the same lookup to save a round-trip. */
@@ -49,7 +62,16 @@ export async function findProjectAccessTx(
   projectId: string,
 ): Promise<ProjectAccessRow | null> {
   const [projectRow] = await tx
-    .select()
+    .select({
+      id: projects.id,
+      organizationId: projects.organizationId,
+      title: projects.title,
+      identifier: projects.identifier,
+      description: projects.description,
+      status: projects.status,
+      categories: projects.categories,
+      updatedAt: projects.updatedAt,
+    })
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);
@@ -80,12 +102,12 @@ export async function findProjectAccessTx(
  *
  * @param userId - Verified user id.
  * @param taskId - UUID of the task.
- * @returns Task row when accessible, null otherwise.
+ * @returns Gate row with only the columns callers read, or null when inaccessible.
  */
 export async function findTaskAccess(
   userId: string,
   taskId: string,
-): Promise<Task | null> {
+): Promise<TaskAccessGate | null> {
   return withUserContext(userId, (tx) => findTaskAccessTx(tx, taskId));
 }
 
@@ -94,14 +116,21 @@ export async function findTaskAccess(
  *
  * @param tx - Active RLS transaction handle.
  * @param taskId - UUID of the task.
- * @returns Task row when accessible, null otherwise.
+ * @returns Gate row with only the columns callers read, or null when inaccessible.
  */
 export async function findTaskAccessTx(
   tx: Tx,
   taskId: string,
-): Promise<Task | null> {
+): Promise<TaskAccessGate | null> {
   const [row] = await tx
-    .select()
+    .select({
+      id: tasks.id,
+      projectId: tasks.projectId,
+      title: tasks.title,
+      status: tasks.status,
+      files: tasks.files,
+      updatedAt: tasks.updatedAt,
+    })
     .from(tasks)
     .where(eq(tasks.id, taskId))
     .limit(1);

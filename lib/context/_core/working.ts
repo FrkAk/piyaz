@@ -1,13 +1,14 @@
 import "server-only";
 
 import type { AcceptanceCriterion } from "@/lib/types";
-import { getAncestors } from "@/lib/data/traversal";
-import { getTaskEdgesDetailedTx } from "@/lib/data/edge";
-import { getTaskFullTx } from "@/lib/data/task";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import { section, formatCriteria } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
 import { withUserContext } from "@/lib/db/rls";
+import {
+  resolveWorkingData,
+  type WorkingContextData,
+} from "@/lib/context/_core/bundle";
 
 /** Full working context for AI assistant (1-hop). */
 type WorkingContext = {
@@ -28,14 +29,46 @@ type WorkingContext = {
 };
 
 /**
+ * Assemble the working context from pre-resolved working data. 1-hop edges plus
+ * the ancestor chain. Pure: reads only its argument, issues no queries.
+ *
+ * @param data Resolved working data (task row, detailed edges, ancestors).
+ * @returns Working context with task data, ancestors, and edges.
+ */
+export function buildWorkingContextFrom(
+  data: WorkingContextData,
+): WorkingContext {
+  const { task, detailedEdges, ancestors } = data;
+
+  const edges = detailedEdges.map((e) => ({
+    id: e.connectedTask.id,
+    taskRef: e.connectedTask.taskRef,
+    edgeType: e.edgeType as string,
+    direction: e.direction,
+    title: e.connectedTask.title,
+    status: e.connectedTask.status,
+    note: e.note,
+  }));
+
+  return {
+    node: task as unknown as Record<string, unknown>,
+    taskRef: task.taskRef,
+    ancestors,
+    edges,
+    assignees: task.assignees,
+    links: task.links,
+  };
+}
+
+/**
  * Build full working context for a task. 1-hop traversal.
  *
- * Sections ordered by U-shaped attention: header + description + criteria at
- * start, edges in middle. No token budget — all content included as-is. Used
- * by MCP for `mymir_context depth='working'`.
+ * Resolves only the working data this depth renders (no dependency closure or
+ * project header), then delegates to the pure {@link buildWorkingContextFrom}
+ * assembler. Used by MCP for `mymir_context depth='working'`.
  *
- * @param ctx - Resolved auth context.
- * @param taskId - UUID of the task.
+ * @param ctx Resolved auth context.
+ * @param taskId UUID of the task.
  * @returns Working context with task data, ancestors, and edges.
  */
 export async function buildWorkingContext(
@@ -43,30 +76,8 @@ export async function buildWorkingContext(
   taskId: string,
 ): Promise<WorkingContext> {
   return withUserContext(ctx.userId, async (tx) => {
-    const task = await getTaskFullTx(tx, taskId);
-    const [detailedEdges, ancestors] = await Promise.all([
-      getTaskEdgesDetailedTx(tx, taskId),
-      getAncestors(taskId, tx),
-    ]);
-
-    const edges = detailedEdges.map((e) => ({
-      id: e.connectedTask.id,
-      taskRef: e.connectedTask.taskRef,
-      edgeType: e.edgeType as string,
-      direction: e.direction,
-      title: e.connectedTask.title,
-      status: e.connectedTask.status,
-      note: e.note,
-    }));
-
-    return {
-      node: task as unknown as Record<string, unknown>,
-      taskRef: task.taskRef,
-      ancestors,
-      edges,
-      assignees: task.assignees,
-      links: task.links,
-    };
+    const data = await resolveWorkingData(tx, taskId);
+    return buildWorkingContextFrom(data);
   });
 }
 

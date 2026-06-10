@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
 import { executeRaw, type Conn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
@@ -48,6 +48,7 @@ import {
   assertProjectAccess,
   assertProjectAccessTx,
   isUuid,
+  type ProjectAccess,
 } from "@/lib/auth/authorization";
 import {
   emitProjectDeleted,
@@ -76,6 +77,26 @@ function makeHistoryEntry(
 // ---------------------------------------------------------------------------
 
 /**
+ * Guard a caller-supplied pre-resolved access row against the project the
+ * read is scoped to. A mismatch is a programmer error — fail loudly rather
+ * than serve one project's data under another project's authorization.
+ *
+ * @param access - Pre-resolved access row, when the caller supplied one.
+ * @param projectId - UUID of the project being read.
+ * @throws Error when the access row belongs to a different project.
+ */
+function assertAccessMatchesProject(
+  access: ProjectAccess | undefined,
+  projectId: string,
+): void {
+  if (access && access.project.id !== projectId) {
+    throw new Error(
+      `pre-resolved access row is for project ${access.project.id}, not ${projectId}`,
+    );
+  }
+}
+
+/**
  * Slim graph payload for the workspace canvas + task list. Drops the heavy
  * task fields (description, plan, decisions, criteria, executionRecord)
  * that only the per-task detail surface needs — those are fetched lazily
@@ -89,15 +110,22 @@ function makeHistoryEntry(
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
+ * @param access - Optional pre-resolved access row so the workspace render
+ *   reuses one project-access read across the layout and page instead of
+ *   reading the row again here. Must have been resolved for this same
+ *   `projectId`; a mismatch throws. Omit to resolve it in-frame.
  * @returns Slim project metadata + slim tasks + slim edges.
  * @throws ForbiddenError on missing or cross-team project.
+ * @throws Error when `access` was resolved for a different project.
  */
 export async function getProjectGraphSlim(
   ctx: AuthContext,
   projectId: string,
+  access?: ProjectAccess,
 ): Promise<ProjectGraphSlim> {
+  assertAccessMatchesProject(access, projectId);
   return withUserContext(ctx.userId, async (tx) => {
-    const { project } = await assertProjectAccessTx(tx, projectId);
+    const { project } = access ?? (await assertProjectAccessTx(tx, projectId));
 
     const tasksQ = tx
       .select({
@@ -183,19 +211,26 @@ export async function getProjectGraphSlim(
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
+ * @param access - Optional pre-resolved access row so the workspace render
+ *   reuses one project-access read across the layout and page instead of
+ *   reading the row again here. Must have been resolved for this same
+ *   `projectId`; a mismatch throws. Omit to resolve it in-frame.
  * @returns Chrome view of the project.
  * @throws ForbiddenError on missing or cross-team project.
+ * @throws Error when `access` was resolved for a different project.
  */
 export async function getProjectChrome(
   ctx: AuthContext,
   projectId: string,
+  access?: ProjectAccess,
 ): Promise<ProjectChrome> {
+  assertAccessMatchesProject(access, projectId);
   return withUserContext(ctx.userId, async (tx) => {
     const {
       project,
       memberRole,
       organization: org,
-    } = await assertProjectAccessTx(tx, projectId);
+    } = access ?? (await assertProjectAccessTx(tx, projectId));
 
     const [{ count }] = await tx
       .select({ count: sql<number>`count(*)::int` })
@@ -616,7 +651,15 @@ export async function listProjectsSlim(
         sql`SELECT org_id, name, slug, member_role FROM public.current_user_orgs()`,
       ),
       tx
-        .select(getTableColumns(projects))
+        .select({
+          id: projects.id,
+          organizationId: projects.organizationId,
+          title: projects.title,
+          identifier: projects.identifier,
+          description: projects.description,
+          status: projects.status,
+          updatedAt: projects.updatedAt,
+        })
         .from(projects)
         .where(cursorClause)
         .orderBy(desc(projects.updatedAt), desc(projects.id))

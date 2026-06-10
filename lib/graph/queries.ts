@@ -13,6 +13,7 @@ import {
   listMyTasks as coreListMyTasks,
   type CrossProjectSearchResult,
 } from "@/lib/data/task";
+import { loadProjectAccess } from "@/lib/auth/authorization";
 import type { MyTask } from "@/lib/data/views";
 
 export type {
@@ -61,7 +62,8 @@ export type MyTasksListResultPayload =
  */
 export async function getProjectChrome(projectId: string) {
   const ctx = await getAuthContext();
-  return coreGetProjectChrome(ctx, projectId);
+  const access = await loadProjectAccess(ctx.userId, projectId);
+  return coreGetProjectChrome(ctx, projectId, access);
 }
 
 /**
@@ -86,7 +88,8 @@ export async function listProjectsSlim() {
  */
 export async function getProjectGraphSlim(projectId: string) {
   const ctx = await getAuthContext();
-  return coreGetProjectGraphSlim(ctx, projectId);
+  const access = await loadProjectAccess(ctx.userId, projectId);
+  return coreGetProjectGraphSlim(ctx, projectId, access);
 }
 
 /**

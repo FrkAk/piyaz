@@ -8,7 +8,7 @@ import {
 } from "@/lib/graph/identifier";
 import { getProjectTagsTx } from "@/lib/data/project";
 import {
-  listProjectTasks,
+  listProjectTasksForOverview,
   fetchAssigneesByProjectUnchecked,
 } from "@/lib/data/task";
 import { fetchEdgesForTaskIds } from "@/lib/data/edge";
@@ -73,7 +73,7 @@ export async function buildProjectOverview(
   return withUserContext(ctx.userId, async (tx) => {
     const { project } = await assertProjectAccessTx(tx, projectId);
     const projectTags = await getProjectTagsTx(tx, projectId);
-    const allTasks = await listProjectTasks(projectId, tx);
+    const allTasks = await listProjectTasksForOverview(projectId, tx);
 
     const identifier = asIdentifier(project.identifier);
     const assigneesByTask = await fetchAssigneesByProjectUnchecked(

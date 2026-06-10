@@ -6,7 +6,7 @@ import {
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
   fetchTaskSummaries,
-  getTaskFullTx,
+  getTaskForDepthTx,
 } from "@/lib/data/task";
 import { getProjectHeader } from "@/lib/data/project";
 import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
@@ -59,7 +59,7 @@ export async function buildReviewContext(
   taskId: string,
 ): Promise<string> {
   return withUserContext(ctx.userId, async (tx) => {
-    const task = await getTaskFullTx(tx, taskId);
+    const task = await getTaskForDepthTx(tx, taskId, "review");
 
     const [{ deps, downstream }, upstreamEdgeNotes] = await Promise.all([
       loadBundleDeps(task.projectId, taskId, 2, tx),

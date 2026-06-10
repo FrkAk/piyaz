@@ -1,13 +1,15 @@
 import { getAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
-import { getTaskFull } from "@/lib/data/task";
+import { getTaskProjectId } from "@/lib/data/task";
 import { getProjectMaxUpdatedAt } from "@/lib/data/project";
-import { buildAgentContext } from "@/lib/context/_core/agent";
-import { buildPlanningContext } from "@/lib/context/_core/planning";
+import { resolveContextBundle } from "@/lib/context/_core/bundle";
+import { buildAgentContextFrom } from "@/lib/context/_core/agent";
+import { buildPlanningContextFrom } from "@/lib/context/_core/planning";
 import {
-  buildWorkingContext,
+  buildWorkingContextFrom,
   formatWorkingContext,
 } from "@/lib/context/_core/working";
+import { withUserContext } from "@/lib/db/rls";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
@@ -18,6 +20,11 @@ import { error } from "@/lib/api/response";
  * POST `/api/project/[projectId]/context` endpoint — caller asserts task
  * access first (a missing or cross-team task surfaces as 404) and the URL
  * task id is the authoritative scope.
+ *
+ * The validator path reads only the slim `projectId` gate, so HEAD/304
+ * never pay for a full task. On a cache miss the task row and dependency
+ * traversal are resolved once via {@link resolveContextBundle} and fed to
+ * the three pure context cores.
  *
  * `Last-Modified` is the project-max validator (see
  * {@link getProjectMaxUpdatedAt}) — over-conservative but trivial to
@@ -37,18 +44,24 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   }
 
   try {
-    const task = await getTaskFull(ctx, taskId);
-    const max = await getProjectMaxUpdatedAt(ctx, task.projectId);
+    const projectId = await getTaskProjectId(ctx, taskId);
+    const max = await getProjectMaxUpdatedAt(ctx, projectId);
 
     if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);
     }
 
-    const [agent, planning, workingRaw] = await Promise.all([
-      buildAgentContext(ctx, taskId),
-      buildPlanningContext(ctx, taskId),
-      buildWorkingContext(ctx, taskId),
-    ]);
+    const { agent, planning, workingRaw } = await withUserContext(
+      ctx.userId,
+      async (tx) => {
+        const bundle = await resolveContextBundle(tx, taskId);
+        return {
+          agent: buildAgentContextFrom(bundle),
+          planning: buildPlanningContextFrom(bundle),
+          workingRaw: buildWorkingContextFrom(bundle),
+        };
+      },
+    );
     const working = await formatWorkingContext(workingRaw);
     return conditionalRespond(req, { agent, planning, working }, max);
   } catch (err) {

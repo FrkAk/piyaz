@@ -51,8 +51,22 @@ export type ProjectTaskStats = {
   cancelled: number;
 };
 
-/** Project entry returned by `listProjectsSlim`. */
-export type ProjectListEntry = Project & {
+/**
+ * Project entry returned by `listProjectsSlim`. Carries only the columns the
+ * home grid and sidebar render (id, organizationId, title, identifier,
+ * description, status, updatedAt); history, categories, and createdAt are
+ * omitted to keep the wire payload slim.
+ */
+export type ProjectListEntry = Pick<
+  Project,
+  | "id"
+  | "organizationId"
+  | "title"
+  | "identifier"
+  | "description"
+  | "status"
+  | "updatedAt"
+> & {
   organization: ProjectListOrganization;
   memberRole: string;
   taskStats: ProjectTaskStats;
