@@ -487,3 +487,18 @@ test("findProjectAccess access row omits history and createdAt", async () => {
     "updatedAt",
   ]);
 });
+
+test("graph and chrome reads reject a pre-resolved access row for another project", async () => {
+  const a = await seedUserOrgProject("access-mismatch-a");
+  const b = await seedUserOrgProject("access-mismatch-b");
+  const access = await findProjectAccess(a.userId, a.projectId);
+  expect(access).not.toBeNull();
+
+  const ctx = makeAuthContext(a.userId);
+  await expect(getProjectGraphSlim(ctx, b.projectId, access!)).rejects.toThrow(
+    "pre-resolved access row",
+  );
+  await expect(getProjectChrome(ctx, b.projectId, access!)).rejects.toThrow(
+    "pre-resolved access row",
+  );
+});

@@ -77,6 +77,26 @@ function makeHistoryEntry(
 // ---------------------------------------------------------------------------
 
 /**
+ * Guard a caller-supplied pre-resolved access row against the project the
+ * read is scoped to. A mismatch is a programmer error — fail loudly rather
+ * than serve one project's data under another project's authorization.
+ *
+ * @param access - Pre-resolved access row, when the caller supplied one.
+ * @param projectId - UUID of the project being read.
+ * @throws Error when the access row belongs to a different project.
+ */
+function assertAccessMatchesProject(
+  access: ProjectAccess | undefined,
+  projectId: string,
+): void {
+  if (access && access.project.id !== projectId) {
+    throw new Error(
+      `pre-resolved access row is for project ${access.project.id}, not ${projectId}`,
+    );
+  }
+}
+
+/**
  * Slim graph payload for the workspace canvas + task list. Drops the heavy
  * task fields (description, plan, decisions, criteria, executionRecord)
  * that only the per-task detail surface needs — those are fetched lazily
@@ -92,15 +112,18 @@ function makeHistoryEntry(
  * @param projectId - UUID of the project.
  * @param access - Optional pre-resolved access row so the workspace render
  *   reuses one project-access read across the layout and page instead of
- *   reading the row again here. Omit to resolve it in-frame.
+ *   reading the row again here. Must have been resolved for this same
+ *   `projectId`; a mismatch throws. Omit to resolve it in-frame.
  * @returns Slim project metadata + slim tasks + slim edges.
  * @throws ForbiddenError on missing or cross-team project.
+ * @throws Error when `access` was resolved for a different project.
  */
 export async function getProjectGraphSlim(
   ctx: AuthContext,
   projectId: string,
   access?: ProjectAccess,
 ): Promise<ProjectGraphSlim> {
+  assertAccessMatchesProject(access, projectId);
   return withUserContext(ctx.userId, async (tx) => {
     const { project } = access ?? (await assertProjectAccessTx(tx, projectId));
 
@@ -190,15 +213,18 @@ export async function getProjectGraphSlim(
  * @param projectId - UUID of the project.
  * @param access - Optional pre-resolved access row so the workspace render
  *   reuses one project-access read across the layout and page instead of
- *   reading the row again here. Omit to resolve it in-frame.
+ *   reading the row again here. Must have been resolved for this same
+ *   `projectId`; a mismatch throws. Omit to resolve it in-frame.
  * @returns Chrome view of the project.
  * @throws ForbiddenError on missing or cross-team project.
+ * @throws Error when `access` was resolved for a different project.
  */
 export async function getProjectChrome(
   ctx: AuthContext,
   projectId: string,
   access?: ProjectAccess,
 ): Promise<ProjectChrome> {
+  assertAccessMatchesProject(access, projectId);
   return withUserContext(ctx.userId, async (tx) => {
     const {
       project,
