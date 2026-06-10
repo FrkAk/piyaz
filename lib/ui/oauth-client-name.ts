@@ -7,6 +7,7 @@ const CLIENT_BRAND_LABELS: readonly {
   { match: /^claude code\b/i, label: "Claude Code" },
   { match: /^codex\b/i, label: "Codex" },
   { match: /^cursor\b/i, label: "Cursor" },
+  { match: /^(?:google )?antigravity\b/i, label: "Antigravity" },
   { match: /^gemini(?: cli)?\b/i, label: "Gemini" },
 ];
 

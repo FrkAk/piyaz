@@ -7,6 +7,10 @@ test("formats supported OAuth client brand names consistently", () => {
     "Claude Code",
   );
   expect(formatOAuthClientName("Cursor")).toBe("Cursor");
+  expect(formatOAuthClientName("Antigravity")).toBe("Antigravity");
+  expect(formatOAuthClientName("Google Antigravity (plugin:mymir:mymir)")).toBe(
+    "Antigravity",
+  );
   expect(formatOAuthClientName("Gemini CLI")).toBe("Gemini");
 });
 

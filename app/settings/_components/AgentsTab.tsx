@@ -16,7 +16,7 @@ interface AgentsTabProps {
 }
 
 /** Canonical brands rendered as fixed sections, in display order. */
-const KNOWN_BRANDS = ["Claude Code", "Codex", "Gemini", "Cursor"] as const;
+const KNOWN_BRANDS = ["Claude Code", "Codex", "Antigravity", "Cursor"] as const;
 type KnownBrand = (typeof KNOWN_BRANDS)[number];
 const KNOWN_BRAND_SET: ReadonlySet<string> = new Set(KNOWN_BRANDS);
 
@@ -34,7 +34,7 @@ function groupSessions(sessions: OAuthSessionView[]): {
   const byBrand: Record<KnownBrand, OAuthSessionView[]> = {
     "Claude Code": [],
     Codex: [],
-    Gemini: [],
+    Antigravity: [],
     Cursor: [],
   };
   const otherSessions: OAuthSessionView[] = [];
@@ -53,7 +53,7 @@ function groupSessions(sessions: OAuthSessionView[]): {
 
 /**
  * Agents & devices tab — H1 + subhead + four fixed brand cards (Claude Code,
- * Codex, Cursor, Gemini) plus a catch-all card when non-canonical clients
+ * Codex, Antigravity, Cursor) plus a catch-all card when non-canonical clients
  * have authorized sessions. Optimistically removes a row on revoke and
  * surfaces an inline error if the server rejects.
  *
