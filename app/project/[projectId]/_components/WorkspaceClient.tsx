@@ -355,6 +355,10 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
       );
       const slim = cached?.tasks.find((t) => t.id === taskId);
       if (!slim) return undefined;
+      // Fields the slim projection lacks (description, sequenceNumber,
+      // createdAt, files, assignees, ...) are fabricated empties below.
+      // Anything that renders or mutates them must stay gated on
+      // `isPlaceholderData` until the real detail fetch resolves.
       return {
         id: slim.id,
         projectId,
