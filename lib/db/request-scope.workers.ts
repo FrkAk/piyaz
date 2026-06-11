@@ -15,6 +15,56 @@ import type { RequestDbOutcome } from "./request-scope.node";
 
 export type { RequestDbOutcome } from "./request-scope.node";
 
+/** Worker DB connection strings supplied by Cloudflare bindings. */
+export interface WorkerDbUrls {
+  /** Application runtime role connection string. */
+  databaseUrl?: string;
+  /** Better-auth schema role connection string. */
+  databaseAuthUrl?: string;
+  /** Service role connection string. */
+  databaseServiceRoleUrl?: string;
+}
+
+interface ResolvedWorkerDbUrls {
+  databaseUrl: string;
+  databaseAuthUrl: string;
+  databaseServiceRoleUrl: string;
+}
+
+/**
+ * Validate explicit Worker DB URLs before creating any pools.
+ *
+ * @param urls - Explicit Cloudflare binding values, if supplied.
+ * @returns Fully-populated URLs, or `undefined` to use driver defaults.
+ * @throws Error when an explicit URL set is incomplete.
+ */
+function resolveWorkerDbUrls(
+  urls?: WorkerDbUrls,
+): ResolvedWorkerDbUrls | undefined {
+  if (!urls) return undefined;
+  if (!urls.databaseUrl) {
+    throw new Error(
+      "DATABASE_URL is required for the app runtime connection (app_user role).",
+    );
+  }
+  if (!urls.databaseAuthUrl) {
+    throw new Error(
+      "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
+        "(DML on neon_auth.*, no public-schema access).",
+    );
+  }
+  if (!urls.databaseServiceRoleUrl) {
+    throw new Error(
+      "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
+    );
+  }
+  return {
+    databaseUrl: urls.databaseUrl,
+    databaseAuthUrl: urls.databaseAuthUrl,
+    databaseServiceRoleUrl: urls.databaseServiceRoleUrl,
+  };
+}
+
 /**
  * Workers implementation of the per-request DB scope.
  *
@@ -31,15 +81,19 @@ export type { RequestDbOutcome } from "./request-scope.node";
  * the first promise.
  *
  * @param fn - The request-handler body.
+ * @param urls - Explicit Cloudflare binding DB URLs.
  * @returns The body's result plus the idempotent pool teardown.
  * @throws Whatever `fn` throws, after ending the request's pools.
+ * @throws Error when an explicit URL set is incomplete.
  */
 export async function withRequestDb<T>(
   fn: () => Promise<T>,
+  urls?: WorkerDbUrls,
 ): Promise<RequestDbOutcome<T>> {
-  const app = buildAppPool();
-  const auth = buildAuthPool();
-  const service = buildServicePool();
+  const resolvedUrls = resolveWorkerDbUrls(urls);
+  const app = buildAppPool(resolvedUrls?.databaseUrl);
+  const auth = buildAuthPool(resolvedUrls?.databaseAuthUrl);
+  const service = buildServicePool(resolvedUrls?.databaseServiceRoleUrl);
   const pools = [app.pool, auth.pool, service.pool];
 
   let ending: Promise<void> | undefined;

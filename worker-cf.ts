@@ -43,6 +43,9 @@ export { MymirBroker };
  * `lib/realtime/broker-do.ts:30-36`).
  */
 interface WorkerEnv {
+  DATABASE_URL: string;
+  DATABASE_AUTH_URL: string;
+  DATABASE_SERVICE_ROLE_URL: string;
   RATE_LIMIT_API?: CloudflareRateLimitBinding;
   RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
 }
@@ -133,8 +136,13 @@ const handler = {
     ctx: WorkerCtx,
   ): Promise<Response> {
     initRateLimitBindings(env);
-    const { result, teardown } = await withRequestDb(() =>
-      openNext.fetch(request, env, ctx),
+    const { result, teardown } = await withRequestDb(
+      () => openNext.fetch(request, env, ctx),
+      {
+        databaseUrl: env.DATABASE_URL,
+        databaseAuthUrl: env.DATABASE_AUTH_URL,
+        databaseServiceRoleUrl: env.DATABASE_SERVICE_ROLE_URL,
+      },
     );
     return scheduleRequestDbTeardown(result, teardown, (promise) =>
       ctx.waitUntil(promise),

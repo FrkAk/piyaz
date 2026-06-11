@@ -26,6 +26,13 @@ const DUMMY_URLS = {
   DATABASE_SERVICE_ROLE_URL: "postgres://svc:svc@db.test.invalid:5432/mymir",
 } as const;
 
+const EXPLICIT_URLS = {
+  databaseUrl: "postgres://explicit-app:app@db.test.invalid:5432/mymir",
+  databaseAuthUrl: "postgres://explicit-auth:auth@db.test.invalid:5432/mymir",
+  databaseServiceRoleUrl:
+    "postgres://explicit-svc:svc@db.test.invalid:5432/mymir",
+} as const;
+
 const ENV_KEYS = [
   "DATABASE_URL",
   "DATABASE_AUTH_URL",
@@ -126,6 +133,38 @@ describe("withRequestDb (workers)", () => {
     expect(typeof outcome.teardown).toBe("function");
     expect(requestDbStore.getStore()).toBeUndefined();
     await outcome.teardown();
+  });
+
+  it("uses explicit worker binding URLs when process env is not populated", async () => {
+    const { withRequestDb } = await import("@/lib/db/request-scope.workers");
+    for (const key of ENV_KEYS) delete process.env[key];
+
+    const outcome = await withRequestDb(async () => {
+      const frame = requestDbStore.getStore();
+      if (!frame) throw new Error("no frame");
+      expect(poolOf(frame.appDb).options).toBeDefined();
+      expect(poolOf(frame.authDb).options).toBeDefined();
+      expect(poolOf(frame.serviceRoleDb).options).toBeDefined();
+      return "rendered";
+    }, EXPLICIT_URLS);
+
+    expect(outcome.result).toBe("rendered");
+    await outcome.teardown();
+  });
+
+  it("rejects incomplete explicit worker binding URLs", async () => {
+    const { withRequestDb } = await import("@/lib/db/request-scope.workers");
+    let ran = false;
+
+    await expect(
+      withRequestDb(
+        async () => {
+          ran = true;
+        },
+        { ...EXPLICIT_URLS, databaseAuthUrl: undefined },
+      ),
+    ).rejects.toThrow(/DATABASE_AUTH_URL/);
+    expect(ran).toBe(false);
   });
 
   it("teardown ends all three pools exactly once", async () => {
