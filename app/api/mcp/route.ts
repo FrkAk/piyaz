@@ -7,6 +7,7 @@ import { createMcpServer } from "@/lib/mcp/create-server";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
 import { makeAuthContext, type AuthContext } from "@/lib/auth/context";
 import { parseEnvInt } from "@/lib/config/env";
+import { readBodyBounded } from "@/lib/api/read-body-bounded";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const origin = new URL(baseUrl).origin;
@@ -21,12 +22,19 @@ const issuer = `${baseUrl}/api/auth`;
  * to the DB and is then re-served verbatim into every teammate's agent
  * context (storage + egress amplification). 1 MB comfortably fits the largest
  * legitimate payload — a full unabridged implementation plan is tens of KB —
- * while bounding worst-case cost. Tunable via MCP_MAX_BODY_BYTES.
+ * while bounding worst-case cost. Tunable via MCP_MAX_BODY_BYTES; an explicit
+ * 0 is honored as a hard freeze (every request body rejected) and logged at
+ * module init so a typo'd env var is not a silent outage.
  */
 const MAX_MCP_BODY_BYTES = parseEnvInt(
   process.env.MCP_MAX_BODY_BYTES,
   1_000_000,
 );
+if (MAX_MCP_BODY_BYTES === 0) {
+  console.warn(
+    "MCP_MAX_BODY_BYTES=0: every MCP request body will be rejected with 413.",
+  );
+}
 
 /**
  * Build a JSON-RPC error envelope response.
@@ -54,45 +62,6 @@ function jsonRpcError(
  */
 function payloadTooLarge() {
   return jsonRpcError(-32600, "Request body too large.", 413);
-}
-
-/**
- * Read a request body up to `maxBytes`, cancelling the stream as soon as
- * the cap is crossed. `request.arrayBuffer()` would buffer the ENTIRE
- * stream into isolate memory before any size check could run — a chunked
- * (length-less) over-limit body would then defeat the cap's purpose on
- * memory-bounded runtimes (Workers isolates). Legitimate bodies cost the
- * same single buffering pass as before.
- *
- * @param request - Incoming request.
- * @param maxBytes - Inclusive byte ceiling.
- * @returns Body bytes, or null when the body exceeds `maxBytes`.
- */
-async function readBodyBounded(
-  request: Request,
-  maxBytes: number,
-): Promise<Uint8Array<ArrayBuffer> | null> {
-  if (!request.body) return new Uint8Array(0);
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
 }
 
 /** Shape we require from a verified MCP access token payload. */
