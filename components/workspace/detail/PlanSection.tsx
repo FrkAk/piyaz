@@ -251,9 +251,7 @@ export function PlanSection({
         }
       />
 
-      {saveError && (
-        <p className="mb-2 text-[11px] text-danger">{saveError}</p>
-      )}
+      {saveError && <p className="mb-2 text-[11px] text-danger">{saveError}</p>}
       <div className="rounded-md border border-border bg-surface-raised/40 p-3">
         <Markdown className="text-[12.5px] leading-relaxed text-text-secondary">
           {plan}

@@ -124,9 +124,7 @@ export function CriteriaSection({
         return;
       }
       const prev = localRef.current;
-      const next = prev.map((c) =>
-        c.id === id ? { ...c, text: trimmed } : c,
-      );
+      const next = prev.map((c) => (c.id === id ? { ...c, text: trimmed } : c));
       setLocal(next);
       setEditingId(null);
       setSaveError(null);
@@ -248,9 +246,7 @@ export function CriteriaSection({
           </span>
         }
       />
-      {saveError && (
-        <p className="mb-2 text-[11px] text-danger">{saveError}</p>
-      )}
+      {saveError && <p className="mb-2 text-[11px] text-danger">{saveError}</p>}
       <div className="space-y-1.5">
         {local.map((c) => (
           <CriterionRow

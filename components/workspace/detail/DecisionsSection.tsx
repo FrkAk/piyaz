@@ -114,9 +114,7 @@ export function DecisionsSection({
         return;
       }
       const prev = localRef.current;
-      const next = prev.map((d) =>
-        d.id === id ? { ...d, text: trimmed } : d,
-      );
+      const next = prev.map((d) => (d.id === id ? { ...d, text: trimmed } : d));
       setLocal(next);
       setEditingId(null);
       setSaveError(null);
@@ -235,9 +233,7 @@ export function DecisionsSection({
           </span>
         }
       />
-      {saveError && (
-        <p className="mb-2 text-[11px] text-danger">{saveError}</p>
-      )}
+      {saveError && <p className="mb-2 text-[11px] text-danger">{saveError}</p>}
       <div className="space-y-1.5">
         {local.map((d) => (
           <DecisionCard

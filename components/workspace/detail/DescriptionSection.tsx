@@ -57,9 +57,7 @@ export function DescriptionSection({
   return (
     <section className="mb-7">
       <SectionHeader label="Description" />
-      {saveError && (
-        <p className="mb-2 text-[11px] text-danger">{saveError}</p>
-      )}
+      {saveError && <p className="mb-2 text-[11px] text-danger">{saveError}</p>}
       {editing ? (
         <AutoGrowTextarea
           value={draft}

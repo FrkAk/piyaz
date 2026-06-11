@@ -19,10 +19,7 @@ const INVISIBLE_CHARS = /[\p{Cf}\p{Cc}]/gu;
  * @returns Visually unambiguous display string.
  */
 function sanitizeClientName(clientName: string): string {
-  return clientName
-    .replace(/\s+/g, " ")
-    .replace(INVISIBLE_CHARS, "")
-    .trim();
+  return clientName.replace(/\s+/g, " ").replace(INVISIBLE_CHARS, "").trim();
 }
 
 const CLIENT_BRAND_LABELS: readonly {
