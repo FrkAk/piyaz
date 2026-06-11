@@ -2,8 +2,13 @@ import "server-only";
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
-import { executeRaw, type Conn, type ReadConn } from "@/lib/db/raw";
-import { withUserContext, type Tx } from "@/lib/db/rls";
+import {
+  executeRaw,
+  normalizeExecuteResult,
+  type Conn,
+  type ReadConn,
+} from "@/lib/db/raw";
+import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges } from "@/lib/db/schema";
 import {
   assigneeCountExpr,
@@ -12,7 +17,11 @@ import {
 } from "@/lib/data/task";
 import { slimEdgeColumns } from "@/lib/data/edge-columns";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
-import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
+import {
+  aggregateProjectTags,
+  mapProjectTagRows,
+  projectTagsStmt,
+} from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
 import type { HistoryEntry } from "@/lib/types";
@@ -484,6 +493,30 @@ export async function getProjectTagsTx(
 ): Promise<ProjectTag[]> {
   await assertProjectAccessTx(tx, projectId);
   return aggregateProjectTags(tx, projectId);
+}
+
+/**
+ * Project tag vocabulary over one read batch.
+ *
+ * UNCHECKED: performs no authorization — callers must have gated the
+ * project (e.g. via `getSearchProjectGate`). RLS still scopes the
+ * aggregated task rows, so an unauthorized caller gets an empty
+ * vocabulary, never another tenant's tags.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param projectId - UUID of the project.
+ * @returns Tags sorted by count desc, tie-broken alphabetically.
+ */
+export async function fetchProjectTagsRead(
+  userId: string,
+  projectId: string,
+): Promise<ProjectTag[]> {
+  const [raw] = await withUserContextRead(userId, (read) => [
+    projectTagsStmt(read, projectId),
+  ]);
+  return mapProjectTagRows(
+    normalizeExecuteResult<{ tag: string; count: number | string }>(raw),
+  );
 }
 
 // ---------------------------------------------------------------------------

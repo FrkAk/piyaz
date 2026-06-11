@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, eq, or, sql } from "drizzle-orm";
 import { uuidArray, type Conn, type ReadConn } from "@/lib/db/raw";
-import { withUserContext, type Tx } from "@/lib/db/rls";
+import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges, type NewTaskEdge } from "@/lib/db/schema";
 import type { EdgeType, HistoryEntry } from "@/lib/types";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
@@ -13,8 +13,11 @@ import type { AuthContext } from "@/lib/auth/context";
 import {
   ForbiddenError,
   assertTaskAccessTx,
+  assertTaskGateRows,
+  assertValidTaskId,
   isUuid,
 } from "@/lib/auth/authorization";
+import { taskAccessGateStmt } from "@/lib/data/access";
 import { emitEdgeMutation } from "@/lib/realtime/events";
 
 /**
@@ -111,62 +114,31 @@ export type DetailedEdge = {
 };
 
 /**
- * Fetch all edges on a task with connected task titles and statuses.
+ * Fetch all edges on a task with connected task titles and statuses. One
+ * read batch for the gate plus the edge rows, and a second for the
+ * connected-task detail when edges exist.
+ *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task.
  * @returns Array of detailed edges.
+ * @throws ForbiddenError when the caller cannot access the task.
  */
 export async function getTaskEdgesDetailed(
   ctx: AuthContext,
   taskId: string,
 ): Promise<DetailedEdge[]> {
-  return withUserContext(ctx.userId, (tx) =>
-    getTaskEdgesDetailedTx(tx, taskId),
-  );
-}
-
-/**
- * Same contract as {@link getTaskEdgesDetailed} but runs on a
- * caller-supplied transaction handle so context builders can share one
- * `withUserContext` frame across the access check, the edge fetch, and
- * the surrounding work.
- *
- * @param tx - Drizzle transaction handle from an active `withUserContext` frame.
- * @param taskId - UUID of the task.
- * @returns Array of detailed edges.
- */
-export async function getTaskEdgesDetailedTx(
-  tx: Tx,
-  taskId: string,
-): Promise<DetailedEdge[]> {
-  await assertTaskAccessTx(tx, taskId);
-
-  const edges = await tx
-    .select()
-    .from(taskEdges)
-    .where(
-      or(
-        eq(taskEdges.sourceTaskId, taskId),
-        eq(taskEdges.targetTaskId, taskId),
-      ),
-    );
+  assertValidTaskId(taskId);
+  const [gateRows, edges] = await withUserContextRead(ctx.userId, (read) => [
+    taskAccessGateStmt(read, taskId),
+    taskEdgesStmt(read, taskId),
+  ]);
+  assertTaskGateRows(taskId, gateRows);
+  if (edges.length === 0) return [];
 
   const ids = connectedTaskIds(taskId, edges);
-  const taskRows =
-    ids.length > 0
-      ? await tx
-          .select({
-            id: tasks.id,
-            title: tasks.title,
-            status: tasks.status,
-            sequenceNumber: tasks.sequenceNumber,
-            identifier: projects.identifier,
-          })
-          .from(tasks)
-          .innerJoin(projects, eq(tasks.projectId, projects.id))
-          .where(sql`${tasks.id} IN ${ids}`)
-      : [];
-
+  const [taskRows] = await withUserContextRead(ctx.userId, (read) => [
+    connectedTaskInfoStmt(read, ids),
+  ]);
   return assembleDetailedEdges(taskId, edges, taskRows);
 }
 
@@ -304,26 +276,28 @@ export function assembleDetailedEdges(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch every edge whose source OR target task is in the supplied id set.
- * Internal helper for the project-overview context assembler — caller
- * asserted access on the project, and the id set is the project's task
- * ids so the OR-on-id-list is safely scoped.
+ * Every edge in a project, as a lazy batch statement keyed on the project
+ * id alone. Filters on the source endpoint only: the
+ * `task_edges_same_project_immutable` trigger guarantees both endpoints
+ * share a project, so the source-side scan returns every intra-project
+ * edge exactly once (same invariant `getProjectGraphSlim` relies on).
  *
- * @param taskIds - Task ids to filter the endpoints on.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Full edge rows.
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project.
+ * @returns Lazy select yielding full edge rows.
  */
-export async function fetchEdgesForTaskIds(taskIds: string[], conn: Conn) {
-  if (taskIds.length === 0) return [];
-  return conn
-    .select()
+export function projectEdgesStmt(read: ReadConn, projectId: string) {
+  return read
+    .select({
+      id: taskEdges.id,
+      sourceTaskId: taskEdges.sourceTaskId,
+      targetTaskId: taskEdges.targetTaskId,
+      edgeType: taskEdges.edgeType,
+      note: taskEdges.note,
+    })
     .from(taskEdges)
-    .where(
-      or(
-        sql`${taskEdges.sourceTaskId} IN ${taskIds}`,
-        sql`${taskEdges.targetTaskId} IN ${taskIds}`,
-      ),
-    );
+    .innerJoin(tasks, eq(taskEdges.sourceTaskId, tasks.id))
+    .where(eq(tasks.projectId, projectId));
 }
 
 /**

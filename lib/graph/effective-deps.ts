@@ -3,8 +3,6 @@ import "server-only";
 import type { Conn } from "@/lib/db/raw";
 import { listTasksForGraph } from "@/lib/data/task";
 import { listDependsOnEdges } from "@/lib/data/edge";
-import { fetchEffectiveDepChain } from "@/lib/db/raw/fetch-effective-dep-chain";
-import { fetchEffectiveDownstream } from "@/lib/db/raw/fetch-effective-downstream";
 import type { Priority } from "@/lib/types";
 
 /** Slim active-task info used by graph analyzers. */
@@ -63,7 +61,44 @@ export async function buildDepAdjacency(
   activeTasks: Map<string, ActiveTaskInfo>;
 }> {
   const allTasks = await listTasksForGraph(projectId, conn);
+  if (allTasks.length === 0) {
+    return buildDepAdjacencyFrom(allTasks, []);
+  }
+  const dependsOnEdges = await listDependsOnEdges(
+    allTasks.map((t) => t.id),
+    conn,
+  );
+  return buildDepAdjacencyFrom(allTasks, dependsOnEdges);
+}
 
+/** Slim task row the dependency-adjacency builder consumes. */
+type GraphTaskRow = {
+  id: string;
+  title: string;
+  status: string;
+  sequenceNumber: number;
+  tags: string[];
+  priority: string | null;
+};
+
+/**
+ * Build the dependency-traversal substrate from pre-fetched rows. Pure
+ * counterpart of {@link buildDepAdjacency} for callers that already hold
+ * the project's tasks and `depends_on` edges (e.g. from one read batch).
+ *
+ * @param allTasks - Every task in the project, cancelled included.
+ * @param dependsOnEdges - Every `depends_on` edge in the project.
+ * @returns The adjacency map, the all-tasks status map, and the active-task
+ *   info map.
+ */
+export function buildDepAdjacencyFrom(
+  allTasks: readonly GraphTaskRow[],
+  dependsOnEdges: readonly { sourceTaskId: string; targetTaskId: string }[],
+): {
+  adj: Map<string, string[]>;
+  taskStatus: Map<string, string>;
+  activeTasks: Map<string, ActiveTaskInfo>;
+} {
   const activeTasks = new Map<string, ActiveTaskInfo>();
   const taskStatus = new Map<string, string>();
   for (const t of allTasks) {
@@ -81,13 +116,6 @@ export async function buildDepAdjacency(
   }
 
   const adj = new Map<string, string[]>();
-  if (allTasks.length === 0) {
-    return { adj, taskStatus, activeTasks };
-  }
-
-  const taskIds = allTasks.map((t) => t.id);
-  const dependsOnEdges = await listDependsOnEdges(taskIds, conn);
-
   for (const e of dependsOnEdges) {
     const list = adj.get(e.sourceTaskId) ?? [];
     list.push(e.targetTaskId);
@@ -118,10 +146,41 @@ export async function buildEffectiveDepGraph(
   projectId: string,
   conn: Conn,
 ): Promise<EffectiveDepGraph> {
-  const { adj, taskStatus, activeTasks } = await buildDepAdjacency(
-    projectId,
-    conn,
+  const substrate = await buildDepAdjacency(projectId, conn);
+  return effectiveGraphFromSubstrate(substrate);
+}
+
+/**
+ * Build the effective dependency graph from pre-fetched rows. Pure
+ * counterpart of {@link buildEffectiveDepGraph} for callers that already
+ * hold the project's tasks and `depends_on` edges (e.g. from one read
+ * batch). Same cancelled-transparency semantics.
+ *
+ * @param allTasks - Every task in the project, cancelled included.
+ * @param dependsOnEdges - Every `depends_on` edge in the project.
+ * @returns The effective dependency graph (active-only nodes, transitive edges).
+ */
+export function buildEffectiveDepGraphFrom(
+  allTasks: Parameters<typeof buildDepAdjacencyFrom>[0],
+  dependsOnEdges: Parameters<typeof buildDepAdjacencyFrom>[1],
+): EffectiveDepGraph {
+  return effectiveGraphFromSubstrate(
+    buildDepAdjacencyFrom(allTasks, dependsOnEdges),
   );
+}
+
+/**
+ * Derive the effective graph from a dependency-traversal substrate.
+ *
+ * @param substrate - Adjacency, status, and active-task maps.
+ * @returns The effective dependency graph.
+ */
+function effectiveGraphFromSubstrate(substrate: {
+  adj: Map<string, string[]>;
+  taskStatus: Map<string, string>;
+  activeTasks: Map<string, ActiveTaskInfo>;
+}): EffectiveDepGraph {
+  const { adj, taskStatus, activeTasks } = substrate;
 
   if (taskStatus.size === 0) {
     return {
@@ -187,41 +246,4 @@ function walkEffectiveDeps(
   }
 
   return result;
-}
-
-/**
- * Walk the effective dependency graph from one source task and return its
- * depth-bounded forward (prerequisites) and reverse (downstream) closures.
- *
- * Cancelled tasks are transparent and depth-free; both result lists contain
- * only active task ids and never the source itself.
- *
- * Delegates to two recursive CTEs ({@link fetchEffectiveDepChain} and
- * {@link fetchEffectiveDownstream}) so the per-call data load stays
- * proportional to the bounded result set rather than the whole project
- * graph.
- *
- * @param projectId - UUID of the project the task belongs to.
- * @param taskId - UUID of the source task; excluded from both results.
- * @param maxDepth - Maximum active hops to include in each direction.
- * @param conn - Drizzle client or transaction handle. Callers inside a
- *   `withUserContext` transaction must pass the active `tx` so the reads
- *   participate in the same RLS-scoped frame.
- * @returns `deps` for active prerequisites and `downstream` for active
- *   dependents.
- */
-export async function loadBundleDeps(
-  projectId: string,
-  taskId: string,
-  maxDepth: number,
-  conn: Conn,
-): Promise<{ deps: { id: string }[]; downstream: { id: string }[] }> {
-  const [depRows, downstreamRows] = await Promise.all([
-    fetchEffectiveDepChain(conn, taskId, projectId, maxDepth),
-    fetchEffectiveDownstream(conn, taskId, projectId, maxDepth),
-  ]);
-  return {
-    deps: depRows.map((r) => ({ id: r.id })),
-    downstream: downstreamRows.map((r) => ({ id: r.id })),
-  };
 }

@@ -3,6 +3,7 @@ import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { seedRichContextTask } from "@/tests/context/fixtures";
 import { ForbiddenError } from "@/lib/auth/authorization";
+import { makeAuthContext } from "@/lib/auth/context";
 import * as rls from "@/lib/db/rls";
 import {
   resolveContextBundle,
@@ -10,6 +11,9 @@ import {
   resolvePlanningData,
   resolveWorkingData,
 } from "@/lib/context/_core/bundle";
+import { buildSummaryContext } from "@/lib/context/_core/summary";
+import { buildReviewContext } from "@/lib/context/_core/review";
+import { buildProjectOverview } from "@/lib/context/_core/overview";
 
 afterEach(async () => {
   await truncateAll();
@@ -123,4 +127,53 @@ test("resolveWorkingData assembles detailed edges and ancestors", async () => {
   expect(data.ancestors).toEqual([
     expect.objectContaining({ type: "project", title: "Project working-data" }),
   ]);
+});
+
+test("buildSummaryContext resolves in read batches with no interactive frame", async () => {
+  const fx = await seedRichContextTask("topo-summary");
+  const readSpy = spyOn(rls, "withUserContextRead");
+  const interactiveSpy = spyOn(rls, "withUserContext");
+
+  try {
+    await buildSummaryContext(makeAuthContext(fx.userId), fx.taskId);
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(interactiveSpy).toHaveBeenCalledTimes(0);
+  } finally {
+    readSpy.mockRestore();
+    interactiveSpy.mockRestore();
+  }
+});
+
+test("buildReviewContext resolves in read batches with no interactive frame", async () => {
+  const fx = await seedRichContextTask("topo-review");
+  const readSpy = spyOn(rls, "withUserContextRead");
+  const interactiveSpy = spyOn(rls, "withUserContext");
+
+  try {
+    await buildReviewContext(makeAuthContext(fx.userId), fx.taskId);
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(interactiveSpy).toHaveBeenCalledTimes(0);
+  } finally {
+    readSpy.mockRestore();
+    interactiveSpy.mockRestore();
+  }
+});
+
+test("buildProjectOverview resolves in one read batch with no interactive frame", async () => {
+  const fx = await seedRichContextTask("topo-overview");
+  const projectRows = await resolveContextBundle(fx.userId, fx.taskId);
+  const readSpy = spyOn(rls, "withUserContextRead");
+  const interactiveSpy = spyOn(rls, "withUserContext");
+
+  try {
+    await buildProjectOverview(
+      makeAuthContext(fx.userId),
+      projectRows.task.projectId,
+    );
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(interactiveSpy).toHaveBeenCalledTimes(0);
+  } finally {
+    readSpy.mockRestore();
+    interactiveSpy.mockRestore();
+  }
 });

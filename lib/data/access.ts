@@ -161,3 +161,31 @@ export function taskAccessGateStmt(read: ReadConn, taskId: string) {
     .where(eq(tasks.id, taskId))
     .limit(1);
 }
+
+/**
+ * Build the project access-gate read as a lazy batch statement. Same
+ * project projection as {@link findProjectAccessTx} but WITHOUT the
+ * member-role lookup: read paths only need the authorized project row, and
+ * RLS already scopes `projects` visibility to the caller's memberships.
+ * Evaluate the rows with `assertProjectGateRows`.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project.
+ * @returns Lazy select statement yielding zero or one project rows.
+ */
+export function projectAccessGateStmt(read: ReadConn, projectId: string) {
+  return read
+    .select({
+      id: projects.id,
+      organizationId: projects.organizationId,
+      title: projects.title,
+      identifier: projects.identifier,
+      description: projects.description,
+      status: projects.status,
+      categories: projects.categories,
+      updatedAt: projects.updatedAt,
+    })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+}

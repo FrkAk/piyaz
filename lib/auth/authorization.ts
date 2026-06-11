@@ -247,6 +247,40 @@ export function assertValidTaskId(taskId: string): void {
 }
 
 /**
+ * Reject a malformed project id before any statement is built. See
+ * {@link assertValidTaskId}.
+ *
+ * @param projectId - Candidate project id from the caller.
+ * @throws ForbiddenError when the id is not UUID-shaped.
+ */
+export function assertValidProjectId(projectId: string): void {
+  if (!isUuid(projectId)) {
+    throw new ForbiddenError("Forbidden", "project", projectId);
+  }
+}
+
+/**
+ * Evaluate the access-gate rows returned by a `projectAccessGateStmt`
+ * batch statement. RLS scopes `projects` rows to the caller's memberships,
+ * so an empty result means missing project or cross-team access. Read-path
+ * only: unlike {@link assertProjectAccessTx} this carries no member role,
+ * so it cannot answer permission (`required`) questions.
+ *
+ * @param projectId - UUID of the project the gate statement targeted.
+ * @param rows - Gate rows from the batch result.
+ * @returns The authorized project slice.
+ * @throws ForbiddenError when no project row is visible to the caller.
+ */
+export function assertProjectGateRows<T>(
+  projectId: string,
+  rows: readonly T[],
+): T {
+  const row = rows[0];
+  if (!row) throw new ForbiddenError("Forbidden", "project", projectId);
+  return row;
+}
+
+/**
  * Evaluate the access-gate rows returned by a `taskAccessGateStmt` batch
  * statement. The batch read path counterpart of {@link assertTaskAccessTx}:
  * RLS already filtered invisible rows, so an empty result means missing

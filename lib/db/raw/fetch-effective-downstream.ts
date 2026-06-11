@@ -95,17 +95,17 @@ export async function fetchEffectiveDownstream(
  * batch result with
  * `normalizeExecuteResult<{ id: string; depth: number | string }>`.
  *
- * @param db - Read statement-building handle.
+ * @param read - Read statement-building handle.
  * @param taskId - UUID of the starting task (excluded from the result).
  * @param maxDepth - Maximum effective hops to include.
  * @returns Lazy raw statement yielding effective-downstream rows.
  */
 export function effectiveDownstreamStmt(
-  db: ReadConn,
+  read: ReadConn,
   taskId: string,
   maxDepth: number,
 ) {
-  return db.execute(
+  return read.execute(
     effectiveDownstreamSql(
       taskId,
       sql`(SELECT project_id FROM ${tasks} WHERE id = ${taskId})`,

@@ -318,6 +318,47 @@ export async function resolvePlanningData(
 }
 
 /**
+ * Resolve a task row at the given depth plus its 1-hop detailed edges and
+ * parent-project header. One read batch, plus one for connected-task
+ * detail when edges exist. Shared substrate for the working and summary
+ * resolvers.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param taskId - UUID of the task.
+ * @param depth - Column projection for the task-row fetch.
+ * @returns The task row, detailed edges, and header row (null when
+ *   unjoinable).
+ * @throws ForbiddenError When the caller cannot access the task.
+ */
+async function resolveTaskEdgesHeader(
+  userId: string,
+  taskId: string,
+  depth: TaskFetchDepth,
+): Promise<{
+  task: TaskFull;
+  detailedEdges: DetailedEdge[];
+  header: HeaderRow | null;
+}> {
+  assertValidTaskId(taskId);
+  const [gateRows, taskRaw, edges, headerRows] = await withUserContextRead(
+    userId,
+    (db) => [
+      taskAccessGateStmt(db, taskId),
+      taskForDepthStmt(db, taskId, depth),
+      taskEdgesStmt(db, taskId),
+      projectHeaderByTaskStmt(db, taskId),
+    ],
+  );
+  assertTaskGateRows(taskId, gateRows);
+  const task = requireTaskForDepthRow(
+    normalizeExecuteResult<TaskFullRawRow>(taskRaw),
+    taskId,
+  );
+  const detailedEdges = await resolveDetailedEdges(userId, taskId, edges);
+  return { task, detailedEdges, header: headerRows[0] ?? null };
+}
+
+/**
  * Resolve the working core's input: the full task row plus its 1-hop edges
  * and ancestor chain. One read batch, plus one for connected-task detail
  * when edges exist.
@@ -331,23 +372,66 @@ export async function resolveWorkingData(
   userId: string,
   taskId: string,
 ): Promise<WorkingContextData> {
-  assertValidTaskId(taskId);
-  const [gateRows, taskRaw, edges, headerRows] = await withUserContextRead(
+  const { task, detailedEdges, header } = await resolveTaskEdgesHeader(
     userId,
-    (db) => [
-      taskAccessGateStmt(db, taskId),
-      taskForDepthStmt(db, taskId, "working"),
-      taskEdgesStmt(db, taskId),
-      projectHeaderByTaskStmt(db, taskId),
-    ],
-  );
-  assertTaskGateRows(taskId, gateRows);
-  const task = requireTaskForDepthRow(
-    normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
+    "working",
   );
-  const detailedEdges = await resolveDetailedEdges(userId, taskId, edges);
-  return { task, detailedEdges, ancestors: toAncestors(headerRows[0] ?? null) };
+  return { task, detailedEdges, ancestors: toAncestors(header) };
+}
+
+/** Exactly what `buildSummaryContext` reads. */
+export type SummaryContextData = {
+  /** Full task row (summary depth projection). */
+  task: TaskFull;
+  /** Connected 1-hop edges of every type with connected-task detail. */
+  detailedEdges: DetailedEdge[];
+  /** Parent project header, or null when the project is unjoinable. */
+  project: ProjectHeader | null;
+};
+
+/**
+ * Resolve the summary core's input: the summary-depth task row plus its
+ * 1-hop edges and parent-project header. One read batch, plus one for
+ * connected-task detail when edges exist.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param taskId - UUID of the task.
+ * @returns The task row, detailed edges, and project header.
+ * @throws ForbiddenError When the caller cannot access the task.
+ */
+export async function resolveSummaryData(
+  userId: string,
+  taskId: string,
+): Promise<SummaryContextData> {
+  const { task, detailedEdges, header } = await resolveTaskEdgesHeader(
+    userId,
+    taskId,
+    "summary",
+  );
+  return { task, detailedEdges, project: toProjectHeader(header) };
+}
+
+/**
+ * Resolve the review core's input: the dependency closure plus the parent
+ * project header, fetched at `review` depth (implementationPlan,
+ * executionRecord, and files all projected). Two read batches.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param taskId - UUID of the task.
+ * @returns The closure plus project header.
+ * @throws ForbiddenError When the caller cannot access the task.
+ */
+export async function resolveReviewData(
+  userId: string,
+  taskId: string,
+): Promise<PlanningContextData> {
+  const { closure, header } = await resolveClosureWithHeader(
+    userId,
+    taskId,
+    "review",
+  );
+  return { ...closure, project: toProjectHeader(header) };
 }
 
 /**

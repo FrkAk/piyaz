@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { executeRaw, type Conn, type ReadConn } from "@/lib/db/raw";
+import { type ReadConn } from "@/lib/db/raw";
 
 /**
  * Raw row shape returned by {@link fetchTaskFull}. Snake-case keys mirror
@@ -233,67 +233,35 @@ function taskForDepthSql(taskId: string, depth: TaskFetchDepth): SQL {
 }
 
 /**
- * Fetch the raw projection backing `getTaskForDepth` in a single round-trip,
- * narrowed to the columns and child aggregates the supplied {@link
- * TaskFetchDepth} renders.
- *
- * UNCHECKED: this helper performs NO authorization. The caller must assert
- * task access (`assertTaskAccess`) before invoking. Depth-aware sibling of
- * {@link fetchTaskFull}, which the web detail path uses.
- *
- * @param conn - Drizzle client or transaction handle.
- * @param taskId - UUID of the task.
- * @param depth - Context depth selecting the column projection.
- * @returns Zero or one rows; callers handle the missing case.
- */
-export async function fetchTaskForDepth(
-  conn: Conn,
-  taskId: string,
-  depth: TaskFetchDepth,
-): Promise<TaskFullRawRow[]> {
-  return executeRaw<TaskFullRawRow>(conn, taskForDepthSql(taskId, depth));
-}
-
-/**
  * {@link fetchTaskForDepth} as a lazy batch statement for the
  * `withUserContextRead` path. Same UNCHECKED contract: batch a
  * `taskAccessGateStmt` alongside and evaluate the gate first. Normalize
  * the batch result with `normalizeExecuteResult<TaskFullRawRow>`.
  *
- * @param db - Read statement-building handle.
+ * @param read - Read statement-building handle.
  * @param taskId - UUID of the task.
  * @param depth - Context depth selecting the column projection.
  * @returns Lazy raw statement yielding zero or one rows.
  */
 export function taskForDepthStmt(
-  db: ReadConn,
+  read: ReadConn,
   taskId: string,
   depth: TaskFetchDepth,
 ) {
-  return db.execute(taskForDepthSql(taskId, depth));
+  return read.execute(taskForDepthSql(taskId, depth));
 }
 
 /**
- * Fetch the raw projection backing `getTaskFull` in a single round-trip.
- * Joins `tasks` to `projects` and folds `task_assignees`,
+ * Build the full-task projection SQL shared by the interactive and batch
+ * read paths. Joins `tasks` to `projects` and folds `task_assignees`,
  * `task_acceptance_criteria`, `task_decisions`, and `task_links` into
  * JSON-aggregated subqueries.
  *
- * UNCHECKED: this helper performs NO authorization. The caller must
- * assert task access (`assertTaskAccess`) before invoking. Sibling of
- * `fetch-dependency-chain.ts` and `fetch-effective-downstream.ts`.
- *
- * @param conn - Drizzle client or transaction handle.
  * @param taskId - UUID of the task.
- * @returns Zero or one rows; callers handle the missing case.
+ * @returns Parameterized SQL fragment.
  */
-export async function fetchTaskFull(
-  conn: Conn,
-  taskId: string,
-): Promise<TaskFullRawRow[]> {
-  return executeRaw<TaskFullRawRow>(
-    conn,
-    sql`
+function taskFullSql(taskId: string): SQL {
+  return sql`
       SELECT
         t.*,
         p.identifier AS project_identifier,
@@ -311,6 +279,18 @@ export async function fetchTaskFull(
       FROM tasks t
       JOIN projects p ON p.id = t.project_id
       WHERE t.id = ${taskId}
-    `,
-  );
+    `;
+}
+
+/**
+ * {@link fetchTaskFull} as a lazy batch statement. Same UNCHECKED contract:
+ * batch a `taskAccessGateStmt` alongside and evaluate the gate first.
+ * Normalize the batch result with `normalizeExecuteResult<TaskFullRawRow>`.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task.
+ * @returns Lazy raw statement yielding zero or one rows.
+ */
+export function taskFullStmt(read: ReadConn, taskId: string) {
+  return read.execute(taskFullSql(taskId));
 }
