@@ -1968,13 +1968,13 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
       .select({
         maxOrder: sql<number>`COALESCE(MAX(${tasks.order}), -1)`,
         maxSeq: sql<number>`COALESCE(MAX(${tasks.sequenceNumber}), 0)`,
-        liveCount: sql<number>`COUNT(*)`,
+        taskCount: sql<number>`COUNT(*)`,
       })
       .from(tasks)
       .where(eq(tasks.projectId, taskFields.projectId));
 
     const maxTasks = parseEnvInt(process.env.MAX_TASKS_PER_PROJECT, 50_000);
-    if (Number(maxRow?.liveCount ?? 0) >= maxTasks) {
+    if (Number(maxRow?.taskCount ?? 0) >= maxTasks) {
       throw new TaskLimitError(taskFields.projectId, maxTasks);
     }
 
