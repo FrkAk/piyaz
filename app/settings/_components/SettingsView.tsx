@@ -264,10 +264,7 @@ export function SettingsView({
               transition={{ duration: 0.16, ease: "easeOut" }}
             >
               {tab === "account" && (
-                <AccountTab
-                  user={user}
-                  passwordUpdatedAt={passwordUpdatedAt}
-                />
+                <AccountTab user={user} passwordUpdatedAt={passwordUpdatedAt} />
               )}
               {tab === "teams" && (
                 <TeamsTab
