@@ -4,8 +4,10 @@ import { z } from "zod/v4";
 
 /**
  * Closed set of failure codes the team wrappers can return. Mapped from
- * Better Auth's `ORGANIZATION_ERROR_CODES` (57 entries) — we never invent
- * a parallel taxonomy.
+ * Better Auth's `ORGANIZATION_ERROR_CODES` (57 entries) plus the
+ * credential entries of `BASE_ERROR_CODES` (`INVALID_PASSWORD`,
+ * `PASSWORD_TOO_SHORT`, `PASSWORD_TOO_LONG`) — we never invent a
+ * parallel taxonomy.
  */
 export type TeamActionFailureCode =
   | "unauthorized"
@@ -19,6 +21,7 @@ export type TeamActionFailureCode =
   | "membership_limit_reached"
   | "cannot_leave_only_owner"
   | "slug_taken"
+  | "invalid_password"
   | "rate_limited"
   | "unknown";
 
@@ -49,6 +52,7 @@ export const TEAM_ACTION_MESSAGES: Record<TeamActionFailureCode, string> = {
   cannot_leave_only_owner:
     "You're the only owner — promote another member first, then leave.",
   slug_taken: "That URL slug is already in use. Try a different one.",
+  invalid_password: "Current password is incorrect.",
   rate_limited: "Too many attempts. Please wait a moment and try again.",
   unknown: "Something went wrong. Please try again.",
 };
@@ -126,6 +130,11 @@ export function mapBetterAuthError(err: unknown): TeamActionFailureCode {
     case "ORGANIZATION_ALREADY_EXISTS":
     case "ORGANIZATION_SLUG_ALREADY_TAKEN":
       return "slug_taken";
+    case "INVALID_PASSWORD":
+      return "invalid_password";
+    case "PASSWORD_TOO_SHORT":
+    case "PASSWORD_TOO_LONG":
+      return "invalid_input";
     default:
       if (FORBIDDEN_CODES.has(code)) return "forbidden";
       if (code.startsWith("YOU_ARE_NOT_ALLOWED_TO_")) {

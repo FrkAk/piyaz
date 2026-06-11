@@ -42,6 +42,17 @@ let addMemberSpy: ReturnType<typeof spyOn>;
 
 mock.module("next/headers", () => ({
   headers: async () => new Headers(),
+  // nextCookies() (last plugin in lib/auth.ts) probes cookies() on every
+  // BA response. This mock is process-wide, so without a cookies export
+  // the plugin's `await cookies()` throws a TypeError that its guard
+  // does not recognize and rethrows, 500-ing unrelated auth tests in the
+  // same run. Throw BA's recognized out-of-scope message so the guard
+  // no-ops exactly as it does in a real non-request context.
+  cookies: async () => {
+    throw new Error(
+      "`cookies` was called outside a request scope. (test mock)",
+    );
+  },
 }));
 
 const setSession = (

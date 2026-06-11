@@ -44,6 +44,14 @@ import type { BetterAuthInvitationRow } from "@/lib/actions/team-invitations-map
 
 mock.module("next/headers", () => ({
   headers: async () => new Headers(),
+  // See tests/actions/team-invite-code-action.test.ts: the process-wide
+  // mock must export cookies() throwing BA's recognized out-of-scope
+  // message, or the nextCookies() plugin rethrows on every BA response.
+  cookies: async () => {
+    throw new Error(
+      "`cookies` was called outside a request scope. (test mock)",
+    );
+  },
 }));
 
 const setSession = (

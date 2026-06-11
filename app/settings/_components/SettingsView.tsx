@@ -96,6 +96,9 @@ interface SettingsViewProps {
     email: string;
     createdAt: Date | string;
   };
+  /** Credential row's updatedAt (password last changed), or null when the
+   *  user has no password-bearing credential account. */
+  passwordUpdatedAt: Date | string | null;
   /** Initial OAuth device sessions, fetched server-side. */
   initialSessions: OAuthSessionView[];
   /** Initial team memberships, fetched server-side. */
@@ -113,6 +116,7 @@ interface SettingsViewProps {
  */
 export function SettingsView({
   user,
+  passwordUpdatedAt,
   initialSessions,
   initialTeams,
 }: SettingsViewProps) {
@@ -259,7 +263,12 @@ export function SettingsView({
               exit={{ opacity: 0, y: -3 }}
               transition={{ duration: 0.16, ease: "easeOut" }}
             >
-              {tab === "account" && <AccountTab user={user} />}
+              {tab === "account" && (
+                <AccountTab
+                  user={user}
+                  passwordUpdatedAt={passwordUpdatedAt}
+                />
+              )}
               {tab === "teams" && (
                 <TeamsTab
                   teams={teams}
