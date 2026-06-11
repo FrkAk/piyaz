@@ -12,12 +12,15 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TwoPanelLayout } from "@/components/layout/TwoPanelLayout";
 import { NavigatorPanel } from "@/components/workspace/NavigatorPanel";
+import type { DeletedTask } from "@/components/workspace/structure/StructureView";
 import { DetailPanel } from "@/components/workspace/DetailPanel";
 import { PropRail } from "@/components/workspace/detail/PropRail";
 import { PropRailDrawer } from "@/components/workspace/detail/PropRailDrawer";
 import { WorkspaceGraphView } from "@/components/workspace/graph/WorkspaceGraphView";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSkeletonVisibility } from "@/hooks/useSkeletonVisibility";
+import { useUndo } from "@/hooks/useUndo";
+import { createTask } from "@/lib/graph/mutations";
 import { DeferredLoadingSpinner } from "@/components/shared/DeferredLoadingSpinner";
 import { projectKeys, taskKeys } from "@/lib/query/keys";
 import { fetchProjectGraph, fetchTaskBody } from "@/lib/query/queries";
@@ -131,6 +134,67 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
       });
     }
   }, [qc, projectId, selectedTaskId]);
+
+  const [undoError, setUndoError] = useState<string | null>(null);
+
+  /**
+   * Recreate a deleted task from its undo snapshot. Lives here (not in
+   * StructureView) because the undo stack must survive the layout
+   * subtree's remounts; a rejection sets `undoError` for the navigator's
+   * undo strip and propagates to useUndo so the entry is re-pushed
+   * instead of lost.
+   *
+   * @param item - Undo snapshot captured at delete time.
+   */
+  const handleRestoreTask = useCallback(
+    async (item: DeletedTask) => {
+      const t = item.taskData;
+      setUndoError(null);
+      try {
+        await createTask({
+          projectId: t.projectId,
+          title: t.title,
+          description: t.description,
+          status: t.status,
+          order: graph?.tasks.length ?? 0,
+          acceptanceCriteria: t.acceptanceCriteria,
+          decisions: t.decisions,
+          implementationPlan: t.implementationPlan,
+          executionRecord: t.executionRecord,
+          tags: t.tags,
+          category: t.category,
+          files: t.files,
+        });
+      } catch (err) {
+        setUndoError("Couldn't restore the task. Try again in a moment.");
+        throw err;
+      }
+      refreshAll();
+    },
+    [graph, refreshAll],
+  );
+
+  // The delete-undo stack is owned here — NOT by StructureView — because
+  // the layout subtree below remounts on view switches, breakpoint flips,
+  // and (historically) selection transitions. The stack holds the only
+  // copy of a deleted task's body, so any remount-scoped state wipe is
+  // permanent data loss. WorkspaceClient only remounts on project change.
+  const { canUndo, push, undo } = useUndo<DeletedTask>({
+    onUndo: handleRestoreTask,
+    keyboard: { panelSelector: '[data-panel="navigator"]' },
+  });
+
+  /**
+   * Record a deleted task for restore, clearing any stale restore error.
+   * @param item - Undo snapshot captured at delete time.
+   */
+  const pushUndo = useCallback(
+    (item: DeletedTask) => {
+      setUndoError(null);
+      push(item);
+    },
+    [push],
+  );
 
   const updateParam = useCallback(
     (key: string, value: string | null) => {
@@ -261,23 +325,41 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     refreshAll,
     taskMap,
     projectTags,
+    canUndo,
+    undo,
+    pushUndo,
+    undoError,
   };
 
-  if (selectedTaskSlim) {
-    return (
-      <WorkspaceBodyWithSelection
-        {...sharedLayoutProps}
-        taskSlim={selectedTaskSlim}
-      />
-    );
-  }
-
+  // A single, unconditional <WorkspaceLayout> keeps the component type at
+  // this tree position stable across selection transitions. The previous
+  // shape (WorkspaceBodyWithSelection wrapping the layout only when a task
+  // was selected) changed the element type whenever the selection flipped
+  // between null and non-null, so React remounted the entire layout
+  // subtree — wiping StructureView's filters, scroll position, and
+  // (before the stack was lifted here) the delete-undo stack.
   return (
     <WorkspaceLayout
       {...sharedLayoutProps}
-      taskSlim={null}
-      detail={<EmptyDetail />}
-      propRail={null}
+      taskSlim={selectedTaskSlim}
+      detail={
+        selectedTaskSlim ? (
+          <WorkspaceDetailSlot
+            {...sharedLayoutProps}
+            taskSlim={selectedTaskSlim}
+          />
+        ) : (
+          <EmptyDetail />
+        )
+      }
+      propRail={
+        selectedTaskSlim ? (
+          <WorkspacePropRailSlot
+            {...sharedLayoutProps}
+            taskSlim={selectedTaskSlim}
+          />
+        ) : null
+      }
     />
   );
 }
@@ -303,49 +385,40 @@ interface SharedLayoutProps {
   refreshAll: () => void;
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   projectTags: string[];
+  /** Whether a deleted task is available to restore. */
+  canUndo: boolean;
+  /** Restore the most recently deleted task. */
+  undo: () => void;
+  /** Record a deleted task so it can be restored. */
+  pushUndo: (item: DeletedTask) => void;
+  /** Message shown in the undo strip when restoring a deleted task failed. */
+  undoError: string | null;
 }
 
-interface WorkspaceBodyWithSelectionProps extends SharedLayoutProps {
+interface SelectedTaskSlotProps extends SharedLayoutProps {
   /** Slim row for the currently selected task (already validated against the graph). */
   taskSlim: TaskGraphSlim;
 }
 
 /**
- * Renders the workspace layout for a live, in-graph selection. The
- * selected-task body is fetched here so the Query observer is only
- * registered when there is a non-null, valid task id — solves the cache
- * pollution issue where a placeholder query keyed on `""` would otherwise
- * survive every empty-state render.
+ * Fetch the selected task's full body for the detail / prop-rail slots.
+ * The slots only mount while a live, in-graph selection exists, so the
+ * Query observer is never registered for an empty selection — preserves
+ * the invariant that no placeholder query keyed on `""` pollutes the
+ * cache. Both slots share one cache entry; the second observer costs no
+ * extra fetch.
  *
- * @param props - Layout + selected slim row.
- * @returns Layout with populated detail and prop rail slots.
+ * @param projectId - Project UUID.
+ * @param taskId - Selected task UUID.
+ * @param graph - Slim project graph (placeholder + edge fallback source).
+ * @returns Body data, placeholder flag, identity match, and edge refs.
  */
-function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
-  const {
-    projectId,
-    graph,
-    view,
-    isXl,
-    taskSlim,
-    taskMap,
-    projectTags,
-    refreshAll,
-    handleSelectNode,
-    handleClose,
-    drawerOpen,
-    setDrawerOpen,
-    navigatorClosed,
-    setNavigatorClosed,
-    showNavigatorToggle,
-    propRailOpen,
-    setPropRailOpen,
-  } = props;
-  // The property-rail toggle is only meaningful inside the graph overlay
-  // (xl + graph view + selection). In structure mode the rail sits beside
-  // the detail column with no overlay to shrink, so the toggle is hidden.
-  const showPropRailToggle = view === "graph" && isXl;
+function useSelectedTaskBody(
+  projectId: string,
+  taskId: string,
+  graph: ProjectGraphSlim,
+) {
   const qc = useQueryClient();
-  const taskId = taskSlim.id;
 
   const { data: selectedTaskFull, isPlaceholderData } = useQuery({
     queryKey: taskKeys.detail(projectId, taskId),
@@ -388,9 +461,9 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
     },
   });
 
-  const showBodySkeleton = useSkeletonVisibility(isPlaceholderData, taskId);
-
-  const taskFullMatches = selectedTaskFull && selectedTaskFull.id === taskId;
+  const taskFullMatches = Boolean(
+    selectedTaskFull && selectedTaskFull.id === taskId,
+  );
   const taskEdges: TaskEdgeRef[] =
     taskFullMatches && selectedTaskFull && !isPlaceholderData
       ? selectedTaskFull.edges
@@ -398,68 +471,120 @@ function WorkspaceBodyWithSelection(props: WorkspaceBodyWithSelectionProps) {
           .filter((e) => e.sourceTaskId === taskId || e.targetTaskId === taskId)
           .map((e) => ({ ...e, note: "" }));
 
-  const detail =
-    taskFullMatches && selectedTaskFull ? (
-      <DetailPanel
-        taskId={taskId}
-        projectId={projectId}
-        task={selectedTaskFull}
-        parentName={graph.project.title}
-        edges={taskEdges}
-        allEdges={graph.edges}
-        allTasks={graph.tasks}
-        taskMap={taskMap}
-        drawerOpen={drawerOpen}
-        onToggleDrawer={() => setDrawerOpen((v) => !v)}
-        onClose={handleClose}
-        onSelectNode={handleSelectNode}
-        onGraphChange={refreshAll}
-        navigatorClosed={showNavigatorToggle ? navigatorClosed : undefined}
-        onToggleNavigator={
-          showNavigatorToggle ? () => setNavigatorClosed((v) => !v) : undefined
-        }
-        propRailOpen={showPropRailToggle ? propRailOpen : undefined}
-        onTogglePropRail={
-          showPropRailToggle ? () => setPropRailOpen((v) => !v) : undefined
-        }
-        isBodyLoading={isPlaceholderData}
-        showBodySkeleton={showBodySkeleton}
-      />
-    ) : (
-      <DetailLoading />
-    );
+  return { selectedTaskFull, isPlaceholderData, taskFullMatches, taskEdges };
+}
 
-  const propRail =
-    taskFullMatches && selectedTaskFull ? (
-      <PropRail
-        taskId={taskId}
-        projectId={projectId}
-        status={selectedTaskFull.status}
-        priority={selectedTaskFull.priority}
-        estimate={selectedTaskFull.estimate}
-        assignees={selectedTaskFull.assignees ?? []}
-        organizationId={graph.project.organizationId}
-        category={selectedTaskFull.category}
-        categories={graph.project.categories}
-        tags={selectedTaskFull.tags ?? []}
-        projectTags={projectTags}
-        edges={taskEdges}
-        taskMap={taskMap}
-        files={Array.from(new Set(selectedTaskFull.files ?? []))}
-        projectIdentifier={graph.project.identifier}
-        projectName={graph.project.title}
-        onSelectNode={handleSelectNode}
-        onGraphChange={refreshAll}
-        isBodyLoading={isPlaceholderData}
-      />
-    ) : null;
+/**
+ * Detail-panel slot for a live selection. A slot component (not a layout
+ * wrapper) so `WorkspaceLayout`'s element type stays stable when the
+ * selection flips between null and non-null — wrapping the layout in a
+ * selection-only component remounted the whole subtree on every
+ * selection transition.
+ *
+ * @param props - Layout props + selected slim row.
+ * @returns DetailPanel, or a loading placeholder until the body matches.
+ */
+function WorkspaceDetailSlot(props: SelectedTaskSlotProps) {
+  const {
+    projectId,
+    graph,
+    view,
+    isXl,
+    taskSlim,
+    taskMap,
+    refreshAll,
+    handleSelectNode,
+    handleClose,
+    drawerOpen,
+    setDrawerOpen,
+    navigatorClosed,
+    setNavigatorClosed,
+    showNavigatorToggle,
+    propRailOpen,
+    setPropRailOpen,
+  } = props;
+  // The property-rail toggle is only meaningful inside the graph overlay
+  // (xl + graph view + selection). In structure mode the rail sits beside
+  // the detail column with no overlay to shrink, so the toggle is hidden.
+  const showPropRailToggle = view === "graph" && isXl;
+  const taskId = taskSlim.id;
+  const { selectedTaskFull, isPlaceholderData, taskFullMatches, taskEdges } =
+    useSelectedTaskBody(projectId, taskId, graph);
+  const showBodySkeleton = useSkeletonVisibility(isPlaceholderData, taskId);
 
+  if (!taskFullMatches || !selectedTaskFull) return <DetailLoading />;
   return (
-    <WorkspaceLayout
-      {...props}
-      taskSlim={taskSlim}
-      detail={detail}
-      propRail={propRail}
+    <DetailPanel
+      taskId={taskId}
+      projectId={projectId}
+      task={selectedTaskFull}
+      parentName={graph.project.title}
+      edges={taskEdges}
+      allEdges={graph.edges}
+      allTasks={graph.tasks}
+      taskMap={taskMap}
+      drawerOpen={drawerOpen}
+      onToggleDrawer={() => setDrawerOpen((v) => !v)}
+      onClose={handleClose}
+      onSelectNode={handleSelectNode}
+      onGraphChange={refreshAll}
+      navigatorClosed={showNavigatorToggle ? navigatorClosed : undefined}
+      onToggleNavigator={
+        showNavigatorToggle ? () => setNavigatorClosed((v) => !v) : undefined
+      }
+      propRailOpen={showPropRailToggle ? propRailOpen : undefined}
+      onTogglePropRail={
+        showPropRailToggle ? () => setPropRailOpen((v) => !v) : undefined
+      }
+      isBodyLoading={isPlaceholderData}
+      showBodySkeleton={showBodySkeleton}
+    />
+  );
+}
+
+/**
+ * Prop-rail slot for a live selection. Shares the body query cache entry
+ * with {@link WorkspaceDetailSlot}.
+ *
+ * @param props - Layout props + selected slim row.
+ * @returns PropRail, or null until the body matches.
+ */
+function WorkspacePropRailSlot(props: SelectedTaskSlotProps) {
+  const {
+    projectId,
+    graph,
+    taskSlim,
+    taskMap,
+    projectTags,
+    refreshAll,
+    handleSelectNode,
+  } = props;
+  const taskId = taskSlim.id;
+  const { selectedTaskFull, isPlaceholderData, taskFullMatches, taskEdges } =
+    useSelectedTaskBody(projectId, taskId, graph);
+
+  if (!taskFullMatches || !selectedTaskFull) return null;
+  return (
+    <PropRail
+      taskId={taskId}
+      projectId={projectId}
+      status={selectedTaskFull.status}
+      priority={selectedTaskFull.priority}
+      estimate={selectedTaskFull.estimate}
+      assignees={selectedTaskFull.assignees ?? []}
+      organizationId={graph.project.organizationId}
+      category={selectedTaskFull.category}
+      categories={graph.project.categories}
+      tags={selectedTaskFull.tags ?? []}
+      projectTags={projectTags}
+      edges={taskEdges}
+      taskMap={taskMap}
+      files={Array.from(new Set(selectedTaskFull.files ?? []))}
+      projectIdentifier={graph.project.identifier}
+      projectName={graph.project.title}
+      onSelectNode={handleSelectNode}
+      onGraphChange={refreshAll}
+      isBodyLoading={isPlaceholderData}
     />
   );
 }
@@ -497,6 +622,10 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     detail,
     propRail,
     propRailOpen,
+    canUndo,
+    undo,
+    pushUndo,
+    undoError,
   } = props;
 
   const navigator = (
@@ -509,6 +638,10 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
       selectedNodeId={selectedTaskId}
       onSelectNode={handleSelectNode}
       onGraphChange={refreshAll}
+      canUndo={canUndo}
+      onUndo={undo}
+      pushUndo={pushUndo}
+      undoError={undoError}
     />
   );
 

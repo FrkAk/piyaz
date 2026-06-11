@@ -55,26 +55,38 @@ export function PlanSection({
   const [planInput, setPlanInput] = useState("");
   const [executionInput, setExecutionInput] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const started = status === "in_progress" || status === "done";
 
   const handleUndoAction = useCallback(
     async (action: LifecycleAction) => {
       setSaving(true);
-      if (action === "plan-saved") {
-        await updateTask(taskId, { implementationPlan: null, status: "draft" });
-        setPlan(null);
-        setPlanInput("");
-      } else if (action === "start-impl") {
-        await updateTask(taskId, { status: "planned" });
-      } else {
-        await updateTask(taskId, {
-          executionRecord: null,
-          status: "in_progress",
-        });
-        setExecution(null);
+      setSaveError(null);
+      try {
+        if (action === "plan-saved") {
+          await updateTask(taskId, {
+            implementationPlan: null,
+            status: "draft",
+          });
+          setPlan(null);
+          setPlanInput("");
+        } else if (action === "start-impl") {
+          await updateTask(taskId, { status: "planned" });
+        } else {
+          await updateTask(taskId, {
+            executionRecord: null,
+            status: "in_progress",
+          });
+          setExecution(null);
+        }
+        onGraphChange?.();
+      } catch (err) {
+        // Rethrow so useUndo re-pushes the lifecycle entry.
+        setSaveError("Couldn't undo. Try again in a moment.");
+        throw err;
+      } finally {
+        setSaving(false);
       }
-      setSaving(false);
-      onGraphChange?.();
     },
     [taskId, onGraphChange],
   );
@@ -104,32 +116,50 @@ export function PlanSection({
     const trimmed = planInput.trim();
     if (!trimmed) return;
     setSaving(true);
-    await updateTask(taskId, {
-      implementationPlan: trimmed,
-      status: "planned",
-    });
-    setPlan(trimmed);
-    setSaving(false);
-    pushUndo("plan-saved");
-    onGraphChange?.();
+    setSaveError(null);
+    try {
+      await updateTask(taskId, {
+        implementationPlan: trimmed,
+        status: "planned",
+      });
+      setPlan(trimmed);
+      pushUndo("plan-saved");
+      onGraphChange?.();
+    } catch {
+      setSaveError("Couldn't save the plan. Try again in a moment.");
+    } finally {
+      setSaving(false);
+    }
   }, [taskId, planInput, pushUndo, onGraphChange]);
 
   const handleStartImpl = useCallback(async () => {
     setSaving(true);
-    await updateTask(taskId, { status: "in_progress" });
-    setSaving(false);
-    pushUndo("start-impl");
-    onGraphChange?.();
+    setSaveError(null);
+    try {
+      await updateTask(taskId, { status: "in_progress" });
+      pushUndo("start-impl");
+      onGraphChange?.();
+    } catch {
+      setSaveError("Couldn't update the status. Try again in a moment.");
+    } finally {
+      setSaving(false);
+    }
   }, [taskId, pushUndo, onGraphChange]);
 
   const handleMarkDone = useCallback(async () => {
     setSaving(true);
+    setSaveError(null);
     const record = executionInput.trim() || "Completed";
-    await updateTask(taskId, { executionRecord: record, status: "done" });
-    setExecution(record);
-    setSaving(false);
-    pushUndo("mark-done");
-    onGraphChange?.();
+    try {
+      await updateTask(taskId, { executionRecord: record, status: "done" });
+      setExecution(record);
+      pushUndo("mark-done");
+      onGraphChange?.();
+    } catch {
+      setSaveError("Couldn't mark the task done. Try again in a moment.");
+    } finally {
+      setSaving(false);
+    }
   }, [taskId, executionInput, pushUndo, onGraphChange]);
 
   const handleReplan = useCallback(() => {
@@ -144,6 +174,9 @@ export function PlanSection({
           label="Plan"
           badge={<PhaseBadge label="Draft" tone="draft" />}
         />
+        {saveError && (
+          <p className="mb-2 text-[11px] text-danger">{saveError}</p>
+        )}
         <div className="space-y-3 rounded-md border border-border bg-surface-raised/40 p-3">
           <p className="text-[12.5px] text-text-secondary">
             Copy the planning context into your CLI agent (Claude Code, Cursor,
@@ -218,6 +251,7 @@ export function PlanSection({
         }
       />
 
+      {saveError && <p className="mb-2 text-[11px] text-danger">{saveError}</p>}
       <div className="rounded-md border border-border bg-surface-raised/40 p-3">
         <Markdown className="text-[12.5px] leading-relaxed text-text-secondary">
           {plan}

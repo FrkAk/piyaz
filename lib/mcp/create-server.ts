@@ -14,6 +14,33 @@ import { identifierSchema } from "@/lib/graph/identifier";
 import type { AuthContext } from "@/lib/auth/context";
 
 /**
+ * Per-field anti-abuse ceilings for MCP tool inputs. These are deliberately
+ * GENEROUS, not content policy: agents legitimately write long unabridged
+ * implementation plans and execution records (the tool instructions say "do
+ * not summarize"), so the caps sit far above any real payload and exist only
+ * to stop a single field carrying tens of megabytes. The operative bound on
+ * total cost is the request body-size limit on the `/api/mcp` route
+ * (`MAX_MCP_BODY_BYTES`) — these field caps are defense in depth so no one
+ * field can consume the whole budget.
+ */
+const LIMITS = {
+  title: 1_000,
+  description: 100_000,
+  plan: 1_000_000,
+  executionRecord: 500_000,
+  decision: 50_000,
+  criterionText: 50_000,
+  edgeNote: 50_000,
+  tag: 200,
+  category: 200,
+  filePath: 4_000,
+  query: 2_000,
+  arrayItems: 1_000,
+  files: 5_000,
+  tags: 500,
+} as const;
+
+/**
  * Format a successful tool result as MCP content.
  * @param data - Result data from a tool handler.
  * @returns MCP content response.
@@ -202,12 +229,14 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           .describe("Project UUID. Required for select and update."),
         title: z
           .string()
+          .max(LIMITS.title)
           .optional()
           .describe(
             "Project name (2-5 words, verb-noun preferred). Required for create.",
           ),
         description: z
           .string()
+          .max(LIMITS.description)
           .optional()
           .describe(
             "3-5 sentence brief: problem, user, features, tech direction, constraints.",
@@ -219,7 +248,8 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
             "Lifecycle: brainstorming → decomposing → active → archived. Settable on create (defaults to 'brainstorming') or update.",
           ),
         categories: z
-          .array(z.string())
+          .array(z.string().max(LIMITS.category))
+          .max(LIMITS.arrayItems)
           .optional()
           .describe(
             "Task categories for this project (e.g. ['backend', 'frontend', 'mcp']). Drives drawer grouping in the UI.",
@@ -294,12 +324,14 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           ),
         title: z
           .string()
+          .max(LIMITS.title)
           .optional()
           .describe(
             "Verb+noun, imperative. Required for create (e.g. 'Implement JWT auth', not 'Auth'). Artifacts §1.",
           ),
         description: z
           .string()
+          .max(LIMITS.description)
           .optional()
           .describe(
             "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence rejected): what + who it serves + where it fits in the architecture. Required for create. Artifacts §1.",
@@ -320,32 +352,36 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         acceptanceCriteria: z
           .array(
             z.union([
-              z.string(),
+              z.string().max(LIMITS.criterionText),
               z.object({
-                id: z.string().optional(),
-                text: z.string(),
+                id: z.string().max(LIMITS.tag).optional(),
+                text: z.string().max(LIMITS.criterionText),
                 checked: z.boolean().optional(),
               }),
             ]),
           )
+          .max(LIMITS.arrayItems)
           .optional()
           .describe(
             "2-4 binary items (reviewer answers YES/NO; single-AC and vague ACs like 'works correctly' rejected). Pass strings for new criteria, or {text, checked} objects to evaluate existing rows. Artifacts §1.",
           ),
         decisions: z
-          .array(z.string())
+          .array(z.string().max(LIMITS.decision))
+          .max(LIMITS.arrayItems)
           .optional()
           .describe(
             "Technical choices and constraints. One-liner per decision (CHOICE + WHY).",
           ),
         tags: z
-          .array(z.string())
+          .array(z.string().max(LIMITS.tag))
+          .max(LIMITS.tags)
           .optional()
           .describe(
             "Kebab-case. Every task carries three tag dimensions: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched). Priority is the `priority` field, not a tag. Do NOT tag codebase area (use category) or status. Run mymir_query type='meta' before coining new tags.",
           ),
         category: z
           .string()
+          .max(LIMITS.category)
           .optional()
           .describe(
             "Architectural layer / subsystem this task belongs to (exactly one). Reuse a project category; do not silently coin mid-task. The project's 4-8 categories are set on creation or via decompose/onboarding gates. Run mymir_query type='meta' to see them. Artifacts §4.",
@@ -371,24 +407,28 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           ),
         assigneeIds: z
           .array(z.uuid())
+          .max(LIMITS.arrayItems)
           .optional()
           .describe(
             "User UUIDs to assign to this task. Each must be a member of the project's owning team; non-members are rejected. The single-worker `in_progress` invariant still applies; assignees declare ownership / intent, not concurrent claim. APPENDS by default on update; `overwriteArrays=true` REPLACES the full set.",
           ),
         files: z
-          .array(z.string())
+          .array(z.string().max(LIMITS.filePath))
+          .max(LIMITS.files)
           .optional()
           .describe(
             "Repo-relative paths created or modified (no leading slash, no absolute). Pass `files=[]` when nothing was touched (unscaffolded repo, research/spec-review/decision-only); never invent paths.",
           ),
         implementationPlan: z
           .string()
+          .max(LIMITS.plan)
           .optional()
           .describe(
             "Implementation plan (markdown, unabridged; do not summarize). Pass with `status='planned'` to transition draft → planned; without the status change the task stays incomplete (lifecycle §1).",
           ),
         executionRecord: z
           .string()
+          .max(LIMITS.executionRecord)
           .optional()
           .describe(
             "3-5 sentences on HOW it was built (function names, file paths, endpoints; distinct from description=scope). For cancelled: rationale + what was tried instead. Draft tasks must not carry this. Iron Law: cite real code, omit what you cannot. Markdown. Artifacts §1.",
@@ -469,6 +509,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           ),
         note: z
           .string()
+          .max(LIMITS.edgeNote)
           .optional()
           .describe(
             "Why this relationship exists. Propagates to agent context for downstream tasks, so write it as a brief to the developer about to start the source task: what specifically does this task get from the target? REQUIRED on create; placeholders ('needed', 'depends', 'related') are rejected.",
@@ -504,18 +545,21 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           ),
         query: z
           .string()
+          .max(LIMITS.query)
           .optional()
           .describe(
             "Search string for type='search'. Matches taskRef, title substring, or tag substring. Optional when `tags` is provided.",
           ),
         tags: z
-          .array(z.string())
+          .array(z.string().max(LIMITS.tag))
+          .max(LIMITS.tags)
           .optional()
           .describe(
             "Filter to tasks containing ANY of these exact tags (OR-within). Combine with `query` to narrow further. Pick from the tag vocabulary in `type='meta'`.",
           ),
         category: z
           .string()
+          .max(LIMITS.category)
           .optional()
           .describe(
             "Filter to tasks in exactly this category (AND with `query`/`tags`). Must be one of the project's categories (closed vocabulary); unknown values are rejected. Run mymir_query type='meta' for the current list.",

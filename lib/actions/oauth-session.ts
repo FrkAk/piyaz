@@ -10,6 +10,7 @@ import {
   type TeamActionResult,
 } from "@/lib/actions/team-errors";
 import type { OAuthSessionView } from "@/lib/actions/oauth-session-types";
+import { isVerifiedOAuthClient } from "@/lib/auth/verified-oauth-clients";
 import {
   clearUserOAuthArtifacts,
   listActiveOAuthSessions,
@@ -43,6 +44,7 @@ export async function listOAuthSessionsAction(): Promise<
       id: row.id,
       clientId: row.clientId,
       clientName: row.clientName ?? row.clientId,
+      verified: isVerifiedOAuthClient(row.clientId),
       organizationId: row.organizationId,
       organizationName: row.organizationName,
       scopes: row.scopes,

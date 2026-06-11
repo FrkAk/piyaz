@@ -14,6 +14,7 @@ import type {
 } from "@/lib/data/traversal";
 import type { ProjectOverview } from "@/lib/context/_core/overview";
 import type { SummaryContext } from "@/lib/context/_core/summary";
+import { untrustedContentNotice } from "@/lib/context/format";
 import type { ProjectMeta } from "@/lib/data/views";
 
 const STATUS_ORDER = [
@@ -78,7 +79,10 @@ function renderGrouped<T extends { status: string }>(
 }
 
 /**
- * Format summary context as compact markdown.
+ * Format summary context as compact markdown. Prefixed with the
+ * untrusted-content notice — the description and edge notes are
+ * user-authored free text served straight into agent context, the same
+ * exposure the agent/planning/review/working bundles carry.
  * @param ctx - SummaryContext from buildSummaryContext.
  * @returns Formatted text with title, stats, and edges.
  */
@@ -115,7 +119,7 @@ export function formatSummary(ctx: SummaryContext): string {
       parts.push(line);
     }
   }
-  return parts.join("\n");
+  return untrustedContentNotice() + "\n\n" + parts.join("\n");
 }
 
 /**
@@ -208,6 +212,9 @@ export function formatProjectMeta(meta: ProjectMeta): string {
 
 /**
  * Format project overview with progress, tasks by status, and edges.
+ * Prefixed with the untrusted-content notice — the project description
+ * and edge notes are user-authored free text served straight into agent
+ * context, the same exposure the per-task bundles carry.
  * @param overview - ProjectOverview from buildProjectOverview.
  * @returns Formatted markdown overview.
  */
@@ -245,7 +252,7 @@ export function formatOverview(overview: ProjectOverview): string {
       parts.push(line);
     }
   }
-  return parts.join("\n");
+  return untrustedContentNotice() + "\n\n" + parts.join("\n");
 }
 
 /**

@@ -242,6 +242,10 @@ export function PropRail({
       applyOptimisticPatch({ status: next });
       try {
         await updateTask(taskId, { status: next });
+      } catch (err) {
+        // The finally-refetch reverts the optimistic patch to server truth,
+        // so the user sees the change snap back instead of a silent lie.
+        console.error("updateTask status failed", err);
       } finally {
         onGraphChange?.();
       }
@@ -254,6 +258,8 @@ export function PropRail({
       applyOptimisticPatch({ category: next });
       try {
         await updateTask(taskId, { category: next });
+      } catch (err) {
+        console.error("updateTask category failed", err);
       } finally {
         onGraphChange?.();
       }
@@ -266,6 +272,8 @@ export function PropRail({
       applyOptimisticPatch({ tags: next });
       try {
         await updateTask(taskId, { tags: next }, true);
+      } catch (err) {
+        console.error("updateTask tags failed", err);
       } finally {
         onGraphChange?.();
       }
@@ -278,6 +286,8 @@ export function PropRail({
       applyOptimisticPatch({ priority: next });
       try {
         await updateTask(taskId, { priority: next });
+      } catch (err) {
+        console.error("updateTask priority failed", err);
       } finally {
         onGraphChange?.();
       }
@@ -290,6 +300,8 @@ export function PropRail({
       applyOptimisticPatch({ estimate: next });
       try {
         await updateTask(taskId, { estimate: next });
+      } catch (err) {
+        console.error("updateTask estimate failed", err);
       } finally {
         onGraphChange?.();
       }
@@ -410,6 +422,10 @@ export function PropRail({
           // the SSE storm that drives race #2 above.
           if (pendingAssigneeWritesRef.current > 1) return;
           await updateTask(taskId, { assigneeIds: nextUserIds }, true);
+        } catch (err) {
+          // The drained-chain refetch below restores server truth, so the
+          // optimistic avatars snap back instead of silently lying.
+          console.error("updateTask assignees failed", err);
         } finally {
           pendingAssigneeWritesRef.current -= 1;
           if (pendingAssigneeWritesRef.current === 0) {

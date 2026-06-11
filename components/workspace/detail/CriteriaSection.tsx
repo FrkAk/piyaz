@@ -52,6 +52,7 @@ export function CriteriaSection({
   const suppressTimerRef = useRef<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const cancelRef = useRef(false);
 
   useEffect(() => {
@@ -93,12 +94,19 @@ export function CriteriaSection({
 
   const handleToggle = useCallback(
     async (id: string) => {
-      const next = localRef.current.map((c) =>
+      const prev = localRef.current;
+      const next = prev.map((c) =>
         c.id === id ? { ...c, checked: !c.checked } : c,
       );
       setLocal(next);
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { acceptanceCriteria: next }, true);
+      try {
+        await updateTask(taskId, { acceptanceCriteria: next }, true);
+      } catch {
+        setLocal(prev);
+        setSaveError("Couldn't save changes. Try again in a moment.");
+      }
     },
     [taskId],
   );
@@ -115,24 +123,39 @@ export function CriteriaSection({
         setEditingId(null);
         return;
       }
-      const next = localRef.current.map((c) =>
-        c.id === id ? { ...c, text: trimmed } : c,
-      );
+      const prev = localRef.current;
+      const next = prev.map((c) => (c.id === id ? { ...c, text: trimmed } : c));
       setLocal(next);
       setEditingId(null);
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { acceptanceCriteria: next }, true);
+      try {
+        await updateTask(taskId, { acceptanceCriteria: next }, true);
+      } catch {
+        setLocal(prev);
+        setSaveError("Couldn't save changes. Try again in a moment.");
+      }
     },
     [taskId],
   );
 
   const handleRestore = useCallback(
     async (item: { criterion: AcceptanceCriterion; index: number }) => {
-      const next = [...localRef.current];
+      const prev = localRef.current;
+      const next = [...prev];
       next.splice(item.index, 0, item.criterion);
       setLocal(next);
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { acceptanceCriteria: next }, true);
+      try {
+        await updateTask(taskId, { acceptanceCriteria: next }, true);
+      } catch (err) {
+        // Revert the optimistic insert and rethrow so useUndo re-pushes the
+        // item — the entry stays recoverable instead of vanishing.
+        setLocal(prev);
+        setSaveError("Couldn't undo. Try again in a moment.");
+        throw err;
+      }
     },
     [taskId],
   );
@@ -149,15 +172,22 @@ export function CriteriaSection({
 
   const handleDelete = useCallback(
     async (id: string) => {
-      const index = localRef.current.findIndex((c) => c.id === id);
+      const prev = localRef.current;
+      const index = prev.findIndex((c) => c.id === id);
       if (index === -1) return;
-      const removed = localRef.current[index];
-      const next = localRef.current.filter((c) => c.id !== id);
+      const removed = prev[index];
+      const next = prev.filter((c) => c.id !== id);
       setLocal(next);
       setEditingId(null);
-      pushUndo({ criterion: removed, index });
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { acceptanceCriteria: next }, true);
+      try {
+        await updateTask(taskId, { acceptanceCriteria: next }, true);
+        pushUndo({ criterion: removed, index });
+      } catch {
+        setLocal(prev);
+        setSaveError("Couldn't delete. Try again in a moment.");
+      }
     },
     [taskId, pushUndo],
   );
@@ -174,12 +204,19 @@ export function CriteriaSection({
         text: trimmed,
         checked: false,
       };
-      const next = [...localRef.current, newCriterion];
+      const prev = localRef.current;
+      const next = [...prev, newCriterion];
       setLocal(next);
       setAdding(false);
+      setSaveError(null);
       markMutation();
-      await updateTask(taskId, { acceptanceCriteria: next }, true);
-      onGraphChange?.();
+      try {
+        await updateTask(taskId, { acceptanceCriteria: next }, true);
+        onGraphChange?.();
+      } catch {
+        setLocal(prev);
+        setSaveError("Couldn't add the criterion. Try again in a moment.");
+      }
     },
     [taskId, onGraphChange],
   );
@@ -209,6 +246,7 @@ export function CriteriaSection({
           </span>
         }
       />
+      {saveError && <p className="mb-2 text-[11px] text-danger">{saveError}</p>}
       <div className="space-y-1.5">
         {local.map((c) => (
           <CriterionRow

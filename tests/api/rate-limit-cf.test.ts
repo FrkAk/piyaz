@@ -68,6 +68,34 @@ test("auth rules precede the catch-all api rule in RATE_LIMIT_RULES", () => {
   expect(matchRule("/api/auth/get-session")?.bindingKey ?? "api").toBe("api");
 });
 
+test("open DCR registration is throttled by the strict auth binding", () => {
+  const rule = matchRule("/api/auth/oauth2/register");
+  expect(rule?.bindingKey).toBe("auth");
+  expect(rule?.max).toBe(5);
+  // Must not fall through to the loose /api/* catch-all.
+  expect(rule?.pattern).toBe("/api/auth/oauth2/register");
+  // Must key on IP, not the unvalidated session cookie: the register endpoint
+  // is unauthenticated, so a `"session"` key lets a caller rotate a forged
+  // cookie to mint a fresh bucket per request and bypass the limit.
+  expect(rule?.keyStrategy).toBe("ip");
+});
+
+test("pre-auth endpoints key on IP, not the forgeable session cookie", () => {
+  expect(matchRule("/api/auth/sign-in/email")?.keyStrategy).toBe("ip");
+  expect(matchRule("/api/auth/sign-up/email")?.keyStrategy).toBe("ip");
+});
+
+test("trailing slashes cannot dodge an exact-pattern rule", () => {
+  // The auth route handler strips trailing slashes before dispatch, so the
+  // limiter must normalize the same way or `/register/` escapes the strict
+  // 5/60 ip rule onto the forgeable session-keyed catch-all.
+  expect(matchRule("/api/auth/oauth2/register/")?.pattern).toBe(
+    "/api/auth/oauth2/register",
+  );
+  expect(matchRule("/api/auth/oauth2/register///")?.keyStrategy).toBe("ip");
+  expect(matchRule("/api/events/")).toBeNull();
+});
+
 test("CloudflareRateLimitBackend fails open by default on binding RPC error", async () => {
   const backend = new CloudflareRateLimitBackend(brokenBinding());
   const result = await backend.check("test-key", 100, 60);

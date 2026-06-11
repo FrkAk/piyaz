@@ -39,8 +39,9 @@ import {
 import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
-import { ProjectNotFoundError } from "@/lib/graph/errors";
+import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
+import { parseEnvInt } from "@/lib/config/env";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccessTx,
@@ -1967,9 +1968,15 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
       .select({
         maxOrder: sql<number>`COALESCE(MAX(${tasks.order}), -1)`,
         maxSeq: sql<number>`COALESCE(MAX(${tasks.sequenceNumber}), 0)`,
+        taskCount: sql<number>`COUNT(*)`,
       })
       .from(tasks)
       .where(eq(tasks.projectId, taskFields.projectId));
+
+    const maxTasks = parseEnvInt(process.env.MAX_TASKS_PER_PROJECT, 50_000);
+    if (Number(maxRow?.taskCount ?? 0) >= maxTasks) {
+      throw new TaskLimitError(taskFields.projectId, maxTasks);
+    }
 
     const sequenceNumber = (maxRow?.maxSeq ?? 0) + 1;
     const order =

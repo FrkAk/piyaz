@@ -5,8 +5,8 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { createTask, deleteTask } from "@/lib/graph/mutations";
-import { useUndo, UndoButton } from "@/hooks/useUndo";
+import { deleteTask } from "@/lib/graph/mutations";
+import { UndoButton } from "@/hooks/useUndo";
 import { IconSearch, IconX } from "@/components/shared/icons";
 import {
   StatusGlyph,
@@ -83,6 +83,20 @@ interface StructureViewProps {
   group: GroupKey;
   /** Available categories for chip filters. */
   categories: string[];
+  /**
+   * Whether a deleted task is available to restore. The undo stack is
+   * owned by WorkspaceClient — this component remounts on view switches,
+   * breakpoint flips, and layout transitions, and locally-held undo state
+   * was wiped on every remount, permanently losing the only copy of a
+   * deleted task's body.
+   */
+  canUndo: boolean;
+  /** Restore the most recently deleted task. */
+  onUndo: () => void;
+  /** Record a deleted task so it can be restored. */
+  pushUndo: (item: DeletedTask) => void;
+  /** Message shown in the undo strip when restoring a deleted task failed. */
+  undoError: string | null;
 }
 
 /**
@@ -180,7 +194,7 @@ function buildDepsMap(edges: TaskGraphEdge[]): DepsMap {
   return { upstream, downstream };
 }
 
-interface DeletedTask {
+export interface DeletedTask {
   /** Task title for the undo toast. */
   title: string;
   /** Snapshot used to recreate the task on undo. */
@@ -243,6 +257,10 @@ export function StructureView({
   sort,
   group,
   categories,
+  canUndo,
+  onUndo,
+  pushUndo,
+  undoError,
 }: StructureViewProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -273,6 +291,7 @@ export function StructureView({
     () => searchParams.get(FILTER_PARAM_KEYS.search) ?? "",
   );
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const pendingDeleteBodyRef = useRef<Map<string, Promise<TaskFull | null>>>(
     new Map(),
   );
@@ -508,37 +527,6 @@ export function StructureView({
     setSearch("");
   }, []);
 
-  const handleRestore = useCallback(
-    async (item: DeletedTask) => {
-      const t = item.taskData;
-      await createTask({
-        projectId: t.projectId,
-        title: t.title,
-        description: t.description,
-        status: t.status,
-        order: tasks.length,
-        acceptanceCriteria: t.acceptanceCriteria,
-        decisions: t.decisions,
-        implementationPlan: t.implementationPlan,
-        executionRecord: t.executionRecord,
-        tags: t.tags,
-        category: t.category,
-        files: t.files,
-      });
-      onGraphChange?.();
-    },
-    [tasks.length, onGraphChange],
-  );
-
-  const {
-    canUndo,
-    push: pushUndo,
-    undo,
-  } = useUndo<DeletedTask>({
-    onUndo: handleRestore,
-    keyboard: { panelSelector: '[data-panel="navigator"]' },
-  });
-
   const queryClient = useQueryClient();
 
   // Prefetch the heavy task body when the inline confirm dialog opens. The
@@ -577,8 +565,18 @@ export function StructureView({
       // win the race and the GET return 404.
       const full = await bodyPromise;
       pendingDeleteBodyRef.current.delete(taskId);
+      setDeleteError(null);
+      try {
+        await deleteTask(taskId);
+      } catch (err) {
+        // Leave the confirm dialog open so the user can retry; pushing the
+        // undo entry only after a successful delete avoids a bogus "undo"
+        // for a task that was never removed.
+        console.error("deleteTask failed", err);
+        setDeleteError("Couldn't delete the task. Try again in a moment.");
+        return;
+      }
       if (slim && full) pushUndo({ title: slim.title, taskData: full });
-      await deleteTask(taskId);
       setConfirmDelete(null);
       onGraphChange?.();
     },
@@ -590,6 +588,7 @@ export function StructureView({
   // `StructureView` renders so unchanged rows skip render.
   const handleRequestDelete = useCallback((id: string) => {
     setConfirmDelete(id);
+    setDeleteError(null);
   }, []);
   const handleConfirmDelete = useCallback(
     (id: string) => {
@@ -599,6 +598,7 @@ export function StructureView({
   );
   const handleCancelDelete = useCallback(() => {
     setConfirmDelete(null);
+    setDeleteError(null);
   }, []);
 
   const totalActiveFilters =
@@ -695,13 +695,21 @@ export function StructureView({
             exit={{ opacity: 0, height: 0 }}
             className="flex items-center gap-2 border-b border-border bg-surface-raised/40 px-4 py-1.5"
           >
-            <span className="text-[11px] text-text-secondary">
-              Task deleted
+            <span
+              className={`text-[11px] ${undoError ? "text-danger" : "text-text-secondary"}`}
+            >
+              {undoError ?? "Task deleted"}
             </span>
-            <UndoButton canUndo={canUndo} onUndo={undo} className="ml-auto" />
+            <UndoButton canUndo={canUndo} onUndo={onUndo} className="ml-auto" />
           </motion.div>
         )}
       </AnimatePresence>
+
+      {deleteError && (
+        <p className="border-b border-border bg-surface-raised/40 px-4 py-1.5 text-[11px] text-danger">
+          {deleteError}
+        </p>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {tasks.length === 0 ? (

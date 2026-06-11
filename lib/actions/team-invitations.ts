@@ -18,6 +18,7 @@ import {
 } from "@/lib/actions/team-invitations-map";
 import { isCallerInInvitationOrg } from "@/lib/data/invitation";
 import { lookupUserNames } from "@/lib/data/membership";
+import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
 
 /**
  * Input schema for {@link cancelInvitationAction}. Requires the caller
@@ -154,6 +155,17 @@ export async function cancelInvitationAction(input: {
 
   const parsed = parseOrFail(cancelSchema, input);
   if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.invite_cancel",
+      windowSeconds: 60,
+      perUserMax: 20,
+      perIpMax: 40,
+    },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
 
   let inOrg: boolean;
   try {

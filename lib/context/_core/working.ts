@@ -2,7 +2,11 @@ import "server-only";
 
 import type { AcceptanceCriterion } from "@/lib/types";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
-import { section, formatCriteria } from "@/lib/context/format";
+import {
+  section,
+  formatCriteria,
+  untrustedContentNotice,
+} from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
 import { withUserContext } from "@/lib/db/rls";
 import {
@@ -121,7 +125,7 @@ export async function formatWorkingContext(
   const links = formatLinksSection(ctx.links);
   if (links) parts.push(links);
 
-  return parts.join("\n");
+  return untrustedContentNotice() + "\n\n" + parts.join("\n");
 }
 
 /**

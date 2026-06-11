@@ -22,6 +22,15 @@ export type OAuthSessionView = {
   clientId: string;
   /** Display name from oauthClient.name; falls back to clientId. */
   clientName: string;
+  /**
+   * Whether the client id is on the server-side verified allowlist
+   * (`isVerifiedOAuthClient`). Computed server-side because the allowlist
+   * env var must not reach the client bundle. The devices UI only renders
+   * the polished brand label when true; otherwise the raw registered name
+   * is shown so a spoofed client cannot hide under a trusted brand in the
+   * audit/revoke list.
+   */
+  verified: boolean;
   /** Active organization scope, if the token is org-scoped. */
   organizationId: string | null;
   /** Display name of the organization, if joinable. */

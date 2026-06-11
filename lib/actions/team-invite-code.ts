@@ -43,6 +43,7 @@ type InviteCodeFailureCode =
   | "forbidden"
   | "invalid_input"
   | "not_found"
+  | "rate_limited"
   | "unknown";
 
 export type InviteCodeResult =
@@ -192,6 +193,23 @@ export async function getOrCreateTeamInviteCodeAction(input: {
   if (!authResult.ok) return authResult;
   const ctx = makeAuthContext(authResult.userId);
 
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.invite_code",
+      windowSeconds: 60,
+      perUserMax: 10,
+      perIpMax: 30,
+    },
+    authResult.userId,
+  );
+  if (!limit.ok) {
+    return {
+      ok: false,
+      code: "rate_limited",
+      message: TEAM_ACTION_MESSAGES.rate_limited,
+    };
+  }
+
   try {
     const existing = await findTeamInviteCode(ctx, orgId);
     if (existing) return { ok: true, data: toMetadata(existing) };
@@ -259,6 +277,23 @@ export async function regenerateTeamInviteCodeAction(input: {
   const authResult = await resolveAdminContext(orgId);
   if (!authResult.ok) return authResult;
   const ctx = makeAuthContext(authResult.userId);
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.invite_code",
+      windowSeconds: 60,
+      perUserMax: 10,
+      perIpMax: 30,
+    },
+    authResult.userId,
+  );
+  if (!limit.ok) {
+    return {
+      ok: false,
+      code: "rate_limited",
+      message: TEAM_ACTION_MESSAGES.rate_limited,
+    };
+  }
 
   try {
     const updated = await rotateTeamInviteCode(ctx, {
@@ -340,6 +375,23 @@ export async function revokeTeamInviteCodeAction(input: {
   const authResult = await resolveAdminContext(orgId);
   if (!authResult.ok) return authResult;
   const ctx = makeAuthContext(authResult.userId);
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.invite_code",
+      windowSeconds: 60,
+      perUserMax: 10,
+      perIpMax: 30,
+    },
+    authResult.userId,
+  );
+  if (!limit.ok) {
+    return {
+      ok: false,
+      code: "rate_limited",
+      message: TEAM_ACTION_MESSAGES.rate_limited,
+    };
+  }
 
   let updated: InviteCodeRow | null;
   try {

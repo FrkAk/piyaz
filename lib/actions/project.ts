@@ -16,6 +16,7 @@ import {
   ForbiddenError,
   InsufficientRoleError,
 } from "@/lib/auth/authorization";
+import { RateLimitError } from "@/lib/actions/rate-limit-action";
 import { isUniqueViolation } from "@/lib/db/errors";
 
 /** Statuses the web app is allowed to set. Coding agents handle brainstorming/decomposing via MCP. */
@@ -64,6 +65,7 @@ export type ProjectSettingsResult =
         | "invalid_identifier"
         | "identifier_conflict"
         | "not_found"
+        | "rate_limited"
         | "unknown";
       message: string;
     };
@@ -78,6 +80,7 @@ export type ProjectCategoryResult =
         | "forbidden"
         | "invalid_input"
         | "not_found"
+        | "rate_limited"
         | "unknown";
       message: string;
     };
@@ -92,6 +95,7 @@ export type ProjectStatusResult =
         | "forbidden"
         | "invalid_input"
         | "not_found"
+        | "rate_limited"
         | "unknown";
       message: string;
     };
@@ -214,6 +218,13 @@ export async function updateProjectStatus(
     if (err instanceof ProjectNotFoundError) {
       return { ok: false, code: "not_found", message: "Project not found." };
     }
+    if (err instanceof RateLimitError) {
+      return {
+        ok: false,
+        code: "rate_limited",
+        message: `Too many requests. Try again in about ${err.retryAfter}s.`,
+      };
+    }
     console.error("updateProjectStatus failed", {
       projectId: idParsed.data,
       err,
@@ -296,6 +307,13 @@ export async function updateProjectSettings(
         message: "That identifier is already in use by another project",
       };
     }
+    if (err instanceof RateLimitError) {
+      return {
+        ok: false,
+        code: "rate_limited",
+        message: `Too many requests. Try again in about ${err.retryAfter}s.`,
+      };
+    }
     console.error("updateProjectSettings failed", {
       projectId: idParsed.data,
       err,
@@ -344,6 +362,13 @@ export async function renameProjectCategory(
     if (err instanceof ProjectNotFoundError) {
       return { ok: false, code: "not_found", message: "Project not found." };
     }
+    if (err instanceof RateLimitError) {
+      return {
+        ok: false,
+        code: "rate_limited",
+        message: `Too many requests. Try again in about ${err.retryAfter}s.`,
+      };
+    }
     console.error("renameProjectCategory failed", {
       projectId: idParsed.data,
       err,
@@ -384,6 +409,13 @@ export async function deleteProjectCategory(
     }
     if (err instanceof ProjectNotFoundError) {
       return { ok: false, code: "not_found", message: "Project not found." };
+    }
+    if (err instanceof RateLimitError) {
+      return {
+        ok: false,
+        code: "rate_limited",
+        message: `Too many requests. Try again in about ${err.retryAfter}s.`,
+      };
     }
     console.error("deleteProjectCategory failed", {
       projectId: idParsed.data,

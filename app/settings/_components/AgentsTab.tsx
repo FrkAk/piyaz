@@ -40,7 +40,7 @@ function groupSessions(sessions: OAuthSessionView[]): {
   const otherSessions: OAuthSessionView[] = [];
 
   for (const session of sessions) {
-    const brand = formatOAuthClientName(session.clientName);
+    const brand = formatOAuthClientName(session.clientName, session.verified);
     if (KNOWN_BRAND_SET.has(brand)) {
       byBrand[brand as KnownBrand].push(session);
     } else {

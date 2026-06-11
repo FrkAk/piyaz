@@ -6,12 +6,63 @@ import { auth } from "@/lib/auth";
 import { createMcpServer } from "@/lib/mcp/create-server";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
 import { makeAuthContext, type AuthContext } from "@/lib/auth/context";
+import { parseEnvInt } from "@/lib/config/env";
+import { readBodyBounded } from "@/lib/api/read-body-bounded";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const origin = new URL(baseUrl).origin;
 const resourceMetadataUrl = `${origin}/.well-known/oauth-protected-resource`;
 const audiences: [string, string] = [origin, `${origin}/api/mcp`];
 const issuer = `${baseUrl}/api/auth`;
+
+/**
+ * Maximum accepted MCP JSON-RPC request body, in bytes. The Next.js server-
+ * action `bodySizeLimit` does NOT apply to this route handler, so without an
+ * explicit cap a token holder could POST a multi-megabyte body that persists
+ * to the DB and is then re-served verbatim into every teammate's agent
+ * context (storage + egress amplification). 1 MB comfortably fits the largest
+ * legitimate payload — a full unabridged implementation plan is tens of KB —
+ * while bounding worst-case cost. Tunable via MCP_MAX_BODY_BYTES; an explicit
+ * 0 is honored as a hard freeze (every request body rejected) and logged at
+ * module init so a typo'd env var is not a silent outage.
+ */
+const MAX_MCP_BODY_BYTES = parseEnvInt(
+  process.env.MCP_MAX_BODY_BYTES,
+  1_000_000,
+);
+if (MAX_MCP_BODY_BYTES === 0) {
+  console.warn(
+    "MCP_MAX_BODY_BYTES=0: every MCP request body will be rejected with 413.",
+  );
+}
+
+/**
+ * Build a JSON-RPC error envelope response.
+ * @param code - JSON-RPC error code.
+ * @param message - Human-readable error message.
+ * @param status - HTTP status code.
+ * @param headers - Optional extra response headers.
+ * @returns JSON-RPC error response.
+ */
+function jsonRpcError(
+  code: number,
+  message: string,
+  status: number,
+  headers?: HeadersInit,
+) {
+  return Response.json(
+    { jsonrpc: "2.0", error: { code, message }, id: null },
+    { status, headers },
+  );
+}
+
+/**
+ * MCP-spec 413 response for an over-limit request body.
+ * @returns 413 JSON-RPC error response.
+ */
+function payloadTooLarge() {
+  return jsonRpcError(-32600, "Request body too large.", 413);
+}
 
 /** Shape we require from a verified MCP access token payload. */
 const accessTokenClaimsSchema = z.looseObject({
@@ -129,20 +180,10 @@ function authContextFromPayload(payload: unknown): AuthContext | null {
  * @returns 401 JSON-RPC error response.
  */
 function unauthorized() {
-  return Response.json(
-    {
-      jsonrpc: "2.0",
-      error: { code: -32000, message: "Unauthorized" },
-      id: null,
-    },
-    {
-      status: 401,
-      headers: {
-        "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
-        "Access-Control-Expose-Headers": "WWW-Authenticate",
-      },
-    },
-  );
+  return jsonRpcError(-32000, "Unauthorized", 401, {
+    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+    "Access-Control-Expose-Headers": "WWW-Authenticate",
+  });
 }
 
 /**
@@ -158,12 +199,27 @@ export async function POST(request: Request) {
   const ctx = authContextFromPayload(payload);
   if (!ctx) return unauthorized();
 
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_MCP_BODY_BYTES) {
+    return payloadTooLarge();
+  }
+  const body = await readBodyBounded(request, MAX_MCP_BODY_BYTES);
+  if (body === null) {
+    return payloadTooLarge();
+  }
+  const boundedRequest = new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body,
+    signal: request.signal,
+  });
+
   const server = createMcpServer(ctx);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
   await server.connect(transport);
-  return transport.handleRequest(request);
+  return transport.handleRequest(boundedRequest);
 }
 
 /**

@@ -43,6 +43,7 @@ type ConsentMeta = {
   tos_uri?: string;
   policy_uri?: string;
   isFirstTime: boolean;
+  verified: boolean;
 };
 
 /** Shared utility classes for the in-card section header — mirrors the
@@ -116,13 +117,14 @@ function ConsentErrorPanel({ message }: { message: string }): React.ReactNode {
  * the actual redirect_uri, a first-time / unsafe-redirect warning banner,
  * and the raw client_id demoted to a copyable mono footnote.
  *
- * Trust model: `formatOAuthClientName` collapses brand-suffixed names
- * (e.g. `Claude Code (plugin:evil)` → `Claude Code`) for legibility, so
- * the consent header is NOT a trust statement about the client. The
- * `isFirstTime` warning is the only signal that fires on a never-seen
- * client; once the user approves, repeat visits no longer distinguish
- * spoofed clients from the originals visually. Long-term mitigation is
- * software statements (RFC 7591 §2.3) — tracked as MYMR-199.
+ * Trust model: dynamic client registration is open, so the `client_name`
+ * is attacker-chosen. Brand polish (collapsing `Claude Code (plugin:evil)`
+ * → `Claude Code`) is therefore gated on `meta.verified` — true only for
+ * client_ids on the server-side allowlist (`isVerifiedOAuthClient`). For an
+ * unverified client the raw registered name is shown verbatim (React-escaped)
+ * so a spoofed name cannot impersonate a trusted brand. The `isFirstTime`
+ * and unverified-redirect warnings remain the per-request trust signals.
+ * Software statements (RFC 7591 §2.3) are the longer-term hardening — MYMR-199.
  *
  * `logo_uri` is intentionally NOT rendered. Displaying an
  * attacker-controlled image is a separate UX upgrade requiring
@@ -252,7 +254,7 @@ export default function ConsentPage() {
     );
   }
 
-  const brandName = formatOAuthClientName(meta.client_name);
+  const brandName = formatOAuthClientName(meta.client_name, meta.verified);
 
   const warnings: string[] = [];
   if (!meta.client_uri) {

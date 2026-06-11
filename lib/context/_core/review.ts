@@ -9,7 +9,12 @@ import {
   getTaskForDepthTx,
 } from "@/lib/data/task";
 import { getProjectHeader } from "@/lib/data/project";
-import { section, formatCriteria, formatDecisions } from "@/lib/context/format";
+import {
+  section,
+  formatCriteria,
+  formatDecisions,
+  untrustedContentNotice,
+} from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
 import { withUserContext } from "@/lib/db/rls";
 
@@ -98,7 +103,7 @@ export async function buildReviewContext(
         : "PR: (no `pull_request` link on task; pass the URL in dispatch or check upstream)",
     );
 
-    const parts: string[] = [];
+    const parts: string[] = [untrustedContentNotice()];
 
     if (status !== "in_review") {
       parts.push(

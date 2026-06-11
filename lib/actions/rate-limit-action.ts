@@ -49,6 +49,56 @@ async function getActionClientIp(): Promise<string> {
 }
 
 /**
+ * Map a backend check result to an action outcome.
+ * @param result - Raw backend rate-limit result.
+ * @returns `ok: true` when allowed, otherwise `retryAfter` seconds.
+ */
+function toOutcome(result: RateLimitResult): ActionRateLimitOutcome {
+  return result.allowed
+    ? { ok: true }
+    : { ok: false, retryAfter: result.resetIn };
+}
+
+/**
+ * Check (and count) only the per-IP limb of an action budget. Exposed
+ * separately so the mutation wrappers can run it BEFORE the session
+ * lookup — an unauthenticated flood is then counted and blocked without
+ * farming a free DB session lookup per request.
+ *
+ * @param config - Rate-limit policy for this action.
+ * @returns `ok: true` to proceed, otherwise `retryAfter` seconds.
+ */
+export async function checkActionIpRateLimit(
+  config: ActionRateLimitConfig,
+): Promise<ActionRateLimitOutcome> {
+  const ip = await getActionClientIp();
+  const result = await getBackend("actions").check(
+    `action:${config.action}:ip:${ip}`,
+    config.perIpMax,
+    config.windowSeconds,
+  );
+  return toOutcome(result);
+}
+
+/**
+ * Check (and count) only the per-user limb of an action budget.
+ * @param config - Rate-limit policy for this action.
+ * @param userId - Caller's user id.
+ * @returns `ok: true` to proceed, otherwise `retryAfter` seconds.
+ */
+export async function checkActionUserRateLimit(
+  config: ActionRateLimitConfig,
+  userId: string,
+): Promise<ActionRateLimitOutcome> {
+  const result = await getBackend("actions").check(
+    `action:${config.action}:user:${userId}`,
+    config.perUserMax,
+    config.windowSeconds,
+  );
+  return toOutcome(result);
+}
+
+/**
  * Apply two-key rate limiting (per-user AND per-IP) to a server action.
  * The first key to exceed its budget rejects the call; both buckets get
  * decremented on every successful pass. Uses the dedicated `"actions"`
@@ -72,30 +122,27 @@ export async function checkActionRateLimit(
   config: ActionRateLimitConfig,
   userId: string | null,
 ): Promise<ActionRateLimitOutcome> {
-  const backend = getBackend("actions");
-  const ip = await getActionClientIp();
-
-  const checks: Promise<RateLimitResult>[] = [
-    backend.check(
-      `action:${config.action}:ip:${ip}`,
-      config.perIpMax,
-      config.windowSeconds,
-    ),
+  const checks: Promise<ActionRateLimitOutcome>[] = [
+    checkActionIpRateLimit(config),
   ];
   if (userId) {
-    checks.push(
-      backend.check(
-        `action:${config.action}:user:${userId}`,
-        config.perUserMax,
-        config.windowSeconds,
-      ),
-    );
+    checks.push(checkActionUserRateLimit(config, userId));
   }
-
   const results = await Promise.all(checks);
-  const blocked = results.find((r) => !r.allowed);
-  if (blocked) {
-    return { ok: false, retryAfter: blocked.resetIn };
+  return results.find((r) => !r.ok) ?? { ok: true };
+}
+
+/**
+ * Thrown by the mutation wrappers (`lib/graph/mutations.ts`) when a caller
+ * exceeds an action's budget. The wrappers already throw typed errors
+ * (`ForbiddenError`, `ProjectNotFoundError`) that their callers catch, so
+ * throwing here keeps the same contract instead of forcing every wrapper
+ * to a discriminated-union return type.
+ */
+export class RateLimitError extends Error {
+  /** @param retryAfter - Seconds until the caller may retry. */
+  constructor(public readonly retryAfter: number) {
+    super("Too many requests. Please slow down and try again shortly.");
+    this.name = "RateLimitError";
   }
-  return { ok: true };
 }
