@@ -13,43 +13,38 @@ export type { AppDb, AuthDb, DbBundle, ClosablePool } from "./_driver.node";
  * WebSocket. Transactions still open a WS (the SQL protocol requires the
  * round-trip) but they become the exception.
  *
- * The Neon shim's WebSocket close fires in a `setTimeout(0)`
- * (`@neondatabase/serverless` `index.mjs:421`) that runs after the
- * originating Workers request returns, in a dead I/O context, and re-emits
- * the resulting DOM `ErrorEvent` as a pool-level error (`index.mjs:401-403`).
- * With `maxUses: 1` every connection is destroyed after one query, so the
- * cascade fires on each query. Routing over `fetch` removes the WS for those
- * queries entirely.
+ * Caveat from the driver (`@neondatabase/serverless` `index.d.mts:598-605`):
+ * fetch-routing only applies while the Pool has NO listeners for `connect`,
+ * `acquire`, `release`, or `remove`. The `error` listener attached below is
+ * safe; do not add any of those four or fetch-routing silently turns off.
+ *
+ * Workers-only — this file is aliased out of the self-host build by
+ * `next.config.ts`'s `_driver` swap.
  */
 neonConfig.poolQueryViaFetch = true;
 
 /**
  * Disable the connect-time pipelined startup that batches the TLS handshake
- * with the Postgres startup packet. On Workers the pipelined path produces
- * "WebSocket closed before greeting" when the server side of the WS
- * terminates in the narrow window between pipeline send and reply;
- * sequential startup trades ~1 RTT for a quiet auth/app pool.
- *
- * Workers-only — this file is aliased out of the self-host build by
- * `next.config.ts`'s `_driver` swap.
+ * with the Postgres startup packet. The pipelined path produced observed
+ * production "WebSocket closed before greeting" failures when the server
+ * closed the WS between the pipelined send and its reply; the race is a
+ * connect-time window, so per-request pools (which still open a fresh WS
+ * per interactive transaction) do not remove it. Sequential startup trades
+ * ~1 RTT on WS connects for a quiet connect path; revisit with
+ * post-deploy observability evidence.
  */
 neonConfig.pipelineConnect = false;
 
 /**
- * Per-isolate Neon Pool tuning. The Pool is shared across requests within
- * one isolate; each connection is single-use (`maxUses: 1`) so the
- * "WebSocket cannot outlive a single request" constraint is honored at the
- * connection level. `max` caps concurrent open connections per isolate.
- * `connectionTimeoutMillis` bounds `pool.connect()` waits so a dead WS
- * callback cannot stall a request to the Workers 30s wall-time.
- *
- * Pattern from OpenNext (https://opennext.js.org/cloudflare/howtos/db).
+ * Per-request Pool options. `connectionTimeoutMillis` bounds
+ * `pool.connect()` waits so an unresponsive Neon endpoint fails the request
+ * fast instead of riding the Workers 30s wall clock — and so a stuck
+ * connect cannot wedge `pool.end()` during teardown (it only settles once
+ * every client drains). 10s clears Neon cold starts where the old 5s was
+ * tight. `max` stays at the driver default: a per-request pool is already
+ * lifetime-bounded by the request.
  */
-const NEON_OPTS = {
-  max: 5,
-  maxUses: 1,
-  connectionTimeoutMillis: 5_000,
-} as const;
+const POOL_OPTS = { connectionTimeoutMillis: 10_000 } as const;
 
 /**
  * Attach a Pool-level error listener so unhandled idle-client errors from
@@ -92,21 +87,24 @@ function attachPoolErrorLogger<P extends NeonPool>(pool: P, role: string): P {
 
 /**
  * Build the application Drizzle client backed by `@neondatabase/serverless`.
- * The underlying `NeonPool` is reused across requests within an isolate;
- * each query opens a fresh single-use connection (`maxUses: 1`).
+ * Returns a fresh `NeonPool` on every call: pools are request-scoped on
+ * Workers (created by `withRequestDb`, ended via `ctx.waitUntil` after the
+ * response body completes) per Neon's documented Workers lifecycle — a Pool
+ * that outlives its request fires WebSocket close callbacks in a dead I/O
+ * context.
  *
+ * @param url - Connection string, defaulting to `DATABASE_URL`.
  * @returns Pool + Drizzle instance bound to the public schema.
  * @throws Error when `DATABASE_URL` is unset.
  */
-export function buildAppPool(): DbBundle<AppDb> {
-  const url = process.env.DATABASE_URL;
+export function buildAppPool(url = process.env.DATABASE_URL): DbBundle<AppDb> {
   if (!url) {
     throw new Error(
       "DATABASE_URL is required for the app runtime connection (app_user role).",
     );
   }
   const pool = attachPoolErrorLogger(
-    new NeonPool({ connectionString: url, ...NEON_OPTS }),
+    new NeonPool({ connectionString: url, ...POOL_OPTS }),
     "app",
   );
   return {
@@ -117,12 +115,15 @@ export function buildAppPool(): DbBundle<AppDb> {
 
 /**
  * Build the Better-auth Drizzle client backed by `@neondatabase/serverless`.
+ * Fresh request-scoped Pool per call; see {@link buildAppPool}.
  *
+ * @param url - Connection string, defaulting to `DATABASE_AUTH_URL`.
  * @returns Pool + Drizzle instance bound to the neon_auth schema.
  * @throws Error when `DATABASE_AUTH_URL` is unset.
  */
-export function buildAuthPool(): DbBundle<AuthDb> {
-  const url = process.env.DATABASE_AUTH_URL;
+export function buildAuthPool(
+  url = process.env.DATABASE_AUTH_URL,
+): DbBundle<AuthDb> {
   if (!url) {
     throw new Error(
       "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
@@ -130,7 +131,7 @@ export function buildAuthPool(): DbBundle<AuthDb> {
     );
   }
   const pool = attachPoolErrorLogger(
-    new NeonPool({ connectionString: url, ...NEON_OPTS }),
+    new NeonPool({ connectionString: url, ...POOL_OPTS }),
     "auth",
   );
   return {
@@ -141,19 +142,22 @@ export function buildAuthPool(): DbBundle<AuthDb> {
 
 /**
  * Build the BYPASSRLS Drizzle client backed by `@neondatabase/serverless`.
+ * Fresh request-scoped Pool per call; see {@link buildAppPool}.
  *
+ * @param url - Connection string, defaulting to `DATABASE_SERVICE_ROLE_URL`.
  * @returns Pool + Drizzle instance bound to the public schema.
  * @throws Error when `DATABASE_SERVICE_ROLE_URL` is unset.
  */
-export function buildServicePool(): DbBundle<AppDb> {
-  const url = process.env.DATABASE_SERVICE_ROLE_URL;
+export function buildServicePool(
+  url = process.env.DATABASE_SERVICE_ROLE_URL,
+): DbBundle<AppDb> {
   if (!url) {
     throw new Error(
       "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
     );
   }
   const pool = attachPoolErrorLogger(
-    new NeonPool({ connectionString: url, ...NEON_OPTS }),
+    new NeonPool({ connectionString: url, ...POOL_OPTS }),
     "service",
   );
   return {

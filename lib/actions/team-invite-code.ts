@@ -10,6 +10,7 @@ import {
   generateInviteCode,
   INVITE_CODE_PATTERN,
 } from "@/lib/auth/invite-code";
+import { deferRequestWork } from "@/lib/db/request-store";
 import {
   createTeamInviteCode,
   diagnoseTeamInviteCode,
@@ -484,11 +485,15 @@ export async function joinTeamByCodeAction(input: {
   if (!reserved) {
     // Fire-and-forget: keeping the diagnostic SELECT off the response
     // path prevents its latency from leaking whether the code matched a
-    // row (timing side-channel on top of anti-enumeration).
-    void diagnoseTeamInviteCode(code).then(
-      (cause) => console.warn("joinTeamByCode rejected", { cause }),
-      (err) =>
-        console.warn("joinTeamByCode rejected (diagnose failed)", { err }),
+    // row (timing side-channel on top of anti-enumeration). Registered
+    // with the request scope so Workers teardown does not end the pools
+    // under the in-flight SELECT.
+    deferRequestWork(
+      diagnoseTeamInviteCode(code).then(
+        (cause) => console.warn("joinTeamByCode rejected", { cause }),
+        (err) =>
+          console.warn("joinTeamByCode rejected (diagnose failed)", { err }),
+      ),
     );
     return {
       ok: false,
