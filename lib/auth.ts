@@ -10,6 +10,7 @@ import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
+import { logAuthApiError } from "@/lib/auth/api-error-log";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -83,6 +84,11 @@ export const auth = betterAuth({
     // default is already false; lock it so a future default flip cannot
     // regress the KV-backed session-cache path.
     cookieCache: { enabled: false },
+  },
+  // BA's default router logging is message-only; 5xx throw sites on
+  // /api/auth/* are untraceable without the stack + cause chain.
+  onAPIError: {
+    onError: logAuthApiError,
   },
   rateLimit: {
     enabled: true,
