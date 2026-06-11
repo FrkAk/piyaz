@@ -3,7 +3,7 @@
   "main": "./worker-cf.ts",
   "name": "mymir",
   "compatibility_date": "2026-05-16",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
