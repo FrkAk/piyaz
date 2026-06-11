@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { neonConfig } from "@neondatabase/serverless";
 import {
   buildAppPool,
   buildAuthPool,
   buildServicePool,
 } from "@/lib/db/_driver.workers";
+import type { RequestScopedDb } from "@/lib/db/connection";
 import { requestDbStore, deferRequestWork } from "@/lib/db/request-store";
 
 /**
@@ -254,6 +255,72 @@ describe("withRequestDb (workers)", () => {
     await teardownDone;
     expect(order).toEqual(["deferred", "teardown"]);
     expect(pool?.ended).toBe(true);
+  });
+
+  it("throws instead of building a new role pool after teardown", async () => {
+    const { withRequestDb } = await import("@/lib/db/request-scope.workers");
+    let frame: RequestScopedDb | undefined;
+
+    const outcome = await withRequestDb(async () => {
+      frame = requestDbStore.getStore();
+      if (!frame) throw new Error("no frame");
+      expect(typeof frame.appDb.select).toBe("function");
+    });
+
+    await outcome.teardown();
+    expect(() => frame?.authDb).toThrow(/deferRequestWork/);
+    expect(typeof frame?.appDb.select).toBe("function");
+  });
+
+  it("lets deferred work build a pool during settlement and ends it", async () => {
+    const { withRequestDb } = await import("@/lib/db/request-scope.workers");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pool: PoolInternals | undefined;
+
+    const outcome = await withRequestDb(async () => {
+      const frame = requestDbStore.getStore();
+      if (!frame) throw new Error("no frame");
+      deferRequestWork(
+        gate.then(() => {
+          pool = poolOf(frame.authDb);
+        }),
+      );
+    });
+
+    const teardownDone = outcome.teardown();
+    release();
+    await teardownDone;
+    expect(pool).toBeDefined();
+    expect(pool?.ended).toBe(true);
+  });
+
+  it("logs the failing role on teardown errors", async () => {
+    const { withRequestDb } = await import("@/lib/db/request-scope.workers");
+
+    const outcome = await withRequestDb(async () => {
+      const frame = requestDbStore.getStore();
+      if (!frame) throw new Error("no frame");
+      await poolOf(frame.authDb).end();
+    });
+
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    let logged: string[];
+    try {
+      await outcome.teardown();
+      logged = errorSpy.mock.calls.map((call) => String(call[0]));
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(
+      logged.some(
+        (line) =>
+          line.includes('"event":"neon_pool_teardown_error"') &&
+          line.includes('"role":"auth"'),
+      ),
+    ).toBe(true);
   });
 
   it("deferRequestWork is a no-op without an active frame", () => {

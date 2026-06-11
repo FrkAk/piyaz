@@ -41,26 +41,54 @@ export interface WorkerDbUrls {
 }
 
 /**
+ * Per-request pool registry drained by teardown.
+ *
+ * `sealed` flips just before teardown snapshots `pools` — after the
+ * deferred-work settlement window, so deferred work may still build pools
+ * that teardown picks up, but any later first-build throws instead of
+ * minting a pool nothing would ever end.
+ */
+interface PoolRegistry {
+  /** Role-labelled pools built for this request. */
+  pools: Array<{ role: string; pool: ClosablePool }>;
+  /** True once teardown has snapshotted `pools`; late builds must throw. */
+  sealed: boolean;
+}
+
+/**
  * Single-flight lazy accessor for one role's Drizzle client.
  *
  * The pool is constructed (and its URL validated) on first access and
- * registered into `pools` for teardown; roles a request never touches
- * build nothing, so a misconfigured binding only fails the paths that use
- * that role and the BYPASSRLS client is not materialized on every request.
+ * registered for teardown; roles a request never touches build nothing, so
+ * a misconfigured binding only fails the paths that use that role and the
+ * BYPASSRLS client is not materialized on every request. Once the registry
+ * is sealed a first-build throws: a pool created after the teardown
+ * snapshot would never be closed and would silently recreate the
+ * dead-I/O-context WebSocket bug per-request pools exist to fix.
  *
+ * @param role - Role label for the teardown registry and error messages.
  * @param build - Role bundle factory from the workers driver.
- * @param pools - Append-only registry the request teardown drains.
+ * @param registry - Request pool registry the teardown drains.
  * @returns Accessor returning the memoized Drizzle client.
+ * @throws Error on first access after the registry is sealed.
  */
 function lazyRole<TDb>(
+  role: string,
   build: () => DbBundle<TDb>,
-  pools: ClosablePool[],
+  registry: PoolRegistry,
 ): () => TDb {
   let db: TDb | undefined;
   return () => {
     if (db === undefined) {
+      if (registry.sealed) {
+        throw new Error(
+          `Request DB scope is torn down: a new "${role}" pool built now ` +
+            "would never be closed. Register detached work with " +
+            "deferRequestWork before the response body completes.",
+        );
+      }
       const bundle = build();
-      pools.push(bundle.pool);
+      registry.pools.push({ role, pool: bundle.pool });
       db = bundle.db;
     }
     return db;
@@ -68,31 +96,37 @@ function lazyRole<TDb>(
 }
 
 /**
- * Settle deferred request work, then end every pool built so far.
+ * Settle deferred request work, then seal the registry and end every pool.
  *
  * Never rejects: `pool.end()` failures are logged as structured
  * `neon_pool_teardown_error` events so the `waitUntil` chain cannot
  * surface unhandled rejections and the error path cannot mask the
  * request's own failure. Deferred work settles first (single pass) so
- * detached queries finish before their pools close; pools are read after
- * that await, picking up any pool the deferred work built.
+ * detached queries finish before their pools close; the registry is sealed
+ * and snapshotted after that await, picking up any pool the deferred work
+ * built while making any later first-build throw in `lazyRole`.
  *
  * @param deferred - Promises registered via `deferRequestWork`.
- * @param pools - Pools built for this request.
+ * @param registry - Request pool registry; sealed here.
  */
 async function settleAndEnd(
   deferred: ReadonlySet<Promise<unknown>>,
-  pools: readonly ClosablePool[],
+  registry: PoolRegistry,
 ): Promise<void> {
   if (deferred.size > 0) {
     await Promise.allSettled(deferred);
   }
-  const results = await Promise.allSettled(pools.map((pool) => pool.end()));
-  for (const result of results) {
+  registry.sealed = true;
+  const entries = [...registry.pools];
+  const results = await Promise.allSettled(
+    entries.map(({ pool }) => pool.end()),
+  );
+  results.forEach((result, index) => {
     if (result.status === "rejected") {
       console.error(
         JSON.stringify({
           event: "neon_pool_teardown_error",
+          role: entries[index].role,
           message:
             result.reason instanceof Error
               ? result.reason.message
@@ -100,7 +134,7 @@ async function settleAndEnd(
         }),
       );
     }
-  }
+  });
 }
 
 /**
@@ -125,18 +159,23 @@ export async function withRequestDb<T>(
   fn: () => Promise<T>,
   urls?: WorkerDbUrls,
 ): Promise<RequestDbOutcome<T>> {
-  const pools: ClosablePool[] = [];
+  const registry: PoolRegistry = { pools: [], sealed: false };
   const deferred = new Set<Promise<unknown>>();
-  const app = lazyRole(() => buildAppPool(urls?.databaseUrl), pools);
-  const auth = lazyRole(() => buildAuthPool(urls?.databaseAuthUrl), pools);
+  const app = lazyRole("app", () => buildAppPool(urls?.databaseUrl), registry);
+  const auth = lazyRole(
+    "auth",
+    () => buildAuthPool(urls?.databaseAuthUrl),
+    registry,
+  );
   const service = lazyRole(
+    "service",
     () => buildServicePool(urls?.databaseServiceRoleUrl),
-    pools,
+    registry,
   );
 
   let ending: Promise<void> | undefined;
   const teardown = (): Promise<void> => {
-    ending ??= settleAndEnd(deferred, pools);
+    ending ??= settleAndEnd(deferred, registry);
     return ending;
   };
 
