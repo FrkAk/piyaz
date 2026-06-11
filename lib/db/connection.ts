@@ -1,12 +1,12 @@
 import "server-only";
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import {
   buildAppPool,
   buildAuthPool,
   buildServicePool,
 } from "@/lib/db/_driver";
 import type { AppDb, AuthDb } from "@/lib/db/_driver.node";
+import { requestDbStore } from "./request-store";
 
 export type { AppDb, AuthDb } from "@/lib/db/_driver.node";
 
@@ -53,49 +53,29 @@ export interface RequestScopedDb {
   serviceRoleDb: ServiceRoleConn;
 }
 
-/**
- * AsyncLocalStorage frame populated by the Workers request-scope helper.
- *
- * Pinned to a `globalThis` slot keyed by `Symbol.for(...)` so every bundle
- * that imports this module observes the same instance — on Workers the
- * final artifact contains two copies of this file (one bundled by Next's
- * webpack into `.open-next/worker.js`, another by wrangler's esbuild from
- * `worker-cf.ts`), and without the global pin each would instantiate its
- * own `AsyncLocalStorage`. OpenNext's `init.js` uses the same pattern for
- * `__cloudflare-context__`.
- */
-const REQUEST_DB_STORE_KEY = Symbol.for("@mymir/db/requestDbStore");
-const symbolKeyedGlobal = globalThis as Record<symbol, unknown>;
-if (!symbolKeyedGlobal[REQUEST_DB_STORE_KEY]) {
-  symbolKeyedGlobal[REQUEST_DB_STORE_KEY] =
-    new AsyncLocalStorage<RequestScopedDb>();
-}
-export const requestDbStore = symbolKeyedGlobal[
-  REQUEST_DB_STORE_KEY
-] as AsyncLocalStorage<RequestScopedDb>;
+export { requestDbStore } from "./request-store";
 
 type GlobalKey = "__mymirAppDb" | "__mymirAuthDb" | "__mymirServiceRoleDb";
 
 /**
  * Resolve the active Drizzle client for a role.
  *
- * Both deploy targets use a `globalThis`-cached singleton built lazily on
- * first read. On self-host the Node `Pool` warms up once and serves every
- * request via standard pg pooling. On Cloudflare Workers the Neon Pool is
- * configured with `maxUses: 1` (see `lib/db/_driver.workers.ts`), so each
- * connection is single-use even though the Pool instance persists across
- * requests within an isolate — the "WebSocket cannot outlive a request"
- * constraint is honored at the connection level, not the Pool level.
+ * The {@link requestDbStore} ALS frame is consulted first. On Cloudflare
+ * Workers (`DEPLOY_TARGET=cloudflare`) it is the ONLY source: pools are
+ * built per request by `withRequestDb` (`lib/db/request-scope.workers.ts`)
+ * and ended after the response body completes, so unscoped access throws
+ * loudly instead of minting a Pool that would outlive its request and fire
+ * WebSocket close callbacks in a dead I/O context.
  *
- * The {@link requestDbStore} ALS frame is consulted first for explicit
- * scoping (e.g. tests that want to inject sentinel clients via
- * `requestDbStore.run`). Production fetch paths simply hit the cache.
+ * On self-host the frame is optional (tests inject sentinel clients via
+ * `requestDbStore.run`); without one, a `globalThis`-cached singleton is
+ * built lazily and reused across requests via standard pg pooling.
  *
- * @param key - Which role to read from the request-scope bundle (used only
- *   when an ALS frame is explicitly active).
- * @param globalKey - Matching `globalThis.__mymir*` slot.
+ * @param key - Which role to read from the request-scope bundle.
+ * @param globalKey - Matching `globalThis.__mymir*` slot (self-host only).
  * @param builder - Factory invoked at most once to populate the slot.
  * @returns Drizzle instance for the role.
+ * @throws Error on Workers when no request frame is active.
  */
 function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
   key: keyof RequestScopedDb,
@@ -104,6 +84,13 @@ function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
 ): TDb {
   const scoped = requestDbStore.getStore();
   if (scoped) return scoped[key] as TDb;
+  if (process.env.DEPLOY_TARGET === "cloudflare") {
+    throw new Error(
+      `Unscoped DB access on Workers: "${key}" is only available inside an ` +
+        "active withRequestDb frame (lib/db/request-scope.workers.ts). " +
+        "Wrap the entry point in withRequestDb.",
+    );
+  }
   const cached = globalThis[globalKey];
   if (cached) return cached as TDb;
   const built = builder().db;

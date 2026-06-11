@@ -18,6 +18,10 @@ import {
   CloudflareRateLimitBackend,
   type CloudflareRateLimitBinding,
 } from "./lib/api/rate-limit-cf";
+import {
+  scheduleRequestDbTeardown,
+  withRequestDb,
+} from "./lib/db/request-scope.workers";
 import { MymirBroker } from "./lib/realtime/broker-do";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- generated entry; tsc resolves it but @ts-expect-error trips "unused directive".
@@ -51,6 +55,18 @@ interface WorkerCtx {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
 }
+
+/**
+ * Shape of the OpenNext-generated default export this entry delegates to.
+ * The generated module carries no usable types (imported under
+ * `@ts-ignore`), so pin the call surface here instead of letting `any`
+ * leak into `withRequestDb`'s generic inference.
+ */
+interface OpenNextHandler {
+  fetch(request: Request, env: WorkerEnv, ctx: WorkerCtx): Promise<Response>;
+}
+
+const openNext = openNextHandler as OpenNextHandler;
 
 // Binding-pointer state, not request-scoped — set once per isolate spawn and
 // read by every subsequent request through the same isolate. Safe to live at
@@ -95,13 +111,34 @@ function initRateLimitBindings(env: WorkerEnv): void {
 }
 
 const handler = {
+  /**
+   * Delegate to the OpenNext handler inside a per-request DB frame.
+   *
+   * `withRequestDb` builds the request's Neon Pools and exposes them via
+   * AsyncLocalStorage to the route handlers in the webpack bundle (the ALS
+   * store is symbol-pinned on `globalThis`, see `lib/db/request-store.ts`).
+   * Teardown is deferred until the response body finishes streaming —
+   * RSC pages keep querying after `fetch` resolves, so ending pools here
+   * would sever in-flight rendering queries.
+   *
+   * @param request - Incoming request.
+   * @param env - Worker bindings.
+   * @param ctx - Execution context; `waitUntil` extends the request past
+   *   the response for the pool teardown.
+   * @returns The OpenNext response, body-wrapped for teardown scheduling.
+   */
   async fetch(
     request: Request,
     env: WorkerEnv,
     ctx: WorkerCtx,
   ): Promise<Response> {
     initRateLimitBindings(env);
-    return openNextHandler.fetch(request, env, ctx);
+    const { result, teardown } = await withRequestDb(() =>
+      openNext.fetch(request, env, ctx),
+    );
+    return scheduleRequestDbTeardown(result, teardown, (promise) =>
+      ctx.waitUntil(promise),
+    );
   },
 };
 
