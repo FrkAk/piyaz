@@ -10,6 +10,7 @@ import {
   IconX,
 } from "@/components/shared/icons";
 import { updateTask } from "@/lib/graph/mutations";
+import { isModalOpen } from "@/hooks/useModalChrome";
 import type { TaskStatus } from "@/lib/types";
 
 interface DetailHeaderProps {
@@ -86,6 +87,11 @@ export function DetailHeader({
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (editing) return;
+      // Yield to any open dialog (modal, palette, drawer). The modal
+      // stack owns this Escape regardless of listener registration
+      // order; without the check, dismissing a dialog would also
+      // deselect the task behind it.
+      if (isModalOpen()) return;
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement

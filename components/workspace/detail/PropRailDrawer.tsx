@@ -1,7 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect } from "react";
+import { useRef } from "react";
+import { useModalChrome } from "@/hooks/useModalChrome";
 import { IconX } from "@/components/shared/icons";
 
 interface PropRailDrawerProps {
@@ -15,8 +16,10 @@ interface PropRailDrawerProps {
 
 /**
  * Slide-out drawer wrapping the property rail for viewports below 1280px.
- * Closes on backdrop click and on Esc — the keyboard handler is suppressed
- * when the drawer is closed so it doesn't fight the detail-header Esc.
+ * Closes on backdrop click and on Esc. Dialog chrome (Escape via the
+ * shared modal stack, Tab focus trap, focus seed and restore) comes from
+ * {@link useModalChrome}; the detail-header Esc yields to the stack via
+ * `isModalOpen`, so drawer-Escape never deselects the task behind it.
  *
  * @param props - Drawer configuration.
  * @returns Backdrop + sliding panel.
@@ -26,18 +29,8 @@ export function PropRailDrawer({
   onClose,
   children,
 }: PropRailDrawerProps) {
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handler, { capture: true });
-    return () =>
-      document.removeEventListener("keydown", handler, { capture: true });
-  }, [open, onClose]);
+  const panelRef = useRef<HTMLElement | null>(null);
+  useModalChrome(open, onClose, panelRef);
 
   return (
     <AnimatePresence>
@@ -55,6 +48,7 @@ export function PropRailDrawer({
           />
           <motion.aside
             key="panel"
+            ref={panelRef}
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}

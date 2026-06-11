@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -17,6 +18,7 @@ import {
   type SidebarUser,
 } from "@/components/layout/Sidebar";
 import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
+import { useModalChrome } from "@/hooks/useModalChrome";
 import { IconX } from "@/components/shared/icons";
 
 interface MobileNavValue {
@@ -83,7 +85,9 @@ interface MobileNavDrawerProps {
  * Left slide-in navigation drawer for viewports below `lg`, where the
  * desktop sidebar is hidden. Reuses {@link SidebarPanel} with a close
  * button in place of the collapse toggle. Closes on backdrop click, Esc,
- * route change, and before opening the command palette.
+ * route change, and before opening the command palette. Dialog chrome
+ * (Escape via the shared modal stack, Tab focus trap, focus seed and
+ * restore) comes from {@link useModalChrome}.
  *
  * @param props - Sidebar data threaded from AppShell.
  * @returns Backdrop + sliding panel, rendered only below `lg`.
@@ -97,23 +101,12 @@ export function MobileNavDrawer({
   const { open, closeNav } = useMobileNav();
   const { openPalette } = useCommandPalette();
   const pathname = usePathname();
+  const panelRef = useRef<HTMLElement | null>(null);
+  useModalChrome(open, closeNav, panelRef);
 
   useEffect(() => {
     closeNav();
   }, [pathname, closeNav]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        closeNav();
-      }
-    };
-    document.addEventListener("keydown", handler, { capture: true });
-    return () =>
-      document.removeEventListener("keydown", handler, { capture: true });
-  }, [open, closeNav]);
 
   /** Close the drawer first so the palette isn't stacked over it. */
   const handleOpenPalette = useCallback(() => {
@@ -137,6 +130,7 @@ export function MobileNavDrawer({
           />
           <motion.aside
             key="mobile-nav-panel"
+            ref={panelRef}
             initial={{ x: "-100%" }}
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
