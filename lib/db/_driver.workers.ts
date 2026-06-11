@@ -1,12 +1,22 @@
 import "server-only";
 
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
-import { neonConfig, Pool as NeonPool } from "@neondatabase/serverless";
+import {
+  drizzle as drizzleHttp,
+  type NeonHttpDatabase,
+} from "drizzle-orm/neon-http";
+import { neon, neonConfig, Pool as NeonPool } from "@neondatabase/serverless";
 import * as appSchema from "./schema";
 import * as authSchema from "./auth-schema";
 import type { AppDb, AuthDb, DbBundle } from "./_driver.node";
 
 export type { AppDb, AuthDb, DbBundle, ClosablePool } from "./_driver.node";
+
+/** Drizzle client over the neon-http driver, bound to the public schema. */
+export type AppHttpDb = NeonHttpDatabase<typeof appSchema>;
+
+/** Drizzle client over the neon-http driver, bound to the neon_auth schema. */
+export type AuthHttpDb = NeonHttpDatabase<typeof authSchema>;
 
 /**
  * Route non-transactional `pool.query()` calls over HTTP `fetch` instead of
@@ -164,4 +174,73 @@ export function buildServicePool(
     pool,
     db: drizzleNeon(pool, { schema: appSchema }) as unknown as AppDb,
   };
+}
+
+/**
+ * Transaction defaults baked into every neon-http read client. Drizzle's
+ * `db.batch()` forwards no per-call transaction options to the driver
+ * (verified against `drizzle-orm@0.45.2` `neon-http/session.js:131`), so
+ * `READ ONLY` + `ReadCommitted` must ride the client construction — they
+ * become the `Neon-Batch-*` headers on every batch this client sends.
+ */
+const HTTP_TX_OPTS = {
+  readOnly: true,
+  isolationLevel: "ReadCommitted",
+} as const;
+
+/**
+ * Build the application read client backed by the neon-http driver.
+ * Stateless — each batch is one self-contained HTTP request with no
+ * connection to tear down, so callers register nothing with the request
+ * teardown. Consumed by `withUserContextRead` for the RLS read path.
+ *
+ * @param url - Connection string, defaulting to `DATABASE_URL`.
+ * @returns Drizzle neon-http client bound to the public schema.
+ * @throws Error when `DATABASE_URL` is unset.
+ */
+export function buildAppHttp(url = process.env.DATABASE_URL): AppHttpDb {
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL is required for the app runtime connection (app_user role).",
+    );
+  }
+  return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: appSchema });
+}
+
+/**
+ * Build the Better-auth read client backed by the neon-http driver.
+ * See {@link buildAppHttp}.
+ *
+ * @param url - Connection string, defaulting to `DATABASE_AUTH_URL`.
+ * @returns Drizzle neon-http client bound to the neon_auth schema.
+ * @throws Error when `DATABASE_AUTH_URL` is unset.
+ */
+export function buildAuthHttp(url = process.env.DATABASE_AUTH_URL): AuthHttpDb {
+  if (!url) {
+    throw new Error(
+      "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
+        "(DML on neon_auth.*, no public-schema access).",
+    );
+  }
+  return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: authSchema });
+}
+
+/**
+ * Build the BYPASSRLS read client backed by the neon-http driver.
+ * See {@link buildAppHttp}; the bypass-site inventory in
+ * `lib/db/connection.ts` applies to this handle too.
+ *
+ * @param url - Connection string, defaulting to `DATABASE_SERVICE_ROLE_URL`.
+ * @returns Drizzle neon-http client bound to the public schema.
+ * @throws Error when `DATABASE_SERVICE_ROLE_URL` is unset.
+ */
+export function buildServiceHttp(
+  url = process.env.DATABASE_SERVICE_ROLE_URL,
+): AppHttpDb {
+  if (!url) {
+    throw new Error(
+      "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
+    );
+  }
+  return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: appSchema });
 }

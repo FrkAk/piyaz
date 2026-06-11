@@ -1,8 +1,11 @@
 import "server-only";
 
 import {
+  buildAppHttp,
   buildAppPool,
+  buildAuthHttp,
   buildAuthPool,
+  buildServiceHttp,
   buildServicePool,
 } from "./_driver.workers";
 import type { ClosablePool, DbBundle } from "./_driver.node";
@@ -91,6 +94,26 @@ function lazyRole<TDb>(
       registry.pools.push({ role, pool: bundle.pool });
       db = bundle.db;
     }
+    return db;
+  };
+}
+
+/**
+ * Single-flight lazy accessor for one role's neon-http read client.
+ *
+ * HTTP clients are stateless — every batch is one self-contained fetch —
+ * so unlike {@link lazyRole} there is no pool registry, no teardown
+ * registration, and no seal check. A read fired after the response body
+ * completes is still the documented `deferRequestWork` landmine (the
+ * Workers I/O context may be gone), but it cannot leak a connection.
+ *
+ * @param build - Role HTTP client factory from the workers driver.
+ * @returns Accessor returning the memoized client.
+ */
+function lazyHttpRole<TDb>(build: () => TDb): () => TDb {
+  let db: TDb | undefined;
+  return () => {
+    if (db === undefined) db = build();
     return db;
   };
 }
@@ -192,6 +215,11 @@ export async function withRequestDb<T>(
     () => buildServicePool(urls?.databaseServiceRoleUrl),
     registry,
   );
+  const appRead = lazyHttpRole(() => buildAppHttp(urls?.databaseUrl));
+  const authRead = lazyHttpRole(() => buildAuthHttp(urls?.databaseAuthUrl));
+  const serviceRead = lazyHttpRole(() =>
+    buildServiceHttp(urls?.databaseServiceRoleUrl),
+  );
 
   let ending: Promise<void> | undefined;
   const teardown = (): Promise<void> => {
@@ -208,6 +236,15 @@ export async function withRequestDb<T>(
     },
     get serviceRoleDb() {
       return service() as ServiceRoleConn;
+    },
+    get appDbRead() {
+      return appRead();
+    },
+    get authDbRead() {
+      return authRead();
+    },
+    get serviceRoleDbRead() {
+      return serviceRead();
     },
     deferred,
   };

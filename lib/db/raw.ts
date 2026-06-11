@@ -1,5 +1,11 @@
 import { sql, type SQL } from "drizzle-orm";
-import type { AppUserConn, RlsTx, ServiceRoleConn } from "@/lib/db/connection";
+import type {
+  AppDb,
+  AppUserConn,
+  RlsTx,
+  ServiceRoleConn,
+} from "@/lib/db/connection";
+import type { ReadStatement } from "@/lib/db/read-guard";
 
 export type { AppUserConn, RlsTx, ServiceRoleConn };
 
@@ -11,6 +17,32 @@ export type { AppUserConn, RlsTx, ServiceRoleConn };
  * site, not just an ESLint violation.
  */
 export type Conn = AppUserConn | RlsTx;
+
+declare const readConnBrand: unique symbol;
+
+/**
+ * Statement-building handle passed to a `withUserContextRead` build
+ * callback. Exposes only lazy read builders: on Workers the statements are
+ * sent as ONE neon-http batch transaction with the `app.user_id` GUC set
+ * first; on self-host they run inside one read-only interactive
+ * transaction with the same GUC contract.
+ *
+ * Deliberately DISJOINT from {@link Conn}: awaiting queries one-by-one on
+ * the HTTP handle outside a batch would run each as its own stateless
+ * request with NO `app.user_id` set — RLS would default-deny and silently
+ * return empty rows. The brand keeps a ReadConn out of every
+ * interactive-transaction helper, and write builders off this surface
+ * entirely.
+ */
+export type ReadConn = Pick<AppDb, "select"> & {
+  /**
+   * Build a lazy raw-SQL read statement. Result shape differs per backend
+   * (postgres-js row list vs neon-http `{ rows }`); always pass it through
+   * {@link normalizeExecuteResult}.
+   */
+  execute(query: SQL): ReadStatement<unknown>;
+  readonly [readConnBrand]: true;
+};
 
 /**
  * Internal: any drizzle handle the `executeRaw` helpers accept. Broader
