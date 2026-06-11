@@ -609,3 +609,113 @@ END;
 $$;
 REVOKE EXECUTE ON FUNCTION public.find_org_member_user_ids_as_admin(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.find_org_member_user_ids_as_admin(uuid) TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- Activity propagation — bump projects.updated_at when tasks/edges change.
+--
+-- The home grid sorts on projects.updated_at and the conditional-GET
+-- validators take MAX(updated_at) across projects + tasks + task_edges.
+-- Without these triggers only project-metadata edits (and nothing that
+-- happens *inside* a project) move the sort key, so actively worked
+-- projects sink below recently renamed ones.
+--
+-- Statement-level with transition tables: a bulk write touching N tasks
+-- bumps each distinct parent project once, not N times. SECURITY DEFINER
+-- so the bump skips the projects RLS InitPlan — the firing DML already
+-- passed RLS on tasks/task_edges, and the function only widens writes to
+-- the parent project's updated_at. GREATEST keeps the bump monotonic:
+-- now() is transaction start, so a flow that stamps the project with a
+-- fresh client-clock timestamp and then writes tasks in the same
+-- transaction (renameCategory, deleteCategory) must not be rewound.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.touch_projects_for_changed_tasks()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+BEGIN
+  UPDATE public.projects
+  SET updated_at = GREATEST(updated_at, now())
+  WHERE id IN (SELECT DISTINCT project_id FROM changed_tasks);
+  RETURN NULL;
+END;
+$$;
+
+-- Fire-time EXECUTE is checked against the firing role (see
+-- reject_task_edges_cross_project above). service_role included because
+-- the documented bypass sites also write tasks.
+REVOKE EXECUTE ON FUNCTION public.touch_projects_for_changed_tasks() FROM public;
+GRANT EXECUTE ON FUNCTION public.touch_projects_for_changed_tasks() TO app_user, service_role;
+
+DROP TRIGGER IF EXISTS tasks_touch_project_insert ON public.tasks;
+CREATE TRIGGER tasks_touch_project_insert
+  AFTER INSERT ON public.tasks
+  REFERENCING NEW TABLE AS changed_tasks
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION public.touch_projects_for_changed_tasks();
+
+DROP TRIGGER IF EXISTS tasks_touch_project_update ON public.tasks;
+CREATE TRIGGER tasks_touch_project_update
+  AFTER UPDATE ON public.tasks
+  REFERENCING NEW TABLE AS changed_tasks
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION public.touch_projects_for_changed_tasks();
+
+DROP TRIGGER IF EXISTS tasks_touch_project_delete ON public.tasks;
+CREATE TRIGGER tasks_touch_project_delete
+  AFTER DELETE ON public.tasks
+  REFERENCING OLD TABLE AS changed_tasks
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION public.touch_projects_for_changed_tasks();
+
+-- Edges carry no project_id; resolve through both endpoints so the bump
+-- matches the validators' definition of project activity. On task-delete
+-- cascades the endpoint task rows are already gone — the subquery yields
+-- nothing and the tasks_touch_project_delete trigger owns the bump.
+CREATE OR REPLACE FUNCTION public.touch_projects_for_changed_task_edges()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+BEGIN
+  UPDATE public.projects
+  SET updated_at = GREATEST(updated_at, now())
+  WHERE id IN (
+    SELECT DISTINCT t.project_id
+    FROM public.tasks t
+    WHERE t.id IN (
+      SELECT source_task_id FROM changed_edges
+      UNION
+      SELECT target_task_id FROM changed_edges
+    )
+  );
+  RETURN NULL;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.touch_projects_for_changed_task_edges() FROM public;
+GRANT EXECUTE ON FUNCTION public.touch_projects_for_changed_task_edges() TO app_user, service_role;
+
+DROP TRIGGER IF EXISTS task_edges_touch_project_insert ON public.task_edges;
+CREATE TRIGGER task_edges_touch_project_insert
+  AFTER INSERT ON public.task_edges
+  REFERENCING NEW TABLE AS changed_edges
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION public.touch_projects_for_changed_task_edges();
+
+DROP TRIGGER IF EXISTS task_edges_touch_project_update ON public.task_edges;
+CREATE TRIGGER task_edges_touch_project_update
+  AFTER UPDATE ON public.task_edges
+  REFERENCING NEW TABLE AS changed_edges
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION public.touch_projects_for_changed_task_edges();
+
+DROP TRIGGER IF EXISTS task_edges_touch_project_delete ON public.task_edges;
+CREATE TRIGGER task_edges_touch_project_delete
+  AFTER DELETE ON public.task_edges
+  REFERENCING OLD TABLE AS changed_edges
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION public.touch_projects_for_changed_task_edges();
