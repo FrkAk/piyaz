@@ -135,31 +135,40 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     }
   }, [qc, projectId, selectedTaskId]);
 
+  const [undoError, setUndoError] = useState<string | null>(null);
+
   /**
    * Recreate a deleted task from its undo snapshot. Lives here (not in
    * StructureView) because the undo stack must survive the layout
-   * subtree's remounts; a rejection propagates to useUndo so the entry
-   * is re-pushed instead of lost.
+   * subtree's remounts; a rejection sets `undoError` for the navigator's
+   * undo strip and propagates to useUndo so the entry is re-pushed
+   * instead of lost.
    *
    * @param item - Undo snapshot captured at delete time.
    */
   const handleRestoreTask = useCallback(
     async (item: DeletedTask) => {
       const t = item.taskData;
-      await createTask({
-        projectId: t.projectId,
-        title: t.title,
-        description: t.description,
-        status: t.status,
-        order: graph?.tasks.length ?? 0,
-        acceptanceCriteria: t.acceptanceCriteria,
-        decisions: t.decisions,
-        implementationPlan: t.implementationPlan,
-        executionRecord: t.executionRecord,
-        tags: t.tags,
-        category: t.category,
-        files: t.files,
-      });
+      setUndoError(null);
+      try {
+        await createTask({
+          projectId: t.projectId,
+          title: t.title,
+          description: t.description,
+          status: t.status,
+          order: graph?.tasks.length ?? 0,
+          acceptanceCriteria: t.acceptanceCriteria,
+          decisions: t.decisions,
+          implementationPlan: t.implementationPlan,
+          executionRecord: t.executionRecord,
+          tags: t.tags,
+          category: t.category,
+          files: t.files,
+        });
+      } catch (err) {
+        setUndoError("Couldn't restore the task. Try again in a moment.");
+        throw err;
+      }
       refreshAll();
     },
     [graph, refreshAll],
@@ -170,14 +179,22 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
   // and (historically) selection transitions. The stack holds the only
   // copy of a deleted task's body, so any remount-scoped state wipe is
   // permanent data loss. WorkspaceClient only remounts on project change.
-  const {
-    canUndo,
-    push: pushUndo,
-    undo,
-  } = useUndo<DeletedTask>({
+  const { canUndo, push, undo } = useUndo<DeletedTask>({
     onUndo: handleRestoreTask,
     keyboard: { panelSelector: '[data-panel="navigator"]' },
   });
+
+  /**
+   * Record a deleted task for restore, clearing any stale restore error.
+   * @param item - Undo snapshot captured at delete time.
+   */
+  const pushUndo = useCallback(
+    (item: DeletedTask) => {
+      setUndoError(null);
+      push(item);
+    },
+    [push],
+  );
 
   const updateParam = useCallback(
     (key: string, value: string | null) => {
@@ -311,6 +328,7 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     canUndo,
     undo,
     pushUndo,
+    undoError,
   };
 
   // A single, unconditional <WorkspaceLayout> keeps the component type at
@@ -373,6 +391,8 @@ interface SharedLayoutProps {
   undo: () => void;
   /** Record a deleted task so it can be restored. */
   pushUndo: (item: DeletedTask) => void;
+  /** Message shown in the undo strip when restoring a deleted task failed. */
+  undoError: string | null;
 }
 
 interface SelectedTaskSlotProps extends SharedLayoutProps {
@@ -605,6 +625,7 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     canUndo,
     undo,
     pushUndo,
+    undoError,
   } = props;
 
   const navigator = (
@@ -620,6 +641,7 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
       canUndo={canUndo}
       onUndo={undo}
       pushUndo={pushUndo}
+      undoError={undoError}
     />
   );
 

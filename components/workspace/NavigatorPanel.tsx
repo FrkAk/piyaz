@@ -34,6 +34,8 @@ interface NavigatorPanelProps {
   onUndo: () => void;
   /** Record a deleted task so it can be restored. */
   pushUndo: (item: DeletedTask) => void;
+  /** Message shown in the undo strip when restoring a deleted task failed. */
+  undoError: string | null;
   /** Additional CSS classes. */
   className?: string;
 }
@@ -112,6 +114,7 @@ export function NavigatorPanel({
   canUndo,
   onUndo,
   pushUndo,
+  undoError,
   className = "",
 }: NavigatorPanelProps) {
   const router = useRouter();
@@ -197,6 +200,7 @@ export function NavigatorPanel({
           canUndo={canUndo}
           onUndo={onUndo}
           pushUndo={pushUndo}
+          undoError={undoError}
         />
       </div>
     </div>

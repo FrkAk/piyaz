@@ -95,6 +95,8 @@ interface StructureViewProps {
   onUndo: () => void;
   /** Record a deleted task so it can be restored. */
   pushUndo: (item: DeletedTask) => void;
+  /** Message shown in the undo strip when restoring a deleted task failed. */
+  undoError: string | null;
 }
 
 /**
@@ -258,6 +260,7 @@ export function StructureView({
   canUndo,
   onUndo,
   pushUndo,
+  undoError,
 }: StructureViewProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -288,6 +291,7 @@ export function StructureView({
     () => searchParams.get(FILTER_PARAM_KEYS.search) ?? "",
   );
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const pendingDeleteBodyRef = useRef<Map<string, Promise<TaskFull | null>>>(
     new Map(),
   );
@@ -561,6 +565,7 @@ export function StructureView({
       // win the race and the GET return 404.
       const full = await bodyPromise;
       pendingDeleteBodyRef.current.delete(taskId);
+      setDeleteError(null);
       try {
         await deleteTask(taskId);
       } catch (err) {
@@ -568,6 +573,7 @@ export function StructureView({
         // undo entry only after a successful delete avoids a bogus "undo"
         // for a task that was never removed.
         console.error("deleteTask failed", err);
+        setDeleteError("Couldn't delete the task. Try again in a moment.");
         return;
       }
       if (slim && full) pushUndo({ title: slim.title, taskData: full });
@@ -582,6 +588,7 @@ export function StructureView({
   // `StructureView` renders so unchanged rows skip render.
   const handleRequestDelete = useCallback((id: string) => {
     setConfirmDelete(id);
+    setDeleteError(null);
   }, []);
   const handleConfirmDelete = useCallback(
     (id: string) => {
@@ -591,6 +598,7 @@ export function StructureView({
   );
   const handleCancelDelete = useCallback(() => {
     setConfirmDelete(null);
+    setDeleteError(null);
   }, []);
 
   const totalActiveFilters =
@@ -687,13 +695,21 @@ export function StructureView({
             exit={{ opacity: 0, height: 0 }}
             className="flex items-center gap-2 border-b border-border bg-surface-raised/40 px-4 py-1.5"
           >
-            <span className="text-[11px] text-text-secondary">
-              Task deleted
+            <span
+              className={`text-[11px] ${undoError ? "text-danger" : "text-text-secondary"}`}
+            >
+              {undoError ?? "Task deleted"}
             </span>
             <UndoButton canUndo={canUndo} onUndo={onUndo} className="ml-auto" />
           </motion.div>
         )}
       </AnimatePresence>
+
+      {deleteError && (
+        <p className="border-b border-border bg-surface-raised/40 px-4 py-1.5 text-[11px] text-danger">
+          {deleteError}
+        </p>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {tasks.length === 0 ? (
