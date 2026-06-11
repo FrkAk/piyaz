@@ -2390,13 +2390,11 @@ export async function updateTask(
 /**
  * Delete a task and remove all referencing edges.
  *
- * Bumps the parent project's `updated_at` after the deletion so the
- * conditional-GET validator (`max(updated_at)` across project + tasks +
- * edges) strictly increases. Without this, deleting the most-recently
- * touched task would shrink the validator and produce a spurious 304 on
- * the next graph fetch — the UI would never see the deletion land. The
- * three writes run in a single transaction so concurrent readers either
- * see the pre- or post-delete state, never an in-between.
+ * The parent project's `updated_at` bump (which keeps the conditional-GET
+ * validator strictly increasing and the home-grid sort fresh) is owned by
+ * the `tasks_touch_project_delete` trigger in `docker/rls-functions.sql`.
+ * The writes run in a single transaction so concurrent readers either see
+ * the pre- or post-delete state, never an in-between.
  *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task to delete.
@@ -2419,11 +2417,6 @@ export async function deleteTask(ctx: AuthContext, taskId: string) {
         .returning({ id: taskEdges.id });
 
       await tx.delete(tasks).where(eq(tasks.id, taskId));
-
-      await tx
-        .update(projects)
-        .set({ updatedAt: new Date() })
-        .where(eq(projects.id, task.projectId));
 
       return { projectId: task.projectId, deletedEdges: removed };
     },
