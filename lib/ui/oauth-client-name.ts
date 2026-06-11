@@ -53,19 +53,19 @@ function stripClientMetadata(clientName: string): string {
  * whitespace tidied and invisible characters stripped — no suffix stripping,
  * no brand collapse — so a spoofed `"Claude Code (plugin:evil)"` is shown
  * verbatim rather than laundered into "Claude Code", and a zero-width or
- * RTL-override payload cannot render as a visual lookalike. Callers on the
- * security-sensitive consent screen MUST pass the real verified flag (see
- * `isVerifiedOAuthClient`); pass the flag everywhere the name participates
- * in a trust decision (consent, device audit).
+ * RTL-override payload cannot render as a visual lookalike. The flag is
+ * required — not defaulted — so no call site can silently opt into brand
+ * polish; derive it from the server-side check (`isVerifiedOAuthClient`)
+ * everywhere the name participates in a trust decision (consent, device
+ * audit).
  *
  * @param clientName - Raw OAuth client name from Better Auth.
  * @param verified - Whether the client_id is on the verified allowlist.
- *   Defaults to true (polished) for display-only contexts.
  * @returns User-facing client label.
  */
 export function formatOAuthClientName(
   clientName: string,
-  verified = true,
+  verified: boolean,
 ): string {
   const cleaned = sanitizeClientName(clientName);
   if (!verified) return cleaned;
