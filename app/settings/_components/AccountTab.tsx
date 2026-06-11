@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
@@ -207,6 +207,11 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  // isPending only flips after a re-render, so two submits in one event
+  // batch (double Enter) would both pass the `pending` guard and fire two
+  // server actions — burning two rate-limit slots and landing the loser's
+  // stale error on the collapsed form. The ref closes synchronously.
+  const inFlightRef = useRef(false);
 
   const mismatch =
     confirmPassword.length > 0 && confirmPassword !== newPassword;
@@ -225,7 +230,8 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
-    if (!submittable || pending) return;
+    if (!submittable || pending || inFlightRef.current) return;
+    inFlightRef.current = true;
     setError(null);
     startTransition(async () => {
       try {
@@ -245,6 +251,8 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
         setError(
           "Something went wrong reaching the server. Check your connection and try again.",
         );
+      } finally {
+        inFlightRef.current = false;
       }
     });
   };

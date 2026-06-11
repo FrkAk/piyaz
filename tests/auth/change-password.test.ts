@@ -180,6 +180,16 @@ test("revokeOtherSessions rotates the caller's session and kills the others", as
   expect(rotated).toBeDefined();
   expect(rotated).not.toBe(cookieA);
 
+  // The rotated cookie must be a LIVE session — a deletion header
+  // (`session_token=; Max-Age=0`) would also satisfy the two assertions
+  // above while shipping the silent-signout regression this test guards.
+  const getSessionA = await auth.handler(
+    new Request("https://example.test/api/auth/get-session", {
+      headers: { cookie: rotated!, "cf-connecting-ip": "127.0.2.20" },
+    }),
+  );
+  expect((await getSessionA.json()) as unknown).not.toBeNull();
+
   // The second device's session must be dead.
   const getSessionB = await auth.handler(
     new Request("https://example.test/api/auth/get-session", {

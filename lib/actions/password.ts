@@ -5,7 +5,11 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
 import { getSession } from "@/lib/auth/session";
-import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
+import {
+  checkActionIpRateLimit,
+  checkActionUserRateLimit,
+  type ActionRateLimitConfig,
+} from "@/lib/actions/rate-limit-action";
 import {
   mapBetterAuthError,
   parseOrFail,
@@ -15,6 +19,21 @@ import {
 
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 128;
+
+// Per-PoP enforcement on Workers via the auth binding. The default
+// "actions" slot is per-isolate memory, which a distributed attacker
+// holding a stolen session cookie could sidestep across isolates to
+// brute-force the current password. Both limits MUST equal the binding's
+// `simple.limit` (5/60): the binding enforces its own limit per key, so
+// any larger declared value would be silently rewritten to 5 on Workers
+// while self-host enforced the declared number.
+const RATE_LIMIT: ActionRateLimitConfig = {
+  action: "password.change",
+  windowSeconds: 60,
+  perUserMax: 5,
+  perIpMax: 5,
+  backendKind: "auth",
+};
 
 const changePasswordSchema = z.object({
   // Bound the current password to BA's max so an attacker cannot submit a
@@ -48,7 +67,9 @@ const changePasswordSchema = z.object({
  * Reached only through this server action: the HTTP `/change-password`
  * route is default-denied by the auth catch-all allowlist
  * (`app/api/auth/[...all]/route.ts`), so brute-force throttling lives in
- * `checkActionRateLimit` below, counted against the per-PoP `auth` binding.
+ * the two rate-limit limbs below, counted against the per-PoP `auth`
+ * binding in flood-safe order (per-IP before the session lookup, per-user
+ * after auth — the `authorizeWrite` pattern in `lib/graph/mutations.ts`).
  *
  * @param input - `{ currentPassword, newPassword }` from the password form.
  * @returns Discriminated `TeamActionResult`; `invalid_password` when the
@@ -58,6 +79,9 @@ export async function changePasswordAction(input: {
   currentPassword: string;
   newPassword: string;
 }): Promise<TeamActionResult> {
+  const ipLimit = await checkActionIpRateLimit(RATE_LIMIT);
+  if (!ipLimit.ok) return teamFail("rate_limited");
+
   let userId: string;
   try {
     const session = await getSession();
@@ -75,21 +99,8 @@ export async function changePasswordAction(input: {
   const parsed = parseOrFail(changePasswordSchema, input);
   if (!parsed.ok) return parsed;
 
-  const limit = await checkActionRateLimit(
-    {
-      action: "password.change",
-      windowSeconds: 60,
-      perUserMax: 5,
-      perIpMax: 10,
-      // Per-PoP enforcement on Workers via the auth binding (5/60). The
-      // default "actions" slot is per-isolate memory, which a distributed
-      // attacker holding a stolen session cookie could sidestep across
-      // isolates to brute-force the current password.
-      backendKind: "auth",
-    },
-    userId,
-  );
-  if (!limit.ok) return teamFail("rate_limited");
+  const userLimit = await checkActionUserRateLimit(RATE_LIMIT, userId);
+  if (!userLimit.ok) return teamFail("rate_limited");
 
   try {
     await auth.api.changePassword({

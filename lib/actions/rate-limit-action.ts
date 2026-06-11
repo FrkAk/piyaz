@@ -23,10 +23,12 @@ export type ActionRateLimitConfig = {
    * memory on Workers; that slot is intentionally never bound to a CF
    * rate-limit binding because most actions declare tighter limits than
    * any binding could honor). A high-value secret-verification action
-   * whose limit equals the auth binding's `simple.limit` (5/60) passes
-   * `"auth"` to get per-PoP durable enforcement on Workers, with no
-   * relaxation because the limit matches the binding exactly. Self-host
-   * resolves both slots to the same per-process memory backend.
+   * passes `"auth"` to get per-PoP durable enforcement on Workers — but
+   * the binding enforces its own `simple.limit` (5/60) per key regardless
+   * of the declared max, so EVERY limit routed here must equal 5/60 or
+   * Workers silently enforces 5 while self-host enforces the declared
+   * value. Self-host lazily builds a separate per-process memory backend
+   * per slot, each enforcing declared limits exactly.
    */
   backendKind?: "actions" | "auth";
 };

@@ -57,7 +57,7 @@ const RATE_CONFIG = {
   action: "password.change",
   windowSeconds: 60,
   perUserMax: 5,
-  perIpMax: 10,
+  perIpMax: 5,
   backendKind: "auth" as const,
 };
 

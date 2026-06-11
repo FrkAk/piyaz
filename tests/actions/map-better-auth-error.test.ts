@@ -129,6 +129,16 @@ describe("mapBetterAuthError — switch-case branches", () => {
       "invalid_input",
     );
   });
+
+  test("UNAUTHORIZED → unauthorized", () => {
+    expect(mapBetterAuthError(baError("UNAUTHORIZED"))).toBe("unauthorized");
+  });
+
+  test("CREDENTIAL_ACCOUNT_NOT_FOUND → not_found", () => {
+    expect(mapBetterAuthError(baError("CREDENTIAL_ACCOUNT_NOT_FOUND"))).toBe(
+      "not_found",
+    );
+  });
 });
 
 describe("mapBetterAuthError — FORBIDDEN_CODES allowlist", () => {

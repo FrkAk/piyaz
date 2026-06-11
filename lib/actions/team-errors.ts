@@ -6,8 +6,9 @@ import { z } from "zod/v4";
  * Closed set of failure codes the team wrappers can return. Mapped from
  * Better Auth's `ORGANIZATION_ERROR_CODES` (57 entries) plus the
  * credential entries of `BASE_ERROR_CODES` (`INVALID_PASSWORD`,
- * `PASSWORD_TOO_SHORT`, `PASSWORD_TOO_LONG`) — we never invent a
- * parallel taxonomy.
+ * `PASSWORD_TOO_SHORT`, `PASSWORD_TOO_LONG`,
+ * `CREDENTIAL_ACCOUNT_NOT_FOUND`) and the generic `UNAUTHORIZED` — we
+ * never invent a parallel taxonomy.
  */
 export type TeamActionFailureCode =
   | "unauthorized"
@@ -135,6 +136,14 @@ export function mapBetterAuthError(err: unknown): TeamActionFailureCode {
     case "PASSWORD_TOO_SHORT":
     case "PASSWORD_TOO_LONG":
       return "invalid_input";
+    // Session revoked between the action's getSession() and the auth.api
+    // call (e.g. a concurrent password change elsewhere revoked it):
+    // BA's sensitiveSessionMiddleware throws UNAUTHORIZED.
+    case "UNAUTHORIZED":
+      return "unauthorized";
+    // changePassword on a user without a password-bearing credential row.
+    case "CREDENTIAL_ACCOUNT_NOT_FOUND":
+      return "not_found";
     default:
       if (FORBIDDEN_CODES.has(code)) return "forbidden";
       if (code.startsWith("YOU_ARE_NOT_ALLOWED_TO_")) {
