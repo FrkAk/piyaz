@@ -96,6 +96,20 @@ function lazyRole<TDb>(
 }
 
 /**
+ * Grace period held after `pool.end()` so WebSocket close handshakes
+ * finish inside a live request context.
+ *
+ * `pool.end()` resolves before the WS close round-trip completes; if the
+ * teardown promise settles immediately, `waitUntil` releases the context
+ * and workerd severs the half-closed sockets — surfacing as uncaught
+ * "Network connection lost" errors because the Neon shim re-emits the
+ * failure on a deferred tick against a client `end()` already removed
+ * from the pool. 100ms covers the close round-trip; the cost is idle
+ * `waitUntil` wall time after the response, never user-facing latency.
+ */
+const WS_CLOSE_GRACE_MS = 100;
+
+/**
  * Settle deferred request work, then seal the registry and end every pool.
  *
  * Never rejects: `pool.end()` failures are logged as structured
@@ -104,7 +118,10 @@ function lazyRole<TDb>(
  * request's own failure. Deferred work settles first (single pass) so
  * detached queries finish before their pools close; the registry is sealed
  * and snapshotted after that await, picking up any pool the deferred work
- * built while making any later first-build throw in `lazyRole`.
+ * built while making any later first-build throw in `lazyRole`. When at
+ * least one pool was built, the context is held for
+ * {@link WS_CLOSE_GRACE_MS} after `end()` so the close handshakes drain
+ * cleanly instead of being severed at context teardown.
  *
  * @param deferred - Promises registered via `deferRequestWork`.
  * @param registry - Request pool registry; sealed here.
@@ -135,6 +152,9 @@ async function settleAndEnd(
       );
     }
   });
+  if (entries.length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, WS_CLOSE_GRACE_MS));
+  }
 }
 
 /**

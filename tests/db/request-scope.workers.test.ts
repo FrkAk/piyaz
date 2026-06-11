@@ -327,6 +327,30 @@ describe("withRequestDb (workers)", () => {
     expect(requestDbStore.getStore()).toBeUndefined();
     deferRequestWork(Promise.resolve());
   });
+
+  it("teardown holds a close grace after ending built pools", async () => {
+    const { withRequestDb } = await import("@/lib/db/request-scope.workers");
+
+    const outcome = await withRequestDb(async () => {
+      const frame = requestDbStore.getStore();
+      if (!frame) throw new Error("no frame");
+      expect(typeof frame.appDb.select).toBe("function");
+    });
+
+    const started = performance.now();
+    await outcome.teardown();
+    expect(performance.now() - started).toBeGreaterThanOrEqual(80);
+  });
+
+  it("teardown skips the close grace when no pool was built", async () => {
+    const { withRequestDb } = await import("@/lib/db/request-scope.workers");
+
+    const outcome = await withRequestDb(async () => "no-db");
+
+    const started = performance.now();
+    await outcome.teardown();
+    expect(performance.now() - started).toBeLessThan(50);
+  });
 });
 
 describe("connection proxies on the Workers target", () => {
