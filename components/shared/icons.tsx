@@ -101,6 +101,15 @@ export function IconPanelRight(props: IconProps) {
   );
 }
 
+/** Hamburger menu — mobile navigation drawer trigger. */
+export function IconMenu(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />
+    </IconBase>
+  );
+}
+
 /** Magnifying glass — search and ⌘K trigger. */
 export function IconSearch(props: IconProps) {
   return (

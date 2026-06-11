@@ -45,6 +45,18 @@ const modalStack: ModalHandle[] = [];
 let globalListenerInstalled = false;
 
 /**
+ * Whether any dialog wired through {@link useModalChrome} is currently
+ * open. Page-level Escape handlers (e.g. the detail header's
+ * deselect-task listener) call this to yield to the open dialog instead
+ * of racing it on listener registration order.
+ *
+ * @returns `true` while at least one modal is on the stack.
+ */
+export function isModalOpen(): boolean {
+  return modalStack.length > 0;
+}
+
+/**
  * Install the single document-level keydown listener responsible for
  * dispatching to the topmost active modal. Idempotent — installs once
  * and stays registered for the lifetime of the page so subsequent

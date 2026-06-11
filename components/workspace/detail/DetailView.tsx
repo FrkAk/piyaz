@@ -151,7 +151,7 @@ export function DetailView({
         {showBodySkeleton ? (
           <DetailBodySkeleton />
         ) : isBodyLoading ? null : (
-          <div className="rise-in mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
+          <div className="rise-in mx-auto max-w-[720px] px-4 pt-6 pb-[60px] sm:px-6 lg:px-8">
             <DescriptionSection
               taskId={taskId}
               description={task.description}
@@ -416,7 +416,7 @@ const BUNDLE_SKELETON_BARS: { tint: string; width: string }[] = [
  */
 function DetailBodySkeleton() {
   return (
-    <div className="mx-auto max-w-[720px] px-8 pt-6 pb-[60px]">
+    <div className="mx-auto max-w-[720px] px-4 pt-6 pb-[60px] sm:px-6 lg:px-8">
       <section
         className="rise-in mb-7"
         style={skeletonVars({ "--skeleton-delay": "0ms" })}

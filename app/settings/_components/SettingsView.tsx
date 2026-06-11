@@ -200,7 +200,7 @@ export function SettingsView({
   );
 
   return (
-    <div className="flex min-h-0 flex-1 overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
       <aside
         aria-label="Settings sections"
         className="hidden w-60 shrink-0 flex-col gap-px overflow-y-auto border-r border-border px-3 py-5 md:flex"

@@ -15,7 +15,7 @@ export function SavedViewsTabs({
   onChange,
 }: SavedViewsTabsProps) {
   return (
-    <div className="-mx-8 overflow-x-auto px-8 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+    <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
       <TabSwitcher
         activeTab={value}
         onTabChange={(id) => onChange(id as SavedView)}

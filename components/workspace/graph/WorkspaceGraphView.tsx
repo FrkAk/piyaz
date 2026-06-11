@@ -161,6 +161,7 @@ export function WorkspaceGraphView({
         onHover={setHoveredFromRail}
         onSelect={onSelectNode}
         stageMap={stageMap}
+        className="max-sm:hidden"
       />
 
       <div className="relative min-w-0 flex-1 overflow-hidden bg-base">

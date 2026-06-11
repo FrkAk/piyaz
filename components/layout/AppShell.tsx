@@ -15,6 +15,10 @@ import {
 import { WorkspaceLabelProvider } from "@/components/layout/WorkspaceLabelProvider";
 import { SidebarCollapseProvider } from "@/components/layout/SidebarCollapseProvider";
 import { CommandPaletteProvider } from "@/components/layout/CommandPaletteProvider";
+import {
+  MobileNavDrawer,
+  MobileNavProvider,
+} from "@/components/layout/MobileNav";
 
 /** Cookie that persists the sidebar collapse preference. Mirrors the constant in `SidebarCollapseProvider`. */
 const SIDEBAR_COLLAPSE_COOKIE = "mymir-sidebar-collapsed";
@@ -31,8 +35,8 @@ interface AppShellProps {
  * TopBar at the top of `children`, in flow.
  *
  * Below the `lg` breakpoint the sidebar is hidden and the main column takes
- * the full width. Mobile drawer / icon-rail variants are deliberately out
- * of scope for Phase 1 and left as polish.
+ * the full width; navigation moves into the {@link MobileNavDrawer}, opened
+ * by the TopBar hamburger.
  *
  * @param props - Page content.
  * @returns Sidebar + main column wrapper.
@@ -77,17 +81,25 @@ export async function AppShell({ children }: AppShellProps) {
     <WorkspaceLabelProvider value={workspaceLabel}>
       <SidebarCollapseProvider initialCollapsed={initialSidebarCollapsed}>
         <CommandPaletteProvider projects={sidebarProjects}>
-          <div className="flex h-[var(--viewport-height)] overflow-hidden">
-            <Sidebar
+          <MobileNavProvider>
+            <div className="flex h-[var(--viewport-height)] overflow-hidden">
+              <Sidebar
+                user={user}
+                workspaceLabel={workspaceLabel}
+                projects={sidebarProjects}
+                teams={sidebarTeams}
+              />
+              <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                {children}
+              </main>
+            </div>
+            <MobileNavDrawer
               user={user}
               workspaceLabel={workspaceLabel}
               projects={sidebarProjects}
               teams={sidebarTeams}
             />
-            <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-              {children}
-            </main>
-          </div>
+          </MobileNavProvider>
         </CommandPaletteProvider>
       </SidebarCollapseProvider>
     </WorkspaceLabelProvider>
