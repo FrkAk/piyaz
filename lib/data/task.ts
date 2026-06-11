@@ -1,7 +1,7 @@
 import "server-only";
 
 import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
-import { executeRaw, uuidArray, type Conn } from "@/lib/db/raw";
+import { executeRaw, uuidArray, type Conn, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import {
   projects,
@@ -503,6 +503,24 @@ export async function getTaskForDepthTx(
 ): Promise<TaskFull> {
   await assertTaskAccessTx(tx, taskId);
   const rows = await fetchTaskForDepth(tx, taskId, depth);
+  return requireTaskForDepthRow(rows, taskId);
+}
+
+/**
+ * Map the rows of a depth-projected task fetch to {@link TaskFull},
+ * failing loudly when the task vanished between the access gate and the
+ * row read. Shared by {@link getTaskForDepthTx} and the batch read path
+ * in `lib/context/_core/bundle.ts`.
+ *
+ * @param rows - Raw rows from `fetchTaskForDepth` / `taskForDepthStmt`.
+ * @param taskId - UUID of the task, for the error message.
+ * @returns The mapped {@link TaskFull}.
+ * @throws Error when no row is present despite a passing access gate.
+ */
+export function requireTaskForDepthRow(
+  rows: TaskFullRawRow[],
+  taskId: string,
+): TaskFull {
   if (rows.length === 0) {
     throw new Error(
       `getTaskForDepth: task ${taskId} disappeared after access check`,
@@ -1666,6 +1684,85 @@ export async function fetchEdgeNotesByTarget(
   return map;
 }
 
+/** Row shape shared by the two edge-note batch statements. */
+type EdgeNoteRow = { taskId: string; note: string };
+
+/**
+ * SQL expression deriving a task's project id from its own row, so a batch
+ * statement keyed only on `taskId` keeps the cross-project defense-in-depth
+ * filter without waiting for the task row to be read first.
+ *
+ * @param taskId - UUID of the task whose project scopes the read.
+ * @returns Scalar-subquery SQL fragment.
+ */
+function projectScopeOf(taskId: string) {
+  return sql`(SELECT project_id FROM ${tasks} WHERE id = ${taskId})`;
+}
+
+/**
+ * {@link fetchEdgeNotesBySource} as a lazy batch statement. The connected
+ * task's project filter derives from the source task's own row. Build the
+ * note map from the rows with {@link mapEdgeNoteRows}.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the source task.
+ * @returns Lazy select yielding `{ taskId, note }` rows keyed by
+ *   prerequisite id.
+ */
+export function edgeNotesBySourceStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({ taskId: taskEdges.targetTaskId, note: taskEdges.note })
+    .from(taskEdges)
+    .innerJoin(tasks, eq(tasks.id, taskEdges.targetTaskId))
+    .where(
+      and(
+        eq(taskEdges.sourceTaskId, taskId),
+        eq(taskEdges.edgeType, "depends_on"),
+        eq(tasks.projectId, projectScopeOf(taskId)),
+      ),
+    );
+}
+
+/**
+ * {@link fetchEdgeNotesByTarget} as a lazy batch statement. See
+ * {@link edgeNotesBySourceStmt}.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the target task.
+ * @returns Lazy select yielding `{ taskId, note }` rows keyed by
+ *   dependent id.
+ */
+export function edgeNotesByTargetStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({ taskId: taskEdges.sourceTaskId, note: taskEdges.note })
+    .from(taskEdges)
+    .innerJoin(tasks, eq(tasks.id, taskEdges.sourceTaskId))
+    .where(
+      and(
+        eq(taskEdges.targetTaskId, taskId),
+        eq(taskEdges.edgeType, "depends_on"),
+        eq(tasks.projectId, projectScopeOf(taskId)),
+      ),
+    );
+}
+
+/**
+ * Fold edge-note rows into the connected-task-id → note map the context
+ * cores consume, dropping empty notes.
+ *
+ * @param rows - Rows from an edge-note batch statement.
+ * @returns Map of connected task id to non-empty note.
+ */
+export function mapEdgeNoteRows(
+  rows: readonly EdgeNoteRow[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const r of rows) {
+    if (r.note) map.set(r.taskId, r.note);
+  }
+  return map;
+}
+
 // ---------------------------------------------------------------------------
 // Batch task summaries — internal helper
 // ---------------------------------------------------------------------------
@@ -1704,6 +1801,68 @@ export async function fetchTaskSummaries(
     title: r.title,
     status: r.status,
     description: r.description,
+  }));
+}
+
+/** Row shape shared by the summary / dependency-task batch statements. */
+type TaskSummaryRow = {
+  id: string;
+  title: string;
+  status: string;
+  description?: string;
+  executionRecord?: string | null;
+  sequenceNumber: number;
+  identifier: string;
+};
+
+/**
+ * {@link fetchTaskSummaries} as a lazy batch statement. `ANY` over a typed
+ * uuid array keeps the statement valid for an empty id list (zero rows),
+ * unlike `IN ()`. Map the rows with {@link mapTaskSummaryRows}.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project the tasks belong to.
+ * @param taskIds - UUIDs of the tasks to summarize.
+ * @returns Lazy select yielding summary rows.
+ */
+export function taskSummariesStmt(
+  read: ReadConn,
+  projectId: string,
+  taskIds: readonly string[],
+) {
+  return read
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      description: tasks.description,
+      sequenceNumber: tasks.sequenceNumber,
+      identifier: projects.identifier,
+    })
+    .from(tasks)
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        sql`${tasks.id} = ANY(${uuidArray(taskIds)})`,
+      ),
+    );
+}
+
+/**
+ * Map summary rows to the downstream-summary projection the context cores
+ * consume, composing each `taskRef`.
+ *
+ * @param rows - Rows from {@link taskSummariesStmt}.
+ * @returns Task summaries with composed `taskRef`.
+ */
+export function mapTaskSummaryRows(rows: readonly TaskSummaryRow[]) {
+  return rows.map((r) => ({
+    id: r.id,
+    taskRef: composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber),
+    title: r.title,
+    status: r.status,
+    description: r.description ?? "",
   }));
 }
 
@@ -1746,6 +1905,59 @@ export async function fetchDependencyTasks(
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
     .where(and(eq(tasks.projectId, projectId), sql`${tasks.id} IN ${taskIds}`));
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    status: r.status,
+    executionRecord: r.executionRecord,
+    taskRef: composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber),
+  }));
+}
+
+/**
+ * {@link fetchDependencyTasks} as a lazy batch statement. `ANY` over a
+ * typed uuid array keeps the statement valid for an empty id list. Map the
+ * rows with {@link mapDependencyTaskRows}.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project the dependency tasks belong to.
+ * @param taskIds - UUIDs of the dependency tasks.
+ * @returns Lazy select yielding dependency-task rows.
+ */
+export function dependencyTasksStmt(
+  read: ReadConn,
+  projectId: string,
+  taskIds: readonly string[],
+) {
+  return read
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      executionRecord: tasks.executionRecord,
+      sequenceNumber: tasks.sequenceNumber,
+      identifier: projects.identifier,
+    })
+    .from(tasks)
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        sql`${tasks.id} = ANY(${uuidArray(taskIds)})`,
+      ),
+    );
+}
+
+/**
+ * Map dependency-task rows to {@link DependencyTaskInfo}, composing each
+ * `taskRef`.
+ *
+ * @param rows - Rows from {@link dependencyTasksStmt}.
+ * @returns Dep-task projections including `executionRecord` and `taskRef`.
+ */
+export function mapDependencyTaskRows(
+  rows: readonly (TaskSummaryRow & { executionRecord: string | null })[],
+): DependencyTaskInfo[] {
   return rows.map((r) => ({
     id: r.id,
     title: r.title,

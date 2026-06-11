@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
-import { executeRaw, type Conn } from "@/lib/db/raw";
+import { executeRaw, type Conn, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges } from "@/lib/db/schema";
 import {
@@ -425,6 +425,30 @@ export async function getProjectHeader(
     .where(eq(projects.id, projectId))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * A task's parent-project header (plus the project id) as a lazy batch
+ * statement keyed on the task id, so it can ride the same batch as the
+ * task read. The id column lets the context bundle derive the ancestor
+ * chain from this row without a separate query.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task whose parent project to read.
+ * @returns Lazy select yielding zero or one header rows.
+ */
+export function projectHeaderByTaskStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({
+      id: projects.id,
+      title: projects.title,
+      description: projects.description,
+      identifier: projects.identifier,
+    })
+    .from(projects)
+    .innerJoin(tasks, eq(tasks.projectId, projects.id))
+    .where(eq(tasks.id, taskId))
+    .limit(1);
 }
 
 // ---------------------------------------------------------------------------

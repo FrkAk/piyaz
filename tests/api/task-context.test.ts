@@ -7,9 +7,7 @@ import {
 } from "@/tests/context/fixtures";
 import { superuserPool } from "@/tests/setup/global";
 import { GET } from "@/app/api/task/[taskId]/context/route";
-import * as taskData from "@/lib/data/task";
-import * as effectiveDeps from "@/lib/graph/effective-deps";
-import * as projectData from "@/lib/data/project";
+import * as rls from "@/lib/db/rls";
 import { makeAuthContext } from "@/lib/auth/context";
 import { buildAgentContext } from "@/lib/context/_core/agent";
 import { buildPlanningContext } from "@/lib/context/_core/planning";
@@ -147,23 +145,20 @@ test("GET /api/task/[id]/context — golden bundle for a fully-populated task", 
   }).toMatchSnapshot();
 });
 
-test("GET /api/task/[id]/context — one full-task read and one traversal", async () => {
+test("GET /api/task/[id]/context — two read batches resolve the bundle", async () => {
   const fx = await seedRichContextTask("ctx-counts");
 
-  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
-  const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
+  const readSpy = spyOn(rls, "withUserContextRead");
 
   try {
     await fetchBundle(fx.taskId, fx.userId);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(traversalSpy).toHaveBeenCalledTimes(1);
+    expect(readSpy).toHaveBeenCalledTimes(2);
   } finally {
-    fetchSpy.mockRestore();
-    traversalSpy.mockRestore();
+    readSpy.mockRestore();
   }
 });
 
-test("GET /api/task/[id]/context — validator path skips the full-task read", async () => {
+test("GET /api/task/[id]/context — validator path issues no read batches", async () => {
   const fx = await seedRichContextTask("ctx-validator");
 
   setSession({ user: { id: fx.userId } });
@@ -174,8 +169,7 @@ test("GET /api/task/[id]/context — validator path skips the full-task read", a
   const etag = first.headers.get("ETag");
   expect(etag).toBeTruthy();
 
-  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
-  const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
+  const readSpy = spyOn(rls, "withUserContextRead");
 
   try {
     const conditional = await GET(
@@ -185,70 +179,59 @@ test("GET /api/task/[id]/context — validator path skips the full-task read", a
       { params: Promise.resolve({ taskId: fx.taskId }) },
     );
     expect(conditional.status).toBe(304);
-    expect(fetchSpy).toHaveBeenCalledTimes(0);
-    expect(traversalSpy).toHaveBeenCalledTimes(0);
+    expect(readSpy).toHaveBeenCalledTimes(0);
   } finally {
-    fetchSpy.mockRestore();
-    traversalSpy.mockRestore();
+    readSpy.mockRestore();
   }
 });
 
-test("MCP buildWorkingContext fetches per depth: no dependency closure", async () => {
+test("MCP buildWorkingContext resolves without the dependency closure", async () => {
   const fx = await seedRichContextTask("ctx-mcp-working");
   const ctx = makeAuthContext(fx.userId);
 
-  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
-  const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
-  const projectSpy = spyOn(projectData, "getProjectHeader");
+  const readSpy = spyOn(rls, "withUserContextRead");
+  const interactiveSpy = spyOn(rls, "withUserContext");
 
   try {
     await buildWorkingContext(ctx, fx.taskId);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(traversalSpy).toHaveBeenCalledTimes(0);
-    expect(projectSpy).toHaveBeenCalledTimes(0);
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(interactiveSpy).toHaveBeenCalledTimes(0);
   } finally {
-    fetchSpy.mockRestore();
-    traversalSpy.mockRestore();
-    projectSpy.mockRestore();
+    readSpy.mockRestore();
+    interactiveSpy.mockRestore();
   }
 });
 
-test("MCP buildAgentContext fetches per depth: closure but no project header", async () => {
+test("MCP buildAgentContext resolves in two read batches", async () => {
   const fx = await seedRichContextTask("ctx-mcp-agent");
   const ctx = makeAuthContext(fx.userId);
 
-  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
-  const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
-  const projectSpy = spyOn(projectData, "getProjectHeader");
+  const readSpy = spyOn(rls, "withUserContextRead");
+  const interactiveSpy = spyOn(rls, "withUserContext");
 
   try {
     await buildAgentContext(ctx, fx.taskId);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(traversalSpy).toHaveBeenCalledTimes(1);
-    expect(projectSpy).toHaveBeenCalledTimes(0);
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(interactiveSpy).toHaveBeenCalledTimes(0);
   } finally {
-    fetchSpy.mockRestore();
-    traversalSpy.mockRestore();
-    projectSpy.mockRestore();
+    readSpy.mockRestore();
+    interactiveSpy.mockRestore();
   }
 });
 
-test("MCP buildPlanningContext fetches per depth: closure plus project header", async () => {
+test("MCP buildPlanningContext resolves in two read batches", async () => {
   const fx = await seedRichContextTask("ctx-mcp-planning");
   const ctx = makeAuthContext(fx.userId);
 
-  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
-  const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
-  const projectSpy = spyOn(projectData, "getProjectHeader");
+  const readSpy = spyOn(rls, "withUserContextRead");
+  const interactiveSpy = spyOn(rls, "withUserContext");
 
   try {
     await buildPlanningContext(ctx, fx.taskId);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(traversalSpy).toHaveBeenCalledTimes(1);
-    expect(projectSpy).toHaveBeenCalledTimes(1);
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(interactiveSpy).toHaveBeenCalledTimes(0);
   } finally {
-    fetchSpy.mockRestore();
-    traversalSpy.mockRestore();
-    projectSpy.mockRestore();
+    readSpy.mockRestore();
+    interactiveSpy.mockRestore();
   }
 });

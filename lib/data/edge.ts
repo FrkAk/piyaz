@@ -1,7 +1,7 @@
 import "server-only";
 
 import { and, eq, or, sql } from "drizzle-orm";
-import type { Conn } from "@/lib/db/raw";
+import { uuidArray, type Conn, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges, type NewTaskEdge } from "@/lib/db/schema";
 import type { EdgeType, HistoryEntry } from "@/lib/types";
@@ -151,37 +151,135 @@ export async function getTaskEdgesDetailedTx(
       ),
     );
 
-  const idsToFetch = new Set<string>();
-  for (const edge of edges) {
-    const isOutgoing = edge.sourceTaskId === taskId;
-    idsToFetch.add(isOutgoing ? edge.targetTaskId : edge.sourceTaskId);
-  }
+  const ids = connectedTaskIds(taskId, edges);
+  const taskRows =
+    ids.length > 0
+      ? await tx
+          .select({
+            id: tasks.id,
+            title: tasks.title,
+            status: tasks.status,
+            sequenceNumber: tasks.sequenceNumber,
+            identifier: projects.identifier,
+          })
+          .from(tasks)
+          .innerJoin(projects, eq(tasks.projectId, projects.id))
+          .where(sql`${tasks.id} IN ${ids}`)
+      : [];
 
+  return assembleDetailedEdges(taskId, edges, taskRows);
+}
+
+/** Edge columns the detailed-edge assembly reads. */
+type EdgeRow = {
+  id: string;
+  sourceTaskId: string;
+  targetTaskId: string;
+  edgeType: EdgeType;
+  note: string;
+};
+
+/** Connected-task projection consumed by {@link assembleDetailedEdges}. */
+type ConnectedTaskRow = {
+  id: string;
+  title: string;
+  status: string;
+  sequenceNumber: number;
+  identifier: string;
+};
+
+/**
+ * Distinct opposite-endpoint task ids for a task's edges.
+ *
+ * @param taskId - UUID of the anchor task.
+ * @param edges - Edge rows touching the anchor.
+ * @returns Connected task ids, deduplicated.
+ */
+export function connectedTaskIds(
+  taskId: string,
+  edges: readonly EdgeRow[],
+): string[] {
+  const ids = new Set<string>();
+  for (const edge of edges) {
+    ids.add(
+      edge.sourceTaskId === taskId ? edge.targetTaskId : edge.sourceTaskId,
+    );
+  }
+  return [...ids];
+}
+
+/**
+ * All edges touching a task, as a lazy batch statement. Pair with
+ * {@link connectedTaskInfoStmt} in a follow-up batch and assemble via
+ * {@link assembleDetailedEdges}.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task (matched on either endpoint).
+ * @returns Lazy select yielding full edge rows.
+ */
+export function taskEdgesStmt(read: ReadConn, taskId: string) {
+  return read
+    .select()
+    .from(taskEdges)
+    .where(
+      or(
+        eq(taskEdges.sourceTaskId, taskId),
+        eq(taskEdges.targetTaskId, taskId),
+      ),
+    );
+}
+
+/**
+ * Connected-task detail rows for an id list, as a lazy batch statement.
+ * `ANY` over a typed uuid array keeps the statement valid for an empty
+ * id list.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskIds - Connected task ids from {@link connectedTaskIds}.
+ * @returns Lazy select yielding {@link ConnectedTaskRow}s.
+ */
+export function connectedTaskInfoStmt(
+  read: ReadConn,
+  taskIds: readonly string[],
+) {
+  return read
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      sequenceNumber: tasks.sequenceNumber,
+      identifier: projects.identifier,
+    })
+    .from(tasks)
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(sql`${tasks.id} = ANY(${uuidArray(taskIds)})`);
+}
+
+/**
+ * Join edge rows with their connected-task details into the
+ * {@link DetailedEdge} projection. Edges whose opposite endpoint is not in
+ * `taskRows` (RLS-invisible) are dropped, matching the interactive path.
+ *
+ * @param taskId - UUID of the anchor task.
+ * @param edges - Edge rows touching the anchor.
+ * @param taskRows - Connected-task detail rows.
+ * @returns Detailed edges with direction and connected-task info.
+ */
+export function assembleDetailedEdges(
+  taskId: string,
+  edges: readonly EdgeRow[],
+  taskRows: readonly ConnectedTaskRow[],
+): DetailedEdge[] {
   const taskInfoMap = new Map<
     string,
     { taskRef: string; title: string; status: string }
   >();
-
-  if (idsToFetch.size > 0) {
-    const ids = [...idsToFetch];
-    const taskRows = await tx
-      .select({
-        id: tasks.id,
-        title: tasks.title,
-        status: tasks.status,
-        sequenceNumber: tasks.sequenceNumber,
-        identifier: projects.identifier,
-      })
-      .from(tasks)
-      .innerJoin(projects, eq(tasks.projectId, projects.id))
-      .where(sql`${tasks.id} IN ${ids}`);
-    for (const t of taskRows) {
-      taskInfoMap.set(t.id, {
-        taskRef: composeTaskRef(asIdentifier(t.identifier), t.sequenceNumber),
-        title: t.title,
-        status: t.status,
-      });
-    }
+  for (const t of taskRows) {
+    taskInfoMap.set(t.id, {
+      taskRef: composeTaskRef(asIdentifier(t.identifier), t.sequenceNumber),
+      title: t.title,
+      status: t.status,
+    });
   }
 
   return edges

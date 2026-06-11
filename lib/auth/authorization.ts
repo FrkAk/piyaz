@@ -230,3 +230,38 @@ export async function assertTaskAccessTx(
   if (!task) throw new ForbiddenError("Forbidden", "task", taskId);
   return task;
 }
+
+/**
+ * Reject a malformed task id before any statement is built. The batch read
+ * path counterpart of the `isUuid` pre-check inside
+ * {@link assertTaskAccessTx}: a non-UUID id must surface as a 404-shaped
+ * ForbiddenError, not as a Postgres `22P02` cast failure mid-batch.
+ *
+ * @param taskId - Candidate task id from the caller.
+ * @throws ForbiddenError when the id is not UUID-shaped.
+ */
+export function assertValidTaskId(taskId: string): void {
+  if (!isUuid(taskId)) {
+    throw new ForbiddenError("Forbidden", "task", taskId);
+  }
+}
+
+/**
+ * Evaluate the access-gate rows returned by a `taskAccessGateStmt` batch
+ * statement. The batch read path counterpart of {@link assertTaskAccessTx}:
+ * RLS already filtered invisible rows, so an empty result means missing
+ * task or cross-team access — both 404-shaped.
+ *
+ * @param taskId - UUID of the task the gate statement targeted.
+ * @param rows - Gate rows from the batch result.
+ * @returns The slim gate row for the task.
+ * @throws ForbiddenError when no gate row is visible to the caller.
+ */
+export function assertTaskGateRows(
+  taskId: string,
+  rows: readonly TaskAccessGate[],
+): TaskAccessGate {
+  const row = rows[0];
+  if (!row) throw new ForbiddenError("Forbidden", "task", taskId);
+  return row;
+}

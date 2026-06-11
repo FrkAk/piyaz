@@ -9,7 +9,7 @@
 import "server-only";
 import { eq, sql } from "drizzle-orm";
 import { projects, tasks, type Project, type Task } from "@/lib/db/schema";
-import { executeRaw } from "@/lib/db/raw";
+import { executeRaw, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import type { ProjectListOrganization } from "@/lib/data/views";
 
@@ -135,4 +135,29 @@ export async function findTaskAccessTx(
     .where(eq(tasks.id, taskId))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * Build the task access-gate read as a lazy batch statement. Same
+ * projection as {@link findTaskAccessTx}; RLS scopes visibility, so an
+ * empty result post-batch means missing task or cross-team access.
+ * Evaluate the rows with `assertTaskGateRows`.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task.
+ * @returns Lazy select statement yielding zero or one gate rows.
+ */
+export function taskAccessGateStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({
+      id: tasks.id,
+      projectId: tasks.projectId,
+      title: tasks.title,
+      status: tasks.status,
+      files: tasks.files,
+      updatedAt: tasks.updatedAt,
+    })
+    .from(tasks)
+    .where(eq(tasks.id, taskId))
+    .limit(1);
 }
