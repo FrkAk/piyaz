@@ -463,7 +463,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
   if (isFullyEmpty) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="mx-auto w-full max-w-[1080px] px-8 pt-7">
+        <div className="mx-auto w-full max-w-[1080px] px-4 pt-7 sm:px-6 lg:px-8">
           <MyTasksHeader
             totalCount={0}
             viewCounts={countByState([])}
@@ -473,7 +473,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
           />
         </div>
         <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1080px] px-8 pb-20">
+          <div className="mx-auto w-full max-w-[1080px] px-4 pb-20 sm:px-6 lg:px-8">
             <MyTasksEmpty />
           </div>
         </div>
@@ -483,7 +483,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mx-auto w-full max-w-[1080px] shrink-0 overflow-y-auto px-8 pt-7 [scrollbar-gutter:stable]">
+      <div className="mx-auto w-full max-w-[1080px] shrink-0 overflow-y-auto px-4 pt-7 sm:px-6 lg:px-8 [scrollbar-gutter:stable]">
         {errorCode && <ErrorBanner code={errorCode} />}
         <MyTasksHeader
           totalCount={rows.length}
@@ -529,7 +529,7 @@ export function MyTasksClient({ initialError = null }: MyTasksClientProps) {
         ref={setScrollEl}
         className="flex-1 overflow-y-auto [scrollbar-gutter:stable]"
       >
-        <div className="mx-auto w-full max-w-[1080px] px-8 pb-20">
+        <div className="mx-auto w-full max-w-[1080px] px-4 pb-20 sm:px-6 lg:px-8">
           {displayGroups.length === 0 ? (
             <NoMatch onReset={handleResetFromNoMatch} />
           ) : (

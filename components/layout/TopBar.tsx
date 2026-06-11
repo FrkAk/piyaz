@@ -4,8 +4,14 @@ import { usePathname } from "next/navigation";
 import { useTheme } from "@/components/layout/ThemeProvider";
 import { ProjectBreadcrumb } from "@/components/layout/ProjectBreadcrumb";
 import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
+import { useMobileNav } from "@/components/layout/MobileNav";
 import { Kbd } from "@/components/shared/Kbd";
-import { IconMoon, IconSearch, IconSun } from "@/components/shared/icons";
+import {
+  IconMenu,
+  IconMoon,
+  IconSearch,
+  IconSun,
+} from "@/components/shared/icons";
 
 interface TopBarProps {
   /** @param projectName - Optional project crumb label. When set, renders the project breadcrumb pill. */
@@ -24,9 +30,10 @@ interface TopBarProps {
 
 /**
  * In-flow top bar that sits at the head of the main column inside
- * {@link AppShell}. Renders the workspace breadcrumb (when available),
- * an optional page or project crumb, and the right-side action cluster
- * (Jump, theme toggle, avatar).
+ * {@link AppShell}. Renders a hamburger that opens the mobile nav drawer
+ * (below `lg` only), the workspace breadcrumb (when available), an optional
+ * page or project crumb, and the right-side action cluster (Jump, theme
+ * toggle, avatar).
  *
  * @param props - TopBar configuration.
  * @returns Sticky header element styled per the design spec.
@@ -41,6 +48,7 @@ export function TopBar({
 }: TopBarProps) {
   const { theme, setTheme } = useTheme();
   const { openPalette } = useCommandPalette();
+  const { openNav } = useMobileNav();
   const pathname = usePathname() ?? "/";
 
   const derivedPageLabel = derivePageLabel({
@@ -59,6 +67,15 @@ export function TopBar({
       className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-base/80 px-3 backdrop-blur-md"
       style={{ height: "var(--topbar-h)" }}
     >
+      <button
+        type="button"
+        onClick={openNav}
+        aria-label="Open navigation"
+        title="Open navigation"
+        className="inline-flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary lg:hidden"
+      >
+        <IconMenu size={14} />
+      </button>
       <nav
         aria-label="Breadcrumb"
         className="flex min-w-0 flex-1 items-center gap-1.5"

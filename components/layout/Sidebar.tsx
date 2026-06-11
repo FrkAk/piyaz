@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { signOut } from "@/lib/auth-client";
 import { Avatar } from "@/components/shared/Avatar";
 import { Kbd } from "@/components/shared/Kbd";
@@ -78,28 +78,11 @@ export function Sidebar({
   projects,
   teams,
 }: SidebarProps) {
-  const [openProjects, setOpenProjects] = useState(true);
   const pathname = usePathname() ?? "/";
   const activeProjectId = pathname.match(/^\/project\/([^/]+)/)?.[1];
   const myTasksActive = pathname.startsWith("/my-tasks");
   const { collapsed, toggle } = useSidebarCollapse();
   const { openPalette } = useCommandPalette();
-
-  const projectGroups = useMemo(
-    () => groupProjectsByTeam(projects, teams),
-    [projects, teams],
-  );
-  const [collapsedTeams, setCollapsedTeams] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const toggleTeam = useCallback((teamKey: string) => {
-    setCollapsedTeams((prev) => {
-      const next = new Set(prev);
-      if (next.has(teamKey)) next.delete(teamKey);
-      else next.add(teamKey);
-      return next;
-    });
-  }, []);
 
   return (
     <aside
@@ -122,117 +105,182 @@ export function Sidebar({
           onOpenPalette={openPalette}
         />
       ) : (
-        <>
-          <div className="mx-2 mt-2 mb-1 flex items-center gap-1">
-            <Link
-              href="/"
-              title={`${workspaceLabel} — workspace home`}
-              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-hover"
-            >
-              <BrandMark />
-              <div className="min-w-0 flex-1 text-[13px] font-semibold leading-tight text-text-primary">
-                mymir
-              </div>
-            </Link>
-            <button
-              type="button"
-              onClick={toggle}
-              aria-label="Collapse sidebar"
-              title="Collapse sidebar"
-              className="inline-flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
-            >
-              <IconPanelLeft size={13} />
-            </button>
-          </div>
-
-          <div className="px-2 pb-2 pt-1">
-            <button
-              type="button"
-              onClick={openPalette}
-              aria-label="Search or jump (⌘K)"
-              title="Search or jump (⌘K)"
-              className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[12px] text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
-            >
-              <IconSearch size={12} />
-              <span className="flex-1 text-left">Search or jump</span>
-              <Kbd dim>⌘K</Kbd>
-            </button>
-          </div>
-
-          <nav className="flex flex-col gap-px px-2">
-            <NavItem
-              icon={<IconInbox size={12} />}
-              label="Inbox"
-              disabledHint="Coming soon"
-            />
-            <NavItem
-              icon={<IconUser size={12} />}
-              label="My tasks"
-              href="/my-tasks"
-              active={myTasksActive}
-            />
-          </nav>
-
-          <div className="flex items-center gap-1.5 px-3 pb-1.5 pt-4">
-            <button
-              type="button"
-              onClick={() => setOpenProjects((v) => !v)}
-              className="flex cursor-pointer items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-[0.10em] text-text-muted transition-colors hover:text-text-secondary"
-            >
-              <span
-                className="inline-flex transition-transform duration-150"
-                style={{
-                  transform: openProjects ? "rotate(90deg)" : undefined,
-                }}
-              >
-                <IconChevronRight size={10} />
-              </span>
-              Projects
-            </button>
-          </div>
-
-          {openProjects && (
-            <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-2">
-              {projects.length === 0 ? (
-                <p className="px-2 py-1 text-[11px] italic text-text-muted">
-                  No projects yet
-                </p>
-              ) : projectGroups.length === 1 ? (
-                projectGroups[0].projects.map((p) => (
-                  <ProjectNavItem
-                    key={p.id}
-                    project={p}
-                    color={projectColor(p.identifier)}
-                    active={p.id === activeProjectId}
-                  />
-                ))
-              ) : (
-                projectGroups.map((group, idx) => {
-                  const teamKey = group.team?.id ?? `__no-team__-${idx}`;
-                  return (
-                    <ProjectTeamGroup
-                      key={teamKey}
-                      group={group}
-                      activeProjectId={activeProjectId}
-                      showSpacer={idx > 0}
-                      collapsed={collapsedTeams.has(teamKey)}
-                      onToggle={() => toggleTeam(teamKey)}
-                    />
-                  );
-                })
-              )}
-            </div>
-          )}
-
-          {!openProjects && <div className="flex-1" />}
-
-          <UserFooter
-            user={user}
-            settingsActive={pathname.startsWith("/settings")}
-          />
-        </>
+        <SidebarPanel
+          user={user}
+          workspaceLabel={workspaceLabel}
+          projects={projects}
+          teams={teams}
+          dismissLabel="Collapse sidebar"
+          dismissIcon={<IconPanelLeft size={13} />}
+          onDismiss={toggle}
+        />
       )}
     </aside>
+  );
+}
+
+interface SidebarPanelProps extends SidebarProps {
+  /** Accessible label + tooltip for the header dismiss button. */
+  dismissLabel: string;
+  /** Icon rendered inside the header dismiss button. */
+  dismissIcon: ReactNode;
+  /** Called when the dismiss button is clicked — collapse on desktop, close on mobile. */
+  onDismiss: () => void;
+  /** Optional override for the search row — defaults to the command-palette context opener. */
+  onOpenPalette?: () => void;
+}
+
+/**
+ * Expanded sidebar content — brand row, search jump, top-level nav, projects
+ * list, and user footer. Shared between the desktop sidebar (dismiss =
+ * collapse) and the mobile nav drawer (dismiss = close).
+ *
+ * @param props - Sidebar data plus dismiss-button configuration.
+ * @returns Full-height column of sidebar rows.
+ */
+export function SidebarPanel({
+  user,
+  workspaceLabel,
+  projects,
+  teams,
+  dismissLabel,
+  dismissIcon,
+  onDismiss,
+  onOpenPalette,
+}: SidebarPanelProps) {
+  const [openProjects, setOpenProjects] = useState(true);
+  const pathname = usePathname() ?? "/";
+  const activeProjectId = pathname.match(/^\/project\/([^/]+)/)?.[1];
+  const myTasksActive = pathname.startsWith("/my-tasks");
+  const { openPalette } = useCommandPalette();
+  const handleOpenPalette = onOpenPalette ?? openPalette;
+
+  const projectGroups = useMemo(
+    () => groupProjectsByTeam(projects, teams),
+    [projects, teams],
+  );
+  const [collapsedTeams, setCollapsedTeams] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleTeam = useCallback((teamKey: string) => {
+    setCollapsedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamKey)) next.delete(teamKey);
+      else next.add(teamKey);
+      return next;
+    });
+  }, []);
+
+  return (
+    <>
+      <div className="mx-2 mt-2 mb-1 flex items-center gap-1">
+        <Link
+          href="/"
+          title={`${workspaceLabel} — workspace home`}
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-hover"
+        >
+          <BrandMark />
+          <div className="min-w-0 flex-1 text-[13px] font-semibold leading-tight text-text-primary">
+            mymir
+          </div>
+        </Link>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label={dismissLabel}
+          title={dismissLabel}
+          className="inline-flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
+        >
+          {dismissIcon}
+        </button>
+      </div>
+
+      <div className="px-2 pb-2 pt-1">
+        <button
+          type="button"
+          onClick={handleOpenPalette}
+          aria-label="Search or jump (⌘K)"
+          title="Search or jump (⌘K)"
+          className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[12px] text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
+        >
+          <IconSearch size={12} />
+          <span className="flex-1 text-left">Search or jump</span>
+          <Kbd dim>⌘K</Kbd>
+        </button>
+      </div>
+
+      <nav className="flex flex-col gap-px px-2">
+        <NavItem
+          icon={<IconInbox size={12} />}
+          label="Inbox"
+          disabledHint="Coming soon"
+        />
+        <NavItem
+          icon={<IconUser size={12} />}
+          label="My tasks"
+          href="/my-tasks"
+          active={myTasksActive}
+        />
+      </nav>
+
+      <div className="flex items-center gap-1.5 px-3 pb-1.5 pt-4">
+        <button
+          type="button"
+          onClick={() => setOpenProjects((v) => !v)}
+          className="flex cursor-pointer items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-[0.10em] text-text-muted transition-colors hover:text-text-secondary"
+        >
+          <span
+            className="inline-flex transition-transform duration-150"
+            style={{
+              transform: openProjects ? "rotate(90deg)" : undefined,
+            }}
+          >
+            <IconChevronRight size={10} />
+          </span>
+          Projects
+        </button>
+      </div>
+
+      {openProjects && (
+        <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-2">
+          {projects.length === 0 ? (
+            <p className="px-2 py-1 text-[11px] italic text-text-muted">
+              No projects yet
+            </p>
+          ) : projectGroups.length === 1 ? (
+            projectGroups[0].projects.map((p) => (
+              <ProjectNavItem
+                key={p.id}
+                project={p}
+                color={projectColor(p.identifier)}
+                active={p.id === activeProjectId}
+              />
+            ))
+          ) : (
+            projectGroups.map((group, idx) => {
+              const teamKey = group.team?.id ?? `__no-team__-${idx}`;
+              return (
+                <ProjectTeamGroup
+                  key={teamKey}
+                  group={group}
+                  activeProjectId={activeProjectId}
+                  showSpacer={idx > 0}
+                  collapsed={collapsedTeams.has(teamKey)}
+                  onToggle={() => toggleTeam(teamKey)}
+                />
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {!openProjects && <div className="flex-1" />}
+
+      <UserFooter
+        user={user}
+        settingsActive={pathname.startsWith("/settings")}
+      />
+    </>
   );
 }
 

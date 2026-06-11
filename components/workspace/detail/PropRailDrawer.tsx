@@ -59,7 +59,7 @@ export function PropRailDrawer({
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed right-0 top-[var(--topbar-h)] z-50 flex h-[calc(var(--viewport-height)-var(--topbar-h))] flex-col border-l border-border bg-base shadow-[var(--shadow-float)]"
+            className="fixed right-0 top-[var(--topbar-h)] z-50 flex h-[calc(var(--viewport-height)-var(--topbar-h))] max-w-[85vw] flex-col border-l border-border bg-base shadow-[var(--shadow-float)]"
             style={{ width: "var(--rail-w)" }}
             role="dialog"
             aria-label="Task properties"

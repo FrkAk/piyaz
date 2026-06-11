@@ -119,7 +119,7 @@ export function DetailHeader({
 
   return (
     <div className="shrink-0 bg-base">
-      <div className="mx-auto max-w-[720px] px-8 pt-5">
+      <div className="mx-auto max-w-[720px] px-4 pt-5 sm:px-6 lg:px-8">
         <div className="flex items-center gap-2.5">
           <MonoId id={taskRef} hintOnMount />
           <span className="text-text-faint">·</span>
