@@ -1,6 +1,14 @@
 import "server-only";
 
 /**
+ * Self-host builds resolve DB clients from the `globalThis` singleton when
+ * no frame is active; the unscoped-access guard in `./connection.ts` stays
+ * off. The Workers sibling exports `true`, riding the same webpack alias
+ * that selects the driver.
+ */
+export const requiresRequestScope = false;
+
+/**
  * Outcome of running a request body inside the per-request DB scope.
  * Shared shape across both deploy targets so callers compile against
  * either implementation of the `request-scope` indirection.

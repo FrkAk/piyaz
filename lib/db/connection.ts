@@ -6,6 +6,7 @@ import {
   buildServicePool,
 } from "@/lib/db/_driver";
 import type { AppDb, AuthDb } from "@/lib/db/_driver.node";
+import { requiresRequestScope } from "@/lib/db/request-scope";
 import { requestDbStore } from "./request-store";
 
 export type { AppDb, AuthDb } from "@/lib/db/_driver.node";
@@ -51,21 +52,35 @@ export interface RequestScopedDb {
   appDb: AppUserConn;
   authDb: AuthDb;
   serviceRoleDb: ServiceRoleConn;
+  /**
+   * Detached promises registered via `deferRequestWork`; the request
+   * teardown settles them before ending any pool. Optional so tests can
+   * seed minimal sentinel frames.
+   */
+  deferred?: Set<Promise<unknown>>;
 }
 
 export { requestDbStore } from "./request-store";
 
 type GlobalKey = "__mymirAppDb" | "__mymirAuthDb" | "__mymirServiceRoleDb";
 
+type RoleKey = "appDb" | "authDb" | "serviceRoleDb";
+
 /**
  * Resolve the active Drizzle client for a role.
  *
- * The {@link requestDbStore} ALS frame is consulted first. On Cloudflare
- * Workers (`DEPLOY_TARGET=cloudflare`) it is the ONLY source: pools are
- * built per request by `withRequestDb` (`lib/db/request-scope.workers.ts`)
- * and ended after the response body completes, so unscoped access throws
- * loudly instead of minting a Pool that would outlive its request and fire
- * WebSocket close callbacks in a dead I/O context.
+ * The {@link requestDbStore} ALS frame is consulted first. On Workers
+ * builds it is the ONLY production source: pools are built per request by
+ * `withRequestDb` (`lib/db/request-scope.workers.ts`) and ended after the
+ * response body completes, so unscoped access throws loudly instead of
+ * minting a Pool that would outlive its request and fire WebSocket close
+ * callbacks in a dead I/O context. The guard fires on two belts:
+ * {@link requiresRequestScope} from the target-aliased request-scope
+ * module (same build axis that selects the driver, so a missing wrangler
+ * var cannot silently disable it) and the `DEPLOY_TARGET` runtime var
+ * (which keeps the branch testable where the alias is absent).
+ * Development is exempt: `next dev` has no worker entry to install the
+ * frame and runs in Node, where a long-lived pool is legal.
  *
  * On self-host the frame is optional (tests inject sentinel clients via
  * `requestDbStore.run`); without one, a `globalThis`-cached singleton is
@@ -78,13 +93,15 @@ type GlobalKey = "__mymirAppDb" | "__mymirAuthDb" | "__mymirServiceRoleDb";
  * @throws Error on Workers when no request frame is active.
  */
 function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
-  key: keyof RequestScopedDb,
+  key: RoleKey,
   globalKey: GlobalKey,
   builder: () => { db: TDb },
 ): TDb {
   const scoped = requestDbStore.getStore();
   if (scoped) return scoped[key] as TDb;
-  if (process.env.DEPLOY_TARGET === "cloudflare") {
+  const workersBuild =
+    requiresRequestScope || process.env.DEPLOY_TARGET === "cloudflare";
+  if (workersBuild && process.env.NODE_ENV !== "development") {
     throw new Error(
       `Unscoped DB access on Workers: "${key}" is only available inside an ` +
         "active withRequestDb frame (lib/db/request-scope.workers.ts). " +

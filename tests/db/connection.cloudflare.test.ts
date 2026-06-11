@@ -3,18 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 /**
  * Cloudflare branch of `getScopedOrGlobal` in `lib/db/connection.ts`.
  *
- * Since the B2 refactor (MYMR-165 follow-up), the Workers path uses the
- * same `globalThis`-cached singleton as self-host; the Pool is a
- * per-isolate singleton with `maxUses: 1` connections. The legacy
- * per-request ALS auto-seed has been removed.
- *
- * `requestDbStore.run(...)` still wins when an explicit ALS frame is
- * active — used by tests that inject sentinels and by any future
- * background callers that want explicit scoping.
+ * Since MYMR-216, Workers builds resolve DB clients exclusively from the
+ * per-request ALS frame seeded by `withRequestDb`; unscoped access throws
+ * outside development (covered by `tests/db/request-scope.workers.test.ts`).
+ * The frame always wins when active — used by tests that inject sentinels
+ * and by the production worker entry.
  */
 
 mock.module("@/lib/db/request-scope", () => ({
-  withRequestDb: async <T>(fn: () => Promise<T>): Promise<T> => fn(),
+  requiresRequestScope: false,
+  withRequestDb: async <T>(fn: () => Promise<T>) => ({
+    result: await fn(),
+    teardown: async () => {},
+  }),
 }));
 
 describe("getScopedOrGlobal on Cloudflare", () => {

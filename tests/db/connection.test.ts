@@ -130,8 +130,6 @@ describe("getScopedOrGlobal resolver", () => {
     expect((globalThis as GlobalCache).__mymirAppDb).toBeDefined();
   });
 
-  // TODO: cover the Cloudflare throw-on-missing-ALS-frame branch. Mutating
-  // process.env.DEPLOY_TARGET = "cloudflare" mid-suite would race other
-  // tests that load lib/db modules; see lib/db/connection.ts:getScopedOrGlobal
-  // for the guarded branch.
+  // The Cloudflare throw-on-missing-ALS-frame branch is covered by
+  // tests/db/request-scope.workers.test.ts.
 });

@@ -5,6 +5,7 @@ import {
   buildAuthPool,
   buildServicePool,
 } from "./_driver.workers";
+import type { ClosablePool, DbBundle } from "./_driver.node";
 import type {
   AppUserConn,
   RequestScopedDb,
@@ -15,7 +16,21 @@ import type { RequestDbOutcome } from "./request-scope.node";
 
 export type { RequestDbOutcome } from "./request-scope.node";
 
-/** Worker DB connection strings supplied by Cloudflare bindings. */
+/**
+ * Workers builds resolve DB clients exclusively from the request frame;
+ * the unscoped-access guard in `./connection.ts` throws without one. Rides
+ * the same webpack alias that selects the Workers driver, so the guard
+ * cannot be disabled by a missing runtime var.
+ */
+export const requiresRequestScope = true;
+
+/**
+ * Worker DB connection strings supplied by Cloudflare bindings. Fields are
+ * optional because bindings can be absent (e.g. `wrangler dev` without
+ * secrets); each pool builder falls back to its `process.env` default —
+ * populated from the same bindings under `nodejs_compat` — and throws its
+ * own role error when both sources are missing, on first use of that role.
+ */
 export interface WorkerDbUrls {
   /** Application runtime role connection string. */
   databaseUrl?: string;
@@ -25,89 +40,117 @@ export interface WorkerDbUrls {
   databaseServiceRoleUrl?: string;
 }
 
-interface ResolvedWorkerDbUrls {
-  databaseUrl: string;
-  databaseAuthUrl: string;
-  databaseServiceRoleUrl: string;
+/**
+ * Single-flight lazy accessor for one role's Drizzle client.
+ *
+ * The pool is constructed (and its URL validated) on first access and
+ * registered into `pools` for teardown; roles a request never touches
+ * build nothing, so a misconfigured binding only fails the paths that use
+ * that role and the BYPASSRLS client is not materialized on every request.
+ *
+ * @param build - Role bundle factory from the workers driver.
+ * @param pools - Append-only registry the request teardown drains.
+ * @returns Accessor returning the memoized Drizzle client.
+ */
+function lazyRole<TDb>(
+  build: () => DbBundle<TDb>,
+  pools: ClosablePool[],
+): () => TDb {
+  let db: TDb | undefined;
+  return () => {
+    if (db === undefined) {
+      const bundle = build();
+      pools.push(bundle.pool);
+      db = bundle.db;
+    }
+    return db;
+  };
 }
 
 /**
- * Validate explicit Worker DB URLs before creating any pools.
+ * Settle deferred request work, then end every pool built so far.
  *
- * @param urls - Explicit Cloudflare binding values, if supplied.
- * @returns Fully-populated URLs, or `undefined` to use driver defaults.
- * @throws Error when an explicit URL set is incomplete.
+ * Never rejects: `pool.end()` failures are logged as structured
+ * `neon_pool_teardown_error` events so the `waitUntil` chain cannot
+ * surface unhandled rejections and the error path cannot mask the
+ * request's own failure. Deferred work settles first (single pass) so
+ * detached queries finish before their pools close; pools are read after
+ * that await, picking up any pool the deferred work built.
+ *
+ * @param deferred - Promises registered via `deferRequestWork`.
+ * @param pools - Pools built for this request.
  */
-function resolveWorkerDbUrls(
-  urls?: WorkerDbUrls,
-): ResolvedWorkerDbUrls | undefined {
-  if (!urls) return undefined;
-  if (!urls.databaseUrl) {
-    throw new Error(
-      "DATABASE_URL is required for the app runtime connection (app_user role).",
-    );
+async function settleAndEnd(
+  deferred: ReadonlySet<Promise<unknown>>,
+  pools: readonly ClosablePool[],
+): Promise<void> {
+  if (deferred.size > 0) {
+    await Promise.allSettled(deferred);
   }
-  if (!urls.databaseAuthUrl) {
-    throw new Error(
-      "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
-        "(DML on neon_auth.*, no public-schema access).",
-    );
+  const results = await Promise.allSettled(pools.map((pool) => pool.end()));
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error(
+        JSON.stringify({
+          event: "neon_pool_teardown_error",
+          message:
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason),
+        }),
+      );
+    }
   }
-  if (!urls.databaseServiceRoleUrl) {
-    throw new Error(
-      "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
-    );
-  }
-  return {
-    databaseUrl: urls.databaseUrl,
-    databaseAuthUrl: urls.databaseAuthUrl,
-    databaseServiceRoleUrl: urls.databaseServiceRoleUrl,
-  };
 }
 
 /**
  * Workers implementation of the per-request DB scope.
  *
- * Builds a fresh Neon Pool per role, runs `fn` inside a `requestDbStore`
- * ALS frame so the `appDb` / `authDb` / `serviceRoleDb` proxies resolve to
- * the request's own clients, and returns a teardown that ends every pool.
- * Teardown is NOT invoked here: when to end pools depends on the response
- * body lifecycle (`scheduleRequestDbTeardown`), which only the worker
- * entry can see. If `fn` throws, the pools are ended before rethrowing so
- * a failed request cannot leak WebSocket connections.
- *
- * The teardown is memoized — the vendored pg BoundPool rejects a second
- * `end()` with "Called end on pool more than once", so repeat calls reuse
- * the first promise.
+ * Exposes lazy single-flight role accessors through a `requestDbStore` ALS
+ * frame so the `appDb` / `authDb` / `serviceRoleDb` proxies resolve to the
+ * request's own clients, building each role's Neon Pool on first access.
+ * Returns a memoized teardown that settles `deferRequestWork` promises and
+ * then ends every built pool; it never rejects (failures are logged), so
+ * the error path below cannot replace the request's own failure. Teardown
+ * is NOT invoked here: when to end pools depends on the response body
+ * lifecycle (`scheduleRequestDbTeardown`), which only the worker entry can
+ * see. If `fn` throws, teardown runs before rethrowing.
  *
  * @param fn - The request-handler body.
- * @param urls - Explicit Cloudflare binding DB URLs.
+ * @param urls - Explicit Cloudflare binding DB URLs; see {@link WorkerDbUrls}.
  * @returns The body's result plus the idempotent pool teardown.
- * @throws Whatever `fn` throws, after ending the request's pools.
- * @throws Error when an explicit URL set is incomplete.
+ * @throws Whatever `fn` throws, after the request's pools are ended.
  */
 export async function withRequestDb<T>(
   fn: () => Promise<T>,
   urls?: WorkerDbUrls,
 ): Promise<RequestDbOutcome<T>> {
-  const resolvedUrls = resolveWorkerDbUrls(urls);
-  const app = buildAppPool(resolvedUrls?.databaseUrl);
-  const auth = buildAuthPool(resolvedUrls?.databaseAuthUrl);
-  const service = buildServicePool(resolvedUrls?.databaseServiceRoleUrl);
-  const pools = [app.pool, auth.pool, service.pool];
+  const pools: ClosablePool[] = [];
+  const deferred = new Set<Promise<unknown>>();
+  const app = lazyRole(() => buildAppPool(urls?.databaseUrl), pools);
+  const auth = lazyRole(() => buildAuthPool(urls?.databaseAuthUrl), pools);
+  const service = lazyRole(
+    () => buildServicePool(urls?.databaseServiceRoleUrl),
+    pools,
+  );
 
   let ending: Promise<void> | undefined;
   const teardown = (): Promise<void> => {
-    ending ??= Promise.all(pools.map((pool) => pool.end())).then(
-      () => undefined,
-    );
+    ending ??= settleAndEnd(deferred, pools);
     return ending;
   };
 
   const frame: RequestScopedDb = {
-    appDb: app.db as AppUserConn,
-    authDb: auth.db,
-    serviceRoleDb: service.db as ServiceRoleConn,
+    get appDb() {
+      return app() as AppUserConn;
+    },
+    get authDb() {
+      return auth();
+    },
+    get serviceRoleDb() {
+      return service() as ServiceRoleConn;
+    },
+    deferred,
   };
 
   try {
@@ -119,6 +162,21 @@ export async function withRequestDb<T>(
   }
 }
 
+/** Constructor shape shared by `IdentityTransformStream` and `TransformStream`. */
+type IdentityStreamCtor = new () => {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+};
+
+/**
+ * workerd's native C++ pass-through stream when available (production),
+ * falling back to the spec `TransformStream` elsewhere (bun tests, Node).
+ * The native stream avoids per-chunk JS dispatch on every streamed byte.
+ */
+const IdentityStream: IdentityStreamCtor =
+  (globalThis as { IdentityTransformStream?: IdentityStreamCtor })
+    .IdentityTransformStream ?? (TransformStream as IdentityStreamCtor);
+
 /**
  * Schedule pool teardown for after the response is fully delivered.
  *
@@ -127,8 +185,11 @@ export async function withRequestDb<T>(
  * `openNextHandler.fetch` resolves as soon as the Response object exists —
  * RSC/HTML bodies keep streaming (and keep issuing queries) after that.
  * Ending pools at handler return would kill in-flight rendering queries,
- * so the body is piped through an identity `TransformStream` and teardown
- * runs only once the source closes or the consumer cancels.
+ * so the body is piped through an identity stream and teardown runs only
+ * once the source closes or the consumer cancels. On consumer cancel the
+ * render may still be mid-query; its rejections are logged, not surfaced —
+ * the client is gone. Every bodied response is wrapped (even ones that
+ * built no pool yet) because lazily-built pools can appear mid-stream.
  *
  * Null-body responses (204/3xx/HEAD) tear down immediately. WebSocket
  * upgrade responses (status 101 / `webSocket` set) are returned untouched
@@ -136,7 +197,8 @@ export async function withRequestDb<T>(
  * broker path behind them does not use these pools.
  *
  * @param response - Response produced inside the `withRequestDb` frame.
- * @param teardown - Idempotent pool teardown from {@link withRequestDb}.
+ * @param teardown - Idempotent, non-rejecting teardown from
+ *   {@link withRequestDb}.
  * @param waitUntil - `ctx.waitUntil` (or equivalent) to extend the request
  *   lifetime until teardown settles.
  * @returns The response to return to the client (body-wrapped when it
@@ -155,7 +217,7 @@ export function scheduleRequestDbTeardown(
     return response;
   }
 
-  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const { readable, writable } = new IdentityStream();
   const bodyDone = response.body.pipeTo(writable).catch(() => undefined);
   waitUntil(bodyDone.then(teardown));
   return new Response(readable, response);

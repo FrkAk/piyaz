@@ -24,6 +24,29 @@ export type { AppDb, AuthDb, DbBundle, ClosablePool } from "./_driver.node";
 neonConfig.poolQueryViaFetch = true;
 
 /**
+ * Disable the connect-time pipelined startup that batches the TLS handshake
+ * with the Postgres startup packet. The pipelined path produced observed
+ * production "WebSocket closed before greeting" failures when the server
+ * closed the WS between the pipelined send and its reply; the race is a
+ * connect-time window, so per-request pools (which still open a fresh WS
+ * per interactive transaction) do not remove it. Sequential startup trades
+ * ~1 RTT on WS connects for a quiet connect path; revisit with
+ * post-deploy observability evidence.
+ */
+neonConfig.pipelineConnect = false;
+
+/**
+ * Per-request Pool options. `connectionTimeoutMillis` bounds
+ * `pool.connect()` waits so an unresponsive Neon endpoint fails the request
+ * fast instead of riding the Workers 30s wall clock — and so a stuck
+ * connect cannot wedge `pool.end()` during teardown (it only settles once
+ * every client drains). 10s clears Neon cold starts where the old 5s was
+ * tight. `max` stays at the driver default: a per-request pool is already
+ * lifetime-bounded by the request.
+ */
+const POOL_OPTS = { connectionTimeoutMillis: 10_000 } as const;
+
+/**
  * Attach a Pool-level error listener so unhandled idle-client errors from
  * `pg` do not surface as `EventEmitter` uncaught events (which terminate the
  * isolate and drop every in-flight request). Logged only; the Pool recovers
@@ -81,7 +104,7 @@ export function buildAppPool(url = process.env.DATABASE_URL): DbBundle<AppDb> {
     );
   }
   const pool = attachPoolErrorLogger(
-    new NeonPool({ connectionString: url }),
+    new NeonPool({ connectionString: url, ...POOL_OPTS }),
     "app",
   );
   return {
@@ -108,7 +131,7 @@ export function buildAuthPool(
     );
   }
   const pool = attachPoolErrorLogger(
-    new NeonPool({ connectionString: url }),
+    new NeonPool({ connectionString: url, ...POOL_OPTS }),
     "auth",
   );
   return {
@@ -134,7 +157,7 @@ export function buildServicePool(
     );
   }
   const pool = attachPoolErrorLogger(
-    new NeonPool({ connectionString: url }),
+    new NeonPool({ connectionString: url, ...POOL_OPTS }),
     "service",
   );
   return {

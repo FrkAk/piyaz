@@ -43,9 +43,9 @@ export { MymirBroker };
  * `lib/realtime/broker-do.ts:30-36`).
  */
 interface WorkerEnv {
-  DATABASE_URL: string;
-  DATABASE_AUTH_URL: string;
-  DATABASE_SERVICE_ROLE_URL: string;
+  DATABASE_URL?: string;
+  DATABASE_AUTH_URL?: string;
+  DATABASE_SERVICE_ROLE_URL?: string;
   RATE_LIMIT_API?: CloudflareRateLimitBinding;
   RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
 }
