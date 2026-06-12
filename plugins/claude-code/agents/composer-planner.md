@@ -5,9 +5,8 @@ description: >
   composer orchestrator after the researcher returns. Takes the research
   brief plus the target task's planning context, writes the unabridged
   implementationPlan to Mymir, and transitions the task draft → planned in
-  the same update. Applies refinements the researcher proposed
-  (acceptance criteria rewrites, description tightening, tag adjustments)
-  via append-only updates. Returns a one-sentence confirmation. Does not
+  the same update. Fills refinement gaps the researcher missed via
+  append-only updates. Returns a one-sentence confirmation. Does not
   edit code, run tests, or open PRs. Invoked automatically by the composer
   skill; safe to call directly when the user asks "plan <taskRef> from
   the research brief" outside the composer loop.

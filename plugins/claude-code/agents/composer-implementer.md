@@ -109,11 +109,11 @@ b. Create a feature branch from the project's default branch.
    DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')
    # Fallback when gh is unavailable:
    # DEFAULT_BRANCH=$(git remote show origin | sed -n 's/.*HEAD branch: //p')
-   git checkout "$DEFAULT_BRANCH" && git pull --ff-only
+   git fetch origin "$DEFAULT_BRANCH"
    git fetch origin "+refs/heads/<branch-name>:refs/remotes/origin/<branch-name>" 2>/dev/null || true
    ```
 
-   Never hardcode `main`; projects differ. Shell state does not persist between your Bash tool calls: every later block that uses `$DEFAULT_BRANCH` re-derives it on its first line — keep those lines when you run the blocks separately.
+   Never hardcode `main`; projects differ. Never check out the default branch itself: under worktree isolation it is usually checked out in the orchestrator's tree and `git checkout` refuses (one checkout per branch across worktrees); branching from `origin/$DEFAULT_BRANCH` gives the same fresh base in both modes. Shell state does not persist between your Bash tool calls: every later block that uses `$DEFAULT_BRANCH` re-derives it on its first line — keep those lines when you run the blocks separately.
 
    **If the task branch already exists** (locally or on `origin`): do not create a new one. Verify it is yours first against the remote ref (the branch may exist only on `origin`; the bare local name will not resolve there):
 
@@ -125,7 +125,7 @@ b. Create a feature branch from the project's default branch.
 
    The commits or the PR must reference this taskRef (the `[<taskRef>]` bracket form, or the taskRef in commit subjects). Yours: check it out (`git checkout <branch-name>` when a local ref exists, else `git checkout -b <branch-name> origin/<branch-name>`) and continue from where the prior attempt stopped (retries reuse the branch). Foreign (a different task or author squatting the deterministic name): fail loudly naming the conflict — `STATUS: BLOCKED — branch collision: <branch> carries <evidence>`. Suffixes stay forbidden; never mint `<branch>-2`.
 
-   **Otherwise**: `git checkout -b <branch-name>`.
+   **Otherwise**: `git checkout -b <branch-name> "origin/$DEFAULT_BRANCH"`.
 
    **Never** append an `attempt-N` suffix and **never** nest the taskRef as its own path segment (`composer/RZE-17/attempt-1` is wrong; this is an old pattern that no longer applies). Retries reuse the same branch and append commits; git history tracks attempts, the branch name does not. One branch per task; do not stack tasks on one branch unless the user has explicitly arranged it.
 
@@ -180,7 +180,7 @@ mymir_task action='update' taskId='<id>'
   executionRecord='<per lifecycle §2>'
   decisions=['<CHOICE + WHY one-liner>', ...]
   files=['<repo-relative path>', ...]
-  acceptanceCriteria=[{id: '<id>', checked: true|false}, ...]
+  acceptanceCriteria=[{id: '<id>', text: '<criterion text, verbatim from the bundle>', checked: true|false}, ...]
   prUrl='<gh-pr-url>'
 ```
 

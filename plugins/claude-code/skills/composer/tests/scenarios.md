@@ -16,7 +16,7 @@ one-line justification citing the section you are following.
 ```
 
 `<agent file>` defaults to `skills/composer/SKILL.md` with role "the composer
-orchestrator". Scenarios 10 and 11 name a different agent file.
+orchestrator". Scenarios 10, 11, and 20 name a different agent file.
 
 ## Scenarios
 
@@ -103,7 +103,7 @@ Expected: derives that rotation 1 of 2 is already consumed (the FIX line), appen
 FAIL: resets rotations to 0, re-runs research or planning, or starts a fresh implementation.
 
 ### 17. Pipelined invalidation, file overlap (row 4)
-Scenario: "`/mymir:composer --pipelined`, backlog mode. Task A (ZIN-4) just finished propagation; its PR touched `lib/auth/session.ts`. The prefetched brief for B (ZIN-6, marked `baselinedAt: ZIN-4 in_progress`) lists `lib/auth/session.ts` under Files to touch. No new depends_on edges; B's description unchanged."
+Scenario: "`/mymir:composer --pipelined`, backlog mode. Task A (ZIN-4) just finished propagation; its PR touched `lib/auth/session.ts`. The prefetched brief for B (ZIN-6, logged as `BRIEF task=ZIN-6 baselinedAt=ZIN-4`) lists `lib/auth/session.ts` under Files to touch. No new depends_on edges; B's description unchanged."
 Expected: invalidation row 4 fires — re-dispatch the researcher on ZIN-6 with the ZIN-4 PR pointer in the open-questions dispatch slot; the stale brief never reaches the planner.
 FAIL: proceeds to plan B with the stale brief, re-picks (rows 1/5 did not fire), or counts the invalidation as a failed attempt.
 
@@ -111,3 +111,14 @@ FAIL: proceeds to plan B with the stale brief, re-picks (rows 1/5 did not fire),
 Scenario: "ZIN-14: the planner returned `STATUS: NEEDS_DECISION — the brief leaves the storage backend choice unresolved; the plan cannot proceed without it`."
 Expected: gates via `AskUserQuestion`, then re-dispatches the PLANNER (the raising agent) with the answer; no implementer dispatch; not counted as a failed attempt.
 FAIL: routes to failure handling, re-dispatches the researcher instead of the planner, or proceeds to implement.
+
+### 19. Rework fix dispatch carries the rework marker
+Scenario: "Rework mode on ZIN-16. HOTL flipped the task `in_review → in_progress`; intake returned `request-changes` with one finding re-anchored to current HEAD. You are about to dispatch the implementer."
+Expected: fix-mode dispatch prefixed with `Rework.`, carrying the PR URL and the finding verbatim.
+FAIL: a fix dispatch without the rework marker, a fresh (non-fix-mode) implementer dispatch, or refusing because the entry status is `in_progress`.
+
+### 20. Worktree branch creation
+Agent file: `agents/composer-implementer.md`; role "the composer implementer".
+Scenario: "You run worktree-isolated; the orchestrator's tree has the default branch `main` checked out. Pre-flight passed and the claim is written. The task branch does not exist locally or on origin. Reply with the exact branch-creation commands."
+Expected: derives `$DEFAULT_BRANCH`, fetches it, creates the branch with `git checkout -b <branch-name> "origin/$DEFAULT_BRANCH"`; never checks out the default branch itself.
+FAIL: runs `git checkout "$DEFAULT_BRANCH"` (refused in a worktree while it is checked out elsewhere) or hardcodes `main`.

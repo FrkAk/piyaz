@@ -23,7 +23,7 @@ Composer is glue. The heavy lifting (task selection, refinement, the Completion 
 - **`/mymir:composer rework <taskRef|pr-url>`**: rework mode. HOTL requested changes on GitHub instead of merging; composer rounds that feedback back through the fix loop.
 - **`/mymir:composer --pipelined`**: backlog mode with research-ahead. While task A is in review/fix, the researcher for the next task B runs in the background. Lookahead is hard-capped at 1. Backlog mode only — the flag is ignored in single-task and rework modes.
 
-No argument means backlog mode; `rework` plus an argument means rework mode; anything else is single-task.
+No argument means backlog mode; `--pipelined` alone is still backlog mode (with research-ahead); `rework` plus an argument means rework mode; anything else is single-task.
 
 ## Mymir operating context
 
@@ -45,7 +45,7 @@ Each is a registered plugin agent dispatched via the Task tool by `subagent_type
 | 3. Implement | `mymir:composer-implementer` | `status='in_progress'` (claim), `status='in_review'` (+ full Completion Protocol payload); in fix mode rotates `in_review → in_progress → in_review` | PR URL + one-line summary + `STATUS` line |
 | 4. Review | `mymir:review` | Nothing (read-only over Mymir) | Structured verdict + `STATUS` line |
 
-The task row is the single source of truth. The researcher refines it before planning; the planner saves the plan to it; the implementer reads everything (refined description, ACs, plan, upstream decisions) from `mymir_context depth='agent'`; the reviewer reads `mymir_context depth='review'`. Dispatch payloads stay minimal (see *Dispatch hygiene*).
+The task row is the single source of truth. The researcher refines it before planning; the planner saves the plan to it; the implementer reads everything (refined description, ACs, plan, upstream decisions) from `mymir_context depth='agent'`; the reviewer runs its own two-phase fetch (`depth='working'`, then `depth='review'`). Dispatch payloads stay minimal (see *Dispatch hygiene*).
 
 ## Status vocabulary
 
@@ -54,7 +54,7 @@ Every subagent return ends with `STATUS: <value> — <one-line reason>`. Branch 
 | STATUS | Meaning | Orchestrator reaction |
 | --- | --- | --- |
 | `DONE` | Phase output complete | Advance to the next phase |
-| `DONE_WITH_CONCERNS` | Complete, but the agent flagged doubts | Quote the concerns in the iteration log, then advance |
+| `DONE_WITH_CONCERNS` | Complete, but the agent flagged doubts | Quote the concerns in the run log, then advance |
 | `NEEDS_DECISION` | A user decision is required | Gate via `AskUserQuestion`; act on the answer |
 | `BLOCKED` | Phase cannot complete | *Failure handling* |
 
@@ -166,7 +166,7 @@ digraph composer_iteration {
 
    The gate re-runs after every fix rotation's implementer DONE.
 
-6. **Review and the fix loop.** Dispatch `mymir:review` with: `Target task: <taskRef>. PR URL: <url>. Mode: composer-phase-4. Fetch the bundle via mymir_context depth='review'.` On `STATUS: DONE`, branch on the verdict payload:
+6. **Review and the fix loop.** Dispatch `mymir:review` with: `Target task: <taskRef>. PR URL: <url>. Mode: composer-phase-4.` — nothing more; the reviewer's two-phase context fetch is its own contract, and instructing a `depth='review'` fetch up front would defeat it. On `STATUS: DONE`, branch on the verdict payload:
    - **`approve`**: go to step 7.
    - **`request-changes`**, fewer than 2 fix rotations used this task: dispatch the implementer in fix mode — `Target task: <taskRef>. Fix mode. PR: <url>. Address exactly these review findings, re-run verification, re-mark in_review:` followed by the verdict's blocking findings verbatim. On the implementer's `DONE`, re-run the CI gate (step 5), then re-dispatch the reviewer (same dispatch shape). Each fix dispatch + re-review is one rotation.
    - **`request-changes`** with 2 rotations used, or **`block`**: stop fixing. Escalate every verdict from this task to HOTL and go to step 7. `block` is never auto-fixed; review.md calibrates it as "one rotation will not land this".
@@ -215,6 +215,7 @@ One timestamped line per event, `key=value` pairs; multi-line payloads (blocking
 | `ESCALATE` | rotations exhausted or a `block` verdict goes to HOTL |
 | `SURFACED` | the final verdict is quoted to the user |
 | `PROPAGATED` | step 7 propagation completes (`edges=<n> unblocked=<refs>`) |
+| `BRIEF` | a `--pipelined` prefetch brief lands (`task=<B-ref> baselinedAt=<A-ref>`; the brief verbatim as continuations) |
 | `FAIL` | a phase returns BLOCKED (failure summary as continuation) |
 | `TASK_END` | the iteration ends (`outcome=in_review\|planned\|stuck\|skipped rotations=<n>`) |
 | `RESUME` | recovery appends this after reading the log |
@@ -246,7 +247,7 @@ Pull-based: the backend has no webhooks, and `task_links` is the only PR record.
 1. **Resolve the pair.** Given a taskRef, read `task.links` filtered to `kind='pull_request'`; given a PR URL, resolve the task from the `[<taskRef>]` bracket in the PR title/body (verify the link row agrees). When several PR links exist, prefer the newest open PR — never trust oldest-link-wins. Every downstream dispatch carries the explicit PR URL.
 2. **Reviewer-led intake.** Dispatch `mymir:review` with: `Target task: <taskRef>. PR URL: <url>. Mode: rework-intake.` The intake re-verifies the human feedback against current HEAD and returns a standard verdict.
 3. **Branch on the intake verdict.**
-   - `request-changes`: the blocking findings are the human's items with fresh file:line citations. Run *Review and the fix loop* verbatim from the fix-dispatch step, with a **fresh rotation budget of 2 for this rework invocation** (it is a new review cycle; prior runs' rotations do not count). The CI gate (step 5) applies to each rotation as usual.
+   - `request-changes`: the blocking findings are the human's items with fresh file:line citations. Run *Review and the fix loop* from the fix-dispatch step, with two changes: prefix each fix dispatch with `Rework.` (the implementer accepts an `in_progress` entry only when the dispatch says rework — HOTL may flip `in_review → in_progress` to signal rework), and use a **fresh rotation budget of 2 for this rework invocation** (it is a new review cycle; prior runs' rotations do not count). The CI gate (step 5) applies to each rotation as usual.
    - approve-shaped "nothing to rework": zero unresolved feedback. Report it and stop; the iteration is complete.
    - `BLOCKED` (PR merged/closed, task `done`/`cancelled`): report and stop; there is nothing legal to do.
 4. **Finish like any iteration.** Surface the final verdict, propagate (step 7), `TASK_END`. The run log records the whole run with `RUN_START mode=rework`.
@@ -260,7 +261,7 @@ Only under `--pipelined`, only in backlog mode, lookahead 1. The win is latency 
 - **Trigger:** dispatch researcher(B) in the background only after implementer(A) returns DONE — overlap covers A's CI gate, review, and fix rotations only. Never manage background work while A is still implementing.
 - **Pick B excluding A.** B must be ready independently of A by construction — `in_review` unblocks nothing, so the ready set already excludes A's dependents.
 - **Isolation:** researcher(B) is dispatched with worktree isolation and `run_in_background`; the orchestrator's tree and A's review baseline never move.
-- **Brief custody:** when researcher(B) returns, append the brief verbatim to the run log with a baseline marker line: `briefFor: <B-ref>, baselinedAt: <A-ref> in_progress, <timestamp>`. The transcript copy is working memory; the log copy survives compaction.
+- **Brief custody:** when researcher(B) returns, append a `BRIEF` event to the run log (`task=<B-ref> baselinedAt=<A-ref>`) with the brief verbatim as `> ` continuation lines. The transcript copy is working memory; the log copy survives compaction. The prefetch is not a `PICK`: B's `PICK` line is written when B's own iteration starts, so recovery's last-`PICK`-without-`TASK_END` rule still finds A.
 - **Gates queue.** A `NEEDS_DECISION` from researcher(B) queues until A's iteration boundary; never interrupt A's review/fix cycle to gate on B.
 - **Propagation(A) never runs while researcher(B) is in flight.** Wait for the researcher's return (or stop it) before touching edges.
 - **One motion at a time:** at most one task is ever in the `planned → in_progress → in_review` motion. B is never planned, claimed, or implemented early.

@@ -191,7 +191,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ## artifacts §2 — Tag dimensions and first-class fields
 
-Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `mymir_query type='overview'` before coining new ones.
+Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `mymir_query type='meta'` before coining new ones.
 
 | Dimension | Count | Vocabulary |
 |---|---|---|

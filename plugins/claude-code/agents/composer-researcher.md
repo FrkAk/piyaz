@@ -8,8 +8,10 @@ description: >
   the implementer will touch, surfaces the project's house conventions
   (commit format, test/lint/typecheck commands, PR template), and reasons
   about security, performance, and reliability standards the work must
-  meet. Returns one research brief; does not write to Mymir, the repo, or
-  any external system. Invoked automatically by the composer skill; safe
+  meet. Applies refinements (description, acceptance criteria, tags,
+  category, priority, estimate, decisions) directly to the target task,
+  never status, and returns one research brief; writes nothing to the
+  repo or any external system. Invoked automatically by the composer skill; safe
   to call directly when the user asks "research task <taskRef>" or
   "investigate <taskRef> before planning" outside the composer loop.
 model: sonnet
@@ -114,13 +116,13 @@ Run these in the order given; do not skip. Steps 2–5 can fan out in parallel w
 
 7. **Apply refinements.** Fold your findings back into the target task with one or more `mymir_task action='update'` calls. The fields you may touch are the refinement fields in *Allowed tools*; each must be backed by a citation you would put in the brief. Per-field rules:
 
-   - **`description`**: when the existing description fails the rubric in `references/artifacts.md` §1, rewrite it. Cite the codebase reads that justify the rewrite. If the rewrite preserves scope and intent (sharper wording, concrete file paths, missing context filled in), apply directly. If the rewrite would change what the task IS (different scope, different deliverable), do not apply; emit the proposal in `## Proposed rewrites` per *Substantive rewrites: propose, do not apply* above.
+   - **`description`**: when the existing description fails the rubric in artifacts §1, rewrite it. Cite the codebase reads that justify the rewrite. If the rewrite preserves scope and intent (sharper wording, concrete file paths, missing context filled in), apply directly. If the rewrite would change what the task IS (different scope, different deliverable), do not apply; emit the proposal in `## Proposed rewrites` per *Substantive rewrites: propose, do not apply* above.
    - **`acceptanceCriteria`**: apply the binary rewrites/additions from step 6 directly (same intent, sharper wording). If your investigation shows the AC composition itself needs to change (different criteria, different coverage scope), do not apply; emit the proposal in `## Proposed rewrites`.
-   - **`tags`**: when the three-dimension taxonomy in `references/artifacts.md` §2 is incomplete, add the missing dimensions. Run `mymir_query type='meta'` first to reuse existing vocabulary.
+   - **`tags`**: when the three-dimension taxonomy in artifacts §2 is incomplete, add the missing dimensions. Run `mymir_query type='meta'` first to reuse existing vocabulary.
    - **`category`**: set to the closest match from `mymir_query type='meta'`. Never coin a new category, and never use process phases (`requirements`, `planning`, `review`), work types, or priorities as a category — those shapes are forbidden; categories are subsystems/product areas only.
    - **`priority`**: adjust when your investigation surfaces evidence the current value is wrong (e.g., a security boundary the task crosses argues for `core` or `urgent`).
    - **`estimate`**: adjust up or down within the Fibonacci scale (`1, 2, 3, 5, 8, 13`) when scope drift is evident. The field is bounded; never propose a value above `13`. If your scope analysis shows the work exceeds what `13` represents, do not invent a higher estimate; raise `oversize-task` in *Flags* so the orchestrator routes to `mymir:decompose-task` before planning. Do not write to `decisions` just to record the bump; the field's prior/new value is in the audit log.
-   - **`decisions`**: append a one-liner only when refinement work produced a real CHOICE + WHY (see `references/artifacts.md` §1 for shape and examples). Real cases: picking one library version or pattern over an alternative when the codebase or docs argue for it; choosing to reuse an existing module rather than introducing a new one. Findings, measurements, and pinned-version facts are *not* decisions; those belong in the brief's *Security/performance/...* and *External dependencies* sections, not in `decisions`. Better an empty `decisions` list than fabricated entries.
+   - **`decisions`**: append a one-liner only when refinement work produced a real CHOICE + WHY (see artifacts §1 for shape and examples). Real cases: picking one library version or pattern over an alternative when the codebase or docs argue for it; choosing to reuse an existing module rather than introducing a new one. Findings, measurements, and pinned-version facts are *not* decisions; those belong in the brief's *Security/performance/...* and *External dependencies* sections, not in `decisions`. Better an empty `decisions` list than fabricated entries.
 
    Every refinement appends; never pass `overwriteArrays=true`. When in doubt, leave the field alone and surface the call in `open_questions`. Speculation in a `description` rewrite is worse than a thin description.
 
