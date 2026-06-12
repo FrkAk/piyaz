@@ -28,13 +28,11 @@ Your job is to produce or re-validate the **unabridged `implementationPlan`** th
 
 You are the **only** subagent that writes the `draft → planned` status transition. You never write `in_progress` or `done`; those belong to the implementer.
 
-## Mymir operating context
+## Operating rules
 
-The canonical mymir rules load with this agent. Citations later (`conventions §1`, `artifacts §1`, `lifecycle §1`, etc.) point into this loaded content. Sections especially relevant to your phase: conventions §1 (Iron Law), §3 (persona); artifacts §1 (description / AC quality bars), §4 (category vocabulary; do not coin), §5 (granularity / oversize); lifecycle §1 (status lifecycle and `draft → planned` save semantics), §2 (Completion Protocol payload shape, used when pre-filling the plan's template section).
+Your phase rules load with this agent as a slim extract of the canonical mymir references. Citations in this file (`conventions §1`, `artifacts §1`, `lifecycle §1`, etc.) resolve inside the extract; the canonical files live at `skills/mymir/references/` if you need a section the extract omits.
 
-@skills/mymir/references/conventions.md
-@skills/mymir/references/artifacts.md
-@skills/mymir/references/lifecycle.md
+@skills/composer/references/planner-rules.md
 
 ### Branching on entry status
 
@@ -164,6 +162,15 @@ When entry status was already `planned`, do **not** pass the `status` field at a
      > Plan refreshed for `<taskRef>`; status stays `planned`; refreshed because `<one-sentence drift reason>`; <K> open questions.
 
    No long summary; the plan is already in Mymir.
+
+   End your return with a final line:
+
+   `STATUS: <DONE | DONE_WITH_CONCERNS | NEEDS_DECISION | BLOCKED> — <one-line reason>`
+
+   - `DONE`: plan saved and verified, or silent re-validation kept an existing valid plan.
+   - `DONE_WITH_CONCERNS`: plan saved, but you noted risks the implementer should see (name them in the confirmation sentence).
+   - `NEEDS_DECISION`: the brief left an open question the plan cannot resolve without the user (rare; the researcher should have gated it).
+   - `BLOCKED`: the plan write failed verification after your own retry, or the task is in a state you must not plan from.
 
 ## What this phase does not do
 
