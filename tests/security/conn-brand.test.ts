@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Conn } from "@/lib/db/raw";
+import type { Conn, ReadConn } from "@/lib/db/raw";
 import type { AppDb } from "@/lib/db/connection";
 
 /**
@@ -43,6 +43,93 @@ describe("Conn brand — type-level guard against non-RLS handles", () => {
     // @ts-expect-error — plain AppDb has no brand; Conn requires one.
     const wrong = (): void => takesConn({} as unknown as AppDb);
     expect(typeof wrong).toBe("function");
+  });
+});
+
+/**
+ * Type-level guard for the ReadConn brand (the neon-http batch read
+ * handle). ReadConn is deliberately DISJOINT from Conn: an HTTP read
+ * handle passed to an interactive-transaction helper would run each
+ * awaited query as its own stateless request with NO `app.user_id` GUC,
+ * silently returning empty (or wrong-tenant) rows under RLS — so the
+ * brands must reject each other in both directions.
+ */
+describe("ReadConn brand — disjoint from Conn, no write builders", () => {
+  test("a Conn does NOT satisfy ReadConn and vice versa", () => {
+    function takesReadConn(_c: ReadConn): void {
+      // intentionally empty
+    }
+    function takesConn(_c: Conn): void {
+      // intentionally empty
+    }
+    // @ts-expect-error — Conn (AppUserConn | RlsTx) carries no ReadConn brand.
+    const wrongRead = (): void => takesReadConn(null as unknown as Conn);
+    // @ts-expect-error — ReadConn carries no Conn brand.
+    const wrongConn = (): void => takesConn(null as unknown as ReadConn);
+    expect(typeof wrongRead).toBe("function");
+    expect(typeof wrongConn).toBe("function");
+  });
+
+  test("an arbitrary AppDb-shaped value does NOT satisfy ReadConn", () => {
+    function takesReadConn(_c: ReadConn): void {
+      // intentionally empty
+    }
+    // @ts-expect-error — plain AppDb has no brand; ReadConn requires one.
+    const wrong = (): void => takesReadConn({} as unknown as AppDb);
+    expect(typeof wrong).toBe("function");
+  });
+
+  test("ReadConn exposes no write builders", () => {
+    const readDb = null as unknown as ReadConn;
+    // @ts-expect-error — insert is not on the ReadConn surface.
+    const insert = (): void => void readDb.insert;
+    // @ts-expect-error — update is not on the ReadConn surface.
+    const update = (): void => void readDb.update;
+    // @ts-expect-error — delete is not on the ReadConn surface.
+    const del = (): void => void readDb.delete;
+    // @ts-expect-error — transaction is not on the ReadConn surface.
+    const transaction = (): void => void readDb.transaction;
+    expect(
+      [insert, update, del, transaction].every((f) => typeof f === "function"),
+    ).toBe(true);
+  });
+});
+
+/**
+ * Type-level guard for the RawReadRows brand: a raw `execute` batch result
+ * must pass through `normalizeExecuteResult` — consuming it as an array
+ * works on postgres-js (RowList extends Array) but crashes on neon-http
+ * ({ rows } object), so the brand makes direct consumption a compile error.
+ */
+describe("RawReadRows brand — raw results are not directly consumable", () => {
+  test("a RawReadRows value exposes no array or rows surface", () => {
+    const raw = null as unknown as import("@/lib/db/raw").RawReadRows;
+    // @ts-expect-error — map is not on the RawReadRows surface.
+    const mapped = (): void => void raw.map;
+    // @ts-expect-error — rows is not on the RawReadRows surface.
+    const rows = (): void => void raw.rows;
+    expect([mapped, rows].every((f) => typeof f === "function")).toBe(true);
+  });
+});
+
+/**
+ * Type-level guard for ReadStatement's non-thenable surface: a statement
+ * leaked out of a `withUserContextRead` build callback and awaited on its
+ * own would run as a standalone stateless query with NO `app.user_id` GUC
+ * on Workers — RLS would silently return empty rows. ReadStatement hides
+ * `then`, so awaiting a leaked statement yields the unconsumable statement
+ * type instead of rows.
+ */
+describe("ReadStatement — leaked statements are not awaitable into rows", () => {
+  test("awaiting a leaked statement does not yield rows", () => {
+    type Stmt = import("@/lib/db/read-guard").ReadStatement<{ id: string }[]>;
+    const leaked = null as unknown as Stmt;
+    const consume = async (): Promise<string> => {
+      const awaited = await leaked;
+      // @ts-expect-error — await does not unwrap a non-thenable statement.
+      return awaited[0].id;
+    };
+    expect(typeof consume).toBe("function");
   });
 });
 

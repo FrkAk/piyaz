@@ -2,8 +2,13 @@ import "server-only";
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
-import { executeRaw, type Conn } from "@/lib/db/raw";
-import { withUserContext, type Tx } from "@/lib/db/rls";
+import {
+  executeRaw,
+  normalizeExecuteResult,
+  type Conn,
+  type ReadConn,
+} from "@/lib/db/raw";
+import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges } from "@/lib/db/schema";
 import {
   assigneeCountExpr,
@@ -12,7 +17,11 @@ import {
 } from "@/lib/data/task";
 import { slimEdgeColumns } from "@/lib/data/edge-columns";
 import { acquireOrgIdentifierLock } from "@/lib/db/raw/acquire-org-identifier-lock";
-import { aggregateProjectTags } from "@/lib/db/raw/aggregate-project-tags";
+import {
+  aggregateProjectTags,
+  mapProjectTagRows,
+  projectTagsStmt,
+} from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
 import type { HistoryEntry } from "@/lib/types";
@@ -427,6 +436,30 @@ export async function getProjectHeader(
   return row ?? null;
 }
 
+/**
+ * A task's parent-project header (plus the project id) as a lazy batch
+ * statement keyed on the task id, so it can ride the same batch as the
+ * task read. The id column lets the context bundle derive the ancestor
+ * chain from this row without a separate query.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task whose parent project to read.
+ * @returns Lazy select yielding zero or one header rows.
+ */
+export function projectHeaderByTaskStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({
+      id: projects.id,
+      title: projects.title,
+      description: projects.description,
+      identifier: projects.identifier,
+    })
+    .from(projects)
+    .innerJoin(tasks, eq(tasks.projectId, projects.id))
+    .where(eq(tasks.id, taskId))
+    .limit(1);
+}
+
 // ---------------------------------------------------------------------------
 // Tag aggregation
 // ---------------------------------------------------------------------------
@@ -460,6 +493,30 @@ export async function getProjectTagsTx(
 ): Promise<ProjectTag[]> {
   await assertProjectAccessTx(tx, projectId);
   return aggregateProjectTags(tx, projectId);
+}
+
+/**
+ * Project tag vocabulary over one read batch.
+ *
+ * UNCHECKED: performs no authorization — callers must have gated the
+ * project (e.g. via `getSearchProjectGate`). RLS still scopes the
+ * aggregated task rows, so an unauthorized caller gets an empty
+ * vocabulary, never another tenant's tags.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param projectId - UUID of the project.
+ * @returns Tags sorted by count desc, tie-broken alphabetically.
+ */
+export async function fetchProjectTagsRead(
+  userId: string,
+  projectId: string,
+): Promise<ProjectTag[]> {
+  const [raw] = await withUserContextRead(userId, (read) => [
+    projectTagsStmt(read, projectId),
+  ]);
+  return mapProjectTagRows(
+    normalizeExecuteResult<{ tag: string; count: number | string }>(raw),
+  );
 }
 
 // ---------------------------------------------------------------------------

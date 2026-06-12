@@ -47,38 +47,6 @@ function priorityWeight(p: ActiveTaskInfo["priority"]): number {
 }
 
 // ---------------------------------------------------------------------------
-// Ancestor traversal — internal helper
-// ---------------------------------------------------------------------------
-
-/** Ancestor node (always the project for a task). */
-type Ancestor = { id: string; type: "project"; title: string };
-
-/**
- * Get the parent project for a task. Internal — caller asserted access.
- * @param taskId - UUID of the task.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Array with the project ancestor, or empty if not found.
- */
-export async function getAncestors(
-  taskId: string,
-  conn: Conn,
-): Promise<Ancestor[]> {
-  const [task] = await conn
-    .select({ projectId: tasks.projectId })
-    .from(tasks)
-    .where(eq(tasks.id, taskId));
-  if (!task) return [];
-
-  const [project] = await conn
-    .select({ id: projects.id, title: projects.title })
-    .from(projects)
-    .where(eq(projects.id, task.projectId));
-  if (!project) return [];
-
-  return [{ id: project.id, type: "project", title: project.title }];
-}
-
-// ---------------------------------------------------------------------------
 // Connected tasks — internal helper (1-hop neighbors)
 // ---------------------------------------------------------------------------
 

@@ -103,6 +103,11 @@ const eslintConfig = [
           message:
             "db.query.* is the Drizzle relational API and bypasses RLS the same way bare db.select does — under app_user with no GUC it default-denies silently. Use withUserContext(userId, async tx => tx.query.*) or, preferably, tx.select(...) from @/lib/db/rls.",
         },
+        {
+          selector: "CallExpression[callee.property.name='batch']",
+          message:
+            "Bare .batch() is reserved for the neon-http read driver: outside withUserContextRead(userId, (read) => [...statements]) from @/lib/db/rls it opens a batch transaction without the app.user_id GUC and RLS silently returns empty (or wrong-tenant) data. If this is not a database batch, add the file to the ignores list in eslint.config.mjs.",
+        },
       ],
       "no-restricted-imports": [
         "error",
@@ -122,6 +127,16 @@ const eslintConfig = [
               name: "@cloudflare/workers-types",
               message:
                 "Importing @cloudflare/workers-types pulls its ambient declarations globally and clobbers DOM Request/Response types, breaking unrelated tests. Declare minimal local type stubs in the workers-only file that needs them (see lib/realtime/broker-do.ts for the pattern).",
+            },
+            {
+              name: "drizzle-orm/neon-http",
+              message:
+                "The neon-http driver is wired per role in lib/db/_driver.workers.ts and consumed through withUserContextRead. Constructing an ad-hoc HTTP client skips the per-batch app.user_id GUC and the READ ONLY transaction defaults.",
+            },
+            {
+              name: "@neondatabase/serverless",
+              message:
+                "Neon driver construction belongs to lib/db/_driver.workers.ts; ad-hoc clients skip the request-scoped lifecycle and the RLS read-batch contract.",
             },
           ],
         },
