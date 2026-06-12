@@ -3,6 +3,11 @@ import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import * as rls from "@/lib/db/rls";
+import { normalizeExecuteResult } from "@/lib/db/raw";
+import {
+  effectiveDownstreamStmt,
+  fetchEffectiveDownstream,
+} from "@/lib/db/raw/fetch-effective-downstream";
 import {
   getTaskFull,
   getTaskFullWithEdges,
@@ -115,4 +120,46 @@ test("searchTasks wrong-tenant project throws ForbiddenError", async () => {
       query: "Seam",
     }),
   ).rejects.toThrow("Forbidden");
+});
+
+test("effective downstream literal and derived project scopes agree", async () => {
+  const fx = await seedUserOrgProject("seam-scope");
+  const sr = serviceRoleConnect();
+  let mainId = "";
+  try {
+    const [main] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number)
+      VALUES (${fx.projectId}, 'Scope main', 1)
+      RETURNING id`;
+    const [mid] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, status)
+      VALUES (${fx.projectId}, 'Scope mid', 2, 'cancelled')
+      RETURNING id`;
+    const [leaf] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number)
+      VALUES (${fx.projectId}, 'Scope leaf', 3)
+      RETURNING id`;
+    await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+             VALUES (${mid.id}, ${main.id}, 'depends_on')`;
+    await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+             VALUES (${leaf.id}, ${mid.id}, 'depends_on')`;
+    mainId = main.id;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+
+  const interactive = await rls.withUserContext(fx.userId, (tx) =>
+    fetchEffectiveDownstream(tx, mainId, fx.projectId, 2),
+  );
+  const [batchRaw] = await rls.withUserContextRead(fx.userId, (read) => [
+    effectiveDownstreamStmt(read, mainId, 2),
+  ]);
+  const batch = normalizeExecuteResult<{ id: string; depth: number | string }>(
+    batchRaw,
+  ).map((r) => ({ id: r.id, depth: Number(r.depth) }));
+
+  const byId = (a: { id: string }, b: { id: string }) =>
+    a.id.localeCompare(b.id);
+  expect(interactive.length).toBeGreaterThan(0);
+  expect([...batch].sort(byId)).toEqual([...interactive].sort(byId));
 });
