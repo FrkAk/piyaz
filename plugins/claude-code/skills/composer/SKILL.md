@@ -63,7 +63,7 @@ Expected `NEEDS_DECISION` triggers (all from the researcher):
 
 A return without a STATUS line is malformed: re-read the prose once; if the outcome is still ambiguous, treat it as `BLOCKED`.
 
-**Headless gate fallback:** when `AskUserQuestion` is unavailable (errors or hangs — headless runs, policy-denied contexts), a `NEEDS_DECISION` gate resolves to skip-the-task: record the unasked question and the skip in the stop report, then end the iteration (backlog mode picks the next task; single-task mode stops). Never fabricate an answer — skipping is the reversible default (resilience §11).
+**Headless gate fallback:** when `AskUserQuestion` is unavailable (errors or hangs — headless runs, policy-denied contexts), a `NEEDS_DECISION` gate resolves to skip-the-task: append a `GATE` line to the run log carrying the unasked question and the skip as continuations, then end the iteration (`TASK_END outcome=skipped`) (backlog mode picks the next task; single-task mode stops). Never fabricate an answer — skipping is the reversible default (resilience §11).
 
 ## Session bootstrap
 
@@ -249,9 +249,15 @@ Stop and report in plain language (there are no magic stop phrases) when one of 
 
 These six are exhaustive. Do not invent new stop conditions, and do not stop for anything else.
 
+Every stop appends `RUN_END` with its reason and the grep-derived counters, then offers in the stop report to archive the log to `.mymir/archive/`; the headless default is archive.
+
 ## Recovering after compaction
 
-Re-derive the phase from the iteration todos plus the task's Mymir status: `draft` without a plan → research or planning pending; `planned` → implementation pending; `in_progress` → implementer in flight, a fix rotation in flight, or partial-success recovery; `in_review` → review pending, the fix loop mid-cycle, or the iteration's verdict already in the transcript (check before re-dispatching); `done` → HOTL approved, run propagation if it has not run. For runs likely to span compaction, prefer single-task mode re-invoked per task. Broader primitives: the resilience reference loaded above.
+Read the run log first: `.mymir/composer-<projectIdentifier>.md`. The last `PICK` without a matching `TASK_END` is the in-flight task. Division of authority: **Mymir wins on status** — re-read the task row and never trust the log over the server for where the task is; **the log wins on counters and history** — rotations used (`FIX task=X` count), failed attempts (`FAIL task=X` count), verdict history, gate answers, and DONE_WITH_CONCERNS text all come from the log, never from your memory. Rebuild the backlog skip set from this run's `TASK_END outcome=stuck` and `outcome=skipped` lines (the skip set is per-run; archives do not feed it). Append a `RESUME` line, then continue from the derived phase.
+
+To derive the phase, combine the in-flight task's last log lines with its Mymir status: `draft` without a plan → research or planning pending; `planned` → implementation pending (or iteration end, when the pick was plannable-only); `in_progress` → implementer in flight, a fix rotation in flight (a trailing `FIX` without a following `VERDICT` means resume that rotation, budget already counted), or partial-success recovery; `in_review` → CI gate or review pending, the fix loop mid-cycle, or the verdict already logged (check `VERDICT` lines before re-dispatching); `done` → HOTL approved, run propagation if no `PROPAGATED` line exists.
+
+When the log is missing (different machine, sandbox), fall back to the status mapping alone. For runs likely to span compaction, single-task mode re-invoked per task remains the lowest-risk shape.
 
 ## Red flags — never do these
 
@@ -269,7 +275,7 @@ Re-derive the phase from the iteration todos plus the task's Mymir status: `draf
 
 ## What composer is not
 
-Not a decomposer (oversize routes out). Not a hand-refiner (that is the mymir skill, used directly). Not the merge gate (HOTL owns `in_review → done` and merging, whatever the verdict). Not a session-resilience layer (re-invoke per task for very long runs).
+Not a decomposer (oversize routes out). Not a hand-refiner (that is the mymir skill, used directly). Not the merge gate (HOTL owns `in_review → done` and merging, whatever the verdict). The run log is the resilience primitive; per-task re-invocation remains the recommendation for very long runs.
 
 ## See also
 
