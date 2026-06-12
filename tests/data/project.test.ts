@@ -183,7 +183,10 @@ test("getProjectMeta returns header + tag vocabulary + status-grouped stats", as
   expect(m.taskStats).toEqual({
     total: 5,
     done: 2,
+    inReview: 0,
     inProgress: 1,
+    planned: 1,
+    draft: 0,
     cancelled: 1,
   });
   // 2 done out of (5 total - 1 cancelled) = 50%
@@ -208,7 +211,10 @@ test("getProjectMeta on an empty project reports zero stats and empty vocab", as
   expect(m.taskStats).toEqual({
     total: 0,
     done: 0,
+    inReview: 0,
     inProgress: 0,
+    planned: 0,
+    draft: 0,
     cancelled: 0,
   });
   expect(m.progress).toBe(0);
@@ -315,7 +321,10 @@ test("listProjectsSlim aggregates statuses via grouped COUNT", async () => {
   expect(row?.taskStats).toEqual({
     total: 6,
     done: 3,
+    inReview: 0,
     inProgress: 2,
+    planned: 0,
+    draft: 0,
     cancelled: 1,
   });
   expect(row?.progress).toBe(60);
@@ -426,7 +435,10 @@ test("listProjectsForMcp aggregates task stats and progress like listProjectsSli
   expect(row?.taskStats).toEqual({
     total: 6,
     done: 3,
+    inReview: 0,
     inProgress: 2,
+    planned: 0,
+    draft: 0,
     cancelled: 1,
   });
   expect(row?.progress).toBe(60);

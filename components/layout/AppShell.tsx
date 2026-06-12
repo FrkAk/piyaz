@@ -45,7 +45,7 @@ export async function AppShell({ children }: AppShellProps) {
   const session = await getSession();
   if (!session) redirect("/sign-in");
 
-  const [projects, teamsResult, cookieStore] = await Promise.all([
+  const [projectsPage, teamsResult, cookieStore] = await Promise.all([
     loadSidebarProjects(),
     loadUserTeams(),
     cookies(),
@@ -54,7 +54,7 @@ export async function AppShell({ children }: AppShellProps) {
     cookieStore.get(SIDEBAR_COLLAPSE_COOKIE)?.value === "1";
 
   const teams = teamsResult.ok ? teamsResult.data : [];
-  const sidebarProjects: SidebarProject[] = projects.map((p) => ({
+  const sidebarProjects: SidebarProject[] = projectsPage.rows.map((p) => ({
     id: p.id,
     identifier: p.identifier,
     title: p.title,

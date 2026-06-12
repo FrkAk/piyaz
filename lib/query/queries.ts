@@ -1,5 +1,8 @@
 import type { QueryClient, QueryFunctionContext } from "@tanstack/react-query";
-import { conditionalFetch } from "@/lib/query/conditional-fetch";
+import {
+  conditionalFetch,
+  conditionalFetchPage,
+} from "@/lib/query/conditional-fetch";
 import { projectKeys, taskKeys } from "@/lib/query/keys";
 import type {
   ProjectGraphSlim,
@@ -17,16 +20,34 @@ export type TaskContextBundles = {
 type Fn<T> = (ctx: QueryFunctionContext<readonly unknown[]>) => Promise<T>;
 
 /**
- * QueryFn factory for the home-grid project list.
+ * One keyset page of the home-grid project list. `nextCursor` is the opaque
+ * token to request the following page, or `null` at the end of the list.
+ */
+export type ProjectListPage = {
+  rows: ProjectListEntry[];
+  nextCursor: string | null;
+};
+
+/**
+ * QueryFn factory for one page of the home-grid project list. Conditional-GET
+ * per page (side-channel ETag keyed by cursor), so an unchanged page costs a
+ * bodiless 304 and skips the server-side stats roll-up.
  *
  * @param qc - QueryClient (closed over so the 304 branch can read cache).
- * @returns Conditional-GET fetcher suitable for `useQuery({ queryFn })`.
+ * @returns Page fetcher suitable for `useInfiniteQuery({ queryFn })`.
  */
-export function fetchProjectsList(qc: QueryClient): Fn<ProjectListEntry[]> {
+export function fetchProjectsPage(
+  qc: QueryClient,
+): (
+  ctx: QueryFunctionContext<readonly unknown[], string | null>,
+) => Promise<ProjectListPage> {
   return (ctx) =>
-    conditionalFetch<ProjectListEntry[]>({
-      url: "/api/projects",
+    conditionalFetchPage<ProjectListPage>({
+      url: ctx.pageParam
+        ? `/api/projects?cursor=${encodeURIComponent(ctx.pageParam)}`
+        : "/api/projects",
       queryKey: projectKeys.list(),
+      pageParam: ctx.pageParam,
       queryClient: qc,
       signal: ctx.signal,
     });

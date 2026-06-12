@@ -43,11 +43,18 @@ export type ProjectListOrganization = {
   slug: string;
 };
 
-/** Per-project task progress counts shown on the home grid. */
+/**
+ * Per-project task progress counts shown on the home grid. One bucket per
+ * persisted task status so the lifecycle bar can colour each status band;
+ * `total` is the sum across every bucket.
+ */
 export type ProjectTaskStats = {
   total: number;
   done: number;
+  inReview: number;
   inProgress: number;
+  planned: number;
+  draft: number;
   cancelled: number;
 };
 

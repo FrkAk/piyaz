@@ -13,6 +13,7 @@ import { IconMore, IconTrash } from "@/components/shared/icons";
 import { projectColor } from "@/lib/ui/project-color";
 import { deleteProjectAction } from "@/lib/actions/project";
 import { projectKeys } from "@/lib/query/keys";
+import type { ProjectTaskStats } from "@/lib/data/views";
 
 interface ProjectCardProps {
   /** @param id - Project ID. */
@@ -25,14 +26,8 @@ interface ProjectCardProps {
   description: string;
   /** @param status - Project lifecycle status. */
   status: string;
-  /** @param tasksDone - Number of completed tasks. */
-  tasksDone: number;
-  /** @param totalTasks - Total number of tasks. */
-  totalTasks: number;
-  /** @param cancelledTasks - Number of cancelled tasks excluded from progress. */
-  cancelledTasks?: number;
-  /** @param tasksInProgress - Number of in-progress tasks. */
-  tasksInProgress: number;
+  /** @param taskStats - Per-status task counts driving the percent label and lifecycle bar. */
+  taskStats: ProjectTaskStats;
   /** @param lastActive - Relative time string. */
   lastActive: string;
   /** @param canDelete - True when the caller's role grants delete in the owning team. */
@@ -67,10 +62,7 @@ export function ProjectCard({
   title,
   description,
   status,
-  tasksDone,
-  totalTasks,
-  cancelledTasks = 0,
-  tasksInProgress,
+  taskStats,
   lastActive,
   canDelete,
   team,
@@ -93,10 +85,9 @@ export function ProjectCard({
     },
   });
   const opensWorkspace = status === "active" || status === "archived";
-  const activeTotal = Math.max(totalTasks - cancelledTasks, 0);
+  const activeTotal = Math.max(taskStats.total - taskStats.cancelled, 0);
   const percent =
-    activeTotal > 0 ? Math.round((tasksDone / activeTotal) * 100) : 0;
-  const pending = Math.max(activeTotal - tasksDone - tasksInProgress, 0);
+    activeTotal > 0 ? Math.round((taskStats.done / activeTotal) * 100) : 0;
   const color = projectColor(identifier);
   const initial = (identifier[0] ?? title[0] ?? "?").toUpperCase();
 
@@ -195,15 +186,10 @@ export function ProjectCard({
             <span className="ml-1">complete</span>
           </span>
           <span className="font-mono tabular-nums text-text-faint">
-            {tasksDone}/{activeTotal}
+            {taskStats.done}/{activeTotal}
           </span>
         </div>
-        <LifecycleBar
-          done={tasksDone}
-          inProgress={tasksInProgress}
-          pending={pending}
-          totalActive={activeTotal}
-        />
+        <LifecycleBar stats={taskStats} totalActive={activeTotal} />
       </div>
 
       <div className="flex items-center gap-2 border-t border-border/60 pt-2.5">
@@ -275,30 +261,38 @@ function BrandMark({ initial, color }: BrandMarkProps) {
 }
 
 interface LifecycleBarProps {
-  /** Tasks finished. */
-  done: number;
-  /** Tasks currently in progress. */
-  inProgress: number;
-  /** Tasks not yet started (draft + planned + ready + blocked, lumped). */
-  pending: number;
-  /** Sum of done + inProgress + pending — denominator for segment widths. */
+  /** Per-status task counts for the project. */
+  stats: ProjectTaskStats;
+  /** Active-task denominator (`total - cancelled`) for segment widths. */
   totalActive: number;
 }
 
 /**
- * Slim 5px lifecycle bar showing pending → in-progress → done split.
- * Uses the existing taskStats shape (no schema change); draft/planned/
- * ready/blocked all collapse into the leading `pending` band.
+ * Status bands rendered draft → done left → right, so completed work fills
+ * toward the right edge. Each band draws in its canonical `--color-glyph-*`
+ * status colour, matching the graph and {@link StatusGlyph} convention.
+ * `cancelled` is excluded — it is removed from the denominator, not shown
+ * as progress.
+ */
+const LIFECYCLE_BANDS = [
+  { key: "draft", color: "var(--color-glyph-draft)" },
+  { key: "planned", color: "var(--color-glyph-planned)" },
+  { key: "inProgress", color: "var(--color-glyph-progress)" },
+  { key: "inReview", color: "var(--color-glyph-review)" },
+  { key: "done", color: "var(--color-glyph-done)" },
+] as const satisfies ReadonlyArray<{
+  key: keyof ProjectTaskStats;
+  color: string;
+}>;
+
+/**
+ * Slim 5px lifecycle bar with one coloured band per task status, filling
+ * draft → done so completed work reads at the right edge.
  *
- * @param props - Counts plus the active-task denominator.
+ * @param props - Per-status counts plus the active-task denominator.
  * @returns Segmented bar with 2px gaps and rounded ends.
  */
-function LifecycleBar({
-  done,
-  inProgress,
-  pending,
-  totalActive,
-}: LifecycleBarProps) {
+function LifecycleBar({ stats, totalActive }: LifecycleBarProps) {
   if (totalActive === 0) {
     return (
       <div
@@ -307,30 +301,23 @@ function LifecycleBar({
       />
     );
   }
-  const pct = (n: number) => `${(n / totalActive) * 100}%`;
   return (
     <div className="flex h-[5px] gap-[2px] overflow-hidden rounded-full bg-border/70">
-      {pending > 0 && (
-        <span
-          aria-hidden="true"
-          className="rounded-sm bg-text-muted/30"
-          style={{ width: pct(pending) }}
-        />
-      )}
-      {inProgress > 0 && (
-        <span
-          aria-hidden="true"
-          className="rounded-sm bg-progress"
-          style={{ width: pct(inProgress) }}
-        />
-      )}
-      {done > 0 && (
-        <span
-          aria-hidden="true"
-          className="rounded-sm bg-done"
-          style={{ width: pct(done) }}
-        />
-      )}
+      {LIFECYCLE_BANDS.map(({ key, color }) => {
+        const count = stats[key];
+        if (count <= 0) return null;
+        return (
+          <span
+            key={key}
+            aria-hidden="true"
+            className="rounded-sm"
+            style={{
+              width: `${(count / totalActive) * 100}%`,
+              background: color,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

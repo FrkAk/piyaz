@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { ProjectCard } from "@/components/home/ProjectCard";
 import { NewProjectButton } from "@/components/home/NewProjectButton";
 import { ContinueBanner } from "@/components/home/ContinueBanner";
@@ -10,7 +10,7 @@ import { TeamFilterBar } from "@/components/home/TeamFilterBar";
 import { TeamChip } from "@/components/shared/TeamChip";
 import { roleHasProjectPermission } from "@/lib/auth/permissions";
 import { projectKeys } from "@/lib/query/keys";
-import { fetchProjectsList } from "@/lib/query/queries";
+import { fetchProjectsPage } from "@/lib/query/queries";
 import type { ProjectListEntry } from "@/lib/data/views";
 import type { TeamView } from "@/lib/actions/team-list";
 
@@ -34,10 +34,18 @@ export function HomeGrid({ teams }: HomeGridProps) {
   const qc = useQueryClient();
   const searchParams = useSearchParams();
 
-  const { data: projects = [] } = useQuery({
-    queryKey: projectKeys.list(),
-    queryFn: fetchProjectsList(qc),
-  });
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useInfiniteQuery({
+      queryKey: projectKeys.list(),
+      queryFn: fetchProjectsPage(qc),
+      initialPageParam: null as string | null,
+      getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    });
+
+  const projects = useMemo(
+    () => data?.pages.flatMap((page) => page.rows) ?? [],
+    [data],
+  );
 
   const teamIds = useMemo(() => new Set(teams.map((t) => t.id)), [teams]);
   const requestedTeam = searchParams.get("team");
@@ -106,6 +114,19 @@ export function HomeGrid({ teams }: HomeGridProps) {
       ) : (
         <FlatGrid projects={filteredProjects} />
       )}
+
+      {hasNextPage ? (
+        <div className="mt-6 flex justify-center">
+          <button
+            type="button"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="cursor-pointer rounded-lg border border-border bg-surface px-4 py-2 text-[12.5px] font-medium text-text-secondary shadow-[var(--shadow-button)] transition-colors hover:border-border-strong hover:bg-surface-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isFetchingNextPage ? "Loading…" : "Load more projects"}
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -134,10 +155,7 @@ function FlatGrid({ projects }: FlatGridProps) {
           title={project.title}
           description={project.description}
           status={project.status}
-          tasksDone={project.taskStats.done}
-          totalTasks={project.taskStats.total}
-          cancelledTasks={project.taskStats.cancelled}
-          tasksInProgress={project.taskStats.inProgress}
+          taskStats={project.taskStats}
           lastActive={dateFormatter.format(new Date(project.updatedAt))}
           canDelete={roleHasProjectPermission(project.memberRole, ["delete"])}
           team={
@@ -200,10 +218,7 @@ function GroupedGrid({ projects, teams }: GroupedGridProps) {
                     title={project.title}
                     description={project.description}
                     status={project.status}
-                    tasksDone={project.taskStats.done}
-                    totalTasks={project.taskStats.total}
-                    cancelledTasks={project.taskStats.cancelled}
-                    tasksInProgress={project.taskStats.inProgress}
+                    taskStats={project.taskStats}
                     lastActive={dateFormatter.format(
                       new Date(project.updatedAt),
                     )}

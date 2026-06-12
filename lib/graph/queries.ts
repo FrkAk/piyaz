@@ -67,15 +67,15 @@ export async function getProjectChrome(projectId: string) {
 }
 
 /**
- * Server action wrapper — fetches every project across every team the
- * caller is a member of, decorated with team metadata, the caller's role,
- * and progress stats.
- * @returns Array of projects ordered by `updatedAt` descending.
+ * Server action wrapper — fetches the first keyset page of projects across
+ * every team the caller is a member of, decorated with team metadata, the
+ * caller's role, and progress stats. Seeds both the sidebar list and the
+ * home grid's infinite query.
+ * @returns First page `{ rows, nextCursor }` ordered by `updatedAt` descending.
  */
 export async function listProjectsSlim() {
   const ctx = await getAuthContext();
-  const { rows } = await coreListProjectsSlim(ctx);
-  return rows;
+  return coreListProjectsSlim(ctx);
 }
 
 /**

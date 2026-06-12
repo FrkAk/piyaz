@@ -120,3 +120,94 @@ export async function conditionalFetch<T>({
   if (etag) etagByKey.set(keyStr, etag);
   return (await res.json()) as T;
 }
+
+/** Arguments accepted by {@link conditionalFetchPage}. */
+export interface ConditionalFetchPageArgs {
+  /** Endpoint URL including any cursor query param, relative to origin. */
+  url: string;
+  /** Base infinite-query key; pages share it and are addressed by `pageParam`. */
+  queryKey: QueryKey;
+  /** Param identifying this page (`null` for the first page). */
+  pageParam: unknown;
+  /** QueryClient used to read the cached page on 304. */
+  queryClient: QueryClient;
+  /** AbortSignal forwarded to `fetch`. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Conditional GET for one page of an infinite query. Mirrors
+ * {@link conditionalFetch} but tracks the `ETag` per `(queryKey, pageParam)`
+ * and resolves a 304 from the matching page inside the cached `InfiniteData`,
+ * since an infinite query stores every page under one key.
+ *
+ * @param args - URL plus infinite-page bundle.
+ * @returns Parsed page body. Always defined — never `undefined`.
+ * @throws Error When the status is not 200 or 304, or the defensive refetch fails.
+ */
+export async function conditionalFetchPage<T>({
+  url,
+  queryKey,
+  pageParam,
+  queryClient,
+  signal,
+}: ConditionalFetchPageArgs): Promise<T> {
+  bindToQueryCache(queryClient);
+
+  const keyStr = JSON.stringify([
+    ...(queryKey as readonly unknown[]),
+    pageParam,
+  ]);
+  const previous = etagByKey.get(keyStr);
+  const headers: HeadersInit = previous ? { "If-None-Match": previous } : {};
+
+  const res = await fetch(url, {
+    headers,
+    signal,
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+
+  if (res.status === 304) {
+    const cached = readCachedPage<T>(queryClient, queryKey, pageParam);
+    if (cached !== undefined) return cached;
+    etagByKey.delete(keyStr);
+    const fresh = await fetch(url, {
+      signal,
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!fresh.ok) throw new Error(`${fresh.status} ${fresh.statusText}`);
+    const freshEtag = fresh.headers.get("ETag");
+    if (freshEtag) etagByKey.set(keyStr, freshEtag);
+    return (await fresh.json()) as T;
+  }
+
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+  const etag = res.headers.get("ETag");
+  if (etag) etagByKey.set(keyStr, etag);
+  return (await res.json()) as T;
+}
+
+/**
+ * Read the cached page whose stored param matches `pageParam` out of an
+ * infinite query's `InfiniteData`.
+ *
+ * @param queryClient - QueryClient holding the infinite cache.
+ * @param queryKey - Base infinite-query key.
+ * @param pageParam - Param identifying the page to read.
+ * @returns The cached page, or `undefined` when absent.
+ */
+function readCachedPage<T>(
+  queryClient: QueryClient,
+  queryKey: QueryKey,
+  pageParam: unknown,
+): T | undefined {
+  const data = queryClient.getQueryData<{ pages: T[]; pageParams: unknown[] }>(
+    queryKey,
+  );
+  if (!data) return undefined;
+  const idx = data.pageParams.findIndex((p) => Object.is(p, pageParam));
+  return idx >= 0 ? data.pages[idx] : undefined;
+}
