@@ -10,6 +10,7 @@ import {
   test,
 } from "bun:test";
 import { auth } from "@/lib/auth";
+import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
 
 /**
  * Narrow-catch tests for `isOrgAdmin` / `isOrgOwner`. Pins the H4 fix:
@@ -34,17 +35,7 @@ type HasPermissionImpl = () => Promise<{ success: boolean }>;
 let nextHasPermission: HasPermissionImpl = async () => ({ success: false });
 let hasPermissionSpy: ReturnType<typeof spyOn>;
 
-mock.module("next/headers", () => ({
-  headers: async () => new Headers(),
-  // See tests/actions/team-invite-code-action.test.ts: the process-wide
-  // mock must export cookies() throwing BA's recognized out-of-scope
-  // message, or the nextCookies() plugin rethrows on every BA response.
-  cookies: async () => {
-    throw new Error(
-      "`cookies` was called outside a request scope. (test mock)",
-    );
-  },
-}));
+mock.module("next/headers", nextHeadersMockModule);
 
 beforeAll(() => {
   hasPermissionSpy = spyOn(

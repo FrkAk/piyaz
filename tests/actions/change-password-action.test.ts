@@ -12,7 +12,11 @@ import {
 import { auth } from "@/lib/auth";
 import { setBackend } from "@/lib/api/rate-limit";
 import { MemoryRateLimitBackend } from "@/lib/api/rate-limit-memory";
-import { checkActionUserRateLimit } from "@/lib/actions/rate-limit-action";
+import {
+  checkActionIpRateLimit,
+  checkActionUserRateLimit,
+} from "@/lib/actions/rate-limit-action";
+import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
 
 /**
  * Action-level coverage for `changePasswordAction`. The brute-force defense
@@ -25,18 +29,12 @@ import { checkActionUserRateLimit } from "@/lib/actions/rate-limit-action";
  * `auth.api.changePassword` is spied (not the real handler) so routing and
  * input checks are exercised without a credential row or DB password write;
  * `next/headers` is mocked process-wide (headers + the cookies() stub BA's
- * `nextCookies` guard recognizes). `tests/setup/preload.ts` mocks
- * `@/lib/auth/session`, exposing `__setTestSession` to drive `getSession`.
+ * `nextCookies` guard recognizes — see `tests/setup/next-headers-mock.ts`).
+ * `tests/setup/preload.ts` mocks `@/lib/auth/session`, exposing
+ * `__setTestSession` to drive `getSession`.
  */
 
-mock.module("next/headers", () => ({
-  headers: async () => new Headers(),
-  cookies: async () => {
-    throw new Error(
-      "`cookies` was called outside a request scope. (test mock)",
-    );
-  },
-}));
+mock.module("next/headers", nextHeadersMockModule);
 
 // revalidatePath needs a Next request/render scope and throws an invariant
 // outside one. No test asserts on revalidation, so a no-op is faithful.
@@ -137,6 +135,58 @@ describe("changePasswordAction rate limiting", () => {
       body: { revokeOtherSessions?: boolean };
     };
     expect(call.body.revokeOtherSessions).toBe(true);
+  });
+
+  test("exhausting the per-IP limb blocks the action before the session lookup", async () => {
+    // Mirror of the per-user drain above for the IP limb (the mocked
+    // empty Headers resolve every caller to the shared "unknown" IP key).
+    // Together the two drains pin BOTH of the action's declared maxima to
+    // RATE_CONFIG: a drift in either limb leaves its bucket under-drained
+    // and the expected rate_limited rejection never fires.
+    const { changePasswordAction } = await import("@/lib/actions/password");
+    for (let i = 0; i < RATE_CONFIG.perIpMax; i++) {
+      const outcome = await checkActionIpRateLimit(RATE_CONFIG);
+      expect(outcome.ok).toBe(true);
+    }
+
+    const result = await changePasswordAction({
+      currentPassword: "irrelevant-current",
+      newPassword: "irrelevant-new-12",
+    });
+    expect(result).toEqual({
+      ok: false,
+      code: "rate_limited",
+      message: "Too many attempts. Please wait a moment and try again.",
+    });
+    expect(changePasswordSpy).not.toHaveBeenCalled();
+  });
+
+  test("declared limits equal the RATE_LIMIT_AUTH binding's simple limit", async () => {
+    // The CF binding enforces its own simple.limit per key regardless of
+    // the max declared in code: a larger declared value would be silently
+    // rewritten to the binding limit on Workers while self-host enforced
+    // the declared number. The drain tests above pin RATE_CONFIG to the
+    // action's real values, so asserting RATE_CONFIG against
+    // wrangler.jsonc transitively pins the action to the binding.
+    const wrangler = (await Bun.file(
+      `${import.meta.dir}/../../wrangler.jsonc`,
+    ).json()) as {
+      env: {
+        production: {
+          ratelimits: {
+            name: string;
+            simple: { limit: number; period: number };
+          }[];
+        };
+      };
+    };
+    const binding = wrangler.env.production.ratelimits.find(
+      (b) => b.name === "RATE_LIMIT_AUTH",
+    );
+    expect(binding).toBeDefined();
+    expect(RATE_CONFIG.perUserMax).toBe(binding!.simple.limit);
+    expect(RATE_CONFIG.perIpMax).toBe(binding!.simple.limit);
+    expect(RATE_CONFIG.windowSeconds).toBe(binding!.simple.period);
   });
 });
 
