@@ -208,20 +208,20 @@ function walkEffectiveDeps(
  *   `withUserContext` transaction must pass the active `tx` so the reads
  *   participate in the same RLS-scoped frame.
  * @returns `deps` for active prerequisites and `downstream` for active
- *   dependents.
+ *   dependents, each with its minimum effective depth.
  */
 export async function loadBundleDeps(
   projectId: string,
   taskId: string,
   maxDepth: number,
   conn: Conn,
-): Promise<{ deps: { id: string }[]; downstream: { id: string }[] }> {
+): Promise<{
+  deps: { id: string; depth: number }[];
+  downstream: { id: string; depth: number }[];
+}> {
   const [depRows, downstreamRows] = await Promise.all([
     fetchEffectiveDepChain(conn, taskId, projectId, maxDepth),
     fetchEffectiveDownstream(conn, taskId, projectId, maxDepth),
   ]);
-  return {
-    deps: depRows.map((r) => ({ id: r.id })),
-    downstream: downstreamRows.map((r) => ({ id: r.id })),
-  };
+  return { deps: depRows, downstream: downstreamRows };
 }

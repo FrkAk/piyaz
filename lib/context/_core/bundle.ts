@@ -35,10 +35,10 @@ type Ancestor = { id: string; type: "project"; title: string };
 export type DependencyClosureData = {
   /** Full task row. */
   task: TaskFull;
-  /** Active prerequisites within 2 effective hops. */
-  deps: { id: string }[];
-  /** Active dependents within 2 effective hops. */
-  downstream: { id: string }[];
+  /** Active prerequisites within 2 effective hops, with effective depth. */
+  deps: { id: string; depth: number }[];
+  /** Active dependents within 2 effective hops, with effective depth. */
+  downstream: { id: string; depth: number }[];
   /** Outgoing depends_on edge notes, keyed by prerequisite id. */
   upstreamEdgeNotes: Map<string, string>;
   /** Dependency-task summaries (taskRef, title, status, executionRecord). */
