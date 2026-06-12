@@ -172,14 +172,7 @@ export const taskInputSchema = z.object({
       "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence rejected): what + who it serves + where it fits in the architecture. Required for create. Artifacts §1.",
     ),
   status: z
-    .enum([
-      "draft",
-      "planned",
-      "in_progress",
-      "in_review",
-      "done",
-      "cancelled",
-    ])
+    .enum(["draft", "planned", "in_progress", "in_review", "done", "cancelled"])
     .optional()
     .describe(
       "Lifecycle: draft → planned → in_progress → in_review → done. The implementer subagent's terminal write is `in_review` (PR opened, tests green); the HOTL gate flips to `done` after PR approval. cancelled = terminal abandoned work; populate executionRecord with rationale. Cancelled deps are transparent: dependents stay blocked through the cancelled task's own unsatisfied deps. Excluded from progress and critical path.",
@@ -380,20 +373,11 @@ export const contextInputSchema = z.object({
 
 export const analyzeInputSchema = z.object({
   type: z
-    .enum([
-      "ready",
-      "blocked",
-      "downstream",
-      "critical_path",
-      "plannable",
-    ])
+    .enum(["ready", "blocked", "downstream", "critical_path", "plannable"])
     .describe(
       "ready=planned tasks with all deps done (drafts with deps satisfied surface as plannable, not ready). blocked=waiting tasks with blocker details. downstream=transitive dependents (impact analysis before changes). critical_path=longest dep chain (project bottleneck). plannable=draft tasks with description+criteria, ready for planning.",
     ),
-  taskId: z
-    .uuid()
-    .optional()
-    .describe("Task UUID. Required for 'downstream'."),
+  taskId: z.uuid().optional().describe("Task UUID. Required for 'downstream'."),
   projectId: z
     .uuid()
     .optional()

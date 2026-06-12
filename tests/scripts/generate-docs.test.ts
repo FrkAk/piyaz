@@ -74,11 +74,15 @@ describe("transformReference", () => {
 
   test("adds the canonical banner with the source path", () => {
     expect(out).toContain("Canonical skill reference");
-    expect(out).toContain("plugins/claude-code/skills/mymir/references/conventions.md");
+    expect(out).toContain(
+      "plugins/claude-code/skills/mymir/references/conventions.md",
+    );
   });
 
   test("rewrites cross-reference links to docs urls", () => {
-    expect(out).toContain("[`references/artifacts.md`](/docs/reference/artifacts/)");
+    expect(out).toContain(
+      "[`references/artifacts.md`](/docs/reference/artifacts/)",
+    );
   });
 });
 

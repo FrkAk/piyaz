@@ -107,7 +107,8 @@ function renderType(prop: JsonSchemaProperty): string {
   if (prop.enum) return prop.enum.map((v) => `"${v}"`).join(" \\| ");
   if (prop.type === "array") {
     const items = prop.items;
-    if (items?.enum) return `(${items.enum.map((v) => `"${v}"`).join(" \\| ")})[]`;
+    if (items?.enum)
+      return `(${items.enum.map((v) => `"${v}"`).join(" \\| ")})[]`;
     return `${items?.type ?? "unknown"}[]`;
   }
   if (prop.format === "uuid") return "string (uuid)";
@@ -153,7 +154,9 @@ export function renderToolPage(tool: ToolDefinition): string {
   const props = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
   const discriminatorName = Object.keys(props).find((k) => props[k]?.enum);
-  const discriminator = discriminatorName ? props[discriminatorName] : undefined;
+  const discriminator = discriminatorName
+    ? props[discriminatorName]
+    : undefined;
   const actions = discriminator?.enum ?? [];
   const firstSentence = `${tool.description.split(". ")[0]}.`;
 
@@ -168,9 +171,10 @@ export function renderToolPage(tool: ToolDefinition): string {
     return `| \`${name}\` | \`${renderType(prop)}\` | ${req} | ${escapeCell(prop.description ?? "")} |`;
   });
 
-  const actionRows = parseActions(discriminator?.description ?? "", actions).map(
-    ({ action, purpose }) => `| \`${action}\` | ${escapeCell(purpose)} |`,
-  );
+  const actionRows = parseActions(
+    discriminator?.description ?? "",
+    actions,
+  ).map(({ action, purpose }) => `| \`${action}\` | ${escapeCell(purpose)} |`);
 
   return `---
 title: ${tool.name}
@@ -212,12 +216,14 @@ export const SKILL_REFERENCES = [
   {
     file: "lifecycle.md",
     slug: "lifecycle",
-    description: "Status lifecycle, Completion Protocol, and propagation rules.",
+    description:
+      "Status lifecycle, Completion Protocol, and propagation rules.",
   },
   {
     file: "resilience.md",
     slug: "resilience",
-    description: "Long-session discipline: persistence, resume mode, compaction.",
+    description:
+      "Long-session discipline: persistence, resume mode, compaction.",
   },
 ] as const;
 
@@ -236,7 +242,10 @@ export function transformReference(raw: string, file: string): string {
   const titleIndex = lines.findIndex((l) => l.startsWith("# "));
   if (titleIndex === -1) throw new Error(`no h1 in ${file}`);
   const title = normalizeProseDashes(lines[titleIndex].slice(2).trim());
-  const body = lines.slice(titleIndex + 1).join("\n").trim();
+  const body = lines
+    .slice(titleIndex + 1)
+    .join("\n")
+    .trim();
   const linked = body.replace(
     /`references\/(conventions|artifacts|lifecycle|resilience)\.md`/g,
     "[`references/$1.md`](/docs/reference/$1/)",
@@ -306,7 +315,11 @@ export async function renderCatalog(pluginRoot: string): Promise<string> {
     if (entry) agents.push(entry);
   }
   skills.sort((a, b) =>
-    a.name === "mymir" ? -1 : b.name === "mymir" ? 1 : a.name.localeCompare(b.name),
+    a.name === "mymir"
+      ? -1
+      : b.name === "mymir"
+        ? 1
+        : a.name.localeCompare(b.name),
   );
   const skillSections = skills.map((s) => {
     const command = s.name === "mymir" ? "/mymir" : `/mymir:${s.name}`;
