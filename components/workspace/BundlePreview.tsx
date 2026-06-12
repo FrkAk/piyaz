@@ -772,11 +772,12 @@ function ProjectBody({ props }: ProjectBodyProps) {
       <p className="font-mono text-[11.5px] text-text-secondary">
         Project: {props.projectName}
       </p>
-      {props.projectDescription && props.projectDescription.trim().length > 0 && (
-        <Markdown className="text-[12.5px] leading-relaxed text-text-secondary">
-          {props.projectDescription}
-        </Markdown>
-      )}
+      {props.projectDescription &&
+        props.projectDescription.trim().length > 0 && (
+          <Markdown className="text-[12.5px] leading-relaxed text-text-secondary">
+            {props.projectDescription}
+          </Markdown>
+        )}
     </div>
   );
 }
