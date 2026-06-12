@@ -168,6 +168,32 @@ export async function resolveReviewData(
   return { ...closure, project };
 }
 
+/** Exactly what {@link buildRecordContextFrom} reads. */
+export type RecordContextData = DependencyClosureData & {
+  /** Parent project header, or null when the project is unjoinable. */
+  project: ProjectHeader | null;
+};
+
+/**
+ * Resolve the dependency closure plus the parent project header at `record`
+ * depth, the record core's full input. One task read and one traversal; the
+ * `record` projection drops `implementationPlan` and assignees, which the
+ * retrospective bundle never renders.
+ *
+ * @param tx Active RLS transaction handle from a `withUserContext` frame.
+ * @param taskId UUID of the task.
+ * @returns The closure plus project header.
+ * @throws ForbiddenError When the caller cannot access the task.
+ */
+export async function resolveRecordData(
+  tx: Tx,
+  taskId: string,
+): Promise<RecordContextData> {
+  const closure = await resolveDependencyClosure(tx, taskId, "record");
+  const project = await getProjectHeader(closure.task.projectId, tx);
+  return { ...closure, project };
+}
+
 /**
  * Resolve the working core's input: the full task row plus its 1-hop edges and
  * ancestor chain. One task read, no dependency closure.
