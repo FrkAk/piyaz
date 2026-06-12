@@ -139,7 +139,7 @@ digraph composer_iteration {
 
 ### Step details
 
-1. **Pick.** Backlog: `mymir_analyze type='ready'` ∩ `type='critical_path'`; rank by priority (`urgent > core > normal > backlog`), tie-break by lowest estimate. Fall back to the highest-priority `ready` task when the intersection is empty, then to `mymir_analyze type='plannable'` when `ready` is empty (those route through research + plan only; their dependencies are unfinished, so there is nothing to implement yet — note the pick as **plannable-only**). Single-task: the named task; if already `done` or `cancelled`, report that and stop. Emit a one-paragraph pick rationale (taskRef, priority, estimate, critical-path yes/no, one-sentence reason). Do not wait for approval — the user interrupts if they disagree.
+1. **Pick.** Backlog: `mymir_analyze type='ready'` ∩ `type='critical_path'`; rank by priority (`urgent > core > normal > backlog`), tie-break by lowest estimate. Fall back to the highest-priority `ready` task when the intersection is empty, then to `mymir_analyze type='plannable'` when `ready` is empty (those route through research + plan only; their dependencies are unfinished, so there is nothing to implement yet — note the pick as **plannable-only**). Single-task: the named task; if already `done` or `cancelled`, report that and stop. If the named task is already claimed, never re-run research or planning on it: at `in_progress`, jump straight to implement-phase recovery (the partial-success check in *Failure handling*); at `in_review`, jump straight to *Review and the fix loop*. Emit a one-paragraph pick rationale (taskRef, priority, estimate, critical-path yes/no, one-sentence reason). Do not wait for approval — the user interrupts if they disagree.
 
 2. **Research.** Dispatch `mymir:composer-researcher` with: `Target task: <taskRef>`, the categories + tag vocabulary from bootstrap, and (on re-dispatch) the user's gate answers. Status does not change in this phase; the researcher refines the task row in place. React per *Status vocabulary*.
 
@@ -165,7 +165,7 @@ Subagents inherit nothing from this session; the dispatch prompt is their whole 
 
 ## Failure handling
 
-`BLOCKED` from any phase is a failed attempt. On failure:
+`BLOCKED` from any phase is a failed attempt, with one exception: a phase that reports BLOCKED because the task is already at `done` or `cancelled` is not a failure — HOTL resolved the task underneath the run (e.g. approving mid-fix-rotation). Treat that as iteration complete: run *Surface + propagate* if it has not run, consume no failure budget, and move on. For every other BLOCKED:
 
 1. Keep the failure summary in your transcript. Do not write it to `decisions` — per artifacts §1 that field is CHOICE + WHY, not process metadata.
 2. Leave the task at its current status. Never roll back, never cancel.
@@ -182,8 +182,9 @@ Stop and report in plain language (there are no magic stop phrases) when one of 
 3. **User says stop**: exit after the in-flight write finishes.
 4. **Single-task iteration complete**: verdict surfaced and propagation done. The task itself sits at `in_review` awaiting HOTL; composer's job is finished.
 5. **Rewrite denied** (single-task mode): the user rejected a proposed rewrite at the gate.
+6. **Mymir transport/auth failure**: any Mymir tool call fails with auth expiry, 401/403, a 5xx, or a network error. Stop immediately — these are not retryable in-session (resilience §10) — and report the exact error text plus the last completed phase for each in-flight task.
 
-These five are exhaustive. Do not invent new stop conditions, and do not stop for anything else.
+These six are exhaustive. Do not invent new stop conditions, and do not stop for anything else.
 
 ## Recovering after compaction
 
@@ -198,7 +199,7 @@ Re-derive the phase from the iteration todos plus the task's Mymir status: `draf
 | Split an oversize task yourself | Oversize routes to `mymir:decompose-task`, and only after the user gate. |
 | Treat `request-changes` or `block` as a failed attempt | A careful verdict is a successful review (`STATUS: DONE`). The fix loop or HOTL owns the response; the failure budget is untouched. |
 | Re-implement when a matching PR already exists | Resume the Completion Protocol instead. |
-| Pause between tasks to ask "should I continue?" | Continuous execution. The five stop conditions are the only exits; gates fire only on `NEEDS_DECISION`. |
+| Pause between tasks to ask "should I continue?" | Continuous execution. The six stop conditions are the only exits; gates fire only on `NEEDS_DECISION`. |
 | Keep fixing after 2 rotations, or auto-fix a `block` | Escalate to HOTL with all verdicts. |
 | Pad a dispatch with transcript, meta, or spec text | Phase minimum only. Pollution makes agents worse. |
 | Emit or watch for literal stop phrases | Stops are structural; report them in plain language. |
