@@ -43,7 +43,7 @@ Prereq execution record
 
 ## Done Means
 
-- [ ] It works
+- [ ] \`<uuid>\` It works
 
 
 ## Files
@@ -98,7 +98,7 @@ Central description
 
 ## Acceptance Criteria
 
-- [ ] It works
+- [ ] \`<uuid>\` It works
 
 
 ## Existing Implementation Plan
@@ -152,7 +152,7 @@ Central description
 
 ## Acceptance Criteria
 
-- [ ] It works
+- [ ] \`<uuid>\` It works
 
 ## Hierarchy
 project: "Project ctx-golden" > task: "Central task"

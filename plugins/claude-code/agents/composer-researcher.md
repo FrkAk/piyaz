@@ -110,7 +110,7 @@ Run these in the order given; do not skip. Steps 2–5 can fan out in parallel w
    - **Reliability**: failure modes the implementer must handle vs. ones to let propagate, retry semantics, idempotency requirements.
    - **Observability**: log/metric/trace expectations consistent with the rest of the codebase.
 
-6. **Score acceptance criteria.** Walk the target's current `acceptanceCriteria` and score each against the binary-AC rubric in artifacts §1. Apply binary rewrites for ambiguous criteria via `mymir_task action='update' acceptanceCriteria=[{id: '<id>', text: '<rewrite>'}]` (append shape; the data layer reconciles by `id`). Missing coverage gets a new entry as a plain string. Quantity bounds live in artifacts §1; do not restate them, just hit them.
+6. **Score acceptance criteria.** Walk the target's current `acceptanceCriteria` and score each against the binary-AC rubric in artifacts §1. Apply binary rewrites for ambiguous criteria via `mymir_task action='update' acceptanceCriteria=[{id: '<id>', text: '<rewrite>'}]` (append shape; the data layer reconciles by `id`). Criterion ids are visible in your context bundle — each rendered criterion line carries its backticked id; use those ids, never invent one. Missing coverage gets a new entry as a plain string. Quantity bounds live in artifacts §1; do not restate them, just hit them.
 
 7. **Apply refinements.** Fold your findings back into the target task with one or more `mymir_task action='update'` calls. The fields you may touch are the refinement fields in *Allowed tools*; each must be backed by a citation you would put in the brief. Per-field rules:
 

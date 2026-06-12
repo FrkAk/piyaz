@@ -25,7 +25,7 @@ Central description
 
 ## Acceptance Criteria
 
-- [ ] It works
+- [ ] \`<uuid>\` It works
 
 ## Hierarchy
 project: "Project working-ctx-golden" > task: "Central task"

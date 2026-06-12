@@ -58,6 +58,10 @@ export function formatDecisions(decisions: Decision[]): string {
  * - all checked: "All criteria met:" label followed by the checked list
  * - mixed: "Remaining:" section first (primacy for pending work), then "Done:"
  *
+ * Each line carries the criterion's backticked id so agents can target the
+ * documented by-id rewrite (`acceptanceCriteria=[{id, text}]`) without
+ * appending duplicates.
+ *
  * @param criteria - Array of acceptance criteria.
  * @returns Formatted checklist string, possibly grouped by checked state.
  */
@@ -67,8 +71,9 @@ export function formatCriteria(criteria: AcceptanceCriterion[]): string {
   const remaining = criteria.filter((c) => !c.checked);
   const done = criteria.filter((c) => c.checked);
   const renderRemaining = () =>
-    remaining.map((c) => `- [ ] ${c.text}`).join("\n");
-  const renderDone = () => done.map((c) => `- [x] ${c.text}`).join("\n");
+    remaining.map((c) => `- [ ] \`${c.id}\` ${c.text}`).join("\n");
+  const renderDone = () =>
+    done.map((c) => `- [x] \`${c.id}\` ${c.text}`).join("\n");
 
   if (done.length === 0) return renderRemaining();
   if (remaining.length === 0) return `All criteria met:\n${renderDone()}`;
