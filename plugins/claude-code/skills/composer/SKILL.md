@@ -189,6 +189,7 @@ Re-derive the phase from the iteration todos plus the task's Mymir status: `draf
 | Temptation | Reality |
 | --- | --- |
 | Write `status` "so no other agent grabs the task" | Every transition belongs to a subagent: planner `draft→planned`; implementer `planned→in_progress→in_review` plus the fix rotation; HOTL `in_review→done`. The orchestrator writes propagation edges, nothing else. |
+| Skip research or planning to "get the claim in faster" | The phase order is fixed for every task, including `planned` entries (the planner re-validates): research → plan → implement → review. The implementer claims when its turn comes; no urgency moves it earlier. |
 | Split an oversize task yourself | Oversize routes to `mymir:decompose-task`, and only after the user gate. |
 | Treat `request-changes` or `block` as a failed attempt | A careful verdict is a successful review (`STATUS: DONE`). The fix loop or HOTL owns the response; the failure budget is untouched. |
 | Re-implement when a matching PR already exists | Resume the Completion Protocol instead. |
