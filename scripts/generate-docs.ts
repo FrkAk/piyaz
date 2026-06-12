@@ -154,3 +154,141 @@ ${actionRows.join("\n")}
 ${paramRows.join("\n")}
 `;
 }
+
+/** Synced skill reference files and their docs metadata. */
+export const SKILL_REFERENCES = [
+  {
+    file: "conventions.md",
+    slug: "conventions",
+    description: "Always-on quality rules for every Mymir skill and agent.",
+  },
+  {
+    file: "artifacts.md",
+    slug: "artifacts",
+    description: "Quality bar for tasks, edges, tags, and categories.",
+  },
+  {
+    file: "lifecycle.md",
+    slug: "lifecycle",
+    description: "Status lifecycle, Completion Protocol, and propagation rules.",
+  },
+  {
+    file: "resilience.md",
+    slug: "resilience",
+    description: "Long-session discipline: persistence, resume mode, compaction.",
+  },
+] as const;
+
+/**
+ * Transform a skill reference markdown file into a docs MDX page.
+ * Content is synced verbatim; only frontmatter, a provenance banner, and
+ * cross-reference links are added.
+ * @param raw - Source file content.
+ * @param file - Source file name (e.g. "conventions.md").
+ * @returns Complete MDX document text.
+ */
+export function transformReference(raw: string, file: string): string {
+  const ref = SKILL_REFERENCES.find((r) => r.file === file);
+  if (!ref) throw new Error(`unknown reference file: ${file}`);
+  const lines = raw.split("\n");
+  const titleIndex = lines.findIndex((l) => l.startsWith("# "));
+  if (titleIndex === -1) throw new Error(`no h1 in ${file}`);
+  const title = lines[titleIndex].slice(2).trim();
+  const body = lines.slice(titleIndex + 1).join("\n").trim();
+  const linked = body.replace(
+    /`references\/(conventions|artifacts|lifecycle|resilience)\.md`/g,
+    "[`references/$1.md`](/docs/reference/$1/)",
+  );
+  return `---
+title: ${title}
+description: ${yamlQuote(ref.description)}
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+${GENERATED_NOTE}
+
+<Callout type="info">
+  Canonical skill reference. This page is synced verbatim from
+  plugins/claude-code/skills/mymir/references/${file} in the mymir repo.
+  The Mymir skills and agents follow exactly this text.
+</Callout>
+
+# ${title}
+
+${linked}
+`;
+}
+
+/** A skill or agent entry parsed from plugin frontmatter. */
+interface PluginEntry {
+  name: string;
+  description: string;
+}
+
+/**
+ * Parse the YAML frontmatter of a plugin markdown file.
+ * @param path - Absolute path to a SKILL.md or agent .md file.
+ * @returns Name and description, or null when frontmatter is incomplete.
+ */
+async function readFrontmatter(path: string): Promise<PluginEntry | null> {
+  const raw = await readFile(path, "utf8");
+  const match = raw.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return null;
+  const parsed = Bun.YAML.parse(match[1]) as {
+    name?: string;
+    description?: string;
+  };
+  if (!parsed.name || !parsed.description) return null;
+  return { name: parsed.name, description: parsed.description.trim() };
+}
+
+/**
+ * Render the skills and agents catalog page from plugin frontmatter.
+ * @param pluginRoot - Absolute path to plugins/claude-code.
+ * @returns Complete MDX document text.
+ */
+export async function renderCatalog(pluginRoot: string): Promise<string> {
+  const skillsDir = join(pluginRoot, "skills");
+  const agentsDir = join(pluginRoot, "agents");
+  const skills: PluginEntry[] = [];
+  for (const name of (await readdir(skillsDir)).sort()) {
+    const entry = await readFrontmatter(join(skillsDir, name, "SKILL.md"));
+    if (entry) skills.push(entry);
+  }
+  const agents: PluginEntry[] = [];
+  for (const fileName of (await readdir(agentsDir)).sort()) {
+    if (!fileName.endsWith(".md")) continue;
+    const entry = await readFrontmatter(join(agentsDir, fileName));
+    if (entry) agents.push(entry);
+  }
+  skills.sort((a, b) =>
+    a.name === "mymir" ? -1 : b.name === "mymir" ? 1 : a.name.localeCompare(b.name),
+  );
+  const skillSections = skills.map((s) => {
+    const command = s.name === "mymir" ? "/mymir" : `/mymir:${s.name}`;
+    return `### ${command}\n\n${escapeProse(s.description)}`;
+  });
+  const agentSections = agents.map(
+    (a) => `### ${a.name}\n\n${escapeProse(a.description)}`,
+  );
+  return `---
+title: Skills and agents
+description: "Every command and agent the Mymir plugin installs, and when each one triggers."
+---
+
+${GENERATED_NOTE}
+
+# Skills and agents
+
+The Mymir plugin ships the same skill set on Claude Code, Codex, Cursor, and Antigravity. Commands are skills you or the model invoke; agents are dispatched by skills for focused phases of work. The descriptions below are the live trigger text from the plugin source.
+
+## Commands
+
+${skillSections.join("\n\n")}
+
+## Agents
+
+${agentSections.join("\n\n")}
+`;
+}
