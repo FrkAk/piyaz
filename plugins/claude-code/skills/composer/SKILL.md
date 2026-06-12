@@ -77,7 +77,7 @@ Then start iterating. There is nothing to install and nothing to confirm.
 
 ## The loop
 
-At the start of each iteration, materialize these steps as todos and mark them off as you go (the todo list is your compaction anchor): pick, research, plan, implement, review, surface verdict, propagate.
+At the start of each iteration, materialize these steps as todos and mark them off as you go (the todo list is your compaction anchor): pick, research, plan, implement, ci gate, review, surface verdict, propagate.
 
 ```dot
 digraph composer_iteration {
@@ -99,6 +99,7 @@ digraph composer_iteration {
     "Verdict?" [shape=diamond];
     "Fix rotations used < 2?" [shape=diamond];
     "Dispatch implementer in fix mode" [shape=box];
+    "CI gate: gh pr checks (10m bound)" [shape=box];
     "Escalate all verdicts to HOTL" [shape=box];
     "Surface verdict + propagate" [shape=box];
     "Failure handling" [shape=box];
@@ -122,7 +123,8 @@ digraph composer_iteration {
     "Pick was plannable-only?" -> "Single-task mode?" [label="yes: planned; deps unfinished"];
     "Planner STATUS?" -> "Failure handling" [label="BLOCKED"];
     "Dispatch implementer" -> "Implementer STATUS?";
-    "Implementer STATUS?" -> "Dispatch reviewer" [label="DONE / DONE_WITH_CONCERNS"];
+    "Implementer STATUS?" -> "CI gate: gh pr checks (10m bound)" [label="DONE / DONE_WITH_CONCERNS"];
+    "CI gate: gh pr checks (10m bound)" -> "Dispatch reviewer" [label="green / red / unresolved: annotate dispatch"];
     "Implementer STATUS?" -> "Failure handling" [label="BLOCKED"];
     "Dispatch reviewer" -> "Reviewer STATUS?";
     "Reviewer STATUS?" -> "Verdict?" [label="DONE"];
@@ -152,15 +154,22 @@ digraph composer_iteration {
 
 4. **Implement.** Dispatch `mymir:composer-implementer` with: `Target task: <taskRef>. Plan is saved to Mymir; fetch via mymir_context depth='agent'. Claim the task (planned → in_progress), implement per the implementationPlan, open a PR, mark in_review per the Completion Protocol.` Append the prior failure summary on retries. The implementer runs worktree-isolated (frontmatter `isolation: worktree`; also pass the Task tool's `isolation: "worktree"` parameter at dispatch, which is verified to work with plugin agents): it works in its own tree, the orchestrator's tree never moves, and the researcher's baseline stays stable.
 
-5. **Review and the fix loop.** Dispatch `mymir:review` with: `Target task: <taskRef>. PR URL: <url>. Mode: composer-phase-4. Fetch the bundle via mymir_context depth='review'.` On `STATUS: DONE`, branch on the verdict payload:
-   - **`approve`**: go to step 6.
-   - **`request-changes`**, fewer than 2 fix rotations used this task: dispatch the implementer in fix mode — `Target task: <taskRef>. Fix mode. PR: <url>. Address exactly these review findings, re-run verification, re-mark in_review:` followed by the verdict's blocking findings verbatim. On the implementer's `DONE`, re-dispatch the reviewer (same dispatch shape). Each fix dispatch + re-review is one rotation.
-   - **`request-changes`** with 2 rotations used, or **`block`**: stop fixing. Escalate every verdict from this task to HOTL and go to step 6. `block` is never auto-fixed; review.md calibrates it as "one rotation will not land this".
+5. **CI gate.** After the implementer returns DONE with a PR URL, watch the checks with a bounded timeout: `timeout 600 gh pr checks <url> --watch`. Skip the gate entirely when the repo has no checks configured (`gh pr checks` reports no checks — that is a skip, not a red). Branch on the result:
+   - **Green**: dispatch the reviewer normally.
+   - **Red**: dispatch the reviewer with the failing check names appended to the dispatch (`CI: failing — <check names>`); the reviewer may not approve red CI.
+   - **Still pending at the 10-minute timeout**: dispatch the reviewer with `CI: unresolved after 10m`; `approve` is off the table, and an otherwise-clean review returns `request-changes` citing unresolved CI as the sole blocking finding.
+
+   The gate re-runs after every fix rotation's implementer DONE.
+
+6. **Review and the fix loop.** Dispatch `mymir:review` with: `Target task: <taskRef>. PR URL: <url>. Mode: composer-phase-4. Fetch the bundle via mymir_context depth='review'.` On `STATUS: DONE`, branch on the verdict payload:
+   - **`approve`**: go to step 7.
+   - **`request-changes`**, fewer than 2 fix rotations used this task: dispatch the implementer in fix mode — `Target task: <taskRef>. Fix mode. PR: <url>. Address exactly these review findings, re-run verification, re-mark in_review:` followed by the verdict's blocking findings verbatim. On the implementer's `DONE`, re-run the CI gate (step 5), then re-dispatch the reviewer (same dispatch shape). Each fix dispatch + re-review is one rotation.
+   - **`request-changes`** with 2 rotations used, or **`block`**: stop fixing. Escalate every verdict from this task to HOTL and go to step 7. `block` is never auto-fixed; review.md calibrates it as "one rotation will not land this".
    - The verdict is advisory beyond the fix loop: HOTL owns `in_review → done` on GitHub regardless of verdict.
 
-6. **Surface + propagate.** Quote the final verdict block verbatim. Then propagate per lifecycle §3: `mymir_query type='edges' taskId='<id>'`, `mymir_analyze type='downstream' taskId='<id>'`; update or retire edge notes the work invalidated (edge-note shape: artifacts §3 — one to three short sentences addressed to the downstream task's agent). Propagation depth follows the verdict: on `approve`, propagate fully. On an escalated `request-changes` or `block`, write edge-note updates as provisional — prefix each with `Provisional pending HOTL on PR #<n>:` — because HOTL may reject the work; the HOTL `done` flip (outside composer, as today) is the trigger for firming them up. Surface newly-unblocked tasks in the next pick rationale.
+7. **Surface + propagate.** Quote the final verdict block verbatim. Then propagate per lifecycle §3: `mymir_query type='edges' taskId='<id>'`, `mymir_analyze type='downstream' taskId='<id>'`; update or retire edge notes the work invalidated (edge-note shape: artifacts §3 — one to three short sentences addressed to the downstream task's agent). Propagation depth follows the verdict: on `approve`, propagate fully. On an escalated `request-changes` or `block`, write edge-note updates as provisional — prefix each with `Provisional pending HOTL on PR #<n>:` — because HOTL may reject the work; the HOTL `done` flip (outside composer, as today) is the trigger for firming them up. Surface newly-unblocked tasks in the next pick rationale.
 
-7. **Loop.** Single-task: report the iteration outcome and stop. Backlog: next iteration, no pause.
+8. **Loop.** Single-task: report the iteration outcome and stop. Backlog: next iteration, no pause.
 
 ## Dispatch hygiene
 

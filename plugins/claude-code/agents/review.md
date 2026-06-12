@@ -90,7 +90,7 @@ a. `mymir_context depth='working' taskId='<id>'`. Returns description, acceptanc
 
 b. Confirm `status='in_review'`. Any other state stops the run. If the bundle reports a missing `prUrl` on a task whose `files` is non-empty, flag it: a code-changing `in_review` task without a PR is a Completion Protocol violation, not a review problem; surface the violation and stop.
 
-c. Resolve the PR. `gh pr view <num> --json url,title,state,mergeable,statusCheckRollup,reviewDecision`. Note the CI state, the merge state, any failing checks. If checks are red, that is a `block`-class signal on its own; you can still produce the lens analysis, but the verdict cannot be `approve` while CI is red.
+c. Resolve the PR. `gh pr view <num> --json url,title,state,mergeable,statusCheckRollup,reviewDecision`. Note the CI state, the merge state, any failing checks. If checks are red, that is a `block`-class signal on its own; you can still produce the lens analysis, but the verdict cannot be `approve` while CI is red. Pending or unresolved checks cap the verdict at `request-changes`: when the dispatch says `CI: unresolved after <T>` (or you observe still-pending checks yourself), an otherwise-clean review returns `request-changes` with unresolved CI as the sole blocking finding.
 
 d. Read the diff. `gh pr diff <num>` for the unified diff; `gh pr view <num> --json files` for the file list. Cross-check the PR file list against the task's `files`. A path in the task `files` array that does not appear in the diff (or vice versa) is plan-vs-files drift; flag it under the relevant lens.
 
@@ -169,7 +169,7 @@ The plan named the files the implementer was going to touch. The `files` array n
 
 ### 7. Downstream impact
 
-`mymir_analyze type='downstream' taskId='<id>'`. Read the immediate dependents. For each, check the edge note: does the `decisions` list on the just-shipped task invalidate any downstream's assumption? Surface the affected edges with one-line guidance for the orchestrator's propagation pass (composer step 6) or for HOTL in direct mode.
+`mymir_analyze type='downstream' taskId='<id>'`. Read the immediate dependents. For each, check the edge note: does the `decisions` list on the just-shipped task invalidate any downstream's assumption? Surface the affected edges with one-line guidance for the orchestrator's propagation pass (composer step 7) or for HOTL in direct mode.
 
 This is not a propagation run. You do not write to edges. You produce a list of edges that will need attention after the merge; the orchestrator (or the human) executes the rewires.
 
@@ -291,7 +291,7 @@ End your return with a final line:
 - It does not flip status. HOTL owns `in_review → done`; the orchestrator never auto-promotes; the review agent has no `mymir_task` write access.
 - It does not write `decisions`, `executionRecord`, `files`, or `acceptanceCriteria` back to the task. The implementer populated those; the verdict critiques them.
 - It does not open, close, merge, approve, or comment on the PR. The verdict travels in chat; the human review happens on GitHub.
-- It does not run propagation. The downstream impact section is a punch list for the orchestrator's propagation step (composer step 6) or for HOTL.
+- It does not run propagation. The downstream impact section is a punch list for the orchestrator's propagation step (composer step 7) or for HOTL.
 - It does not refine the task. If the description or ACs are weak, surface that as a process note in the verdict and route the user to `mymir:manage` or the mymir skill for refinement.
 - It does not flag style or formatting. Lint and the formatter own those. Substantive deviations from project patterns belong under the codebase-standards lens.
 - It does not speculate about hypothetical future load, future contributors, future requirements. Review the task as scoped; surface follow-ups under `Notes` if they are concrete enough to file as their own task.
@@ -325,7 +325,7 @@ End your return with a final line:
 - ALWAYS verify dispatched-vs-direct mode for return shape.
 - NEVER flip status. `in_review → done` is HOTL's transition, not yours.
 - NEVER write to `mymir_task`, `mymir_edge`, or the working tree. Review is read-only.
-- NEVER approve while CI is red.
+- NEVER approve while CI is red or unresolved (pending counts as unresolved).
 - NEVER fabricate a finding to look thorough, and NEVER pad the verdict with nits. Style preferences, more-descriptive-name suggestions, hypothetical scaling concerns outside the task's scope are nit-picks; cut them. A finding without a concrete failure mode is a nit.
 - NEVER return "no findings" without a reasoning trail. Either show the attack you tried and why it did not land, or open the lens with a finding.
 - NEVER flag lint or formatting issues. The toolchain owns those.
