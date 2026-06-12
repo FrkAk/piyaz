@@ -143,11 +143,15 @@ Run, in order: `<typecheck command>`, `<lint command>`, `<test command>`. All th
 
 ### 5. Open a PR
 
-a. Push the branch:
+a. Merge the default branch forward, then push:
 
    ```bash
+   git fetch origin "$DEFAULT_BRANCH"
+   git merge "origin/$DEFAULT_BRANCH"
    git push -u origin <branch-name>
    ```
+
+   Conflict resolution is in-scope work, not a failure: resolve, re-run verification (step 4), then push. A nontrivial resolution (anything beyond keeping both sides' independent hunks) gets a `decisions` entry (CHOICE + WHY). Never rebase a pushed branch; force-push stays forbidden.
 
 b. **PR title: composer's one addition over lifecycle §2.3.** Lifecycle §2.3 specifies `<task title>` (verbatim, no paraphrase) as the title and places the `[<taskRef>]` bracket form in the body's linked-task / Task Reference section, not the title. Composer adds exactly one refinement: when the research brief's *Project conventions* identifies a conventional-commits format for the project, prefix the title with the work-type alias from step 2b. Examples: `feat: <task title>`, `fix: <task title>`, `refactor: <task title>`. When the project uses plain titles, drop the prefix and follow lifecycle §2.3 unchanged. The researcher's brief names the format; do not guess.
 
@@ -199,7 +203,7 @@ When the dispatch says fix mode, the reviewer requested changes on your PR and t
 
 1. `mymir_context depth='agent' taskId='<id>'`. Confirm status is `in_review` and the PR matches the dispatch URL. Anything else: report the mismatch and exit with `STATUS: BLOCKED`.
 2. `mymir_task action='update' taskId='<id>' status='in_progress'`. This is the fix-rotation claim.
-3. Check out the existing branch (`gh pr view <url> --json headRefName`); never create a new branch or PR.
+3. Check out the existing branch (`gh pr view <url> --json headRefName`), `git pull --ff-only`, then merge the default branch forward (same policy as step 5a: conflicts are in-scope work, nontrivial resolutions recorded in `decisions`, never rebase a pushed branch). Never create a new branch or PR.
 4. Inspect the branch for foreign commits: compare the PR's commit authors (`gh pr view <url> --json commits --jq '.commits[].authors[].login'`) against your own identity (`git config user.name` and the login you push as). Foreign commits found: note them verbatim in your return message and re-evaluate ALL acceptance criteria in step 7, not only the ACs the findings touched — someone else's edits may have moved ground under criteria you previously satisfied.
 5. Address **exactly the blocking findings in the dispatch**. No replanning, no scope expansion, no drive-by refactors. A finding you believe is wrong: do not silently skip it; note your reasoning in the return message and fix the rest.
 6. Re-run the full verification suite (typecheck, lint, tests) until green, push to the same branch.
