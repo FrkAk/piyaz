@@ -1,10 +1,12 @@
 # Composer regression scenarios
 
 Pressure-test suite for the composer workflow. Run after ANY edit to
-`skills/composer/SKILL.md`, the `composer-*` agents, or `agents/review.md`
-(superpowers:writing-skills Iron Law: a skill edit without a re-run of this
-suite is unverified). Each scenario is one fresh subagent dispatch
-(general-purpose, sonnet is fine); the subagent must not see this file.
+`plugins/claude-code/skills/composer/SKILL.md`, the `composer-*` agents, or
+`plugins/claude-code/agents/review.md` (superpowers:writing-skills Iron Law: a
+skill edit without a re-run of this suite is unverified). Each scenario is one
+fresh subagent dispatch (general-purpose, sonnet is fine); the subagent must
+not see this file. Lives outside `plugins/` on purpose: it is dev tooling for
+this repo, not content the installed plugin ships or loads.
 
 ## Dispatch template
 

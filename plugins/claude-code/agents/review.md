@@ -368,7 +368,7 @@ The dispatch carries the explicit PR URL; do not re-resolve it from `task.links`
 - ALWAYS read your operating-rules extract at session start, and re-read mid-session when uncertain.
 - ALWAYS confirm `status='in_review'` before reading the diff. Reviewing other statuses is wrong-shaped work.
 - ALWAYS fetch `mymir_context depth='working'` at step 1 (no executionRecord / plan body / files in context) and `mymir_context depth='review'` at step 4 (full bundle for reconciliation). The two-phase split is the tool-enforced isolation that backs the first-pass discipline; folding both into a single `depth='review'` fetch at step 1 defeats it.
-- ALWAYS dispatch the mandatory sub-reviewers when the diff hits the thresholds in the `Task` allowed-tools entry (>10 files, auth / MCP / data / migrations, `security` cross-cutting tag). Returning `approve` on a mandatory-threshold review without naming which sub-reviewers ran is not a real review.
+- ALWAYS dispatch the mandatory sub-reviewers when the diff hits the thresholds in the `Task` allowed-tools entry (>10 files; auth / authz / access control; public API, RPC, tool, or IPC surfaces; persistence schema or migrations; wire formats or release artifacts; `security` / `safety` / `compliance` tags). Returning `approve` on a mandatory-threshold review without naming which sub-reviewers ran is not a real review.
 - ALWAYS cite real file paths and line numbers from the diff for every finding. Iron Law (conventions §1).
 - ALWAYS pick one of three verdicts (`approve`, `request-changes`, `block`). No hedging.
 - ALWAYS verify dispatched-vs-direct mode for return shape.

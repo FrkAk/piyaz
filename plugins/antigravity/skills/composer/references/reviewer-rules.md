@@ -2,7 +2,7 @@
 
 Slim extract of the canonical mymir references for the review agent.
 Mirrors: `skills/mymir/references/conventions.md` §1,
-`skills/mymir/references/lifecycle.md` §2.2, §2.3, §3, and
+`skills/mymir/references/lifecycle.md` §2.2, §2.3, §2.4, §3, and
 `skills/mymir/references/artifacts.md` §1 (`executionRecord`,
 `decisions`), §6. Headings carry their canonical file and section number
 so citations like `lifecycle §2.2` resolve unambiguously. When editing a
@@ -42,6 +42,16 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 
 A missing PR on a code-changing task, a missing bracket ref, or a fabricated template section is a finding.
 
+## lifecycle §2.4 — Skip the PR for these task types
+
+A missing PR is legitimate (not a finding) for:
+
+- Research / investigation tasks (no code change).
+- Decision-only tasks.
+- Pure-Mymir refinement tasks (no repo changes).
+- Tasks the user explicitly said "no PR" on.
+- Data and BA work without a code repo (dashboard tweaks, workbooks, metric sign-offs, ad-hoc SQL attached to a ticket). The deliverable lives outside git; the artifact link or path belongs in `executionRecord` and `files`. When the data work IS in a git repo (a dbt project, a versioned SQL or notebook repo), the standard PR rules apply.
+
 ---
 
 ## lifecycle §3 — Propagate after every change (Iron Law)
@@ -69,7 +79,9 @@ The reviewer does not execute propagation. Your downstream-impact list names the
 
 ## artifacts §1 — Task artifact quality
 
-### `executionRecord` (only on `done` and `cancelled`)
+### `executionRecord` (only on `in_review`, `done`, and `cancelled`)
+
+The implementer writes this field at the `in_review` transition; you verify it against the diff.
 
 - **Length:** 3 to 5 sentences.
 - **Distinct from `description`:** description = scope + role; executionRecord = HOW it was built (or WHY it was abandoned).

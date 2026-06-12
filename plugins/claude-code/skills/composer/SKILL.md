@@ -14,7 +14,7 @@ description: >
 
 Composer is a Mymir task orchestrator. Per iteration it picks the next ready task off the project's critical path, dispatches four phase subagents in sequence (research, plan, implement, review), runs a bounded review→fix loop, propagates the result through the graph, and continues until a structural stop condition holds. Each subagent runs in a fresh context with a focused tool set; the orchestrator stays clean and writes nothing to tasks except propagation edges.
 
-Composer is glue. The heavy lifting (task selection, refinement, the Completion Protocol, propagation) lives in the `mymir` skill (`plugins/claude-code/skills/mymir/SKILL.md`); composer reuses those flows rather than duplicating them.
+Composer is glue. The heavy lifting (task selection, refinement, the Completion Protocol, propagation) lives in the `mymir` skill (`skills/mymir/SKILL.md`); composer reuses those flows rather than duplicating them.
 
 ## Invocation
 
@@ -58,7 +58,7 @@ Every subagent return ends with `STATUS: <value> — <one-line reason>`. Branch 
 | `NEEDS_DECISION` | A user decision is required | Gate via `AskUserQuestion`; act on the answer |
 | `BLOCKED` | Phase cannot complete | *Failure handling* |
 
-Expected `NEEDS_DECISION` triggers (typically from the researcher; any phase may raise one — gate the same way and re-dispatch the **raising agent** with the answers):
+Expected `NEEDS_DECISION` triggers (typically from the researcher; the planner may raise one too — gate the same way and re-dispatch the **raising agent** with the answers; the implementer and reviewer contracts do not return this status):
 
 - **Oversize** (`oversize-task` flag): offer to dispatch `mymir:decompose-task` or skip the task. Composer never splits a task itself.
 - **Proposed rewrites** (`## Proposed rewrites` non-empty): show original vs proposed per field with the researcher's rationale; offer accept / deny. On accept, apply via `mymir_task action='update'` and re-dispatch the researcher on the rewritten task (the old brief is invalid). On deny, end the iteration: backlog mode picks the next task; single-task mode stops.
@@ -159,7 +159,7 @@ digraph composer_iteration {
 
 4. **Implement.** First check the pick type: when the pick was plannable-only, do not enter this step — the iteration already ended at `planned` (step 3). Otherwise dispatch `mymir:composer-implementer` with: `Target task: <taskRef>. Plan is saved to Mymir; fetch via mymir_context depth='agent'. Claim the task (planned → in_progress), implement per the implementationPlan, open a PR, mark in_review per the Completion Protocol.` Append the prior failure summary on retries. The implementer runs worktree-isolated (frontmatter `isolation: worktree`; also pass the Task tool's `isolation: "worktree"` parameter at dispatch, which is verified to work with plugin agents): it works in its own tree, the orchestrator's tree never moves, and the researcher's baseline stays stable.
 
-5. **CI gate.** After the implementer returns DONE with a PR URL, watch the checks with a bounded timeout and branch on the **exit code**, never on truncated output: `timeout 600 gh pr checks <url> --watch; rc=$?`. `rc=0` → green. `rc=124` (timeout killed the watch mid-pending) or `rc=8` (gh's checks-pending code) → still pending. Any other non-zero `rc` → red; read the failing check names from the output. Skip the gate entirely when the repo has no checks configured (`gh pr checks` reports no checks — that is a skip, not a red). Branch on the result:
+5. **CI gate.** After the implementer returns DONE with a PR URL, watch the checks with a bounded timeout: `timeout 600 gh pr checks <url> --watch; rc=$?`. Branch on the **exit code**, with one output-based exception: `rc=0` → green. `rc=124` (timeout killed the watch mid-pending) or `rc=8` (gh's checks-pending code) → still pending. Any other non-zero `rc` → red — unless the output says no checks are reported (gh has no distinct exit code for a repo with no checks configured; it shares the red codes). No checks reported → skip the gate entirely; that is a skip, not a red. For a real red, read the failing check names from the output. Branch on the result:
    - **Green**: dispatch the reviewer normally.
    - **Red**: dispatch the reviewer with the failing check names appended to the dispatch (`CI: failing — <check names>`); the reviewer may not approve red CI.
    - **Still pending at the 10-minute timeout**: dispatch the reviewer with `CI: unresolved after 10m`; `approve` is off the table, and an otherwise-clean review returns `request-changes` citing unresolved CI as the sole blocking finding.
@@ -258,7 +258,7 @@ Future (documented, not built): a GitHub webhook feeding `task_links.metadata` a
 
 Only under `--pipelined`, only in backlog mode, lookahead 1. The win is latency (~15–25%), not tokens; when in doubt, run without the flag.
 
-- **Trigger:** dispatch researcher(B) in the background only after implementer(A) returns DONE — overlap covers A's CI gate, review, and fix rotations only. Never manage background work while A is still implementing.
+- **Trigger:** dispatch researcher(B) in the background only after implementer(A) returns DONE — overlap covers A's CI gate, review, and fix rotations only. Never dispatch the prefetch while A's initial implement phase is still running.
 - **Pick B excluding A.** B must be ready independently of A by construction — `in_review` unblocks nothing, so the ready set already excludes A's dependents.
 - **Isolation:** researcher(B) is dispatched with worktree isolation and `run_in_background`; the orchestrator's tree and A's review baseline never move.
 - **Brief custody:** when researcher(B) returns, append a `BRIEF` event to the run log (`task=<B-ref> baselinedAt=<A-ref>`) with the brief verbatim as `> ` continuation lines. The transcript copy is working memory; the log copy survives compaction. The prefetch is not a `PICK`: B's `PICK` line is written when B's own iteration starts, so recovery's last-`PICK`-without-`TASK_END` rule still finds A.
@@ -350,7 +350,7 @@ Not a decomposer (oversize routes out). Not a hand-refiner (that is the mymir sk
 
 ## See also
 
-- `plugins/claude-code/skills/mymir/SKILL.md`: canonical flows composer reuses — selection (§ *What should I work on?*), refinement (§ *Refine a task*), planning (§ *Plan a draft task*), implementation (§ *Implement a task*), propagation.
-- `plugins/claude-code/agents/composer-researcher.md`, `composer-planner.md`, `composer-implementer.md`, `review.md`: the four phase contracts, including each phase's STATUS rules.
-- `plugins/claude-code/skills/composer/references/`: the slim per-phase rule extracts the agents load.
-- `plugins/claude-code/agents/decompose-task.md`: the oversize-delegation target.
+- `skills/mymir/SKILL.md`: canonical flows composer reuses — selection (§ *What should I work on?*), refinement (§ *Refine a task*), planning (§ *Plan a draft task*), implementation (§ *Implement a task*), propagation.
+- `agents/composer-researcher.md`, `agents/composer-planner.md`, `agents/composer-implementer.md`, `agents/review.md`: the four phase contracts, including each phase's STATUS rules.
+- `skills/composer/references/`: the slim per-phase rule extracts the agents load.
+- `agents/decompose-task.md`: the oversize-delegation target.

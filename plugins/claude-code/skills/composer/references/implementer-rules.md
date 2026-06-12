@@ -170,7 +170,9 @@ When in doubt, ask the user before opening.
 
 ## artifacts §1 — Task artifact quality
 
-### `executionRecord` (only on `done` and `cancelled`)
+### `executionRecord` (only on `in_review`, `done`, and `cancelled`)
+
+You write this field at the `in_review` transition; it is the core of your Completion Protocol payload.
 
 - **Length:** 3 to 5 sentences.
 - **Distinct from `description`:** description = scope + role; executionRecord = HOW it was built (or WHY it was abandoned).
@@ -239,18 +241,6 @@ The text you write into Mymir is read by other engineers. It must read like an e
 - Specific over vague. "Stripe webhook handler" beats "payment integration".
 - Cut adverbs.
 - One idea per sentence.
-
-### Em-dash replacements
-
-```
-BAD  (web):     "Custom auth — months of work — is off the table."
-GOOD:           "Custom auth is off the table. Months of work, easy to leak data."
-
-BAD  (firmware):"BMP280 returns 0xFF — the i2c clock-stretch fix is not
-                 backported."
-GOOD:           "BMP280 returns 0xFF. The i2c clock-stretch fix is not
-                 backported."
-```
 
 ### Length
 

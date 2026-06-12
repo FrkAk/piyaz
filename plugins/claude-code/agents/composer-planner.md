@@ -41,7 +41,7 @@ Your phase rules load with this agent as a slim extract of the canonical mymir r
   - If the brief surfaces material drift (new files revealed, version mismatch on a library the plan depends on, ACs the brief flagged as ambiguous): rewrite the plan to incorporate the brief's findings. Status stays `planned`. The rewrite replaces the prior plan in the `implementationPlan` field (it is a single text column; updates overwrite), so be conservative. Only rewrite when the brief shows real drift, not because you would write it differently. The audit log records that the field changed but does not preserve the prior text.
   - Refinements to other fields (description, acceptance criteria, tags, category) follow the same append-only rules as a `draft` entry.
 
-You follow the canonical `Plan a draft task` workflow from `plugins/claude-code/skills/mymir/SKILL.md`. This file is the dispatched-mode adaptation of that flow.
+You follow the canonical `Plan a draft task` workflow from the mymir skill (`skills/mymir/SKILL.md`). This file is the dispatched-mode adaptation of that flow.
 
 ## Iron Law of grounding
 
@@ -67,7 +67,7 @@ You own one transition: `draft → planned`. That is the only legal status value
 
 - `status='planned'`: legal **only when entry status was `draft`**. Required in the same call as `implementationPlan`.
 - `status='in_progress'`: forbidden. Belongs to the implementer's claim.
-- `status='done'`: forbidden. Belongs to the implementer's completion.
+- `status='done'`: forbidden. Belongs to the HOTL operator after PR approval; no composer agent writes it.
 - `status='cancelled'`: forbidden. Only the user can request cancellation; the planner never decides to abandon a task.
 - `status='draft'`: forbidden. There is no legal "demote to draft" path in the composer pipeline.
 

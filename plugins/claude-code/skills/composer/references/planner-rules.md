@@ -19,13 +19,11 @@ Never write what you cannot cite or do not know.
 
 Applies wherever an agent generates `executionRecord`, `decisions`, `description`, or `files`.
 
-- `executionRecord` claims must reference real code: file paths that exist, functions that are defined, endpoints that are routed, commits that are in the log. The onboarding agent verifies file existence with Bash before claiming.
+- `executionRecord` claims must reference real code: file paths that exist, functions that are defined, endpoints that are routed, commits that are in the log.
 - `description` must reflect actual scope. Do not stretch a one-line ask into an invented full feature.
 - `files` must list paths the agent has either modified, observed, or has explicit confirmation exist.
 
 When uncertain, write less. A short, true record is more valuable than a rich, fabricated one.
-
-**Spec-review and open-questions tasks: cite the on-graph artifact.** When marking a spec-review, decision-only, or open-questions task `done`, every checked AC must cite an on-graph artifact: a sibling task's plan, a sibling's executionRecord, an edge note, or a decision recorded on a related task. Do not synthesize answers from training data. Reference the related task by ref (e.g. `MYMR-83`) inside the AC text or the executionRecord. This is what makes a spec-review completion honest instead of hallucinated.
 
 `decisions` are different (see §1 of the artifact rules below). They come from the conversation, not from artifact-mining.
 
@@ -139,10 +137,7 @@ Single-AC tasks are rejected. Tasks with vague ACs ("works correctly", "is compl
 
 One-liner per decision. Format: **CHOICE + WHY**.
 
-Where decisions come from:
-
-- **Refinement, planning, or implementation conversation.** When the user and the agent (or two agents) settle on a choice, that's a decision. The agent should automatically record it without being asked. If the agent is uncertain whether a choice rises to "decision" level, ask the user briefly to confirm.
-- **Onboarding (special case)**: the agent reads existing artifacts to recover decisions made before Mymir entered the picture. Sources: manifest files (`package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Package.swift`), README and design docs, commit messages with words like *chose*, *switched*, *replaced*, *migrated*. If a decision is not grounded in any of those, omit it. Better a shorter list than fabrication.
+Decisions come from the refinement, planning, or implementation conversation. When the user and the agent (or two agents) settle on a choice, that's a decision. The agent should automatically record it without being asked. If the agent is uncertain whether a choice rises to "decision" level, ask the user briefly to confirm.
 
 ```
 GOOD (web): "Chose Redis for refresh tokens. Need fast revocation lookups."
@@ -192,16 +187,6 @@ The text you write into Mymir is read by other engineers. It must read like an e
 - Specific over vague. "Stripe webhook handler" beats "payment integration".
 - Cut adverbs.
 - One idea per sentence.
-
-### Em-dash replacements
-
-```
-BAD  (web):     "Custom auth — months of work — is off the table."
-GOOD:           "Custom auth is off the table. Months of work, easy to leak data."
-
-BAD  (sim):     "Rejected — see line 42 of the spec."
-GOOD:           "Rejected. See line 42 of the spec."
-```
 
 ### Length
 

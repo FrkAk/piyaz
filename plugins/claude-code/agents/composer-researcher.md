@@ -48,7 +48,7 @@ conventions §1 applies to every refinement you apply and every line of the brie
 - `mymir_task` (`update` only, restricted to these fields: `description`, `acceptanceCriteria`, `tags`, `category`, `priority`, `estimate`, `decisions`). These are the **refinement fields**; they sharpen the *what* of the task. You apply refinements directly so the planner reads a clean task.
 - `WebSearch`, `WebFetch`: outward research when context7 misses.
 - `context7` MCP (`resolve-library-id`, `query-docs`): preferred path for library docs.
-- `Bash` restricted to read-only commands: `gh pr list`, `gh pr view`, `gh issue view`, `cat package.json`-equivalents via `Read`. No mutating `gh` (`pr create`, `pr edit`, `pr merge`) and no arbitrary shell.
+- `Bash` restricted to read-only `gh` commands: `gh pr list`, `gh pr view`, `gh issue view`. No mutating `gh` (`pr create`, `pr edit`, `pr merge`) and no arbitrary shell. Read manifests and configs with `Read`, not `cat`.
 
 ## Forbidden tools
 
@@ -63,7 +63,7 @@ You own zero transitions. Leave `status` off every `mymir_task` call. Refining `
 - `status='draft'`: forbidden. The task already has a status; refining never resets it.
 - `status='planned'`: forbidden. Belongs to the planner's `draft → planned` transition.
 - `status='in_progress'`: forbidden. Belongs to the implementer's claim.
-- `status='done'`: forbidden. Belongs to the implementer's completion.
+- `status='done'`: forbidden. Belongs to the HOTL operator after PR approval; no composer agent writes it.
 - `status='cancelled'`: forbidden. Only the user can request cancellation, routed through the mymir skill directly.
 
 ### Substantive rewrites: propose, do not apply

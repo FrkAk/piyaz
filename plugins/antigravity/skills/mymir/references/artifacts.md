@@ -133,7 +133,7 @@ BAD:
 
 Single-AC tasks are rejected. Tasks with vague ACs ("works correctly", "is complete", "performs well") are rejected.
 
-### `executionRecord` (only on `done` and `cancelled`)
+### `executionRecord` (only on `in_review`, `done`, and `cancelled`)
 
 - **Length:** 3 to 5 sentences.
 - **Distinct from `description`:** description = scope + role; executionRecord = HOW it was built (or WHY it was abandoned).
@@ -401,29 +401,6 @@ The text you write into Mymir is read by other engineers. It must read like an e
 - Specific over vague. "Stripe webhook handler" beats "payment integration".
 - Cut adverbs.
 - One idea per sentence.
-
-### Em-dash replacements
-
-```
-BAD  (web):     "Custom auth — months of work — is off the table."
-GOOD:           "Custom auth is off the table. Months of work, easy to leak data."
-
-BAD  (web):     "The API uses Bearer tokens — validated against the users table."
-GOOD:           "The API validates Bearer tokens against the users table."
-
-BAD  (sim):     "Rejected — see line 42 of the spec."
-GOOD:           "Rejected. See line 42 of the spec."
-
-BAD  (agentic): "The agent loop dispatches tools — validated against the
-                 registry — then streams the model output."
-GOOD:           "The agent loop validates each tool against the registry
-                 before dispatching, then streams the model output."
-
-BAD  (firmware):"BMP280 returns 0xFF — the i2c clock-stretch fix is not
-                 backported."
-GOOD:           "BMP280 returns 0xFF. The i2c clock-stretch fix is not
-                 backported."
-```
 
 ### Length
 
