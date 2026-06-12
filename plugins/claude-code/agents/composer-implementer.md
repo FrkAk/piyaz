@@ -16,6 +16,7 @@ description: >
   user asks "implement <taskRef> per the saved plan" outside the composer
   loop.
 model: opus
+isolation: worktree
 ---
 
 # Composer implementer (Phase 3)
