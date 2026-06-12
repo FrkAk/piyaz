@@ -1,13 +1,45 @@
 import "server-only";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
+import { authDb } from "@/lib/db/connection";
 import {
+  account,
   oauthAccessToken,
   oauthConsent,
   oauthRefreshToken,
   session,
 } from "@/lib/db/auth-schema";
 import { projects, tasks, taskAssignees } from "@/lib/db/schema";
+
+/**
+ * Read when the user's credential (email/password) account row last
+ * changed. The row's `updatedAt` bumps on every password write, so it
+ * doubles as "password last changed" for the settings UI.
+ *
+ * Reads through `authDb` (auth_role): `neon_auth.account` holds password
+ * hashes, so `docker/grants.sql` deliberately excludes it from
+ * `service_role`'s table grants. Only the auth layer's role may touch it.
+ *
+ * @param userId - Verified user id from the session.
+ * @returns The credential row's `updatedAt`, or null when the user has no
+ *          password-bearing credential account.
+ */
+export async function getPasswordUpdatedAt(
+  userId: string,
+): Promise<Date | null> {
+  const rows = await authDb
+    .select({ updatedAt: account.updatedAt })
+    .from(account)
+    .where(
+      and(
+        eq(account.userId, userId),
+        eq(account.providerId, "credential"),
+        isNotNull(account.password),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.updatedAt ?? null;
+}
 
 /**
  * Wipe every artifact that referenced (userId, orgId) so a removed member

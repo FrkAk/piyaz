@@ -111,6 +111,34 @@ describe("mapBetterAuthError — switch-case branches", () => {
       "slug_taken",
     );
   });
+
+  test("INVALID_PASSWORD → invalid_password", () => {
+    expect(mapBetterAuthError(baError("INVALID_PASSWORD"))).toBe(
+      "invalid_password",
+    );
+  });
+
+  test("PASSWORD_TOO_SHORT → invalid_input", () => {
+    expect(mapBetterAuthError(baError("PASSWORD_TOO_SHORT"))).toBe(
+      "invalid_input",
+    );
+  });
+
+  test("PASSWORD_TOO_LONG → invalid_input", () => {
+    expect(mapBetterAuthError(baError("PASSWORD_TOO_LONG"))).toBe(
+      "invalid_input",
+    );
+  });
+
+  test("UNAUTHORIZED → unauthorized", () => {
+    expect(mapBetterAuthError(baError("UNAUTHORIZED"))).toBe("unauthorized");
+  });
+
+  test("CREDENTIAL_ACCOUNT_NOT_FOUND → not_found", () => {
+    expect(mapBetterAuthError(baError("CREDENTIAL_ACCOUNT_NOT_FOUND"))).toBe(
+      "not_found",
+    );
+  });
 });
 
 describe("mapBetterAuthError — FORBIDDEN_CODES allowlist", () => {

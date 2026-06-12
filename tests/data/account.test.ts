@@ -2,10 +2,39 @@ import { test, expect, describe, afterEach } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { clearOrgMembershipArtifacts } from "@/lib/data/account";
+import {
+  clearOrgMembershipArtifacts,
+  getPasswordUpdatedAt,
+} from "@/lib/data/account";
 
 afterEach(async () => {
   await truncateAll();
+});
+
+describe("getPasswordUpdatedAt", () => {
+  // Regression: the helper must read through authDb (auth_role).
+  // docker/grants.sql deliberately excludes neon_auth.account (password
+  // hashes) from service_role's grants, so a serviceRoleDb read throws
+  // "permission denied for table account" at runtime. These tests run
+  // against the real role split and fail on any client downgrade.
+  test("returns the credential row's updatedAt", async () => {
+    const f = await seedUserOrgProject("pw-updated-at");
+    const sqlc = superuserPool();
+    await sqlc`
+      INSERT INTO neon_auth."account"
+        ("accountId", "providerId", "userId", "password", "updatedAt")
+      VALUES (${f.userId}, 'credential', ${f.userId},
+              'scrypt-hash-placeholder', '2026-03-01T12:00:00Z')
+    `;
+
+    const updatedAt = await getPasswordUpdatedAt(f.userId);
+    expect(updatedAt).toEqual(new Date("2026-03-01T12:00:00Z"));
+  });
+
+  test("returns null for a user without a password-bearing account", async () => {
+    const f = await seedUserOrgProject("pw-no-credential");
+    expect(await getPasswordUpdatedAt(f.userId)).toBeNull();
+  });
 });
 
 describe("clearOrgMembershipArtifacts", () => {
