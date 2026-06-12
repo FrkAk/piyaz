@@ -7,7 +7,6 @@ import {
   untrustedContentNotice,
 } from "@/lib/context/format";
 import type { AuthContext } from "@/lib/auth/context";
-import { withUserContext } from "@/lib/db/rls";
 import {
   resolveDependencyClosure,
   type AgentContextData,
@@ -172,8 +171,6 @@ export async function buildAgentContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<string> {
-  return withUserContext(ctx.userId, async (tx) => {
-    const data = await resolveDependencyClosure(tx, taskId, "agent");
-    return buildAgentContextFrom(data);
-  });
+  const data = await resolveDependencyClosure(ctx.userId, taskId, "agent");
+  return buildAgentContextFrom(data);
 }

@@ -10,6 +10,7 @@ import {
   test,
 } from "bun:test";
 import { auth } from "@/lib/auth";
+import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
 
 /**
  * Narrow-catch tests for `isOrgAdmin` / `isOrgOwner`. Pins the H4 fix:
@@ -34,9 +35,7 @@ type HasPermissionImpl = () => Promise<{ success: boolean }>;
 let nextHasPermission: HasPermissionImpl = async () => ({ success: false });
 let hasPermissionSpy: ReturnType<typeof spyOn>;
 
-mock.module("next/headers", () => ({
-  headers: async () => new Headers(),
-}));
+mock.module("next/headers", nextHeadersMockModule);
 
 beforeAll(() => {
   hasPermissionSpy = spyOn(

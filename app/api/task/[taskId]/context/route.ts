@@ -9,7 +9,6 @@ import {
   buildWorkingContextFrom,
   formatWorkingContext,
 } from "@/lib/context/_core/working";
-import { withUserContext } from "@/lib/db/rls";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
@@ -51,18 +50,10 @@ async function handle(req: Request, taskId: string): Promise<Response> {
       return conditionalRespond(req, null, max);
     }
 
-    const { agent, planning, workingRaw } = await withUserContext(
-      ctx.userId,
-      async (tx) => {
-        const bundle = await resolveContextBundle(tx, taskId);
-        return {
-          agent: buildAgentContextFrom(bundle),
-          planning: buildPlanningContextFrom(bundle),
-          workingRaw: buildWorkingContextFrom(bundle),
-        };
-      },
-    );
-    const working = await formatWorkingContext(workingRaw);
+    const bundle = await resolveContextBundle(ctx.userId, taskId);
+    const agent = buildAgentContextFrom(bundle);
+    const planning = buildPlanningContextFrom(bundle);
+    const working = await formatWorkingContext(buildWorkingContextFrom(bundle));
     return conditionalRespond(req, { agent, planning, working }, max);
   } catch (err) {
     if (err instanceof ForbiddenError) {

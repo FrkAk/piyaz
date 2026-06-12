@@ -6,6 +6,7 @@ import {
   buildServicePool,
 } from "@/lib/db/_driver";
 import type { AppDb, AuthDb } from "@/lib/db/_driver.node";
+import type { AppHttpDb } from "@/lib/db/_driver.workers";
 import { requiresRequestScope } from "@/lib/db/request-scope";
 import { requestDbStore } from "./request-store";
 
@@ -52,6 +53,13 @@ export interface RequestScopedDb {
   appDb: AppUserConn;
   authDb: AuthDb;
   serviceRoleDb: ServiceRoleConn;
+  /**
+   * Lazy neon-http read client for the app role (Workers only; type-only
+   * import keeps the HTTP driver out of the self-host bundle). Stateless —
+   * no teardown registration. Backs `withUserContextRead`'s batch path.
+   * Optional so tests can seed minimal sentinel frames.
+   */
+  appDbRead?: AppHttpDb;
   /**
    * Detached promises registered via `deferRequestWork`; the request
    * teardown settles them before ending any pool. Optional so tests can

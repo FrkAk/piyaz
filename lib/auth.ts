@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { organization, jwt } from "better-auth/plugins";
+import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as authSchema from "@/lib/db/auth-schema";
@@ -214,6 +215,15 @@ export const auth = betterAuth({
       },
       silenceWarnings: { oauthAuthServerConfig: true },
     }),
+    // MUST stay last (BA Next.js integration requirement): forwards BA's
+    // Set-Cookie into Next's cookie store for server actions. Without it,
+    // changePassword({ revokeOtherSessions: true }) deletes every session
+    // and the rotated cookie never reaches the browser, signing the user
+    // out after a successful change. tests/auth/change-password pins
+    // presence and ordering only; the actual store forwarding cannot run
+    // under bun (no Next request scope) and was verified manually against
+    // the dev server (MYMR-235).
+    nextCookies(),
   ],
   databaseHooks: {
     account: {

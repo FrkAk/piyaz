@@ -14,6 +14,7 @@ import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { listPendingInvitationsAction } from "@/lib/actions/team-invitations";
 import type { BetterAuthInvitationRow } from "@/lib/actions/team-invitations-map";
+import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
 
 /**
  * MYMR-155 security contract, two halves:
@@ -42,9 +43,7 @@ import type { BetterAuthInvitationRow } from "@/lib/actions/team-invitations-map
  * same `bun test` run.
  */
 
-mock.module("next/headers", () => ({
-  headers: async () => new Headers(),
-}));
+mock.module("next/headers", nextHeadersMockModule);
 
 const setSession = (
   globalThis as unknown as {

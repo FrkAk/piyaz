@@ -9,9 +9,31 @@
 import "server-only";
 import { eq, sql } from "drizzle-orm";
 import { projects, tasks, type Project, type Task } from "@/lib/db/schema";
-import { executeRaw } from "@/lib/db/raw";
+import { executeRaw, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import type { ProjectListOrganization } from "@/lib/data/views";
+
+/** Gate columns shared by the interactive finder and the batch statement. */
+const taskGateColumns = {
+  id: tasks.id,
+  projectId: tasks.projectId,
+  title: tasks.title,
+  status: tasks.status,
+  files: tasks.files,
+  updatedAt: tasks.updatedAt,
+} as const;
+
+/** Project gate columns shared by the finder and the batch statement. */
+const projectGateColumns = {
+  id: projects.id,
+  organizationId: projects.organizationId,
+  title: projects.title,
+  identifier: projects.identifier,
+  description: projects.description,
+  status: projects.status,
+  categories: projects.categories,
+  updatedAt: projects.updatedAt,
+} as const;
 
 /** Slim task row returned by the membership gate. Only the columns callers read. */
 export type TaskAccessGate = Pick<
@@ -62,16 +84,7 @@ export async function findProjectAccessTx(
   projectId: string,
 ): Promise<ProjectAccessRow | null> {
   const [projectRow] = await tx
-    .select({
-      id: projects.id,
-      organizationId: projects.organizationId,
-      title: projects.title,
-      identifier: projects.identifier,
-      description: projects.description,
-      status: projects.status,
-      categories: projects.categories,
-      updatedAt: projects.updatedAt,
-    })
+    .select(projectGateColumns)
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);
@@ -123,16 +136,46 @@ export async function findTaskAccessTx(
   taskId: string,
 ): Promise<TaskAccessGate | null> {
   const [row] = await tx
-    .select({
-      id: tasks.id,
-      projectId: tasks.projectId,
-      title: tasks.title,
-      status: tasks.status,
-      files: tasks.files,
-      updatedAt: tasks.updatedAt,
-    })
+    .select(taskGateColumns)
     .from(tasks)
     .where(eq(tasks.id, taskId))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * Build the task access-gate read as a lazy batch statement. Same
+ * projection as {@link findTaskAccessTx}; RLS scopes visibility, so an
+ * empty result post-batch means missing task or cross-team access.
+ * Evaluate the rows with `assertTaskGateRows`.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task.
+ * @returns Lazy select statement yielding zero or one gate rows.
+ */
+export function taskAccessGateStmt(read: ReadConn, taskId: string) {
+  return read
+    .select(taskGateColumns)
+    .from(tasks)
+    .where(eq(tasks.id, taskId))
+    .limit(1);
+}
+
+/**
+ * Build the project access-gate read as a lazy batch statement. Same
+ * project projection as {@link findProjectAccessTx} but WITHOUT the
+ * member-role lookup: read paths only need the authorized project row, and
+ * RLS already scopes `projects` visibility to the caller's memberships.
+ * Evaluate the rows with `assertProjectGateRows`.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project.
+ * @returns Lazy select statement yielding zero or one project rows.
+ */
+export function projectAccessGateStmt(read: ReadConn, projectId: string) {
+  return read
+    .select(projectGateColumns)
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
 }

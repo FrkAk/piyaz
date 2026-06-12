@@ -85,6 +85,18 @@ test("pre-auth endpoints key on IP, not the forgeable session cookie", () => {
   expect(matchRule("/api/auth/sign-up/email")?.keyStrategy).toBe("ip");
 });
 
+test("change-password has no middleware rule — it is not an HTTP-exposed path", () => {
+  // The /change-password HTTP route is default-denied by the auth
+  // catch-all allowlist (app/api/auth/[...all]/route.ts), and the feature
+  // ships as a server action calling auth.api.changePassword directly. A
+  // middleware rule here would only throttle requests that 404 anyway;
+  // brute-force throttling lives in the action via the auth binding
+  // (tests/actions/change-password-action.test.ts). Pinning the matched
+  // pattern to the catch-all proves no dedicated rule exists — asserting
+  // on bindingKey alone would also pass with a dead rule present.
+  expect(matchRule("/api/auth/change-password")?.pattern).toBe("/api/*");
+});
+
 test("trailing slashes cannot dodge an exact-pattern rule", () => {
   // The auth route handler strips trailing slashes before dispatch, so the
   // limiter must normalize the same way or `/register/` escapes the strict
