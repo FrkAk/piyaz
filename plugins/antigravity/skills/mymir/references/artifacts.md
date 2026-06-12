@@ -4,7 +4,7 @@ Quality bar for everything an agent writes into Mymir: titles, descriptions, acc
 
 Agents read this file when about to create, refine, or audit an artifact. The Iron Law of grounding (`conventions.md` §1) applies at every step.
 
-> Sections of this file are mirrored by the composer phase extracts in `skills/composer/references/`; when you edit a mirrored section, update the extract too.
+> Sections of this file are mirrored by the composer phase extracts in the claude-code plugin (`plugins/claude-code/skills/composer/references/`); when you edit a mirrored section, update those extracts and bump the pin in their `sources.json`.
 
 ---
 
