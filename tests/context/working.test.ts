@@ -4,8 +4,12 @@ import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { seedRichContextTask, normalizeContextGolden } from "./fixtures";
 import {
   buildWorkingContext,
+  buildWorkingContextFrom,
   formatWorkingContext,
+  formatWorkingContextParts,
 } from "@/lib/context/_core/working";
+import { resolveWorkingData } from "@/lib/context/_core/bundle";
+import { withUserContext } from "@/lib/db/rls";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
 
@@ -97,5 +101,31 @@ describe("buildWorkingContext under app_user", () => {
     await expect(buildWorkingContext(ctx, taskInAId)).rejects.toThrow(
       ForbiddenError,
     );
+  });
+
+  test("parts: meta, tags, and hierarchy are adjacent under one meta id", async () => {
+    const fx = await seedRichContextTask("working-ctx-parts");
+    const parts = await withUserContext(fx.userId, async (tx) =>
+      formatWorkingContextParts(
+        buildWorkingContextFrom(await resolveWorkingData(tx, fx.taskId)),
+      ),
+    );
+    expect(parts.map((p) => p.id)).toEqual([
+      "notice",
+      "header",
+      "spec",
+      "meta",
+      "meta",
+      "meta",
+      "criteria",
+      "decisions",
+      "connected",
+      "links",
+    ]);
+    expect(parts.filter((p) => p.id === "meta").map((p) => p.heading)).toEqual([
+      "Meta",
+      "Tags",
+      "Hierarchy",
+    ]);
   });
 });
