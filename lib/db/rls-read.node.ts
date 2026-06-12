@@ -14,8 +14,9 @@ import {
  * transaction opened `READ ONLY` / `READ COMMITTED`, with
  * `set_config('app.user_id', $1, true)` run before the statements so both
  * deploy targets share the exact GUC contract. Statements execute
- * sequentially on the transaction's connection and results return in
- * build order.
+ * concurrently on the transaction's connection (postgres-js pipelines
+ * same-connection queries, the same shape the interactive bundle path
+ * used) and results return in build order.
  *
  * Callers must come through `withUserContextRead` (`lib/db/rls.ts`), which
  * owns the userId validation.
@@ -37,11 +38,8 @@ export async function runUserContextRead<T extends ReadStatements>(
         rawTx as RlsTx,
         sql`SELECT set_config('app.user_id', ${userId}, true)`,
       );
-      const results: unknown[] = [];
-      for (const statement of statements) {
-        results.push(await statement);
-      }
-      return results as ReadResults<T>;
+      const results = await Promise.all(statements);
+      return results as unknown as ReadResults<T>;
     },
     { isolationLevel: "read committed", accessMode: "read only" },
   );
