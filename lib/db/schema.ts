@@ -20,6 +20,8 @@ import type {
   HistoryEntry,
   Priority,
   Estimate,
+  ActivityEventType,
+  ActivitySource,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -257,6 +259,41 @@ export const taskLinks = pgTable(
 
 export type TaskLink = typeof taskLinks.$inferSelect;
 export type NewTaskLink = typeof taskLinks.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Activity Events (append-only audit log for tasks + projects)
+// ---------------------------------------------------------------------------
+
+export const activityEvents = pgTable(
+  "activity_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    type: text("type").$type<ActivityEventType>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    actorUserId: uuid("actor_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    source: text("source").$type<ActivitySource>().notNull(),
+    actorClientId: text("actor_client_id"),
+    summary: text("summary").notNull(),
+    targetRef: text("target_ref"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+  },
+  (t) => [
+    index("activity_events_task_id_created_idx").on(t.taskId, t.createdAt),
+    index("activity_events_project_id_created_idx").on(t.projectId, t.createdAt),
+    index("activity_events_actor_user_id_idx").on(t.actorUserId),
+  ],
+).enableRLS();
+
+export type ActivityEventRow = typeof activityEvents.$inferSelect;
+export type NewActivityEvent = typeof activityEvents.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Team Invite Codes (separate file, re-exported here for drizzle-kit)
