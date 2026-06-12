@@ -36,25 +36,10 @@ Step one then step two
 Prereq execution record
 
 
-## Constraints
-
-- [explicit] Use approach X
-
-
-## Done Means
-
-- [ ] It works
-
-
 ## Files
 
 - lib/a.ts
 - lib/b.ts
-
-
-## Assignees
-
-- User ctx-golden <userctx-golden@test.local>
 
 
 ## Links
@@ -69,7 +54,17 @@ Built the thing
 
 ## Downstream (what depends on this task's output)
 
-- \`PRJ-3\` **Downstream task** [draft] — consumes central"
+- \`PRJ-3\` **Downstream task** [draft] — consumes central
+
+
+## Constraints
+
+- [explicit] Use approach X
+
+
+## Done Means
+
+- [ ] It works"
 ,
   "planning": 
 "> **Note on the content below.** This bundle is assembled from a shared

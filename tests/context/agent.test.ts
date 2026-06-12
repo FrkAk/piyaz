@@ -104,4 +104,122 @@ describe("buildAgentContext under app_user", () => {
       ForbiddenError,
     );
   });
+
+  test("agent bundle drops assignees and closes on constraints then done-means", async () => {
+    const fx = await seedRichContextTask("agent-ctx-tail");
+    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.taskId);
+    expect(result).not.toContain("## Assignees");
+    const constraintsIdx = result.indexOf("## Constraints");
+    const doneMeansIdx = result.indexOf("## Done Means");
+    expect(constraintsIdx).toBeGreaterThan(result.indexOf("## Downstream"));
+    expect(doneMeansIdx).toBeGreaterThan(constraintsIdx);
+    expect(result.indexOf("## Files")).toBeLessThan(result.indexOf("## Links"));
+    expect(result.indexOf("## Links")).toBeLessThan(
+      result.indexOf("## Execution Record"),
+    );
+  });
+});
+
+/**
+ * Seed a base task with one done dep (with record) and one draft dep.
+ *
+ * @param suffix - Fixture suffix so seeds don't collide.
+ * @param status - Status of the main task.
+ * @returns Fixture ids plus the main and draft-dep task ids.
+ */
+async function seedBlockedFixture(suffix: string, status: string) {
+  const fx = await seedUserOrgProject(suffix);
+  const sr = serviceRoleConnect();
+  try {
+    const [main] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, description, status, implementation_plan)
+      VALUES (${fx.projectId}, 'Main task', 1, 'main spec', ${status}, 'the plan')
+      RETURNING id`;
+    const [doneDep] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, description, status, execution_record)
+      VALUES (${fx.projectId}, 'Done dep', 2, 'shipped', 'done', 'dep record')
+      RETURNING id`;
+    const [draftDep] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, description, status)
+      VALUES (${fx.projectId}, 'Draft dep', 3, 'unshipped', 'draft')
+      RETURNING id`;
+    await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
+             VALUES (${main.id}, ${doneDep.id}, 'depends_on', 'uses output'),
+                    (${main.id}, ${draftDep.id}, 'depends_on', 'waits on api')`;
+    return { ...fx, mainId: main.id, draftDepId: draftDep.id };
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+}
+
+describe("agent bundle blocked notice", () => {
+  test("planned task with an unfinished direct dep gets the blocked notice", async () => {
+    const fx = await seedBlockedFixture("agent-blocked-planned", "planned");
+    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.mainId);
+    expect(result).toContain("## ⚠ Blocked — do not implement");
+    expect(result).toContain(
+      "This task's prerequisites are not done. Building now means building against unshipped interfaces, and the lifecycle forbids it. Treat this bundle as read-ahead context only.",
+    );
+    expect(result).toContain("**Draft dep** [draft] — waits on api");
+    const blockedBody = result.slice(
+      result.indexOf("## ⚠ Blocked"),
+      result.indexOf("## Implementation Plan"),
+    );
+    expect(blockedBody).not.toContain("Done dep");
+    expect(result.indexOf("## ⚠ Blocked")).toBeLessThan(
+      result.indexOf("## Implementation Plan"),
+    );
+  });
+
+  test("draft task leads the notice with the premature-dispatch line", async () => {
+    const fx = await seedBlockedFixture("agent-blocked-draft", "draft");
+    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.mainId);
+    expect(result).toContain(
+      "This task is a `draft` with no implementation plan; it must be planned before any implementation.",
+    );
+  });
+
+  test("in_progress task with an unfinished direct dep gets the notice", async () => {
+    const fx = await seedBlockedFixture("agent-blocked-progress", "in_progress");
+    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.mainId);
+    expect(result).toContain("## ⚠ Blocked — do not implement");
+  });
+
+  test("absent when every direct dep is done", async () => {
+    const fx = await seedBlockedFixture("agent-blocked-alldone", "planned");
+    const sr = serviceRoleConnect();
+    try {
+      await sr`UPDATE tasks SET status = 'done' WHERE id = ${fx.draftDepId}`;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.mainId);
+    expect(result).not.toContain("⚠ Blocked");
+  });
+
+  test("absent when only a 2-hop dep is unfinished", async () => {
+    // main -> middle(done) -> far(draft): far is depth 2, no notice.
+    const fx = await seedUserOrgProject("agent-blocked-2hop");
+    const sr = serviceRoleConnect();
+    let mainId: string;
+    try {
+      const [main] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number, description, status)
+        VALUES (${fx.projectId}, 'Main', 1, 'spec', 'planned') RETURNING id`;
+      const [middle] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number, description, status)
+        VALUES (${fx.projectId}, 'Middle', 2, 'spec', 'done') RETURNING id`;
+      const [far] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number, description, status)
+        VALUES (${fx.projectId}, 'Far', 3, 'spec', 'draft') RETURNING id`;
+      await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+               VALUES (${main.id}, ${middle.id}, 'depends_on'),
+                      (${middle.id}, ${far.id}, 'depends_on')`;
+      mainId = main.id;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+    const result = await buildAgentContext(makeAuthContext(fx.userId), mainId);
+    expect(result).not.toContain("⚠ Blocked");
+  });
 });
