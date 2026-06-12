@@ -23,6 +23,9 @@ interface JsonSchemaProperty {
   enum?: string[];
   items?: { type?: string; enum?: string[] };
   format?: string;
+  default?: unknown;
+  anyOf?: JsonSchemaProperty[];
+  const?: unknown;
 }
 
 interface JsonSchemaObject {
@@ -53,9 +56,9 @@ export function normalizeProseDashes(text: string): string {
           seg.startsWith("`") && seg.endsWith("`")
             ? seg
             : seg
-                .replace(/(\d)\s*–\s*(\d)/g, "$1-$2")
-                .replace(/\s*—\s*/g, ", ")
-                .replace(/\s*–\s*/g, ", ")
+                .replace(/(\d)\s*[–]\s*(\d)/g, "$1-$2")
+                .replace(/(?<=[^\s|])\s*[—–]\s*(?=[^\s|])/g, ", ")
+                .replace(/[—–]/g, "-")
                 .replace(/ ,/g, ","),
         )
         .join("");
@@ -97,6 +100,10 @@ function yamlQuote(text: string): string {
  * @returns Type string for a parameter table cell.
  */
 function renderType(prop: JsonSchemaProperty): string {
+  if (prop.const !== undefined) {
+    return typeof prop.const === "string" ? `"${prop.const}"` : `${prop.const}`;
+  }
+  if (prop.anyOf) return prop.anyOf.map(renderType).join(" \\| ");
   if (prop.enum) return prop.enum.map((v) => `"${v}"`).join(" \\| ");
   if (prop.type === "array") {
     const items = prop.items;
@@ -145,22 +152,23 @@ export function renderToolPage(tool: ToolDefinition): string {
   const schema = z.toJSONSchema(tool.inputSchema) as JsonSchemaObject;
   const props = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
-  const actionProp = props.action;
-  const actions = actionProp?.enum ?? [];
+  const discriminatorName = Object.keys(props).find((k) => props[k]?.enum);
+  const discriminator = discriminatorName ? props[discriminatorName] : undefined;
+  const actions = discriminator?.enum ?? [];
   const firstSentence = `${tool.description.split(". ")[0]}.`;
 
   const paramNames = Object.keys(props).sort((a, b) => {
-    if (a === "action") return -1;
-    if (b === "action") return 1;
+    if (a === discriminatorName) return -1;
+    if (b === discriminatorName) return 1;
     return a.localeCompare(b);
   });
   const paramRows = paramNames.map((name) => {
     const prop = props[name];
-    const req = required.has(name) ? "Yes" : "No";
+    const req = required.has(name) && prop.default === undefined ? "Yes" : "No";
     return `| \`${name}\` | \`${renderType(prop)}\` | ${req} | ${escapeCell(prop.description ?? "")} |`;
   });
 
-  const actionRows = parseActions(actionProp?.description ?? "", actions).map(
+  const actionRows = parseActions(discriminator?.description ?? "", actions).map(
     ({ action, purpose }) => `| \`${action}\` | ${escapeCell(purpose)} |`,
   );
 

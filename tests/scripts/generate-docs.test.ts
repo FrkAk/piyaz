@@ -130,3 +130,54 @@ describe("normalizeProseDashes", () => {
     );
   });
 });
+
+describe("renderToolPage covers every tool", () => {
+  for (const tool of TOOLS) {
+    test(`${tool.name} has a populated Actions table`, () => {
+      const page = renderToolPage(tool);
+      const actionsSection = page.slice(
+        page.indexOf("## Actions"),
+        page.indexOf("## Parameters"),
+      );
+      const bodyRows = actionsSection
+        .split("\n")
+        .filter((l) => l.startsWith("| `"));
+      expect(bodyRows.length).toBeGreaterThan(0);
+    });
+
+    test(`${tool.name} renders deterministically`, () => {
+      expect(renderToolPage(tool)).toBe(renderToolPage(tool));
+    });
+  }
+});
+
+describe("renderToolPage Required column", () => {
+  test("default-valued fields are not marked Required", () => {
+    const task = renderToolPage(TOOLS.find((t) => t.name === "mymir_task")!);
+    const previewRow = task
+      .split("\n")
+      .find((l) => l.startsWith("| `preview` |"));
+    expect(previewRow).toBeDefined();
+    expect(previewRow).toContain("| No |");
+  });
+
+  test("the discriminator field itself stays Required", () => {
+    const task = renderToolPage(TOOLS.find((t) => t.name === "mymir_task")!);
+    const actionRow = task
+      .split("\n")
+      .find((l) => l.startsWith("| `action` |"));
+    expect(actionRow).toContain("| Yes |");
+  });
+});
+
+describe("normalizeProseDashes standalone cells", () => {
+  test("a lone em-dash table cell becomes a single hyphen", () => {
+    expect(normalizeProseDashes("| `field` | — | note |")).toBe(
+      "| `field` | - | note |",
+    );
+  });
+
+  test("prose em-dash still becomes a comma", () => {
+    expect(normalizeProseDashes("X — Y")).toBe("X, Y");
+  });
+});
