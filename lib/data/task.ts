@@ -60,6 +60,7 @@ import {
   assertTaskAccessTx,
   assertValidProjectId,
   assertValidTaskId,
+  firstRowOrForbidden,
   ForbiddenError,
   isUuid,
 } from "@/lib/auth/authorization";
@@ -475,10 +476,7 @@ export function requireTaskRow(
   rows: TaskFullRawRow[],
   taskId: string,
 ): TaskFull {
-  if (rows.length === 0) {
-    throw new ForbiddenError("Forbidden", "task", taskId);
-  }
-  return mapTaskFullRow(rows[0]);
+  return mapTaskFullRow(firstRowOrForbidden("task", taskId, rows));
 }
 
 /**

@@ -37,6 +37,21 @@ export class InvalidUserIdError extends Error {
 }
 
 /**
+ * Reject a non-UUID `userId` before any GUC or statement work. Shared by
+ * both RLS entry points so the acceptance rule cannot drift between the
+ * interactive and batch read paths.
+ *
+ * @param userId - Candidate user id.
+ * @param message - Entry-point-specific diagnostic text.
+ * @throws {InvalidUserIdError} When `userId` is not a valid UUID string.
+ */
+function assertValidUserId(userId: string, message?: string): void {
+  if (typeof userId !== "string" || !UUID_RE.test(userId)) {
+    throw new InvalidUserIdError(message);
+  }
+}
+
+/**
  * Run `fn` inside a Drizzle transaction with `app.user_id` set to the supplied
  * user id for the lifetime of the transaction. The GUC clears automatically on
  * commit/rollback so it never leaks across pooled connections (Neon pgBouncer
@@ -58,9 +73,7 @@ export async function withUserContext<T>(
   userId: string,
   fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
-  if (typeof userId !== "string" || !UUID_RE.test(userId)) {
-    throw new InvalidUserIdError();
-  }
+  assertValidUserId(userId);
   return db.transaction(async (rawTx) => {
     const tx = rawTx as Tx;
     await executeRawDiscard(
@@ -97,10 +110,9 @@ export async function withUserContextRead<T extends ReadStatements>(
   userId: string,
   build: (db: ReadConn) => T,
 ): Promise<ReadResults<T>> {
-  if (typeof userId !== "string" || !UUID_RE.test(userId)) {
-    throw new InvalidUserIdError(
-      "withUserContextRead: userId must be a valid UUID string",
-    );
-  }
+  assertValidUserId(
+    userId,
+    "withUserContextRead: userId must be a valid UUID string",
+  );
   return runUserContextRead(userId, build);
 }

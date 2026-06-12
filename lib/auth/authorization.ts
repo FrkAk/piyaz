@@ -260,6 +260,27 @@ export function assertValidProjectId(projectId: string): void {
 }
 
 /**
+ * The single RLS read-path gate contract: an empty batch result means the
+ * resource is missing or cross-team — both 404-shaped. Every batch gate
+ * evaluator delegates here so the emptiness rule cannot drift per resource.
+ *
+ * @param resource - Resource kind for the error payload.
+ * @param id - UUID the gate statement targeted.
+ * @param rows - Rows from the batch result.
+ * @returns The first visible row.
+ * @throws ForbiddenError when no row is visible to the caller.
+ */
+export function firstRowOrForbidden<T>(
+  resource: ForbiddenResource,
+  id: string,
+  rows: readonly T[],
+): T {
+  const row = rows[0];
+  if (!row) throw new ForbiddenError("Forbidden", resource, id);
+  return row;
+}
+
+/**
  * Evaluate the access-gate rows returned by a `projectAccessGateStmt`
  * batch statement. RLS scopes `projects` rows to the caller's memberships,
  * so an empty result means missing project or cross-team access. Read-path
@@ -275,9 +296,7 @@ export function assertProjectGateRows<T>(
   projectId: string,
   rows: readonly T[],
 ): T {
-  const row = rows[0];
-  if (!row) throw new ForbiddenError("Forbidden", "project", projectId);
-  return row;
+  return firstRowOrForbidden("project", projectId, rows);
 }
 
 /**
@@ -295,7 +314,5 @@ export function assertTaskGateRows(
   taskId: string,
   rows: readonly TaskAccessGate[],
 ): TaskAccessGate {
-  const row = rows[0];
-  if (!row) throw new ForbiddenError("Forbidden", "task", taskId);
-  return row;
+  return firstRowOrForbidden("task", taskId, rows);
 }
