@@ -145,7 +145,11 @@ export function formatWorkingContextParts(ctx: WorkingContext): BundlePart[] {
 
   const edges = formatEdgesSection(ctx.edges);
   if (edges) {
-    parts.push({ id: "connected", heading: "Connected Tasks", markdown: edges });
+    parts.push({
+      id: "connected",
+      heading: "Connected Tasks",
+      markdown: edges,
+    });
   }
 
   const links = formatLinksSection(ctx.links);

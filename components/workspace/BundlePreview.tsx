@@ -309,7 +309,8 @@ export function BundlePreview(props: BundlePreviewProps) {
   );
 
   const [expanded, setExpanded] = useState<Set<BundleSectionId>>(
-    () => new Set<BundleSectionId>(sectionIds.length > 0 ? [sectionIds[0]] : []),
+    () =>
+      new Set<BundleSectionId>(sectionIds.length > 0 ? [sectionIds[0]] : []),
   );
   const [showRaw, setShowRaw] = useState(false);
 
@@ -533,7 +534,10 @@ function BundleSection({
  * @param props - Bundle props.
  * @returns Plain text summary line.
  */
-function sectionSummary(id: BundleSectionId, props: BundlePreviewProps): string {
+function sectionSummary(
+  id: BundleSectionId,
+  props: BundlePreviewProps,
+): string {
   if (id === "spec") return "task spec";
   if (id === "meta") {
     const bits: string[] = [];
@@ -649,7 +653,11 @@ function SectionBody({
 }: SectionBodyProps) {
   if (SERVER_ONLY_SECTIONS.has(id)) {
     return (
-      <ServerSectionBody id={id} sections={sections} fetching={bundleFetching} />
+      <ServerSectionBody
+        id={id}
+        sections={sections}
+        fetching={bundleFetching}
+      />
     );
   }
   if (id === "spec")
@@ -678,7 +686,9 @@ function SectionBody({
     );
   }
   if (id === "connected") {
-    return <ConnectedList items={props.connected} onSelectTask={onSelectTask} />;
+    return (
+      <ConnectedList items={props.connected} onSelectTask={onSelectTask} />
+    );
   }
   if (id === "decisions" || id === "constraints") {
     return <DecisionsBody decisions={props.decisions} />;

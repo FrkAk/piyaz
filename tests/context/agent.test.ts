@@ -107,7 +107,10 @@ describe("buildAgentContext under app_user", () => {
 
   test("agent bundle drops assignees and closes on constraints then done-means", async () => {
     const fx = await seedRichContextTask("agent-ctx-tail");
-    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.taskId);
+    const result = await buildAgentContext(
+      makeAuthContext(fx.userId),
+      fx.taskId,
+    );
     expect(result).not.toContain("## Assignees");
     const constraintsIdx = result.indexOf("## Constraints");
     const doneMeansIdx = result.indexOf("## Done Means");
@@ -155,7 +158,10 @@ async function seedBlockedFixture(suffix: string, status: string) {
 describe("agent bundle blocked notice", () => {
   test("planned task with an unfinished direct dep gets the blocked notice", async () => {
     const fx = await seedBlockedFixture("agent-blocked-planned", "planned");
-    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.mainId);
+    const result = await buildAgentContext(
+      makeAuthContext(fx.userId),
+      fx.mainId,
+    );
     expect(result).toContain("## ⚠ Blocked — do not implement");
     expect(result).toContain(
       "This task's prerequisites are not done. Building now means building against unshipped interfaces, and the lifecycle forbids it. Treat this bundle as read-ahead context only.",
@@ -173,15 +179,24 @@ describe("agent bundle blocked notice", () => {
 
   test("draft task leads the notice with the premature-dispatch line", async () => {
     const fx = await seedBlockedFixture("agent-blocked-draft", "draft");
-    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.mainId);
+    const result = await buildAgentContext(
+      makeAuthContext(fx.userId),
+      fx.mainId,
+    );
     expect(result).toContain(
       "This task is a `draft` with no implementation plan; it must be planned before any implementation.",
     );
   });
 
   test("in_progress task with an unfinished direct dep gets the notice", async () => {
-    const fx = await seedBlockedFixture("agent-blocked-progress", "in_progress");
-    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.mainId);
+    const fx = await seedBlockedFixture(
+      "agent-blocked-progress",
+      "in_progress",
+    );
+    const result = await buildAgentContext(
+      makeAuthContext(fx.userId),
+      fx.mainId,
+    );
     expect(result).toContain("## ⚠ Blocked — do not implement");
   });
 
@@ -193,7 +208,10 @@ describe("agent bundle blocked notice", () => {
     } finally {
       await sr.end({ timeout: 5 });
     }
-    const result = await buildAgentContext(makeAuthContext(fx.userId), fx.mainId);
+    const result = await buildAgentContext(
+      makeAuthContext(fx.userId),
+      fx.mainId,
+    );
     expect(result).not.toContain("⚠ Blocked");
   });
 

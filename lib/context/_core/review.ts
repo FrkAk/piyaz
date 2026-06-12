@@ -184,7 +184,9 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
     driftLines.push("Skipped: no path-like tokens extracted from plan.");
   } else {
     if (matched.length > 0) {
-      driftLines.push("**Planned and touched** (plan path appears in `files`):");
+      driftLines.push(
+        "**Planned and touched** (plan path appears in `files`):",
+      );
       for (const p of matched) driftLines.push(`- ${p}`);
     }
     if (plannedMissing.length > 0) {

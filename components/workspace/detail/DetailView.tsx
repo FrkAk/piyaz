@@ -174,10 +174,7 @@ export function DetailView({
               <SectionHeader
                 label="Context bundle preview"
                 badge={
-                  <BundleStageBadge
-                    status={task.status}
-                    state={currentState}
-                  />
+                  <BundleStageBadge status={task.status} state={currentState} />
                 }
               />
               <BundlePreview

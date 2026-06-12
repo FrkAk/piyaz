@@ -99,7 +99,9 @@ export function buildPlanningContextParts(
       id: "plan",
       heading: "Existing Implementation Plan",
       markdown:
-        section("Existing Implementation Plan") + "\n" + task.implementationPlan,
+        section("Existing Implementation Plan") +
+        "\n" +
+        task.implementationPlan,
     });
   }
 

@@ -55,7 +55,9 @@ describe("record bundle", () => {
     expect(result).toContain("## How It Completed");
     expect(result).toContain("Built the thing");
     expect(result).toContain("## Downstream Consumers");
-    expect(result).toContain("- [pull_request] PR 1 (https://example.test/pr/1)");
+    expect(result).toContain(
+      "- [pull_request] PR 1 (https://example.test/pr/1)",
+    );
     expect(result).toContain(NUDGE);
     expect(result).not.toContain("## Implementation Plan");
     expect(result).not.toContain("Step one then step two");

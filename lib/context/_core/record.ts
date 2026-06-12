@@ -110,12 +110,16 @@ export function buildRecordContextParts(data: RecordContextData): BundlePart[] {
     });
   }
 
-  const outcomeHeading = cancelled ? "Why It Was Cancelled" : "How It Completed";
+  const outcomeHeading = cancelled
+    ? "Why It Was Cancelled"
+    : "How It Completed";
   parts.push({
     id: "execution",
     heading: outcomeHeading,
     markdown:
-      section(outcomeHeading) + "\n" + (task.executionRecord ?? "None recorded."),
+      section(outcomeHeading) +
+      "\n" +
+      (task.executionRecord ?? "None recorded."),
   });
 
   const filesPart: BundlePart | null =
@@ -143,7 +147,8 @@ export function buildRecordContextParts(data: RecordContextData): BundlePart[] {
       ? {
           id: "links",
           heading: "Links",
-          markdown: section("Links") + "\n" + formatRecordLinks(links, cancelled),
+          markdown:
+            section("Links") + "\n" + formatRecordLinks(links, cancelled),
         }
       : null;
 
