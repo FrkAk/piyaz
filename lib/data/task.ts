@@ -46,7 +46,7 @@ import {
   type EffectiveDepGraph,
 } from "@/lib/graph/effective-deps";
 import { projectEdgesStmt } from "@/lib/data/edge";
-import { projectAccessGateStmt, taskAccessGateStmt } from "@/lib/data/access";
+import { projectAccessGateStmt } from "@/lib/data/access";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
@@ -57,7 +57,6 @@ import {
   assertProjectAccessTx,
   assertProjectGateRows,
   assertTaskAccessTx,
-  assertTaskGateRows,
   assertValidProjectId,
   assertValidTaskId,
   ForbiddenError,
@@ -452,31 +451,31 @@ export async function getTaskFull(
   taskId: string,
 ): Promise<TaskFull> {
   assertValidTaskId(taskId);
-  const [gateRows, fullRaw] = await withUserContextRead(ctx.userId, (read) => [
-    taskAccessGateStmt(read, taskId),
+  const [fullRaw] = await withUserContextRead(ctx.userId, (read) => [
     taskFullStmt(read, taskId),
   ]);
-  assertTaskGateRows(taskId, gateRows);
-  return requireTaskFullRow(
+  return requireTaskRow(
     normalizeExecuteResult<TaskFullRawRow>(fullRaw),
     taskId,
   );
 }
 
 /**
- * Map the rows of a full-task fetch to {@link TaskFull}, failing loudly
- * when the task vanished between the access gate and the row read.
+ * Map the rows of a task fetch to {@link TaskFull}, failing closed when no
+ * row is visible. RLS hides rows the caller cannot access, so an empty
+ * result means missing task or cross-team access — both 404-shaped.
  *
- * @param rows - Raw rows from `taskFullStmt`.
- * @param taskId - UUID of the task, for the error message.
+ * @param rows - Raw rows from `taskFullStmt` or `taskForDepthStmt`.
+ * @param taskId - UUID of the task, for the error payload.
  * @returns The mapped {@link TaskFull}.
- * @throws Error when no row is present despite a passing access gate.
+ * @throws ForbiddenError when no row is visible to the caller.
  */
-function requireTaskFullRow(rows: TaskFullRawRow[], taskId: string): TaskFull {
+export function requireTaskRow(
+  rows: TaskFullRawRow[],
+  taskId: string,
+): TaskFull {
   if (rows.length === 0) {
-    throw new Error(
-      `getTaskFull: task ${taskId} disappeared after access check`,
-    );
+    throw new ForbiddenError("Forbidden", "task", taskId);
   }
   return mapTaskFullRow(rows[0]);
 }
@@ -504,35 +503,12 @@ export async function getTaskProjectId(
 }
 
 /**
- * Map the rows of a depth-projected task fetch to {@link TaskFull},
- * failing loudly when the task vanished between the access gate and the
- * row read. Shared by {@link getTaskForDepthTx} and the batch read path
- * in `lib/context/_core/bundle.ts`.
- *
- * @param rows - Raw rows from `fetchTaskForDepth` / `taskForDepthStmt`.
- * @param taskId - UUID of the task, for the error message.
- * @returns The mapped {@link TaskFull}.
- * @throws Error when no row is present despite a passing access gate.
- */
-export function requireTaskForDepthRow(
-  rows: TaskFullRawRow[],
-  taskId: string,
-): TaskFull {
-  if (rows.length === 0) {
-    throw new Error(
-      `getTaskForDepth: task ${taskId} disappeared after access check`,
-    );
-  }
-  return mapTaskFullRow(rows[0]);
-}
-
-/**
  * Map a {@link TaskFullRawRow} to the camelCase {@link TaskFull} shape,
  * composing `taskRef` and narrowing the decision `source` union. Shared by
- * {@link getTaskFullTx} and {@link getTaskForDepthTx} so both surfaces map
- * identically.
+ * {@link requireTaskRow} consumers so the full and depth-projected surfaces
+ * map identically.
  *
- * @param r - Raw row from `fetchTaskFull` or `fetchTaskForDepth`.
+ * @param r - Raw row from `taskFullStmt` or `taskForDepthStmt`.
  * @returns The mapped {@link TaskFull}.
  */
 function mapTaskFullRow(r: TaskFullRawRow): TaskFull {
@@ -581,7 +557,8 @@ function mapTaskFullRow(r: TaskFullRawRow): TaskFull {
  * A task's connected edges in the slim `note`-carrying shape the detail
  * relationships list renders, as a lazy batch statement. RLS scopes the
  * rows to edges whose endpoints are both member-visible. Performs no
- * authorization itself — batch a `taskAccessGateStmt` alongside.
+ * authorization itself — batch alongside a task-row statement whose empty
+ * result is the 404 signal.
  *
  * @param read - Read statement-building handle.
  * @param taskId - UUID of the task (matched on either endpoint).
@@ -615,16 +592,11 @@ export async function getTaskFullWithEdges(
   taskId: string,
 ): Promise<TaskFullWithEdges> {
   assertValidTaskId(taskId);
-  const [gateRows, fullRaw, edges] = await withUserContextRead(
-    ctx.userId,
-    (read) => [
-      taskAccessGateStmt(read, taskId),
-      taskFullStmt(read, taskId),
-      taskEdgeRefsStmt(read, taskId),
-    ],
-  );
-  assertTaskGateRows(taskId, gateRows);
-  const full = requireTaskFullRow(
+  const [fullRaw, edges] = await withUserContextRead(ctx.userId, (read) => [
+    taskFullStmt(read, taskId),
+    taskEdgeRefsStmt(read, taskId),
+  ]);
+  const full = requireTaskRow(
     normalizeExecuteResult<TaskFullRawRow>(fullRaw),
     taskId,
   );

@@ -7,11 +7,10 @@ import {
   mapDependencyTaskRows,
   mapEdgeNoteRows,
   mapTaskSummaryRows,
-  requireTaskForDepthRow,
+  requireTaskRow,
   taskSummariesStmt,
   type DependencyTaskInfo,
 } from "@/lib/data/task";
-import { taskAccessGateStmt } from "@/lib/data/access";
 import {
   projectHeaderByTaskStmt,
   type ProjectHeader,
@@ -23,12 +22,10 @@ import {
   taskEdgesStmt,
   type DetailedEdge,
 } from "@/lib/data/edge";
-import {
-  assertTaskGateRows,
-  assertValidTaskId,
-} from "@/lib/auth/authorization";
+import { assertValidTaskId } from "@/lib/auth/authorization";
 import { withUserContextRead, type ReadConn } from "@/lib/db/rls";
 import { normalizeExecuteResult } from "@/lib/db/raw";
+import type { ReadResults } from "@/lib/db/read-guard";
 import { effectiveDepChainStmt } from "@/lib/db/raw/fetch-effective-dep-chain";
 import { effectiveDownstreamStmt } from "@/lib/db/raw/fetch-effective-downstream";
 import type {
@@ -105,69 +102,44 @@ export type ContextBundle = PlanningContextData & WorkingContextData;
 type HeaderRow = ProjectHeader & { id: string };
 
 /**
- * Build the closure batch shared by every resolver: access gate, the
- * depth-projected task row, both effective-dependency walks, both
- * edge-note reads, and the parent-project header. Every statement is keyed
- * on `taskId` alone (project scope derives in SQL), so the whole set rides
+ * Build the closure batch shared by every resolver: the depth-projected
+ * task row (whose empty result is the 404 signal — RLS hides rows the
+ * caller cannot access), both effective-dependency walks, the outgoing
+ * edge notes, and the parent-project header. Every statement is keyed on
+ * `taskId` alone (project scope derives in SQL), so the whole set rides
  * ONE read batch before the task row has been seen.
  *
  * @param db - Read statement-building handle.
  * @param taskId - UUID of the task.
  * @param depth - Column projection for the task-row fetch.
- * @returns Tuple of seven lazy statements.
+ * @returns Tuple of five lazy statements.
  */
 function closureBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
   return [
-    taskAccessGateStmt(db, taskId),
     taskForDepthStmt(db, taskId, depth),
     effectiveDepChainStmt(db, taskId, CLOSURE_DEPTH),
     effectiveDownstreamStmt(db, taskId, CLOSURE_DEPTH),
     edgeNotesBySourceStmt(db, taskId),
-    edgeNotesByTargetStmt(db, taskId),
     projectHeaderByTaskStmt(db, taskId),
   ] as const;
 }
 
-/** Closure batch results decoded into their domain shapes. */
-type ClosureBatchData = {
-  task: TaskFull;
-  deps: { id: string }[];
-  downstream: { id: string }[];
-  upstreamEdgeNotes: Map<string, string>;
-  downstreamEdgeNotes: Map<string, string>;
-  header: HeaderRow | null;
-};
-
-/** Gate-row slice {@link decodeClosureBatch} needs for the access check. */
-type GateRows = Parameters<typeof assertTaskGateRows>[1];
+/** Positional results of a {@link closureBatch} run. */
+type ClosureBatchResults = ReadResults<ReturnType<typeof closureBatch>>;
 
 /**
- * Decode the raw closure-batch results: evaluate the access gate, map the
- * task row, and normalize the dependency walks and edge notes.
+ * Decode a closure-batch result tuple: map the task row (throwing the
+ * 404-shaped ForbiddenError when RLS hides it), normalize the dependency
+ * walks, and fold the outgoing edge notes.
  *
  * @param taskId - UUID of the task the batch targeted.
- * @param gateRows - Access-gate rows (first batch statement).
- * @param taskRaw - Raw depth-projected task result.
- * @param depRaw - Raw effective-dependency walk result.
- * @param downRaw - Raw effective-downstream walk result.
- * @param srcNotes - Outgoing edge-note rows.
- * @param tgtNotes - Incoming edge-note rows.
- * @param headerRows - Parent-project header rows.
- * @returns Decoded closure data plus the header row.
- * @throws ForbiddenError when the access gate returned no row.
+ * @param results - Positional results of a {@link closureBatch} run.
+ * @returns Task, walks, outgoing notes, and the header row.
+ * @throws ForbiddenError when the task row is not visible to the caller.
  */
-function decodeClosureBatch(
-  taskId: string,
-  gateRows: GateRows,
-  taskRaw: unknown,
-  depRaw: unknown,
-  downRaw: unknown,
-  srcNotes: { taskId: string; note: string }[],
-  tgtNotes: { taskId: string; note: string }[],
-  headerRows: HeaderRow[],
-): ClosureBatchData {
-  assertTaskGateRows(taskId, gateRows);
-  const task = requireTaskForDepthRow(
+function decodeClosureBatch(taskId: string, results: ClosureBatchResults) {
+  const [taskRaw, depRaw, downRaw, srcNotes, headerRows] = results;
+  const task = requireTaskRow(
     normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
   );
@@ -182,43 +154,54 @@ function decodeClosureBatch(
     deps,
     downstream,
     upstreamEdgeNotes: mapEdgeNoteRows(srcNotes),
-    downstreamEdgeNotes: mapEdgeNoteRows(tgtNotes),
     header: headerRows[0] ?? null,
   };
 }
 
 /**
- * Fetch the closure secondaries (dependency-task summaries and downstream
- * summaries) in one read batch, skipped entirely when the closure is empty.
+ * Fetch the closure secondaries (dependency-task summaries, downstream
+ * summaries, and incoming edge notes) in one read batch, skipped entirely
+ * when the closure is empty — the incoming notes are only ever consumed
+ * alongside a non-empty downstream walk.
  *
  * @param userId - Authenticated user id.
  * @param projectId - UUID of the task's project (from the closure task row).
+ * @param taskId - UUID of the task.
  * @param deps - Active prerequisite ids.
  * @param downstream - Active dependent ids.
- * @returns Dep-task summaries and downstream summaries.
+ * @returns Dep-task summaries, downstream summaries, and incoming notes.
  */
 async function resolveClosureSecondaries(
   userId: string,
   projectId: string,
+  taskId: string,
   deps: { id: string }[],
   downstream: { id: string }[],
-): Promise<[DependencyTaskInfo[], DownstreamSummary[]]> {
+): Promise<[DependencyTaskInfo[], DownstreamSummary[], Map<string, string>]> {
   if (deps.length === 0 && downstream.length === 0) {
-    return [[], []];
+    return [[], [], new Map()];
   }
-  const [depRows, summaryRows] = await withUserContextRead(userId, (db) => [
-    dependencyTasksStmt(
-      db,
-      projectId,
-      deps.map((d) => d.id),
-    ),
-    taskSummariesStmt(
-      db,
-      projectId,
-      downstream.map((d) => d.id),
-    ),
-  ]);
-  return [mapDependencyTaskRows(depRows), mapTaskSummaryRows(summaryRows)];
+  const [depRows, summaryRows, tgtNotes] = await withUserContextRead(
+    userId,
+    (db) => [
+      dependencyTasksStmt(
+        db,
+        projectId,
+        deps.map((d) => d.id),
+      ),
+      taskSummariesStmt(
+        db,
+        projectId,
+        downstream.map((d) => d.id),
+      ),
+      edgeNotesByTargetStmt(db, taskId),
+    ],
+  );
+  return [
+    mapDependencyTaskRows(depRows),
+    mapTaskSummaryRows(summaryRows),
+    mapEdgeNoteRows(tgtNotes),
+  ];
 }
 
 /**
@@ -264,35 +247,30 @@ async function resolveClosureWithHeader(
   depth: TaskFetchDepth,
 ): Promise<{ closure: DependencyClosureData; header: HeaderRow | null }> {
   assertValidTaskId(taskId);
-  const [gateRows, taskRaw, depRaw, downRaw, srcNotes, tgtNotes, headerRows] =
-    await withUserContextRead(userId, (db) => closureBatch(db, taskId, depth));
-  const decoded = decodeClosureBatch(
-    taskId,
-    gateRows,
-    taskRaw,
-    depRaw,
-    downRaw,
-    srcNotes,
-    tgtNotes,
-    headerRows,
+  const results = await withUserContextRead(userId, (db) =>
+    closureBatch(db, taskId, depth),
   );
-  const [depTasks, downstreamSummaries] = await resolveClosureSecondaries(
-    userId,
-    decoded.task.projectId,
-    decoded.deps,
-    decoded.downstream,
-  );
+  const { task, deps, downstream, upstreamEdgeNotes, header } =
+    decodeClosureBatch(taskId, results);
+  const [depTasks, downstreamSummaries, downstreamEdgeNotes] =
+    await resolveClosureSecondaries(
+      userId,
+      task.projectId,
+      taskId,
+      deps,
+      downstream,
+    );
   return {
     closure: {
-      task: decoded.task,
-      deps: decoded.deps,
-      downstream: decoded.downstream,
-      upstreamEdgeNotes: decoded.upstreamEdgeNotes,
+      task,
+      deps,
+      downstream,
+      upstreamEdgeNotes,
       depTasks,
-      downstreamEdgeNotes: decoded.downstreamEdgeNotes,
+      downstreamEdgeNotes,
       downstreamSummaries,
     },
-    header: decoded.header,
+    header,
   };
 }
 
@@ -340,17 +318,15 @@ async function resolveTaskEdgesHeader(
   header: HeaderRow | null;
 }> {
   assertValidTaskId(taskId);
-  const [gateRows, taskRaw, edges, headerRows] = await withUserContextRead(
+  const [taskRaw, edges, headerRows] = await withUserContextRead(
     userId,
     (db) => [
-      taskAccessGateStmt(db, taskId),
       taskForDepthStmt(db, taskId, depth),
       taskEdgesStmt(db, taskId),
       projectHeaderByTaskStmt(db, taskId),
     ],
   );
-  assertTaskGateRows(taskId, gateRows);
-  const task = requireTaskForDepthRow(
+  const task = requireTaskRow(
     normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
   );
@@ -452,30 +428,19 @@ export async function resolveContextBundle(
   taskId: string,
 ): Promise<ContextBundle> {
   assertValidTaskId(taskId);
-  const [
-    gateRows,
-    taskRaw,
-    depRaw,
-    downRaw,
-    srcNotes,
-    tgtNotes,
-    headerRows,
-    edges,
-  ] = await withUserContextRead(userId, (db) => [
-    ...closureBatch(db, taskId, "agent"),
-    taskEdgesStmt(db, taskId),
-  ]);
-  const decoded = decodeClosureBatch(
-    taskId,
-    gateRows,
-    taskRaw,
-    depRaw,
-    downRaw,
-    srcNotes,
-    tgtNotes,
-    headerRows,
-  );
-  const { task, deps, downstream } = decoded;
+  const [taskRaw, depRaw, downRaw, srcNotes, headerRows, edges] =
+    await withUserContextRead(userId, (db) => [
+      ...closureBatch(db, taskId, "agent"),
+      taskEdgesStmt(db, taskId),
+    ]);
+  const { task, deps, downstream, upstreamEdgeNotes, header } =
+    decodeClosureBatch(taskId, [
+      taskRaw,
+      depRaw,
+      downRaw,
+      srcNotes,
+      headerRows,
+    ] as const);
 
   const connectedIds = connectedTaskIds(taskId, edges);
   const needsSecondaries =
@@ -483,11 +448,11 @@ export async function resolveContextBundle(
 
   let depTasks: DependencyTaskInfo[] = [];
   let downstreamSummaries: DownstreamSummary[] = [];
+  let downstreamEdgeNotes = new Map<string, string>();
   let detailedEdges: DetailedEdge[] = [];
   if (needsSecondaries) {
-    const [depRows, summaryRows, connectedRows] = await withUserContextRead(
-      userId,
-      (db) => [
+    const [depRows, summaryRows, tgtNotes, connectedRows] =
+      await withUserContextRead(userId, (db) => [
         dependencyTasksStmt(
           db,
           task.projectId,
@@ -498,11 +463,12 @@ export async function resolveContextBundle(
           task.projectId,
           downstream.map((d) => d.id),
         ),
+        edgeNotesByTargetStmt(db, taskId),
         connectedTaskInfoStmt(db, connectedIds),
-      ],
-    );
+      ]);
     depTasks = mapDependencyTaskRows(depRows);
     downstreamSummaries = mapTaskSummaryRows(summaryRows);
+    downstreamEdgeNotes = mapEdgeNoteRows(tgtNotes);
     detailedEdges = assembleDetailedEdges(taskId, edges, connectedRows);
   }
 
@@ -510,13 +476,13 @@ export async function resolveContextBundle(
     task,
     deps,
     downstream,
-    upstreamEdgeNotes: decoded.upstreamEdgeNotes,
+    upstreamEdgeNotes,
     depTasks,
-    downstreamEdgeNotes: decoded.downstreamEdgeNotes,
+    downstreamEdgeNotes,
     downstreamSummaries,
-    project: toProjectHeader(decoded.header),
+    project: toProjectHeader(header),
     detailedEdges,
-    ancestors: toAncestors(decoded.header),
+    ancestors: toAncestors(header),
   };
 }
 
