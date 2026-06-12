@@ -159,6 +159,42 @@ function decodeClosureBatch(taskId: string, results: ClosureBatchResults) {
 }
 
 /**
+ * Build the closure-secondaries statements: dependency-task summaries,
+ * downstream summaries, and incoming edge notes. Single source for
+ * {@link resolveClosureSecondaries} and {@link resolveContextBundle} (which
+ * appends the connected-task detail to the same batch) so the two
+ * consumers cannot drift.
+ *
+ * @param db - Read statement-building handle.
+ * @param projectId - UUID of the task's project (from the closure task row).
+ * @param taskId - UUID of the task.
+ * @param deps - Active prerequisite ids.
+ * @param downstream - Active dependent ids.
+ * @returns Tuple of three lazy statements.
+ */
+function secondariesBatch(
+  db: ReadConn,
+  projectId: string,
+  taskId: string,
+  deps: { id: string }[],
+  downstream: { id: string }[],
+) {
+  return [
+    dependencyTasksStmt(
+      db,
+      projectId,
+      deps.map((d) => d.id),
+    ),
+    taskSummariesStmt(
+      db,
+      projectId,
+      downstream.map((d) => d.id),
+    ),
+    edgeNotesByTargetStmt(db, taskId),
+  ] as const;
+}
+
+/**
  * Fetch the closure secondaries (dependency-task summaries, downstream
  * summaries, and incoming edge notes) in one read batch, skipped entirely
  * when the closure is empty — the incoming notes are only ever consumed
@@ -183,19 +219,7 @@ async function resolveClosureSecondaries(
   }
   const [depRows, summaryRows, tgtNotes] = await withUserContextRead(
     userId,
-    (db) => [
-      dependencyTasksStmt(
-        db,
-        projectId,
-        deps.map((d) => d.id),
-      ),
-      taskSummariesStmt(
-        db,
-        projectId,
-        downstream.map((d) => d.id),
-      ),
-      edgeNotesByTargetStmt(db, taskId),
-    ],
+    (db) => secondariesBatch(db, projectId, taskId, deps, downstream),
   );
   return [
     mapDependencyTaskRows(depRows),
@@ -454,17 +478,7 @@ export async function resolveContextBundle(
   if (needsSecondaries) {
     const [depRows, summaryRows, tgtNotes, connectedRows] =
       await withUserContextRead(userId, (db) => [
-        dependencyTasksStmt(
-          db,
-          task.projectId,
-          deps.map((d) => d.id),
-        ),
-        taskSummariesStmt(
-          db,
-          task.projectId,
-          downstream.map((d) => d.id),
-        ),
-        edgeNotesByTargetStmt(db, taskId),
+        ...secondariesBatch(db, task.projectId, taskId, deps, downstream),
         connectedTaskInfoStmt(db, connectedIds),
       ]);
     depTasks = mapDependencyTaskRows(depRows);
