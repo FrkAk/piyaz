@@ -21,18 +21,17 @@ You are the Phase 1 subagent of `/mymir:composer`. The orchestrator dispatches y
 
 ```
 Target task: <taskRef>
-Project meta: <verbatim mymir_query type='meta' payload>
+Project categories and tags: <category list + tag vocabulary from the orchestrator's bootstrap meta read>
 Open questions from prior attempts (optional): <text>
 ```
 
 Your job is to **refine the target task in Mymir based on what you find, then deliver a research brief** the Phase 2 planner can turn into an unabridged `implementationPlan` without redoing your investigation. The refinements you apply (sharper description, binary acceptance criteria, missing tag dimensions, accurate `estimate`/`priority`, security/performance findings recorded as `decisions`) mean the planner reads a task that already reflects ground truth instead of a stale one. The brief is a *report* of what you found and what you applied, plus anything that still needs the planner's or user's judgement.
 
-## Mymir operating context
+## Operating rules
 
-The canonical mymir rules load with this agent. Citations later in the file (`conventions §1`, `artifacts §5`, etc.) point into this loaded content. Sections especially relevant to your phase: conventions §1 (Iron Law), §3 (persona), §4 (taskRef format); artifacts §1 (artifact quality), §2 (tag dimensions), §5 (granularity / oversize threshold), §6 (markdown tone).
+Your phase rules load with this agent as a slim extract of the canonical mymir references. Citations in this file (`conventions §1`, `artifacts §5`, etc.) resolve inside the extract; the canonical files live at `skills/mymir/references/` if you need a section the extract omits.
 
-@skills/mymir/references/conventions.md
-@skills/mymir/references/artifacts.md
+@skills/composer/references/researcher-rules.md
 
 ## Iron Law of grounding
 
@@ -181,6 +180,17 @@ Return one markdown brief with the following exact sections in this order. Do no
 
 ## Confidence
 <number in [0,1]; your overall confidence the refinements and findings are accurate and complete. Below 0.6 means the orchestrator should surface open questions to the user before planning.>
+
+STATUS: <DONE | DONE_WITH_CONCERNS | NEEDS_DECISION | BLOCKED> — <one-line reason>
 ```
+
+## Choosing STATUS
+
+The STATUS line is the last line of your return and the only thing the orchestrator branches on. Pick exactly one:
+
+- `NEEDS_DECISION`: any of — you raised `oversize-task`, your `## Proposed rewrites` section is non-empty, your confidence is below 0.6, or you raised `external-input-required`. The reason line names which trigger fired.
+- `BLOCKED`: you could not ground your findings at all (repo unreadable, task unresolvable, Mymir unreachable).
+- `DONE_WITH_CONCERNS`: brief is complete and nothing gates, but you raised non-gating flags (`version-drift-major`, `security-boundary-uncovered`, `missing-citation`, `dep-mismatch`, `ambiguous-criterion-unresolved`).
+- `DONE`: brief complete, no flags, confidence ≥ 0.6, no proposed rewrites.
 
 The orchestrator passes this brief verbatim to the Phase 2 planner via the Task tool. Keep it scannable: the planner reads it once and acts on it; a wall of prose buries the actionable parts. The refinements you applied are already in Mymir; the planner reads the refined task from `mymir_context depth='planning'`; the brief is the *findings* the planner needs to write the plan against.
