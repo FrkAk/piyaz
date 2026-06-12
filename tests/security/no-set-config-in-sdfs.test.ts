@@ -3,7 +3,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Invariant: only `lib/db/rls.ts` may issue `set_config('app.user_id', ...)`.
+ * Invariant: only the transaction-boundary owners — `lib/db/rls.ts` plus
+ * the `withUserContextRead` backends `lib/db/rls-read.node.ts` and
+ * `lib/db/rls-read.workers.ts` — may issue `set_config('app.user_id', ...)`.
  *
  * `public.current_user_org_ids()` is `STABLE`, so Postgres memoizes its
  * result for the duration of a single statement. The function reads
@@ -12,10 +14,13 @@ import { join } from "node:path";
  * rows even if the GUC changed. If any SECURITY DEFINER or migration ever
  * flipped `app.user_id` mid-statement, RLS policies that already
  * memoized the membership array would silently see the new GUC's
- * authority on subsequent rows. The JS wrapper that owns the transaction
- * boundary is the SOLE allowed call site; this test pins the contract so
- * a future SDF/migration cannot quietly land a `set_config('app.user_id',
- * ...)` and break the STABLE-cache invariant.
+ * authority on subsequent rows. The JS wrappers that own a transaction
+ * boundary (and set the GUC exactly once, before any read) are the only
+ * allowed call sites; this test pins the contract so a future
+ * SDF/migration cannot quietly land a `set_config('app.user_id', ...)`
+ * and break the STABLE-cache invariant. The read path's keyword guard
+ * (`lib/db/read-guard.ts`) is the matching runtime belt: it rejects
+ * `set_config` inside any `withUserContextRead` build statement.
  */
 describe("no set_config('app.user_id', ...) outside lib/db/rls.ts", () => {
   const SET_CONFIG_APP_USER_ID = /set_config\s*\(\s*['"]app\.user_id/i;
@@ -57,7 +62,7 @@ describe("no set_config('app.user_id', ...) outside lib/db/rls.ts", () => {
     }
   });
 
-  test("lib/db/rls.ts is the sole TS call site", () => {
+  test("the rls transaction-boundary owners are the sole TS call sites", () => {
     const re = /set_config\s*\(\s*['"`]app\.user_id/i;
     const root = process.cwd();
     const offenders: string[] = [];
@@ -72,6 +77,8 @@ describe("no set_config('app.user_id', ...) outside lib/db/rls.ts", () => {
         }
         if (!/\.(ts|tsx|js|mjs|cjs)$/.test(entry.name)) continue;
         if (p.endsWith("/lib/db/rls.ts")) continue;
+        if (p.endsWith("/lib/db/rls-read.node.ts")) continue;
+        if (p.endsWith("/lib/db/rls-read.workers.ts")) continue;
         // The grep test itself contains the literal string; skip.
         if (p.endsWith("/tests/security/no-set-config-in-sdfs.test.ts"))
           continue;

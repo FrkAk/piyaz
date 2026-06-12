@@ -8,7 +8,6 @@ import {
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
-import { withUserContext } from "@/lib/db/rls";
 import {
   resolveReviewData,
   type ReviewContextData,
@@ -342,7 +341,5 @@ export async function buildReviewContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<string> {
-  return withUserContext(ctx.userId, async (tx) =>
-    buildReviewContextFrom(await resolveReviewData(tx, taskId)),
-  );
+  return buildReviewContextFrom(await resolveReviewData(ctx.userId, taskId));
 }

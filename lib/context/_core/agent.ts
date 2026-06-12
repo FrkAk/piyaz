@@ -8,11 +8,8 @@ import {
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
-import { assertTaskAccessTx } from "@/lib/auth/authorization";
-import { withUserContext } from "@/lib/db/rls";
 import {
-  resolveDependencyClosure,
-  resolveRecordData,
+  resolveAgentBundleData,
   type AgentContextData,
 } from "@/lib/context/_core/bundle";
 import { buildRecordContextFrom } from "@/lib/context/_core/record";
@@ -254,11 +251,11 @@ export function buildAgentContextFrom(data: AgentContextData): string {
  * Build lean, position-optimized context for external coding agents.
  *
  * The MCP `mymir_context depth='agent'` entry point. For `done` /
- * `cancelled` tasks it delegates to the retrospective record builder — the
- * slim access gate carries the status, so the heavy fetch happens once at
- * the right depth (`record` drops `implementationPlan`). Otherwise it
- * resolves the dependency closure at `agent` depth and delegates to the
- * pure {@link buildAgentContextFrom} assembler.
+ * `cancelled` tasks it delegates to the retrospective record builder; the
+ * status dispatch happens inside {@link resolveAgentBundleData}, which
+ * reads it from the closure-core batch so both shapes resolve in two read
+ * batches. Otherwise it delegates to the pure
+ * {@link buildAgentContextFrom} assembler.
  *
  * @param ctx Resolved auth context.
  * @param taskId UUID of the task.
@@ -268,13 +265,8 @@ export async function buildAgentContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<string> {
-  return withUserContext(ctx.userId, async (tx) => {
-    const gate = await assertTaskAccessTx(tx, taskId);
-    if (gate.status === "done" || gate.status === "cancelled") {
-      return buildRecordContextFrom(await resolveRecordData(tx, taskId));
-    }
-    return buildAgentContextFrom(
-      await resolveDependencyClosure(tx, taskId, "agent"),
-    );
-  });
+  const resolved = await resolveAgentBundleData(ctx.userId, taskId);
+  return resolved.kind === "record"
+    ? buildRecordContextFrom(resolved.data)
+    : buildAgentContextFrom(resolved.data);
 }

@@ -15,7 +15,7 @@ import {
   listProjectsForMcp,
   listUserTeams,
   getProjectTags,
-  getProjectTagsTx,
+  fetchProjectTagsRead,
   getProjectMeta,
 } from "@/lib/data/project";
 import {
@@ -23,7 +23,8 @@ import {
   updateTask,
   deleteTask,
   deleteTaskPreview,
-  searchTasksTx,
+  getSearchProjectGate,
+  searchTasksRead,
   getProjectTasksSlim,
   getTaskFull,
   fetchAssigneesUnchecked,
@@ -83,7 +84,6 @@ import type { AuthContext } from "@/lib/auth/context";
 import {
   ForbiddenError,
   InsufficientRoleError,
-  assertProjectAccessTx,
   assertTaskAccess,
 } from "@/lib/auth/authorization";
 import { withUserContext } from "@/lib/db/rls";
@@ -1380,56 +1380,39 @@ export async function handleQuery(
         }
 
         const projectId = p.projectId;
-        const outcome = await withUserContext(ctx.userId, async (tx) => {
-          const { project } = await assertProjectAccessTx(tx, projectId);
+        const project = await getSearchProjectGate(ctx.userId, projectId);
 
-          if (
-            trimmedCategory.length > 0 &&
-            !project.categories.includes(trimmedCategory)
-          ) {
-            return {
-              kind: "invalid_category" as const,
-              categories: project.categories,
-            };
-          }
+        if (
+          trimmedCategory.length > 0 &&
+          !project.categories.includes(trimmedCategory)
+        ) {
+          return fail(
+            `Category "${trimmedCategory}" not in this project's categories: [${project.categories.join(", ")}]. Run mymir_query type='meta' for the current list.`,
+          );
+        }
 
-          const projectTagVocab =
-            tagFilter.length > 0
-              ? (await getProjectTagsTx(tx, projectId)).map((t) => t.tag)
-              : [];
-
-          const results = await searchTasksTx(tx, project, {
+        const [results, projectTags] = await Promise.all([
+          searchTasksRead(ctx.userId, project, {
             query: p.query,
             tags: tagFilter,
             category: trimmedCategory || undefined,
-          });
+          }),
+          tagFilter.length > 0
+            ? fetchProjectTagsRead(ctx.userId, projectId)
+            : Promise.resolve([]),
+        ]);
 
-          return { kind: "ok" as const, projectTagVocab, results };
-        });
-
-        switch (outcome.kind) {
-          case "invalid_category":
-            return fail(
-              `Category "${trimmedCategory}" not in this project's categories: [${outcome.categories.join(", ")}]. Run mymir_query type='meta' for the current list.`,
-            );
-          case "ok": {
-            const variantHints =
-              tagFilter.length > 0
-                ? tagVariantHints(tagFilter, outcome.projectTagVocab)
-                : [];
-            const hintParts: string[] = [...variantHints];
-            if (outcome.results.length === 1)
-              hintParts.push(stateHint(outcome.results[0].state));
-            const hint =
-              hintParts.length > 0 ? hintParts.join("\n> ") : undefined;
-            return ok(formatSearchResults(outcome.results, hint));
-          }
-          default:
-            outcome satisfies never;
-            throw new Error(
-              `unreachable: unhandled search outcome ${JSON.stringify(outcome)}`,
-            );
-        }
+        const variantHints =
+          tagFilter.length > 0
+            ? tagVariantHints(
+                tagFilter,
+                projectTags.map((t) => t.tag),
+              )
+            : [];
+        const hintParts: string[] = [...variantHints];
+        if (results.length === 1) hintParts.push(stateHint(results[0].state));
+        const hint = hintParts.length > 0 ? hintParts.join("\n> ") : undefined;
+        return ok(formatSearchResults(results, hint));
       }
       case "list": {
         if (!p.projectId)

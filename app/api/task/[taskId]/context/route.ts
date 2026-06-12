@@ -17,7 +17,6 @@ import {
   formatWorkingContextParts,
 } from "@/lib/context/_core/working";
 import type { BundleKind, BundlePart } from "@/lib/context/parts";
-import { withUserContext, type Tx } from "@/lib/db/rls";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
@@ -44,34 +43,37 @@ function isBundleKind(value: string | null): value is BundleKind {
 /**
  * Resolve and assemble one bundle's structured sections. Each kind pays only
  * for the data its builder renders — one task read at the kind's column
- * projection, plus the dependency traversal only for closure-backed kinds.
+ * projection, plus the dependency traversal only for closure-backed kinds —
+ * resolved through stateless read batches.
  *
- * @param tx - Active RLS transaction handle.
+ * @param userId - Authenticated user id (RLS scope).
  * @param taskId - UUID of the task.
  * @param kind - Bundle kind to build.
  * @returns Ordered bundle parts.
  * @throws ForbiddenError When the caller cannot access the task.
  */
 async function buildSections(
-  tx: Tx,
+  userId: string,
   taskId: string,
   kind: BundleKind,
 ): Promise<BundlePart[]> {
   switch (kind) {
     case "working":
       return formatWorkingContextParts(
-        buildWorkingContextFrom(await resolveWorkingData(tx, taskId)),
+        buildWorkingContextFrom(await resolveWorkingData(userId, taskId)),
       );
     case "planning":
-      return buildPlanningContextParts(await resolvePlanningData(tx, taskId));
+      return buildPlanningContextParts(
+        await resolvePlanningData(userId, taskId),
+      );
     case "agent":
       return buildAgentContextParts(
-        await resolveDependencyClosure(tx, taskId, "agent"),
+        await resolveDependencyClosure(userId, taskId, "agent"),
       );
     case "review":
-      return buildReviewContextParts(await resolveReviewData(tx, taskId));
+      return buildReviewContextParts(await resolveReviewData(userId, taskId));
     case "record":
-      return buildRecordContextParts(await resolveRecordData(tx, taskId));
+      return buildRecordContextParts(await resolveRecordData(userId, taskId));
   }
 }
 
@@ -119,9 +121,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
       return conditionalRespond(req, null, max);
     }
 
-    const sections = await withUserContext(ctx.userId, (tx) =>
-      buildSections(tx, taskId, kind),
-    );
+    const sections = await buildSections(ctx.userId, taskId, kind);
     return conditionalRespond(req, { sections }, max);
   } catch (err) {
     if (err instanceof ForbiddenError) {

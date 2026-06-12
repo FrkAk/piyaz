@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { serviceRoleConnect } from "@/tests/setup/seed";
 import { seedRichContextTask } from "./fixtures";
-import { withUserContext } from "@/lib/db/rls";
 import {
   resolveDependencyClosure,
   resolvePlanningData,
@@ -114,10 +113,8 @@ async function seedFullParityTask(suffix: string) {
 describe("drawer/bundle parity (spec §3 item 1)", () => {
   test("working", async () => {
     const fx = await seedFullParityTask("parity-working");
-    const parts = await withUserContext(fx.userId, async (tx) =>
-      formatWorkingContextParts(
-        buildWorkingContextFrom(await resolveWorkingData(tx, fx.taskId)),
-      ),
+    const parts = formatWorkingContextParts(
+      buildWorkingContextFrom(await resolveWorkingData(fx.userId, fx.taskId)),
     );
     expect(drawerOrder(parts, "working")).toEqual([
       ...SECTIONS_BY_BUNDLE.working,
@@ -126,8 +123,8 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
 
   test("planning", async () => {
     const fx = await seedFullParityTask("parity-planning");
-    const parts = await withUserContext(fx.userId, async (tx) =>
-      buildPlanningContextParts(await resolvePlanningData(tx, fx.taskId)),
+    const parts = buildPlanningContextParts(
+      await resolvePlanningData(fx.userId, fx.taskId),
     );
     expect(drawerOrder(parts, "planning")).toEqual([
       ...SECTIONS_BY_BUNDLE.planning,
@@ -140,18 +137,16 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
       (sr) =>
         sr`UPDATE tasks SET status = 'in_progress' WHERE id = ${fx.taskId}`,
     );
-    const parts = await withUserContext(fx.userId, async (tx) =>
-      buildAgentContextParts(
-        await resolveDependencyClosure(tx, fx.taskId, "agent"),
-      ),
+    const parts = buildAgentContextParts(
+      await resolveDependencyClosure(fx.userId, fx.taskId, "agent"),
     );
     expect(drawerOrder(parts, "agent")).toEqual([...SECTIONS_BY_BUNDLE.agent]);
   });
 
   test("review", async () => {
     const fx = await seedFullParityTask("parity-review");
-    const parts = await withUserContext(fx.userId, async (tx) =>
-      buildReviewContextParts(await resolveReviewData(tx, fx.taskId)),
+    const parts = buildReviewContextParts(
+      await resolveReviewData(fx.userId, fx.taskId),
     );
     expect(drawerOrder(parts, "review")).toEqual([
       ...SECTIONS_BY_BUNDLE.review,
@@ -163,8 +158,8 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
     await srRun(
       (sr) => sr`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`,
     );
-    const parts = await withUserContext(fx.userId, async (tx) =>
-      buildRecordContextParts(await resolveRecordData(tx, fx.taskId)),
+    const parts = buildRecordContextParts(
+      await resolveRecordData(fx.userId, fx.taskId),
     );
     expect(drawerOrder(parts, "record-done")).toEqual([
       ...SECTIONS_BY_BUNDLE["record-done"],
@@ -176,8 +171,8 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
     await srRun(
       (sr) => sr`UPDATE tasks SET status = 'cancelled' WHERE id = ${fx.taskId}`,
     );
-    const parts = await withUserContext(fx.userId, async (tx) =>
-      buildRecordContextParts(await resolveRecordData(tx, fx.taskId)),
+    const parts = buildRecordContextParts(
+      await resolveRecordData(fx.userId, fx.taskId),
     );
     expect(drawerOrder(parts, "record-cancelled")).toEqual([
       ...SECTIONS_BY_BUNDLE["record-cancelled"],

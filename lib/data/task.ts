@@ -12,8 +12,15 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { executeRaw, uuidArray, type Conn } from "@/lib/db/raw";
-import { withUserContext, type Tx } from "@/lib/db/rls";
+import {
+  executeRaw,
+  normalizeExecuteResult,
+  taskProjectScopeSql,
+  uuidArray,
+  type Conn,
+  type ReadConn,
+} from "@/lib/db/raw";
+import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import {
   projects,
   tasks,
@@ -28,9 +35,7 @@ import {
 } from "@/lib/db/schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
 import {
-  fetchTaskFull,
-  fetchTaskForDepth,
-  type TaskFetchDepth,
+  taskFullStmt,
   type TaskFullRawRow,
 } from "@/lib/db/raw/fetch-task-full";
 import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
@@ -47,7 +52,13 @@ import {
   composeTaskRef,
   enrichWithTaskRef,
 } from "@/lib/graph/identifier";
-import { buildEffectiveDepGraph } from "@/lib/graph/effective-deps";
+import {
+  buildEffectiveDepGraph,
+  buildEffectiveDepGraphFrom,
+  type EffectiveDepGraph,
+} from "@/lib/graph/effective-deps";
+import { projectDependsOnEdgesStmt } from "@/lib/data/edge";
+import { projectAccessGateStmt } from "@/lib/data/access";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
@@ -56,7 +67,11 @@ import { parseEnvInt } from "@/lib/config/env";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccessTx,
+  assertProjectGateRows,
   assertTaskAccessTx,
+  assertValidProjectId,
+  assertValidTaskId,
+  firstRowOrForbidden,
   ForbiddenError,
   isUuid,
 } from "@/lib/auth/authorization";
@@ -68,7 +83,6 @@ import {
 import type {
   AssigneeRef,
   MyTask,
-  TaskEdgeRef,
   TaskFull,
   TaskFullWithEdges,
   TaskLinkRef,
@@ -434,9 +448,10 @@ export function hasCriteriaExpr() {
  * Fetch the full task row plus the composed `taskRef`, assignees, criteria,
  * decisions, and links. Membership-gated.
  *
- * Single round-trip: a raw SQL query joins `tasks` to `projects` and folds
- * `task_assignees`, `task_acceptance_criteria`, `task_decisions`, and
- * `task_links` into JSON-aggregated subqueries.
+ * One read batch: the access gate plus a raw SQL statement that joins
+ * `tasks` to `projects` and folds `task_assignees`,
+ * `task_acceptance_criteria`, `task_decisions`, and `task_links` into
+ * JSON-aggregated subqueries.
  *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task.
@@ -448,7 +463,31 @@ export async function getTaskFull(
   ctx: AuthContext,
   taskId: string,
 ): Promise<TaskFull> {
-  return withUserContext(ctx.userId, (tx) => getTaskFullTx(tx, taskId));
+  assertValidTaskId(taskId);
+  const [fullRaw] = await withUserContextRead(ctx.userId, (read) => [
+    taskFullStmt(read, taskId),
+  ]);
+  return requireTaskRow(
+    normalizeExecuteResult<TaskFullRawRow>(fullRaw),
+    taskId,
+  );
+}
+
+/**
+ * Map the rows of a task fetch to {@link TaskFull}, failing closed when no
+ * row is visible. RLS hides rows the caller cannot access, so an empty
+ * result means missing task or cross-team access — both 404-shaped.
+ *
+ * @param rows - Raw rows from `taskFullStmt` or `taskForDepthStmt`.
+ * @param taskId - UUID of the task, for the error payload.
+ * @returns The mapped {@link TaskFull}.
+ * @throws ForbiddenError when no row is visible to the caller.
+ */
+export function requireTaskRow(
+  rows: TaskFullRawRow[],
+  taskId: string,
+): TaskFull {
+  return mapTaskFullRow(firstRowOrForbidden("task", taskId, rows));
 }
 
 /**
@@ -474,61 +513,12 @@ export async function getTaskProjectId(
 }
 
 /**
- * {@link getTaskFull} on a caller-supplied tx.
- *
- * @param tx - Active RLS transaction handle.
- * @param taskId - UUID of the task.
- * @returns Full task row with composed `taskRef`, assignees, criteria,
- *   decisions, and links.
- * @throws ForbiddenError when the caller is not a member of the task's team.
- */
-export async function getTaskFullTx(tx: Tx, taskId: string): Promise<TaskFull> {
-  await assertTaskAccessTx(tx, taskId);
-  const rows = await fetchTaskFull(tx, taskId);
-  if (rows.length === 0) {
-    throw new Error(
-      `getTaskFull: task ${taskId} disappeared after access check`,
-    );
-  }
-  return mapTaskFullRow(rows[0]);
-}
-
-/**
- * Membership-gated single-round-trip task fetch narrowed to the columns the
- * supplied {@link TaskFetchDepth} renders. Mirrors {@link getTaskFullTx} but
- * routes through {@link fetchTaskForDepth}, so each MCP context builder pays
- * egress only for the task-row columns and child aggregates its formatter
- * reads. Columns the depth omits arrive as type-stable empty values, keeping
- * the returned {@link TaskFull} shape identical across depths.
- *
- * @param tx - Active RLS transaction handle.
- * @param taskId - UUID of the task.
- * @param depth - Context depth selecting the column projection.
- * @returns Task row (depth-projected) with composed `taskRef` and aggregates.
- * @throws ForbiddenError when the caller is not a member of the task's team.
- */
-export async function getTaskForDepthTx(
-  tx: Tx,
-  taskId: string,
-  depth: TaskFetchDepth,
-): Promise<TaskFull> {
-  await assertTaskAccessTx(tx, taskId);
-  const rows = await fetchTaskForDepth(tx, taskId, depth);
-  if (rows.length === 0) {
-    throw new Error(
-      `getTaskForDepth: task ${taskId} disappeared after access check`,
-    );
-  }
-  return mapTaskFullRow(rows[0]);
-}
-
-/**
  * Map a {@link TaskFullRawRow} to the camelCase {@link TaskFull} shape,
  * composing `taskRef` and narrowing the decision `source` union. Shared by
- * {@link getTaskFullTx} and {@link getTaskForDepthTx} so both surfaces map
- * identically.
+ * {@link requireTaskRow} consumers so the full and depth-projected surfaces
+ * map identically.
  *
- * @param r - Raw row from `fetchTaskFull` or `fetchTaskForDepth`.
+ * @param r - Raw row from `taskFullStmt` or `taskForDepthStmt`.
  * @returns The mapped {@link TaskFull}.
  */
 function mapTaskFullRow(r: TaskFullRawRow): TaskFull {
@@ -574,23 +564,18 @@ function mapTaskFullRow(r: TaskFullRawRow): TaskFull {
 }
 
 /**
- * Fetch a task's connected edges in the slim `note`-carrying shape the
- * detail relationships list renders. RLS scopes the rows to edges whose
- * endpoints are both member-visible.
+ * A task's connected edges in the slim `note`-carrying shape the detail
+ * relationships list renders, as a lazy batch statement. RLS scopes the
+ * rows to edges whose endpoints are both member-visible. Performs no
+ * authorization itself — batch alongside a task-row statement whose empty
+ * result is the 404 signal.
  *
- * UNCHECKED: no `assertTaskAccessTx` call — callers must assert access before
- * invoking. The `Unchecked` suffix is the contract; do not strip it when
- * wrapping or re-exporting.
- *
- * @param tx - Active RLS transaction handle.
+ * @param read - Read statement-building handle.
  * @param taskId - UUID of the task (matched on either endpoint).
- * @returns Connected edges projected to {@link TaskEdgeRef}.
+ * @returns Lazy select yielding {@link TaskEdgeRef} rows.
  */
-function fetchTaskEdgeRefsUnchecked(
-  tx: Tx,
-  taskId: string,
-): Promise<TaskEdgeRef[]> {
-  return tx
+function taskEdgeRefsStmt(read: ReadConn, taskId: string) {
+  return read
     .select(edgeRefColumns)
     .from(taskEdges)
     .where(
@@ -602,9 +587,10 @@ function fetchTaskEdgeRefsUnchecked(
 }
 
 /**
- * {@link getTaskFull} plus the task's connected edges. Only the task-detail
- * endpoint renders relationships, so the universal `getTaskFull(Tx)` stays
- * lean and this variant layers the edge fetch on for that single caller.
+ * {@link getTaskFull} plus the task's connected edges, in one read batch.
+ * Only the task-detail endpoint renders relationships, so `getTaskFull`
+ * stays lean and this variant layers the edge statement on for that single
+ * caller.
  *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task.
@@ -615,13 +601,16 @@ export async function getTaskFullWithEdges(
   ctx: AuthContext,
   taskId: string,
 ): Promise<TaskFullWithEdges> {
-  return withUserContext(ctx.userId, async (tx) => {
-    const [full, edges] = await Promise.all([
-      getTaskFullTx(tx, taskId),
-      fetchTaskEdgeRefsUnchecked(tx, taskId),
-    ]);
-    return { ...full, edges };
-  });
+  assertValidTaskId(taskId);
+  const [fullRaw, edges] = await withUserContextRead(ctx.userId, (read) => [
+    taskFullStmt(read, taskId),
+    taskEdgeRefsStmt(read, taskId),
+  ]);
+  const full = requireTaskRow(
+    normalizeExecuteResult<TaskFullRawRow>(fullRaw),
+    taskId,
+  );
+  return { ...full, edges };
 }
 
 /**
@@ -688,46 +677,6 @@ export async function fetchAssigneesByTaskUnchecked(
       FROM unnest(${uuidArray(taskIds)}) AS t(task_id)
       CROSS JOIN LATERAL public.task_assignees_visible(t.task_id) a
       ORDER BY a.name
-    `,
-  );
-  for (const r of rows) {
-    const list = result.get(r.task_id) ?? [];
-    list.push({ userId: r.user_id, name: r.name, email: r.email });
-    result.set(r.task_id, list);
-  }
-  return result;
-}
-
-/**
- * Batched sibling of {@link fetchAssigneesByTaskUnchecked} that resolves the
- * caller-membership check ONCE for the whole project, rather than N times
- * per task. Calls `public.task_assignees_for_project_visible`, which holds
- * the same anti-disclosure contract as the per-task variant (empty result
- * for non-members; no oracle on project existence).
- *
- * UNCHECKED: caller must assert project access (`assertProjectAccess`)
- * before invoking. The `Unchecked` suffix is the contract — do not strip
- * it when wrapping or re-exporting.
- *
- * @param projectId - UUID of the project whose tasks to enumerate.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Map of taskId -> AssigneeRef[]; tasks without assignees omitted.
- */
-export async function fetchAssigneesByProjectUnchecked(
-  projectId: string,
-  conn: Conn,
-): Promise<Map<string, AssigneeRef[]>> {
-  const result = new Map<string, AssigneeRef[]>();
-  const rows = await executeRaw<{
-    task_id: string;
-    user_id: string;
-    name: string;
-    email: string;
-  }>(
-    conn,
-    sql`
-      SELECT task_id, user_id, name, email
-      FROM public.task_assignees_for_project_visible(${projectId}::uuid)
     `,
   );
   for (const r of rows) {
@@ -851,22 +800,14 @@ export async function getTaskSlim(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch a slim task projection for project overview assembly, ordered by
- * `order`. Description is capped at 101 characters in SQL to reduce egress
- * while preserving the caller's `compress(_, 100)` behavior byte-for-byte:
- * any source description longer than 100 chars stays longer than 100 after
- * the cap, so the downstream ellipsis truncation is unaffected. Internal
- * helper -- caller must assert project access before invoking.
+ * Overview rows for every task in a project, as a lazy batch statement.
  *
+ * @param read - Read statement-building handle.
  * @param projectId - UUID of the project.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Ordered array of slim task rows with a 101-char description cap.
+ * @returns Lazy select yielding overview rows for every project task.
  */
-export async function listProjectTasksForOverview(
-  projectId: string,
-  conn: Conn,
-) {
-  return conn
+export function projectTasksForOverviewStmt(read: ReadConn, projectId: string) {
+  return read
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1043,6 +984,22 @@ export async function deriveTaskStatesSlim(
   conn: Conn,
 ): Promise<Map<string, TaskState>> {
   const graph = await buildEffectiveDepGraph(projectId, conn);
+  return deriveTaskStatesFrom(graph, taskSubset);
+}
+
+/**
+ * Derive per-task workflow states from a pre-built effective dependency
+ * graph. Pure counterpart of {@link deriveTaskStatesSlim} for callers that
+ * resolved the graph substrate in a read batch.
+ *
+ * @param graph - Effective dependency graph for the project.
+ * @param taskSubset - Tasks to derive states for.
+ * @returns Map of task id to derived state.
+ */
+export function deriveTaskStatesFrom(
+  graph: EffectiveDepGraph,
+  taskSubset: TaskStateInput[],
+): Map<string, TaskState> {
   const result = new Map<string, TaskState>();
   for (const task of taskSubset) {
     result.set(task.id, deriveTaskState(task, graph));
@@ -1071,7 +1028,7 @@ export type SearchResult = {
 /** Match a full taskRef like "MYMR-83" (case-insensitive). */
 const TASK_REF_PATTERN = /^([A-Z0-9]+)-(\d+)$/i;
 
-/** Filter options for {@link searchTasks} and {@link searchTasksTx}. */
+/** Filter options for {@link searchTasks} and {@link searchTasksRead}. */
 export type SearchTasksOpts = {
   /** Optional search string (taskRef, title, or tag substring). */
   query?: string;
@@ -1083,7 +1040,7 @@ export type SearchTasksOpts = {
 
 /**
  * Search tasks by taskRef, title, tags, or category within a project.
- * Prefer {@link searchTasksTx} when the caller already owns a
+ * Prefer {@link searchTasksRead} when the caller already holds a
  * `withUserContext` frame.
  *
  * @param ctx - Resolved auth context.
@@ -1097,38 +1054,51 @@ export async function searchTasks(
   projectId: string,
   opts: SearchTasksOpts = {},
 ): Promise<SearchResult[]> {
-  return withUserContext(ctx.userId, async (tx) => {
-    const { project } = await assertProjectAccessTx(tx, projectId);
-    return searchTasksTx(tx, project, opts);
-  });
+  const project = await getSearchProjectGate(ctx.userId, projectId);
+  return searchTasksRead(ctx.userId, project, opts);
 }
 
-/** The slice of {@link Project} that {@link searchTasksTx} reads. */
+/** The slice of {@link Project} that {@link searchTasksRead} reads. */
 export type SearchTasksProject = Pick<
   Project,
   "id" | "identifier" | "categories"
 >;
 
 /**
- * {@link searchTasks} on a caller-supplied tx and pre-resolved project.
+ * Resolve the project access gate for a search in one read batch. Shared
+ * by {@link searchTasks} and the MCP search tool, whose category
+ * validation needs the project's `categories` before the search batch.
  *
- * The caller MUST have invoked `assertProjectAccessTx` for `project.id` on
- * the same `tx` before calling this. RLS still gates every row read, so a
- * missing assert never bypasses authorization — it would only mute the
- * explicit `Forbidden` error path. The pre-resolved `project` lets the
- * search share authorization with surrounding work without a second access
- * check.
- *
- * @param tx - Active RLS transaction handle.
- * @param project - Pre-resolved project slice (caller already authorized).
- * @param opts - Filter options.
- * @returns Up to 20 matching tasks with derived state.
+ * @param userId - Authenticated user id (RLS scope).
+ * @param projectId - UUID of the project.
+ * @returns The authorized project slice.
+ * @throws ForbiddenError on missing or cross-team project.
  */
-export async function searchTasksTx(
-  tx: Tx,
-  project: SearchTasksProject,
-  opts: SearchTasksOpts = {},
-): Promise<SearchResult[]> {
+export async function getSearchProjectGate(
+  userId: string,
+  projectId: string,
+): Promise<SearchTasksProject> {
+  assertValidProjectId(projectId);
+  const [gateRows] = await withUserContextRead(userId, (read) => [
+    projectAccessGateStmt(read, projectId),
+  ]);
+  return assertProjectGateRows(projectId, gateRows);
+}
+
+/** Trimmed, normalized search filters; null when every filter is empty. */
+type SearchFilters = {
+  trimmedQuery: string;
+  tagFilter: string[];
+  trimmedCategory: string;
+};
+
+/**
+ * Trim and normalize the search options.
+ *
+ * @param opts - Caller-supplied filter options.
+ * @returns Normalized filters, or null when nothing filters.
+ */
+function normalizeSearchFilters(opts: SearchTasksOpts): SearchFilters | null {
   const trimmedQuery = opts.query?.trim() ?? "";
   const tagFilter = normalizeTags(opts.tags);
   const trimmedCategory = opts.category?.trim() ?? "";
@@ -1136,9 +1106,26 @@ export async function searchTasksTx(
     trimmedQuery.length === 0 &&
     tagFilter.length === 0 &&
     trimmedCategory.length === 0
-  )
-    return [];
+  ) {
+    return null;
+  }
+  return { trimmedQuery, tagFilter, trimmedCategory };
+}
 
+/**
+ * Build the ranked, filtered search select as a lazy batch statement.
+ *
+ * @param read - Read statement-building handle.
+ * @param project - Pre-resolved project slice (caller already authorized).
+ * @param filters - Normalized search filters.
+ * @returns Lazy select yielding up to 20 ranked task rows.
+ */
+function searchTasksStmt(
+  read: ReadConn,
+  project: SearchTasksProject,
+  filters: SearchFilters,
+) {
+  const { trimmedQuery, tagFilter, trimmedCategory } = filters;
   const lower = trimmedQuery.toLowerCase();
   const rankExpr =
     trimmedQuery.length > 0
@@ -1181,7 +1168,7 @@ export async function searchTasksTx(
   const orderByCols = rankExpr
     ? [rankExpr, asc(tasks.order)]
     : [asc(tasks.order)];
-  const trimmedRows = await tx
+  return read
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1200,15 +1187,48 @@ export async function searchTasksTx(
     .where(and(...clauses))
     .orderBy(...orderByCols)
     .limit(20);
-  const stateMap = await deriveTaskStatesSlim(
-    project.id,
+}
+
+/**
+ * {@link searchTasks} on a pre-resolved project, over one read batch: the
+ * ranked search select plus the project's graph substrate (tasks and
+ * edges) so derived states compute without an interactive transaction.
+ *
+ * The caller MUST have gated `project.id` (e.g. via
+ * {@link getSearchProjectGate}). RLS still gates every row read, so a
+ * missing gate never bypasses authorization — it would only mute the
+ * explicit `Forbidden` error path.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param project - Pre-resolved project slice (caller already authorized).
+ * @param opts - Filter options.
+ * @returns Up to 20 matching tasks with derived state.
+ */
+export async function searchTasksRead(
+  userId: string,
+  project: SearchTasksProject,
+  opts: SearchTasksOpts = {},
+): Promise<SearchResult[]> {
+  const filters = normalizeSearchFilters(opts);
+  if (!filters) return [];
+
+  const [trimmedRows, graphTasks, dependsOnEdges] = await withUserContextRead(
+    userId,
+    (read) => [
+      searchTasksStmt(read, project, filters),
+      listTasksForGraphStmt(read, project.id),
+      projectDependsOnEdgesStmt(read, project.id),
+    ],
+  );
+  const graph = buildEffectiveDepGraphFrom(graphTasks, dependsOnEdges);
+  const stateMap = deriveTaskStatesFrom(
+    graph,
     trimmedRows.map((t) => ({
       id: t.id,
       status: t.status,
       hasDescription: t.hasDescription,
       hasCriteria: t.hasCriteria,
     })),
-    tx,
   );
 
   const identifier = asIdentifier(project.identifier);
@@ -1611,68 +1631,69 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
 // Edge notes — internal helpers (caller asserted access already)
 // ---------------------------------------------------------------------------
 
+/** Row shape shared by the two edge-note batch statements. */
+type EdgeNoteRow = { taskId: string; note: string };
+
 /**
- * Fetch edge notes for outgoing depends_on edges from a task. Internal —
- * caller must assert task access before invoking. The `projectId` filter
- * guarantees the connected (target) task is in the same project, so a
- * stale or hand-crafted edge to a task in another project cannot leak a
- * note into context output.
- * @param projectId - UUID of the project the source task belongs to.
+ * Outgoing depends_on edge notes as a lazy batch statement. The connected
+ * task's project filter derives from the source task's own row. Build the
+ * note map from the rows with {@link mapEdgeNoteRows}.
+ *
+ * @param read - Read statement-building handle.
  * @param taskId - UUID of the source task.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Map of target task ID to edge note.
+ * @returns Lazy select yielding `{ taskId, note }` rows keyed by
+ *   prerequisite id.
  */
-export async function fetchEdgeNotesBySource(
-  projectId: string,
-  taskId: string,
-  conn: Conn,
-): Promise<Map<string, string>> {
-  const rows = await conn
-    .select({ targetTaskId: taskEdges.targetTaskId, note: taskEdges.note })
+export function edgeNotesBySourceStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({ taskId: taskEdges.targetTaskId, note: taskEdges.note })
     .from(taskEdges)
     .innerJoin(tasks, eq(tasks.id, taskEdges.targetTaskId))
     .where(
       and(
         eq(taskEdges.sourceTaskId, taskId),
         eq(taskEdges.edgeType, "depends_on"),
-        eq(tasks.projectId, projectId),
+        eq(tasks.projectId, taskProjectScopeSql(taskId)),
       ),
     );
-  const map = new Map<string, string>();
-  for (const r of rows) {
-    if (r.note) map.set(r.targetTaskId, r.note);
-  }
-  return map;
 }
 
 /**
- * Fetch edge notes for incoming depends_on edges to a task. Internal —
- * caller must assert task access before invoking. See `fetchEdgeNotesBySource`
- * for the projectId-filter rationale.
- * @param projectId - UUID of the project the target task belongs to.
+ * Incoming depends_on edge notes as a lazy batch statement. See
+ * {@link edgeNotesBySourceStmt}.
+ *
+ * @param read - Read statement-building handle.
  * @param taskId - UUID of the target task.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Map of source task ID to edge note.
+ * @returns Lazy select yielding `{ taskId, note }` rows keyed by
+ *   dependent id.
  */
-export async function fetchEdgeNotesByTarget(
-  projectId: string,
-  taskId: string,
-  conn: Conn,
-): Promise<Map<string, string>> {
-  const rows = await conn
-    .select({ sourceTaskId: taskEdges.sourceTaskId, note: taskEdges.note })
+export function edgeNotesByTargetStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({ taskId: taskEdges.sourceTaskId, note: taskEdges.note })
     .from(taskEdges)
     .innerJoin(tasks, eq(tasks.id, taskEdges.sourceTaskId))
     .where(
       and(
         eq(taskEdges.targetTaskId, taskId),
         eq(taskEdges.edgeType, "depends_on"),
-        eq(tasks.projectId, projectId),
+        eq(tasks.projectId, taskProjectScopeSql(taskId)),
       ),
     );
+}
+
+/**
+ * Fold edge-note rows into the connected-task-id → note map the context
+ * cores consume, dropping empty notes.
+ *
+ * @param rows - Rows from an edge-note batch statement.
+ * @returns Map of connected task id to non-empty note.
+ */
+export function mapEdgeNoteRows(
+  rows: readonly EdgeNoteRow[],
+): Map<string, string> {
   const map = new Map<string, string>();
   for (const r of rows) {
-    if (r.note) map.set(r.sourceTaskId, r.note);
+    if (r.note) map.set(r.taskId, r.note);
   }
   return map;
 }
@@ -1681,23 +1702,33 @@ export async function fetchEdgeNotesByTarget(
 // Batch task summaries — internal helper
 // ---------------------------------------------------------------------------
 
+/** Row shape shared by the summary / dependency-task batch statements. */
+type TaskSummaryRow = {
+  id: string;
+  title: string;
+  status: string;
+  description?: string;
+  executionRecord?: string | null;
+  sequenceNumber: number;
+  identifier: string;
+};
+
 /**
- * Fetch taskRef, title, status, and description for multiple tasks by ID.
- * Internal — caller must have already asserted access on the originating task.
- * The `projectId` filter is defense in depth: if a future caller passes an
- * id list that crosses projects, the SQL ignores out-of-project rows.
+ * Slim task summaries for an id list, as a lazy batch statement. `ANY` over a typed
+ * uuid array keeps the statement valid for an empty id list (zero rows),
+ * unlike `IN ()`. Map the rows with {@link mapTaskSummaryRows}.
+ *
+ * @param read - Read statement-building handle.
  * @param projectId - UUID of the project the tasks belong to.
- * @param taskIds - Array of task UUIDs.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Array of task summaries with composed taskRef.
+ * @param taskIds - UUIDs of the tasks to summarize.
+ * @returns Lazy select yielding summary rows.
  */
-export async function fetchTaskSummaries(
+export function taskSummariesStmt(
+  read: ReadConn,
   projectId: string,
-  taskIds: string[],
-  conn: Conn,
+  taskIds: readonly string[],
 ) {
-  if (taskIds.length === 0) return [];
-  const rows = await conn
+  return read
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1708,13 +1739,28 @@ export async function fetchTaskSummaries(
     })
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(and(eq(tasks.projectId, projectId), sql`${tasks.id} IN ${taskIds}`));
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        sql`${tasks.id} = ANY(${uuidArray(taskIds)})`,
+      ),
+    );
+}
+
+/**
+ * Map summary rows to the downstream-summary projection the context cores
+ * consume, composing each `taskRef`.
+ *
+ * @param rows - Rows from {@link taskSummariesStmt}.
+ * @returns Task summaries with composed `taskRef`.
+ */
+export function mapTaskSummaryRows(rows: readonly TaskSummaryRow[]) {
   return rows.map((r) => ({
     id: r.id,
     taskRef: composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber),
     title: r.title,
     status: r.status,
-    description: r.description,
+    description: r.description ?? "",
   }));
 }
 
@@ -1728,24 +1774,21 @@ export type DependencyTaskInfo = {
 };
 
 /**
- * Fetch dependency-task summaries with composed taskRef and execution record
- * for an id list scoped to one project. Internal helper for context
- * assemblers — caller asserted access on the originating task. The
- * `projectId` filter prevents stale or hand-crafted edges from leaking
- * cross-project rows into context output.
+ * Dependency-task summaries for an id list, as a lazy batch statement. `ANY` over a
+ * typed uuid array keeps the statement valid for an empty id list. Map the
+ * rows with {@link mapDependencyTaskRows}.
  *
+ * @param read - Read statement-building handle.
  * @param projectId - UUID of the project the dependency tasks belong to.
  * @param taskIds - UUIDs of the dependency tasks.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Dep-task projections including `executionRecord` and `taskRef`.
+ * @returns Lazy select yielding dependency-task rows.
  */
-export async function fetchDependencyTasks(
+export function dependencyTasksStmt(
+  read: ReadConn,
   projectId: string,
-  taskIds: string[],
-  conn: Conn,
-): Promise<DependencyTaskInfo[]> {
-  if (taskIds.length === 0) return [];
-  const rows = await conn
+  taskIds: readonly string[],
+) {
+  return read
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1756,7 +1799,24 @@ export async function fetchDependencyTasks(
     })
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(and(eq(tasks.projectId, projectId), sql`${tasks.id} IN ${taskIds}`));
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        sql`${tasks.id} = ANY(${uuidArray(taskIds)})`,
+      ),
+    );
+}
+
+/**
+ * Map dependency-task rows to {@link DependencyTaskInfo}, composing each
+ * `taskRef`.
+ *
+ * @param rows - Rows from {@link dependencyTasksStmt}.
+ * @returns Dep-task projections including `executionRecord` and `taskRef`.
+ */
+export function mapDependencyTaskRows(
+  rows: readonly (TaskSummaryRow & { executionRecord: string | null })[],
+): DependencyTaskInfo[] {
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
@@ -1767,22 +1827,23 @@ export async function fetchDependencyTasks(
 }
 
 /**
- * Fetch direct cancelled prerequisites that carry an execution record, for
- * the planning bundle's "Abandoned Approaches" section. Direct 1-hop
- * `depends_on` targets only — the effective-dep walk treats cancelled tasks
- * as transparent, so they never appear in the closure's `deps`.
+ * Direct cancelled prerequisites that carry an execution record, as a lazy
+ * batch statement, for the planning bundle's "Abandoned Approaches" section.
+ * Direct 1-hop `depends_on` targets only — the effective-dep walk treats
+ * cancelled tasks as transparent, so they never appear in the closure's
+ * `deps`. Map the rows with {@link mapDependencyTaskRows}.
  *
+ * @param read - Read statement-building handle.
  * @param projectId - UUID of the project the task belongs to.
  * @param taskId - UUID of the planning task.
- * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
- * @returns Cancelled dep projections including `executionRecord` and `taskRef`.
+ * @returns Lazy select yielding cancelled-dep rows with execution records.
  */
-export async function fetchCancelledDepRecords(
+export function cancelledDepRecordsStmt(
+  read: ReadConn,
   projectId: string,
   taskId: string,
-  conn: Conn,
-): Promise<DependencyTaskInfo[]> {
-  const rows = await conn
+) {
+  return read
     .select({
       id: tasks.id,
       title: tasks.title,
@@ -1803,13 +1864,6 @@ export async function fetchCancelledDepRecords(
         isNotNull(tasks.executionRecord),
       ),
     );
-  return rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    status: r.status,
-    executionRecord: r.executionRecord,
-    taskRef: composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber),
-  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1826,14 +1880,32 @@ export async function fetchCancelledDepRecords(
  */
 export async function listTasksForGraph(projectId: string, conn: Conn) {
   return conn
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      sequenceNumber: tasks.sequenceNumber,
-      tags: tasks.tags,
-      priority: tasks.priority,
-    })
+    .select(graphTaskColumns)
+    .from(tasks)
+    .where(eq(tasks.projectId, projectId))
+    .orderBy(asc(tasks.sequenceNumber));
+}
+
+/** Columns the dependency-graph builders read; one source for both paths. */
+const graphTaskColumns = {
+  id: tasks.id,
+  title: tasks.title,
+  status: tasks.status,
+  sequenceNumber: tasks.sequenceNumber,
+  tags: tasks.tags,
+  priority: tasks.priority,
+} as const;
+
+/**
+ * {@link listTasksForGraph} as a lazy batch statement.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project.
+ * @returns Lazy select yielding slim graph rows for every project task.
+ */
+export function listTasksForGraphStmt(read: ReadConn, projectId: string) {
+  return read
+    .select(graphTaskColumns)
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.sequenceNumber));

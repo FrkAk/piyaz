@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { serviceRoleConnect } from "@/tests/setup/seed";
 import { seedRichContextTask, normalizeContextGolden } from "./fixtures";
-import { withUserContext } from "@/lib/db/rls";
 import { resolveRecordData } from "@/lib/context/_core/bundle";
 import { buildRecordContextFrom } from "@/lib/context/_core/record";
 
@@ -12,9 +11,7 @@ afterEach(async () => {
 
 /** Render the record bundle for a task as its owner. */
 async function recordBundle(userId: string, taskId: string): Promise<string> {
-  return withUserContext(userId, async (tx) =>
-    buildRecordContextFrom(await resolveRecordData(tx, taskId)),
-  );
+  return buildRecordContextFrom(await resolveRecordData(userId, taskId));
 }
 
 /** Run service-role statements against the seeded DB. */

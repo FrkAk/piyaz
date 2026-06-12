@@ -8,7 +8,6 @@ import {
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
-import { withUserContext } from "@/lib/db/rls";
 import {
   resolvePlanningData,
   type PlanningContextData,
@@ -242,8 +241,6 @@ export async function buildPlanningContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<string> {
-  return withUserContext(ctx.userId, async (tx) => {
-    const data = await resolvePlanningData(tx, taskId);
-    return buildPlanningContextFrom(data);
-  });
+  const data = await resolvePlanningData(ctx.userId, taskId);
+  return buildPlanningContextFrom(data);
 }

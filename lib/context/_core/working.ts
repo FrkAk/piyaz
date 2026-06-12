@@ -5,7 +5,6 @@ import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import { formatCriteria, untrustedContentNotice } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
-import { withUserContext } from "@/lib/db/rls";
 import {
   resolveWorkingData,
   type WorkingContextData,
@@ -76,10 +75,8 @@ export async function buildWorkingContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<WorkingContext> {
-  return withUserContext(ctx.userId, async (tx) => {
-    const data = await resolveWorkingData(tx, taskId);
-    return buildWorkingContextFrom(data);
-  });
+  const data = await resolveWorkingData(ctx.userId, taskId);
+  return buildWorkingContextFrom(data);
 }
 
 /**

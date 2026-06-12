@@ -1,14 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
-import { withUserContext } from "@/lib/db/rls";
-import { loadBundleDeps } from "@/lib/graph/effective-deps";
+import { resolveDependencyClosure } from "@/lib/context/_core/bundle";
 
 afterEach(async () => {
   await truncateAll();
 });
 
-test("loadBundleDeps surfaces per-dep effective depth in both directions", async () => {
+test("dependency closure surfaces per-dep effective depth in both directions", async () => {
   const fx = await seedUserOrgProject("eff-deps-depth");
   const sr = serviceRoleConnect();
   let aId: string, bId: string, cId: string;
@@ -28,8 +27,10 @@ test("loadBundleDeps surfaces per-dep effective depth in both directions", async
     await sr.end({ timeout: 5 });
   }
 
-  const { deps, downstream } = await withUserContext(fx.userId, (tx) =>
-    loadBundleDeps(fx.projectId, aId, 2, tx),
+  const { deps, downstream } = await resolveDependencyClosure(
+    fx.userId,
+    aId,
+    "agent",
   );
   expect(deps).toEqual([
     { id: bId, depth: 1 },
@@ -37,9 +38,7 @@ test("loadBundleDeps surfaces per-dep effective depth in both directions", async
   ]);
   expect(downstream).toEqual([]);
 
-  const fromC = await withUserContext(fx.userId, (tx) =>
-    loadBundleDeps(fx.projectId, cId, 2, tx),
-  );
+  const fromC = await resolveDependencyClosure(fx.userId, cId, "agent");
   expect(fromC.downstream).toEqual([
     { id: bId, depth: 1 },
     { id: aId, depth: 2 },

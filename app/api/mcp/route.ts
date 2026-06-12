@@ -71,12 +71,14 @@ const accessTokenClaimsSchema = z.looseObject({
 
 /**
  * Resolve the active JSON Web Key Set in-process via the JWT plugin's API
- * surface. Worker self-fetches against `/api/auth/jwks` traverse the
- * Cloudflare edge stack (per `wrangler.jsonc`'s `global_fetch_strictly_public`
- * compatibility flag) and can be rejected by upstream filtering, which leaves
- * Better-Auth's per-isolate JWKS cache (`@better-auth/core/dist/oauth2/verify.mjs:7`)
- * populated with `undefined` for the lifetime of the isolate. `auth.api.*` is
- * target-agnostic so self-host shares the same path.
+ * surface. Worker self-fetches against `/api/auth/jwks` traversed the
+ * Cloudflare edge stack (under the `global_fetch_strictly_public`
+ * compatibility flag, since removed from `wrangler.jsonc` once this
+ * in-process path eliminated the bundle's last outbound self-fetch) and
+ * could be rejected by upstream filtering, which left Better-Auth's
+ * per-isolate JWKS cache (`@better-auth/core/dist/oauth2/verify.mjs:7`)
+ * populated with `undefined` for the lifetime of the isolate. `auth.api.*`
+ * is target-agnostic so self-host shares the same path.
  *
  * @returns The active JWK set with the signing key.
  * @throws Error when `auth.api.getJwks()` returns an unexpected shape.
