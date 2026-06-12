@@ -27,7 +27,7 @@ Two failure modes, both lethal to Mymir's value:
 1. **Compaction.** The conversation is summarized to fit context limits. The agent's memory of the plan, the decisions, and what it has already done gets reduced to whatever the summarizer keeps. When the agent wakes back up, it has less context than when it started.
 2. **Quality decay.** As the session grows, agents get lazier. Task 5 has a 3-sentence description and 4 binary ACs; task 35 has a single sentence and "works correctly" as an AC. Token pressure compounds the laziness.
 
-> **Worst-case outcome:** a decompose run restarts from scratch and creates BAT-1..12 again on top of the existing BAT-1..12. Polluted graph, no clear truth, lost user trust.
+> **Worst-case outcome:** a decompose run restarts from scratch and creates LUM-1..12 again on top of the existing LUM-1..12. Polluted graph, no clear truth, lost user trust.
 
 **The principle that prevents both:** treat Mymir state plus a local working file as the agent's memory, not the conversation.
 
@@ -72,15 +72,15 @@ For high-write phases (decompose Phase 2, onboarding Phase 4), maintain a local 
 
 **Location:** `.mymir/<workflow>-<projectIdentifier>.md`. Examples:
 
-- `.mymir/decompose-BAT2.md`
-- `.mymir/onboarding-MYMR.md`
+- `.mymir/decompose-LUM.md`
+- `.mymir/onboarding-KRN.md`
 
 **Structure:**
 
 ```markdown
-# Decompose working file: BAT2
+# Decompose working file: LUM
 
-projectId: 5ca57933-3c87-42ab-a28b-4780a2420f40
+projectId: 0b6e4a2d-9c1f-4e83-8a57-3d2f5b7c9e14
 session: 2026-05-08
 status: in-progress
 
@@ -90,10 +90,10 @@ status: in-progress
 
 ## Progress
 
-- [x] BAT-1: Initialize Turborepo monorepo (created 2026-05-08)
-- [x] BAT-2: Configure shared TypeScript tooling
-- [ ] BAT-3: Define ClickHouse schema
-- [ ] BAT-4: Define PostgreSQL schema
+- [x] LUM-1: Initialize Turborepo monorepo (created 2026-05-08)
+- [x] LUM-2: Configure shared TypeScript tooling
+- [ ] LUM-3: Define ClickHouse schema
+- [ ] LUM-4: Define PostgreSQL schema
 - ... (one line per task in the plan; check when created)
 
 ## Decisions in flight
@@ -247,7 +247,7 @@ These mean the host's authentication or the connection itself is broken. The age
 
 1. Stop. Do not retry the same call. Do not silently proceed to the next step assuming the prior write succeeded.
 2. Do not fabricate the downstream artifacts that would have followed a successful call. The Iron Law (`conventions.md` §1) applies: you cannot cite what you do not have.
-3. Surface the failure to the user with the exact error text and the last completed step ("Mymir auth expired after creating BAT-12. Re-authenticate and I will resume from BAT-13.").
+3. Surface the failure to the user with the exact error text and the last completed step ("Mymir auth expired after creating LUM-12. Re-authenticate and I will resume from LUM-13.").
 4. Wait for confirmation that the connection is restored before resuming.
 
 A session that silently retries a 401 in a loop wastes tokens and produces nothing. A session that fabricates the rest of the workflow on the assumption the call succeeded produces actively misleading state.

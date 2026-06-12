@@ -40,7 +40,7 @@ When uncertain, write less. A short, true record is more valuable than a rich, f
 
 **Re-deriving an executionRecord from the task's own description is fabrication.** The description says what was planned; the record must cite what actually happened (code, commits, PRs, conversation, an agent's report). If no such source exists, the honest record says so ("user reported completion; no implementation details provided") and stops there.
 
-**Spec-review and open-questions tasks: cite the on-graph artifact.** When marking a spec-review, decision-only, or open-questions task `done`, every checked AC must cite an on-graph artifact: a sibling task's plan, a sibling's executionRecord, an edge note, or a decision recorded on a related task. Do not synthesize answers from training data. Reference the related task by ref (e.g. `MYMR-83`) inside the AC text or the executionRecord. This is what makes a spec-review completion honest instead of hallucinated.
+**Spec-review and open-questions tasks: cite the on-graph artifact.** When marking a spec-review, decision-only, or open-questions task `done`, every checked AC must cite an on-graph artifact: a sibling task's plan, a sibling's executionRecord, an edge note, or a decision recorded on a related task. Do not synthesize answers from training data. Reference the related task by ref (e.g. `ARV-17`) inside the AC text or the executionRecord. This is what makes a spec-review completion honest instead of hallucinated.
 
 `decisions` are different (see `references/artifacts.md` §1). They come from the conversation, not from artifact-mining.
 
@@ -89,7 +89,7 @@ A junior engineer who agrees with everything is worse than no engineer at all. T
 
 ## 4. taskRef format
 
-Tool responses include a `taskRef` like `MYMR-83`: uppercase project prefix, dash, integer. Use the ref in user-facing output. **Always pass the UUID `taskId` to tool calls. Never the ref.**
+Tool responses include a `taskRef` like `WHL-214`: uppercase project prefix, dash, integer. Use the ref in user-facing output. **Always pass the UUID `taskId` to tool calls. Never the ref.**
 
 ---
 

@@ -87,7 +87,7 @@ Completion Protocol:
 ### 2.1. Detect mode by transcript
 
 - **Dispatched mode**: your context shows you were invoked via the Task tool by a parent agent. Mark `in_review` directly with the full payload (the implementer's terminal write); the HOTL operator finalizes to `done`. Return to the parent with the task ref and a one-sentence summary. Do not ask.
-- **Direct mode**: invoked by the user in a normal session. Ask "Ready to mark this `in_review`?" with a one-sentence executionRecord preview. Wait for explicit confirmation; the HOTL operator finalizes to `done` after PR approval. An explicit user order ("mark SPT-1 done") is itself the confirmation; do not re-ask. "Don't ask me anything" waives the question, never the required fields' honesty: record only what you can cite, leave unevidenced ACs unchecked, and tell the user which fields still need input.
+- **Direct mode**: invoked by the user in a normal session. Ask "Ready to mark this `in_review`?" with a one-sentence executionRecord preview. Wait for explicit confirmation; the HOTL operator finalizes to `done` after PR approval. An explicit user order ("mark EDR-5 done") is itself the confirmation; do not re-ask. "Don't ask me anything" waives the question, never the required fields' honesty: record only what you can cite, leave unevidenced ACs unchecked, and tell the user which fields still need input.
 - **Uncertain**: default to asking. A spurious confirmation prompt is cheap; an unauthorized status change is expensive.
 
 ### 2.2. Populate the required fields
@@ -111,7 +111,7 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 
 **If a template exists**: fill it. Map task fields onto template sections only where they fit. Leave a section blank rather than invent content. Common mappings:
 
-- Linked issue / linked task: include the `taskRef` in `[BRACKETS]` (e.g. `[MYMR-83]`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference any related tasks elsewhere as plain links (no brackets). Add `Closes #N` on its own line if a GitHub issue is being resolved.
+- Linked issue / linked task: include the `taskRef` in `[BRACKETS]` (e.g. `[LSQ-38]`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference any related tasks elsewhere as plain links (no brackets). Add `Closes #N` on its own line if a GitHub issue is being resolved.
 - Summary section: 2 to 3 sentences from `executionRecord`.
 - Test plan / verification section: the `acceptanceCriteria` items that are checked.
 - Decisions or notes-for-reviewer section if present: relevant entries from `decisions`.
@@ -121,7 +121,7 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 ```markdown
 ## Summary
 
-**Task Reference**: [MYMR-XXX]
+**Task Reference**: [PREFIX-N]
 <!-- The ONE primary task this PR builds. Brackets trigger Mymir
      PR-status tracking. Use them only here. Reference any related
      tasks elsewhere as plain links (no brackets). -->

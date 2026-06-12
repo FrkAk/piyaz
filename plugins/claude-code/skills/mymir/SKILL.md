@@ -6,8 +6,8 @@ description: >
   workspace, asking what to work on / what's next / what's blocked / where
   they left off, reporting task completion, dispatching work in parallel, or
   planning a draft task. Also when the user mentions Mymir by name (e.g.
-  "mymir, do X") or references a task by its ref (e.g. MYMR-83, RZE-153,
-  ORAS-42). Works for any project domain (code or data). Do not invoke for:
+  "mymir, do X") or references a task by its ref (e.g. VLT-9, KRN-153,
+  PXD-31). Works for any project domain (code or data). Do not invoke for:
   one-off coding questions, single-file edits, debugging a specific error,
   generic todos, or scheduling.
 ---
@@ -67,7 +67,7 @@ Six tools. Read tools have cost (slim → very heavy); pick the lightest that an
 
 | Type | Cost | Use when |
 |---|---|---|
-| `search` | slim | find tasks by taskRef (e.g. `MYMR-83`), title substring, or tag substring. Pass `tags=[...]` for exact tag match (OR-within); combine with `query` to AND-narrow. Capped at 20 results, ranked by relevance. Read the `_hints` on the result to pick the right `mymir_context` depth. |
+| `search` | slim | find tasks by taskRef (e.g. `QRM-21`), title substring, or tag substring. Pass `tags=[...]` for exact tag match (OR-within); combine with `query` to AND-narrow. Capped at 20 results, ranked by relevance. Read the `_hints` on the result to pick the right `mymir_context` depth. |
 | `list` | medium | browse every task in a project (slim per-task fields, but every task). |
 | `edges` | slim | inspect one task's relationships. |
 | `meta` | slim | look up the project's categories, tag vocabulary (with usage counts), description, status, and progress without dragging tasks or edges into context. Use before setting a `category` on a new task, before coining new tags, or for a quick read of where the project stands. |
@@ -148,10 +148,10 @@ You handle most Mymir interactions inline. The four agents are escalations for h
 | Existing repo, no matching Mymir project | After confirmation: dispatch **`mymir:onboarding`**. Fabrication risk is too high to inline. |
 | Decompose a project: ≤300-word description, ≤15 features | Inline. **§ Decompose inline** |
 | Decompose a project: large, multi-domain, or sensitive | Dispatch **`mymir:decompose`** for the gated 4-phase pipeline |
-| Split a single existing oversize task into children within an active project ("split this task", "decompose RZE-42", composer's oversize handler) | Dispatch **`mymir:decompose-task`** for the gated split + edge-rewiring + parent-cancel pipeline |
+| Split a single existing oversize task into children within an active project ("split this task", "decompose HGT-17", composer's oversize handler) | Dispatch **`mymir:decompose-task`** for the gated split + edge-rewiring + parent-cancel pipeline |
 | Add a new feature or capability cluster to an active project ("add a feature for X", "decompose this idea into tasks", "extend the project with Y") | Dispatch **`mymir:decompose-feature`** for the gated feature-addition pipeline |
 | Drive tasks end-to-end through research + plan + implement + review + propagate ("ship the backlog", "run the next task", "compose through my queue", "loop through mymir tasks", a named task ref to take all the way to a PR) | Suggest user invoke **`/mymir:composer`** (backlog mode) or **`/mymir:composer <taskRef>`** (single-task mode). Composer is a slash-command skill that orchestrates four dispatched subagents per task in clean per-phase contexts; the user has to type the slash command (and paste the `/goal` harness composer emits on first turn) for it to start. |
-| Review an `in_review` task or a PR by URL ("review MYMR-N", "review this PR", "review `<PR URL>`", "what does the review subagent think of MYMR-N") | Dispatch **`mymir:review`** for a five-lens structured verdict (`approve` / `request-changes` / `block`). The verdict is advisory; HOTL still owns the `in_review → done` transition on GitHub. |
+| Review an `in_review` task or a PR by URL ("review LNS-12", "review this PR", "review `<PR URL>`", "what does the review subagent think of LNS-12") | Dispatch **`mymir:review`** for a five-lens structured verdict (`approve` / `request-changes` / `block`). The verdict is advisory; HOTL still owns the `in_review → done` transition on GitHub. |
 | Status, next task, mark done, plan a draft, refine, dispatch, create or delete task | Handle inline. **Do not** dispatch `mymir:manage` for these; they are day-to-day. |
 | Strategic review, rebalance the graph, audit dependencies, prune orphans, connect missing edges, audit blockers, consolidate categories or tags, graph-health check, "is this project on track?" | Dispatch **`mymir:manage`** for deep CTO mode |
 
@@ -214,8 +214,8 @@ Lead with slim tools.
 2. `mymir_context depth='agent'`. Multi-hop deps, execution records, ACs.
 3. **Understand before doing.** Read the description, the executionRecords from upstream tasks, and the relevant code. Reason about what could go wrong. Ask if anything is unclear. Then implement. Rushing here produces work that misses the actual requirement.
 4. Confirm before marking in_review. Completion Protocol (lifecycle §2): if you were dispatched (parent agent visible in your transcript), mark in_review directly; otherwise ask.
-5. `mymir_task action='update' status='in_review' executionRecord='...' decisions=[...] files=[...] acceptanceCriteria=[...] prUrl='<gh-pr-url>'`. Pass `prUrl` whenever a PR was opened (the dominant case); the backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR. Omit only when no PR exists (research / decision-only / Mymir-only refinement). Read response `_hints`. Re-call with missing fields if any. **Do not pass `overwriteArrays=true`** unless replacing the arrays is the intent and the user has confirmed. The default append behavior is safe. After the PR is approved, the HOTL operator flips the task `in_review → done`. Agents do not self-promote.
-6. **If the work changed code, open a PR.** Detect a PR template (`.github/PULL_REQUEST_TEMPLATE.md` and variants). Fill it concisely from the executionRecord and ACs. Use `[MYMR-N]` bracket form for the primary task ref so Mymir tracks PR status. Skip sections where you have nothing to say. Lifecycle §2 step 3 has the full rules.
+5. **If the work changed code, open a PR first.** Detect a PR template (`.github/PULL_REQUEST_TEMPLATE.md` and variants). Fill it concisely from the executionRecord and ACs. Use bracket form for the primary task ref (e.g. `[EWA-31]`) so Mymir tracks PR status. Skip sections where you have nothing to say. Lifecycle §2.3 has the full rules.
+6. `mymir_task action='update' status='in_review' executionRecord='...' decisions=[...] files=[...] acceptanceCriteria=[...] prUrl='<gh-pr-url>'`. Pass `prUrl` whenever a PR was opened (the dominant case); the backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR. Omit only when no PR exists (research / decision-only / Mymir-only refinement). Read response `_hints`. Re-call with missing fields if any. **Do not pass `overwriteArrays=true`** unless replacing the arrays is the intent and the user has confirmed. The default append behavior is safe. After the PR is approved, the HOTL operator flips the task `in_review → done`. Agents do not self-promote.
 7. **Propagate** (lifecycle §3). `mymir_query type='edges'`, then `mymir_analyze type='downstream'`. Update, create, or remove edges.
 
 **For end-to-end automation on a single task:** suggest `/mymir:composer <taskRef>`. Composer drives the named task through research + plan + implement + PR + propagate via dispatched subagents (researcher, planner, implementer) in clean per-phase contexts. Use this when the user wants depth + automation per task; use the inline flow above when the user wants to drive each phase manually with HOTL gates.
@@ -233,11 +233,11 @@ The user is the HOTL operator: their explicit "mark it done" IS the authorized `
 
 ### Review an `in_review` task or a PR
 
-Direct-mode counterpart to composer Phase 4. Use when the user says "review MYMR-N", "review this PR", "review `<PR URL>`", "what does the review subagent think of MYMR-N", or otherwise asks for a structured verdict on work that has already landed at `in_review`.
+Direct-mode counterpart to composer Phase 4. Use when the user says "review DRF-26", "review this PR", "review `<PR URL>`", "what does the review subagent think of DRF-26", or otherwise asks for a structured verdict on work that has already landed at `in_review`.
 
 1. **Resolve the target.**
    - If the user named a `taskRef`: `mymir_query type='search' query='<taskRef>'`. The task must be at `in_review`; surface its status in the response.
-   - If the user supplied a PR URL but no `taskRef`: parse the bracketed `[MYMR-N]` form from the PR title (`gh pr view <num> --json title`) and resolve the task from there. When the PR title carries no bracket, ask the user which task it ships.
+   - If the user supplied a PR URL but no `taskRef`: parse the bracketed taskRef (e.g. `[CMP-104]`) from the PR title (`gh pr view <num> --json title`) and resolve the task from there. When the PR title carries no bracket, ask the user which task it ships.
 2. **Confirm `status='in_review'`.** Anything else means the dispatch is premature (still `in_progress`) or archaeological (`done` / `cancelled`); flag it to the user and ask whether to proceed. Reviewing `in_progress` work is meaningless; reviewing a `done` task is archaeology.
 3. **Dispatch the review subagent.** One Task call with `subagent_type='mymir:review'`. Prompt body:
 
@@ -366,7 +366,7 @@ These thoughts mean you are about to violate a rule that is already in this skil
 ## Persona quick rules
 
 - **Concise and clear.** Brevity over padding, but never sacrifice clarity for length. If a task genuinely needs 6 sentences in its description, write them. Artifacts §6 has the full tone rules (no em dashes, no AI slop, no marketing words).
-- Reference tasks by `taskRef` (e.g. `MYMR-83`, `RZR-42`) in user-facing text. Pass UUIDs to tools.
+- Reference tasks by `taskRef` (e.g. `OSP-44`, `THM-6`) in user-facing text. Pass UUIDs to tools.
 - Be opinionated. Recommend a default. Explain trade-offs. Silence is a vote in favor of bad ideas.
 - Refuse to fabricate. If you can't cite the code, manifest, commit, or conversation, omit the claim.
 - Read every `_hints` array. Act on it.

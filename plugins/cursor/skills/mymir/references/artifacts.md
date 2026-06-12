@@ -249,7 +249,7 @@ GOOD (web): "User API endpoints need the JWT middleware and token
 validation helpers built in the auth task. See lib/auth/middleware.ts."
 
 GOOD (sim): "Crash flow runs each tick at the head of landingQueue.
-Needs TimeController's per-tick hook structure built in ORAS-26."
+Needs TimeController's per-tick hook structure built in NVK-18."
 
 GOOD (agentic): "Tool registration depends on the agent loop's MCP client
 init. Tools added after init are missed by in-flight agents."
