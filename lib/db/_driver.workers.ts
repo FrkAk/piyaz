@@ -15,9 +15,6 @@ export type { AppDb, AuthDb, DbBundle, ClosablePool } from "./_driver.node";
 /** Drizzle client over the neon-http driver, bound to the public schema. */
 export type AppHttpDb = NeonHttpDatabase<typeof appSchema>;
 
-/** Drizzle client over the neon-http driver, bound to the neon_auth schema. */
-export type AuthHttpDb = NeonHttpDatabase<typeof authSchema>;
-
 /**
  * Route non-transactional `pool.query()` calls over HTTP `fetch` instead of
  * WebSocket. Transactions still open a WS (the SQL protocol requires the
@@ -207,35 +204,4 @@ export function buildAppHttp(url = process.env.DATABASE_URL): AppHttpDb {
   return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: appSchema });
 }
 
-/**
- * Build the Better-auth read client backed by the neon-http driver.
- * See {@link buildAppHttp}.
- *
- * @param url - Connection string, defaulting to `DATABASE_AUTH_URL`.
- * @returns Drizzle neon-http client bound to the neon_auth schema.
- * @throws Error when `DATABASE_AUTH_URL` is unset.
- */
-export function buildAuthHttp(url = process.env.DATABASE_AUTH_URL): AuthHttpDb {
-  if (!url) {
-    throw new Error(DB_URL_REQUIRED.auth);
-  }
-  return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: authSchema });
-}
 
-/**
- * Build the BYPASSRLS read client backed by the neon-http driver.
- * See {@link buildAppHttp}; the bypass-site inventory in
- * `lib/db/connection.ts` applies to this handle too.
- *
- * @param url - Connection string, defaulting to `DATABASE_SERVICE_ROLE_URL`.
- * @returns Drizzle neon-http client bound to the public schema.
- * @throws Error when `DATABASE_SERVICE_ROLE_URL` is unset.
- */
-export function buildServiceHttp(
-  url = process.env.DATABASE_SERVICE_ROLE_URL,
-): AppHttpDb {
-  if (!url) {
-    throw new Error(DB_URL_REQUIRED.service);
-  }
-  return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: appSchema });
-}

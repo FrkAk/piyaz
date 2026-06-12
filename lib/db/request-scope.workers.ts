@@ -3,9 +3,7 @@ import "server-only";
 import {
   buildAppHttp,
   buildAppPool,
-  buildAuthHttp,
   buildAuthPool,
-  buildServiceHttp,
   buildServicePool,
 } from "./_driver.workers";
 import type { ClosablePool, DbBundle } from "./_driver.node";
@@ -216,10 +214,6 @@ export async function withRequestDb<T>(
     registry,
   );
   const appRead = lazyHttpRole(() => buildAppHttp(urls?.databaseUrl));
-  const authRead = lazyHttpRole(() => buildAuthHttp(urls?.databaseAuthUrl));
-  const serviceRead = lazyHttpRole(() =>
-    buildServiceHttp(urls?.databaseServiceRoleUrl),
-  );
 
   let ending: Promise<void> | undefined;
   const teardown = (): Promise<void> => {
@@ -239,12 +233,6 @@ export async function withRequestDb<T>(
     },
     get appDbRead() {
       return appRead();
-    },
-    get authDbRead() {
-      return authRead();
-    },
-    get serviceRoleDbRead() {
-      return serviceRead();
     },
     deferred,
   };
