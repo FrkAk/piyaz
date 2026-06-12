@@ -21,6 +21,7 @@ Composer is glue. The heavy lifting (task selection, refinement, the Completion 
 - **`/mymir:composer`**: backlog mode. Pick the highest-value ready task each iteration; continue until a stop condition holds.
 - **`/mymir:composer <taskRef>`**: single-task mode. Same pipeline applied to one task; exits after the iteration completes.
 - **`/mymir:composer rework <taskRef|pr-url>`**: rework mode. HOTL requested changes on GitHub instead of merging; composer rounds that feedback back through the fix loop.
+- **`/mymir:composer --pipelined`**: backlog mode with research-ahead. While task A is in review/fix, the researcher for the next task B runs in the background. Lookahead is hard-capped at 1. Backlog mode only — the flag is ignored in single-task and rework modes.
 
 No argument means backlog mode; `rework` plus an argument means rework mode; anything else is single-task.
 
@@ -250,6 +251,35 @@ Pull-based: the backend has no webhooks, and `task_links` is the only PR record.
 4. **Finish like any iteration.** Surface the final verdict, propagate (step 7), `TASK_END`. The run log records the whole run with `RUN_START mode=rework`.
 
 Future (documented, not built): a GitHub webhook feeding `task_links.metadata` and a UI "rework available" signal; this agent-side mode stays the consumer.
+
+## Pipelined research-ahead (flag-gated)
+
+Only under `--pipelined`, only in backlog mode, lookahead 1. The win is latency (~15–25%), not tokens; when in doubt, run without the flag.
+
+- **Trigger:** dispatch researcher(B) in the background only after implementer(A) returns DONE — overlap covers A's CI gate, review, and fix rotations only. Never manage background work while A is still implementing.
+- **Pick B excluding A.** B must be ready independently of A by construction — `in_review` unblocks nothing, so the ready set already excludes A's dependents.
+- **Isolation:** researcher(B) is dispatched with worktree isolation and `run_in_background`; the orchestrator's tree and A's review baseline never move.
+- **Brief custody:** when researcher(B) returns, append the brief verbatim to the run log with a baseline marker line: `briefFor: <B-ref>, baselinedAt: <A-ref> in_progress, <timestamp>`. The transcript copy is working memory; the log copy survives compaction.
+- **Gates queue.** A `NEEDS_DECISION` from researcher(B) queues until A's iteration boundary; never interrupt A's review/fix cycle to gate on B.
+- **Propagation(A) never runs while researcher(B) is in flight.** Wait for the researcher's return (or stop it) before touching edges.
+- **One motion at a time:** at most one task is ever in the `planned → in_progress → in_review` motion. B is never planned, claimed, or implemented early.
+- **A prefetch failure consumes no budget.** Researcher(B) BLOCKED or crashed: drop the prefetch silently and research B normally on its own iteration.
+
+Red flags, in addition to the table above: never plan or claim B early; never run two researchers; never author or amend a brief yourself; never prefetch in single-task or rework mode; never gate mid-A for a prefetch decision.
+
+**Brief invalidation.** After propagation(A) completes, evaluate this table against the prefetched brief, in order; the first matching row wins:
+
+| # | Signal observed after propagation(A) | Action |
+| --- | --- | --- |
+| 1 | Propagation created a `depends_on` edge B→(non-done task) | Re-pick; the brief is marked stale |
+| 2 | B's description was updated by propagation | Re-research (same precedent as the accepted-rewrite rule) |
+| 3 | Edge notes into B were updated naming files or patterns in the brief's *Files to touch* | Re-research; otherwise proceed |
+| 4 | A's files ∩ B brief's *Files to touch* ≠ ∅ | Re-research with the A PR pointer in the open-questions dispatch slot |
+| 5 | A pick re-run returns task C outranking B on priority class | Re-pick to C; a mere tie proceeds with B |
+| 6 | Pure `relates_to`/informational note updates, no description change, no overlap | Proceed |
+| 7 | None of the above | Proceed (the expected common case) |
+
+Re-research reuses the existing open-questions dispatch slot (the same slot gate answers travel in); an invalidation is not a failed attempt and consumes no budget. **Kill switch:** after two consecutive invalidations, disable prefetch for the rest of the run and say so in the next pick rationale — the project is too churny for lookahead today.
 
 ## Dispatch hygiene
 
