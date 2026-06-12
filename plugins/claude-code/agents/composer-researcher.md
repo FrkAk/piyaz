@@ -84,7 +84,7 @@ These three fields belong to downstream phases (planner writes `implementationPl
 
 Run these in the order given; do not skip. Steps 2–5 can fan out in parallel where they do not depend on each other (e.g. step 3 and step 5 are independent).
 
-1. **Read the task.** `mymir_context depth='agent' taskId='<id>'` for multi-hop dependencies and upstream `executionRecord` entries. Then `mymir_context depth='working' taskId='<id>'` to see the current `acceptanceCriteria`, decisions, and 1-hop edges verbatim. Note any ambiguous criteria or thin descriptions; you flag these for the planner to refine.
+1. **Read the task.** One fetch: `mymir_context depth='agent' taskId='<id>'`. It carries the multi-hop dependencies, upstream `executionRecord` entries, the current `acceptanceCriteria`, and decisions. Do not also fetch `depth='working'` — it is ~80% duplicate of the agent bundle. When 1-hop sibling context matters (incoming edges, `relates_to` neighbors the agent bundle omits), add `mymir_query type='edges' taskId='<id>'` instead. Note any ambiguous criteria or thin descriptions; you flag these for the planner to refine.
 
 2. **Map the task to the codebase.** Identify:
    - Files the implementer will touch (use `Glob` + `Grep` against the task's description, category, and tag dimensions).
