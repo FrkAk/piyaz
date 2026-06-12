@@ -8,8 +8,16 @@ import type {
   TaskGraphSlim,
   TaskLinkRef,
 } from "@/lib/data/views";
+import type { TaskState } from "@/lib/data/task";
 import type { TaskStatus } from "@/lib/types";
-import { BundlePreview } from "@/components/workspace/BundlePreview";
+import {
+  BundlePreview,
+  type BundleConnectedEdge,
+} from "@/components/workspace/BundlePreview";
+import {
+  BUNDLE_LABEL_BY_STAGE,
+  resolveStage,
+} from "@/components/workspace/bundle-tables";
 import { DetailHeader } from "./DetailHeader";
 import { DescriptionSection } from "./DescriptionSection";
 import { CriteriaSection } from "./CriteriaSection";
@@ -113,16 +121,14 @@ export function DetailView({
     () => allTasks.find((t) => t.id === taskId)?.state,
     [allTasks, taskId],
   );
-  const ready = currentState === "ready";
-  const plannable = currentState === "plannable";
 
   const prerequisites = useMemo(
     () => buildPrerequisites(taskId, allEdges, taskMap),
     [taskId, allEdges, taskMap],
   );
-  const neighbors = useMemo(
-    () => buildNeighbors(taskId, allEdges, taskMap),
-    [taskId, allEdges, taskMap],
+  const connected = useMemo(
+    () => buildConnected(taskId, edges, taskMap),
+    [taskId, edges, taskMap],
   );
   const downstream = useMemo(
     () => buildDownstream(taskId, allEdges, taskMap),
@@ -170,8 +176,7 @@ export function DetailView({
                 badge={
                   <BundleStageBadge
                     status={task.status}
-                    isReady={ready}
-                    isPlannable={plannable}
+                    state={currentState}
                   />
                 }
               />
@@ -179,18 +184,23 @@ export function DetailView({
                 taskId={taskId}
                 projectId={projectId}
                 status={task.status}
-                isReady={ready}
-                isPlannable={plannable}
+                state={currentState}
+                projectName={projectName}
                 spec={task.description}
+                tags={(task.tags as string[] | null) ?? []}
+                priority={task.priority}
+                estimate={task.estimate}
+                assignees={task.assignees ?? []}
                 criteria={task.acceptanceCriteria ?? []}
                 plan={task.implementationPlan}
                 prerequisites={prerequisites}
-                neighbors={neighbors}
+                connected={connected}
                 downstream={downstream}
                 decisions={task.decisions ?? []}
                 files={Array.from(
                   new Set((task.files as string[] | null) ?? []),
                 )}
+                links={(task.links as TaskLinkRef[] | undefined) ?? []}
                 executionRecord={task.executionRecord}
                 onSelectTask={onSelectNode}
               />
@@ -227,46 +237,24 @@ export function DetailView({
 }
 
 interface BundleStageBadgeProps {
-  /** Active task status. */
+  /** Schema task status. */
   status: TaskStatus;
-  /** True when a `planned` task has all effective deps done. */
-  isReady: boolean;
-  /** True when a `draft` task has the description + criteria + done deps to be planned. */
-  isPlannable: boolean;
+  /** Server-derived state, when the task appears in the slim payload. */
+  state?: TaskState;
 }
-
-/** Caption shown for each resolved lifecycle stage — matches the `lib/context` builder name used by BundlePreview. */
-const BUNDLE_BADGE_CAPTION: Record<string, string> = {
-  draft: "planning",
-  plannable: "planning",
-  planned: "working",
-  ready: "planning",
-  in_progress: "agent",
-  in_review: "execution",
-  done: "execution",
-  cancelled: "execution",
-};
 
 /**
  * Mono lowercase tag rendered next to the "Context bundle preview" section
- * label — surfaces the active bundle shape (including `plannable` and
- * `ready` sub-stages) so the operator sees what the agent will receive
- * at this point in the lifecycle.
+ * label — surfaces the bundle the next lifecycle consumer receives at this
+ * point in the lifecycle.
  *
  * @param props - Badge props.
  * @returns Inline badge element.
  */
-function BundleStageBadge({
-  status,
-  isReady,
-  isPlannable,
-}: BundleStageBadgeProps) {
-  let stage: string = status;
-  if (status === "draft" && isPlannable) stage = "plannable";
-  else if (status === "planned" && isReady) stage = "ready";
+function BundleStageBadge({ status, state }: BundleStageBadgeProps) {
   return (
     <span className="inline-flex items-center rounded-md border border-accent/25 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] font-medium lowercase tracking-wider text-accent-light">
-      {BUNDLE_BADGE_CAPTION[stage] ?? "working"}
+      {BUNDLE_LABEL_BY_STAGE[resolveStage(status, state)]}
     </span>
   );
 }
@@ -313,37 +301,34 @@ function buildPrerequisites(
 }
 
 /**
- * Build `relates_to` 1-hop siblings — surfaces the agent's "neighbors" lane.
+ * Build all 1-hop connected edges (every type, both directions) for the
+ * bundle preview's connected row.
  *
  * @param taskId - Current task UUID.
- * @param edges - All slim project edges.
+ * @param edges - Edges connected to this task (with notes).
  * @param taskMap - Map of task IDs to title/status/taskRef.
- * @returns List of related siblings.
+ * @returns Connected edge rows.
  */
-function buildNeighbors(
+function buildConnected(
   taskId: string,
-  edges: TaskGraphEdge[],
+  edges: TaskEdgeRef[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
-): BundleNeighbor[] {
-  const out: BundleNeighbor[] = [];
-  const seen = new Set<string>();
-  for (const edge of edges) {
-    if (edge.edgeType !== "relates_to") continue;
-    const otherId =
-      edge.sourceTaskId === taskId
-        ? edge.targetTaskId
-        : edge.targetTaskId === taskId
-          ? edge.sourceTaskId
-          : null;
-    if (!otherId || otherId === taskId || seen.has(otherId)) continue;
+): BundleConnectedEdge[] {
+  const out: BundleConnectedEdge[] = [];
+  for (const e of edges) {
+    const direction = e.sourceTaskId === taskId ? "outgoing" : "incoming";
+    const otherId = direction === "outgoing" ? e.targetTaskId : e.sourceTaskId;
+    if (otherId === taskId) continue;
     const info = taskMap.get(otherId);
     if (!info) continue;
-    seen.add(otherId);
     out.push({
       id: otherId,
       taskRef: info.taskRef,
       title: info.title,
       status: info.status,
+      edgeType: e.edgeType,
+      direction,
+      note: e.note ?? null,
     });
   }
   return out;

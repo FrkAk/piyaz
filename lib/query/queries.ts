@@ -1,17 +1,16 @@
 import type { QueryClient, QueryFunctionContext } from "@tanstack/react-query";
 import { conditionalFetch } from "@/lib/query/conditional-fetch";
 import { projectKeys, taskKeys } from "@/lib/query/keys";
+import type { BundleKind, BundlePart } from "@/lib/context/parts";
 import type {
   ProjectGraphSlim,
   ProjectListEntry,
   TaskFullWithEdges,
 } from "@/lib/data/views";
 
-/** Three-bundle markdown payload returned by `/api/task/[id]/context`. */
-export type TaskContextBundles = {
-  agent: string;
-  planning: string;
-  working: string;
+/** Structured sections payload returned by `/api/task/[id]/context?bundle=`. */
+export type TaskContextSections = {
+  sections: BundlePart[];
 };
 
 type Fn<T> = (ctx: QueryFunctionContext<readonly unknown[]>) => Promise<T>;
@@ -75,22 +74,24 @@ export function fetchTaskBody(
 }
 
 /**
- * QueryFn factory for a task's three-bundle markdown payload.
+ * QueryFn factory for one bundle kind's structured sections.
  *
  * @param qc - QueryClient.
  * @param projectId - Owning project id.
  * @param taskId - Task id.
+ * @param kind - Bundle kind to fetch.
  * @returns Conditional-GET fetcher.
  */
 export function fetchTaskContext(
   qc: QueryClient,
   projectId: string,
   taskId: string,
-): Fn<TaskContextBundles> {
+  kind: BundleKind,
+): Fn<TaskContextSections> {
   return (ctx) =>
-    conditionalFetch<TaskContextBundles>({
-      url: `/api/task/${taskId}/context`,
-      queryKey: taskKeys.context(projectId, taskId),
+    conditionalFetch<TaskContextSections>({
+      url: `/api/task/${taskId}/context?bundle=${kind}`,
+      queryKey: taskKeys.context(projectId, taskId, kind),
       queryClient: qc,
       signal: ctx.signal,
     });
