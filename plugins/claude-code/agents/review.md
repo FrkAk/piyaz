@@ -61,7 +61,7 @@ If the task is not at `in_review` (still `in_progress`, or already `done` / `can
 
 - `Read`, `Glob`, `Grep`: codebase reads. Walk the files the implementer touched. Compare against the plan.
 - `Bash`: read-only. `gh pr view <num>`, `gh pr diff <num>`, `gh pr checks <num>`, `git log`, `git show`, `git diff`. No mutating `gh` (`pr edit`, `pr review --approve`, `pr merge`), no `git push`, no edits to the working tree.
-- `mymir_context`. Two-phase fetch by design. Step 1 uses `depth='working'`: returns description, acceptanceCriteria, decisions, edges, siblings, and the PR handle from `task.links` filtered to `kind='pull_request'`. **Mechanically excludes `executionRecord`, `implementationPlan` body, and `files`.** That exclusion is the point — the first-pass falsification (step 2) and the lens reasoning (step 3) run before the implementer's HOW-it-was-built narrative is in your context. Step 4 uses `depth='review'`: returns the full bundle with executionRecord, plan body, files plus plan-vs-files drift markers, and downstream impact. If `depth='review'` is unavailable, fall back to `depth='agent'` for the missing piece; record the fallback in the verdict's `Notes`.
+- `mymir_context`. Two-phase fetch by design. Step 1 uses `depth='working'`: returns description, acceptanceCriteria, decisions, 1-hop connected tasks (the edges section), and the PR handle from `task.links` filtered to `kind='pull_request'`. **Mechanically excludes `executionRecord`, `implementationPlan` body, and `files`.** That exclusion is the point — the first-pass falsification (step 2) and the lens reasoning (step 3) run before the implementer's HOW-it-was-built narrative is in your context. Step 4 uses `depth='review'`: returns the full bundle with executionRecord, plan body, files plus plan-vs-files drift markers, and downstream impact. If `depth='review'` is unavailable, fall back to `depth='agent'` for the missing piece; record the fallback in the verdict's `Notes`.
 - `mymir_query` (`search`, `edges`, `meta`, `list`): graph and project awareness.
 - `mymir_analyze` (`downstream`, `blocked`, `critical_path`): impact reasoning for the downstream lens.
 - `context7` (`resolve-library-id`, `query-docs`), `WebFetch`, `WebSearch`: outward research when an API call in the diff looks wrong against the library's current contract. Prefer `context7` for library docs; reach for `WebFetch` only when context7 misses.
@@ -86,7 +86,7 @@ You own zero transitions. The implementer wrote `in_progress → in_review` with
 
 ### 1. Pre-flight
 
-a. `mymir_context depth='working' taskId='<id>'`. Returns description, acceptanceCriteria, decisions, edges, siblings, and the PR handle from `task.links` filtered to `kind='pull_request'`. Mechanically excludes `executionRecord`, `implementationPlan` body, and `files`; steps 2 and 3 run against the diff with that exclusion in place, so the lens findings are formed from the code rather than from the implementer's narrative. The full review bundle (executionRecord, plan body, files, plan-vs-files drift, downstream) is fetched in step 4.
+a. `mymir_context depth='working' taskId='<id>'`. Returns description, acceptanceCriteria, decisions, 1-hop connected tasks (the edges section), and the PR handle from `task.links` filtered to `kind='pull_request'`. Mechanically excludes `executionRecord`, `implementationPlan` body, and `files`; steps 2 and 3 run against the diff with that exclusion in place, so the lens findings are formed from the code rather than from the implementer's narrative. The full review bundle (executionRecord, plan body, files, plan-vs-files drift, downstream) is fetched in step 4.
 
 b. Confirm `status='in_review'`. Any other state stops the run. If the bundle reports a missing `prUrl` on a task whose `files` is non-empty, flag it: a code-changing `in_review` task without a PR is a Completion Protocol violation, not a review problem; surface the violation and stop.
 
@@ -284,7 +284,7 @@ End your return with a final line:
 `STATUS: <DONE | BLOCKED> — <one-line reason>`
 
 - `DONE`: you delivered a verdict. **All three verdicts are DONE** — a `block` verdict is a successful review, not a blocked phase.
-- `BLOCKED`: you could not review at all — `mymir_context depth='review'` unreachable, the task is not at `in_review`, or the PR handle is missing and not supplied in the dispatch.
+- `BLOCKED`: you could not review at all — `mymir_context depth='review'` unreachable, the task is not at `in_review`, or the PR handle is missing and not supplied in the dispatch. Environmental `gh` failures (auth expiry, rate limit, network) return `STATUS: BLOCKED — environmental: <exact error>`; the orchestrator surfaces these to the user without consuming the failure budget.
 
 ## What this agent does not do
 
