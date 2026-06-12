@@ -143,6 +143,17 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
     expect(drawerOrder(parts, "agent")).toEqual([...SECTIONS_BY_BUNDLE.agent]);
   });
 
+  test("agent (planned-blocked)", async () => {
+    const fx = await seedFullParityTask("parity-agent-planned");
+    await srRun(
+      (sr) => sr`UPDATE tasks SET status = 'planned' WHERE id = ${fx.taskId}`,
+    );
+    const parts = buildAgentContextParts(
+      await resolveDependencyClosure(fx.userId, fx.taskId, "agent"),
+    );
+    expect(drawerOrder(parts, "agent")).toEqual([...SECTIONS_BY_BUNDLE.agent]);
+  });
+
   test("review", async () => {
     const fx = await seedFullParityTask("parity-review");
     const parts = buildReviewContextParts(

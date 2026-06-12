@@ -77,7 +77,6 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
 
   const taskRef = task.taskRef;
   const tags = (task.tags as string[] | null) ?? [];
-  const files = (task.files as string[] | null) ?? [];
   const status = task.status as string;
   const priority = task.priority as string | null;
   const estimate = task.estimate as number | null;
@@ -158,14 +157,6 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
           section("Upstream Execution Records") + "\n" + execLines.join("\n"),
       });
     }
-  }
-
-  if (files.length > 0) {
-    parts.push({
-      id: "files",
-      heading: "Files",
-      markdown: section("Files") + "\n" + files.map((f) => `- ${f}`).join("\n"),
-    });
   }
 
   if (links.length > 0) {

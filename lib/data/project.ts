@@ -204,6 +204,7 @@ export async function getProjectGraphSlim(
         organizationId: project.organizationId,
         identifier: project.identifier,
         title: project.title,
+        description: project.description,
         status: project.status,
         updatedAt: project.updatedAt,
         categories: project.categories,

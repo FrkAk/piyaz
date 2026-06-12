@@ -34,12 +34,6 @@ Central description
 Built the thing
 
 
-## Files
-
-- lib/a.ts
-- lib/b.ts
-
-
 ## Decisions
 
 - [explicit] Use approach X

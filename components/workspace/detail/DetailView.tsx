@@ -43,6 +43,8 @@ interface DetailViewProps {
   projectId: string;
   /** Project display name for the breadcrumb. */
   projectName: string;
+  /** Project description — feeds the bundle preview's project drawer. */
+  projectDescription: string | null;
   /** All slim project edges — used by the bundle preview to derive neighbors. */
   allEdges: TaskGraphEdge[];
   /** Edges connected to this task. */
@@ -97,6 +99,7 @@ export function DetailView({
   task,
   projectId,
   projectName,
+  projectDescription,
   allEdges,
   edges,
   allTasks,
@@ -178,11 +181,13 @@ export function DetailView({
                 }
               />
               <BundlePreview
+                key={taskId}
                 taskId={taskId}
                 projectId={projectId}
                 status={task.status}
                 state={currentState}
                 projectName={projectName}
+                projectDescription={projectDescription}
                 spec={task.description}
                 tags={(task.tags as string[] | null) ?? []}
                 priority={task.priority}
@@ -194,9 +199,6 @@ export function DetailView({
                 connected={connected}
                 downstream={downstream}
                 decisions={task.decisions ?? []}
-                files={Array.from(
-                  new Set((task.files as string[] | null) ?? []),
-                )}
                 links={(task.links as TaskLinkRef[] | undefined) ?? []}
                 executionRecord={task.executionRecord}
                 onSelectTask={onSelectNode}

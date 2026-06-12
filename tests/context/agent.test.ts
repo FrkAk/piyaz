@@ -112,11 +112,11 @@ describe("buildAgentContext under app_user", () => {
       fx.taskId,
     );
     expect(result).not.toContain("## Assignees");
+    expect(result).not.toContain("## Files");
     const constraintsIdx = result.indexOf("## Constraints");
     const doneMeansIdx = result.indexOf("## Done Means");
     expect(constraintsIdx).toBeGreaterThan(result.indexOf("## Downstream"));
     expect(doneMeansIdx).toBeGreaterThan(constraintsIdx);
-    expect(result.indexOf("## Files")).toBeLessThan(result.indexOf("## Links"));
     expect(result.indexOf("## Links")).toBeLessThan(
       result.indexOf("## Execution Record"),
     );

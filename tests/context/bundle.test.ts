@@ -8,6 +8,7 @@ import * as rls from "@/lib/db/rls";
 import {
   resolveDependencyClosure,
   resolvePlanningData,
+  resolveRecordData,
   resolveWorkingData,
 } from "@/lib/context/_core/bundle";
 import { buildSummaryContext } from "@/lib/context/_core/summary";
@@ -133,6 +134,51 @@ test("resolvePlanningData surfaces direct cancelled deps with records", async ()
   expect(data.abandonedDeps.map((d) => d.title)).toEqual(["Dead approach"]);
   expect(data.abandonedDeps[0].executionRecord).toBe("Tried Z; failed");
   expect(data.deps.map((d) => d.id)).not.toContain(data.abandonedDeps[0].id);
+});
+
+test("resolveRecordData resolves in two read batches and skips upstream data", async () => {
+  const fx = await seedRichContextTask("record-slim");
+  const sr = serviceRoleConnect();
+  try {
+    await sr`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+  const readSpy = spyOn(rls, "withUserContextRead");
+
+  try {
+    const data = await resolveRecordData(fx.userId, fx.taskId);
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(data.project?.title).toBe("Project record-slim");
+    expect(data.downstreamSummaries.map((d) => d.title)).toEqual([
+      "Downstream task",
+    ]);
+    expect(data.downstreamSummaries[0].description).toBe("");
+    expect("depTasks" in data).toBe(false);
+  } finally {
+    readSpy.mockRestore();
+  }
+});
+
+test("resolveRecordData skips the secondary batch without dependents", async () => {
+  const fx = await seedUserOrgProject("record-isolated");
+  const { superuserPool } = await import("@/tests/setup/global");
+  const su = superuserPool();
+  const [task] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number", "status")
+    VALUES (${fx.projectId}, 'Isolated done task', 1, 'done')
+    RETURNING id
+  `;
+  const readSpy = spyOn(rls, "withUserContextRead");
+
+  try {
+    const data = await resolveRecordData(fx.userId, task.id);
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(data.downstream).toEqual([]);
+    expect(data.downstreamSummaries).toEqual([]);
+  } finally {
+    readSpy.mockRestore();
+  }
 });
 
 test("resolveWorkingData assembles detailed edges and ancestors", async () => {

@@ -61,7 +61,7 @@ describe("record bundle", () => {
     expect(result).not.toContain("## Assignees");
   });
 
-  test("cancelled: rationale, files, remaining dependents, closed-PR label", async () => {
+  test("cancelled: rationale, remaining dependents, closed-PR label", async () => {
     const fx = await seedRichContextTask("record-cancelled");
     await srRun(
       (sr) =>
@@ -75,8 +75,8 @@ describe("record bundle", () => {
     expect(result).toContain(
       "- [pull_request] PR 1 (https://example.test/pr/1) — closed, unmerged",
     );
-    expect(result).toContain("## Files");
     expect(result).toContain(NUDGE);
+    expect(result).not.toContain("## Files");
     expect(result).not.toContain("## Acceptance Criteria");
     expect(result).not.toContain("## Downstream Consumers");
   });

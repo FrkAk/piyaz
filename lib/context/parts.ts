@@ -21,13 +21,11 @@ export type BundleSectionId =
   | "constraints"
   | "connected"
   | "links"
-  | "files"
   | "downstream"
   | "dependents"
   | "execution"
   | "project"
   | "blocked"
-  | "drift"
   | "lens";
 
 /** Part identifiers: drawer sections plus bundle-only chrome. */

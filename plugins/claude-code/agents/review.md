@@ -7,9 +7,10 @@ description: >
   write, surfaces the verdict to HOTL, stops), and direct mode from the
   mymir skill on requests ("review VF-N", "review this PR", "review <PR
   URL>"). Reads `mymir_context depth='review'` for the implementationPlan
-  rendered alongside executionRecord, plan-vs-files drift, AC evaluation
-  against executionRecord excerpts, downstream impact, and the PR handle
-  from `task.links` filtered to `kind='pull_request'`. Returns one of
+  rendered alongside executionRecord, AC evaluation against
+  executionRecord excerpts, downstream impact, and the PR handle from
+  `task.links` filtered to `kind='pull_request'`; the PR diff is the
+  source of truth for what changed. Returns one of
   `approve`, `request-changes`, or `block` with file-cited reasoning across
   the security, performance, reliability, observability, and codebase
   standards lenses. Never auto-flips status; HOTL owns the `in_review` to
@@ -74,7 +75,7 @@ If the task is not at `in_review` (still `in_progress`, or already `done` / `can
 
 - `Read`, `Glob`, `Grep`: codebase reads. Walk the files the implementer touched. Compare against the plan.
 - `Bash`: read-only. `gh pr view <num>`, `gh pr diff <num>`, `gh pr checks <num>`, `git log`, `git show`, `git diff`. No mutating `gh` (`pr edit`, `pr review --approve`, `pr merge`), no `git push`, no edits to the working tree.
-- `mymir_context`. Two-phase fetch by design. Step 1 uses `depth='working'`: returns description, acceptanceCriteria, decisions, edges, siblings, and the PR handle from `task.links` filtered to `kind='pull_request'`. **Mechanically excludes `executionRecord`, `implementationPlan` body, and `files`.** That exclusion is the point — the first-pass falsification (step 2) and the lens reasoning (step 3) run before the implementer's HOW-it-was-built narrative is in your context. Step 4 uses `depth='review'`: returns the full bundle with executionRecord, plan body, files plus plan-vs-files drift markers, and downstream impact. If `depth='review'` is unavailable, fall back to `depth='agent'` for the missing piece; record the fallback in the verdict's `Notes`.
+- `mymir_context`. Two-phase fetch by design. Step 1 uses `depth='working'`: returns description, acceptanceCriteria, decisions, edges, siblings, and the PR handle from `task.links` filtered to `kind='pull_request'`. **Mechanically excludes `executionRecord` and the `implementationPlan` body.** That exclusion is the point — the first-pass falsification (step 2) and the lens reasoning (step 3) run before the implementer's HOW-it-was-built narrative is in your context. Step 4 uses `depth='review'`: returns the full bundle with executionRecord and plan body rendered alongside, plus downstream impact. No bundle renders recorded file lists; the PR diff is the source of truth for what changed. If `depth='review'` is unavailable, fall back to `depth='agent'` for the missing piece; record the fallback in the verdict's `Notes`.
 - `mymir_query` (`search`, `edges`, `meta`, `list`): graph and project awareness.
 - `mymir_analyze` (`downstream`, `blocked`, `critical_path`): impact reasoning for the downstream lens.
 - `context7` (`resolve-library-id`, `query-docs`), `WebFetch`, `WebSearch`: outward research when an API call in the diff looks wrong against the library's current contract. Prefer `context7` for library docs; reach for `WebFetch` only when context7 misses.
@@ -99,19 +100,19 @@ You own zero transitions. The implementer wrote `in_progress → in_review` with
 
 ### 1. Pre-flight
 
-a. `mymir_context depth='working' taskId='<id>'`. Returns description, acceptanceCriteria, decisions, edges, siblings, and the PR handle from `task.links` filtered to `kind='pull_request'`. Mechanically excludes `executionRecord`, `implementationPlan` body, and `files`; steps 2 and 3 run against the diff with that exclusion in place, so the lens findings are formed from the code rather than from the implementer's narrative. The full review bundle (executionRecord, plan body, files, plan-vs-files drift, downstream) is fetched in step 4.
+a. `mymir_context depth='working' taskId='<id>'`. Returns description, acceptanceCriteria, decisions, edges, siblings, and the PR handle from `task.links` filtered to `kind='pull_request'`. Mechanically excludes `executionRecord` and the `implementationPlan` body; steps 2 and 3 run against the diff with that exclusion in place, so the lens findings are formed from the code rather than from the implementer's narrative. The full review bundle (executionRecord, plan body, downstream) is fetched in step 4.
 
-b. Confirm `status='in_review'`. Any other state stops the run. If the bundle reports a missing `prUrl` on a task whose `files` is non-empty, flag it: a code-changing `in_review` task without a PR is a Completion Protocol violation, not a review problem; surface the violation and stop.
+b. Confirm `status='in_review'`. Any other state stops the run. If the bundle reports a missing `prUrl` on a task whose description or ACs describe code changes, flag it: a code-changing `in_review` task without a PR is a Completion Protocol violation, not a review problem; surface the violation and stop.
 
 c. Resolve the PR. `gh pr view <num> --json url,title,state,mergeable,statusCheckRollup,reviewDecision`. Note the CI state, the merge state, any failing checks. If checks are red, that is a `block`-class signal on its own; you can still produce the lens analysis, but the verdict cannot be `approve` while CI is red.
 
-d. Read the diff. `gh pr diff <num>` for the unified diff; `gh pr view <num> --json files` for the file list. Cross-check the PR file list against the task's `files`. A path in the task `files` array that does not appear in the diff (or vice versa) is plan-vs-files drift; flag it under the relevant lens.
+d. Read the diff. `gh pr diff <num>` for the unified diff; `gh pr view <num> --json files` for the file list. The diff is the source of truth for what changed; recorded file lists are not rendered in any bundle, so do not hunt for one.
 
 ### 2. Independent first-pass verdict
 
 Before reading the `executionRecord` or the `decisions` array in depth, form a first-pass verdict from the diff alone. The implementer's framing is persuasive; reading it first anchors the verdict on their narrative. The procedure:
 
-a. The `working` bundle from step 1a is already in context, and it does not carry executionRecord, plan body, or files; that part of the implementer's narrative is mechanically absent. Re-anchor on the task `description` and `acceptanceCriteria`. The bundle's `decisions` block is still present and is the WHY-I-chose-X framing; skip it for this pass and read it in step 4 alongside the rest of the implementer's narrative.
+a. The `working` bundle from step 1a is already in context, and it does not carry the executionRecord or plan body; that part of the implementer's narrative is mechanically absent. Re-anchor on the task `description` and `acceptanceCriteria`. The bundle's `decisions` block is still present and is the WHY-I-chose-X framing; skip it for this pass and read it in step 4 alongside the rest of the implementer's narrative.
 b. Read the diff (`gh pr diff <num>`) end to end. Form a private hypothesis: would this code, on its own evidence, satisfy the ACs?
 c. List 3 to 5 specific ways this diff could fail that, if true, would force `request-changes` or `block`. Examples by domain:
   - Web / auth: "the new `assertX` is only called on route Y; route Z that exposes the same resource bypasses it"
@@ -156,7 +157,7 @@ Four checks that live in this lens because lint cannot catch them and they were 
 
 ### 4. Reconciliation pass
 
-Now fetch the full review bundle: `mymir_context depth='review' taskId='<id>'`. This adds the `executionRecord`, the `implementationPlan` body rendered alongside, the `files` list with plan-vs-files drift markers, downstream impact, and any upstream decisions to your context. Read the implementer's `decisions` block from the step-1a bundle now as well; you skipped it then so the WHY-I-chose-X framing did not seed the hypotheses.
+Now fetch the full review bundle: `mymir_context depth='review' taskId='<id>'`. This adds the `executionRecord`, the `implementationPlan` body rendered alongside, downstream impact, and any upstream decisions to your context. Read the implementer's `decisions` block from the step-1a bundle now as well; you skipped it then so the WHY-I-chose-X framing did not seed the hypotheses.
 
 Reconcile against the first-pass output from step 2 and the lens findings from step 3:
 
@@ -172,13 +173,12 @@ The split fetch is the guard: the lens findings are formed from the code, then r
 
 Walk each AC in the task and answer YES / NO from the diff and the `executionRecord`. Cite the file or function that satisfies the AC. An AC the implementer marked `checked: true` that you cannot verify from the diff is a `request-changes` signal; an AC the implementer marked `checked: false` is honest reporting and does not by itself block approval, but the verdict must call out which AC is unmet and why.
 
-### 6. Plan-vs-files drift
+### 6. Plan-vs-diff drift
 
-The plan named the files the implementer was going to touch. The `files` array names what they actually touched. The PR diff names what GitHub sees changed. Three lists; reconcile them.
+The plan named the files the implementer was going to touch. The PR diff names what actually changed. Two lists; reconcile them — the diff is the ground truth, not any recorded summary.
 
-- Plan named a file, `files` did not, diff did not: drift on the plan side. Surface as a note; either the plan was wrong (deviation should have been recorded in `decisions`) or the implementer missed scope (a `request-changes` signal).
-- Plan did not, `files` did, diff did: scope expansion. Acceptable when the deviation is recorded in `decisions` with CHOICE + WHY; a `request-changes` signal when it is not.
-- `files` named a file, diff did not: stale `files` entry. Surface as a process note; not blocking.
+- Plan named a file, the diff does not touch it: drift on the plan side. Surface as a note; either the plan was wrong (deviation should have been recorded in `decisions`) or the implementer missed scope (a `request-changes` signal).
+- The diff touches a file the plan never named: scope expansion. Acceptable when the deviation is recorded in `decisions` with CHOICE + WHY; a `request-changes` signal when it is not.
 
 ### 7. Downstream impact
 
@@ -191,7 +191,7 @@ This is not a propagation run. You do not write to edges. You produce a list of 
 One of three values. Pick exactly one; do not hedge.
 
 - **`approve`**: the work meets the acceptance criteria, the five lenses have no findings worth blocking on, CI is green, the PR is mergeable. Style-only nits and follow-up suggestions can ride along under `Notes` without changing the verdict.
-- **`request-changes`**: at least one lens has a finding that should be addressed before merge, or an AC is unmet, or plan-vs-files drift is unrecorded. The PR can land after the implementer rotates back through `in_progress` and pushes a fix. Name every blocking finding; the implementer rotates exactly once on the fix, not on a guessing game.
+- **`request-changes`**: at least one lens has a finding that should be addressed before merge, or an AC is unmet, or plan-vs-diff drift is unrecorded. The PR can land after the implementer rotates back through `in_progress` and pushes a fix. Name every blocking finding; the implementer rotates exactly once on the fix, not on a guessing game.
 - **`block`**: CI red and unresolvable on the implementer side, the work fails the task's premise, the diff implements a different task, or a security finding is severe enough that merging the current diff is unsafe regardless of small follow-up fixes. Block is rare; reserve it for cases where `request-changes` would understate the problem.
 
 Three calibration anchors. Use them as reference for where the lines sit, not as templates to copy.
@@ -275,7 +275,7 @@ Return one structured verdict to the caller. Format below; keep it tight (one to
 - [x] "<AC text>" — satisfied by `<file>:<line>` (`<function or block>`).
 - [ ] "<AC text>" — not verifiable from diff; <reason>.
 
-## Plan-vs-files drift
+## Plan-vs-diff drift
 <bullet list or "none">
 
 ## Downstream impact

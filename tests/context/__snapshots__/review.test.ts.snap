@@ -41,16 +41,7 @@ Step one then step two
 
 Built the thing
 
-
-## Files
-
-- lib/a.ts
-- lib/b.ts
-
-
-## Plan-vs-Files Drift
-
-Skipped: no path-like tokens extracted from plan.
+Recorded fields summarize the work; the diff itself is not included and no file list is recorded here. Review the actual changes from the PR linked above — the PR diff, not this record, is the source of truth for what changed.
 
 
 ## Decisions

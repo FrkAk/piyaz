@@ -7,44 +7,29 @@ import {
   untrustedContentNotice,
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
+import { REVIEW_LENS_PROMPTS } from "@/lib/context/lens";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   resolveReviewData,
   type ReviewContextData,
 } from "@/lib/context/_core/bundle";
 
-/**
- * Extract path-like tokens from a markdown plan. A token qualifies when it
- * sits inside backticks and either contains a forward slash or matches a
- * common file-extension pattern; protocol URLs are filtered out.
- *
- * @param plan - Implementation plan markdown.
- * @returns Deduplicated set of candidate repo-relative paths.
- */
-function extractPathsFromPlan(plan: string): Set<string> {
-  const out = new Set<string>();
-  const pattern = /`([^`\s]+)`/g;
-  for (const match of plan.matchAll(pattern)) {
-    const token = match[1];
-    if (token.startsWith("http://") || token.startsWith("https://")) continue;
-    const looksLikePath =
-      token.includes("/") || /\.[a-z][a-z0-9]{0,5}$/i.test(token);
-    if (!looksLikePath) continue;
-    out.add(token);
-  }
-  return out;
-}
+/** Footer nudge pointing reviewers at the PR diff as the source of truth. */
+const REVIEW_PR_NUDGE =
+  "Recorded fields summarize the work; the diff itself is not included and no file list is recorded here. Review the actual changes from the PR linked above — the PR diff, not this record, is the source of truth for what changed.";
 
 /**
  * Assemble the review context as structured bundle parts.
  *
  * Renders `implementationPlan` alongside `executionRecord`, surfaces the
- * PR handle from `task_links` filtered to `kind='pull_request'`, computes
- * plan-vs-files drift, lists downstream tasks whose edge notes may need a
- * refresh after merge, and emits review-lens prompt scaffolding so the
- * reviewer agent can return a structured verdict without re-deriving any
- * of the substrate. The bundle does not itself produce a verdict;
- * consumers (the `review` agent) read it.
+ * PR handle from `task_links` filtered to `kind='pull_request'`, lists
+ * downstream tasks whose edge notes may need a refresh after merge, and
+ * emits review-lens prompt scaffolding so the reviewer agent can return a
+ * structured verdict without re-deriving any of the substrate. Recorded
+ * file lists are deliberately absent: the PR diff is the source of truth
+ * for what changed, and the nudge after the execution record says so. The
+ * bundle does not itself produce a verdict; consumers (the `review` agent)
+ * read it.
  *
  * Status check is soft: when the task is not at `in_review` a header note
  * tells the reader the dispatch may be premature, but the bundle still
@@ -64,7 +49,6 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
     });
   }
   const tags = (task.tags as string[] | null) ?? [];
-  const files = (task.files as string[] | null) ?? [];
   const status = task.status as string;
   const priority = task.priority as string | null;
   const estimate = task.estimate as number | null;
@@ -147,68 +131,7 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
         "None recorded. The implementer must populate this before review can proceed."),
   });
 
-  const filesLines: string[] = [];
-  if (files.length === 0) {
-    filesLines.push(
-      "No files recorded on task. Either the work is research / decision-only (`files=[]` is correct) or the implementer left the field unpopulated.",
-    );
-  } else {
-    for (const f of files) filesLines.push(`- ${f}`);
-  }
-  parts.push({
-    id: "files",
-    heading: "Files",
-    markdown: section("Files") + "\n" + filesLines.join("\n"),
-  });
-
-  const filesSet = new Set(files);
-  const planPaths = task.implementationPlan
-    ? extractPathsFromPlan(task.implementationPlan)
-    : new Set<string>();
-  const matched: string[] = [];
-  const plannedMissing: string[] = [];
-  const touchedUnplanned: string[] = [];
-  for (const p of planPaths) {
-    if (filesSet.has(p)) matched.push(p);
-    else plannedMissing.push(p);
-  }
-  for (const f of files) {
-    if (!planPaths.has(f)) touchedUnplanned.push(f);
-  }
-
-  const driftLines: string[] = [];
-  if (!task.implementationPlan) {
-    driftLines.push("Skipped: no implementation plan on task.");
-  } else if (planPaths.size === 0) {
-    driftLines.push("Skipped: no path-like tokens extracted from plan.");
-  } else {
-    if (matched.length > 0) {
-      driftLines.push(
-        "**Planned and touched** (plan path appears in `files`):",
-      );
-      for (const p of matched) driftLines.push(`- ${p}`);
-    }
-    if (plannedMissing.length > 0) {
-      driftLines.push(
-        (driftLines.length > 0 ? "\n" : "") +
-          "**Planned, not touched** (plan named the path, `files` does not):",
-      );
-      for (const p of plannedMissing) driftLines.push(`- ${p}`);
-    }
-    if (touchedUnplanned.length > 0) {
-      driftLines.push(
-        (driftLines.length > 0 ? "\n" : "") +
-          "**Touched, not planned** (in `files`, no mention in plan; expect a `decisions` entry):",
-      );
-      for (const p of touchedUnplanned) driftLines.push(`- ${p}`);
-    }
-    if (driftLines.length === 0) driftLines.push("No drift detected.");
-  }
-  parts.push({
-    id: "drift",
-    heading: "Plan-vs-Files Drift",
-    markdown: section("Plan-vs-Files Drift") + "\n" + driftLines.join("\n"),
-  });
+  parts.push({ id: "nudge", heading: null, markdown: REVIEW_PR_NUDGE });
 
   if (task.decisions.length > 0) {
     parts.push({
@@ -298,19 +221,10 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
     }
   }
 
-  const lensPrompts = [
-    "When producing the structured verdict, address each lens against the diff and the executionRecord above. Cite real file paths and line numbers; `no findings` is a valid answer.",
-    "",
-    "- **Security**: trust-boundary input validation, authn / authz on new endpoints, secret handling, SQL or command injection surfaces, deserialization of untrusted data.",
-    "- **Performance**: N+1 query patterns, unbounded memory growth, synchronous I/O on hot paths, missing indexes implied by new query shapes.",
-    "- **Reliability**: failure modes the plan listed vs the diff's handling, silent error swallowing, idempotency on retry-eligible paths, transactional boundaries.",
-    "- **Observability**: logs / metrics / traces consistent with the rest of the codebase, no high-cardinality dimensions that blow the metrics backend.",
-    "- **Codebase standards**: project conventions from `CLAUDE.md` and the patterns upstream executionRecord entries cite. Lint and formatting belong to the toolchain; flag substantive deviations only.",
-  ];
   parts.push({
     id: "lens",
     heading: "Review Lens Prompts",
-    markdown: section("Review Lens Prompts") + "\n" + lensPrompts.join("\n"),
+    markdown: section("Review Lens Prompts") + "\n" + REVIEW_LENS_PROMPTS,
   });
 
   return parts;

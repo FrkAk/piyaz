@@ -113,7 +113,6 @@ export const SECTIONS_BY_BUNDLE: Record<
     "plan",
     "prerequisites",
     "built",
-    "files",
     "links",
     "downstream",
     "constraints",
@@ -125,8 +124,6 @@ export const SECTIONS_BY_BUNDLE: Record<
     "criteria",
     "plan",
     "execution",
-    "files",
-    "drift",
     "decisions",
     "links",
     "prerequisites",
@@ -139,7 +136,6 @@ export const SECTIONS_BY_BUNDLE: Record<
     "spec",
     "criteria",
     "execution",
-    "files",
     "decisions",
     "links",
     "downstream",
@@ -149,21 +145,7 @@ export const SECTIONS_BY_BUNDLE: Record<
     "spec",
     "execution",
     "decisions",
-    "files",
     "dependents",
     "links",
   ],
 };
-
-/**
- * Sections whose body data lives only in the server bundle. They render
- * collapsed for free; expanding one (or toggling MD) triggers the shared
- * bundle fetch.
- */
-export const SERVER_ONLY_SECTIONS: ReadonlySet<BundleSectionId> = new Set([
-  "project",
-  "built",
-  "abandoned",
-  "drift",
-  "lens",
-]);

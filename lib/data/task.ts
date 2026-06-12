@@ -1721,19 +1721,26 @@ type TaskSummaryRow = {
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project the tasks belong to.
  * @param taskIds - UUIDs of the tasks to summarize.
+ * @param withDescription - Whether to select the `description` column. Only
+ *   the planning bundle renders downstream descriptions; every other
+ *   consumer passes false and pays no text egress (the column stays
+ *   type-stable as an empty literal).
  * @returns Lazy select yielding summary rows.
  */
 export function taskSummariesStmt(
   read: ReadConn,
   projectId: string,
   taskIds: readonly string[],
+  withDescription: boolean,
 ) {
   return read
     .select({
       id: tasks.id,
       title: tasks.title,
       status: tasks.status,
-      description: tasks.description,
+      description: withDescription
+        ? tasks.description
+        : sql<string>`''`.as("description"),
       sequenceNumber: tasks.sequenceNumber,
       identifier: projects.identifier,
     })

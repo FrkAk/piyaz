@@ -11,12 +11,12 @@ import { IconBundle, IconChevronRight } from "@/components/shared/icons";
 import type { AcceptanceCriterion, Decision, TaskStatus } from "@/lib/types";
 import type { TaskState } from "@/lib/data/task";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
-import type { BundlePart, BundleSectionId } from "@/lib/context/parts";
+import type { BundleSectionId } from "@/lib/context/parts";
+import { REVIEW_LENS_PROMPTS } from "@/lib/context/lens";
 import {
   BUNDLE_BY_STAGE,
   BUNDLE_LABEL_BY_STAGE,
   SECTIONS_BY_BUNDLE,
-  SERVER_ONLY_SECTIONS,
   resolveStage,
   variantOf,
 } from "@/components/workspace/bundle-tables";
@@ -69,7 +69,6 @@ const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
     color: "var(--color-accent-2)",
   },
   links: { id: "links", label: "links", color: "var(--color-accent-light)" },
-  files: { id: "files", label: "files", color: "var(--color-progress)" },
   downstream: {
     id: "downstream",
     label: "downstream",
@@ -87,7 +86,6 @@ const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
   },
   project: { id: "project", label: "project", color: "var(--color-relates)" },
   blocked: { id: "blocked", label: "blocked", color: "var(--color-danger)" },
-  drift: { id: "drift", label: "drift", color: "var(--color-progress)" },
   lens: { id: "lens", label: "lens", color: "var(--color-accent)" },
 };
 
@@ -123,6 +121,8 @@ interface BundlePreviewProps {
   state?: TaskState;
   /** Project display name — drives the hierarchy line in the meta row. */
   projectName: string;
+  /** Project description — drives the project-context drawer body. */
+  projectDescription: string | null;
   /** Task spec (description). */
   spec: string;
   /** Task tags. */
@@ -145,8 +145,6 @@ interface BundlePreviewProps {
   downstream: BundleNeighbor[];
   /** Pinned decisions. */
   decisions: Decision[];
-  /** File paths the task touches. */
-  files: string[];
   /** Task links. */
   links: TaskLinkRef[];
   /** Execution record markdown. */
@@ -154,9 +152,6 @@ interface BundlePreviewProps {
   /** Click a neighbor row to navigate to that task. */
   onSelectTask?: (taskId: string) => void;
 }
-
-/** Fixed bar weight for server-only sections before the bundle is fetched. */
-const SERVER_SECTION_DEFAULT_WEIGHT = 400;
 
 /**
  * Direct prerequisites that are not finished — the client-side approximation
@@ -173,7 +168,32 @@ function unfinishedPrereqs(props: BundlePreviewProps): BundleNeighbor[] {
 }
 
 /**
- * Whether a client-local section has any data to show (render-if-nonempty).
+ * Direct done prerequisites — the client-side approximation of the bundle's
+ * upstream-execution-record list (the bundle walks the 2-hop effective
+ * closure; the drawer previews the direct hop).
+ *
+ * @param props - Bundle props.
+ * @returns Done direct prerequisite rows.
+ */
+function donePrereqs(props: BundlePreviewProps): BundleNeighbor[] {
+  return props.prerequisites.filter((p) => p.status === "done");
+}
+
+/**
+ * Direct cancelled prerequisites — the client-side approximation of the
+ * planning bundle's abandoned-approaches list.
+ *
+ * @param props - Bundle props.
+ * @returns Cancelled direct prerequisite rows.
+ */
+function cancelledPrereqs(props: BundlePreviewProps): BundleNeighbor[] {
+  return props.prerequisites.filter((p) => p.status === "cancelled");
+}
+
+/**
+ * Whether a section has any data to show (render-if-nonempty). All bodies
+ * render from props already loaded with the detail panel — no section
+ * expansion triggers a fetch.
  *
  * @param id - Section identifier.
  * @param props - Bundle props.
@@ -184,6 +204,8 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
     case "spec":
       return props.spec.trim().length > 0;
     case "meta":
+    case "project":
+    case "lens":
       return true;
     case "criteria":
       return props.criteria.length > 0;
@@ -191,6 +213,10 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
       return (props.plan ?? "").trim().length > 0;
     case "prerequisites":
       return props.prerequisites.length > 0;
+    case "built":
+      return donePrereqs(props).length > 0;
+    case "abandoned":
+      return cancelledPrereqs(props).length > 0;
     case "decisions":
     case "constraints":
       return props.decisions.length > 0;
@@ -198,44 +224,25 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
       return props.connected.length > 0;
     case "links":
       return props.links.length > 0;
-    case "files":
-      return props.files.length > 0;
     case "downstream":
     case "dependents":
       return props.downstream.length > 0;
     case "execution":
       return (props.executionRecord ?? "").trim().length > 0;
     case "blocked":
-      return unfinishedPrereqs(props).length > 0;
-    default:
-      return true;
+      return props.state === "blocked" || unfinishedPrereqs(props).length > 0;
   }
 }
 
 /**
- * Approximate visual weight of a section for the proportional bar. Local
- * sections weigh their prop data; server-only sections use a fixed constant
- * until the bundle is cached, then recompute from actual part lengths.
+ * Approximate visual weight of a section for the proportional bar, computed
+ * entirely from prop data already on the client.
  *
  * @param id - Section identifier.
  * @param props - Bundle props.
- * @param sections - Cached bundle sections, when fetched.
  * @returns Non-negative weight (1 minimum).
  */
-function sectionWeight(
-  id: BundleSectionId,
-  props: BundlePreviewProps,
-  sections: BundlePart[] | undefined,
-): number {
-  if (SERVER_ONLY_SECTIONS.has(id)) {
-    if (!sections) return SERVER_SECTION_DEFAULT_WEIGHT;
-    return Math.max(
-      sections
-        .filter((s) => s.id === id)
-        .reduce((sum, s) => sum + s.markdown.length, 0),
-      1,
-    );
-  }
+function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
   const len = (s: string) => s.length;
   const refLen = (xs: BundleNeighbor[]) =>
     xs.reduce((sum, n) => sum + len(`${n.taskRef} ${n.title}`), 0);
@@ -247,6 +254,11 @@ function sectionWeight(
         len(props.tags.join(" ")) + len(props.projectName) + 24,
         1,
       );
+    case "project":
+      return Math.max(
+        len(props.projectName) + len(props.projectDescription ?? ""),
+        1,
+      );
     case "criteria":
       return Math.max(
         props.criteria.reduce((sum, c) => sum + len(c.text), 0),
@@ -256,6 +268,10 @@ function sectionWeight(
       return Math.max(len(props.plan ?? ""), 1);
     case "prerequisites":
       return Math.max(refLen(props.prerequisites), 1);
+    case "built":
+      return Math.max(refLen(donePrereqs(props)), 1);
+    case "abandoned":
+      return Math.max(refLen(cancelledPrereqs(props)), 1);
     case "connected":
       return Math.max(refLen(props.connected), 1);
     case "decisions":
@@ -269,14 +285,14 @@ function sectionWeight(
         props.links.reduce((sum, l) => sum + len(l.url), 0),
         1,
       );
-    case "files":
-      return Math.max(len(props.files.join("\n")), 1);
     case "downstream":
     case "dependents":
       return Math.max(refLen(props.downstream), 1);
     case "blocked":
       return Math.max(refLen(unfinishedPrereqs(props)), 1);
-    default:
+    case "lens":
+      return REVIEW_LENS_PROMPTS.length;
+    case "execution":
       return Math.max(len(props.executionRecord ?? ""), 1);
   }
 }
@@ -288,6 +304,10 @@ function sectionWeight(
  * in `bundle-tables.ts`, so the preview tracks the real
  * `lib/context/_core/*` builder output.
  *
+ * Every drawer body renders from data the detail panel already loaded; the
+ * server bundle is fetched only when the MD raw view is toggled on. All
+ * drawers start collapsed.
+ *
  * @param props - Bundle data.
  * @returns Card containing the header, section bar, and section list.
  */
@@ -298,19 +318,22 @@ export function BundlePreview(props: BundlePreviewProps) {
   const variant = variantOf(stage);
   const kind = BUNDLE_BY_STAGE[stage];
   const bundleName = BUNDLE_LABEL_BY_STAGE[stage];
-  const isBlocked = state === "blocked";
+  // Chip mirrors the bundle content: it shows exactly when the agent bundle
+  // carries the blocked section — authoritative server state for blocked
+  // planned tasks, the direct-prereq approximation for premature
+  // in_progress claims. A blocked draft previews the working bundle, which
+  // has no blocked treatment, so it gets no chip.
+  const isBlocked =
+    stage === "planned-blocked" ||
+    (stage === "in_progress" && unfinishedPrereqs(props).length > 0);
 
   const sectionIds = useMemo(
-    () =>
-      SECTIONS_BY_BUNDLE[variant].filter(
-        (id) => SERVER_ONLY_SECTIONS.has(id) || hasLocalData(id, props),
-      ),
+    () => SECTIONS_BY_BUNDLE[variant].filter((id) => hasLocalData(id, props)),
     [variant, props],
   );
 
   const [expanded, setExpanded] = useState<Set<BundleSectionId>>(
-    () =>
-      new Set<BundleSectionId>(sectionIds.length > 0 ? [sectionIds[0]] : []),
+    () => new Set<BundleSectionId>(),
   );
   const [showRaw, setShowRaw] = useState(false);
 
@@ -319,20 +342,19 @@ export function BundlePreview(props: BundlePreviewProps) {
   const [lastStage, setLastStage] = useState(stage);
   if (stage !== lastStage) {
     setLastStage(stage);
-    setExpanded(
-      new Set<BundleSectionId>(sectionIds.length > 0 ? [sectionIds[0]] : []),
-    );
+    setExpanded(new Set<BundleSectionId>());
   }
 
   const qc = useQueryClient();
-  const serverSectionOpen = useMemo(
-    () => [...expanded].some((id) => SERVER_ONLY_SECTIONS.has(id)),
-    [expanded],
-  );
-  const { data, isFetching: bundleFetching } = useQuery({
+  const {
+    data,
+    isFetching: bundleFetching,
+    isError: bundleError,
+    refetch: refetchBundle,
+  } = useQuery({
     queryKey: taskKeys.context(projectId, taskId, kind),
     queryFn: fetchTaskContext(qc, projectId, taskId, kind),
-    enabled: showRaw || serverSectionOpen,
+    enabled: showRaw,
   });
   const sections = data?.sections;
 
@@ -343,9 +365,9 @@ export function BundlePreview(props: BundlePreviewProps) {
 
   const weights = useMemo(() => {
     const out = {} as Record<BundleSectionId, number>;
-    for (const id of sectionIds) out[id] = sectionWeight(id, props, sections);
+    for (const id of sectionIds) out[id] = sectionWeight(id, props);
     return out;
-  }, [sectionIds, props, sections]);
+  }, [sectionIds, props]);
 
   /** Toggle a section's expansion state without disturbing the others. */
   const toggle = (id: BundleSectionId) => {
@@ -391,11 +413,13 @@ export function BundlePreview(props: BundlePreviewProps) {
         {sectionIds.map((id) => (
           <div
             key={id}
+            title={SECTION_META[id].label}
             style={{
               flexGrow: weights[id],
               flexBasis: 0,
               background: SECTION_META[id].color,
               opacity: 0.85,
+              transition: "flex-grow 300ms ease",
             }}
             aria-hidden="true"
           />
@@ -404,15 +428,32 @@ export function BundlePreview(props: BundlePreviewProps) {
 
       {showRaw ? (
         <div className="space-y-2 bg-base-2 p-3">
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between">
+            {bundleError ? (
+              <button
+                type="button"
+                onClick={() => void refetchBundle()}
+                className="cursor-pointer rounded-md border border-danger/40 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-danger transition-colors hover:bg-danger/10"
+              >
+                Retry
+              </button>
+            ) : (
+              <span />
+            )}
             <CopyButton text={rawText} label="Copy" />
           </div>
-          <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed text-text-secondary">
-            {bundleFetching && !rawText
-              ? "// loading bundle…"
-              : rawText.trim().length > 0
-                ? rawText
-                : "// bundle empty — add a description and prerequisites"}
+          <pre
+            className={`max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed text-text-secondary ${
+              bundleFetching && !rawText ? "animate-pulse" : ""
+            }`}
+          >
+            {bundleError
+              ? "// failed to load bundle — retry above"
+              : bundleFetching && !rawText
+                ? "// loading bundle…"
+                : rawText.trim().length > 0
+                  ? rawText
+                  : "// bundle empty — add a description and prerequisites"}
           </pre>
         </div>
       ) : (
@@ -425,8 +466,6 @@ export function BundlePreview(props: BundlePreviewProps) {
               isLast={i === sectionIds.length - 1}
               onToggle={() => toggle(id)}
               props={props}
-              sections={sections}
-              bundleFetching={bundleFetching}
               onSelectTask={onSelectTask}
             />
           ))}
@@ -447,10 +486,6 @@ interface BundleSectionProps {
   onToggle: () => void;
   /** Bundle props (data sources). */
   props: BundlePreviewProps;
-  /** Cached bundle sections, when the shared fetch has resolved. */
-  sections?: BundlePart[];
-  /** Whether the shared bundle fetch is in flight. */
-  bundleFetching: boolean;
   /** Click a neighbor row to navigate. */
   onSelectTask?: (taskId: string) => void;
 }
@@ -468,8 +503,6 @@ function BundleSection({
   isLast,
   onToggle,
   props,
-  sections,
-  bundleFetching,
   onSelectTask,
 }: BundleSectionProps) {
   const meta = SECTION_META[id];
@@ -512,13 +545,7 @@ function BundleSection({
             className="overflow-hidden"
           >
             <div className="bg-base-2 pt-1 pb-3.5 pr-3.5 pl-8">
-              <SectionBody
-                id={id}
-                props={props}
-                sections={sections}
-                bundleFetching={bundleFetching}
-                onSelectTask={onSelectTask}
-              />
+              <SectionBody id={id} props={props} onSelectTask={onSelectTask} />
             </div>
           </motion.div>
         )}
@@ -590,12 +617,6 @@ function sectionSummary(
   if (id === "links") {
     return props.links.length === 1 ? "1 link" : `${props.links.length} links`;
   }
-  if (id === "files") {
-    if (props.files.length === 0) return "no files yet";
-    return props.files.length === 1
-      ? props.files[0]
-      : `${props.files[0]} + ${props.files.length - 1} more`;
-  }
   if (id === "downstream") {
     if (props.downstream.length === 0) return "no consumers";
     const refs = props.downstream
@@ -615,10 +636,23 @@ function sectionSummary(
     const n = unfinishedPrereqs(props).length;
     return `${n} unfinished prerequisite${n === 1 ? "" : "s"}`;
   }
-  if (id === "project") return "project context";
-  if (id === "built") return "upstream execution records";
-  if (id === "abandoned") return "abandoned approaches";
-  if (id === "drift") return "plan-vs-files drift";
+  if (id === "project") return props.projectName;
+  if (id === "built") {
+    const done = donePrereqs(props);
+    const refs = done
+      .slice(0, 2)
+      .map((p) => p.taskRef)
+      .join(" · ");
+    return done.length > 2 ? `${refs} · +${done.length - 2} more` : refs;
+  }
+  if (id === "abandoned") {
+    const dead = cancelledPrereqs(props);
+    const refs = dead
+      .slice(0, 2)
+      .map((p) => p.taskRef)
+      .join(" · ");
+    return dead.length > 2 ? `${refs} · +${dead.length - 2} more` : refs;
+  }
   if (id === "lens") return "review lens prompts";
   return props.executionRecord && props.executionRecord.trim().length > 0
     ? "shipped record"
@@ -630,36 +664,18 @@ interface SectionBodyProps {
   id: BundleSectionId;
   /** Bundle props. */
   props: BundlePreviewProps;
-  /** Cached bundle sections, when the shared fetch has resolved. */
-  sections?: BundlePart[];
-  /** Whether the shared bundle fetch is in flight. */
-  bundleFetching: boolean;
   /** Click a neighbor row to navigate. */
   onSelectTask?: (taskId: string) => void;
 }
 
 /**
  * Section body dispatcher — chooses the right renderer for the active id.
+ * Every body renders from props; nothing here fetches.
  *
  * @param body - Body configuration.
  * @returns The matching body renderer.
  */
-function SectionBody({
-  id,
-  props,
-  sections,
-  bundleFetching,
-  onSelectTask,
-}: SectionBodyProps) {
-  if (SERVER_ONLY_SECTIONS.has(id)) {
-    return (
-      <ServerSectionBody
-        id={id}
-        sections={sections}
-        fetching={bundleFetching}
-      />
-    );
-  }
+function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
   if (id === "spec")
     return (
       <MarkdownBody
@@ -668,6 +684,7 @@ function SectionBody({
       />
     );
   if (id === "meta") return <MetaBody props={props} />;
+  if (id === "project") return <ProjectBody props={props} />;
   if (id === "criteria") return <CriteriaBody criteria={props.criteria} />;
   if (id === "plan")
     return (
@@ -685,6 +702,26 @@ function SectionBody({
       />
     );
   }
+  if (id === "built") {
+    return (
+      <RecordRefList
+        items={donePrereqs(props)}
+        hint="Execution records are inlined in the bundle (MD view). Open a task to read its record."
+        emptyHint="No done prerequisites."
+        onSelectTask={onSelectTask}
+      />
+    );
+  }
+  if (id === "abandoned") {
+    return (
+      <RecordRefList
+        items={cancelledPrereqs(props)}
+        hint="Cancellation records are inlined in the bundle (MD view). Open a task to read its record."
+        emptyHint="No cancelled prerequisites."
+        onSelectTask={onSelectTask}
+      />
+    );
+  }
   if (id === "connected") {
     return (
       <ConnectedList items={props.connected} onSelectTask={onSelectTask} />
@@ -693,7 +730,6 @@ function SectionBody({
   if (id === "decisions" || id === "constraints") {
     return <DecisionsBody decisions={props.decisions} />;
   }
-  if (id === "files") return <FilesBody files={props.files} />;
   if (id === "links") return <LinksBody links={props.links} />;
   if (id === "downstream" || id === "dependents") {
     return (
@@ -707,6 +743,9 @@ function SectionBody({
   if (id === "blocked") {
     return <BlockedBody props={props} onSelectTask={onSelectTask} />;
   }
+  if (id === "lens") {
+    return <MarkdownBody text={REVIEW_LENS_PROMPTS} emptyHint="" />;
+  }
   return (
     <MarkdownBody
       text={props.executionRecord ?? ""}
@@ -715,42 +754,74 @@ function SectionBody({
   );
 }
 
-interface ServerSectionBodyProps {
-  /** Section identifier. */
-  id: BundleSectionId;
-  /** Cached bundle sections, when fetched. */
-  sections?: BundlePart[];
-  /** Whether the shared bundle fetch is in flight. */
-  fetching: boolean;
+interface ProjectBodyProps {
+  /** Bundle props. */
+  props: BundlePreviewProps;
 }
 
 /**
- * Body for server-only sections: renders the matching bundle parts once the
- * shared fetch resolves; shows a loading hint while it is in flight.
+ * Project-context body: project name plus its description, mirroring the
+ * bundle's Project Context section from data already on the client.
  *
- * @param props - Section id, cached sections, and fetch state.
- * @returns Markdown body, loading hint, or empty hint.
+ * @param props - Bundle props.
+ * @returns Project body element.
  */
-function ServerSectionBody({ id, sections, fetching }: ServerSectionBodyProps) {
-  if (!sections) {
-    return (
-      <p className="font-mono text-[11.5px] italic text-text-muted">
-        {fetching ? "// loading bundle…" : "// expand fetches the bundle…"}
+function ProjectBody({ props }: ProjectBodyProps) {
+  return (
+    <div className="space-y-1.5">
+      <p className="font-mono text-[11.5px] text-text-secondary">
+        Project: {props.projectName}
       </p>
-    );
-  }
-  const matched = sections.filter((s) => s.id === id);
-  if (matched.length === 0) {
+      {props.projectDescription && props.projectDescription.trim().length > 0 && (
+        <Markdown className="text-[12.5px] leading-relaxed text-text-secondary">
+          {props.projectDescription}
+        </Markdown>
+      )}
+    </div>
+  );
+}
+
+interface RecordRefListProps {
+  /** Neighbor task entries. */
+  items: BundleNeighbor[];
+  /** Muted hint shown above the list. */
+  hint: string;
+  /** Italic hint shown when the list is empty. */
+  emptyHint: string;
+  /** Click a row to navigate. */
+  onSelectTask?: (taskId: string) => void;
+}
+
+/**
+ * Ref list for record-bearing prerequisites (built / abandoned): the drawer
+ * previews which tasks carry records; the records themselves stay in the
+ * bundle markdown and on each task's own detail view.
+ *
+ * @param props - Ref list configuration.
+ * @returns Hint plus neighbor list, or empty hint.
+ */
+function RecordRefList({
+  items,
+  hint,
+  emptyHint,
+  onSelectTask,
+}: RecordRefListProps) {
+  if (items.length === 0) {
     return (
       <p className="font-mono text-[11.5px] italic text-text-muted">
-        Not present in this bundle.
+        {emptyHint}
       </p>
     );
   }
   return (
-    <Markdown className="text-[12.5px] leading-relaxed text-text-secondary">
-      {matched.map((s) => s.markdown).join("\n\n")}
-    </Markdown>
+    <div className="space-y-2">
+      <p className="text-[11.5px] leading-snug text-text-muted">{hint}</p>
+      <NeighborList
+        items={items}
+        emptyHint={emptyHint}
+        onSelectTask={onSelectTask}
+      />
+    </div>
   );
 }
 
@@ -1081,41 +1152,6 @@ function DecisionsBody({ decisions }: DecisionsBodyProps) {
               {d.date}
             </span>
           </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-interface FilesBodyProps {
-  /** File paths the task touches. */
-  files: string[];
-}
-
-/**
- * File list — renders each path as a mono chip. Diff stats are deferred
- * until the schema persists `{path, added, removed, commit}` shapes.
- *
- * @param props - Files list.
- * @returns Wrap of file chips or empty hint.
- */
-function FilesBody({ files }: FilesBodyProps) {
-  if (files.length === 0) {
-    return (
-      <p className="font-mono text-[11.5px] italic text-text-muted">
-        No files touched yet.
-      </p>
-    );
-  }
-  return (
-    <ul className="flex flex-wrap gap-1.5">
-      {files.map((path) => (
-        <li
-          key={path}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-text-secondary"
-          title={path}
-        >
-          {path}
         </li>
       ))}
     </ul>

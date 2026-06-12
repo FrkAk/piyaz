@@ -6,7 +6,7 @@ test("record depth keeps the retrospective columns and drops the plan", () => {
     tags: true,
     implementationPlan: false,
     executionRecord: true,
-    files: true,
+    files: false,
     assignees: false,
     acceptanceCriteria: true,
     decisions: true,
@@ -16,4 +16,10 @@ test("record depth keeps the retrospective columns and drops the plan", () => {
 
 test("agent depth drops assignees (bundle no longer renders them)", () => {
   expect(DEPTH_PROJECTIONS.agent.assignees).toBe(false);
+});
+
+test("no depth selects files (bundles point at the PR diff instead)", () => {
+  for (const projection of Object.values(DEPTH_PROJECTIONS)) {
+    expect(projection.files).toBe(false);
+  }
 });

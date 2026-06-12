@@ -73,12 +73,13 @@ type DepthProjection = {
 };
 
 /**
- * The exact column set each depth's formatter reads. `category` and `history`
- * are omitted at every depth (no formatter reads them). `implementationPlan`
+ * The exact column set each depth's formatter reads. `category`, `history`,
+ * and `files` are omitted at every depth (no formatter reads them — bundles
+ * point at the PR diff instead of recorded file lists). `implementationPlan`
  * is true for `summary` because `buildSummaryContext` reads its presence
  * (`hasImplementationPlan`) even though it never renders the plan text.
  * `record` serves the retrospective bundle for done/cancelled tasks: it keeps
- * executionRecord, files, links, decisions, and criteria, and drops
+ * executionRecord, links, decisions, and criteria, and drops
  * `implementationPlan` (often the largest column) and assignees because the
  * record bundle never renders them.
  *
@@ -121,7 +122,7 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
     tags: true,
     implementationPlan: true,
     executionRecord: true,
-    files: true,
+    files: false,
     assignees: false,
     acceptanceCriteria: true,
     decisions: true,
@@ -131,7 +132,7 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
     tags: true,
     implementationPlan: true,
     executionRecord: true,
-    files: true,
+    files: false,
     assignees: false,
     acceptanceCriteria: true,
     decisions: true,
@@ -141,7 +142,7 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
     tags: true,
     implementationPlan: false,
     executionRecord: true,
-    files: true,
+    files: false,
     assignees: false,
     acceptanceCriteria: true,
     decisions: true,

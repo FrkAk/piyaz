@@ -146,6 +146,7 @@ export type ProjectGraphSlim = {
     | "organizationId"
     | "identifier"
     | "title"
+    | "description"
     | "status"
     | "updatedAt"
     | "categories"
