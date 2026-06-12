@@ -1,0 +1,169 @@
+import type { BundleKind, BundleSectionId } from "@/lib/context/parts";
+import type { TaskState } from "@/lib/data/task";
+import type { TaskStatus } from "@/lib/types";
+
+/**
+ * Resolved bundle stage. Splits the derived `blocked` state on schema status
+ * (a blocked draft keeps the working bundle; a blocked planned task gets the
+ * agent bundle with the blocked treatment).
+ */
+export type BundleStage =
+  | "draft"
+  | "plannable"
+  | "planned-blocked"
+  | "ready"
+  | "in_progress"
+  | "in_review"
+  | "done"
+  | "cancelled";
+
+/** Drawer-section table key: bundle kind, with `record` split per variant. */
+export type BundleVariant =
+  | Exclude<BundleKind, "record">
+  | "record-done"
+  | "record-cancelled";
+
+/**
+ * Resolve the visible bundle stage from the server-derived state plus the
+ * schema status. `state` alone cannot derive the stage because
+ * `deriveTaskState` returns `blocked` for both blocked drafts and blocked
+ * planned tasks. When the task is missing from the slim payload (no derived
+ * state) fall back to the schema status — `planned` maps to `ready` (the
+ * next consumer is the implementer either way) and no chip is shown.
+ *
+ * @param status - Schema task status.
+ * @param state - Server-derived task state, if the task appears in `allTasks`.
+ * @returns Resolved bundle stage.
+ */
+export function resolveStage(
+  status: TaskStatus,
+  state: TaskState | undefined,
+): BundleStage {
+  if (state === undefined) {
+    return status === "planned" ? "ready" : (status as BundleStage);
+  }
+  if (state === "blocked") {
+    return status === "draft" ? "draft" : "planned-blocked";
+  }
+  return state;
+}
+
+/** Which bundle kind the next lifecycle consumer receives at each stage. */
+export const BUNDLE_BY_STAGE: Record<BundleStage, BundleKind> = {
+  draft: "working",
+  plannable: "planning",
+  "planned-blocked": "agent",
+  ready: "agent",
+  in_progress: "agent",
+  in_review: "review",
+  done: "record",
+  cancelled: "record",
+};
+
+/** Header label / badge caption per stage. */
+export const BUNDLE_LABEL_BY_STAGE: Record<BundleStage, string> = {
+  draft: "working bundle",
+  plannable: "planning bundle",
+  "planned-blocked": "agent bundle",
+  ready: "agent bundle",
+  in_progress: "agent bundle",
+  in_review: "review bundle",
+  done: "completion record",
+  cancelled: "cancellation record",
+};
+
+/**
+ * Resolve the drawer-section table key for a stage — the record kind splits
+ * into done/cancelled variants because their section lists differ.
+ *
+ * @param stage - Resolved bundle stage.
+ * @returns Variant key into {@link SECTIONS_BY_BUNDLE}.
+ */
+export function variantOf(stage: BundleStage): BundleVariant {
+  const kind = BUNDLE_BY_STAGE[stage];
+  if (kind !== "record") return kind;
+  return stage === "done" ? "record-done" : "record-cancelled";
+}
+
+/**
+ * Drawer sections per bundle variant, in render order (render-if-nonempty).
+ * The parity test in `tests/context/parity.test.ts` pins these lists against
+ * the actual builder part order — change both together.
+ */
+export const SECTIONS_BY_BUNDLE: Record<
+  BundleVariant,
+  readonly BundleSectionId[]
+> = {
+  working: ["spec", "meta", "criteria", "decisions", "connected", "links"],
+  planning: [
+    "project",
+    "spec",
+    "criteria",
+    "plan",
+    "prerequisites",
+    "built",
+    "abandoned",
+    "decisions",
+    "links",
+    "downstream",
+  ],
+  agent: [
+    "blocked",
+    "spec",
+    "plan",
+    "prerequisites",
+    "built",
+    "files",
+    "links",
+    "downstream",
+    "constraints",
+    "criteria",
+  ],
+  review: [
+    "project",
+    "spec",
+    "criteria",
+    "plan",
+    "execution",
+    "files",
+    "drift",
+    "decisions",
+    "links",
+    "prerequisites",
+    "built",
+    "downstream",
+    "lens",
+  ],
+  "record-done": [
+    "project",
+    "spec",
+    "criteria",
+    "execution",
+    "files",
+    "decisions",
+    "links",
+    "downstream",
+  ],
+  "record-cancelled": [
+    "project",
+    "spec",
+    "execution",
+    "decisions",
+    "files",
+    "dependents",
+    "links",
+  ],
+};
+
+/**
+ * Sections whose body data lives only in the server bundle. They render
+ * collapsed for free; expanding one (or toggling MD) triggers the shared
+ * bundle fetch.
+ */
+export const SERVER_ONLY_SECTIONS: ReadonlySet<BundleSectionId> = new Set([
+  "project",
+  "built",
+  "abandoned",
+  "drift",
+  "lens",
+]);
