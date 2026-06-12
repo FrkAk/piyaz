@@ -95,6 +95,23 @@ describe("ReadConn brand — disjoint from Conn, no write builders", () => {
   });
 });
 
+/**
+ * Type-level guard for the RawReadRows brand: a raw `execute` batch result
+ * must pass through `normalizeExecuteResult` — consuming it as an array
+ * works on postgres-js (RowList extends Array) but crashes on neon-http
+ * ({ rows } object), so the brand makes direct consumption a compile error.
+ */
+describe("RawReadRows brand — raw results are not directly consumable", () => {
+  test("a RawReadRows value exposes no array or rows surface", () => {
+    const raw = null as unknown as import("@/lib/db/raw").RawReadRows;
+    // @ts-expect-error — map is not on the RawReadRows surface.
+    const mapped = (): void => void raw.map;
+    // @ts-expect-error — rows is not on the RawReadRows surface.
+    const rows = (): void => void raw.rows;
+    expect([mapped, rows].every((f) => typeof f === "function")).toBe(true);
+  });
+});
+
 // Stub is typed but never invoked — the brand check is purely at the
 // type system level. Using `unknown as ...` so the test does not pull
 // the real `serviceRoleDb` proxy (which would require a live database

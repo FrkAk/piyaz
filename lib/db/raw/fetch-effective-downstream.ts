@@ -1,6 +1,11 @@
 import { sql, type SQL } from "drizzle-orm";
 import { tasks, taskEdges } from "@/lib/db/schema";
-import { executeRaw, type Conn, type ReadConn } from "@/lib/db/raw";
+import {
+  executeRaw,
+  taskProjectScopeSql,
+  type Conn,
+  type ReadConn,
+} from "@/lib/db/raw";
 
 /** A task in an effective downstream-dependents chain with its effective depth. */
 export type EffectiveDownstreamRow = { id: string; depth: number };
@@ -106,10 +111,6 @@ export function effectiveDownstreamStmt(
   maxDepth: number,
 ) {
   return read.execute(
-    effectiveDownstreamSql(
-      taskId,
-      sql`(SELECT project_id FROM ${tasks} WHERE id = ${taskId})`,
-      maxDepth,
-    ),
+    effectiveDownstreamSql(taskId, taskProjectScopeSql(taskId), maxDepth),
   );
 }

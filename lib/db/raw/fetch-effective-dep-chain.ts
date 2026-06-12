@@ -1,6 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { tasks, taskEdges } from "@/lib/db/schema";
-import { type ReadConn } from "@/lib/db/raw";
+import { taskProjectScopeSql, type ReadConn } from "@/lib/db/raw";
 
 /** A task in an effective `depends_on` chain with its effective depth. */
 export type EffectiveDepRow = { id: string; depth: number };
@@ -76,10 +76,6 @@ export function effectiveDepChainStmt(
   maxDepth: number,
 ) {
   return read.execute(
-    effectiveDepChainSql(
-      taskId,
-      sql`(SELECT project_id FROM ${tasks} WHERE id = ${taskId})`,
-      maxDepth,
-    ),
+    effectiveDepChainSql(taskId, taskProjectScopeSql(taskId), maxDepth),
   );
 }

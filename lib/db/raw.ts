@@ -1,4 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
+import { tasks } from "@/lib/db/schema";
 import type {
   AppDb,
   AppUserConn,
@@ -19,6 +20,15 @@ export type { AppUserConn, RlsTx, ServiceRoleConn };
 export type Conn = AppUserConn | RlsTx;
 
 declare const readConnBrand: unique symbol;
+declare const rawReadRowsBrand: unique symbol;
+
+/**
+ * Opaque result of a `ReadConn.execute` batch statement. The runtime shape
+ * differs per backend (postgres-js row list vs neon-http `{ rows }`), so
+ * the brand blocks direct consumption — pass it through
+ * {@link normalizeExecuteResult} to get typed rows on both targets.
+ */
+export type RawReadRows = { readonly [rawReadRowsBrand]: true };
 
 /**
  * Statement-building handle passed to a `withUserContextRead` build
@@ -36,13 +46,27 @@ declare const readConnBrand: unique symbol;
  */
 export type ReadConn = Pick<AppDb, "select"> & {
   /**
-   * Build a lazy raw-SQL read statement. Result shape differs per backend
-   * (postgres-js row list vs neon-http `{ rows }`); always pass it through
-   * {@link normalizeExecuteResult}.
+   * Build a lazy raw-SQL read statement. The branded result blocks direct
+   * consumption; pass it through {@link normalizeExecuteResult}.
    */
-  execute(query: SQL): ReadStatement<unknown>;
+  execute(query: SQL): ReadStatement<RawReadRows>;
   readonly [readConnBrand]: true;
 };
+
+/**
+ * SQL expression deriving a task's project id from its own row, so a batch
+ * statement keyed only on the task id keeps the cross-project
+ * defense-in-depth filter without waiting for the task row to be read
+ * first. Equal to the project id every interactive caller passes (it comes
+ * from the same task row); Postgres evaluates the uncorrelated subquery
+ * once as an InitPlan.
+ *
+ * @param taskId - UUID of the task whose project scopes the read.
+ * @returns Scalar-subquery SQL fragment.
+ */
+export function taskProjectScopeSql(taskId: string): SQL {
+  return sql`(SELECT project_id FROM ${tasks} WHERE id = ${taskId})`;
+}
 
 /**
  * Internal: any drizzle handle the `executeRaw` helpers accept. Broader

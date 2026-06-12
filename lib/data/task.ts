@@ -4,6 +4,7 @@ import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import {
   executeRaw,
   normalizeExecuteResult,
+  taskProjectScopeSql,
   uuidArray,
   type Conn,
   type ReadConn,
@@ -1628,18 +1629,6 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
 type EdgeNoteRow = { taskId: string; note: string };
 
 /**
- * SQL expression deriving a task's project id from its own row, so a batch
- * statement keyed only on `taskId` keeps the cross-project defense-in-depth
- * filter without waiting for the task row to be read first.
- *
- * @param taskId - UUID of the task whose project scopes the read.
- * @returns Scalar-subquery SQL fragment.
- */
-function projectScopeOf(taskId: string) {
-  return sql`(SELECT project_id FROM ${tasks} WHERE id = ${taskId})`;
-}
-
-/**
  * {@link fetchEdgeNotesBySource} as a lazy batch statement. The connected
  * task's project filter derives from the source task's own row. Build the
  * note map from the rows with {@link mapEdgeNoteRows}.
@@ -1658,7 +1647,7 @@ export function edgeNotesBySourceStmt(read: ReadConn, taskId: string) {
       and(
         eq(taskEdges.sourceTaskId, taskId),
         eq(taskEdges.edgeType, "depends_on"),
-        eq(tasks.projectId, projectScopeOf(taskId)),
+        eq(tasks.projectId, taskProjectScopeSql(taskId)),
       ),
     );
 }
@@ -1681,7 +1670,7 @@ export function edgeNotesByTargetStmt(read: ReadConn, taskId: string) {
       and(
         eq(taskEdges.targetTaskId, taskId),
         eq(taskEdges.edgeType, "depends_on"),
-        eq(tasks.projectId, projectScopeOf(taskId)),
+        eq(tasks.projectId, taskProjectScopeSql(taskId)),
       ),
     );
 }
