@@ -18,7 +18,7 @@ Three reference files hold the topical rules. Read them at the moment of use, no
 |---|---|---|
 | `references/artifacts.md` | About to write or refine any task, edge, or related artifact. | Title, description, AC, executionRecord, decisions, files (§1). Tag dimensions (§2). Edge types (§3). Categories with project-type guidance and forbidden list (§4). Granularity (§5). Markdown formatting and tone (§6). |
 | `references/lifecycle.md` | Before any status transition, before marking done or cancelled, after any status change. | Status lifecycle, what each state means (§1). Completion Protocol with PR-opening (§2). Propagation Iron Law (§3). |
-| `references/resilience.md` | At session start (resume mode) and after any compaction signal. | Why long sessions fail (§1). Persist plan to project description (§2). Local working file at `.mymir/` (§3). Resume mode (§4). Idempotent creation (§5). Quality checkpoints (§6). Compaction signals (§7). |
+| `references/resilience.md` | At session start (resume mode) and after any compaction signal. | Why long sessions fail (§1). Persist plan to project description (§2). Local working file at `.mymir/` (§3). Resume mode (§4). Idempotent creation (§5). Quality checkpoints (§6). Compaction signals (§7). Server vs agent-enforced rules (§9). Transport / auth errors (§10). Headless runs (§11). |
 
 References renumber from §1 within their own file. When this document or an agent says "artifacts §4", it means section 4 of `references/artifacts.md` (categories), not section 4 of this file.
 
@@ -37,6 +37,8 @@ Applies wherever an agent generates `executionRecord`, `decisions`, `description
 - `files` must list paths the agent has either modified, observed, or has explicit confirmation exist.
 
 When uncertain, write less. A short, true record is more valuable than a rich, fabricated one.
+
+**Re-deriving an executionRecord from the task's own description is fabrication.** The description says what was planned; the record must cite what actually happened (code, commits, PRs, conversation, an agent's report). If no such source exists, the honest record says so ("user reported completion; no implementation details provided") and stops there.
 
 **Spec-review and open-questions tasks: cite the on-graph artifact.** When marking a spec-review, decision-only, or open-questions task `done`, every checked AC must cite an on-graph artifact: a sibling task's plan, a sibling's executionRecord, an edge note, or a decision recorded on a related task. Do not synthesize answers from training data. Reference the related task by ref (e.g. `MYMR-83`) inside the AC text or the executionRecord. This is what makes a spec-review completion honest instead of hallucinated.
 

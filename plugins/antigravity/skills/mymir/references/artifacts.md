@@ -4,6 +4,15 @@ Quality bar for everything an agent writes into Mymir: titles, descriptions, acc
 
 Agents read this file when about to create, refine, or audit an artifact. The Iron Law of grounding (`conventions.md` §1) applies at every step.
 
+## Contents
+
+- §1 Task artifact quality: title, description, acceptanceCriteria, executionRecord, decisions, files
+- §2 Tag dimensions and first-class fields (priority, estimate, assignees)
+- §3 Edge types and decision criteria
+- §4 Categories: selection walkthrough, hard rules, forbidden list, project-type guidance
+- §5 Granularity: task sizing and starting counts
+- §6 Markdown formatting and tone
+
 ---
 
 ## 1. Task artifact quality
@@ -334,8 +343,8 @@ Defaults that match the actual architecture of common project shapes. Adapt to w
 - **ML / data platform** (production ML systems with training and serving): `data-pipeline`, `training`, `inference`, `evaluation`, `serving`.
 - **Data warehouse / analytics engineering** (dbt project, SQL marts, transformations): `sources`, `staging`, `marts`, `metrics`, `tests`, `docs`. Add `pipelines` if Airflow/Dagster orchestration is its own surface; `seeds` if reference data has a meaningful footprint.
 - **Business analyst / BI** (dashboards, reports, ad-hoc analysis, stakeholder deliverables): `requirements-intake`, `analysis`, `dashboards`, `metrics`, `data-quality`, `documentation`. Add `stakeholders` if recurring stakeholder reviews are first-class; `playbooks` if reusable analysis templates are part of the deliverable. Note: `requirements-intake` here is a product surface (BRDs, stakeholder asks tracked as artifacts), not the forbidden process-phase `requirements`.
-- **Mixed dbt-shop + BI delivery** (a dbt rebuild that ships into stakeholder-owned BI dashboards — common when Finance / Sales / Marketing trust degrades and the fix is one source of truth fed into existing tools): merge the two vocabularies. Common landing: `sources`, `staging`, `marts`, `metrics`, `dashboards`, `data-quality`, `governance`. Pick `tests` over `data-quality` if testing has its own surface; `documentation` over `governance` if change-management is light.
-- **Agentic system / app** (an LLM loop with tools and memory; new normal as of 2026): `core` (agent loop, planner, orchestration), `tools` (function calling, MCP, capability adapters), `memory` (context, state, long-term storage), `models` (LLM client, routing, caching), `evals` (scenarios, regression harness), `safety` (guardrails, output validation). Add `ui` if there is a chat or dashboard surface; `prompts` if prompt engineering is its own discipline.
+- **Mixed dbt-shop + BI delivery** (a dbt rebuild that ships into stakeholder-owned BI dashboards, common when Finance / Sales / Marketing trust degrades and the fix is one source of truth fed into existing tools): merge the two vocabularies. Common landing: `sources`, `staging`, `marts`, `metrics`, `dashboards`, `data-quality`, `governance`. Pick `tests` over `data-quality` if testing has its own surface; `documentation` over `governance` if change-management is light.
+- **Agentic system / app** (an LLM loop with tools and memory): `core` (agent loop, planner, orchestration), `tools` (function calling, MCP, capability adapters), `memory` (context, state, long-term storage), `models` (LLM client, routing, caching), `evals` (scenarios, regression harness), `safety` (guardrails, output validation). Add `ui` if there is a chat or dashboard surface; `prompts` if prompt engineering is its own discipline.
 - **Multi-agent system** (orchestrator + worker agents, tools shared): `orchestration` (planner, scheduler, routing), `agents` (worker agent definitions), `tools`, `memory`, `models`, `evals`, `safety`.
 - **Financial / quant**: `models`, `pricing`, `risk`, `reporting`, `data`, `ui`.
 - **Library / SDK / CLI**: `core`, `api`, `cli`, `examples`, `testing`, `docs`.

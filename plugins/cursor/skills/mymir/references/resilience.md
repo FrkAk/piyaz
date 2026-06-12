@@ -4,6 +4,20 @@ How to survive long sessions: compaction, restart-from-scratch, and quality deca
 
 Agents read this file at session start (for resume mode) and after any compaction signal (memory gaps, fuzzy progress, "continue" / "resume" requests).
 
+## Contents
+
+- §1 Why long sessions fail
+- §2 Persist the plan to Mymir, not to the chat
+- §3 Local working file (`.mymir/`)
+- §4 Resume mode (run before any write phase)
+- §5 Idempotent task creation
+- §6 Quality checkpoints
+- §7 Compaction signals (when to STOP and resume)
+- §8 What this means in practice
+- §9 Server vs agent-enforced rules
+- §10 Transport / auth errors are not retryable in-session
+- §11 Headless / non-interactive runs
+
 ---
 
 ## 1. Why long sessions fail
