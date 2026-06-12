@@ -674,60 +674,6 @@ function translateError(e: unknown): ToolResult {
 }
 
 // ---------------------------------------------------------------------------
-// Shared descriptions (MCP tools are ground truth)
-//
-// Tool descriptions are loaded on every agent turn — every word is paid
-// N×turns. Each line below earns its place: purpose, per-action steering,
-// a critical limitation or rule, the next-call cue. Doctrine (tag
-// taxonomy, AC quality, category vocab, full lifecycle table, persona)
-// lives in the skill's reference files; the server steers the agent
-// toward the right rule rather than restating it.
-// ---------------------------------------------------------------------------
-
-/** Tool descriptions shared between MCP and web app. */
-export const DESCRIPTIONS = {
-  mymir_project:
-    "List, create, and update projects, plus enumerate team memberships. Spans every team the caller belongs to; no server-side session state, so pass projectId explicitly on every downstream call. " +
-    "list=projects (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via mymir_query type='meta'. " +
-    "teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. " +
-    "select=confirm working project; pass returned projectId on every subsequent call. " +
-    "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline; auto-resolves single-team). " +
-    "update=title, description, status, categories, or identifier. Renaming identifier cascades every taskRef and breaks external references (PR titles, docs, commits).",
-  mymir_task:
-    "Create, update, or delete tasks. Lifecycle: draft → planned → in_progress → in_review → done. The implementer subagent's terminal write is `in_review` (PR opened, tests green); the HOTL gate flips to `done` after PR approval. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
-    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, three tag dimensions (work-type, cross-cutting, tech), one project category. priority, estimate, and assigneeIds are first-class fields, not tags: priority (urgent / core / normal / backlog), estimate (Fibonacci story points 1/2/3/5/8/13), assigneeIds (array of team-member user UUIDs). After create: search precedents/coordinators by verb+noun+surface, wire mymir_edge, verify with mymir_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
-    "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files, assigneeIds) APPEND by default; overwriteArrays=true REPLACES them. Destructive, NO undo (history is an audit log); confirm with user first. " +
-    "delete: preview=true (default) shows impact; preview=false executes. Prefer status='cancelled' for abandoned scope so the rationale is preserved. " +
-    "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run mymir_analyze type='downstream' to propagate.",
-  mymir_edge:
-    "Create, update, or remove dependency edges between tasks. depends_on=source needs target's output (target must be done first). relates_to=informational link, neither blocks the other. Litmus test: removing the target makes the source impossible → depends_on; just makes it harder → relates_to. " +
-    "create: edge note REQUIRED and substantive; notes propagate to downstream agent context, and placeholders ('needed', 'depends') are rejected. Write it as a brief to the developer about to start the source task. " +
-    "update: change edgeType or note by edgeId. " +
-    "remove: by edgeId OR by sourceTaskId+targetTaskId+edgeType. " +
-    "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with mymir_query type='edges'.",
-  mymir_query:
-    "Search and browse project data. Pick the slim tool first; reserve overview for unfamiliar projects. " +
-    "search=tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass tags=[...] for exact tag match (OR-within); combine with `query` to AND-narrow. Pass category='...' for exact project-category match (closed vocabulary; unknown values rejected with the valid list inline); combines with query/tags via AND. Single-result responses include a state hint pointing to the right next call. " +
-    "list=every task in the project (slim, ordered by position). " +
-    "edges=relationships on one task (connected title, status, direction, note). " +
-    "meta=slim project metadata: header, description, status, categories, tag vocabulary (with usage counts), progress + status counts. No task list, no edges. Use this to look up categories before setting one, or the tag vocabulary before coining new tags. " +
-    "overview=full project structure: every task, every edge, full tag vocab, progress. VERY HEAVY. Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session. For just categories or tag vocab, use meta.",
-  mymir_context:
-    "Retrieve task context at varying depth. ALWAYS fetch context before reasoning about a task; pick the lightest depth that answers the question. " +
-    "summary=task header + description + counts (criteria, decisions, plan flag, edge counts) + full 1-hop edges WITH notes. The lightest depth that still carries edge notes; folds in what `mymir_query type='edges'` would give. " +
-    "working=detailed (criteria, decisions, 1-hop edges) for refinement and review. " +
-    "agent=multi-hop dependency chains with upstream execution records (~4-8K tokens); fetch BEFORE coding. " +
-    "planning=spec-focused (project description, prereqs, acceptance criteria, downstream specs); fetch BEFORE writing the implementation plan.",
-  mymir_analyze:
-    "Analyze the project dependency graph. All variants slim; lead with these for status, prioritization, 'what's next', 'what's stuck'. " +
-    "critical_path=longest dep chain (project bottleneck, minimum duration). Lead with this on continue / resume / 'guide me forward'; the most important type for prioritization. " +
-    "ready=planned tasks with all effective deps done (only `status='planned'` reaches this state; drafts with satisfied deps surface as `plannable`, not `ready`). Pick from `ready ∩ critical_path` for the highest-impact unblocked work. " +
-    "plannable=draft tasks with description + criteria, ready for planning. Fall back here when nothing is ready to code. " +
-    "blocked=tasks waiting on unfinished deps with blocker details. " +
-    "downstream=transitive dependents of one task; impact analysis before status change, refinement, or cancellation.",
-} as const;
-
-// ---------------------------------------------------------------------------
 // Param types
 // ---------------------------------------------------------------------------
 
