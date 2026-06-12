@@ -112,6 +112,27 @@ describe("RawReadRows brand — raw results are not directly consumable", () => 
   });
 });
 
+/**
+ * Type-level guard for ReadStatement's non-thenable surface: a statement
+ * leaked out of a `withUserContextRead` build callback and awaited on its
+ * own would run as a standalone stateless query with NO `app.user_id` GUC
+ * on Workers — RLS would silently return empty rows. ReadStatement hides
+ * `then`, so awaiting a leaked statement yields the unconsumable statement
+ * type instead of rows.
+ */
+describe("ReadStatement — leaked statements are not awaitable into rows", () => {
+  test("awaiting a leaked statement does not yield rows", () => {
+    type Stmt = import("@/lib/db/read-guard").ReadStatement<{ id: string }[]>;
+    const leaked = null as unknown as Stmt;
+    const consume = async (): Promise<string> => {
+      const awaited = await leaked;
+      // @ts-expect-error — await does not unwrap a non-thenable statement.
+      return awaited[0].id;
+    };
+    expect(typeof consume).toBe("function");
+  });
+});
+
 // Stub is typed but never invoked — the brand check is purely at the
 // type system level. Using `unknown as ...` so the test does not pull
 // the real `serviceRoleDb` proxy (which would require a live database

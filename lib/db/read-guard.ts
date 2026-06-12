@@ -21,8 +21,15 @@ export class ReadOnlyViolationError extends Error {
  * lazy drizzle query (select builder or `db.execute(sql)` raw) that has not
  * been awaited. The `_` marker mirrors drizzle's `RunnableQuery` so batch
  * result types map positionally.
+ *
+ * Deliberately NOT `PromiseLike`: the underlying drizzle builder is
+ * thenable at runtime, but a statement leaked out of the build callback
+ * and awaited on its own would run as a standalone stateless query with
+ * NO `app.user_id` GUC on Workers — RLS would silently return empty rows.
+ * Hiding `then` from the type makes such an await yield the unconsumable
+ * statement type instead of rows; only the batch runners execute these.
  */
-export interface ReadStatement<TResult = unknown> extends PromiseLike<TResult> {
+export interface ReadStatement<TResult = unknown> {
   /** Drizzle runnable-query result marker (type-level only). */
   readonly _: { readonly result: TResult };
 }
