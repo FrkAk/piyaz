@@ -4,6 +4,8 @@ How tasks move through state, what each state means, the Completion Protocol (wi
 
 Agents read this file before any status transition, before marking a task done or cancelled, and after every status change to propagate.
 
+> Sections of this file are mirrored by the composer phase extracts in `skills/composer/references/`; when you edit a mirrored section, update the extract too.
+
 ---
 
 ## 1. Status lifecycle
