@@ -46,7 +46,7 @@ import {
   buildEffectiveDepGraphFrom,
   type EffectiveDepGraph,
 } from "@/lib/graph/effective-deps";
-import { projectEdgesStmt } from "@/lib/data/edge";
+import { projectDependsOnEdgesStmt } from "@/lib/data/edge";
 import { projectAccessGateStmt } from "@/lib/data/access";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
@@ -1203,18 +1203,15 @@ export async function searchTasksRead(
   const filters = normalizeSearchFilters(opts);
   if (!filters) return [];
 
-  const [trimmedRows, graphTasks, projectEdges] = await withUserContextRead(
+  const [trimmedRows, graphTasks, dependsOnEdges] = await withUserContextRead(
     userId,
     (read) => [
       searchTasksStmt(read, project, filters),
       listTasksForGraphStmt(read, project.id),
-      projectEdgesStmt(read, project.id),
+      projectDependsOnEdgesStmt(read, project.id),
     ],
   );
-  const graph = buildEffectiveDepGraphFrom(
-    graphTasks,
-    projectEdges.filter((e) => e.edgeType === "depends_on"),
-  );
+  const graph = buildEffectiveDepGraphFrom(graphTasks, dependsOnEdges);
   const stateMap = deriveTaskStatesFrom(
     graph,
     trimmedRows.map((t) => ({
@@ -1834,18 +1831,21 @@ export function mapDependencyTaskRows(
  */
 export async function listTasksForGraph(projectId: string, conn: Conn) {
   return conn
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      sequenceNumber: tasks.sequenceNumber,
-      tags: tasks.tags,
-      priority: tasks.priority,
-    })
+    .select(graphTaskColumns)
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.sequenceNumber));
 }
+
+/** Columns the dependency-graph builders read; one source for both paths. */
+const graphTaskColumns = {
+  id: tasks.id,
+  title: tasks.title,
+  status: tasks.status,
+  sequenceNumber: tasks.sequenceNumber,
+  tags: tasks.tags,
+  priority: tasks.priority,
+} as const;
 
 /**
  * {@link listTasksForGraph} as a lazy batch statement.
@@ -1856,14 +1856,7 @@ export async function listTasksForGraph(projectId: string, conn: Conn) {
  */
 export function listTasksForGraphStmt(read: ReadConn, projectId: string) {
   return read
-    .select({
-      id: tasks.id,
-      title: tasks.title,
-      status: tasks.status,
-      sequenceNumber: tasks.sequenceNumber,
-      tags: tasks.tags,
-      priority: tasks.priority,
-    })
+    .select(graphTaskColumns)
     .from(tasks)
     .where(eq(tasks.projectId, projectId))
     .orderBy(asc(tasks.sequenceNumber));

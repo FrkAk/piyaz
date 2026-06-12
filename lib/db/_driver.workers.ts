@@ -45,6 +45,15 @@ neonConfig.poolQueryViaFetch = true;
  */
 neonConfig.pipelineConnect = false;
 
+/** Per-role connection-string guard messages, one source for WS + HTTP builders. */
+const DB_URL_REQUIRED = {
+  app: "DATABASE_URL is required for the app runtime connection (app_user role).",
+  auth:
+    "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
+    "(DML on neon_auth.*, no public-schema access).",
+  service: "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
+} as const;
+
 /**
  * Per-request Pool options. `connectionTimeoutMillis` bounds
  * `pool.connect()` waits so an unresponsive Neon endpoint fails the request
@@ -109,9 +118,7 @@ function attachPoolErrorLogger<P extends NeonPool>(pool: P, role: string): P {
  */
 export function buildAppPool(url = process.env.DATABASE_URL): DbBundle<AppDb> {
   if (!url) {
-    throw new Error(
-      "DATABASE_URL is required for the app runtime connection (app_user role).",
-    );
+    throw new Error(DB_URL_REQUIRED.app);
   }
   const pool = attachPoolErrorLogger(
     new NeonPool({ connectionString: url, ...POOL_OPTS }),
@@ -135,10 +142,7 @@ export function buildAuthPool(
   url = process.env.DATABASE_AUTH_URL,
 ): DbBundle<AuthDb> {
   if (!url) {
-    throw new Error(
-      "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
-        "(DML on neon_auth.*, no public-schema access).",
-    );
+    throw new Error(DB_URL_REQUIRED.auth);
   }
   const pool = attachPoolErrorLogger(
     new NeonPool({ connectionString: url, ...POOL_OPTS }),
@@ -162,9 +166,7 @@ export function buildServicePool(
   url = process.env.DATABASE_SERVICE_ROLE_URL,
 ): DbBundle<AppDb> {
   if (!url) {
-    throw new Error(
-      "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
-    );
+    throw new Error(DB_URL_REQUIRED.service);
   }
   const pool = attachPoolErrorLogger(
     new NeonPool({ connectionString: url, ...POOL_OPTS }),
@@ -200,9 +202,7 @@ const HTTP_TX_OPTS = {
  */
 export function buildAppHttp(url = process.env.DATABASE_URL): AppHttpDb {
   if (!url) {
-    throw new Error(
-      "DATABASE_URL is required for the app runtime connection (app_user role).",
-    );
+    throw new Error(DB_URL_REQUIRED.app);
   }
   return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: appSchema });
 }
@@ -217,10 +217,7 @@ export function buildAppHttp(url = process.env.DATABASE_URL): AppHttpDb {
  */
 export function buildAuthHttp(url = process.env.DATABASE_AUTH_URL): AuthHttpDb {
   if (!url) {
-    throw new Error(
-      "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
-        "(DML on neon_auth.*, no public-schema access).",
-    );
+    throw new Error(DB_URL_REQUIRED.auth);
   }
   return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: authSchema });
 }
@@ -238,9 +235,7 @@ export function buildServiceHttp(
   url = process.env.DATABASE_SERVICE_ROLE_URL,
 ): AppHttpDb {
   if (!url) {
-    throw new Error(
-      "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
-    );
+    throw new Error(DB_URL_REQUIRED.service);
   }
   return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: appSchema });
 }

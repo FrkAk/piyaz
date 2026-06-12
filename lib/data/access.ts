@@ -13,6 +13,28 @@ import { executeRaw, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import type { ProjectListOrganization } from "@/lib/data/views";
 
+/** Gate columns shared by the interactive finder and the batch statement. */
+const taskGateColumns = {
+  id: tasks.id,
+  projectId: tasks.projectId,
+  title: tasks.title,
+  status: tasks.status,
+  files: tasks.files,
+  updatedAt: tasks.updatedAt,
+} as const;
+
+/** Project gate columns shared by the finder and the batch statement. */
+const projectGateColumns = {
+  id: projects.id,
+  organizationId: projects.organizationId,
+  title: projects.title,
+  identifier: projects.identifier,
+  description: projects.description,
+  status: projects.status,
+  categories: projects.categories,
+  updatedAt: projects.updatedAt,
+} as const;
+
 /** Slim task row returned by the membership gate. Only the columns callers read. */
 export type TaskAccessGate = Pick<
   Task,
@@ -62,16 +84,7 @@ export async function findProjectAccessTx(
   projectId: string,
 ): Promise<ProjectAccessRow | null> {
   const [projectRow] = await tx
-    .select({
-      id: projects.id,
-      organizationId: projects.organizationId,
-      title: projects.title,
-      identifier: projects.identifier,
-      description: projects.description,
-      status: projects.status,
-      categories: projects.categories,
-      updatedAt: projects.updatedAt,
-    })
+    .select(projectGateColumns)
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);
@@ -123,14 +136,7 @@ export async function findTaskAccessTx(
   taskId: string,
 ): Promise<TaskAccessGate | null> {
   const [row] = await tx
-    .select({
-      id: tasks.id,
-      projectId: tasks.projectId,
-      title: tasks.title,
-      status: tasks.status,
-      files: tasks.files,
-      updatedAt: tasks.updatedAt,
-    })
+    .select(taskGateColumns)
     .from(tasks)
     .where(eq(tasks.id, taskId))
     .limit(1);
@@ -149,14 +155,7 @@ export async function findTaskAccessTx(
  */
 export function taskAccessGateStmt(read: ReadConn, taskId: string) {
   return read
-    .select({
-      id: tasks.id,
-      projectId: tasks.projectId,
-      title: tasks.title,
-      status: tasks.status,
-      files: tasks.files,
-      updatedAt: tasks.updatedAt,
-    })
+    .select(taskGateColumns)
     .from(tasks)
     .where(eq(tasks.id, taskId))
     .limit(1);
@@ -175,16 +174,7 @@ export function taskAccessGateStmt(read: ReadConn, taskId: string) {
  */
 export function projectAccessGateStmt(read: ReadConn, projectId: string) {
   return read
-    .select({
-      id: projects.id,
-      organizationId: projects.organizationId,
-      title: projects.title,
-      identifier: projects.identifier,
-      description: projects.description,
-      status: projects.status,
-      categories: projects.categories,
-      updatedAt: projects.updatedAt,
-    })
+    .select(projectGateColumns)
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);

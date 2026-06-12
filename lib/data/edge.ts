@@ -301,6 +301,29 @@ export function projectEdgesStmt(read: ReadConn, projectId: string) {
 }
 
 /**
+ * Every `depends_on` edge in a project, as a lazy batch statement — the
+ * graph-substrate twin of {@link projectEdgesStmt} with the edge-type
+ * filter owned by the statement (as `listDependsOnEdges` does on the
+ * interactive path), so graph consumers cannot forget it.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project.
+ * @returns Lazy select yielding `depends_on` edge endpoint rows.
+ */
+export function projectDependsOnEdgesStmt(read: ReadConn, projectId: string) {
+  return read
+    .select({
+      sourceTaskId: taskEdges.sourceTaskId,
+      targetTaskId: taskEdges.targetTaskId,
+    })
+    .from(taskEdges)
+    .innerJoin(tasks, eq(taskEdges.sourceTaskId, tasks.id))
+    .where(
+      and(eq(tasks.projectId, projectId), eq(taskEdges.edgeType, "depends_on")),
+    );
+}
+
+/**
  * Fetch every `depends_on` edge whose source task is in the supplied
  * id set. Used by graph algorithms.
  *
