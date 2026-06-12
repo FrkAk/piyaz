@@ -168,7 +168,7 @@ Subagents inherit nothing from this session; the dispatch prompt is their whole 
 
 ## Failure handling
 
-`BLOCKED` from any phase is a failed attempt, with one exception: a phase that reports BLOCKED because the task is already at `done` or `cancelled` is not a failure — HOTL resolved the task underneath the run (e.g. approving mid-fix-rotation). Treat that as iteration complete: run *Surface + propagate* if it has not run, consume no failure budget, and move on. For every other BLOCKED:
+`BLOCKED` from any phase is a failed attempt, with one exception: a phase that reports BLOCKED because the task is already at `done` or `cancelled` is not a failure — HOTL resolved the task underneath the run (e.g. approving mid-fix-rotation). Treat that as iteration complete: run *Surface + propagate* if it has not run, consume no failure budget, and move on. A second exception: `STATUS: BLOCKED — environmental: <error>` (gh auth expiry, rate limits, network) is an environment problem, not a work problem — surface it to the user verbatim and consume no failure budget; resume the same phase once the user confirms the environment is fixed. For every other BLOCKED:
 
 1. Keep the failure summary in your transcript. Do not write it to `decisions` — per artifacts §1 that field is CHOICE + WHY, not process metadata.
 2. Leave the task at its current status. Never roll back, never cancel.

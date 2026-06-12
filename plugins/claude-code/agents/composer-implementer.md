@@ -145,6 +145,8 @@ c. **PR body, template detection, taskRef bracket form, `gh pr create` syntax.**
 
 #### Success path
 
+Immediately before this write, re-read the task: `mymir_context depth='summary' taskId='<id>'`. If status is no longer `in_progress` (a human cancelled or edited the task underneath you), do not write. Report the observed status and exit with `STATUS: BLOCKED — status changed underneath: <status>`. This rule applies to every `in_review` write, including fix-mode step 7.
+
 One `mymir_task action='update'` call carrying the full Completion Protocol payload, append-only. Field shape, content rules, and AC evaluation semantics: lifecycle §2. Pass `prUrl` whenever a PR was opened (the dominant case); the backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR.
 
 ```
@@ -186,10 +188,15 @@ When the dispatch says fix mode, the reviewer requested changes on your PR and t
 1. `mymir_context depth='agent' taskId='<id>'`. Confirm status is `in_review` and the PR matches the dispatch URL. Anything else: report the mismatch and exit with `STATUS: BLOCKED`.
 2. `mymir_task action='update' taskId='<id>' status='in_progress'`. This is the fix-rotation claim.
 3. Check out the existing branch (`gh pr view <url> --json headRefName`); never create a new branch or PR.
-4. Address **exactly the blocking findings in the dispatch**. No replanning, no scope expansion, no drive-by refactors. A finding you believe is wrong: do not silently skip it; note your reasoning in the return message and fix the rest.
-5. Re-run the full verification suite (typecheck, lint, tests) until green, push to the same branch.
-6. Re-mark `in_review` with an updated Completion Protocol payload (append a one-line `executionRecord` delta describing the fix; re-evaluate only the ACs the findings touched).
-7. Return: `<taskRef> fix rotation complete. PR <url>. <one line per finding: addressed or contested>.` plus the STATUS line per the success/failure paths above.
+4. Inspect the branch for foreign commits: compare the PR's commit authors (`gh pr view <url> --json commits --jq '.commits[].authors[].login'`) against your own identity (`git config user.name` and the login you push as). Foreign commits found: note them verbatim in your return message and re-evaluate ALL acceptance criteria in step 7, not only the ACs the findings touched — someone else's edits may have moved ground under criteria you previously satisfied.
+5. Address **exactly the blocking findings in the dispatch**. No replanning, no scope expansion, no drive-by refactors. A finding you believe is wrong: do not silently skip it; note your reasoning in the return message and fix the rest.
+6. Re-run the full verification suite (typecheck, lint, tests) until green, push to the same branch.
+7. Re-mark `in_review` with an updated Completion Protocol payload (append a one-line `executionRecord` delta describing the fix; re-evaluate only the ACs the findings touched, or all ACs when step 4 found foreign commits).
+8. Return: `<taskRef> fix rotation complete. PR <url>. <one line per finding: addressed or contested>.` plus the STATUS line per the success/failure paths above.
+
+## Environmental failures
+
+When a `gh` call fails for environmental reasons — auth expiry (`gh auth status` failing, 401s), rate limiting, network errors — the work is not at fault. One immediate retry is fine; if it persists, stop and return `STATUS: BLOCKED — environmental: <exact error text>`. The orchestrator surfaces environmental failures to the user without consuming the failure budget; mislabeling a real verification failure as environmental hides broken work, so use this only for errors the environment alone can fix.
 
 ## What this phase does not do
 
