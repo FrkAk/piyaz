@@ -31,12 +31,46 @@ interface JsonSchemaObject {
 }
 
 /**
+ * Replace em/en-dashes in prose with commas or hyphens, leaving code intact.
+ * Fenced code blocks and inline code spans are preserved verbatim so docs
+ * generated from product strings satisfy the no-dash content style rule.
+ * @param text - Markdown or prose, possibly containing code.
+ * @returns Text with prose dashes normalized and code untouched.
+ */
+export function normalizeProseDashes(text: string): string {
+  const lines = text.split("\n");
+  let inFence = false;
+  return lines
+    .map((line) => {
+      if (line.trimStart().startsWith("```")) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      const segments = line.split(/(`[^`]*`)/);
+      return segments
+        .map((seg) =>
+          seg.startsWith("`") && seg.endsWith("`")
+            ? seg
+            : seg
+                .replace(/(\d)\s*–\s*(\d)/g, "$1-$2")
+                .replace(/\s*—\s*/g, ", ")
+                .replace(/\s*–\s*/g, ", ")
+                .replace(/ ,/g, ","),
+        )
+        .join("");
+    })
+    .join("\n");
+}
+
+/**
  * Escape characters MDX would parse as JSX in prose positions.
  * @param text - Raw prose.
  * @returns Prose safe to embed in MDX body text.
  */
 function escapeProse(text: string): string {
-  return text.replaceAll("<", "&lt;").replaceAll("{", "&#123;");
+  const normalized = normalizeProseDashes(text);
+  return normalized.replaceAll("<", "&lt;").replaceAll("{", "&#123;");
 }
 
 /**
@@ -193,12 +227,13 @@ export function transformReference(raw: string, file: string): string {
   const lines = raw.split("\n");
   const titleIndex = lines.findIndex((l) => l.startsWith("# "));
   if (titleIndex === -1) throw new Error(`no h1 in ${file}`);
-  const title = lines[titleIndex].slice(2).trim();
+  const title = normalizeProseDashes(lines[titleIndex].slice(2).trim());
   const body = lines.slice(titleIndex + 1).join("\n").trim();
   const linked = body.replace(
     /`references\/(conventions|artifacts|lifecycle|resilience)\.md`/g,
     "[`references/$1.md`](/docs/reference/$1/)",
   );
+  const normalizedBody = normalizeProseDashes(linked);
   return `---
 title: ${title}
 description: ${yamlQuote(ref.description)}
@@ -216,7 +251,7 @@ ${GENERATED_NOTE}
 
 # ${title}
 
-${linked}
+${normalizedBody}
 `;
 }
 

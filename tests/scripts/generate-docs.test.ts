@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import {
+  normalizeProseDashes,
   parseActions,
   renderCatalog,
   renderToolPage,
@@ -90,5 +91,42 @@ describe("renderCatalog", () => {
     expect(out).toContain("### /mymir:composer");
     expect(out).toContain("## Agents");
     expect(out).not.toMatch(/<PR/);
+  });
+});
+
+describe("normalizeProseDashes", () => {
+  test("replaces a spaced em-dash with a comma", () => {
+    expect(normalizeProseDashes("renders X — use BEFORE coding")).toBe(
+      "renders X, use BEFORE coding",
+    );
+  });
+
+  test("replaces a tight em-dash with a comma and space", () => {
+    expect(normalizeProseDashes("a—b")).toBe("a, b");
+  });
+
+  test("turns a numeric en-dash range into a hyphen", () => {
+    expect(normalizeProseDashes("estimate 3–5 points")).toBe(
+      "estimate 3-5 points",
+    );
+  });
+
+  test("preserves dashes inside an inline code span", () => {
+    expect(normalizeProseDashes("use `a — b` verbatim")).toBe(
+      "use `a — b` verbatim",
+    );
+  });
+
+  test("preserves dashes inside a fenced code block", () => {
+    const input = "before\n```\nfoo — bar\n3–5\n```\nafter — end";
+    expect(normalizeProseDashes(input)).toBe(
+      "before\n```\nfoo — bar\n3–5\n```\nafter, end",
+    );
+  });
+
+  test("leaves dash-free prose unchanged", () => {
+    expect(normalizeProseDashes("draft → planned → done")).toBe(
+      "draft → planned → done",
+    );
   });
 });
