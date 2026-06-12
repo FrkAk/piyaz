@@ -72,6 +72,7 @@ Once per session, before the first iteration:
 1. **Resolve the project.** `mymir_project action='list'` → `action='select' projectId='...'`. Single-task mode: also `mymir_query type='search' query='<taskRef>'` to resolve the task UUID and current status.
 2. **Read meta.** `mymir_query type='meta'`. Keep the categories and tag vocabulary for researcher dispatches; drop the status counts.
 3. **Stale-claim sweep.** Scan the project's task list (`mymir_query type='list'`) for tasks already at `in_progress`. These are possible stale claims from dead sessions; surface them in the first pick rationale so the user sees them before the run commits elsewhere.
+4. **Init the run log.** `mkdir -p .mymir` and guard the gitignore (`grep -qxF '.mymir/' .gitignore 2>/dev/null || echo '.mymir/' >> .gitignore` — the resilience §3 pattern). If `.mymir/composer-<projectIdentifier>.md` already exists and ends with a `RUN_END` line, archive it to `.mymir/archive/composer-<projectIdentifier>-<date>.md` and start fresh; if it exists *without* a `RUN_END`, that is a resume signal — see *Recovering after compaction* before doing anything else. Then append `RUN_START`.
 
 Then start iterating. There is nothing to install and nothing to confirm.
 
@@ -170,6 +171,47 @@ digraph composer_iteration {
 7. **Surface + propagate.** Quote the final verdict block verbatim. Then propagate per lifecycle §3: `mymir_query type='edges' taskId='<id>'`, `mymir_analyze type='downstream' taskId='<id>'`; update or retire edge notes the work invalidated (edge-note shape: artifacts §3 — one to three short sentences addressed to the downstream task's agent). Propagation depth follows the verdict: on `approve`, propagate fully. On an escalated `request-changes` or `block`, write edge-note updates as provisional — prefix each with `Provisional pending HOTL on PR #<n>:` — because HOTL may reject the work; the HOTL `done` flip (outside composer, as today) is the trigger for firming them up. Surface newly-unblocked tasks in the next pick rationale.
 
 8. **Loop.** Single-task: report the iteration outcome and stop. Backlog: next iteration, no pause.
+
+## Run log
+
+The run log is composer's crash-safe memory: a pure append-only event log at `.mymir/composer-<projectIdentifier>.md`, one active file per project. The conversation can compact; the log does not. Counters are never tracked as state — they derive by grep over events: rotations used on task X = count of `FIX task=X` lines; failed attempts = count of `FAIL task=X` lines.
+
+One timestamped line per event, `key=value` pairs; multi-line payloads (blocking findings verbatim, gate questions and answers, failure summaries, DONE_WITH_CONCERNS text) follow as `> ` continuation lines. The event vocabulary:
+
+| Event | Written when |
+| --- | --- |
+| `RUN_START` | bootstrap completes (`mode=backlog\|single\|rework project=<identifier>`) |
+| `PICK` | step 1 emits the pick rationale |
+| `PHASE` | a phase subagent returns (`phase=research\|plan\|implement status=<STATUS>`) |
+| `GATE` | a `NEEDS_DECISION` gate resolves — user answer or headless skip; question and answer as continuations |
+| `VERDICT` | the reviewer returns (`verdict=<v> rotation=<used>/2`; blocking findings as continuations) |
+| `FIX` | **before** dispatching a fix rotation (`rotation=<n>/2 pr=<url>`) |
+| `ESCALATE` | rotations exhausted or a `block` verdict goes to HOTL |
+| `SURFACED` | the final verdict is quoted to the user |
+| `PROPAGATED` | step 7 propagation completes (`edges=<n> unblocked=<refs>`) |
+| `FAIL` | a phase returns BLOCKED (failure summary as continuation) |
+| `TASK_END` | the iteration ends (`outcome=in_review\|planned\|stuck\|skipped rotations=<n>`) |
+| `RESUME` | recovery appends this after reading the log |
+| `RUN_END` | any stop condition (`reason=<...> picked=<n> shipped=<n> stuck=<n> skipped=<n>`) |
+
+The `FIX` line is written *before* the rotation dispatch — increment-before-dispatch is crash-safe: a crash mid-rotation wastes at most one rotation and never exceeds the budget. Format example:
+
+```
+2026-06-12T14:01:09Z RUN_START mode=backlog project=RZE
+2026-06-12T14:01:31Z PICK task=RZE-42 prio=core est=5 critical=yes — auth middleware; unblocks RZE-44,RZE-45
+2026-06-12T14:05:44Z PHASE task=RZE-42 phase=plan status=DONE verified=planned
+2026-06-12T14:31:02Z PHASE task=RZE-42 phase=implement status=DONE pr=<url>
+2026-06-12T14:39:18Z VERDICT task=RZE-42 verdict=request-changes rotation=0/2
+> blocking: src/auth/refresh.ts:88 catch swallows token-expiry; AC3 unmet
+2026-06-12T14:39:20Z FIX task=RZE-42 rotation=1/2 pr=<url>
+2026-06-12T14:58:30Z VERDICT task=RZE-42 verdict=approve rotation=1/2
+2026-06-12T14:58:55Z SURFACED task=RZE-42 verdict=approve
+2026-06-12T14:59:40Z PROPAGATED task=RZE-42 edges=2 unblocked=RZE-44,RZE-45
+2026-06-12T14:59:41Z TASK_END task=RZE-42 outcome=in_review rotations=1
+2026-06-12T16:40:12Z RUN_END reason=backlog-drained picked=3 shipped=1 stuck=1 skipped=1
+```
+
+If `.mymir/` is not writable (sandboxed runs), fall back to whatever directory is writable and name the chosen path in your first report; if no local write is possible at all, run without the log and say so — the run loses crash recovery, not correctness.
 
 ## Dispatch hygiene
 
