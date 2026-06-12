@@ -51,7 +51,8 @@ export type TaskFetchDepth =
   | "working"
   | "planning"
   | "agent"
-  | "review";
+  | "review"
+  | "record";
 
 /**
  * Per-depth projection plan. Each flag gates one droppable `tasks` column or
@@ -76,6 +77,10 @@ type DepthProjection = {
  * are omitted at every depth (no formatter reads them). `implementationPlan`
  * is true for `summary` because `buildSummaryContext` reads its presence
  * (`hasImplementationPlan`) even though it never renders the plan text.
+ * `record` serves the retrospective bundle for done/cancelled tasks: it keeps
+ * executionRecord, files, links, decisions, and criteria, and drops
+ * `implementationPlan` (often the largest column) and assignees because the
+ * record bundle never renders them.
  *
  * Invariant: `agent` must keep every flag `planning` and `working` keep —
  * `resolveContextBundle` fetches once at `agent` depth and feeds all three
@@ -125,6 +130,16 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   review: {
     tags: true,
     implementationPlan: true,
+    executionRecord: true,
+    files: true,
+    assignees: false,
+    acceptanceCriteria: true,
+    decisions: true,
+    links: true,
+  },
+  record: {
+    tags: true,
+    implementationPlan: false,
     executionRecord: true,
     files: true,
     assignees: false,
