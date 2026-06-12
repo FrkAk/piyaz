@@ -46,7 +46,7 @@ export const LIMITS = {
 // toward the right rule rather than restating it.
 // ---------------------------------------------------------------------------
 
-/** Tool descriptions shared between MCP and web app. */
+/** Tool descriptions shared between the MCP server and the docs generator. */
 export const DESCRIPTIONS = {
   mymir_project:
     "List, create, and update projects, plus enumerate team memberships. Spans every team the caller belongs to; no server-side session state, so pass projectId explicitly on every downstream call. " +

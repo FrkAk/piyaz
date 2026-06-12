@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import {
+  escapeProse,
   normalizeProseDashes,
   parseActions,
   renderCatalog,
@@ -131,6 +132,18 @@ describe("normalizeProseDashes", () => {
   test("leaves dash-free prose unchanged", () => {
     expect(normalizeProseDashes("draft → planned → done")).toBe(
       "draft → planned → done",
+    );
+  });
+});
+
+describe("escapeProse", () => {
+  test("escapes JSX-hostile characters in prose", () => {
+    expect(escapeProse("Array<T> and {x}")).toBe("Array&lt;T> and &#123;x}");
+  });
+
+  test("leaves < and { inside an inline code span verbatim", () => {
+    expect(escapeProse("see `Array<T>` and `{x}`")).toBe(
+      "see `Array<T>` and `{x}`",
     );
   });
 });

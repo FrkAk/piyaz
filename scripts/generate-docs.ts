@@ -68,12 +68,20 @@ export function normalizeProseDashes(text: string): string {
 
 /**
  * Escape characters MDX would parse as JSX in prose positions.
+ * Inline code spans are left verbatim: backticked text is literal in MDX, so
+ * escaping `<` or `{` inside it would render the entity instead of the source.
  * @param text - Raw prose.
  * @returns Prose safe to embed in MDX body text.
  */
-function escapeProse(text: string): string {
-  const normalized = normalizeProseDashes(text);
-  return normalized.replaceAll("<", "&lt;").replaceAll("{", "&#123;");
+export function escapeProse(text: string): string {
+  return normalizeProseDashes(text)
+    .split(/(`[^`]*`)/)
+    .map((seg) =>
+      seg.startsWith("`") && seg.endsWith("`")
+        ? seg
+        : seg.replaceAll("<", "&lt;").replaceAll("{", "&#123;"),
+    )
+    .join("");
 }
 
 /**
