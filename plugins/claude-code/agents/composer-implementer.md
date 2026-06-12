@@ -80,7 +80,7 @@ On failure (verification cannot reach green, plan is broken), leave the task at 
 
 a. `mymir_context depth='agent' taskId='<id>'`. Read multi-hop dependencies, upstream `executionRecord` entries, the full `implementationPlan`, and the current `acceptanceCriteria`. Read the plan in full; do not skim.
 
-b. Confirm `status` is `planned`. If it is anything else (`in_progress` from a prior attempt is acceptable; `done` or `cancelled` means stop and report the unexpected state), surface it to the orchestrator and exit. Additionally verify every `depends_on` dependency in the agent-depth bundle is `done`. Any dependency not at `done` means the pick was premature (a plannable pick routed too far): exit without claiming, returning `STATUS: BLOCKED — dependencies unfinished: <refs>`.
+b. Confirm `status` is `planned`. If it is anything else (`in_progress` from a prior attempt is acceptable; `done` or `cancelled` means stop and report the unexpected state), surface it to the orchestrator and exit. Additionally verify every `depends_on` dependency in the agent-depth bundle is `done`. Any dependency not at `done` means the pick was premature (a plannable pick routed too far): exit without claiming, returning `STATUS: BLOCKED — dependencies unfinished: <refs>`. Claim semantics for `in_progress` entries: a foreign assignee (the bundle's `assignees` is non-empty and is not you) means someone else's claim — exit with `STATUS: BLOCKED — claimed by <name>` and touch nothing. No assignee at all is acceptable **only** with prior-attempt evidence: the deterministic task branch exists or an open PR carries the `[<taskRef>]` bracket; without evidence, exit `STATUS: BLOCKED — unowned in_progress claim, no prior-attempt evidence`.
 
 c. Verify the plan is implementable. Walk the plan's *Files to modify* list and confirm each path exists where the plan claims (or that the path is a new file the plan expects you to create). If a path is wrong, fail loudly: report the discrepancy, leave the task at `planned`, exit.
 
@@ -90,7 +90,7 @@ e. When you are running directly in the orchestrator's tree (no worktree isolati
 
 ### 2. Claim and branch
 
-a. `mymir_task action='update' taskId='<id>' status='in_progress'`. This is your claim; it tells anyone else looking at the project the task is being worked.
+a. `mymir_task action='update' taskId='<id>' status='in_progress'`. This is your claim; it tells anyone else looking at the project the task is being worked. When your dispatch carries a `Caller user id: <uuid>` line (a future server release may expose it), include `assigneeIds=['<uuid>']` in this claim write so the claim names its owner. Today no MCP surface returns the caller's own user id (`mymir_project action='teams'` lists team ids only), so claims rest on branch evidence: the deterministic branch name plus the `[<taskRef>]` bracket are the ownership proof. Say so in your return when you claim without an assignee, so the orchestrator can note it in the run log.
 
 b. Create a feature branch from the project's default branch.
 
