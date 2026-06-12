@@ -168,7 +168,8 @@ const shared: SharedGroup[] = [
   },
   {
     name: "skills/composer/references/reviewer-rules.md",
-    canonical: "plugins/claude-code/skills/composer/references/reviewer-rules.md",
+    canonical:
+      "plugins/claude-code/skills/composer/references/reviewer-rules.md",
     copies: [
       "plugins/codex/skills/composer/references/reviewer-rules.md",
       "plugins/cursor/skills/composer/references/reviewer-rules.md",
@@ -353,13 +354,13 @@ function checkExtractPins(fixMode: boolean): {
   failures: number;
   changes: number;
 } {
-  if (!existsSync(extractPinsPath)) {
-    console.error(`[missing pins] ${extractPinsPath}`);
+  let pinFile: ExtractPins;
+  try {
+    pinFile = JSON.parse(readFileSync(extractPinsPath, "utf8")) as ExtractPins;
+  } catch {
+    console.error(`[missing pins] ${extractPinsPath} (absent or unreadable)`);
     return { failures: 1, changes: 0 };
   }
-  const pinFile = JSON.parse(
-    readFileSync(extractPinsPath, "utf8"),
-  ) as ExtractPins;
   let failures = 0;
   let changes = 0;
   for (const [path, pinned] of Object.entries(pinFile.pins)) {
