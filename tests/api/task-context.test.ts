@@ -1,10 +1,7 @@
 import { test, expect, afterEach, spyOn } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import {
-  seedRichContextTask,
-  normalizeContextGolden,
-} from "@/tests/context/fixtures";
+import { seedRichContextTask } from "@/tests/context/fixtures";
 import { superuserPool } from "@/tests/setup/global";
 import { GET } from "@/app/api/task/[taskId]/context/route";
 import * as taskData from "@/lib/data/task";
@@ -14,6 +11,7 @@ import { makeAuthContext } from "@/lib/auth/context";
 import { buildAgentContext } from "@/lib/context/_core/agent";
 import { buildPlanningContext } from "@/lib/context/_core/planning";
 import { buildWorkingContext } from "@/lib/context/_core/working";
+import type { BundlePart } from "@/lib/context/parts";
 
 const setSession = (
   globalThis as unknown as {
@@ -41,33 +39,30 @@ async function addTask(projectId: string, suffix: string): Promise<string> {
 }
 
 /**
- * Fetch the `{ agent, planning, working }` payload for a seeded task as the
- * given owner.
+ * Fetch one bundle's sections for a seeded task as the given user.
  *
  * @param taskId - UUID of the task.
- * @param userId - Owner user id.
- * @returns The parsed bundle payload.
+ * @param userId - Caller user id.
+ * @param kind - Bundle kind query param (omit to test validation).
+ * @returns The raw Response.
  */
-async function fetchBundle(
+async function getContext(
   taskId: string,
   userId: string,
-): Promise<{ agent: string; planning: string; working: string }> {
+  kind?: string,
+): Promise<Response> {
   setSession({ user: { id: userId } });
-  const res = await GET(new Request(`http://test/api/task/${taskId}/context`), {
+  const qs = kind === undefined ? "" : `?bundle=${kind}`;
+  return GET(new Request(`http://test/api/task/${taskId}/context${qs}`), {
     params: Promise.resolve({ taskId }),
   });
-  expect(res.status).toBe(200);
-  return (await res.json()) as {
-    agent: string;
-    planning: string;
-    working: string;
-  };
 }
 
-test("GET /api/task/[id]/context — 401 when unauthenticated", async () => {
+test("GET context — 401 when unauthenticated", async () => {
+  setSession(null);
   const res = await GET(
     new Request(
-      "http://test/api/task/00000000-0000-0000-0000-000000000000/context",
+      "http://test/api/task/00000000-0000-0000-0000-000000000000/context?bundle=agent",
     ),
     {
       params: Promise.resolve({
@@ -78,55 +73,69 @@ test("GET /api/task/[id]/context — 401 when unauthenticated", async () => {
   expect(res.status).toBe(401);
 });
 
-test("GET /api/task/[id]/context — 404 for cross-team task access", async () => {
+test("GET context — 400 on missing or unknown bundle kind", async () => {
+  const f = await seedUserOrgProject("ctx-badkind");
+  const taskId = await addTask(f.projectId, "ctx-badkind");
+  expect((await getContext(taskId, f.userId)).status).toBe(400);
+  expect((await getContext(taskId, f.userId, "execution")).status).toBe(400);
+});
+
+test("GET context — 404 for cross-team task access", async () => {
   const owner = await seedUserOrgProject("ctx-owner");
   const stranger = await seedUserOrgProject("ctx-stranger");
   const taskId = await addTask(owner.projectId, "ctx-cross");
-
-  setSession({ user: { id: stranger.userId } });
-  const res = await GET(new Request(`http://test/api/task/${taskId}/context`), {
-    params: Promise.resolve({ taskId }),
-  });
-  expect(res.status).toBe(404);
+  expect((await getContext(taskId, stranger.userId, "agent")).status).toBe(404);
 });
 
-test("GET /api/task/[id]/context — 200 with body and ETag for the owner", async () => {
-  const f = await seedUserOrgProject("ctx-200");
-  const taskId = await addTask(f.projectId, "ctx-ok");
+test("GET context — 400 for record on a non-terminal task", async () => {
+  const fx = await seedRichContextTask("ctx-record-nonterminal");
+  expect((await getContext(fx.taskId, fx.userId, "record")).status).toBe(400);
+});
 
-  setSession({ user: { id: f.userId } });
-  const res = await GET(new Request(`http://test/api/task/${taskId}/context`), {
-    params: Promise.resolve({ taskId }),
-  });
-
+test("GET context — record returns sections for a done task", async () => {
+  const fx = await seedRichContextTask("ctx-record-done-route");
+  const sql = superuserPool();
+  try {
+    await sql`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+  const res = await getContext(fx.taskId, fx.userId, "record");
   expect(res.status).toBe(200);
-  expect(res.headers.get("ETag")).toMatch(/^"\d+"$/);
-  const body = (await res.json()) as {
-    agent: string;
-    planning: string;
-    working: string;
-  };
-  expect(typeof body.agent).toBe("string");
-  expect(typeof body.planning).toBe("string");
-  expect(typeof body.working).toBe("string");
+  const body = (await res.json()) as { sections: BundlePart[] };
+  expect(body.sections.map((s) => s.id)).toContain("execution");
 });
 
-test("GET /api/task/[id]/context — 304 when If-None-Match matches", async () => {
+test("GET context — per-kind section shape and joined-markdown parity", async () => {
+  const fx = await seedRichContextTask("ctx-kinds");
+  for (const kind of ["working", "planning", "agent", "review"] as const) {
+    const res = await getContext(fx.taskId, fx.userId, kind);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sections: BundlePart[] };
+    expect(body.sections.length).toBeGreaterThan(0);
+    for (const s of body.sections) {
+      expect(typeof s.id).toBe("string");
+      expect(typeof s.markdown).toBe("string");
+    }
+  }
+  const agentRes = await getContext(fx.taskId, fx.userId, "agent");
+  const agent = (await agentRes.json()) as { sections: BundlePart[] };
+  const joined = agent.sections.map((s) => s.markdown).join("\n\n");
+  expect(joined).toBe(
+    await buildAgentContext(makeAuthContext(fx.userId), fx.taskId),
+  );
+});
+
+test("GET context — 304 when If-None-Match matches", async () => {
   const f = await seedUserOrgProject("ctx-304");
   const taskId = await addTask(f.projectId, "ctx-304");
-
-  setSession({ user: { id: f.userId } });
-
-  const first = await GET(
-    new Request(`http://test/api/task/${taskId}/context`),
-    { params: Promise.resolve({ taskId }) },
-  );
+  const first = await getContext(taskId, f.userId, "working");
   expect(first.status).toBe(200);
   const etag = first.headers.get("ETag");
   expect(etag).toBeTruthy();
-
+  setSession({ user: { id: f.userId } });
   const conditional = await GET(
-    new Request(`http://test/api/task/${taskId}/context`, {
+    new Request(`http://test/api/task/${taskId}/context?bundle=working`, {
       headers: { "If-None-Match": etag! },
     }),
     { params: Promise.resolve({ taskId }) },
@@ -136,25 +145,13 @@ test("GET /api/task/[id]/context — 304 when If-None-Match matches", async () =
   expect(await conditional.text()).toBe("");
 });
 
-test("GET /api/task/[id]/context — golden bundle for a fully-populated task", async () => {
-  const fx = await seedRichContextTask("ctx-golden");
-  const body = await fetchBundle(fx.taskId, fx.userId);
-
-  expect({
-    agent: normalizeContextGolden(body.agent, "ctx-golden"),
-    planning: normalizeContextGolden(body.planning, "ctx-golden"),
-    working: normalizeContextGolden(body.working, "ctx-golden"),
-  }).toMatchSnapshot();
-});
-
-test("GET /api/task/[id]/context — one full-task read and one traversal", async () => {
+test("GET context — one task read and one traversal per agent request", async () => {
   const fx = await seedRichContextTask("ctx-counts");
-
   const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
   const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
-
   try {
-    await fetchBundle(fx.taskId, fx.userId);
+    const res = await getContext(fx.taskId, fx.userId, "agent");
+    expect(res.status).toBe(200);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(traversalSpy).toHaveBeenCalledTimes(1);
   } finally {
@@ -163,23 +160,29 @@ test("GET /api/task/[id]/context — one full-task read and one traversal", asyn
   }
 });
 
-test("GET /api/task/[id]/context — validator path skips the full-task read", async () => {
-  const fx = await seedRichContextTask("ctx-validator");
+test("GET context — working kind issues no dependency traversal", async () => {
+  const fx = await seedRichContextTask("ctx-working-lean");
+  const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
+  try {
+    const res = await getContext(fx.taskId, fx.userId, "working");
+    expect(res.status).toBe(200);
+    expect(traversalSpy).toHaveBeenCalledTimes(0);
+  } finally {
+    traversalSpy.mockRestore();
+  }
+});
 
-  setSession({ user: { id: fx.userId } });
-  const first = await GET(
-    new Request(`http://test/api/task/${fx.taskId}/context`),
-    { params: Promise.resolve({ taskId: fx.taskId }) },
-  );
+test("GET context — validator path skips the full-task read", async () => {
+  const fx = await seedRichContextTask("ctx-validator");
+  const first = await getContext(fx.taskId, fx.userId, "agent");
   const etag = first.headers.get("ETag");
   expect(etag).toBeTruthy();
-
   const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
   const traversalSpy = spyOn(effectiveDeps, "loadBundleDeps");
-
   try {
+    setSession({ user: { id: fx.userId } });
     const conditional = await GET(
-      new Request(`http://test/api/task/${fx.taskId}/context`, {
+      new Request(`http://test/api/task/${fx.taskId}/context?bundle=agent`, {
         headers: { "If-None-Match": etag! },
       }),
       { params: Promise.resolve({ taskId: fx.taskId }) },

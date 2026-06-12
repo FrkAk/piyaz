@@ -14,19 +14,6 @@ test("record depth keeps the retrospective columns and drops the plan", () => {
   });
 });
 
-test("agent depth keeps every column planning and working read", () => {
-  const agent = DEPTH_PROJECTIONS.agent;
-  const flags = Object.keys(agent) as (keyof typeof agent)[];
-
-  for (const depth of ["planning", "working"] as const) {
-    for (const flag of flags) {
-      if (DEPTH_PROJECTIONS[depth][flag]) {
-        expect({ depth, flag, agentKeeps: agent[flag] }).toEqual({
-          depth,
-          flag,
-          agentKeeps: true,
-        });
-      }
-    }
-  }
+test("agent depth drops assignees (bundle no longer renders them)", () => {
+  expect(DEPTH_PROJECTIONS.agent.assignees).toBe(false);
 });

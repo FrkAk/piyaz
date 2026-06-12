@@ -1,39 +1,95 @@
 import { getAuthContext } from "@/lib/auth/context";
-import { ForbiddenError } from "@/lib/auth/authorization";
-import { getTaskProjectId } from "@/lib/data/task";
+import { ForbiddenError, assertTaskAccess } from "@/lib/auth/authorization";
 import { getProjectMaxUpdatedAt } from "@/lib/data/project";
-import { resolveContextBundle } from "@/lib/context/_core/bundle";
-import { buildAgentContextFrom } from "@/lib/context/_core/agent";
-import { buildPlanningContextFrom } from "@/lib/context/_core/planning";
+import {
+  resolveDependencyClosure,
+  resolvePlanningData,
+  resolveRecordData,
+  resolveReviewData,
+  resolveWorkingData,
+} from "@/lib/context/_core/bundle";
+import { buildAgentContextParts } from "@/lib/context/_core/agent";
+import { buildPlanningContextParts } from "@/lib/context/_core/planning";
+import { buildRecordContextParts } from "@/lib/context/_core/record";
+import { buildReviewContextParts } from "@/lib/context/_core/review";
 import {
   buildWorkingContextFrom,
-  formatWorkingContext,
+  formatWorkingContextParts,
 } from "@/lib/context/_core/working";
-import { withUserContext } from "@/lib/db/rls";
+import type { BundleKind, BundlePart } from "@/lib/context/parts";
+import { withUserContext, type Tx } from "@/lib/db/rls";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 
+/** The bundle kinds the route serves. */
+const BUNDLE_KINDS = [
+  "working",
+  "planning",
+  "agent",
+  "review",
+  "record",
+] as const;
+
 /**
- * Conditional handler for `GET` and `HEAD` on the per-task three-bundle
- * markdown payload (`agent`, `planning`, `working`). Replaces the legacy
- * POST `/api/project/[projectId]/context` endpoint — caller asserts task
- * access first (a missing or cross-team task surfaces as 404) and the URL
- * task id is the authoritative scope.
+ * Narrow a raw query-param value to a {@link BundleKind}.
  *
- * The validator path reads only the slim `projectId` gate, so HEAD/304
- * never pay for a full task. On a cache miss the task row and dependency
- * traversal are resolved once via {@link resolveContextBundle} and fed to
- * the three pure context cores.
+ * @param value - Raw `?bundle=` value.
+ * @returns Whether the value is a known bundle kind.
+ */
+function isBundleKind(value: string | null): value is BundleKind {
+  return value !== null && (BUNDLE_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * Resolve and assemble one bundle's structured sections. Each kind pays only
+ * for the data its builder renders — one task read at the kind's column
+ * projection, plus the dependency traversal only for closure-backed kinds.
  *
- * `Last-Modified` is the project-max validator (see
- * {@link getProjectMaxUpdatedAt}) — over-conservative but trivial to
- * compute, and bundle bytes are small enough that occasional false-positive
- * 200s don't matter.
+ * @param tx - Active RLS transaction handle.
+ * @param taskId - UUID of the task.
+ * @param kind - Bundle kind to build.
+ * @returns Ordered bundle parts.
+ * @throws ForbiddenError When the caller cannot access the task.
+ */
+async function buildSections(
+  tx: Tx,
+  taskId: string,
+  kind: BundleKind,
+): Promise<BundlePart[]> {
+  switch (kind) {
+    case "working":
+      return formatWorkingContextParts(
+        buildWorkingContextFrom(await resolveWorkingData(tx, taskId)),
+      );
+    case "planning":
+      return buildPlanningContextParts(await resolvePlanningData(tx, taskId));
+    case "agent":
+      return buildAgentContextParts(
+        await resolveDependencyClosure(tx, taskId, "agent"),
+      );
+    case "review":
+      return buildReviewContextParts(await resolveReviewData(tx, taskId));
+    case "record":
+      return buildRecordContextParts(await resolveRecordData(tx, taskId));
+  }
+}
+
+/**
+ * Conditional handler for `GET` and `HEAD` on the per-task bundle sections
+ * payload. `?bundle=<kind>` selects exactly one bundle; the response is
+ * `{ sections }` where each section is `{ id, heading, markdown }` and the
+ * MD view is the deterministic join. Missing/unknown kind → 400;
+ * `bundle=record` on a non-terminal task → 400.
+ *
+ * The validator path reads only the slim access gate, so HEAD/304 never pay
+ * for a full task. `Last-Modified` stays the project-max validator (see
+ * {@link getProjectMaxUpdatedAt}); the query param gives each kind its own
+ * client cache entry against the same validator.
  *
  * @param req - Incoming request.
  * @param taskId - Task UUID from the route params.
- * @returns 200 with `{ agent, planning, working }`, 304, 401, 404, or 500.
+ * @returns 200 with `{ sections }`, 304, 400, 401, 404, or 500.
  */
 async function handle(req: Request, taskId: string): Promise<Response> {
   let ctx;
@@ -43,27 +99,30 @@ async function handle(req: Request, taskId: string): Promise<Response> {
     return error("Unauthorized", 401);
   }
 
+  const kind = new URL(req.url).searchParams.get("bundle");
+  if (!isBundleKind(kind)) {
+    return error("Missing or unknown bundle kind", 400);
+  }
+
   try {
-    const projectId = await getTaskProjectId(ctx, taskId);
-    const max = await getProjectMaxUpdatedAt(ctx, projectId);
+    const gate = await assertTaskAccess(taskId, ctx);
+    if (
+      kind === "record" &&
+      gate.status !== "done" &&
+      gate.status !== "cancelled"
+    ) {
+      return error("record bundle requires a done or cancelled task", 400);
+    }
+    const max = await getProjectMaxUpdatedAt(ctx, gate.projectId);
 
     if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);
     }
 
-    const { agent, planning, workingRaw } = await withUserContext(
-      ctx.userId,
-      async (tx) => {
-        const bundle = await resolveContextBundle(tx, taskId);
-        return {
-          agent: buildAgentContextFrom(bundle),
-          planning: buildPlanningContextFrom(bundle),
-          workingRaw: buildWorkingContextFrom(bundle),
-        };
-      },
+    const sections = await withUserContext(ctx.userId, (tx) =>
+      buildSections(tx, taskId, kind),
     );
-    const working = await formatWorkingContext(workingRaw);
-    return conditionalRespond(req, { agent, planning, working }, max);
+    return conditionalRespond(req, { sections }, max);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return error("Task not found", 404);
@@ -73,7 +132,8 @@ async function handle(req: Request, taskId: string): Promise<Response> {
 }
 
 /**
- * GET handler — returns the three-bundle markdown payload for a task.
+ * GET handler — returns one bundle's structured sections for a task,
+ * selected by the `?bundle=<kind>` query param.
  * @param req - Incoming request.
  * @param params - Route params with taskId.
  * @returns JSON or conditional response.
@@ -87,7 +147,8 @@ export async function GET(
 }
 
 /**
- * HEAD handler — same auth + 304 logic as GET, never returns a body.
+ * HEAD handler — same auth + 304 logic as GET (including `?bundle=`
+ * validation), never returns a body.
  * @param req - Incoming request.
  * @param params - Route params with taskId.
  * @returns Empty response with `Last-Modified` header.

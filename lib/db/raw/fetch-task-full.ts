@@ -82,9 +82,9 @@ type DepthProjection = {
  * `implementationPlan` (often the largest column) and assignees because the
  * record bundle never renders them.
  *
- * Invariant: `agent` must keep every flag `planning` and `working` keep —
- * `resolveContextBundle` fetches once at `agent` depth and feeds all three
- * cores. Exported so the invariant test can pin this.
+ * Each depth is fetched independently by its own resolver (there is no
+ * shared superset fetch). Exported so the projection test can pin the
+ * per-depth flags.
  */
 export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   summary: {
@@ -122,7 +122,7 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
     implementationPlan: true,
     executionRecord: true,
     files: true,
-    assignees: true,
+    assignees: false,
     acceptanceCriteria: true,
     decisions: true,
     links: true,

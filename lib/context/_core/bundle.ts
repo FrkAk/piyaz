@@ -72,14 +72,6 @@ export type WorkingContextData = {
 };
 
 /**
- * The complete data union the three context cores read. Resolving this once
- * lets the route feed all three pure cores from a single task read and a
- * single dependency traversal. A wider object than any single core needs, so
- * it is structurally assignable to each narrower core parameter.
- */
-export type ContextBundle = PlanningContextData & WorkingContextData;
-
-/**
  * Resolve the shared dependency closure for a task in one task read and one
  * dependency/downstream traversal. The secondary closure lookups run in
  * parallel off that shared substrate. `getTaskForDepthTx` asserts access, so
@@ -213,59 +205,6 @@ export async function resolveWorkingData(
     getAncestors(taskId, tx),
   ]);
   return { task, detailedEdges, ancestors };
-}
-
-/**
- * Resolve the full {@link ContextBundle} for a task in one task read and one
- * dependency traversal, sharing every lookup across the three cores. Used by
- * the route, which feeds all three cores from this single bundle. Fetches at
- * `agent` depth, the column superset of the agent, planning, and working
- * cores, so one read serves all three.
- *
- * @param tx Active RLS transaction handle from a `withUserContext` frame.
- * @param taskId UUID of the task.
- * @returns The resolved bundle feeding all three context cores.
- * @throws ForbiddenError When the caller cannot access the task.
- */
-export async function resolveContextBundle(
-  tx: Tx,
-  taskId: string,
-): Promise<ContextBundle> {
-  const task = await getTaskForDepthTx(tx, taskId, "agent");
-  const { projectId } = task;
-
-  const [
-    { deps, downstream },
-    upstreamEdgeNotes,
-    project,
-    detailedEdges,
-    ancestors,
-    abandonedDeps,
-  ] = await Promise.all([
-    loadBundleDeps(projectId, taskId, 2, tx),
-    fetchEdgeNotesBySource(projectId, taskId, tx),
-    getProjectHeader(projectId, tx),
-    getTaskEdgesDetailedTx(tx, taskId),
-    getAncestors(taskId, tx),
-    fetchCancelledDepRecords(projectId, taskId, tx),
-  ]);
-
-  const [depTasks, downstreamEdgeNotes, downstreamSummaries] =
-    await resolveClosureSecondaries(tx, projectId, taskId, deps, downstream);
-
-  return {
-    task,
-    deps,
-    downstream,
-    upstreamEdgeNotes,
-    depTasks,
-    downstreamEdgeNotes,
-    downstreamSummaries,
-    project,
-    detailedEdges,
-    ancestors,
-    abandonedDeps,
-  };
 }
 
 /**
