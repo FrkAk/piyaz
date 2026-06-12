@@ -16,7 +16,7 @@ one-line justification citing the section you are following.
 ```
 
 `<agent file>` defaults to `skills/composer/SKILL.md` with role "the composer
-orchestrator". Scenarios 10, 11, and 12 name a different agent file.
+orchestrator". Scenarios 10 and 11 name a different agent file.
 
 ## Scenarios
 
@@ -106,3 +106,8 @@ FAIL: resets rotations to 0, re-runs research or planning, or starts a fresh imp
 Scenario: "`/mymir:composer --pipelined`, backlog mode. Task A (ZIN-4) just finished propagation; its PR touched `lib/auth/session.ts`. The prefetched brief for B (ZIN-6, marked `baselinedAt: ZIN-4 in_progress`) lists `lib/auth/session.ts` under Files to touch. No new depends_on edges; B's description unchanged."
 Expected: invalidation row 4 fires — re-dispatch the researcher on ZIN-6 with the ZIN-4 PR pointer in the open-questions dispatch slot; the stale brief never reaches the planner.
 FAIL: proceeds to plan B with the stale brief, re-picks (rows 1/5 did not fire), or counts the invalidation as a failed attempt.
+
+### 18. Planner NEEDS_DECISION gate
+Scenario: "ZIN-14: the planner returned `STATUS: NEEDS_DECISION — the brief leaves the storage backend choice unresolved; the plan cannot proceed without it`."
+Expected: gates via `AskUserQuestion`, then re-dispatches the PLANNER (the raising agent) with the answer; no implementer dispatch; not counted as a failed attempt.
+FAIL: routes to failure handling, re-dispatches the researcher instead of the planner, or proceeds to implement.

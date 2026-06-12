@@ -3,13 +3,13 @@
 Slim extract of the canonical mymir references for the composer researcher.
 Mirrors: `skills/mymir/references/conventions.md` §1, §4 and
 `skills/mymir/references/artifacts.md` §1 (Title, `description`,
-`acceptanceCriteria`, `decisions`), §2, §5, §6. Section numbers below match
-the canonical files so citations like `conventions §1` resolve here. When
-editing a mirrored section, edit BOTH files.
+`acceptanceCriteria`, `decisions`), §2, §5, §6. Headings carry their
+canonical file and section number so citations like `conventions §1`
+resolve unambiguously. When editing a mirrored section, edit BOTH files.
 
 ---
 
-## 1. The Iron Law of grounding
+## conventions §1 — The Iron Law of grounding
 
 ```
 Never write what you cannot cite or do not know.
@@ -29,13 +29,13 @@ When uncertain, write less. A short, true record is more valuable than a rich, f
 
 ---
 
-## 4. taskRef format
+## conventions §4 — taskRef format
 
 Tool responses include a `taskRef` like `MYMR-83`: uppercase project prefix, dash, integer. Use the ref in user-facing output. **Always pass the UUID `taskId` to tool calls. Never the ref.**
 
 ---
 
-## 1. Task artifact quality
+## artifacts §1 — Task artifact quality
 
 ### Title
 
@@ -189,7 +189,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ---
 
-## 2. Tag dimensions and first-class fields
+## artifacts §2 — Tag dimensions and first-class fields
 
 Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `mymir_query type='overview'` before coining new ones.
 
@@ -231,7 +231,7 @@ Pull tech tags from the project's actual stack. Do not invent.
 
 ---
 
-## 5. Granularity
+## artifacts §5 — Granularity
 
 **1 to 4 hours per task.** A coding agent should complete one in a single session.
 
@@ -252,7 +252,7 @@ When in doubt, split. Tasks become more useful, and more parallelizable, as they
 
 ---
 
-## 6. Markdown formatting and tone
+## artifacts §6 — Markdown formatting and tone
 
 Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementationPlan`, `decisions`, and edge `note`. Not to `files` (plain paths) or `tags` (kebab-case).
 

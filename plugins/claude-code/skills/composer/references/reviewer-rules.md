@@ -4,8 +4,9 @@ Slim extract of the canonical mymir references for the review agent.
 Mirrors: `skills/mymir/references/conventions.md` §1,
 `skills/mymir/references/lifecycle.md` §2.2, §2.3, §3, and
 `skills/mymir/references/artifacts.md` §1 (`executionRecord`,
-`decisions`), §6. Section numbers match the canonical files. When
-editing a mirrored section, edit BOTH files.
+`decisions`), §6. Headings carry their canonical file and section number
+so citations like `lifecycle §2.2` resolve unambiguously. When editing a
+mirrored section, edit BOTH files.
 
 The reviewer verifies the Completion Protocol was honored; it does not
 execute it. §2.2 and §2.3 below are what the implementer was required to
@@ -14,7 +15,7 @@ downstream-impact list.
 
 ---
 
-## 1. The Iron Law of grounding
+## conventions §1 — The Iron Law of grounding
 
 ```
 Never write what you cannot cite or do not know.
@@ -24,13 +25,13 @@ Applies wherever an agent generates `executionRecord`, `decisions`, `description
 
 ---
 
-## 2.2. Populate the required fields
+## lifecycle §2.2 — Populate the required fields
 
 `executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing.
 
 For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, `files=[]` is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
-## 2.3. Open a PR if the work changed code (what the implementer owed)
+## lifecycle §2.3 — Open a PR if the work changed code (what the implementer owed)
 
 If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Mymir-only refinement), the implementer must have opened a PR:
 
@@ -43,7 +44,7 @@ A missing PR on a code-changing task, a missing bracket ref, or a fabricated tem
 
 ---
 
-## 3. Propagate after every change (Iron Law)
+## lifecycle §3 — Propagate after every change (Iron Law)
 
 ```
 A change that does not propagate did not happen.
@@ -66,7 +67,7 @@ The reviewer does not execute propagation. Your downstream-impact list names the
 
 ---
 
-## 1. Task artifact quality
+## artifacts §1 — Task artifact quality
 
 ### `executionRecord` (only on `done` and `cancelled`)
 
@@ -94,7 +95,7 @@ Never invent. An implementer `decisions` entry that is not grounded in the diff,
 
 ---
 
-## 6. Markdown formatting and tone
+## artifacts §6 — Markdown formatting and tone
 
 Applies to everything you write into the verdict.
 

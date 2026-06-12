@@ -4,13 +4,14 @@ Slim extract of the canonical mymir references for the composer planner.
 Mirrors: `skills/mymir/references/conventions.md` §1,
 `skills/mymir/references/artifacts.md` §1 (`description`,
 `acceptanceCriteria`, `decisions`), §6, and
-`skills/mymir/references/lifecycle.md` §1 (Summary, `draft`, `planned`).
-Section numbers match the canonical files. When editing a mirrored
-section, edit BOTH files.
+`skills/mymir/references/lifecycle.md` §1 (Summary, `draft`, `planned`),
+§2.2 (Completion Protocol payload fields). Headings carry their canonical
+file and section number so citations like `lifecycle §2.2` resolve
+unambiguously. When editing a mirrored section, edit BOTH files.
 
 ---
 
-## 1. The Iron Law of grounding
+## conventions §1 — The Iron Law of grounding
 
 ```
 Never write what you cannot cite or do not know.
@@ -30,7 +31,7 @@ When uncertain, write less. A short, true record is more valuable than a rich, f
 
 ---
 
-## 1. Status lifecycle
+## lifecycle §1 — Status lifecycle
 
 ```
 draft → planned → in_progress → in_review → done
@@ -61,7 +62,17 @@ draft → planned → in_progress → in_review → done
 
 ---
 
-## 1. Task artifact quality
+## lifecycle §2.2 — Populate the required fields (Completion Protocol)
+
+`executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
+
+For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+
+(The planner pre-fills the plan's Completion Protocol template section against these field requirements; the implementer executes the full protocol from its own extract.)
+
+---
+
+## artifacts §1 — Task artifact quality
 
 ### `description`
 
@@ -147,7 +158,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ---
 
-## 6. Markdown formatting and tone
+## artifacts §6 — Markdown formatting and tone
 
 Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementationPlan`, `decisions`, and edge `note`. Not to `files` (plain paths) or `tags` (kebab-case).
 

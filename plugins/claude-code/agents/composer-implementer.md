@@ -113,9 +113,17 @@ b. Create a feature branch from the project's default branch.
    git fetch origin "+refs/heads/<branch-name>:refs/remotes/origin/<branch-name>" 2>/dev/null || true
    ```
 
-   Never hardcode `main`; projects differ.
+   Never hardcode `main`; projects differ. Shell state does not persist between your Bash tool calls: every later block that uses `$DEFAULT_BRANCH` re-derives it on its first line — keep those lines when you run the blocks separately.
 
-   **If the task branch already exists** (locally or on `origin`): do not create a new one. Verify it is yours first: `git log "origin/$DEFAULT_BRANCH"..<branch-name> --format='%s'` plus `gh pr list --head <branch-name> --json title,body` — the commits or the PR must reference this taskRef (the `[<taskRef>]` bracket form, or the taskRef in commit subjects). Yours: check it out and continue from where the prior attempt stopped (retries reuse the branch). Foreign (a different task or author squatting the deterministic name): fail loudly naming the conflict — `STATUS: BLOCKED — branch collision: <branch> carries <evidence>`. Suffixes stay forbidden; never mint `<branch>-2`.
+   **If the task branch already exists** (locally or on `origin`): do not create a new one. Verify it is yours first against the remote ref (the branch may exist only on `origin`; the bare local name will not resolve there):
+
+   ```bash
+   DEFAULT_BRANCH=${DEFAULT_BRANCH:-$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')}
+   git log "origin/$DEFAULT_BRANCH"..origin/<branch-name> --format='%s'
+   gh pr list --head <branch-name> --json title,body
+   ```
+
+   The commits or the PR must reference this taskRef (the `[<taskRef>]` bracket form, or the taskRef in commit subjects). Yours: check it out (`git checkout <branch-name>` when a local ref exists, else `git checkout -b <branch-name> origin/<branch-name>`) and continue from where the prior attempt stopped (retries reuse the branch). Foreign (a different task or author squatting the deterministic name): fail loudly naming the conflict — `STATUS: BLOCKED — branch collision: <branch> carries <evidence>`. Suffixes stay forbidden; never mint `<branch>-2`.
 
    **Otherwise**: `git checkout -b <branch-name>`.
 
@@ -146,6 +154,7 @@ Run, in order: `<typecheck command>`, `<lint command>`, `<test command>`. All th
 a. Merge the default branch forward, then push:
 
    ```bash
+   DEFAULT_BRANCH=${DEFAULT_BRANCH:-$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')}
    git fetch origin "$DEFAULT_BRANCH"
    git merge "origin/$DEFAULT_BRANCH"
    git push -u origin <branch-name>

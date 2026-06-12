@@ -121,7 +121,7 @@ When entry status was already `planned`, do **not** pass the `status` field at a
    - Manual checks: `<list, if any>`
 
    ## Completion Protocol payload (template)
-   <pre-fill what you can; the implementer evaluates and submits. Shape and field requirements: lifecycle §2.>
+   <pre-fill what you can; the implementer evaluates and submits. Shape and field requirements: lifecycle §2.2 (in your extract).>
 
    ## Open questions
    <anything the brief flagged plus anything that surfaced during planning; the implementer must escalate these before guessing.>

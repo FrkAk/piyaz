@@ -5,12 +5,13 @@ implementer. Mirrors: `skills/mymir/references/conventions.md` §1, §2,
 `skills/mymir/references/lifecycle.md` §1 (Summary, `in_progress`,
 `in_review`), §2 (entire Completion Protocol, 2.1–2.4), and
 `skills/mymir/references/artifacts.md` §1 (`executionRecord`,
-`decisions`, `files`), §6. Section numbers match the canonical files.
+`decisions`, `files`), §6. Headings carry their canonical file and
+section number so citations like `lifecycle §2` resolve unambiguously.
 When editing a mirrored section, edit BOTH files.
 
 ---
 
-## 1. The Iron Law of grounding
+## conventions §1 — The Iron Law of grounding
 
 ```
 Never write what you cannot cite or do not know.
@@ -28,7 +29,7 @@ When uncertain, write less. A short, true record is more valuable than a rich, f
 
 ---
 
-## 2. Tool descriptions and `_hints` are runtime instructions
+## conventions §2 — Tool descriptions and `_hints` are runtime instructions
 
 Every Mymir tool injects two things into your context at use time:
 
@@ -52,7 +53,7 @@ Skipping a hint is operating on stale information. A session that ignores hints 
 
 ---
 
-## 1. Status lifecycle
+## lifecycle §1 — Status lifecycle
 
 ```
 draft → planned → in_progress → in_review → done
@@ -85,7 +86,7 @@ draft → planned → in_progress → in_review → done
 
 ---
 
-## 2. Completion Protocol
+## lifecycle §2 — Completion Protocol
 
 Before transitioning a task to `in_review`, `done`, or `cancelled`:
 
@@ -167,7 +168,7 @@ When in doubt, ask the user before opening.
 
 ---
 
-## 1. Task artifact quality
+## artifacts §1 — Task artifact quality
 
 ### `executionRecord` (only on `done` and `cancelled`)
 
@@ -204,7 +205,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ---
 
-## 6. Markdown formatting and tone
+## artifacts §6 — Markdown formatting and tone
 
 Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementationPlan`, `decisions`, and edge `note`. Not to `files` (plain paths) or `tags` (kebab-case).
 

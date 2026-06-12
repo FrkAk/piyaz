@@ -58,7 +58,7 @@ Every subagent return ends with `STATUS: <value> — <one-line reason>`. Branch 
 | `NEEDS_DECISION` | A user decision is required | Gate via `AskUserQuestion`; act on the answer |
 | `BLOCKED` | Phase cannot complete | *Failure handling* |
 
-Expected `NEEDS_DECISION` triggers (all from the researcher):
+Expected `NEEDS_DECISION` triggers (typically from the researcher; any phase may raise one — gate the same way and re-dispatch the **raising agent** with the answers):
 
 - **Oversize** (`oversize-task` flag): offer to dispatch `mymir:decompose-task` or skip the task. Composer never splits a task itself.
 - **Proposed rewrites** (`## Proposed rewrites` non-empty): show original vs proposed per field with the researcher's rationale; offer accept / deny. On accept, apply via `mymir_task action='update'` and re-dispatch the researcher on the rewritten task (the old brief is invalid). On deny, end the iteration: backlog mode picks the next task; single-task mode stops.
@@ -75,7 +75,7 @@ Once per session, before the first iteration:
 1. **Resolve the project.** `mymir_project action='list'` → `action='select' projectId='...'`. Single-task mode: also `mymir_query type='search' query='<taskRef>'` to resolve the task UUID and current status.
 2. **Read meta.** `mymir_query type='meta'`. Keep the categories and tag vocabulary for researcher dispatches; drop the status counts.
 3. **Stale-claim sweep.** Scan the project's task list (`mymir_query type='list'`) for tasks already at `in_progress`. These are possible stale claims from dead sessions; surface them in the first pick rationale so the user sees them before the run commits elsewhere.
-4. **Init the run log.** `mkdir -p .mymir` and guard the gitignore (`grep -qxF '.mymir/' .gitignore 2>/dev/null || echo '.mymir/' >> .gitignore` — the resilience §3 pattern). If `.mymir/composer-<projectIdentifier>.md` already exists and ends with a `RUN_END` line, archive it to `.mymir/archive/composer-<projectIdentifier>-<date>.md` and start fresh; if it exists *without* a `RUN_END`, that is a resume signal — see *Recovering after compaction* before doing anything else. Then append `RUN_START`.
+4. **Init the run log.** `mkdir -p .mymir` and guard the gitignore (`grep -qxF '.mymir/' .gitignore 2>/dev/null || printf '\n.mymir/\n' >> .gitignore` — the resilience §3 pattern, with a leading newline so a `.gitignore` ending without one is not corrupted). If `.mymir/composer-<projectIdentifier>.md` already exists and ends with a `RUN_END` line, archive it to `.mymir/archive/composer-<projectIdentifier>-<date>.md` and start fresh; if it exists *without* a `RUN_END`, that is a resume signal — see *Recovering after compaction* before doing anything else. Exception: when the unfinished log's `RUN_START mode=` differs from this invocation (e.g. `rework` invoked over an interrupted backlog run), it is not a resume — append `RUN_END reason=superseded-by-<mode>`, archive it, and start fresh. Then append `RUN_START`.
 
 Then start iterating. There is nothing to install and nothing to confirm.
 
@@ -125,6 +125,7 @@ digraph composer_iteration {
     "Planner STATUS?" -> "Pick was plannable-only?" [label="DONE / DONE_WITH_CONCERNS"];
     "Pick was plannable-only?" -> "Dispatch implementer" [label="no"];
     "Pick was plannable-only?" -> "Single-task mode?" [label="yes: planned; deps unfinished"];
+    "Planner STATUS?" -> "Gate with user" [label="NEEDS_DECISION"];
     "Planner STATUS?" -> "Failure handling" [label="BLOCKED"];
     "Dispatch implementer" -> "Implementer STATUS?";
     "Implementer STATUS?" -> "CI gate: gh pr checks (10m bound)" [label="DONE / DONE_WITH_CONCERNS"];
@@ -158,7 +159,7 @@ digraph composer_iteration {
 
 4. **Implement.** First check the pick type: when the pick was plannable-only, do not enter this step — the iteration already ended at `planned` (step 3). Otherwise dispatch `mymir:composer-implementer` with: `Target task: <taskRef>. Plan is saved to Mymir; fetch via mymir_context depth='agent'. Claim the task (planned → in_progress), implement per the implementationPlan, open a PR, mark in_review per the Completion Protocol.` Append the prior failure summary on retries. The implementer runs worktree-isolated (frontmatter `isolation: worktree`; also pass the Task tool's `isolation: "worktree"` parameter at dispatch, which is verified to work with plugin agents): it works in its own tree, the orchestrator's tree never moves, and the researcher's baseline stays stable.
 
-5. **CI gate.** After the implementer returns DONE with a PR URL, watch the checks with a bounded timeout: `timeout 600 gh pr checks <url> --watch`. Skip the gate entirely when the repo has no checks configured (`gh pr checks` reports no checks — that is a skip, not a red). Branch on the result:
+5. **CI gate.** After the implementer returns DONE with a PR URL, watch the checks with a bounded timeout and branch on the **exit code**, never on truncated output: `timeout 600 gh pr checks <url> --watch; rc=$?`. `rc=0` → green. `rc=124` (timeout killed the watch mid-pending) or `rc=8` (gh's checks-pending code) → still pending. Any other non-zero `rc` → red; read the failing check names from the output. Skip the gate entirely when the repo has no checks configured (`gh pr checks` reports no checks — that is a skip, not a red). Branch on the result:
    - **Green**: dispatch the reviewer normally.
    - **Red**: dispatch the reviewer with the failing check names appended to the dispatch (`CI: failing — <check names>`); the reviewer may not approve red CI.
    - **Still pending at the 10-minute timeout**: dispatch the reviewer with `CI: unresolved after 10m`; `approve` is off the table, and an otherwise-clean review returns `request-changes` citing unresolved CI as the sole blocking finding.
@@ -194,12 +195,12 @@ Guardrails — force opus for the planner and implementer regardless of estimate
 - the estimate is 8, 13, or missing;
 - the dispatch is a fix-mode rotation;
 - the dispatch is any retry after a failure, or partial-success recovery;
-- the researcher returned `DONE_WITH_CONCERNS` with `security-boundary-uncovered`, `version-drift-major`, or `dep-mismatch`;
+- the researcher returned `DONE_WITH_CONCERNS` with `security-boundary-uncovered`, `version-drift-major`, or `dep-mismatch` (the risk-bearing flags; `missing-citation` and `ambiguous-criterion-unresolved` are quality notes and do not bump the model);
 - `priority='urgent'`.
 
 ## Run log
 
-The run log is composer's crash-safe memory: a pure append-only event log at `.mymir/composer-<projectIdentifier>.md`, one active file per project. The conversation can compact; the log does not. Counters are never tracked as state — they derive by grep over events: rotations used on task X = count of `FIX task=X` lines; failed attempts = count of `FAIL task=X` lines.
+The run log is composer's crash-safe memory: a pure append-only event log at `.mymir/composer-<projectIdentifier>.md`, one active file per project. The conversation can compact; the log does not. Counters are never tracked as state — they derive by grep over events **after the latest `RUN_START` line**, so earlier runs' events never leak into this run's budgets: rotations used on task X = count of `FIX task=X` lines; failed attempts = count of `FAIL task=X` lines.
 
 One timestamped line per event, `key=value` pairs; multi-line payloads (blocking findings verbatim, gate questions and answers, failure summaries, DONE_WITH_CONCERNS text) follow as `> ` continuation lines. The event vocabulary:
 
@@ -291,15 +292,15 @@ Subagents inherit nothing from this session; the dispatch prompt is their whole 
 
 1. Keep the failure summary in your transcript. Do not write it to `decisions` — per artifacts §1 that field is CHOICE + WHY, not process metadata.
 2. Leave the task at its current status. Never roll back, never cancel.
-3. Backlog mode: when the failure summary is transient-shaped (network hiccup, flaky test, dirty workspace state), retry the failed phase once with the failure summary appended; otherwise, or when the retry also fails, move to the next pick; the stuck task stays where it is for human triage. Single-task mode: retry the failed phase up to three total attempts on the task, appending each failure summary to the re-dispatch; after the third, report and stop. Re-run research or planning only when the failure clearly traces to a planning gap (e.g. the plan names a file that does not exist).
+3. Backlog mode: when the failure summary is transient-shaped (network hiccup, flaky test, dirty workspace state), retry the failed phase once with the failure summary appended; otherwise, or when the retry also fails, write `TASK_END outcome=stuck`, then move to the next pick; the stuck task stays where it is for human triage. Single-task mode: retry the failed phase up to three total attempts on the task, appending each failure summary to the re-dispatch; after the third, report and stop. Re-run research or planning only when the failure clearly traces to a planning gap (e.g. the plan names a file that does not exist).
 
 **Partial success (PR exists, `in_review` not marked):** when a retry's pre-flight finds the task at `in_progress` with an open PR matching `<type>/<taskRef-lowercased>-<title-slug>`, do not re-implement. First verify the PR actually belongs to the task: its title or body must carry the `[<taskRef>]` bracket form — a branch-name match alone is not proof. Verified: dispatch the implementer to resume the Completion Protocol against the existing PR (re-evaluate ACs, populate the payload, mark `in_review`). Counts as one attempt.
 
 **`in_review` without a PR link:** when the task sits at `in_review` but `task.links` carries no `pull_request` entry, look for the orphaned PR:
 
 ```bash
-gh pr list --state open --json url,title,body,headRefName \
-  --jq '.[] | select(.headRefName | contains("<taskRef-lowercased>"))'
+gh pr list --state open --limit 100 --json url,title,body,headRefName \
+  --jq '.[] | select(.headRefName | contains("<taskRef-lowercased>-"))'
 ```
 
 If a hit carries the `[<taskRef>]` bracket form in title or body, dispatch the implementer to re-run the Completion Protocol payload against it (the `prUrl` write repairs the link). No verified match: report the inconsistency to the user; never fabricate a link.
