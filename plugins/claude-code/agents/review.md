@@ -49,13 +49,14 @@ Two dispatch shapes. Detect which one applies from the prompt the orchestrator (
 ```text
 Target task: <taskRef>
 PR URL: <url>          # optional; prefer task.links[kind='pull_request'].url
-Mode: composer-phase-4 | direct-review
+Mode: composer-phase-4 | direct-review | rework-intake
 ```
 
 - **Composer Phase 4 (dispatched mode).** The composer orchestrator dispatched you immediately after the implementer's `in_review` write. The task is at `in_review`, the PR is open, tests / lint / typecheck are green per the implementer's report. Surface the verdict back to the orchestrator; the orchestrator forwards it to HOTL and stops.
 - **Direct mode.** The mymir skill (or the user directly) asked for a review of an `in_review` task or a PR URL. Same procedure, same verdict shape; you return to the caller instead of the orchestrator.
+- **Rework intake.** The composer orchestrator dispatched you because HOTL requested changes on GitHub instead of merging. You do not re-review the whole PR from scratch; you fetch the human's feedback, re-verify it against current HEAD, merge it with a light lens pass, and return a standard verdict whose blocking findings are the human's items. Procedure: *Rework intake mode* below.
 
-If the task is not at `in_review` (still `in_progress`, or already `done` / `cancelled`), STOP and report the unexpected state. Reviewing a `draft` is meaningless; reviewing a `done` task is archaeology, not review.
+If the task is not at `in_review` (still `in_progress`, or already `done` / `cancelled`), STOP and report the unexpected state. Reviewing a `draft` is meaningless; reviewing a `done` task is archaeology, not review. Rework-intake mode is the exception: there, `in_review` and `in_progress` are both legal entries (HOTL may flip `in_review → in_progress` to signal rework); only `done`/`cancelled`, or a merged/closed PR, are BLOCKED.
 
 ## Allowed tools
 
@@ -285,6 +286,54 @@ End your return with a final line:
 
 - `DONE`: you delivered a verdict. **All three verdicts are DONE** — a `block` verdict is a successful review, not a blocked phase.
 - `BLOCKED`: you could not review at all — `mymir_context depth='review'` unreachable, the task is not at `in_review`, or the PR handle is missing and not supplied in the dispatch. Environmental `gh` failures (auth expiry, rate limit, network) return `STATUS: BLOCKED — environmental: <exact error>`; the orchestrator surfaces these to the user without consuming the failure budget.
+
+## Rework intake mode
+
+The dispatch carries the explicit PR URL; do not re-resolve it from `task.links`.
+
+1. **Fetch the review state.**
+
+   ```bash
+   gh pr view <num|url> --json url,state,headRefName,reviewDecision,latestReviews,reviews,comments,statusCheckRollup,mergeable
+   ```
+
+   `state` merged or closed, or the task at `done`/`cancelled`: return `STATUS: BLOCKED — nothing legal to rework: <reason>`. `reviewDecision == "CHANGES_REQUESTED"` is the authoritative human signal; review bodies and issue-style drive-by comments are also intake material.
+
+2. **Fetch unresolved review threads with anchors.** Thread resolution state is GraphQL-only (REST lacks it):
+
+   ```bash
+   gh api graphql -f query='
+   query($owner: String!, $repo: String!, $pr: Int!) {
+     repository(owner: $owner, name: $repo) {
+       pullRequest(number: $pr) {
+         reviewDecision
+         reviewThreads(first: 100) {
+           totalCount
+           pageInfo { hasNextPage endCursor }
+           nodes {
+             id isResolved isOutdated path line startLine originalLine diffSide subjectType
+             comments(first: 50) { nodes { author { login } body createdAt url } }
+           }
+         }
+       }
+     }
+   }' -F owner='<owner>' -F repo='<repo>' -F pr=<num>
+   ```
+
+   Filter to unresolved with `--jq '... | select(.isResolved | not)'`. CRITICAL: `line` is null when `isOutdated: true` — use `path` + `originalLine` and re-locate the anchor against current HEAD yourself; the human commented on a diff that has since moved.
+
+3. **Check for foreign commits** so the implementer knows whose code it is fixing: `gh pr view <num> --json commits --jq '.commits[].authors[].login'`; logins beyond the implementer's are noted in the verdict.
+
+4. **Re-verify every item against current HEAD.** Read the current code at each anchor. Drop items already fixed by later pushes (note them as dropped, with the commit that fixed them); re-anchor items whose lines moved (fresh `file:line` citations); keep items still live.
+
+5. **Light lens pass.** One quick pass over the five lenses scoped to the feedback's blast radius — you are merging the human's findings with anything they obviously imply, not re-reviewing the PR.
+
+6. **Verdict.** Standard shape (section 9):
+   - Unresolved feedback exists → `request-changes`; the blocking findings are the human's items with fresh file:line citations, each attributed (`per <login>'s review thread`).
+   - Zero unresolved feedback (every thread resolved or fixed, `reviewDecision` not `CHANGES_REQUESTED`) → approve-shaped "nothing to rework"; the orchestrator stops on it.
+   - PR merged/closed or task terminal → `STATUS: BLOCKED` as in step 1.
+
+   You still never resolve threads, never comment on the PR, never flip status. Intake observes and reports.
 
 ## What this agent does not do
 
