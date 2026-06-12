@@ -327,3 +327,58 @@ ${skillSections.join("\n\n")}
 ${agentSections.join("\n\n")}
 `;
 }
+
+/**
+ * Parse CLI arguments.
+ * @returns Resolved output content directory.
+ */
+function parseArgs(): { out: string } {
+  const idx = process.argv.indexOf("--out");
+  const fallback = resolve(import.meta.dir, "../../mymir-docs/content/docs");
+  return { out: idx === -1 ? fallback : resolve(process.argv[idx + 1]) };
+}
+
+/**
+ * Generate all docs artifacts into the output content directory.
+ */
+async function main(): Promise<void> {
+  const { out } = parseArgs();
+  const toolsDir = join(out, "mcp", "tools");
+  const referenceDir = join(out, "reference");
+  await mkdir(toolsDir, { recursive: true });
+  await mkdir(referenceDir, { recursive: true });
+
+  for (const tool of TOOLS) {
+    const slug = tool.name.replace("mymir_", "");
+    await writeFile(join(toolsDir, `${slug}.mdx`), renderToolPage(tool));
+  }
+  const toolSlugs = TOOLS.map((t) => t.name.replace("mymir_", "")).sort();
+  await writeFile(
+    join(toolsDir, "meta.json"),
+    `${JSON.stringify({ title: "Tools", pages: toolSlugs }, null, 2)}\n`,
+  );
+
+  const refRoot = resolve(
+    import.meta.dir,
+    "../plugins/claude-code/skills/mymir/references",
+  );
+  for (const ref of SKILL_REFERENCES) {
+    const raw = await readFile(join(refRoot, ref.file), "utf8");
+    await writeFile(
+      join(referenceDir, `${ref.slug}.mdx`),
+      transformReference(raw, ref.file),
+    );
+  }
+
+  const pluginRoot = resolve(import.meta.dir, "../plugins/claude-code");
+  await writeFile(
+    join(referenceDir, "skills-and-agents.mdx"),
+    await renderCatalog(pluginRoot),
+  );
+
+  console.log(
+    `docs:gen wrote ${TOOLS.length} tool pages, ${SKILL_REFERENCES.length} references, 1 catalog to ${out}`,
+  );
+}
+
+if (import.meta.main) await main();
