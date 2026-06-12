@@ -102,43 +102,72 @@ export type ContextBundle = PlanningContextData & WorkingContextData;
 type HeaderRow = ProjectHeader & { id: string };
 
 /**
- * Build the closure batch shared by every resolver: the depth-projected
- * task row (whose empty result is the 404 signal — RLS hides rows the
- * caller cannot access), both effective-dependency walks, the outgoing
- * edge notes, and the parent-project header. Every statement is keyed on
- * `taskId` alone (project scope derives in SQL), so the whole set rides
- * ONE read batch before the task row has been seen.
+ * Build the closure-core batch shared by every closure resolver: the
+ * depth-projected task row (whose empty result is the 404 signal — RLS
+ * hides rows the caller cannot access), both effective-dependency walks,
+ * and the outgoing edge notes. Every statement is keyed on `taskId` alone
+ * (project scope derives in SQL), so the whole set rides ONE read batch
+ * before the task row has been seen.
  *
  * @param db - Read statement-building handle.
  * @param taskId - UUID of the task.
  * @param depth - Column projection for the task-row fetch.
- * @returns Tuple of five lazy statements.
+ * @returns Tuple of four lazy statements.
  */
-function closureBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
+function closureCoreBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
   return [
     taskForDepthStmt(db, taskId, depth),
     effectiveDepChainStmt(db, taskId, CLOSURE_DEPTH),
     effectiveDownstreamStmt(db, taskId, CLOSURE_DEPTH),
     edgeNotesBySourceStmt(db, taskId),
+  ] as const;
+}
+
+/**
+ * {@link closureCoreBatch} plus the parent-project header, for resolvers
+ * that render the header (planning, review, bundle). The agent path runs
+ * the core batch alone — it never reads the header.
+ *
+ * @param db - Read statement-building handle.
+ * @param taskId - UUID of the task.
+ * @param depth - Column projection for the task-row fetch.
+ * @returns Tuple of five lazy statements; header rows are position 4.
+ */
+function closureBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
+  return [
+    ...closureCoreBatch(db, taskId, depth),
     projectHeaderByTaskStmt(db, taskId),
   ] as const;
 }
 
-/** Positional results of a {@link closureBatch} run. */
-type ClosureBatchResults = ReadResults<ReturnType<typeof closureBatch>>;
+/** Positional results of a {@link closureCoreBatch} run. */
+type ClosureCoreResults = ReadResults<ReturnType<typeof closureCoreBatch>>;
+
+/** Decoded closure core: task row, dependency walks, outgoing notes. */
+type ClosureCore = {
+  task: TaskFull;
+  deps: { id: string }[];
+  downstream: { id: string }[];
+  upstreamEdgeNotes: Map<string, string>;
+};
 
 /**
- * Decode a closure-batch result tuple: map the task row (throwing the
- * 404-shaped ForbiddenError when RLS hides it), normalize the dependency
- * walks, and fold the outgoing edge notes.
+ * Decode the closure-core positions of a batch result tuple: map the task
+ * row (throwing the 404-shaped ForbiddenError when RLS hides it), normalize
+ * the dependency walks, and fold the outgoing edge notes. Accepts any batch
+ * that begins with the {@link closureCoreBatch} statements so wider batches
+ * (header, edges) decode without rebuilding tuples.
  *
  * @param taskId - UUID of the task the batch targeted.
- * @param results - Positional results of a {@link closureBatch} run.
- * @returns Task, walks, outgoing notes, and the header row.
+ * @param results - Batch results whose first four positions are the core.
+ * @returns Task, walks, and outgoing notes.
  * @throws ForbiddenError when the task row is not visible to the caller.
  */
-function decodeClosureBatch(taskId: string, results: ClosureBatchResults) {
-  const [taskRaw, depRaw, downRaw, srcNotes, headerRows] = results;
+function decodeClosureCore(
+  taskId: string,
+  results: readonly [...ClosureCoreResults, ...unknown[]],
+): ClosureCore {
+  const [taskRaw, depRaw, downRaw, srcNotes] = results;
   const task = requireTaskRow(
     normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
@@ -154,8 +183,22 @@ function decodeClosureBatch(taskId: string, results: ClosureBatchResults) {
     deps,
     downstream,
     upstreamEdgeNotes: mapEdgeNoteRows(srcNotes),
-    header: headerRows[0] ?? null,
   };
+}
+
+/**
+ * The single skip rule for the closure-secondaries batch: secondaries are
+ * only worth a round-trip when either dependency walk returned ids.
+ *
+ * @param deps - Active prerequisite ids from the closure walk.
+ * @param downstream - Active dependent ids from the closure walk.
+ * @returns True when a secondaries batch has rows to fetch.
+ */
+function closureHasSecondaries(
+  deps: { id: string }[],
+  downstream: { id: string }[],
+): boolean {
+  return deps.length > 0 || downstream.length > 0;
 }
 
 /**
@@ -214,7 +257,7 @@ async function resolveClosureSecondaries(
   deps: { id: string }[],
   downstream: { id: string }[],
 ): Promise<[DependencyTaskInfo[], DownstreamSummary[], Map<string, string>]> {
-  if (deps.length === 0 && downstream.length === 0) {
+  if (!closureHasSecondaries(deps, downstream)) {
     return [[], [], new Map()];
   }
   const [depRows, summaryRows, tgtNotes] = await withUserContextRead(
@@ -230,10 +273,11 @@ async function resolveClosureSecondaries(
 
 /**
  * Resolve the shared dependency closure for a task in two read batches: one
- * for the task row, dependency walks, edge notes, and header; one for the
- * closure-keyed secondaries (skipped for isolated tasks). The task row's
- * empty result is the 404 signal, evaluated before any other row is
- * consumed, so callers need no prior check.
+ * for the task row, dependency walks, and edge notes (no header — the agent
+ * core never renders it); one for the closure-keyed secondaries (skipped
+ * for isolated tasks). The task row's empty result is the 404 signal,
+ * evaluated before any other row is consumed, so callers need no prior
+ * check.
  *
  * `depth` scopes ONLY the main task-row column projection — the agent core
  * fetches at `agent`, the planning core at `planning`. Snapshot consistency
@@ -251,14 +295,17 @@ export async function resolveDependencyClosure(
   taskId: string,
   depth: TaskFetchDepth,
 ): Promise<DependencyClosureData> {
-  const { closure } = await resolveClosureWithHeader(userId, taskId, depth);
-  return closure;
+  assertValidTaskId(taskId);
+  const results = await withUserContextRead(userId, (db) =>
+    closureCoreBatch(db, taskId, depth),
+  );
+  return finishClosure(userId, taskId, decodeClosureCore(taskId, results));
 }
 
 /**
  * Run the closure batch and secondaries, returning the closure plus the
- * parent-project header row. Internal substrate for the three public
- * closure-consuming resolvers.
+ * parent-project header row. Internal substrate for the header-rendering
+ * closure resolvers (planning, review).
  *
  * @param userId - Authenticated user id (RLS scope).
  * @param taskId - UUID of the task.
@@ -275,28 +322,38 @@ async function resolveClosureWithHeader(
   const results = await withUserContextRead(userId, (db) =>
     closureBatch(db, taskId, depth),
   );
-  const { task, deps, downstream, upstreamEdgeNotes, header } =
-    decodeClosureBatch(taskId, results);
+  const closure = await finishClosure(
+    userId,
+    taskId,
+    decodeClosureCore(taskId, results),
+  );
+  return { closure, header: results[4][0] ?? null };
+}
+
+/**
+ * Fetch the closure secondaries for a decoded core and assemble the full
+ * {@link DependencyClosureData}. Shared tail of the agent and
+ * header-rendering closure resolvers.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param taskId - UUID of the task.
+ * @param core - Decoded closure-core rows.
+ * @returns The resolved closure.
+ */
+async function finishClosure(
+  userId: string,
+  taskId: string,
+  core: ClosureCore,
+): Promise<DependencyClosureData> {
   const [depTasks, downstreamSummaries, downstreamEdgeNotes] =
     await resolveClosureSecondaries(
       userId,
-      task.projectId,
+      core.task.projectId,
       taskId,
-      deps,
-      downstream,
+      core.deps,
+      core.downstream,
     );
-  return {
-    closure: {
-      task,
-      deps,
-      downstream,
-      upstreamEdgeNotes,
-      depTasks,
-      downstreamEdgeNotes,
-      downstreamSummaries,
-    },
-    header,
-  };
+  return { ...core, depTasks, downstreamEdgeNotes, downstreamSummaries };
 }
 
 /**
@@ -453,23 +510,20 @@ export async function resolveContextBundle(
   taskId: string,
 ): Promise<ContextBundle> {
   assertValidTaskId(taskId);
-  const [taskRaw, depRaw, downRaw, srcNotes, headerRows, edges] =
-    await withUserContextRead(userId, (db) => [
-      ...closureBatch(db, taskId, "agent"),
-      taskEdgesStmt(db, taskId),
-    ]);
-  const { task, deps, downstream, upstreamEdgeNotes, header } =
-    decodeClosureBatch(taskId, [
-      taskRaw,
-      depRaw,
-      downRaw,
-      srcNotes,
-      headerRows,
-    ] as const);
+  const results = await withUserContextRead(userId, (db) => [
+    ...closureBatch(db, taskId, "agent"),
+    taskEdgesStmt(db, taskId),
+  ]);
+  const { task, deps, downstream, upstreamEdgeNotes } = decodeClosureCore(
+    taskId,
+    results,
+  );
+  const header = results[4][0] ?? null;
+  const edges = results[5];
 
   const connectedIds = connectedTaskIds(taskId, edges);
   const needsSecondaries =
-    deps.length > 0 || downstream.length > 0 || connectedIds.length > 0;
+    closureHasSecondaries(deps, downstream) || connectedIds.length > 0;
 
   let depTasks: DependencyTaskInfo[] = [];
   let downstreamSummaries: DownstreamSummary[] = [];
