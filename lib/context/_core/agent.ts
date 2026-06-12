@@ -8,11 +8,14 @@ import {
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
+import { assertTaskAccessTx } from "@/lib/auth/authorization";
 import { withUserContext } from "@/lib/db/rls";
 import {
   resolveDependencyClosure,
+  resolveRecordData,
   type AgentContextData,
 } from "@/lib/context/_core/bundle";
+import { buildRecordContextFrom } from "@/lib/context/_core/record";
 
 /** Task statuses where dispatching an implementer is premature. */
 const PRE_DISPATCH_STATUSES = new Set(["draft", "planned", "in_progress"]);
@@ -250,9 +253,12 @@ export function buildAgentContextFrom(data: AgentContextData): string {
 /**
  * Build lean, position-optimized context for external coding agents.
  *
- * The MCP `mymir_context` entry point. Resolves only the dependency-closure
- * data this depth renders, then delegates to the pure
- * {@link buildAgentContextFrom} assembler.
+ * The MCP `mymir_context depth='agent'` entry point. For `done` /
+ * `cancelled` tasks it delegates to the retrospective record builder — the
+ * slim access gate carries the status, so the heavy fetch happens once at
+ * the right depth (`record` drops `implementationPlan`). Otherwise it
+ * resolves the dependency closure at `agent` depth and delegates to the
+ * pure {@link buildAgentContextFrom} assembler.
  *
  * @param ctx Resolved auth context.
  * @param taskId UUID of the task.
@@ -263,7 +269,12 @@ export async function buildAgentContext(
   taskId: string,
 ): Promise<string> {
   return withUserContext(ctx.userId, async (tx) => {
-    const data = await resolveDependencyClosure(tx, taskId, "agent");
-    return buildAgentContextFrom(data);
+    const gate = await assertTaskAccessTx(tx, taskId);
+    if (gate.status === "done" || gate.status === "cancelled") {
+      return buildRecordContextFrom(await resolveRecordData(tx, taskId));
+    }
+    return buildAgentContextFrom(
+      await resolveDependencyClosure(tx, taskId, "agent"),
+    );
   });
 }

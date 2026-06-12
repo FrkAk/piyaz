@@ -252,3 +252,51 @@ test("MCP buildPlanningContext fetches per depth: closure plus project header", 
     projectSpy.mockRestore();
   }
 });
+
+test("MCP agent depth delegates to the record bundle for done tasks", async () => {
+  const fx = await seedRichContextTask("ctx-mcp-record-done");
+  const sql = superuserPool();
+  try {
+    await sql`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+  const result = await buildAgentContext(makeAuthContext(fx.userId), fx.taskId);
+  expect(result).toContain("## How It Completed");
+  expect(result).toContain("## Project Context");
+  expect(result).not.toContain("## Implementation Plan");
+  expect(result).not.toContain("## Done Means");
+});
+
+test("MCP agent depth delegates to the record bundle for cancelled tasks", async () => {
+  const fx = await seedRichContextTask("ctx-mcp-record-cancelled");
+  const sql = superuserPool();
+  try {
+    await sql`UPDATE tasks SET status = 'cancelled' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+  const result = await buildAgentContext(makeAuthContext(fx.userId), fx.taskId);
+  expect(result).toContain("## Why It Was Cancelled");
+});
+
+test("MCP agent-to-record delegation fetches once at record depth", async () => {
+  const fx = await seedRichContextTask("ctx-mcp-record-counts");
+  const sql = superuserPool();
+  try {
+    await sql`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+  const fetchSpy = spyOn(taskData, "getTaskForDepthTx");
+  const projectSpy = spyOn(projectData, "getProjectHeader");
+  try {
+    await buildAgentContext(makeAuthContext(fx.userId), fx.taskId);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][2]).toBe("record");
+    expect(projectSpy).toHaveBeenCalledTimes(1);
+  } finally {
+    fetchSpy.mockRestore();
+    projectSpy.mockRestore();
+  }
+});
