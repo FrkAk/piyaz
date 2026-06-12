@@ -174,6 +174,28 @@ digraph composer_iteration {
 
 8. **Loop.** Single-task: report the iteration outcome and stop. Backlog: next iteration, no pause.
 
+### Model selection
+
+Every phase dispatch passes an explicit `model:` parameter on the Task tool call; dispatch-time models override agent frontmatter. The frontmatter models stay unchanged — they are the conservative defaults for direct (non-composer) invocation.
+
+| Phase | est 1–2 | est 3 | est 5 | est 8–13 / unset |
+| --- | --- | --- | --- | --- |
+| Researcher | sonnet | sonnet | sonnet | sonnet |
+| Planner | sonnet | sonnet if work-type ∈ {docs, test, chore}, else opus | opus | opus |
+| Implementer | sonnet | sonnet if work-type ∈ {docs, test, chore}, else opus | opus | opus |
+| Reviewer | opus | opus | opus | opus — never downgrade the reviewer |
+
+Use the **post-research estimate**, not the pick-time one: the researcher's *Applied refinements* reports estimate changes for the planner dispatch, and the step-3 plan-verification poll (`mymir_context depth='summary'`) re-surfaces the current value for the implement and review dispatches. Work-type comes from the task's work-type tag (pick payload or the brief's tag refinements); when the work-type is unknown, treat it as non-docs.
+
+Guardrails — force opus for the planner and implementer regardless of estimate when any of these holds:
+
+- the task carries a `security`, `safety`, or `compliance` tag;
+- the estimate is 8, 13, or missing;
+- the dispatch is a fix-mode rotation;
+- the dispatch is any retry after a failure, or partial-success recovery;
+- the researcher returned `DONE_WITH_CONCERNS` with `security-boundary-uncovered`, `version-drift-major`, or `dep-mismatch`;
+- `priority='urgent'`.
+
 ## Run log
 
 The run log is composer's crash-safe memory: a pure append-only event log at `.mymir/composer-<projectIdentifier>.md`, one active file per project. The conversation can compact; the log does not. Counters are never tracked as state — they derive by grep over events: rotations used on task X = count of `FIX task=X` lines; failed attempts = count of `FAIL task=X` lines.
