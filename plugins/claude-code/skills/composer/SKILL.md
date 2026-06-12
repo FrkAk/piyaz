@@ -88,6 +88,7 @@ digraph composer_iteration {
     "STOP: iteration ends (single-task)" [shape=doublecircle];
     "Dispatch planner" [shape=box];
     "Planner STATUS?" [shape=diamond];
+    "Pick was plannable-only?" [shape=diamond];
     "Dispatch implementer" [shape=box];
     "Implementer STATUS?" [shape=diamond];
     "Dispatch reviewer" [shape=box];
@@ -113,7 +114,9 @@ digraph composer_iteration {
     "Continue this task?" -> "Pick next task" [label="no (backlog)"];
     "Continue this task?" -> "STOP: iteration ends (single-task)" [label="no (single-task)"];
     "Dispatch planner" -> "Planner STATUS?";
-    "Planner STATUS?" -> "Dispatch implementer" [label="DONE / DONE_WITH_CONCERNS"];
+    "Planner STATUS?" -> "Pick was plannable-only?" [label="DONE / DONE_WITH_CONCERNS"];
+    "Pick was plannable-only?" -> "Dispatch implementer" [label="no"];
+    "Pick was plannable-only?" -> "Single-task mode?" [label="yes: planned; deps unfinished"];
     "Planner STATUS?" -> "Failure handling" [label="BLOCKED"];
     "Dispatch implementer" -> "Implementer STATUS?";
     "Implementer STATUS?" -> "Dispatch reviewer" [label="DONE / DONE_WITH_CONCERNS"];
@@ -136,11 +139,13 @@ digraph composer_iteration {
 
 ### Step details
 
-1. **Pick.** Backlog: `mymir_analyze type='ready'` ∩ `type='critical_path'`; rank by priority (`urgent > core > normal > backlog`), tie-break by lowest estimate. Fall back to the highest-priority `ready` task when the intersection is empty, then to `mymir_analyze type='plannable'` when `ready` is empty (those route through research + plan; nothing to implement yet). Single-task: the named task; if already `done` or `cancelled`, report that and stop. Emit a one-paragraph pick rationale (taskRef, priority, estimate, critical-path yes/no, one-sentence reason). Do not wait for approval — the user interrupts if they disagree.
+1. **Pick.** Backlog: `mymir_analyze type='ready'` ∩ `type='critical_path'`; rank by priority (`urgent > core > normal > backlog`), tie-break by lowest estimate. Fall back to the highest-priority `ready` task when the intersection is empty, then to `mymir_analyze type='plannable'` when `ready` is empty (those route through research + plan only; their dependencies are unfinished, so there is nothing to implement yet — note the pick as **plannable-only**). Single-task: the named task; if already `done` or `cancelled`, report that and stop. Emit a one-paragraph pick rationale (taskRef, priority, estimate, critical-path yes/no, one-sentence reason). Do not wait for approval — the user interrupts if they disagree.
 
 2. **Research.** Dispatch `mymir:composer-researcher` with: `Target task: <taskRef>`, the categories + tag vocabulary from bootstrap, and (on re-dispatch) the user's gate answers. Status does not change in this phase; the researcher refines the task row in place. React per *Status vocabulary*.
 
 3. **Plan.** Dispatch `mymir:composer-planner` with: `Target task: <taskRef>`, the task's current status (so it knows new-plan vs re-validate), and the research brief verbatim. Verify with one `mymir_context depth='summary' taskId='<id>'` poll: a `draft` entry must now show a plan and `status='planned'`. If not, re-dispatch once with the failure appended; a second miss is `BLOCKED`.
+
+   When the pick was plannable-only, the iteration ends here: the task is now `planned` and its dependencies are still unfinished, so there is nothing to implement. Backlog mode returns to the pick; single-task mode reports the planned outcome and stops. Never dispatch the implementer on a plannable-only pick.
 
 4. **Implement.** Dispatch `mymir:composer-implementer` with: `Target task: <taskRef>. Plan is saved to Mymir; fetch via mymir_context depth='agent'. Claim the task (planned → in_progress), implement per the implementationPlan, open a PR, mark in_review per the Completion Protocol.` Append the prior failure summary on retries.
 

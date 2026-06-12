@@ -79,7 +79,7 @@ On failure (verification cannot reach green, plan is broken), leave the task at 
 
 a. `mymir_context depth='agent' taskId='<id>'`. Read multi-hop dependencies, upstream `executionRecord` entries, the full `implementationPlan`, and the current `acceptanceCriteria`. Read the plan in full; do not skim.
 
-b. Confirm `status` is `planned`. If it is anything else (`in_progress` from a prior attempt is acceptable; `done` or `cancelled` means stop and report the unexpected state), surface it to the orchestrator and exit.
+b. Confirm `status` is `planned`. If it is anything else (`in_progress` from a prior attempt is acceptable; `done` or `cancelled` means stop and report the unexpected state), surface it to the orchestrator and exit. Additionally verify every `depends_on` dependency in the agent-depth bundle is `done`. Any dependency not at `done` means the pick was premature (a plannable pick routed too far): exit without claiming, returning `STATUS: BLOCKED — dependencies unfinished: <refs>`.
 
 c. Verify the plan is implementable. Walk the plan's *Files to modify* list and confirm each path exists where the plan claims (or that the path is a new file the plan expects you to create). If a path is wrong, fail loudly: report the discrepancy, leave the task at `planned`, exit.
 
