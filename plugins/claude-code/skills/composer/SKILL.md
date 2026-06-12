@@ -63,12 +63,15 @@ Expected `NEEDS_DECISION` triggers (all from the researcher):
 
 A return without a STATUS line is malformed: re-read the prose once; if the outcome is still ambiguous, treat it as `BLOCKED`.
 
+**Headless gate fallback:** when `AskUserQuestion` is unavailable (errors or hangs — headless runs, policy-denied contexts), a `NEEDS_DECISION` gate resolves to skip-the-task: record the unasked question and the skip in the stop report, then end the iteration (backlog mode picks the next task; single-task mode stops). Never fabricate an answer — skipping is the reversible default (resilience §11).
+
 ## Session bootstrap
 
 Once per session, before the first iteration:
 
 1. **Resolve the project.** `mymir_project action='list'` → `action='select' projectId='...'`. Single-task mode: also `mymir_query type='search' query='<taskRef>'` to resolve the task UUID and current status.
 2. **Read meta.** `mymir_query type='meta'`. Keep the categories and tag vocabulary for researcher dispatches; drop the status counts.
+3. **Stale-claim sweep.** Scan the project's task list (`mymir_query type='list'`) for tasks already at `in_progress`. These are possible stale claims from dead sessions; surface them in the first pick rationale so the user sees them before the run commits elsewhere.
 
 Then start iterating. There is nothing to install and nothing to confirm.
 
@@ -155,7 +158,7 @@ digraph composer_iteration {
    - **`request-changes`** with 2 rotations used, or **`block`**: stop fixing. Escalate every verdict from this task to HOTL and go to step 6. `block` is never auto-fixed; review.md calibrates it as "one rotation will not land this".
    - The verdict is advisory beyond the fix loop: HOTL owns `in_review → done` on GitHub regardless of verdict.
 
-6. **Surface + propagate.** Quote the final verdict block verbatim. Then propagate per lifecycle §3: `mymir_query type='edges' taskId='<id>'`, `mymir_analyze type='downstream' taskId='<id>'`; update or retire edge notes the work invalidated (edge-note shape: artifacts §3 — one to three short sentences addressed to the downstream task's agent). Surface newly-unblocked tasks in the next pick rationale.
+6. **Surface + propagate.** Quote the final verdict block verbatim. Then propagate per lifecycle §3: `mymir_query type='edges' taskId='<id>'`, `mymir_analyze type='downstream' taskId='<id>'`; update or retire edge notes the work invalidated (edge-note shape: artifacts §3 — one to three short sentences addressed to the downstream task's agent). Propagation depth follows the verdict: on `approve`, propagate fully. On an escalated `request-changes` or `block`, write edge-note updates as provisional — prefix each with `Provisional pending HOTL on PR #<n>:` — because HOTL may reject the work; the HOTL `done` flip (outside composer, as today) is the trigger for firming them up. Surface newly-unblocked tasks in the next pick rationale.
 
 7. **Loop.** Single-task: report the iteration outcome and stop. Backlog: next iteration, no pause.
 
@@ -169,15 +172,24 @@ Subagents inherit nothing from this session; the dispatch prompt is their whole 
 
 1. Keep the failure summary in your transcript. Do not write it to `decisions` — per artifacts §1 that field is CHOICE + WHY, not process metadata.
 2. Leave the task at its current status. Never roll back, never cancel.
-3. Backlog mode: move to the next pick; the stuck task stays where it is for human triage. Single-task mode: retry the failed phase up to three total attempts on the task, appending each failure summary to the re-dispatch; after the third, report and stop. Re-run research or planning only when the failure clearly traces to a planning gap (e.g. the plan names a file that does not exist).
+3. Backlog mode: when the failure summary is transient-shaped (network hiccup, flaky test, dirty workspace state), retry the failed phase once with the failure summary appended; otherwise, or when the retry also fails, move to the next pick; the stuck task stays where it is for human triage. Single-task mode: retry the failed phase up to three total attempts on the task, appending each failure summary to the re-dispatch; after the third, report and stop. Re-run research or planning only when the failure clearly traces to a planning gap (e.g. the plan names a file that does not exist).
 
-**Partial success (PR exists, `in_review` not marked):** when a retry's pre-flight finds the task at `in_progress` with an open PR matching `<type>/<taskRef-lowercased>-<title-slug>`, do not re-implement. Dispatch the implementer to resume the Completion Protocol against the existing PR (re-evaluate ACs, populate the payload, mark `in_review`). Counts as one attempt.
+**Partial success (PR exists, `in_review` not marked):** when a retry's pre-flight finds the task at `in_progress` with an open PR matching `<type>/<taskRef-lowercased>-<title-slug>`, do not re-implement. First verify the PR actually belongs to the task: its title or body must carry the `[<taskRef>]` bracket form — a branch-name match alone is not proof. Verified: dispatch the implementer to resume the Completion Protocol against the existing PR (re-evaluate ACs, populate the payload, mark `in_review`). Counts as one attempt.
+
+**`in_review` without a PR link:** when the task sits at `in_review` but `task.links` carries no `pull_request` entry, look for the orphaned PR:
+
+```bash
+gh pr list --state open --json url,title,body,headRefName \
+  --jq '.[] | select(.headRefName | contains("<taskRef-lowercased>"))'
+```
+
+If a hit carries the `[<taskRef>]` bracket form in title or body, dispatch the implementer to re-run the Completion Protocol payload against it (the `prUrl` write repairs the link). No verified match: report the inconsistency to the user; never fabricate a link.
 
 ## Stop conditions
 
 Stop and report in plain language (there are no magic stop phrases) when one of these holds:
 
-1. **Backlog drained**: `ready` and `plannable` are both empty.
+1. **Backlog drained**: `ready` and `plannable` are both empty. The stop report enumerates every task left at `in_progress`/`in_review` with its failure summary — the stranded-task report; nothing strands silently.
 2. **Failure budget exhausted**: three failed attempts on the same task (single-task mode).
 3. **User says stop**: exit after the in-flight write finishes.
 4. **Single-task iteration complete**: verdict surfaced and propagation done. The task itself sits at `in_review` awaiting HOTL; composer's job is finished.
