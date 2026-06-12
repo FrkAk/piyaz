@@ -55,14 +55,38 @@ const READ_HEAD_RE = /^\s*(?:select|with)\b/i;
  * is why this client-side scan exists — a build statement must never be
  * able to re-point `app.user_id` or take a lock over the stateless path.
  *
- * Known false-positive surface, accepted for a defense belt: statements
- * must START with SELECT/WITH (no leading SQL comments), and identifiers,
- * aliases, or literals containing a forbidden token (e.g. a column named
- * "merge") are rejected. Keep read SQL clear of both; the database-level
- * READ ONLY transaction remains the backstop for anything the scan misses.
+ * Quoted spans (string literals, quoted identifiers) are inert SQL, so the
+ * scan strips them first — a column aliased `"update"` or a literal
+ * `'merge'` is a legal read. Remaining false-positive surface, accepted
+ * for a defense belt: statements must START with SELECT/WITH (no leading
+ * SQL comments), dollar-quoted statements are scanned unstripped (dollar
+ * quoting can mis-pair the span stripper, so they keep the strict scan),
+ * and unquoted non-reserved identifiers matching a token (e.g. a bare
+ * column named "copy") are rejected. The database-level READ ONLY
+ * transaction remains the backstop for anything the scan misses.
  */
 const FORBIDDEN_SQL_RE =
   /\b(?:insert|update|delete|merge|alter|drop|truncate|create|grant|revoke|copy|set_config|pg_advisory_\w+)\b/i;
+
+/** Single-quoted literals and double-quoted identifiers, escapes included. */
+const QUOTED_SPAN_RE = /'(?:[^']|'')*'|"(?:[^"]|"")*"/g;
+
+/** Dollar-quote delimiter; its presence disables span stripping. */
+const DOLLAR_QUOTE_RE = /\$[a-zA-Z_]*\$/;
+
+/**
+ * Reduce a rendered statement to the spans that can execute: quoted
+ * literals and identifiers are dropped so their contents cannot trip the
+ * forbidden-token scan. Statements containing dollar quoting are returned
+ * unchanged — pairing rules differ and stripping could hide live SQL.
+ *
+ * @param text - Parameterized SQL text of one statement.
+ * @returns The text with inert quoted spans removed.
+ */
+function scannableSql(text: string): string {
+  if (DOLLAR_QUOTE_RE.test(text)) return text;
+  return text.replace(QUOTED_SPAN_RE, "");
+}
 
 /** Structural surface for extracting SQL text from a lazy drizzle query. */
 type SqlCarrier = {
@@ -115,7 +139,7 @@ export function assertReadOnlyStatements(statements: readonly unknown[]): void {
           `(must start with SELECT or WITH): ${text.slice(0, 120)}`,
       );
     }
-    const banned = text.match(FORBIDDEN_SQL_RE);
+    const banned = scannableSql(text).match(FORBIDDEN_SQL_RE);
     if (banned) {
       throw new ReadOnlyViolationError(
         `withUserContextRead: statement ${index} is not read-only ` +

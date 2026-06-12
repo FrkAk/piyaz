@@ -160,6 +160,55 @@ describe("withUserContextRead read-only guard", () => {
       withUserContextRead(fx.userId, () => [] as never),
     ).rejects.toThrow(/at least one statement/i);
   });
+
+  test("allows quoted identifiers matching forbidden tokens", async () => {
+    const fx = await seedUserOrgProject("guard-quoted-ident");
+
+    const [raw] = await withUserContextRead(fx.userId, (db) => [
+      db.execute(
+        sql`SELECT title AS "update", id AS "merge" FROM projects WHERE id = ${fx.projectId}`,
+      ),
+    ]);
+    const rows = normalizeExecuteResult<{ update: string; merge: string }>(raw);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].update).toBe("Project guard-quoted-ident");
+  });
+
+  test("allows string literals matching forbidden tokens", async () => {
+    const fx = await seedUserOrgProject("guard-quoted-lit");
+
+    const [raw] = await withUserContextRead(fx.userId, (db) => [
+      db.execute(
+        sql`SELECT 'merge' AS verb, 'it''s an update' AS note FROM projects WHERE id = ${fx.projectId}`,
+      ),
+    ]);
+    const rows = normalizeExecuteResult<{ verb: string; note: string }>(raw);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].note).toBe("it's an update");
+  });
+
+  test("still rejects forbidden tokens outside quoted spans", async () => {
+    const fx = await seedUserOrgProject("guard-quoted-mix");
+    const other = "11111111-1111-1111-1111-111111111111";
+
+    await expect(
+      withUserContextRead(fx.userId, (db) => [
+        db.execute(
+          sql`SELECT 'harmless', set_config('app.user_id', ${other}, true)`,
+        ),
+      ]),
+    ).rejects.toThrow(ReadOnlyViolationError);
+  });
+
+  test("scans dollar-quoted statements unstripped", async () => {
+    const fx = await seedUserOrgProject("guard-dollar");
+
+    await expect(
+      withUserContextRead(fx.userId, (db) => [
+        db.execute(sql`SELECT $$ ' $$, set_config('a','b',true), $$ ' $$`),
+      ]),
+    ).rejects.toThrow(ReadOnlyViolationError);
+  });
 });
 
 describe("withUserContextRead database-level READ ONLY", () => {
