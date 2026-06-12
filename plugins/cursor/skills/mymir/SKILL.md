@@ -70,8 +70,8 @@ Six tools. Read tools have cost (slim → very heavy); pick the lightest that an
 |---|---|---|
 | `summary` | slim | quick status check on a single task (status, edge counts). |
 | `working` | medium | refining, discussing, or reviewing a task (criteria, decisions, 1-hop edges, siblings). |
-| `agent` | heavy | handing off to a coding agent. Includes implementation plan, multi-hop upstream execution records, files, "Done Means", downstream specs. ~4-8K tokens. |
-| `planning` | heavy | writing an implementation plan. Includes project description, acceptance criteria, upstream execution records, downstream specs. |
+| `agent` | heavy | handing off to a coding agent. Includes implementation plan, multi-hop upstream execution records, files, "Done Means", downstream specs. ~4-8K tokens. Includes a ⚠ Blocked section when direct prerequisites are unfinished. For `done`/`cancelled` tasks returns the retrospective record bundle (project, what the task was, outcome, files, decisions, PR link) instead of the implementation shape. |
+| `planning` | heavy | writing an implementation plan. Includes project description, acceptance criteria, upstream execution records, downstream specs. Also includes task links and abandoned approaches (cancelled-dep execution records). |
 | `review` | heavy | reviewing an `in_review` task. Renders `implementationPlan` alongside `executionRecord`, surfaces the PR link from `task_links` (kind `pull_request`), computes plan-vs-files drift, lists downstream impact, emits review-lens prompts (security / perf / reliability / observability / codebase standards). Read by `mymir:review` in composer Phase 4 and in direct review dispatch. |
 
 `mymir_query type='search'` returns `_hints` that tell you which depth to use. Follow them. Don't guess.
