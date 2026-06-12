@@ -60,6 +60,12 @@ CREATE POLICY "task_links_member_access" ON "task_links" AS PERMISSIVE FOR ALL T
   USING (task_id IN (SELECT id FROM public.tasks))
   WITH CHECK (task_id IN (SELECT id FROM public.tasks));
 
+-- activity_events — 2-hop via projects' RLS, mirroring tasks.
+DROP POLICY IF EXISTS "activity_events_member_access" ON "activity_events";
+CREATE POLICY "activity_events_member_access" ON "activity_events" AS PERMISSIVE FOR ALL TO app_user
+  USING (project_id IN (SELECT id FROM public.projects))
+  WITH CHECK (project_id IN (SELECT id FROM public.projects));
+
 -- RESTRICTIVE write floor on task_edges. RESTRICTIVE AND's with the OR of
 -- permissives, so a future stray permissive cannot OR-relax both-endpoints
 -- -visible. Scoped per-command to leave SELECT on the permissive policy.
@@ -136,6 +142,7 @@ ALTER TABLE "task_acceptance_criteria" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "task_decisions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "task_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "team_invite_code" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "activity_events" ENABLE ROW LEVEL SECURITY;
 
 -- FORCE subjects the table owner to RLS. BYPASSRLS roles and real
 -- superusers still sidestep.
@@ -147,3 +154,4 @@ ALTER TABLE "task_acceptance_criteria" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "task_decisions" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "task_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "team_invite_code" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "activity_events" FORCE ROW LEVEL SECURITY;

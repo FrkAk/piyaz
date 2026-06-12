@@ -376,6 +376,49 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.task_assignees_visible(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.task_assignees_visible(uuid) TO app_user;
 
+-- Resolve the distinct actor profiles for a task's activity events. Gated on
+-- the caller's membership of the task's org, like task_assignees_visible.
+CREATE OR REPLACE FUNCTION public.activity_actors_visible(p_task_id uuid)
+RETURNS TABLE (user_id uuid, name text, image text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, neon_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT DISTINCT u.id, u.name, u.image
+  FROM public.activity_events ae
+  INNER JOIN neon_auth."user" u ON u.id = ae.actor_user_id
+  WHERE ae.task_id = p_task_id
+    AND EXISTS (
+      SELECT 1
+      FROM public.tasks t
+      INNER JOIN public.projects pj ON pj.id = t.project_id
+      INNER JOIN neon_auth."member" caller
+        ON caller."organizationId" = pj.organization_id
+      WHERE t.id = p_task_id
+        AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
+    );
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.activity_actors_visible(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.activity_actors_visible(uuid) TO app_user;
+
+-- Resolve a single OAuth client display name (not secret). Scalar to avoid
+-- text[] array binding on the read path; callers loop the page's few ids.
+CREATE OR REPLACE FUNCTION public.oauth_client_name(p_client_id text)
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, neon_auth, pg_catalog, pg_temp
+AS $$
+  SELECT c.name FROM neon_auth."oauthClient" c WHERE c."clientId" = p_client_id;
+$$;
+REVOKE EXECUTE ON FUNCTION public.oauth_client_name(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.oauth_client_name(text) TO app_user;
+
 -- Per-project sibling of task_assignees_visible: one membership probe
 -- for the whole project instead of N (old LATERAL pattern). Probing a
 -- foreign project UUID is indistinguishable from a missing one.

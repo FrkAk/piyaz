@@ -25,6 +25,11 @@ GRANT CREATE ON SCHEMA public TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user, service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user, service_role;
 
+-- Explicit per-table grant for activity_events (the documented convention for
+-- new public tables; the schema-wide grant above only covers tables that
+-- exist when it runs).
+GRANT SELECT, INSERT, UPDATE, DELETE ON "activity_events" TO app_user, service_role;
+
 -- neon_auth: app_user reaches it only via SECURITY DEFINER functions.
 -- Explicit REVOKEs make re-runs idempotent on pre-lockdown installs.
 GRANT USAGE ON SCHEMA neon_auth TO service_role, auth_role;
