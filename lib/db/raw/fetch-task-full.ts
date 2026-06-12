@@ -115,7 +115,7 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
     assignees: false,
     acceptanceCriteria: true,
     decisions: true,
-    links: false,
+    links: true,
   },
   agent: {
     tags: true,

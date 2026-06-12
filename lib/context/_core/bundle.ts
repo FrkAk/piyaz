@@ -2,6 +2,7 @@ import "server-only";
 
 import { loadBundleDeps } from "@/lib/graph/effective-deps";
 import {
+  fetchCancelledDepRecords,
   fetchDependencyTasks,
   fetchEdgeNotesBySource,
   fetchEdgeNotesByTarget,
@@ -56,6 +57,8 @@ export type AgentContextData = DependencyClosureData;
 export type PlanningContextData = DependencyClosureData & {
   /** Parent project header, or null when the project is unjoinable. */
   project: ProjectHeader | null;
+  /** Direct cancelled deps with execution records ("Abandoned Approaches"). */
+  abandonedDeps: DependencyTaskInfo[];
 };
 
 /** Exactly what {@link buildWorkingContextFrom} reads. */
@@ -134,8 +137,11 @@ export async function resolvePlanningData(
   taskId: string,
 ): Promise<PlanningContextData> {
   const closure = await resolveDependencyClosure(tx, taskId, "planning");
-  const project = await getProjectHeader(closure.task.projectId, tx);
-  return { ...closure, project };
+  const [project, abandonedDeps] = await Promise.all([
+    getProjectHeader(closure.task.projectId, tx),
+    fetchCancelledDepRecords(closure.task.projectId, taskId, tx),
+  ]);
+  return { ...closure, project, abandonedDeps };
 }
 
 /**
@@ -184,12 +190,14 @@ export async function resolveContextBundle(
     project,
     detailedEdges,
     ancestors,
+    abandonedDeps,
   ] = await Promise.all([
     loadBundleDeps(projectId, taskId, 2, tx),
     fetchEdgeNotesBySource(projectId, taskId, tx),
     getProjectHeader(projectId, tx),
     getTaskEdgesDetailedTx(tx, taskId),
     getAncestors(taskId, tx),
+    fetchCancelledDepRecords(projectId, taskId, tx),
   ]);
 
   const [depTasks, downstreamEdgeNotes, downstreamSummaries] =
@@ -206,6 +214,7 @@ export async function resolveContextBundle(
     project,
     detailedEdges,
     ancestors,
+    abandonedDeps,
   };
 }
 

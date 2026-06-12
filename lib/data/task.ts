@@ -1,6 +1,17 @@
 import "server-only";
 
-import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { executeRaw, uuidArray, type Conn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import {
@@ -1746,6 +1757,52 @@ export async function fetchDependencyTasks(
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
     .where(and(eq(tasks.projectId, projectId), sql`${tasks.id} IN ${taskIds}`));
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    status: r.status,
+    executionRecord: r.executionRecord,
+    taskRef: composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber),
+  }));
+}
+
+/**
+ * Fetch direct cancelled prerequisites that carry an execution record, for
+ * the planning bundle's "Abandoned Approaches" section. Direct 1-hop
+ * `depends_on` targets only — the effective-dep walk treats cancelled tasks
+ * as transparent, so they never appear in the closure's `deps`.
+ *
+ * @param projectId - UUID of the project the task belongs to.
+ * @param taskId - UUID of the planning task.
+ * @param conn - RLS-scoped {@link Conn} from an active `withUserContext` frame.
+ * @returns Cancelled dep projections including `executionRecord` and `taskRef`.
+ */
+export async function fetchCancelledDepRecords(
+  projectId: string,
+  taskId: string,
+  conn: Conn,
+): Promise<DependencyTaskInfo[]> {
+  const rows = await conn
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      executionRecord: tasks.executionRecord,
+      sequenceNumber: tasks.sequenceNumber,
+      identifier: projects.identifier,
+    })
+    .from(taskEdges)
+    .innerJoin(tasks, eq(taskEdges.targetTaskId, tasks.id))
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(
+      and(
+        eq(taskEdges.sourceTaskId, taskId),
+        eq(taskEdges.edgeType, "depends_on"),
+        eq(tasks.projectId, projectId),
+        eq(tasks.status, "cancelled"),
+        isNotNull(tasks.executionRecord),
+      ),
+    );
   return rows.map((r) => ({
     id: r.id,
     title: r.title,

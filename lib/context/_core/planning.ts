@@ -6,6 +6,7 @@ import {
   formatDecisions,
   untrustedContentNotice,
 } from "@/lib/context/format";
+import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
 import { withUserContext } from "@/lib/db/rls";
 import {
@@ -14,18 +15,28 @@ import {
 } from "@/lib/context/_core/bundle";
 
 /**
- * Assemble the planning context string from pre-resolved planning data.
+ * Assemble the planning context as structured bundle parts.
  *
  * Supplies the project-level breadth a planner can't derive from reading code
- * alone: project description, upstream execution records, and downstream task
- * specs. Sections ordered by U-shaped attention. Pure: reads only its
- * argument, issues no queries.
+ * alone: project description, upstream execution records, abandoned
+ * approaches from cancelled deps, and downstream task specs. Sections ordered
+ * by U-shaped attention. Pure: reads only its argument, issues no queries.
  *
  * @param data Resolved planning data (dependency closure plus project header).
- * @returns Formatted planning context string.
+ * @returns Ordered bundle parts; join with {@link joinParts} for markdown.
  */
-export function buildPlanningContextFrom(data: PlanningContextData): string {
-  const { task, deps, downstream, upstreamEdgeNotes, depTasks, project } = data;
+export function buildPlanningContextParts(
+  data: PlanningContextData,
+): BundlePart[] {
+  const {
+    task,
+    deps,
+    downstream,
+    upstreamEdgeNotes,
+    depTasks,
+    project,
+    abandonedDeps,
+  } = data;
 
   if (!project) {
     console.error("Task has no joinable project", {
@@ -48,27 +59,48 @@ export function buildPlanningContextFrom(data: PlanningContextData): string {
   if (priority) headerLines.push(`Priority: \`${priority}\``);
   if (estimate) headerLines.push(`Estimate: ${estimate} pts`);
 
-  const parts: string[] = [untrustedContentNotice(), headerLines.join("\n")];
+  const parts: BundlePart[] = [
+    {
+      id: "notice",
+      heading: null,
+      markdown: untrustedContentNotice("planning"),
+    },
+    { id: "header", heading: null, markdown: headerLines.join("\n") },
+  ];
 
   if (project) {
     const projectLines = [`Project: ${project.title}`];
     if (project.description) {
       projectLines.push(project.description);
     }
-    parts.push(section("Project Context") + "\n" + projectLines.join("\n"));
+    parts.push({
+      id: "project",
+      heading: "Project Context",
+      markdown: section("Project Context") + "\n" + projectLines.join("\n"),
+    });
   }
 
-  parts.push(section("Description") + "\n" + task.description);
-  parts.push(
-    section("Acceptance Criteria") +
+  parts.push({
+    id: "spec",
+    heading: "Description",
+    markdown: section("Description") + "\n" + task.description,
+  });
+  parts.push({
+    id: "criteria",
+    heading: "Acceptance Criteria",
+    markdown:
+      section("Acceptance Criteria") +
       "\n" +
       formatCriteria(task.acceptanceCriteria),
-  );
+  });
 
   if (task.implementationPlan) {
-    parts.push(
-      section("Existing Implementation Plan") + "\n" + task.implementationPlan,
-    );
+    parts.push({
+      id: "plan",
+      heading: "Existing Implementation Plan",
+      markdown:
+        section("Existing Implementation Plan") + "\n" + task.implementationPlan,
+    });
   }
 
   if (deps.length > 0) {
@@ -92,24 +124,66 @@ export function buildPlanningContextFrom(data: PlanningContextData): string {
     }
 
     if (prereqLines.length > 0) {
-      parts.push(
-        section("Prerequisites (context only — do NOT implement these)") +
+      parts.push({
+        id: "prerequisites",
+        heading: "Prerequisites (context only — do NOT implement these)",
+        markdown:
+          section("Prerequisites (context only — do NOT implement these)") +
           "\n" +
           prereqLines.join("\n"),
-      );
+      });
     }
 
     if (execLines.length > 0) {
-      parts.push(
-        section("What's Been Built (from done prerequisites)") +
+      parts.push({
+        id: "built",
+        heading: "What's Been Built (from done prerequisites)",
+        markdown:
+          section("What's Been Built (from done prerequisites)") +
           "\n" +
           execLines.join("\n"),
-      );
+      });
     }
   }
 
+  if (abandonedDeps.length > 0) {
+    const abandonedLines: string[] = [];
+    for (const d of abandonedDeps) {
+      abandonedLines.push(`### \`${d.taskRef}\` ${d.title}`);
+      abandonedLines.push(d.executionRecord ?? "");
+    }
+    parts.push({
+      id: "abandoned",
+      heading: "Abandoned Approaches",
+      markdown:
+        section("Abandoned Approaches") + "\n" + abandonedLines.join("\n"),
+    });
+  }
+
   if (task.decisions.length > 0) {
-    parts.push(section("Decisions") + "\n" + formatDecisions(task.decisions));
+    parts.push({
+      id: "decisions",
+      heading: "Decisions",
+      markdown: section("Decisions") + "\n" + formatDecisions(task.decisions),
+    });
+  }
+
+  if (task.links.length > 0) {
+    const linkLines = task.links.map((l) => {
+      let host = "";
+      try {
+        host = new URL(l.url).host;
+      } catch {
+        host = l.url;
+      }
+      const display = l.label ?? host;
+      return `- [${l.kind}] ${display} (${l.url})`;
+    });
+    parts.push({
+      id: "links",
+      heading: "Links",
+      markdown: section("Links") + "\n" + linkLines.join("\n"),
+    });
   }
 
   if (downstream.length > 0) {
@@ -127,15 +201,28 @@ export function buildPlanningContextFrom(data: PlanningContextData): string {
     }
 
     if (downLines.length > 0) {
-      parts.push(
-        section("Downstream (tasks that depend on this task's output)") +
+      parts.push({
+        id: "downstream",
+        heading: "Downstream (tasks that depend on this task's output)",
+        markdown:
+          section("Downstream (tasks that depend on this task's output)") +
           "\n" +
           downLines.join("\n"),
-      );
+      });
     }
   }
 
-  return parts.join("\n\n");
+  return parts;
+}
+
+/**
+ * Assemble the planning context string from pre-resolved planning data.
+ *
+ * @param data Resolved planning data (dependency closure plus project header).
+ * @returns Formatted planning context string.
+ */
+export function buildPlanningContextFrom(data: PlanningContextData): string {
+  return joinParts(buildPlanningContextParts(data));
 }
 
 /**
