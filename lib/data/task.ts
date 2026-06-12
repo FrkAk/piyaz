@@ -791,7 +791,7 @@ export async function getTaskSlim(
 // ---------------------------------------------------------------------------
 
 /**
- * {@link listProjectTasksForOverview} as a lazy batch statement.
+ * Overview rows for every task in a project, as a lazy batch statement.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project.
@@ -1019,7 +1019,7 @@ export type SearchResult = {
 /** Match a full taskRef like "MYMR-83" (case-insensitive). */
 const TASK_REF_PATTERN = /^([A-Z0-9]+)-(\d+)$/i;
 
-/** Filter options for {@link searchTasks} and {@link searchTasksTx}. */
+/** Filter options for {@link searchTasks} and {@link searchTasksRead}. */
 export type SearchTasksOpts = {
   /** Optional search string (taskRef, title, or tag substring). */
   query?: string;
@@ -1031,7 +1031,7 @@ export type SearchTasksOpts = {
 
 /**
  * Search tasks by taskRef, title, tags, or category within a project.
- * Prefer {@link searchTasksTx} when the caller already owns a
+ * Prefer {@link searchTasksRead} when the caller already holds a
  * `withUserContext` frame.
  *
  * @param ctx - Resolved auth context.
@@ -1626,7 +1626,7 @@ export async function listMyTasks(ctx: AuthContext): Promise<MyTask[]> {
 type EdgeNoteRow = { taskId: string; note: string };
 
 /**
- * {@link fetchEdgeNotesBySource} as a lazy batch statement. The connected
+ * Outgoing depends_on edge notes as a lazy batch statement. The connected
  * task's project filter derives from the source task's own row. Build the
  * note map from the rows with {@link mapEdgeNoteRows}.
  *
@@ -1650,7 +1650,7 @@ export function edgeNotesBySourceStmt(read: ReadConn, taskId: string) {
 }
 
 /**
- * {@link fetchEdgeNotesByTarget} as a lazy batch statement. See
+ * Incoming depends_on edge notes as a lazy batch statement. See
  * {@link edgeNotesBySourceStmt}.
  *
  * @param read - Read statement-building handle.
@@ -1705,7 +1705,7 @@ type TaskSummaryRow = {
 };
 
 /**
- * {@link fetchTaskSummaries} as a lazy batch statement. `ANY` over a typed
+ * Slim task summaries for an id list, as a lazy batch statement. `ANY` over a typed
  * uuid array keeps the statement valid for an empty id list (zero rows),
  * unlike `IN ()`. Map the rows with {@link mapTaskSummaryRows}.
  *
@@ -1765,7 +1765,7 @@ export type DependencyTaskInfo = {
 };
 
 /**
- * {@link fetchDependencyTasks} as a lazy batch statement. `ANY` over a
+ * Dependency-task summaries for an id list, as a lazy batch statement. `ANY` over a
  * typed uuid array keeps the statement valid for an empty id list. Map the
  * rows with {@link mapDependencyTaskRows}.
  *

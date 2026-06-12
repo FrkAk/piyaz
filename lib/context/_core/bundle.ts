@@ -206,9 +206,10 @@ async function resolveClosureSecondaries(
 
 /**
  * Resolve the shared dependency closure for a task in two read batches: one
- * for the gate, task row, dependency walks, edge notes, and header; one for
- * the closure-keyed secondaries (skipped for isolated tasks). The gate is
- * evaluated before any row is consumed, so callers need no prior check.
+ * for the task row, dependency walks, edge notes, and header; one for the
+ * closure-keyed secondaries (skipped for isolated tasks). The task row's
+ * empty result is the 404 signal, evaluated before any other row is
+ * consumed, so callers need no prior check.
  *
  * `depth` scopes ONLY the main task-row column projection — the agent core
  * fetches at `agent`, the planning core at `planning`. Snapshot consistency
@@ -504,7 +505,7 @@ function toProjectHeader(header: HeaderRow | null): ProjectHeader | null {
 
 /**
  * Derive the ancestor chain (always the parent project) from the header
- * row, matching the shape `getAncestors` produced on the interactive path.
+ * row, matching the shape the interactive ancestor lookup produced.
  *
  * @param header - Header row from the closure batch, or null.
  * @returns Single-project ancestor chain, or empty when unjoinable.

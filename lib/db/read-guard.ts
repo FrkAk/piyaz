@@ -47,6 +47,12 @@ const READ_HEAD_RE = /^\s*(?:select|with)\b/i;
  * advisory locks are NOT (they are legal in read-only transactions), which
  * is why this client-side scan exists — a build statement must never be
  * able to re-point `app.user_id` or take a lock over the stateless path.
+ *
+ * Known false-positive surface, accepted for a defense belt: statements
+ * must START with SELECT/WITH (no leading SQL comments), and identifiers,
+ * aliases, or literals containing a forbidden token (e.g. a column named
+ * "merge") are rejected. Keep read SQL clear of both; the database-level
+ * READ ONLY transaction remains the backstop for anything the scan misses.
  */
 const FORBIDDEN_SQL_RE =
   /\b(?:insert|update|delete|merge|alter|drop|truncate|create|grant|revoke|copy|set_config|pg_advisory_\w+)\b/i;

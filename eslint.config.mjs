@@ -106,7 +106,7 @@ const eslintConfig = [
         {
           selector: "CallExpression[callee.property.name='batch']",
           message:
-            "Bare .batch() opens a neon-http batch transaction without prepending the app.user_id GUC — RLS default-denies and silently returns empty (or wrong-tenant) data. Use withUserContextRead(userId, (read) => [...statements]) from @/lib/db/rls instead.",
+            "Bare .batch() is reserved for the neon-http read driver: outside withUserContextRead(userId, (read) => [...statements]) from @/lib/db/rls it opens a batch transaction without the app.user_id GUC and RLS silently returns empty (or wrong-tenant) data. If this is not a database batch, add the file to the ignores list in eslint.config.mjs.",
         },
       ],
       "no-restricted-imports": [

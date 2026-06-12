@@ -59,7 +59,7 @@ function effectiveDepChainSql(
 }
 
 /**
- * {@link fetchEffectiveDepChain} as a lazy batch statement. The project
+ * The effective dependency-chain walk as a lazy batch statement. The project
  * filter derives from the source task's own row (the same project id every
  * interactive caller passes), so the statement can ride the first batch
  * before the task row has been read. Normalize the batch result with

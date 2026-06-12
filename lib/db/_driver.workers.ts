@@ -203,5 +203,3 @@ export function buildAppHttp(url = process.env.DATABASE_URL): AppHttpDb {
   }
   return drizzleHttp(neon(url, HTTP_TX_OPTS), { schema: appSchema });
 }
-
-

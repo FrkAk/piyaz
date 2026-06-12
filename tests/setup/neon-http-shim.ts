@@ -18,8 +18,11 @@ export type CapturedNeonRequest = {
 export type NeonHttpShim = {
   /** Every request the shim served, in arrival order. */
   requests: CapturedNeonRequest[];
-  /** Restore `neonConfig.fetchFunction` so later suites use real fetch. */
-  uninstall: () => void;
+  /**
+   * Restore `neonConfig.fetchFunction` and close the shim's postgres-js
+   * clients so no connection outlives the suite.
+   */
+  uninstall: () => Promise<void>;
 };
 
 /** Wire shape of one query inside the neon-http request body. */
@@ -205,8 +208,11 @@ export function installNeonHttpShim(): NeonHttpShim {
 
   return {
     requests,
-    uninstall: () => {
+    uninstall: async () => {
       neonConfig.fetchFunction = undefined;
+      const clients = [...shimClients.values()];
+      shimClients.clear();
+      await Promise.allSettled(clients.map((c) => c.end({ timeout: 5 })));
     },
   };
 }

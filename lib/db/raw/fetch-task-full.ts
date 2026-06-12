@@ -2,7 +2,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { type ReadConn } from "@/lib/db/raw";
 
 /**
- * Raw row shape returned by {@link fetchTaskFull}. Snake-case keys mirror
+ * Raw row shape returned by {@link taskFullStmt}. Snake-case keys mirror
  * the underlying columns; the caller maps to the camelCase `TaskFull`
  * shape and narrows the `source` union on `decisions`.
  */
@@ -43,7 +43,7 @@ export type TaskFullRawRow = {
 
 /**
  * Context depth identifying which task-row columns and child aggregates a
- * single MCP context builder reads. Drives {@link fetchTaskForDepth} so each
+ * single MCP context builder reads. Drives {@link taskForDepthStmt} so each
  * depth pays egress only for the columns its formatter renders.
  */
 export type TaskFetchDepth =
@@ -56,7 +56,7 @@ export type TaskFetchDepth =
 /**
  * Per-depth projection plan. Each flag gates one droppable `tasks` column or
  * child aggregate; omitted columns fall back to a type-stable empty literal in
- * {@link fetchTaskForDepth} so the {@link TaskFullRawRow} shape never changes.
+ * {@link taskForDepthStmt} so the {@link TaskFullRawRow} shape never changes.
  * Columns every depth renders (id, title, description, status, priority,
  * estimate, ...) are always selected and carry no flag.
  */
@@ -134,21 +134,21 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   },
 };
 
-/** Correlated assignee aggregate, identical to {@link fetchTaskFull}. */
+/** Correlated assignee aggregate, identical to {@link taskFullStmt}. */
 const ASSIGNEES_AGG = sql`(SELECT json_agg(json_build_object('userId', a.user_id, 'name', a.name, 'email', a.email) ORDER BY a.name)
          FROM public.task_assignees_visible(t.id) a)`;
 
-/** Correlated acceptance-criteria aggregate, identical to {@link fetchTaskFull}. */
+/** Correlated acceptance-criteria aggregate, identical to {@link taskFullStmt}. */
 const CRITERIA_AGG = sql`(SELECT json_agg(json_build_object('id', c.id, 'text', c.text, 'checked', c.checked) ORDER BY c.position, c.id)
          FROM task_acceptance_criteria c
          WHERE c.task_id = t.id)`;
 
-/** Correlated decisions aggregate, identical to {@link fetchTaskFull}. */
+/** Correlated decisions aggregate, identical to {@link taskFullStmt}. */
 const DECISIONS_AGG = sql`(SELECT json_agg(json_build_object('id', d.id, 'text', d.text, 'source', d.source, 'date', d.decision_date) ORDER BY d.position, d.id)
          FROM task_decisions d
          WHERE d.task_id = t.id)`;
 
-/** Correlated links aggregate, identical to {@link fetchTaskFull}. */
+/** Correlated links aggregate, identical to {@link taskFullStmt}. */
 const LINKS_AGG = sql`(SELECT json_agg(json_build_object('id', l.id, 'kind', l.kind, 'url', l.url, 'label', l.label, 'createdAt', l.created_at) ORDER BY l.created_at)
          FROM task_links l
          WHERE l.task_id = t.id)`;
@@ -233,7 +233,7 @@ function taskForDepthSql(taskId: string, depth: TaskFetchDepth): SQL {
 }
 
 /**
- * {@link fetchTaskForDepth} as a lazy batch statement for the
+ * The depth-projected task row as a lazy batch statement for the
  * `withUserContextRead` path. Same UNCHECKED contract: batch a
  * `taskAccessGateStmt` alongside and evaluate the gate first. Normalize
  * the batch result with `normalizeExecuteResult<TaskFullRawRow>`.
@@ -283,7 +283,7 @@ function taskFullSql(taskId: string): SQL {
 }
 
 /**
- * {@link fetchTaskFull} as a lazy batch statement. Same UNCHECKED contract:
+ * The full-task projection as a lazy batch statement. Same UNCHECKED contract:
  * batch a `taskAccessGateStmt` alongside and evaluate the gate first.
  * Normalize the batch result with `normalizeExecuteResult<TaskFullRawRow>`.
  *

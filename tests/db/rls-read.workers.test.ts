@@ -29,8 +29,8 @@ beforeAll(async () => {
   await su`GRANT USAGE ON SEQUENCE rls_read_probe_seq TO app_user`;
 });
 
-afterAll(() => {
-  shim.uninstall();
+afterAll(async () => {
+  await shim.uninstall();
 });
 
 /**

@@ -68,7 +68,7 @@ function effectiveDownstreamSql(
  * `C(active) → B(cancelled) → A` returns A at effective depth 1 from C's
  * perspective.
  *
- * Mirror of {@link fetchEffectiveDepChain} with source / target swapped
+ * Mirror of `effectiveDepChainStmt` with source / target swapped
  * on the join. Same `CYCLE`, `projectId` filter, and source-exclusion
  * semantics.
  *
