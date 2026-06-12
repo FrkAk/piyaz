@@ -1,7 +1,8 @@
 ---
 name: composer
 description: >
-  Use when the user types /mymir:composer or /mymir:composer <taskRef>, or
+  Use when the user types /mymir:composer, /mymir:composer <taskRef>, or
+  /mymir:composer rework <taskRef|pr-url>, or
   asks to run the next Mymir task end-to-end, ship the backlog, compose
   through the ready queue, or loop through Mymir tasks until done. Do NOT
   invoke for one-off task lookups, status checks, hand-refinement of one
@@ -19,8 +20,9 @@ Composer is glue. The heavy lifting (task selection, refinement, the Completion 
 
 - **`/mymir:composer`**: backlog mode. Pick the highest-value ready task each iteration; continue until a stop condition holds.
 - **`/mymir:composer <taskRef>`**: single-task mode. Same pipeline applied to one task; exits after the iteration completes.
+- **`/mymir:composer rework <taskRef|pr-url>`**: rework mode. HOTL requested changes on GitHub instead of merging; composer rounds that feedback back through the fix loop.
 
-No argument means backlog mode; anything else is single-task.
+No argument means backlog mode; `rework` plus an argument means rework mode; anything else is single-task.
 
 ## Mymir operating context
 
@@ -213,6 +215,20 @@ The `FIX` line is written *before* the rotation dispatch — increment-before-di
 
 If `.mymir/` is not writable (sandboxed runs), fall back to whatever directory is writable and name the chosen path in your first report; if no local write is possible at all, run without the log and say so — the run loses crash recovery, not correctness.
 
+## Rework mode
+
+Pull-based: the backend has no webhooks, and `task_links` is the only PR record. The user invokes rework when GitHub review feedback exists; composer fetches it, re-anchors it, and runs the existing fix loop on it.
+
+1. **Resolve the pair.** Given a taskRef, read `task.links` filtered to `kind='pull_request'`; given a PR URL, resolve the task from the `[<taskRef>]` bracket in the PR title/body (verify the link row agrees). When several PR links exist, prefer the newest open PR — never trust oldest-link-wins. Every downstream dispatch carries the explicit PR URL.
+2. **Reviewer-led intake.** Dispatch `mymir:review` with: `Target task: <taskRef>. PR URL: <url>. Mode: rework-intake.` The intake re-verifies the human feedback against current HEAD and returns a standard verdict.
+3. **Branch on the intake verdict.**
+   - `request-changes`: the blocking findings are the human's items with fresh file:line citations. Run *Review and the fix loop* verbatim from the fix-dispatch step, with a **fresh rotation budget of 2 for this rework invocation** (it is a new review cycle; prior runs' rotations do not count). The CI gate (step 5) applies to each rotation as usual.
+   - approve-shaped "nothing to rework": zero unresolved feedback. Report it and stop; the iteration is complete.
+   - `BLOCKED` (PR merged/closed, task `done`/`cancelled`): report and stop; there is nothing legal to do.
+4. **Finish like any iteration.** Surface the final verdict, propagate (step 7), `TASK_END`. The run log records the whole run with `RUN_START mode=rework`.
+
+Future (documented, not built): a GitHub webhook feeding `task_links.metadata` and a UI "rework available" signal; this agent-side mode stays the consumer.
+
 ## Dispatch hygiene
 
 Subagents inherit nothing from this session; the dispatch prompt is their whole world beyond their own agent file and tools. Keep every dispatch to the phase minimum shown in *Step details*. Never paste orchestrator transcript, prior-iteration summaries, full meta payloads, or mymir reference text into a dispatch — the agents load their own rules extract and fetch task context from Mymir themselves. Oversized dispatches make agents worse, not better.
@@ -243,7 +259,7 @@ Stop and report in plain language (there are no magic stop phrases) when one of 
 1. **Backlog drained**: `ready` and `plannable` are both empty. The stop report enumerates every task left at `in_progress`/`in_review` with its failure summary — the stranded-task report; nothing strands silently.
 2. **Failure budget exhausted**: three failed attempts on the same task (single-task mode).
 3. **User says stop**: exit after the in-flight write finishes.
-4. **Single-task iteration complete**: verdict surfaced and propagation done. The task itself sits at `in_review` awaiting HOTL; composer's job is finished.
+4. **Single-task or rework iteration complete**: verdict surfaced and propagation done (rework: feedback addressed, or nothing to rework). The task itself sits at `in_review` awaiting HOTL; composer's job is finished.
 5. **Rewrite denied** (single-task mode): the user rejected a proposed rewrite at the gate.
 6. **Mymir transport/auth failure**: any Mymir tool call fails with auth expiry, 401/403, a 5xx, or a network error. Stop immediately — these are not retryable in-session (resilience §10) — and report the exact error text plus the last completed phase for each in-flight task.
 
