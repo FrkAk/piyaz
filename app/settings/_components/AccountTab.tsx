@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
@@ -200,6 +200,7 @@ export function AccountTab({ user, passwordUpdatedAt }: AccountTabProps) {
  */
 function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
   const router = useRouter();
+  const fieldId = useId();
   const [open, setOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -215,9 +216,12 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
 
   const mismatch =
     confirmPassword.length > 0 && confirmPassword !== newPassword;
+  const sameAsCurrent =
+    newPassword.length > 0 && newPassword === currentPassword;
   const submittable =
     currentPassword.length > 0 &&
     newPassword.length >= PASSWORD_MIN &&
+    newPassword !== currentPassword &&
     confirmPassword === newPassword;
 
   const close = () => {
@@ -226,6 +230,10 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
     setNewPassword("");
     setConfirmPassword("");
     setError(null);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape" && !pending) close();
   };
 
   const handleSubmit = (event: React.FormEvent) => {
@@ -305,7 +313,11 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
             transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
             style={{ overflow: "hidden" }}
           >
-            <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            <form
+              onSubmit={handleSubmit}
+              onKeyDown={handleKeyDown}
+              className="mt-5 space-y-4"
+            >
               <label className="block">
                 <span className={FIELD_LABEL_CLASS}>Current password</span>
                 <input
@@ -313,6 +325,7 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   autoComplete="current-password"
+                  autoFocus
                   className={INPUT_CLASS}
                 />
               </label>
@@ -327,11 +340,30 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
                   autoComplete="new-password"
+                  aria-invalid={sameAsCurrent ? true : undefined}
+                  aria-describedby={
+                    sameAsCurrent
+                      ? `${fieldId}-new-error`
+                      : `${fieldId}-new-hint`
+                  }
                   className={INPUT_CLASS}
                 />
-                <p className="mt-1 text-[11px] text-text-muted">
-                  At least {PASSWORD_MIN} characters.
-                </p>
+                {sameAsCurrent ? (
+                  <p
+                    id={`${fieldId}-new-error`}
+                    role="alert"
+                    className="mt-1 text-[11px] text-cancelled"
+                  >
+                    New password must be different from your current one.
+                  </p>
+                ) : (
+                  <p
+                    id={`${fieldId}-new-hint`}
+                    className="mt-1 text-[11px] text-text-muted"
+                  >
+                    At least {PASSWORD_MIN} characters.
+                  </p>
+                )}
               </label>
 
               <label className="block">
@@ -341,10 +373,18 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   autoComplete="new-password"
+                  aria-invalid={mismatch ? true : undefined}
+                  aria-describedby={
+                    mismatch ? `${fieldId}-confirm-error` : undefined
+                  }
                   className={INPUT_CLASS}
                 />
                 {mismatch ? (
-                  <p className="mt-1 text-[11px] text-cancelled">
+                  <p
+                    id={`${fieldId}-confirm-error`}
+                    role="alert"
+                    className="mt-1 text-[11px] text-cancelled"
+                  >
                     Passwords don&apos;t match.
                   </p>
                 ) : null}

@@ -35,20 +35,28 @@ const RATE_LIMIT: ActionRateLimitConfig = {
   backendKind: "auth",
 };
 
-const changePasswordSchema = z.object({
-  // Bound the current password to BA's max so an attacker cannot submit a
-  // multi-hundred-KB value to amplify the scrypt verify cost per attempt
-  // (BA hashes the new password AND verifies the current one, two scrypt
-  // ops, before this value is rejected server-side).
-  currentPassword: z
-    .string()
-    .min(1, "Current password is required")
-    .max(PASSWORD_MAX, `Password must be at most ${PASSWORD_MAX} characters`),
-  newPassword: z
-    .string()
-    .min(PASSWORD_MIN, `Password must be at least ${PASSWORD_MIN} characters`)
-    .max(PASSWORD_MAX, `Password must be at most ${PASSWORD_MAX} characters`),
-});
+const changePasswordSchema = z
+  .object({
+    // Bound the current password to BA's max so an attacker cannot submit a
+    // multi-hundred-KB value to amplify the scrypt verify cost per attempt
+    // (BA hashes the new password AND verifies the current one, two scrypt
+    // ops, before this value is rejected server-side).
+    currentPassword: z
+      .string()
+      .min(1, "Current password is required")
+      .max(PASSWORD_MAX, `Password must be at most ${PASSWORD_MAX} characters`),
+    newPassword: z
+      .string()
+      .min(PASSWORD_MIN, `Password must be at least ${PASSWORD_MIN} characters`)
+      .max(PASSWORD_MAX, `Password must be at most ${PASSWORD_MAX} characters`),
+  })
+  // A same-value "change" still verifies the current password, re-hashes,
+  // and fires revokeOtherSessions + the agent-revocation hook — a
+  // disruptive no-op. Refuse it before reaching Better Auth.
+  .refine((value) => value.currentPassword !== value.newPassword, {
+    message: "New password must be different from the current one",
+    path: ["newPassword"],
+  });
 
 /**
  * Change the signed-in user's password via Better Auth's `changePassword`.

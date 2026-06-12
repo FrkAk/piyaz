@@ -212,6 +212,20 @@ describe("changePasswordAction input validation", () => {
     if (!result.ok) expect(result.code).toBe("invalid_input");
   });
 
+  test("rejects a new password identical to the current one", async () => {
+    // A same-value change still fires revokeOtherSessions + the agent
+    // revocation hook — a disruptive no-op. The action refuses it before
+    // reaching Better Auth.
+    const { changePasswordAction } = await import("@/lib/actions/password");
+    const result = await changePasswordAction({
+      currentPassword: "same-password-123",
+      newPassword: "same-password-123",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("invalid_input");
+    expect(changePasswordSpy).not.toHaveBeenCalled();
+  });
+
   test("returns unauthorized when no session is set", async () => {
     setSession(null);
     const { changePasswordAction } = await import("@/lib/actions/password");
