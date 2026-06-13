@@ -24,6 +24,9 @@ export const taskKeys = {
   /** Three-bundle markdown for the MD toggle. */
   context: (projectId: string, taskId: string) =>
     ["task", projectId, taskId, "context"] as const,
+  /** Paginated activity log for the detail panel. */
+  activity: (projectId: string, taskId: string) =>
+    ["task", projectId, taskId, "activity"] as const,
 } as const;
 
 /** Team-scoped query keys (member roster). */
