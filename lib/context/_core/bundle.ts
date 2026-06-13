@@ -35,9 +35,25 @@ import type {
 } from "@/lib/db/raw/fetch-task-full";
 import { taskForDepthStmt } from "@/lib/db/raw/fetch-task-full";
 import type { TaskFull } from "@/lib/data/views";
+import { isTerminalStatus } from "@/lib/types";
+import { CLOSURE_DEPTH } from "@/lib/context/parts";
 
-/** Effective dependency hops included in the closure. */
-const CLOSURE_DEPTH = 2;
+/**
+ * Thrown by {@link resolveRecordData} when the fetched task row is not
+ * terminal — the retrospective record bundle only exists for done/cancelled
+ * tasks. Guards the gap between the route's access-gate status read and the
+ * resolver's own row fetch (a concurrent reopen between the two would
+ * otherwise render an active task with completion/cancellation framing).
+ */
+export class RecordNotTerminalError extends Error {
+  /**
+   * @param taskId - UUID of the task whose row was not terminal.
+   */
+  constructor(taskId: string) {
+    super(`Task ${taskId} is not done or cancelled; no record bundle exists`);
+    this.name = "RecordNotTerminalError";
+  }
+}
 
 /** Downstream-task summary projection shared by the agent + planning cores. */
 type DownstreamSummary = {
@@ -155,7 +171,7 @@ function closureCoreBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
 function closureBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
   return [
     ...closureCoreBatch(db, taskId, depth),
-    projectHeaderByTaskStmt(db, taskId),
+    projectHeaderByTaskStmt(db, taskId, true),
   ] as const;
 }
 
@@ -474,7 +490,9 @@ async function resolveTaskEdgesHeader(
     (db) => [
       taskForDepthStmt(db, taskId, depth),
       taskEdgesStmt(db, taskId),
-      projectHeaderByTaskStmt(db, taskId),
+      // Neither the working hierarchy (id/title) nor the summary parent
+      // (title) renders the project description — skip its egress.
+      projectHeaderByTaskStmt(db, taskId, false),
     ],
   );
   const task = requireTaskRow(
@@ -573,6 +591,7 @@ export async function resolveReviewData(
  * @param taskId - UUID of the task.
  * @returns The record input.
  * @throws ForbiddenError When the caller cannot access the task.
+ * @throws RecordNotTerminalError When the fetched row is not done/cancelled.
  */
 export async function resolveRecordData(
   userId: string,
@@ -584,13 +603,16 @@ export async function resolveRecordData(
     (db) => [
       taskForDepthStmt(db, taskId, "record"),
       effectiveDownstreamStmt(db, taskId, CLOSURE_DEPTH),
-      projectHeaderByTaskStmt(db, taskId),
+      projectHeaderByTaskStmt(db, taskId, true),
     ],
   );
   const task = requireTaskRow(
     normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
   );
+  if (!isTerminalStatus(task.status as string)) {
+    throw new RecordNotTerminalError(taskId);
+  }
   const downstream = normalizeExecuteResult<{
     id: string;
     depth: number | string;
@@ -652,11 +674,12 @@ export type AgentBundleData =
  * from the agent-depth closure core (the dominant active path stays
  * header-free and batch-identical to {@link resolveDependencyClosure});
  * for terminal tasks the core's task row and downstream walk are reused —
- * the `agent` projection supersets `record`, and the record builder never
- * reads the extra `implementationPlan` column — while the second batch
- * fetches only what the record bundle renders (slim downstream summaries,
- * incoming notes, project header) and always runs because the header is
- * unconditionally rendered.
+ * the `agent` projection selects `implementationPlan` as `"active-only"`,
+ * so a terminal row arrives with the plan already `NULL`, exactly like the
+ * `record` projection — while the second batch fetches only what the
+ * record bundle renders (slim downstream summaries, incoming notes,
+ * project header) and always runs because the header is unconditionally
+ * rendered.
  *
  * @param userId - Authenticated user id (RLS scope).
  * @param taskId - UUID of the task.
@@ -672,8 +695,7 @@ export async function resolveAgentBundleData(
     closureCoreBatch(db, taskId, "agent"),
   );
   const core = decodeClosureCore(taskId, results);
-  const status = core.task.status as string;
-  if (status !== "done" && status !== "cancelled") {
+  if (!isTerminalStatus(core.task.status as string)) {
     return {
       kind: "agent",
       data: await finishClosure(userId, taskId, core, false),
@@ -689,7 +711,7 @@ export async function resolveAgentBundleData(
         false,
       ),
       edgeNotesByTargetStmt(db, taskId),
-      projectHeaderByTaskStmt(db, taskId),
+      projectHeaderByTaskStmt(db, taskId, true),
     ],
   );
   return {

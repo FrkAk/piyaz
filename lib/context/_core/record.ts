@@ -4,6 +4,8 @@ import {
   section,
   formatCriteria,
   formatDecisions,
+  formatLinkLine,
+  formatTaskRefLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
@@ -30,14 +32,7 @@ function formatRecordLinks(links: TaskLinkRef[], cancelled: boolean): string {
   );
   return ordered
     .map((l) => {
-      let host = "";
-      try {
-        host = new URL(l.url).host;
-      } catch {
-        host = l.url;
-      }
-      const display = l.label ?? host;
-      let line = `- [${l.kind}] ${display} (${l.url})`;
+      let line = formatLinkLine(l);
       if (cancelled && l.kind === "pull_request") line += " — closed, unmerged";
       return line;
     })
@@ -176,7 +171,7 @@ function buildConsumersPart(data: RecordContextData): BundlePart | null {
   for (const d of data.downstream) {
     const info = summaryMap.get(d.id);
     if (!info) continue;
-    lines.push(`- \`${info.taskRef}\` **${info.title}** [${info.status}]`);
+    lines.push(formatTaskRefLine(info));
   }
   if (lines.length === 0) return null;
   return {
@@ -201,10 +196,7 @@ function buildDependentsPart(data: RecordContextData): BundlePart | null {
     if (d.depth !== 1) continue;
     const info = summaryMap.get(d.id);
     if (!info) continue;
-    const note = data.downstreamEdgeNotes.get(d.id);
-    let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
-    if (note) line += ` — ${note}`;
-    lines.push(line);
+    lines.push(formatTaskRefLine(info, data.downstreamEdgeNotes.get(d.id)));
   }
   if (lines.length === 0) return null;
   return {

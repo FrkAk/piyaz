@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { type ReadConn } from "@/lib/db/raw";
+import { TERMINAL_STATUSES } from "@/lib/types";
 
 /**
  * Raw row shape returned by {@link taskFullStmt}. Snake-case keys mirror
@@ -63,7 +64,13 @@ export type TaskFetchDepth =
  */
 type DepthProjection = {
   tags: boolean;
-  implementationPlan: boolean;
+  /**
+   * `true` always selects the plan; `"active-only"` selects it only for
+   * non-terminal rows (`NULL` for done/cancelled) so a single fetch serves
+   * both the agent bundle (renders the plan) and the record fallback for
+   * terminal tasks (never reads it) without egressing the plan twice over.
+   */
+  implementationPlan: boolean | "active-only";
   executionRecord: boolean;
   files: boolean;
   assignees: boolean;
@@ -77,11 +84,14 @@ type DepthProjection = {
  * and `files` are omitted at every depth (no formatter reads them — bundles
  * point at the PR diff instead of recorded file lists). `implementationPlan`
  * is true for `summary` because `buildSummaryContext` reads its presence
- * (`hasImplementationPlan`) even though it never renders the plan text.
- * `record` serves the retrospective bundle for done/cancelled tasks: it keeps
- * executionRecord, links, decisions, and criteria, and drops
- * `implementationPlan` (often the largest column) and assignees because the
- * record bundle never renders them.
+ * (`hasImplementationPlan`) even though it never renders the plan text;
+ * `agent` selects it `"active-only"` because terminal tasks dispatch to the
+ * record bundle, which never reads the plan — the conditional keeps the
+ * dominant active path one fetch while sparing terminal rows the egress of
+ * the (often largest) column. `record` serves the retrospective bundle for
+ * done/cancelled tasks: it keeps executionRecord, links, decisions, and
+ * criteria, and drops `implementationPlan` and assignees because the record
+ * bundle never renders them.
  *
  * Each depth is fetched independently by its own resolver (there is no
  * shared superset fetch). Exported so the projection test can pin the
@@ -120,7 +130,7 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   },
   agent: {
     tags: true,
-    implementationPlan: true,
+    implementationPlan: "active-only",
     executionRecord: true,
     files: false,
     assignees: false,
@@ -193,6 +203,30 @@ function depthColumn(
 }
 
 /**
+ * Select the `implementation_plan` column per the depth's plan flag:
+ * always, never, or only for non-terminal rows (`NULL` when the task is
+ * done/cancelled, mirroring the `record` projection those rows render as).
+ *
+ * @param keep - The depth's `implementationPlan` projection flag.
+ * @returns SQL fragment for the SELECT list.
+ */
+function planColumn(keep: boolean | "active-only"): SQL {
+  if (keep !== "active-only") {
+    return depthColumn(
+      keep,
+      sql`t.implementation_plan`,
+      "implementation_plan",
+      "text",
+    );
+  }
+  const terminal = sql.join(
+    TERMINAL_STATUSES.map((s) => sql`${s}`),
+    sql`, `,
+  );
+  return sql`CASE WHEN t.status IN (${terminal}) THEN NULL ELSE t.implementation_plan END AS implementation_plan`;
+}
+
+/**
  * Select a child aggregate when the depth reads it, else a `NULL` literal so
  * the caller's `?? []` fallback yields the empty projection.
  *
@@ -228,7 +262,7 @@ function taskForDepthSql(taskId: string, depth: TaskFetchDepth): SQL {
         t.status,
         t."order",
         NULL::text AS category,
-        ${depthColumn(p.implementationPlan, sql`t.implementation_plan`, "implementation_plan", "text")},
+        ${planColumn(p.implementationPlan)},
         ${depthColumn(p.executionRecord, sql`t.execution_record`, "execution_record", "text")},
         ${depthColumn(p.tags, sql`t.tags`, "tags", "jsonb")},
         t.priority,

@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { effectiveDirectPrerequisiteIds } from "@/lib/ui/effective-prereqs";
+import {
+  effectiveDirectPrerequisiteIds,
+  effectiveNeighbors,
+} from "@/lib/ui/effective-prereqs";
 import type { TaskGraphEdge } from "@/lib/data/views";
 
 /**
@@ -76,4 +79,42 @@ test("cycles through cancelled tasks terminate and dedupe", () => {
   const edges = [dep("a", "b"), dep("b", "a"), dep("b", "c"), dep("a", "c")];
   const tasks = statuses({ a: "planned", b: "cancelled", c: "draft" });
   expect(effectiveDirectPrerequisiteIds("a", edges, tasks)).toEqual(["c"]);
+});
+
+test("effectiveNeighbors reports effective depth up to maxDepth", () => {
+  // a -> b(active) -> c(active): b is depth 1, c is depth 2.
+  const edges = [dep("a", "b"), dep("b", "c")];
+  const tasks = statuses({ a: "planned", b: "draft", c: "draft" });
+  expect(effectiveNeighbors("a", edges, tasks, "upstream", 2)).toEqual([
+    { id: "b", depth: 1 },
+    { id: "c", depth: 2 },
+  ]);
+  // maxDepth 1 prunes c.
+  expect(effectiveNeighbors("a", edges, tasks, "upstream", 1)).toEqual([
+    { id: "b", depth: 1 },
+  ]);
+});
+
+test("effectiveNeighbors downstream walks dependents", () => {
+  // c depends_on b depends_on a: from a, both depend on it (b at 1, c at 2).
+  const edges = [dep("b", "a"), dep("c", "b")];
+  const tasks = statuses({ a: "done", b: "planned", c: "planned" });
+  expect(effectiveNeighbors("a", edges, tasks, "downstream", 2)).toEqual([
+    { id: "b", depth: 1 },
+    { id: "c", depth: 2 },
+  ]);
+});
+
+test("effectiveNeighbors keeps minimum depth across multiple paths", () => {
+  // a -> b -> d and a -> c(cancelled) -> d: d is depth 1 via the cancelled
+  // path, depth 2 via b. The minimum (1) wins.
+  const edges = [dep("a", "b"), dep("b", "d"), dep("a", "c"), dep("c", "d")];
+  const tasks = statuses({
+    a: "planned",
+    b: "draft",
+    c: "cancelled",
+    d: "draft",
+  });
+  const result = effectiveNeighbors("a", edges, tasks, "upstream", 2);
+  expect(result.find((n) => n.id === "d")?.depth).toBe(1);
 });

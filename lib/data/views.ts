@@ -108,6 +108,12 @@ export type TaskGraphSlim = Pick<
   /** True when `acceptanceCriteria` has at least one entry. */
   hasCriteria: boolean;
   /**
+   * True when `executionRecord` is non-null. Lets the bundle preview mirror
+   * the builders' record-gated lists (Abandoned Approaches, upstream
+   * execution records) without shipping record text in the slim payload.
+   */
+  hasExecutionRecord: boolean;
+  /**
    * Derived state computed server-side using the project's effective
    * dependency graph. The schema only stores `status`; this is the
    * UI-facing projection (see {@link TaskState} in `lib/data/task.ts`)
@@ -199,7 +205,7 @@ export type ProjectMeta = Pick<
  */
 export type MyTask = Omit<
   TaskGraphSlim,
-  "assigneeCount" | "assigneeUserIds"
+  "assigneeCount" | "assigneeUserIds" | "hasExecutionRecord"
 > & {
   project: {
     id: string;

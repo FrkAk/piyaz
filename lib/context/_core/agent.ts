@@ -4,9 +4,12 @@ import {
   section,
   formatCriteria,
   formatDecisions,
+  formatLinkLine,
+  formatTaskRefLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
+import { isTerminalStatus } from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   resolveAgentBundleData,
@@ -35,10 +38,7 @@ function buildBlockedNotice(data: AgentContextData): string | null {
     if (dep.depth !== 1) continue;
     const info = depMap.get(dep.id);
     if (!info || info.status === "done") continue;
-    const note = data.upstreamEdgeNotes.get(dep.id);
-    let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
-    if (note) line += ` — ${note}`;
-    depLines.push(line);
+    depLines.push(formatTaskRefLine(info, data.upstreamEdgeNotes.get(dep.id)));
   }
   if (depLines.length === 0) return null;
 
@@ -110,7 +110,7 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
     });
   }
 
-  if (task.implementationPlan && status !== "done" && status !== "cancelled") {
+  if (task.implementationPlan && !isTerminalStatus(status)) {
     parts.push({
       id: "plan",
       heading: "Implementation Plan",
@@ -127,10 +127,7 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
     for (const dep of deps) {
       const info = depMap.get(dep.id);
       if (!info) continue;
-      const note = upstreamEdgeNotes.get(dep.id);
-      let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
-      if (note) line += ` — ${note}`;
-      prereqLines.push(line);
+      prereqLines.push(formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)));
 
       if (info.executionRecord) {
         execLines.push(`### \`${info.taskRef}\` ${info.title}`);
@@ -161,20 +158,10 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
   }
 
   if (links.length > 0) {
-    const linkLines = links.map((l) => {
-      let host = "";
-      try {
-        host = new URL(l.url).host;
-      } catch {
-        host = l.url;
-      }
-      const display = l.label ?? host;
-      return `- [${l.kind}] ${display} (${l.url})`;
-    });
     parts.push({
       id: "links",
       heading: "Links",
-      markdown: section("Links") + "\n" + linkLines.join("\n"),
+      markdown: section("Links") + "\n" + links.map(formatLinkLine).join("\n"),
     });
   }
 
@@ -193,10 +180,9 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
     for (const d of downstream) {
       const info = summaryMap.get(d.id);
       if (!info) continue;
-      const note = data.downstreamEdgeNotes.get(d.id);
-      let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
-      if (note) line += ` — ${note}`;
-      downLines.push(line);
+      downLines.push(
+        formatTaskRefLine(info, data.downstreamEdgeNotes.get(d.id)),
+      );
     }
 
     if (downLines.length > 0) {

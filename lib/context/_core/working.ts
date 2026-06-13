@@ -2,7 +2,11 @@ import "server-only";
 
 import type { AcceptanceCriterion } from "@/lib/types";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
-import { formatCriteria, untrustedContentNotice } from "@/lib/context/format";
+import {
+  formatCriteria,
+  formatLinkLine,
+  untrustedContentNotice,
+} from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
 import {
@@ -203,18 +207,7 @@ function formatMetaSection(
  */
 function formatLinksSection(links: TaskLinkRef[]): string {
   if (links.length === 0) return "";
-  const lines = ["## Links"];
-  for (const l of links) {
-    let host = "";
-    try {
-      host = new URL(l.url).host;
-    } catch {
-      host = l.url;
-    }
-    const display = l.label ?? host;
-    lines.push(`- [${l.kind}] ${display} — ${l.url}`);
-  }
-  return lines.join("\n");
+  return ["## Links", ...links.map(formatLinkLine)].join("\n");
 }
 
 /**

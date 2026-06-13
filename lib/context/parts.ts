@@ -5,8 +5,29 @@
  * never import "server-only" or any data layer.
  */
 
-/** The five bundle kinds the route serves via `?bundle=<kind>`. */
-export type BundleKind = "working" | "planning" | "agent" | "review" | "record";
+/**
+ * The five bundle kinds the route serves via `?bundle=<kind>`. The array is
+ * the single source the {@link BundleKind} union derives from, so route
+ * validation and the type cannot drift.
+ */
+export const BUNDLE_KINDS = [
+  "working",
+  "planning",
+  "agent",
+  "review",
+  "record",
+] as const;
+
+/** One of the five bundle kinds, derived from {@link BUNDLE_KINDS}. */
+export type BundleKind = (typeof BUNDLE_KINDS)[number];
+
+/**
+ * Effective dependency hops included in every closure-backed bundle.
+ * Shared by the server's recursive-CTE walks and the client's mirrored
+ * walk in `lib/ui/effective-prereqs.ts` so the preview cannot drift from
+ * the bundle contents.
+ */
+export const CLOSURE_DEPTH = 2;
 
 /** Drawer-facing section identifiers shared by builders and the preview UI. */
 export type BundleSectionId =

@@ -20,6 +20,7 @@ import {
   SECTIONS_BY_BUNDLE,
   resolveStage,
   variantOf,
+  type BundleVariant,
 } from "@/components/workspace/bundle-tables";
 import { taskKeys } from "@/lib/query/keys";
 import { fetchTaskContext } from "@/lib/query/queries";
@@ -90,7 +91,7 @@ const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
   lens: { id: "lens", label: "lens", color: "var(--color-accent)" },
 };
 
-interface BundleNeighbor {
+export interface BundleNeighbor {
   /** Task UUID. */
   id: string;
   /** Composed task identifier (e.g. `MYMR-104`). */
@@ -99,6 +100,18 @@ interface BundleNeighbor {
   title: string;
   /** Schema status. */
   status: string;
+}
+
+/** A prerequisite row carrying the record flag the built list filters on. */
+export interface BundlePrereqRef extends BundleNeighbor {
+  /** True when the task carries an execution record. */
+  hasExecutionRecord: boolean;
+}
+
+/** A dependent row carrying its effective depth from the previewed task. */
+export interface BundleDownstreamRef extends BundleNeighbor {
+  /** Minimum effective hops from the previewed task (1 = direct). */
+  depth: number;
 }
 
 /** A 1-hop edge row for the connected drawer section. */
@@ -138,14 +151,16 @@ interface BundlePreviewProps {
   criteria: AcceptanceCriterion[];
   /** Implementation plan markdown. */
   plan: string | null;
-  /** Direct `depends_on` prerequisites. */
-  prerequisites: BundleNeighbor[];
+  /** Effective prerequisites within the closure depth (cancelled-transparent walk). */
+  prerequisites: BundlePrereqRef[];
+  /** Direct cancelled prerequisites with execution records ("Abandoned Approaches"). */
+  abandoned: BundleNeighbor[];
   /** Unfinished effective direct prerequisites (cancelled-transparent walk). */
   blockedBy: BundleNeighbor[];
   /** All 1-hop edges, both directions, with type and note. */
   connected: BundleConnectedEdge[];
-  /** Direct `depends_on` dependents. */
-  downstream: BundleNeighbor[];
+  /** Effective dependents within the closure depth, with effective depth. */
+  downstream: BundleDownstreamRef[];
   /** Pinned decisions. */
   decisions: Decision[];
   /** Task links. */
@@ -157,26 +172,41 @@ interface BundlePreviewProps {
 }
 
 /**
- * Direct done prerequisites — the client-side approximation of the bundle's
- * upstream-execution-record list (the bundle walks the 2-hop effective
- * closure; the drawer previews the direct hop).
+ * Resolve the drawer-section variant from the props' status and state.
  *
  * @param props - Bundle props.
- * @returns Done direct prerequisite rows.
+ * @returns Variant key into the per-bundle section tables.
  */
-function donePrereqs(props: BundlePreviewProps): BundleNeighbor[] {
-  return props.prerequisites.filter((p) => p.status === "done");
+function variantFor(props: BundlePreviewProps): BundleVariant {
+  return variantOf(resolveStage(props.status, props.state));
 }
 
 /**
- * Direct cancelled prerequisites — the client-side approximation of the
- * planning bundle's abandoned-approaches list.
+ * Record-bearing prerequisites — mirrors the builders' upstream-execution-
+ * record lists: the agent bundle inlines any effective dep's record, while
+ * planning/review additionally require the dep to be done.
  *
  * @param props - Bundle props.
- * @returns Cancelled direct prerequisite rows.
+ * @returns Prerequisite rows whose records the bundle inlines.
  */
-function cancelledPrereqs(props: BundlePreviewProps): BundleNeighbor[] {
-  return props.prerequisites.filter((p) => p.status === "cancelled");
+function builtPrereqs(props: BundlePreviewProps): BundlePrereqRef[] {
+  if (variantFor(props) === "agent") {
+    return props.prerequisites.filter((p) => p.hasExecutionRecord);
+  }
+  return props.prerequisites.filter(
+    (p) => p.status === "done" && p.hasExecutionRecord,
+  );
+}
+
+/**
+ * Effective direct dependents — mirrors the cancellation record's Remaining
+ * Dependents list (effective depth 1 only).
+ *
+ * @param props - Bundle props.
+ * @returns Direct dependent rows.
+ */
+function dependentRefs(props: BundlePreviewProps): BundleDownstreamRef[] {
+  return props.downstream.filter((d) => d.depth === 1);
 }
 
 /**
@@ -205,9 +235,9 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
     case "prerequisites":
       return props.prerequisites.length > 0;
     case "built":
-      return donePrereqs(props).length > 0;
+      return builtPrereqs(props).length > 0;
     case "abandoned":
-      return cancelledPrereqs(props).length > 0;
+      return props.abandoned.length > 0;
     case "decisions":
     case "constraints":
       return props.decisions.length > 0;
@@ -216,8 +246,9 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
     case "links":
       return props.links.length > 0;
     case "downstream":
-    case "dependents":
       return props.downstream.length > 0;
+    case "dependents":
+      return dependentRefs(props).length > 0;
     case "execution":
       return (props.executionRecord ?? "").trim().length > 0;
     case "blocked":
@@ -260,9 +291,9 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
     case "prerequisites":
       return Math.max(refLen(props.prerequisites), 1);
     case "built":
-      return Math.max(refLen(donePrereqs(props)), 1);
+      return Math.max(refLen(builtPrereqs(props)), 1);
     case "abandoned":
-      return Math.max(refLen(cancelledPrereqs(props)), 1);
+      return Math.max(refLen(props.abandoned), 1);
     case "connected":
       return Math.max(refLen(props.connected), 1);
     case "decisions":
@@ -277,8 +308,9 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
         1,
       );
     case "downstream":
-    case "dependents":
       return Math.max(refLen(props.downstream), 1);
+    case "dependents":
+      return Math.max(refLen(dependentRefs(props)), 1);
     case "blocked":
       return Math.max(refLen(props.blockedBy), 1);
     case "lens":
@@ -317,14 +349,13 @@ export function BundlePreview(props: BundlePreviewProps) {
   // treatment, so it gets no chip.
   const isBlocked = kind === "agent" && props.blockedBy.length > 0;
 
-  const sectionIds = useMemo(
-    () =>
-      SECTIONS_BY_BUNDLE[variant].filter(
-        (id) =>
-          ALWAYS_RENDERED_BY_BUNDLE[variant].includes(id) ||
-          hasLocalData(id, props),
-      ),
-    [variant, props],
+  // Plain derivations: `props` is a fresh object every parent render, so a
+  // useMemo keyed on it would never hit. The work is cheap (string-length
+  // sums over already-loaded slim arrays).
+  const sectionIds = SECTIONS_BY_BUNDLE[variant].filter(
+    (id) =>
+      ALWAYS_RENDERED_BY_BUNDLE[variant].includes(id) ||
+      hasLocalData(id, props),
   );
 
   const [expanded, setExpanded] = useState<Set<BundleSectionId>>(
@@ -358,11 +389,8 @@ export function BundlePreview(props: BundlePreviewProps) {
     [sections],
   );
 
-  const weights = useMemo(() => {
-    const out = {} as Record<BundleSectionId, number>;
-    for (const id of sectionIds) out[id] = sectionWeight(id, props);
-    return out;
-  }, [sectionIds, props]);
+  const weights = {} as Record<BundleSectionId, number>;
+  for (const id of sectionIds) weights[id] = sectionWeight(id, props);
 
   /** Toggle a section's expansion state without disturbing the others. */
   const toggle = (id: BundleSectionId) => {
@@ -435,7 +463,11 @@ export function BundlePreview(props: BundlePreviewProps) {
             ) : (
               <span />
             )}
-            <CopyButton text={rawText} label="Copy" />
+            {rawText.trim().length > 0 ? (
+              <CopyButton text={rawText} label="Copy" />
+            ) : (
+              <span />
+            )}
           </div>
           <pre
             className={`max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed text-text-secondary ${
@@ -508,6 +540,7 @@ function BundleSection({
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={open}
         className="flex w-full cursor-pointer items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-raised/40"
       >
         <span
@@ -623,9 +656,8 @@ function sectionSummary(
       : refs;
   }
   if (id === "dependents") {
-    return props.downstream.length === 1
-      ? "1 remaining dependent"
-      : `${props.downstream.length} remaining dependents`;
+    const n = dependentRefs(props).length;
+    return n === 1 ? "1 remaining dependent" : `${n} remaining dependents`;
   }
   if (id === "blocked") {
     const n = props.blockedBy.length;
@@ -633,15 +665,15 @@ function sectionSummary(
   }
   if (id === "project") return props.projectName;
   if (id === "built") {
-    const done = donePrereqs(props);
-    const refs = done
+    const built = builtPrereqs(props);
+    const refs = built
       .slice(0, 2)
       .map((p) => p.taskRef)
       .join(" · ");
-    return done.length > 2 ? `${refs} · +${done.length - 2} more` : refs;
+    return built.length > 2 ? `${refs} · +${built.length - 2} more` : refs;
   }
   if (id === "abandoned") {
-    const dead = cancelledPrereqs(props);
+    const dead = props.abandoned;
     const refs = dead
       .slice(0, 2)
       .map((p) => p.taskRef)
@@ -703,9 +735,9 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
   if (id === "built") {
     return (
       <RecordRefList
-        items={donePrereqs(props)}
+        items={builtPrereqs(props)}
         hint="Execution records are inlined in the actual bundle. Open a task to read its record."
-        emptyHint="No done prerequisites."
+        emptyHint="No prerequisites with execution records."
         onSelectTask={onSelectTask}
       />
     );
@@ -713,9 +745,9 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
   if (id === "abandoned") {
     return (
       <RecordRefList
-        items={cancelledPrereqs(props)}
+        items={props.abandoned}
         hint="Cancellation records are inlined in the actual bundle. Open a task to read its record."
-        emptyHint="No cancelled prerequisites."
+        emptyHint="No cancelled prerequisites with records."
         onSelectTask={onSelectTask}
       />
     );
@@ -729,11 +761,20 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
     return <DecisionsBody decisions={props.decisions} />;
   }
   if (id === "links") return <LinksBody links={props.links} />;
-  if (id === "downstream" || id === "dependents") {
+  if (id === "downstream") {
     return (
       <NeighborList
         items={props.downstream}
         emptyHint="No downstream consumers."
+        onSelectTask={onSelectTask}
+      />
+    );
+  }
+  if (id === "dependents") {
+    return (
+      <NeighborList
+        items={dependentRefs(props)}
+        emptyHint="No remaining direct dependents."
         onSelectTask={onSelectTask}
       />
     );

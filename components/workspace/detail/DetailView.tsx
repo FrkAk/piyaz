@@ -13,12 +13,19 @@ import type { TaskStatus } from "@/lib/types";
 import {
   BundlePreview,
   type BundleConnectedEdge,
+  type BundleDownstreamRef,
+  type BundleNeighbor,
+  type BundlePrereqRef,
 } from "@/components/workspace/BundlePreview";
 import {
   BUNDLE_LABEL_BY_STAGE,
   resolveStage,
 } from "@/components/workspace/bundle-tables";
-import { effectiveDirectPrerequisiteIds } from "@/lib/ui/effective-prereqs";
+import { CLOSURE_DEPTH } from "@/lib/context/parts";
+import {
+  effectiveDirectPrerequisiteIds,
+  effectiveNeighbors,
+} from "@/lib/ui/effective-prereqs";
 import { DetailHeader } from "./DetailHeader";
 import { DescriptionSection } from "./DescriptionSection";
 import { CriteriaSection } from "./CriteriaSection";
@@ -126,9 +133,20 @@ export function DetailView({
     [allTasks, taskId],
   );
 
+  // Execution-record presence per task, for the record-gated drawer lists
+  // (built / abandoned) the bundle builders filter on server-side.
+  const recordFlags = useMemo(
+    () => new Map(allTasks.map((t) => [t.id, t.hasExecutionRecord])),
+    [allTasks],
+  );
+
   const prerequisites = useMemo(
-    () => buildPrerequisites(taskId, allEdges, taskMap),
-    [taskId, allEdges, taskMap],
+    () => buildPrerequisites(taskId, allEdges, taskMap, recordFlags),
+    [taskId, allEdges, taskMap, recordFlags],
+  );
+  const abandoned = useMemo(
+    () => buildAbandoned(taskId, allEdges, taskMap, recordFlags),
+    [taskId, allEdges, taskMap, recordFlags],
   );
   const blockedBy = useMemo(
     () => buildBlockedBy(taskId, allEdges, taskMap),
@@ -201,6 +219,7 @@ export function DetailView({
                 criteria={task.acceptanceCriteria ?? []}
                 plan={task.implementationPlan}
                 prerequisites={prerequisites}
+                abandoned={abandoned}
                 blockedBy={blockedBy}
                 connected={connected}
                 downstream={downstream}
@@ -264,29 +283,60 @@ function BundleStageBadge({ status, state }: BundleStageBadgeProps) {
   );
 }
 
-interface BundleNeighbor {
-  /** Task UUID. */
-  id: string;
-  /** Composed identifier. */
-  taskRef: string;
-  /** Display title. */
-  title: string;
-  /** Schema status. */
-  status: string;
-}
-
 /**
- * Build the upstream bundle neighbors (`depends_on` outgoing).
+ * Build the upstream bundle neighbors — the same effective
+ * (cancelled-transparent, closure-depth) walk the bundle builders render
+ * in their Prerequisites sections, computed from the slim graph.
  *
  * @param taskId - Current task UUID.
  * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
- * @returns List of upstream bundle neighbors.
+ * @param recordFlags - Execution-record presence per task id.
+ * @returns Effective prerequisite rows, ordered by effective depth.
  */
 function buildPrerequisites(
   taskId: string,
   edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
+  recordFlags: Map<string, boolean>,
+): BundlePrereqRef[] {
+  const out: BundlePrereqRef[] = [];
+  for (const n of effectiveNeighbors(
+    taskId,
+    edges,
+    taskMap,
+    "upstream",
+    CLOSURE_DEPTH,
+  )) {
+    const info = taskMap.get(n.id);
+    if (!info) continue;
+    out.push({
+      id: n.id,
+      taskRef: info.taskRef,
+      title: info.title,
+      status: info.status,
+      hasExecutionRecord: recordFlags.get(n.id) ?? false,
+    });
+  }
+  return out;
+}
+
+/**
+ * Build the abandoned-approaches refs — direct cancelled `depends_on`
+ * prerequisites carrying execution records, mirroring the planning
+ * bundle's record-gated Abandoned Approaches list.
+ *
+ * @param taskId - Current task UUID.
+ * @param edges - All slim project edges.
+ * @param taskMap - Map of task IDs to title/status/taskRef.
+ * @param recordFlags - Execution-record presence per task id.
+ * @returns Cancelled direct prerequisite rows with records.
+ */
+function buildAbandoned(
+  taskId: string,
+  edges: TaskGraphEdge[],
+  taskMap: Map<string, { title: string; status: string; taskRef: string }>,
+  recordFlags: Map<string, boolean>,
 ): BundleNeighbor[] {
   const out: BundleNeighbor[] = [];
   for (const edge of edges) {
@@ -294,7 +344,8 @@ function buildPrerequisites(
       continue;
     if (edge.targetTaskId === taskId) continue;
     const info = taskMap.get(edge.targetTaskId);
-    if (!info) continue;
+    if (!info || info.status !== "cancelled") continue;
+    if (!recordFlags.get(edge.targetTaskId)) continue;
     out.push({
       id: edge.targetTaskId,
       taskRef: info.taskRef,
@@ -370,30 +421,37 @@ function buildConnected(
 }
 
 /**
- * Build downstream `depends_on` consumers — the tasks blocked by this one.
+ * Build the downstream consumers — the same effective
+ * (cancelled-transparent, closure-depth) walk the bundle builders render
+ * in their Downstream sections, with each row's effective depth so the
+ * cancellation record's drawer can filter to direct (depth 1) dependents.
  *
  * @param taskId - Current task UUID.
  * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
- * @returns List of downstream consumers.
+ * @returns Effective dependent rows, ordered by effective depth.
  */
 function buildDownstream(
   taskId: string,
   edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
-): BundleNeighbor[] {
-  const out: BundleNeighbor[] = [];
-  for (const edge of edges) {
-    if (edge.edgeType !== "depends_on" || edge.targetTaskId !== taskId)
-      continue;
-    if (edge.sourceTaskId === taskId) continue;
-    const info = taskMap.get(edge.sourceTaskId);
+): BundleDownstreamRef[] {
+  const out: BundleDownstreamRef[] = [];
+  for (const n of effectiveNeighbors(
+    taskId,
+    edges,
+    taskMap,
+    "downstream",
+    CLOSURE_DEPTH,
+  )) {
+    const info = taskMap.get(n.id);
     if (!info) continue;
     out.push({
-      id: edge.sourceTaskId,
+      id: n.id,
       taskRef: info.taskRef,
       title: info.title,
       status: info.status,
+      depth: n.depth,
     });
   }
   return out;

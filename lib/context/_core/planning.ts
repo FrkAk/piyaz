@@ -4,6 +4,8 @@ import {
   section,
   formatCriteria,
   formatDecisions,
+  formatLinkLine,
+  formatTaskRefLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
@@ -113,10 +115,7 @@ export function buildPlanningContextParts(
     for (const dep of deps) {
       const info = depMap.get(dep.id);
       if (!info) continue;
-      const note = upstreamEdgeNotes.get(dep.id);
-      let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
-      if (note) line += ` — ${note}`;
-      prereqLines.push(line);
+      prereqLines.push(formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)));
 
       if (info.status === "done" && info.executionRecord) {
         execLines.push(`### \`${info.taskRef}\` ${info.title}`);
@@ -172,20 +171,11 @@ export function buildPlanningContextParts(
   }
 
   if (task.links.length > 0) {
-    const linkLines = task.links.map((l) => {
-      let host = "";
-      try {
-        host = new URL(l.url).host;
-      } catch {
-        host = l.url;
-      }
-      const display = l.label ?? host;
-      return `- [${l.kind}] ${display} (${l.url})`;
-    });
     parts.push({
       id: "links",
       heading: "Links",
-      markdown: section("Links") + "\n" + linkLines.join("\n"),
+      markdown:
+        section("Links") + "\n" + task.links.map(formatLinkLine).join("\n"),
     });
   }
 
@@ -196,9 +186,7 @@ export function buildPlanningContextParts(
     for (const d of downstream) {
       const info = summaryMap.get(d.id);
       if (!info) continue;
-      const note = data.downstreamEdgeNotes.get(d.id);
-      let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
-      if (note) line += ` — ${note}`;
+      let line = formatTaskRefLine(info, data.downstreamEdgeNotes.get(d.id));
       if (info.description) line += `\n  ${info.description}`;
       downLines.push(line);
     }

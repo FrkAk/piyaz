@@ -1,4 +1,5 @@
 import type { Decision, AcceptanceCriterion } from "@/lib/types";
+import type { TaskLinkRef } from "@/lib/data/views";
 import type { BundleKind } from "@/lib/context/parts";
 
 /** Final-clause variants of the untrusted-content notice, keyed by kind. */
@@ -102,6 +103,44 @@ export function formatCriteria(criteria: AcceptanceCriterion[]): string {
   if (done.length === 0) return renderRemaining();
   if (remaining.length === 0) return `All criteria met:\n${renderDone()}`;
   return `Remaining:\n${renderRemaining()}\n\nDone:\n${renderDone()}`;
+}
+
+/**
+ * Format one task link as a markdown list line: `- [kind] display (url)`,
+ * where the display is the link label or the URL host. Single source for
+ * every bundle's Links section so the format cannot drift across builders.
+ *
+ * @param link - Task link projection.
+ * @returns Formatted link line.
+ */
+export function formatLinkLine(link: TaskLinkRef): string {
+  let host = "";
+  try {
+    host = new URL(link.url).host;
+  } catch {
+    host = link.url;
+  }
+  const display = link.label ?? host;
+  return `- [${link.kind}] ${display} (${link.url})`;
+}
+
+/**
+ * Format a task reference as a markdown list line:
+ * `` - `REF` **Title** [status] ``, with an optional ` — note` suffix.
+ * Single source for every bundle's prerequisite / downstream / dependent
+ * lists so the same task renders identically across bundles.
+ *
+ * @param info - Task ref, title, and status.
+ * @param note - Optional edge note appended after an em-dash.
+ * @returns Formatted task-ref line.
+ */
+export function formatTaskRefLine(
+  info: { taskRef: string; title: string; status: string },
+  note?: string | null,
+): string {
+  let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
+  if (note) line += ` — ${note}`;
+  return line;
 }
 
 /**

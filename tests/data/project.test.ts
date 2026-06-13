@@ -83,6 +83,7 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
       "estimate",
       "hasCriteria",
       "hasDescription",
+      "hasExecutionRecord",
       "id",
       "order",
       "priority",

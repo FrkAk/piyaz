@@ -2,7 +2,8 @@ import { getAuthContext } from "@/lib/auth/context";
 import { ForbiddenError, assertTaskAccess } from "@/lib/auth/authorization";
 import { getProjectMaxUpdatedAt } from "@/lib/data/project";
 import {
-  resolveDependencyClosure,
+  RecordNotTerminalError,
+  resolveAgentBundleData,
   resolvePlanningData,
   resolveRecordData,
   resolveReviewData,
@@ -16,19 +17,19 @@ import {
   buildWorkingContextFrom,
   formatWorkingContextParts,
 } from "@/lib/context/_core/working";
-import type { BundleKind, BundlePart } from "@/lib/context/parts";
+import {
+  BUNDLE_KINDS,
+  type BundleKind,
+  type BundlePart,
+} from "@/lib/context/parts";
+import { isTerminalStatus } from "@/lib/types";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 
-/** The bundle kinds the route serves. */
-const BUNDLE_KINDS = [
-  "working",
-  "planning",
-  "agent",
-  "review",
-  "record",
-] as const;
+/** 400 body shared by the gate pre-check and the resolver's terminal assert. */
+const RECORD_REQUIRES_TERMINAL =
+  "record bundle requires a done or cancelled task";
 
 /**
  * Narrow a raw query-param value to a {@link BundleKind}.
@@ -66,10 +67,12 @@ async function buildSections(
       return buildPlanningContextParts(
         await resolvePlanningData(userId, taskId),
       );
-    case "agent":
-      return buildAgentContextParts(
-        await resolveDependencyClosure(userId, taskId, "agent"),
-      );
+    case "agent": {
+      const resolved = await resolveAgentBundleData(userId, taskId);
+      return resolved.kind === "record"
+        ? buildRecordContextParts(resolved.data)
+        : buildAgentContextParts(resolved.data);
+    }
     case "review":
       return buildReviewContextParts(await resolveReviewData(userId, taskId));
     case "record":
@@ -82,10 +85,12 @@ async function buildSections(
  * payload. `?bundle=<kind>` selects exactly one bundle; the response is
  * `{ sections }` where each section is `{ id, heading, markdown }` and the
  * MD view is the deterministic join. Missing/unknown kind → 400;
- * `bundle=record` on a non-terminal task → 400. `bundle=agent` on a
- * `done`/`cancelled` task resolves the retrospective record bundle —
- * mirroring the MCP `depth='agent'` dispatch — using the status already on
- * the access gate, at the slimmer `record` column projection.
+ * `bundle=record` on a non-terminal task → 400 (a fast pre-check on the
+ * access-gate status, re-asserted by the resolver against the row it
+ * actually fetched so a concurrent reopen cannot race a stale record).
+ * `bundle=agent` delegates to the same status dispatch the MCP
+ * `depth='agent'` path uses — `done`/`cancelled` rows resolve the
+ * retrospective record bundle, decided by the fetched row itself.
  *
  * The validator path reads only the slim access gate, so HEAD/304 never pay
  * for a full task. `Last-Modified` stays the project-max validator (see
@@ -111,22 +116,23 @@ async function handle(req: Request, taskId: string): Promise<Response> {
 
   try {
     const gate = await assertTaskAccess(taskId, ctx);
-    const terminal = gate.status === "done" || gate.status === "cancelled";
-    if (kind === "record" && !terminal) {
-      return error("record bundle requires a done or cancelled task", 400);
+    if (kind === "record" && !isTerminalStatus(gate.status)) {
+      return error(RECORD_REQUIRES_TERMINAL, 400);
     }
-    const effectiveKind = kind === "agent" && terminal ? "record" : kind;
     const max = await getProjectMaxUpdatedAt(ctx, gate.projectId);
 
     if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);
     }
 
-    const sections = await buildSections(ctx.userId, taskId, effectiveKind);
+    const sections = await buildSections(ctx.userId, taskId, kind);
     return conditionalRespond(req, { sections }, max);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return error("Task not found", 404);
+    }
+    if (err instanceof RecordNotTerminalError) {
+      return error(RECORD_REQUIRES_TERMINAL, 400);
     }
     return internalError("task-context", err);
   }

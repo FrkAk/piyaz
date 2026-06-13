@@ -4,6 +4,8 @@ import {
   section,
   formatCriteria,
   formatDecisions,
+  formatLinkLine,
+  formatTaskRefLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
@@ -142,20 +144,10 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
   }
 
   if (links.length > 0) {
-    const linkLines = links.map((l) => {
-      let host = "";
-      try {
-        host = new URL(l.url).host;
-      } catch {
-        host = l.url;
-      }
-      const display = l.label ?? host;
-      return `- [${l.kind}] ${display} (${l.url})`;
-    });
     parts.push({
       id: "links",
       heading: "Links",
-      markdown: section("Links") + "\n" + linkLines.join("\n"),
+      markdown: section("Links") + "\n" + links.map(formatLinkLine).join("\n"),
     });
   }
 
@@ -168,10 +160,7 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
     for (const dep of deps) {
       const info = depMap.get(dep.id);
       if (!info) continue;
-      const note = upstreamEdgeNotes.get(dep.id);
-      let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
-      if (note) line += ` — ${note}`;
-      prereqLines.push(line);
+      prereqLines.push(formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)));
 
       // Deliberately no upstream PR links here (unlike agent/planning): the
       // reviewer's artifact is the current task's PR, and extra upstream
@@ -206,10 +195,9 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
     for (const d of downstream) {
       const info = summaryMap.get(d.id);
       if (!info) continue;
-      const note = data.downstreamEdgeNotes.get(d.id);
-      let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
-      if (note) line += ` — ${note}`;
-      downLines.push(line);
+      downLines.push(
+        formatTaskRefLine(info, data.downstreamEdgeNotes.get(d.id)),
+      );
     }
 
     if (downLines.length > 0) {

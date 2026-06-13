@@ -6,6 +6,8 @@ import { ForbiddenError } from "@/lib/auth/authorization";
 import { makeAuthContext } from "@/lib/auth/context";
 import * as rls from "@/lib/db/rls";
 import {
+  RecordNotTerminalError,
+  resolveAgentBundleData,
   resolveDependencyClosure,
   resolvePlanningData,
   resolveRecordData,
@@ -161,6 +163,31 @@ test("resolveRecordData resolves in two read batches and skips upstream data", a
   } finally {
     readSpy.mockRestore();
   }
+});
+
+test("resolveRecordData rejects a non-terminal task (TOCTOU guard)", async () => {
+  const fx = await seedRichContextTask("record-nonterminal");
+  // The task is in_review (non-terminal); the resolver must refuse to render
+  // a retrospective record even if a caller reached it, so a status flip
+  // between the access gate and this fetch cannot serve a wrong bundle.
+  await expect(resolveRecordData(fx.userId, fx.taskId)).rejects.toThrow(
+    RecordNotTerminalError,
+  );
+});
+
+test("agent-depth dispatch drops the implementation plan for terminal tasks", async () => {
+  const fx = await seedRichContextTask("agent-terminal-plan");
+  const sr = serviceRoleConnect();
+  try {
+    await sr`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+  const resolved = await resolveAgentBundleData(fx.userId, fx.taskId);
+  expect(resolved.kind).toBe("record");
+  // The `active-only` plan projection NULLs the column for terminal rows, so
+  // the (often largest) implementationPlan never egresses on the done path.
+  expect(resolved.data.task.implementationPlan).toBeNull();
 });
 
 test("resolveRecordData skips the secondary batch without dependents", async () => {

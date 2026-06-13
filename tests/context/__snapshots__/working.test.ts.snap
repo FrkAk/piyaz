@@ -37,5 +37,5 @@ project: "Project working-ctx-golden" > task: "Central task"
 - depends_on ← \`PRJ-3\` "Downstream task" (draft) — consumes central
 
 ## Links
-- [pull_request] PR 1 — https://example.test/pr/1"
+- [pull_request] PR 1 (https://example.test/pr/1)"
 `;
