@@ -1,60 +1,105 @@
 "use client";
 
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Avatar } from "@/components/shared/Avatar";
-import type { HistoryEntry } from "@/lib/types";
+import type { ActivityEvent } from "@/lib/types";
+import { taskKeys } from "@/lib/query/keys";
 import { SectionHeader } from "./SectionHeader";
 
 interface ActivitySectionProps {
-  /** History entries from the schema. */
-  history: HistoryEntry[] | null | undefined;
+  /** Owning project id (for the query key). */
+  projectId: string;
+  /** Task whose activity to show. */
+  taskId: string;
+}
+
+interface ActivityPage {
+  events: ActivityEvent[];
+  nextCursor: string | null;
 }
 
 /**
- * Vertical activity timeline matching the prototype — avatar per row plus a
- * thin connector running through the avatar centers. One-line entries with a
- * mono relative date pinned to the right.
- *
- * @param props - Section configuration.
- * @returns Section element or null when there is no history.
+ * Fetch one page of activity for a task.
+ * @param taskId - Task id.
+ * @param cursor - Opaque keyset cursor or null for the first page.
+ * @returns The page payload.
+ * @throws Error when the request fails.
  */
-export function ActivitySection({ history }: ActivitySectionProps) {
-  if (!history || history.length === 0) return null;
+async function fetchActivity(
+  taskId: string,
+  cursor: string | null,
+): Promise<ActivityPage> {
+  const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const res = await fetch(`/api/task/${taskId}/events${qs}`);
+  if (!res.ok) throw new Error(`activity ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Activity timeline — avatar + actor name + harness badge + entity-referencing
+ * summary + relative time (absolute on hover). Lazy-loaded and paginated.
+ *
+ * @param props - Project + task identifiers.
+ * @returns Section element, or null while empty.
+ */
+export function ActivitySection({ projectId, taskId }: ActivitySectionProps) {
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useInfiniteQuery({
+      queryKey: taskKeys.activity(projectId, taskId),
+      queryFn: ({ pageParam }) => fetchActivity(taskId, pageParam),
+      initialPageParam: null as string | null,
+      getNextPageParam: (last) => last.nextCursor,
+    });
+
+  const events = data?.pages.flatMap((p) => p.events) ?? [];
+  if (events.length === 0) return null;
 
   return (
     <section className="mb-7">
-      <SectionHeader label="Activity" count={history.length} />
+      <SectionHeader label="Activity" count={events.length} />
       <ul className="flex flex-col">
-        {history.map((entry, i) => (
-          <ActivityRow
-            key={entry.id}
-            entry={entry}
-            isLast={i === history.length - 1}
-          />
+        {events.map((e, i) => (
+          <ActivityRow key={e.id} event={e} isLast={i === events.length - 1} />
         ))}
       </ul>
+      {hasNextPage && (
+        <button
+          type="button"
+          onClick={() => fetchNextPage()}
+          disabled={isFetchingNextPage}
+          className="mt-2 text-[11px] text-text-faint hover:text-text-secondary"
+        >
+          {isFetchingNextPage ? "Loading…" : "Show more"}
+        </button>
+      )}
     </section>
   );
 }
 
 interface ActivityRowProps {
-  /** The single history entry to render. */
-  entry: HistoryEntry;
-  /** Whether this is the last row — controls the trailing connector line. */
+  /** Event to render. */
+  event: ActivityEvent;
+  /** Whether this is the last row — controls the trailing connector. */
   isLast: boolean;
 }
 
 /**
- * Single timeline row — avatar + author/verb sentence + relative date.
- *
+ * Single timeline row.
  * @param props - Row configuration.
  * @returns List item element.
  */
-function ActivityRow({ entry, isLast }: ActivityRowProps) {
-  const author = entry.actor === "ai" ? "agent" : "user";
+function ActivityRow({ event, isLast }: ActivityRowProps) {
+  const name = event.actorName ?? (event.source === "web" ? "user" : "agent");
+  const isAgent = event.source === "mcp";
   return (
     <li className="relative flex items-center gap-2.5 py-2">
       <span className="relative flex w-[22px] justify-center">
-        <Avatar name={author} size={18} accent={entry.actor === "ai"} />
+        <Avatar
+          name={name}
+          src={event.actorAvatar ?? undefined}
+          size={18}
+          accent={isAgent}
+        />
         {!isLast && (
           <span
             aria-hidden="true"
@@ -63,22 +108,28 @@ function ActivityRow({ entry, isLast }: ActivityRowProps) {
         )}
       </span>
       <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-secondary">
-        <span className="font-medium text-text-primary">{author}</span>{" "}
-        {entry.label.toLowerCase()}
+        <span className="font-medium text-text-primary">{name}</span>
+        {isAgent && event.agent && (
+          <span className="ml-1 rounded bg-surface-raised px-1 py-px font-mono text-[9px] text-text-faint">
+            {event.agent}
+          </span>
+        )}{" "}
+        {event.summary}
       </span>
-      <span className="font-mono text-[10px] tabular-nums text-text-faint">
-        {formatRelative(entry.date)}
+      <span
+        className="font-mono text-[10px] tabular-nums text-text-faint"
+        title={new Date(event.createdAt).toLocaleString()}
+      >
+        {formatRelative(event.createdAt)}
       </span>
     </li>
   );
 }
 
 /**
- * Compact relative-time formatter — picks the largest unit that fits and
- * appends the unit suffix (`12m`, `2h`, `3d`, `2w`).
- *
+ * Compact relative-time formatter.
  * @param iso - ISO date string.
- * @returns Two-character relative label, or `—` if unparseable.
+ * @returns Short relative label, or `—` if unparseable.
  */
 function formatRelative(iso: string): string {
   const ts = Date.parse(iso);
