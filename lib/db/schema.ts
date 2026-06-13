@@ -287,7 +287,10 @@ export const activityEvents = pgTable(
   },
   (t) => [
     index("activity_events_task_id_created_idx").on(t.taskId, t.createdAt),
-    index("activity_events_project_id_created_idx").on(t.projectId, t.createdAt),
+    index("activity_events_project_id_created_idx").on(
+      t.projectId,
+      t.createdAt,
+    ),
     index("activity_events_actor_user_id_idx").on(t.actorUserId),
   ],
 ).enableRLS();
