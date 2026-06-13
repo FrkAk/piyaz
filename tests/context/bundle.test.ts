@@ -125,6 +125,8 @@ test("resolvePlanningData surfaces direct cancelled deps with records", async ()
       FROM tasks WHERE id = ${fx.taskId} RETURNING id`;
     await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
              VALUES (${fx.taskId}, ${dead.id}, 'depends_on', 'old route')`;
+    await sr`INSERT INTO task_links (task_id, url, kind)
+             VALUES (${dead.id}, 'https://example.test/pr/66', 'pull_request')`;
   } finally {
     await sr.end({ timeout: 5 });
   }
@@ -133,6 +135,7 @@ test("resolvePlanningData surfaces direct cancelled deps with records", async ()
 
   expect(data.abandonedDeps.map((d) => d.title)).toEqual(["Dead approach"]);
   expect(data.abandonedDeps[0].executionRecord).toBe("Tried Z; failed");
+  expect(data.abandonedDeps[0].prUrl).toBe("https://example.test/pr/66");
   expect(data.deps.map((d) => d.id)).not.toContain(data.abandonedDeps[0].id);
 });
 

@@ -134,6 +134,7 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
 
       if (info.executionRecord) {
         execLines.push(`### \`${info.taskRef}\` ${info.title}`);
+        if (info.prUrl) execLines.push(`PR: ${info.prUrl}`);
         execLines.push(info.executionRecord);
       }
     }

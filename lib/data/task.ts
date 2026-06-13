@@ -1778,7 +1778,26 @@ export type DependencyTaskInfo = {
   status: string;
   executionRecord: string | null;
   taskRef: string;
+  /** Earliest `pull_request` link URL, or null when the task has none. */
+  prUrl: string | null;
 };
+
+/**
+ * Correlated scalar subquery selecting a task's earliest `pull_request` link
+ * URL — the same first-PR convention `LINKS_AGG` ordering gives
+ * `links.find(kind === 'pull_request')` consumers.
+ *
+ * @returns SQL expression yielding the PR URL or null, aliased `pr_url`.
+ */
+function depPrUrlExpr() {
+  return sql<string | null>`(
+    SELECT ${taskLinks.url} FROM ${taskLinks}
+    WHERE ${taskLinks.taskId} = ${tasks.id}
+      AND ${taskLinks.kind} = 'pull_request'
+    ORDER BY ${taskLinks.createdAt} ASC
+    LIMIT 1
+  )`.as("pr_url");
+}
 
 /**
  * Dependency-task summaries for an id list, as a lazy batch statement. `ANY` over a
@@ -1803,6 +1822,7 @@ export function dependencyTasksStmt(
       executionRecord: tasks.executionRecord,
       sequenceNumber: tasks.sequenceNumber,
       identifier: projects.identifier,
+      prUrl: depPrUrlExpr(),
     })
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
@@ -1822,7 +1842,10 @@ export function dependencyTasksStmt(
  * @returns Dep-task projections including `executionRecord` and `taskRef`.
  */
 export function mapDependencyTaskRows(
-  rows: readonly (TaskSummaryRow & { executionRecord: string | null })[],
+  rows: readonly (TaskSummaryRow & {
+    executionRecord: string | null;
+    prUrl: string | null;
+  })[],
 ): DependencyTaskInfo[] {
   return rows.map((r) => ({
     id: r.id,
@@ -1830,6 +1853,7 @@ export function mapDependencyTaskRows(
     status: r.status,
     executionRecord: r.executionRecord,
     taskRef: composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber),
+    prUrl: r.prUrl,
   }));
 }
 
@@ -1858,6 +1882,7 @@ export function cancelledDepRecordsStmt(
       executionRecord: tasks.executionRecord,
       sequenceNumber: tasks.sequenceNumber,
       identifier: projects.identifier,
+      prUrl: depPrUrlExpr(),
     })
     .from(taskEdges)
     .innerJoin(tasks, eq(taskEdges.targetTaskId, tasks.id))

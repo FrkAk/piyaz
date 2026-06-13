@@ -103,4 +103,23 @@ describe("buildReviewContext under app_user", () => {
       ForbiddenError,
     );
   });
+
+  test("upstream execution records omit dep PR links (reviewer reads the task's own PR)", async () => {
+    const fx = await seedRichContextTask("review-ctx-dep-pr");
+    const sr = serviceRoleConnect();
+    try {
+      await sr`INSERT INTO task_links (task_id, url, kind)
+               SELECT id, 'https://example.test/pr/41', 'pull_request'
+               FROM tasks
+               WHERE title = 'Prereq task'
+                 AND project_id = (SELECT project_id FROM tasks WHERE id = ${fx.taskId})`;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const ctx = makeAuthContext(fx.userId);
+    const result = await buildReviewContext(ctx, fx.taskId);
+    expect(result).toContain("## Upstream Execution Records");
+    expect(result).not.toContain("https://example.test/pr/41");
+  });
 });

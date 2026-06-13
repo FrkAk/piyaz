@@ -112,6 +112,8 @@ describe("buildPlanningContext under app_user", () => {
         RETURNING id`;
       await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
                VALUES (${fx.taskId}, ${dead.id}, 'depends_on')`;
+      await sr`INSERT INTO task_links (task_id, url, kind)
+               VALUES (${dead.id}, 'https://example.test/pr/66', 'pull_request')`;
     } finally {
       await sr.end({ timeout: 5 });
     }
@@ -120,9 +122,33 @@ describe("buildPlanningContext under app_user", () => {
     const result = await buildPlanningContext(ctx, fx.taskId);
     expect(result).toContain("## Abandoned Approaches");
     expect(result).toContain("Tried X; X cannot work because Y");
+    expect(result).toContain(
+      "PR: https://example.test/pr/66 — closed, unmerged",
+    );
     expect(result).toContain("## Links");
     expect(result).toContain("https://example.test/pr/1");
     // Cancelled deps are transparent to the effective walk: never a prerequisite row.
     expect(result).not.toContain("**Dead-end approach** [cancelled]");
+  });
+
+  test("upstream execution records carry the done dep's PR link", async () => {
+    const fx = await seedRichContextTask("planning-ctx-dep-pr");
+    const sr = serviceRoleConnect();
+    try {
+      await sr`INSERT INTO task_links (task_id, url, kind)
+               SELECT id, 'https://example.test/pr/41', 'pull_request'
+               FROM tasks
+               WHERE title = 'Prereq task'
+                 AND project_id = (SELECT project_id FROM tasks WHERE id = ${fx.taskId})`;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const ctx = makeAuthContext(fx.userId);
+    const result = await buildPlanningContext(ctx, fx.taskId);
+    const built = result.slice(
+      result.indexOf("## What's Been Built (from done prerequisites)"),
+    );
+    expect(built).toContain("PR: https://example.test/pr/41");
   });
 });

@@ -121,6 +121,27 @@ describe("buildAgentContext under app_user", () => {
       result.indexOf("## Execution Record"),
     );
   });
+
+  test("upstream execution records carry the dep's PR link", async () => {
+    const fx = await seedRichContextTask("agent-ctx-dep-pr");
+    const sr = serviceRoleConnect();
+    try {
+      await sr`INSERT INTO task_links (task_id, url, kind)
+               SELECT id, 'https://example.test/pr/41', 'pull_request'
+               FROM tasks
+               WHERE title = 'Prereq task'
+                 AND project_id = (SELECT project_id FROM tasks WHERE id = ${fx.taskId})`;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const result = await buildAgentContext(
+      makeAuthContext(fx.userId),
+      fx.taskId,
+    );
+    const built = result.slice(result.indexOf("## Upstream Execution Records"));
+    expect(built).toContain("PR: https://example.test/pr/41");
+  });
 });
 
 /**

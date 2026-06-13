@@ -120,6 +120,7 @@ export function buildPlanningContextParts(
 
       if (info.status === "done" && info.executionRecord) {
         execLines.push(`### \`${info.taskRef}\` ${info.title}`);
+        if (info.prUrl) execLines.push(`PR: ${info.prUrl}`);
         execLines.push(info.executionRecord);
       }
     }
@@ -151,6 +152,7 @@ export function buildPlanningContextParts(
     const abandonedLines: string[] = [];
     for (const d of abandonedDeps) {
       abandonedLines.push(`### \`${d.taskRef}\` ${d.title}`);
+      if (d.prUrl) abandonedLines.push(`PR: ${d.prUrl} — closed, unmerged`);
       abandonedLines.push(d.executionRecord ?? "");
     }
     parts.push({

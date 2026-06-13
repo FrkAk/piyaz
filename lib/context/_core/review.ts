@@ -173,6 +173,9 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
       if (note) line += ` — ${note}`;
       prereqLines.push(line);
 
+      // Deliberately no upstream PR links here (unlike agent/planning): the
+      // reviewer's artifact is the current task's PR, and extra upstream
+      // URLs dilute attention on it.
       if (info.status === "done" && info.executionRecord) {
         execLines.push(`### \`${info.taskRef}\` ${info.title}`);
         execLines.push(info.executionRecord);
