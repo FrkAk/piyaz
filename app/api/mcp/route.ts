@@ -67,6 +67,7 @@ function payloadTooLarge() {
 /** Shape we require from a verified MCP access token payload. */
 const accessTokenClaimsSchema = z.looseObject({
   sub: z.uuid(),
+  azp: z.string().optional(),
 });
 
 /**
@@ -173,7 +174,11 @@ async function verifyMcpAuth(request: Request) {
 function authContextFromPayload(payload: unknown): AuthContext | null {
   const parsed = accessTokenClaimsSchema.safeParse(payload);
   if (!parsed.success) return null;
-  return makeAuthContext(parsed.data.sub);
+  return makeAuthContext(parsed.data.sub, {
+    source: "mcp",
+    userId: parsed.data.sub,
+    clientId: parsed.data.azp ?? null,
+  });
 }
 
 /**
