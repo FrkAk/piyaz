@@ -147,16 +147,27 @@ function enrollInWaitUntil(promise: Promise<unknown>): void {
  */
 class WorkersBroker {
   /**
-   * Resolve the stub for the broker-global DO. Logs once per isolate when
-   * the binding is missing so misconfigured deploys are diagnosable without
-   * spamming.
+   * Resolve the stub for the broker-global DO. Reads the binding from the
+   * Cloudflare request context rather than `globalThis`: modules-format
+   * Workers never expose bindings on the global object, so the old read
+   * silently no-oped every dispatch. Logs once per isolate when the binding
+   * is missing or the context is unavailable so misconfigured deploys are
+   * diagnosable without spamming.
    *
    * @returns The DO stub, or `null` when `MYMIR_BROKER` is not bound.
    */
   private stub(): DurableObjectStub | null {
-    const env = (globalThis as { MYMIR_BROKER?: DurableObjectNamespace })
-      .MYMIR_BROKER;
-    if (!env) {
+    let namespace: DurableObjectNamespace | undefined;
+    try {
+      namespace = (
+        getCloudflareContext({ async: false }).env as {
+          MYMIR_BROKER?: DurableObjectNamespace;
+        }
+      ).MYMIR_BROKER;
+    } catch {
+      namespace = undefined;
+    }
+    if (!namespace) {
       if (!warnedMissingBinding) {
         console.error(
           "[realtime] MYMIR_BROKER binding missing — realtime fanout will silently no-op",
@@ -165,8 +176,8 @@ class WorkersBroker {
       }
       return null;
     }
-    const id = env.idFromName(BROKER_DO_NAME);
-    return env.get(id);
+    const id = namespace.idFromName(BROKER_DO_NAME);
+    return namespace.get(id);
   }
 
   /**

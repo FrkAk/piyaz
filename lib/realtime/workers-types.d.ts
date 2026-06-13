@@ -17,6 +17,8 @@
 interface WebSocketLike {
   send(data: string): void;
   close(code?: number, reason?: string): void;
+  serializeAttachment?(value: unknown): void;
+  deserializeAttachment?(): unknown;
 }
 
 /** Minimal `DurableObjectState` shape — only methods the broker calls. */

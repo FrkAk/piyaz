@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import { myTasksKeys, projectKeys, taskKeys } from "@/lib/query/keys";
 import type { RealtimeEvent } from "@/lib/realtime/types";
@@ -10,41 +10,86 @@ const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 
 /**
- * Realtime is disabled on the Cloudflare Workers deploy target.
- *
- * The self-host SSE broker (`lib/realtime/_broker.node.ts`) is in-memory and
- * single-process — what a long-lived `EventSource` needs. On Workers an SSE
- * connection bills the wall-clock as compute time and isolates do not share
- * broker state, so `/api/events` short-circuits to 204. The browser
- * `EventSource` API closes on 204 and this component's `onerror` handler
- * would reconnect with exponential backoff, producing a steady reconnect
- * storm. Gating the provider here keeps the network panel clean until the
- * Workers path moves to the Durable-Object-backed broker over the WebSocket
- * Hibernation API. Data freshness on Workers comes from React Query's
- * `staleTime` + focus-refetch.
+ * Realtime transport differs by deploy target. Self-host uses a long-lived
+ * `EventSource` against the in-memory SSE broker (`_broker.node.ts`). On
+ * Cloudflare Workers a long-lived SSE connection bills the wall-clock as
+ * compute and isolates do not share broker state, so the client instead opens
+ * a WebSocket to the hibernating `MymirBroker` Durable Object (zero compute
+ * while idle). Both transports feed the same invalidation switch
+ * ({@link applyRealtimeEvent}); the DO sends SSE-framed payloads over the
+ * socket so the wire shape matches the EventSource path.
  */
 const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
 
 /**
- * Mounts a single `EventSource('/api/events')` for the authenticated user
- * and dispatches incoming events into the shared TanStack Query cache.
+ * Apply one realtime event to the shared TanStack Query cache.
  *
  * - `project` events invalidate `projectKeys.graph(projectId)` (slim graph
- *   refetch on workspace tabs viewing that project).
- * - `task` events invalidate the task body and the task context bundle but
+ *   refetch on workspace tabs viewing that project) plus the my-tasks list.
+ * - `task` events invalidate the task body and context bundle but
  *   intentionally NOT the slim graph: every `task` dispatch in
- *   `lib/realtime/events.ts` is paired with a `project` dispatch that
- *   already invalidates the graph. Firing both produces a redundant
- *   in-flight fetch per mutation that Query then aborts. If
- *   `emitTaskEvent` ever stops emitting the paired project event, the
- *   `task` case here must restore the graph invalidation.
+ *   `lib/realtime/events.ts` is paired with a `project` dispatch that already
+ *   invalidates the graph. If `emitTaskEvent` ever stops emitting the paired
+ *   project event, restore the graph invalidation here.
  * - `project-list` events invalidate the home grid.
- * - `project-deleted` events invalidate the home grid and remove the
+ * - `project-deleted` events invalidate the home grid and drop the
  *   workspace's slim-graph cache entry.
  *
- * Reconnects on error with exponential backoff (capped at 30 s). Strict-
- * Mode-safe: cleanup closes the EventSource and clears any pending
- * reconnect timer.
+ * @param qc - The active QueryClient.
+ * @param raw - JSON-encoded {@link RealtimeEvent} payload.
+ */
+function applyRealtimeEvent(qc: QueryClient, raw: string): void {
+  let ev: RealtimeEvent;
+  try {
+    ev = JSON.parse(raw) as RealtimeEvent;
+  } catch (err) {
+    console.warn("[realtime] parse failed:", err);
+    return;
+  }
+  switch (ev.kind) {
+    case "project":
+      qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
+      qc.invalidateQueries({ queryKey: myTasksKeys.list() });
+      break;
+    case "task":
+      qc.invalidateQueries({
+        queryKey: taskKeys.detail(ev.projectId, ev.taskId),
+      });
+      qc.invalidateQueries({
+        queryKey: taskKeys.context(ev.projectId, ev.taskId),
+      });
+      break;
+    case "project-list":
+      qc.invalidateQueries({ queryKey: projectKeys.list() });
+      break;
+    case "project-deleted":
+      qc.invalidateQueries({ queryKey: projectKeys.list() });
+      qc.removeQueries({ queryKey: projectKeys.graph(ev.projectId) });
+      break;
+  }
+}
+
+/**
+ * Extract the JSON payload from a DO WebSocket frame. The broker encodes each
+ * event as an SSE `data: <json>\n\n` frame (`broker-do.ts`), matching the
+ * EventSource wire format; comment / heartbeat lines (`: ...`) yield `null`.
+ *
+ * @param frame - Raw WebSocket message text.
+ * @returns The `data:` payload, or `null` when the frame carries none.
+ */
+function parseSseFrame(frame: string): string | null {
+  const line = frame.split("\n").find((l) => l.startsWith("data:"));
+  return line ? line.slice(5).trimStart() : null;
+}
+
+/**
+ * Mounts the realtime transport for the authenticated user and feeds incoming
+ * events into the shared TanStack Query cache. Self-host uses `EventSource`;
+ * Cloudflare uses a WebSocket to the broker Durable Object. Both reconnect on
+ * drop with capped exponential backoff (30 s) and run one full
+ * `invalidateQueries()` on reconnect to catch up on anything missed while
+ * disconnected. Strict-Mode-safe: cleanup closes the transport and clears any
+ * pending reconnect timer.
  *
  * @returns null — provider mounts side-effects only.
  */
@@ -53,73 +98,64 @@ export function RealtimeBridge() {
   const session = useSession();
 
   useEffect(() => {
-    if (IS_CLOUDFLARE) return;
     if (!session.data) return;
 
-    let es: EventSource | null = null;
     let backoff = INITIAL_BACKOFF_MS;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
+    let es: EventSource | null = null;
+    let ws: WebSocket | null = null;
 
-    const handle = (raw: string) => {
-      let ev: RealtimeEvent;
-      try {
-        ev = JSON.parse(raw) as RealtimeEvent;
-      } catch (err) {
-        console.warn("[realtime] parse failed:", err);
-        return;
-      }
-
-      switch (ev.kind) {
-        case "project":
-          qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
-          qc.invalidateQueries({ queryKey: myTasksKeys.list() });
-          break;
-        case "task":
-          qc.invalidateQueries({
-            queryKey: taskKeys.detail(ev.projectId, ev.taskId),
-          });
-          qc.invalidateQueries({
-            queryKey: taskKeys.context(ev.projectId, ev.taskId),
-          });
-          break;
-        case "project-list":
-          qc.invalidateQueries({ queryKey: projectKeys.list() });
-          break;
-        case "project-deleted":
-          qc.invalidateQueries({ queryKey: projectKeys.list() });
-          qc.removeQueries({ queryKey: projectKeys.graph(ev.projectId) });
-          break;
-      }
+    const onOpen = () => {
+      const isReconnect = backoff !== INITIAL_BACKOFF_MS;
+      backoff = INITIAL_BACKOFF_MS;
+      if (isReconnect) qc.invalidateQueries();
     };
 
-    const open = () => {
+    const scheduleReconnect = (reopen: () => void) => {
+      if (cancelled) return;
+      const wait = Math.min(backoff, MAX_BACKOFF_MS);
+      reconnectTimer = setTimeout(reopen, wait);
+      backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+    };
+
+    const openEventSource = () => {
       if (cancelled) return;
       es = new EventSource("/api/events");
-      es.onmessage = (msg) => handle(msg.data);
-      es.onopen = () => {
-        const isReconnect = backoff !== INITIAL_BACKOFF_MS;
-        backoff = INITIAL_BACKOFF_MS;
-        if (isReconnect) {
-          qc.invalidateQueries();
-        }
-      };
+      es.onmessage = (msg) => applyRealtimeEvent(qc, msg.data);
+      es.onopen = onOpen;
       es.onerror = () => {
         es?.close();
         es = null;
-        if (cancelled) return;
-        const wait = Math.min(backoff, MAX_BACKOFF_MS);
-        reconnectTimer = setTimeout(open, wait);
-        backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+        scheduleReconnect(openEventSource);
       };
     };
 
-    open();
+    const openWebSocket = () => {
+      if (cancelled) return;
+      const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${scheme}//${window.location.host}/api/events`);
+      ws.onmessage = (msg) => {
+        if (typeof msg.data !== "string") return;
+        const data = parseSseFrame(msg.data);
+        if (data) applyRealtimeEvent(qc, data);
+      };
+      ws.onopen = onOpen;
+      ws.onclose = () => {
+        ws = null;
+        scheduleReconnect(openWebSocket);
+      };
+      ws.onerror = () => ws?.close();
+    };
+
+    if (IS_CLOUDFLARE) openWebSocket();
+    else openEventSource();
 
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       es?.close();
+      ws?.close();
     };
   }, [session.data, qc]);
 

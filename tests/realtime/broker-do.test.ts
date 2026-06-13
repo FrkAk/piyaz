@@ -491,3 +491,76 @@ test("dispatch tolerates a throwing socket without dropping siblings", async () 
   expect(r.status).toBe(204);
   expect(good.send).toHaveBeenCalledTimes(1);
 });
+
+/**
+ * Fake hibernation socket that records its `serializeAttachment` payload and
+ * replays it from `deserializeAttachment`, modeling the workerd contract
+ * where the attachment survives DO hibernation on the live connection.
+ */
+function fakeHibernatingSocket(): FakeSocket & {
+  serializeAttachment: (value: unknown) => void;
+  deserializeAttachment: () => unknown;
+} {
+  let attachment: unknown = null;
+  return {
+    tags: [],
+    send: mock((_data: string) => {}),
+    serializeAttachment(value: unknown) {
+      attachment = value;
+    },
+    deserializeAttachment() {
+      return attachment;
+    },
+  };
+}
+
+test("hibernation rehydration — a woken DO rebuilds subs from socket attachments", async () => {
+  // Model a wake from hibernation: a socket persisted u1's subscription in
+  // its attachment before the DO was evicted, and the fresh instance starts
+  // with an empty in-memory map. The hibernating client never reconnects, so
+  // no re-register RPC arrives; the DO must rebuild from the attachment alone.
+  const ctx = fakeCtx();
+  const ws = fakeHibernatingSocket();
+  ctx.acceptWebSocket(ws, ["u1"]);
+  ws.serializeAttachment({ userId: "u1", subs: [["project:p1", null]] });
+  const broker = new MymirBroker(ctx as never, {
+    BROKER_DO_SECRET: TEST_SECRET,
+  } as never);
+
+  const r = await rpc(broker, {
+    op: "dispatch",
+    key: "project:p1",
+    payload: { kind: "project", projectId: "p1" },
+  });
+
+  expect(r.status).toBe(204);
+  const frame = `data: ${JSON.stringify({ kind: "project", projectId: "p1" })}\n\n`;
+  expect(ws.send).toHaveBeenCalledWith(frame);
+});
+
+test("register persists the user's sub set onto the socket attachment", async () => {
+  const ctx = fakeCtx();
+  const ws = fakeHibernatingSocket();
+  ctx.acceptWebSocket(ws, ["u1"]);
+  const broker = new MymirBroker(ctx as never, {
+    BROKER_DO_SECRET: TEST_SECRET,
+  } as never);
+
+  await rpc(broker, { op: "register", userId: "u1", key: "project:p1" });
+  await rpc(broker, {
+    op: "register",
+    userId: "u1",
+    key: "task:t1",
+    ttlMs: 60_000,
+  });
+
+  const att = ws.deserializeAttachment() as {
+    userId: string;
+    subs: Array<[string, number | null]>;
+  };
+  expect(att.userId).toBe("u1");
+  expect(att.subs.map((entry) => entry[0]).sort()).toEqual([
+    "project:p1",
+    "task:t1",
+  ]);
+});

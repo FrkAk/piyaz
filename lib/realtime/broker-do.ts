@@ -44,20 +44,35 @@ interface BrokerEnv {
 const MAX_CONNECTIONS_PER_USER = 20;
 
 /**
+ * Per-connection state persisted via the Hibernation API's
+ * `serializeAttachment`, so a user's subscriptions survive DO hibernation
+ * (which clears every in-memory field). Mirrored onto every socket the user
+ * holds and merged back into {@link MymirBroker} on wake.
+ */
+interface SocketAttachment {
+  userId: string;
+  subs: Array<[ResourceKey, number | null]>;
+}
+
+/**
  * Cloudflare Durable Object that replaces the self-host in-memory broker for
  * the Workers deploy target. A single global instance (id derived from a
  * stable name) multiplexes every user's subscription state and WebSocket
  * connections, matching the self-host single-process broker semantics.
  *
- * Subscription state lives in memory and is not persisted: the model is that
- * clients re-register their `project:*` / `task:*` / `project-list:*`
- * subscriptions on each SSE reconnect, identical to the self-host broker
- * losing state on process restart. WebSocket connections survive hibernation
- * via Cloudflare's WebSocket Hibernation API and are restored when the DO
- * rehydrates.
+ * The subscription map is an in-memory hot cache backed by per-connection
+ * `serializeAttachment` state. Hibernation clears memory and reruns the
+ * constructor, but the connected WebSockets survive with their attachments
+ * intact; on the first operation after a wake, {@link ensureHydrated}
+ * rebuilds the map from those attachments. This is what keeps a hibernating
+ * socket (which, unlike SSE, never reconnects to re-register) receiving
+ * events after an idle cycle.
  */
 export class MymirBroker extends DurableObject<BrokerEnv> {
   private subs = new Map<string, Map<ResourceKey, number | null>>();
+
+  /** False until {@link ensureHydrated} rebuilds {@link subs} after a wake. */
+  private hydrated = false;
 
   /**
    * Handle a wire request from the Workers broker adapter. Verifies the
@@ -80,8 +95,16 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   async fetch(request: Request): Promise<Response> {
     const authResult = await this.verifyEnvelope(request);
     if (!authResult.ok) {
+      console.warn(
+        JSON.stringify({
+          event: "broker_envelope_rejected",
+          status: authResult.status,
+          reason: authResult.error,
+        }),
+      );
       return new Response(authResult.error, { status: authResult.status });
     }
+    this.ensureHydrated();
     if (request.headers.get("Upgrade") === "websocket") {
       return this.handleUpgrade(request);
     }
@@ -165,6 +188,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server, [userId]);
+    this.persistUser(userId);
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -233,6 +257,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
       this.subs.set(userId, userMap);
     }
     userMap.set(key, expiresAt);
+    this.persistUser(userId);
   }
 
   /**
@@ -243,6 +268,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
    */
   private unregister(userId: string, key: ResourceKey): void {
     this.subs.get(userId)?.delete(key);
+    this.persistUser(userId);
   }
 
   /**
@@ -264,6 +290,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
       if (key.startsWith("task:")) taskKeys.push(key);
     }
     for (const key of taskKeys) userMap.delete(key);
+    this.persistUser(userId);
   }
 
   /**
@@ -333,6 +360,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
     _reason: string,
     _wasClean: boolean,
   ): void {
+    this.ensureHydrated();
     const tags = this.ctx.getTags(ws);
     const userId = tags[0];
     if (!userId) return;
@@ -351,5 +379,60 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
    */
   webSocketError(_ws: WebSocketLike, error: unknown): void {
     console.error("[realtime] websocket error:", error);
+  }
+
+  /**
+   * Rebuild the in-memory subscription map from live socket attachments on
+   * the first operation after a wake. Hibernation clears {@link subs} and
+   * reruns the constructor, but the connected WebSockets persist with their
+   * `serializeAttachment` payloads; hibernating clients never reconnect, so
+   * re-reading those attachments is the only way to restore who-is-subscribed
+   * without dropping events. Idempotent: the guard flag makes every call
+   * after the first a no-op within a live instance.
+   */
+  private ensureHydrated(): void {
+    if (this.hydrated) return;
+    this.hydrated = true;
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = this.readAttachment(ws);
+      if (!attachment) continue;
+      this.subs.set(attachment.userId, new Map(attachment.subs));
+    }
+  }
+
+  /**
+   * Mirror a user's current subscription map onto the `serializeAttachment`
+   * of every socket the user holds, so the set survives hibernation. Sockets
+   * that do not expose the attachment API (test fakes) are skipped.
+   *
+   * @param userId - User whose sockets to update.
+   */
+  private persistUser(userId: string): void {
+    const attachment: SocketAttachment = {
+      userId,
+      subs: [...(this.subs.get(userId)?.entries() ?? [])],
+    };
+    for (const ws of this.ctx.getWebSockets(userId)) {
+      ws.serializeAttachment?.(attachment);
+    }
+  }
+
+  /**
+   * Read a socket's persisted {@link SocketAttachment}, or `null` when the
+   * socket carries none or does not expose the attachment API.
+   *
+   * @param ws - Socket to read.
+   * @returns The parsed attachment, or `null`.
+   */
+  private readAttachment(ws: WebSocketLike): SocketAttachment | null {
+    const raw = ws.deserializeAttachment?.();
+    if (!raw || typeof raw !== "object") return null;
+    const attachment = raw as Partial<SocketAttachment>;
+    if (
+      typeof attachment.userId !== "string" ||
+      !Array.isArray(attachment.subs)
+    )
+      return null;
+    return { userId: attachment.userId, subs: attachment.subs };
   }
 }
