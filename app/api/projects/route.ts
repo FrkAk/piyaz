@@ -42,7 +42,9 @@ async function handle(req: Request): Promise<Response> {
     const limitRaw = params.get("limit");
     const parsedLimit = limitRaw !== null ? Number(limitRaw) : Number.NaN;
     const limit =
-      Number.isInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+      Number.isInteger(parsedLimit) && parsedLimit > 0
+        ? parsedLimit
+        : undefined;
     const page = await listProjectsSlim(ctx, { cursor, limit });
     return conditionalRespond(req, page, max);
   } catch (err) {

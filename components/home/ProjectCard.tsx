@@ -3,7 +3,11 @@
 import { useState, useCallback } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { TeamChip } from "@/components/shared/TeamChip";
 import {
   ProjectStatusModal,
@@ -13,7 +17,12 @@ import { IconMore, IconTrash } from "@/components/shared/icons";
 import { projectColor } from "@/lib/ui/project-color";
 import { deleteProjectAction } from "@/lib/actions/project";
 import { projectKeys } from "@/lib/query/keys";
-import type { ProjectTaskStats } from "@/lib/data/views";
+import {
+  removeProjectFromList,
+  type ProjectListPage,
+} from "@/lib/query/queries";
+import { useSidebarProjects } from "@/components/layout/SidebarProjectsProvider";
+import type { ProjectTaskStats, ProgressBucket } from "@/lib/data/views";
 
 interface ProjectCardProps {
   /** @param id - Project ID. */
@@ -68,6 +77,7 @@ export function ProjectCard({
   team,
 }: ProjectCardProps) {
   const qc = useQueryClient();
+  const { removeProject: removeSidebarProject } = useSidebarProjects();
   const [confirming, setConfirming] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -77,6 +87,14 @@ export function ProjectCard({
     mutationFn: () => deleteProjectAction(id),
     onSuccess: (result) => {
       if (result.ok) {
+        // The list ETag is a max-updated-at validator that can't observe a
+        // deletion, so drop the card from the cache before revalidating —
+        // otherwise the refetch 304s and the deleted project reappears.
+        qc.setQueryData<InfiniteData<ProjectListPage>>(
+          projectKeys.list(),
+          (old) => removeProjectFromList(old, id),
+        );
+        removeSidebarProject(id);
         qc.invalidateQueries({ queryKey: projectKeys.list() });
         return;
       }
@@ -268,22 +286,28 @@ interface LifecycleBarProps {
 }
 
 /**
- * Status bands rendered draft → done left → right, so completed work fills
- * toward the right edge. Each band draws in its canonical `--color-glyph-*`
- * status colour, matching the graph and {@link StatusGlyph} convention.
- * `cancelled` is excluded — it is removed from the denominator, not shown
- * as progress.
+ * Canonical `--color-glyph-*` colour per progress bucket. Typed
+ * `Record<ProgressBucket, …>` so a newly added status (once it reaches
+ * {@link ProgressBucket}) is a compile error here until it gets a colour —
+ * the bar can never silently under-fill. `cancelled` is absent by design:
+ * it's excluded from the denominator, not shown as progress.
  */
-const LIFECYCLE_BANDS = [
-  { key: "draft", color: "var(--color-glyph-draft)" },
-  { key: "planned", color: "var(--color-glyph-planned)" },
-  { key: "inProgress", color: "var(--color-glyph-progress)" },
-  { key: "inReview", color: "var(--color-glyph-review)" },
-  { key: "done", color: "var(--color-glyph-done)" },
-] as const satisfies ReadonlyArray<{
-  key: keyof ProjectTaskStats;
-  color: string;
-}>;
+const BAND_COLORS: Record<ProgressBucket, string> = {
+  draft: "var(--color-glyph-draft)",
+  planned: "var(--color-glyph-planned)",
+  inProgress: "var(--color-glyph-progress)",
+  inReview: "var(--color-glyph-review)",
+  done: "var(--color-glyph-done)",
+};
+
+/** Band render order, draft → done, so completed work fills the right edge. */
+const BAND_ORDER: readonly ProgressBucket[] = [
+  "draft",
+  "planned",
+  "inProgress",
+  "inReview",
+  "done",
+];
 
 /**
  * Slim 5px lifecycle bar with one coloured band per task status, filling
@@ -303,7 +327,7 @@ function LifecycleBar({ stats, totalActive }: LifecycleBarProps) {
   }
   return (
     <div className="flex h-[5px] gap-[2px] overflow-hidden rounded-full bg-border/70">
-      {LIFECYCLE_BANDS.map(({ key, color }) => {
+      {BAND_ORDER.map((key) => {
         const count = stats[key];
         if (count <= 0) return null;
         return (
@@ -313,7 +337,7 @@ function LifecycleBar({ stats, totalActive }: LifecycleBarProps) {
             className="rounded-sm"
             style={{
               width: `${(count / totalActive) * 100}%`,
-              background: color,
+              background: BAND_COLORS[key],
             }}
           />
         );

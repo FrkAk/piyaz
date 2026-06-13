@@ -23,6 +23,8 @@ interface SidebarProjectsValue {
   error: boolean;
   /** Fetch and append the next keyset page. No-op when exhausted or already loading. */
   loadMore: () => void;
+  /** Drop a project from the list — keeps the sidebar in sync after a delete. */
+  removeProject: (id: string) => void;
 }
 
 const SidebarProjectsContext = createContext<SidebarProjectsValue | null>(null);
@@ -87,6 +89,13 @@ export function SidebarProjectsProvider({
     })();
   }, [cursor, isLoadingMore]);
 
+  const removeProject = useCallback((id: string) => {
+    setProjects((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      return next.length === prev.length ? prev : next;
+    });
+  }, []);
+
   return (
     <SidebarProjectsContext
       value={{
@@ -95,6 +104,7 @@ export function SidebarProjectsProvider({
         isLoadingMore,
         error,
         loadMore,
+        removeProject,
       }}
     >
       {children}
@@ -133,5 +143,6 @@ export function useSidebarProjects(): SidebarProjectsValue {
     isLoadingMore: false,
     error: false,
     loadMore: () => {},
+    removeProject: () => {},
   };
 }

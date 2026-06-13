@@ -1,4 +1,8 @@
-import type { QueryClient, QueryFunctionContext } from "@tanstack/react-query";
+import type {
+  InfiniteData,
+  QueryClient,
+  QueryFunctionContext,
+} from "@tanstack/react-query";
 import {
   conditionalFetch,
   conditionalFetchPage,
@@ -27,6 +31,31 @@ export type ProjectListPage = {
   rows: ProjectListEntry[];
   nextCursor: string | null;
 };
+
+/**
+ * Drop a project from the cached infinite home-grid list, preserving page
+ * params. Used to optimistically remove a deleted card: the list ETag is a
+ * max-`updated_at` validator that can't observe a deletion, so a plain
+ * invalidation would 304 and resurrect the stale page.
+ *
+ * @param data - Cached infinite data, or `undefined` when the list isn't cached.
+ * @param projectId - Id of the project to remove.
+ * @returns New infinite data without the project; the same reference when the
+ *   project was not present (no needless re-render).
+ */
+export function removeProjectFromList(
+  data: InfiniteData<ProjectListPage> | undefined,
+  projectId: string,
+): InfiniteData<ProjectListPage> | undefined {
+  if (!data) return data;
+  let changed = false;
+  const pages = data.pages.map((page) => {
+    if (!page.rows.some((row) => row.id === projectId)) return page;
+    changed = true;
+    return { ...page, rows: page.rows.filter((row) => row.id !== projectId) };
+  });
+  return changed ? { ...data, pages } : data;
+}
 
 /**
  * QueryFn factory for one page of the home-grid project list. Conditional-GET

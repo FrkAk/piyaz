@@ -24,7 +24,8 @@ import {
 } from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
-import type { HistoryEntry } from "@/lib/types";
+import type { HistoryEntry, TaskStatus } from "@/lib/types";
+import { STATUS_BUCKET } from "@/lib/data/views";
 import {
   asIdentifier,
   deriveIdentifier,
@@ -34,6 +35,7 @@ import {
 import type {
   ProjectChrome,
   ProjectGraphSlim,
+  ProjectIndexEntry,
   ProjectListEntry,
   ProjectListEntryMcp,
   ProjectMeta,
@@ -113,12 +115,8 @@ function accumulateTaskStats(
   count: number,
 ): void {
   stats.total += count;
-  if (status === "done") stats.done += count;
-  else if (status === "in_review") stats.inReview += count;
-  else if (status === "in_progress") stats.inProgress += count;
-  else if (status === "planned") stats.planned += count;
-  else if (status === "draft") stats.draft += count;
-  else if (status === "cancelled") stats.cancelled += count;
+  const bucket = STATUS_BUCKET[status as TaskStatus];
+  if (bucket) stats[bucket] += count;
 }
 
 // ---------------------------------------------------------------------------
@@ -722,10 +720,15 @@ export async function listProjectsSlim(
   const limit = Math.min(Math.max(opts.limit ?? 15, 1), 100);
   const after = decodeCursor(opts.cursor);
 
+  // The cursor stores `updated_at` at millisecond precision (JS `Date` → ISO)
+  // while Postgres `timestamptz` keeps microseconds. Compare and order on the
+  // same millisecond-truncated key so rows sharing a millisecond across a page
+  // boundary are neither skipped nor duplicated.
   const afterIso = after?.updatedAt.toISOString();
+  const updatedAtMs = sql`date_trunc('milliseconds', ${projects.updatedAt})`;
   const cursorClause = after
-    ? sql`(${projects.updatedAt} < ${afterIso}::timestamptz
-            OR (${projects.updatedAt} = ${afterIso}::timestamptz AND ${projects.id} < ${after.id}))`
+    ? sql`(${updatedAtMs} < ${afterIso}::timestamptz
+            OR (${updatedAtMs} = ${afterIso}::timestamptz AND ${projects.id} < ${after.id}))`
     : sql`TRUE`;
 
   return withUserContext(ctx.userId, async (tx) => {
@@ -751,7 +754,7 @@ export async function listProjectsSlim(
         })
         .from(projects)
         .where(cursorClause)
-        .orderBy(desc(projects.updatedAt), desc(projects.id))
+        .orderBy(desc(updatedAtMs), desc(projects.id))
         .limit(limit + 1),
     ]);
 
@@ -820,6 +823,41 @@ export async function listProjectsSlim(
 
     return { rows, nextCursor };
   });
+}
+
+/**
+ * Hard cap on the command-palette project index — far beyond any realistic
+ * per-user project count, so the slim payload stays bounded while still
+ * covering every accessible project for ⌘K jump-to.
+ */
+const PROJECT_INDEX_CAP = 1000;
+
+/**
+ * Minimal project nav list for the ⌘K command palette. Selects only the four
+ * columns jump-to renders (id, organizationId, title, identifier) — no task
+ * stats, joins, or timestamps — so the caller's entire accessible set fits in
+ * one slim payload, fetched once when the palette first opens. RLS scopes the
+ * rows to the caller's memberships. Ordered `updatedAt DESC, id DESC` so
+ * recent work leads; capped at {@link PROJECT_INDEX_CAP}.
+ *
+ * @param ctx - Resolved auth context.
+ * @returns Slim project nav rows, newest first.
+ */
+export async function listProjectIndex(
+  ctx: AuthContext,
+): Promise<ProjectIndexEntry[]> {
+  return withUserContext(ctx.userId, async (tx) =>
+    tx
+      .select({
+        id: projects.id,
+        organizationId: projects.organizationId,
+        title: projects.title,
+        identifier: projects.identifier,
+      })
+      .from(projects)
+      .orderBy(desc(projects.updatedAt), desc(projects.id))
+      .limit(PROJECT_INDEX_CAP),
+  );
 }
 
 /**

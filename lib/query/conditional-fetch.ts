@@ -12,6 +12,15 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
  */
 const etagByKey = new Map<string, string>();
 
+/**
+ * Prefix for {@link conditionalFetchPage} per-page validators. Plain
+ * {@link conditionalFetch} keys are `JSON.stringify(queryKey)` and always
+ * start with `[`, so this namespace keeps page entries from colliding with —
+ * or being prefix-matched against — a plain key that is a JSON prefix of a
+ * longer sibling (e.g. `["task",p,t]` vs `["task",p,t,"context"]`).
+ */
+const PAGE_KEY_PREFIX = "page::";
+
 /** QueryClients we've already attached the cache-removal subscriber to. */
 const boundClients = new WeakSet<QueryClient>();
 
@@ -28,9 +37,12 @@ export function _clearEtagCache(): void {
  * lets the QueryClient be garbage-collected normally.
  *
  * Also drops the per-page validators that {@link conditionalFetchPage}
- * stores under `[...queryKey, pageParam]`: an infinite query keeps every
- * page under one cache key, so when that key is removed every page entry —
- * serialised with the bare key as a prefix — must go too.
+ * stores under `${PAGE_KEY_PREFIX}[...queryKey, pageParam]`: an infinite query
+ * keeps every page under one cache key, so when that key is removed every page
+ * entry must go too. The page namespace confines this prefix sweep to page
+ * entries — a plain sibling key that is a JSON prefix of the removed key
+ * (e.g. removing `["task",p,t]` while `["task",p,t,"context"]` is still live)
+ * is never matched.
  *
  * @param queryClient - QueryClient whose cache we should mirror.
  */
@@ -41,7 +53,7 @@ function bindToQueryCache(queryClient: QueryClient): void {
     if (event.type !== "removed") return;
     const removed = JSON.stringify(event.query.queryKey);
     etagByKey.delete(removed);
-    const pagePrefix = `${removed.slice(0, -1)},`;
+    const pagePrefix = `${PAGE_KEY_PREFIX}${removed.slice(0, -1)},`;
     for (const key of etagByKey.keys()) {
       if (key.startsWith(pagePrefix)) etagByKey.delete(key);
     }
@@ -163,10 +175,9 @@ export async function conditionalFetchPage<T>({
 }: ConditionalFetchPageArgs): Promise<T> {
   bindToQueryCache(queryClient);
 
-  const keyStr = JSON.stringify([
-    ...(queryKey as readonly unknown[]),
-    pageParam,
-  ]);
+  const keyStr =
+    PAGE_KEY_PREFIX +
+    JSON.stringify([...(queryKey as readonly unknown[]), pageParam]);
   const previous = etagByKey.get(keyStr);
   const headers: HeadersInit = previous ? { "If-None-Match": previous } : {};
 

@@ -42,10 +42,18 @@ export function HomeGrid({ teams }: HomeGridProps) {
       getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     });
 
-  const projects = useMemo(
-    () => data?.pages.flatMap((page) => page.rows) ?? [],
-    [data],
-  );
+  const projects = useMemo(() => {
+    const seen = new Set<string>();
+    const deduped: ProjectListEntry[] = [];
+    for (const page of data?.pages ?? []) {
+      for (const row of page.rows) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        deduped.push(row);
+      }
+    }
+    return deduped;
+  }, [data]);
 
   const teamIds = useMemo(() => new Set(teams.map((t) => t.id)), [teams]);
   const requestedTeam = searchParams.get("team");
@@ -106,7 +114,14 @@ export function HomeGrid({ teams }: HomeGridProps) {
       ) : null}
 
       {filteredProjects.length === 0 && projects.length > 0 ? (
-        <EmptyFilterHint teamFilter={teamFilter} teams={teams} />
+        hasNextPage ? (
+          <EmptyHint
+            title="No matches on the loaded projects"
+            body="Use Load more below to page through the rest of your projects."
+          />
+        ) : (
+          <EmptyFilterHint teamFilter={teamFilter} teams={teams} />
+        )
       ) : null}
 
       {groupByTeam && !teamFilter ? (

@@ -205,3 +205,54 @@ test("page side-channel drops its ETag when the infinite query is removed", asyn
   const init = fn.mock.calls[0]![1] as RequestInit;
   expect(init.headers).toEqual({});
 });
+
+test("removing a query does not drop a longer sibling key's ETag", async () => {
+  // taskKeys.detail ["task",p,t] is a JSON prefix of taskKeys.context
+  // ["task",p,t,"context"]. Evicting detail must NOT drop context's still-live
+  // validator — otherwise the next context refetch sends no If-None-Match and
+  // pays a full 200 instead of a bodiless 304.
+  const qc = new QueryClient();
+  const detailKey = ["task", "p", "t"] as const;
+  const contextKey = ["task", "p", "t", "context"] as const;
+
+  fetchMock(
+    new Response(JSON.stringify({ ok: 1 }), {
+      status: 200,
+      headers: { ETag: ETAG },
+    }),
+  );
+  const ctxBody = await conditionalFetch<{ ok: number }>({
+    url: "/ctx",
+    queryKey: contextKey,
+    queryClient: qc,
+  });
+  qc.setQueryData(contextKey, ctxBody);
+
+  fetchMock(
+    new Response(JSON.stringify({ ok: 2 }), {
+      status: 200,
+      headers: { ETag: ETAG_NEXT },
+    }),
+  );
+  const detailBody = await conditionalFetch<{ ok: number }>({
+    url: "/detail",
+    queryKey: detailKey,
+    queryClient: qc,
+  });
+  qc.setQueryData(detailKey, detailBody);
+
+  // Exact removal: evict ONLY detail (a plain `removeQueries` partial-matches
+  // and would remove context too, masking the prefix-eviction bug).
+  qc.removeQueries({ queryKey: detailKey, exact: true });
+
+  // Context's validator must survive the detail eviction.
+  const fn = fetchMock(new Response(null, { status: 304 }));
+  await conditionalFetch({
+    url: "/ctx",
+    queryKey: contextKey,
+    queryClient: qc,
+  });
+
+  const init = fn.mock.calls[0]![1] as RequestInit;
+  expect(init.headers).toEqual({ "If-None-Match": ETAG });
+});

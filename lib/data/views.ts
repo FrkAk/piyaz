@@ -5,6 +5,7 @@ import type {
   Decision,
   Priority,
   Estimate,
+  TaskStatus,
 } from "@/lib/types";
 
 /**
@@ -59,6 +60,31 @@ export type ProjectTaskStats = {
 };
 
 /**
+ * Progress buckets the lifecycle bar renders as bands — every
+ * {@link ProjectTaskStats} count except the `total` roll-up and `cancelled`
+ * (excluded from the denominator, not shown as progress).
+ */
+export type ProgressBucket = Exclude<
+  keyof ProjectTaskStats,
+  "total" | "cancelled"
+>;
+
+/**
+ * Canonical persisted-status → {@link ProjectTaskStats} bucket map: the single
+ * source of truth shared by the server roll-up (`accumulateTaskStats`) and the
+ * client lifecycle bar. Typed `Record<TaskStatus, …>` so adding or renaming a
+ * status is a compile error here instead of a silently under-filled bar.
+ */
+export const STATUS_BUCKET: Record<TaskStatus, keyof ProjectTaskStats> = {
+  draft: "draft",
+  planned: "planned",
+  in_progress: "inProgress",
+  in_review: "inReview",
+  done: "done",
+  cancelled: "cancelled",
+};
+
+/**
  * Project entry returned by `listProjectsSlim`. Carries only the columns the
  * home grid and sidebar render (id, organizationId, title, identifier,
  * description, status, updatedAt); history, categories, and createdAt are
@@ -79,6 +105,16 @@ export type ProjectListEntry = Pick<
   taskStats: ProjectTaskStats;
   progress: number;
 };
+
+/**
+ * Minimal project nav row returned by `listProjectIndex` — the columns the
+ * ⌘K command palette needs to jump to a project. No task stats, joins, or
+ * timestamps, so the whole accessible set fits in one slim payload.
+ */
+export type ProjectIndexEntry = Pick<
+  Project,
+  "id" | "organizationId" | "title" | "identifier"
+>;
 
 /**
  * Slim project entry returned by `listProjectsForMcp` — the agent-facing

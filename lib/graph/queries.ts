@@ -7,6 +7,7 @@ import {
   getProjectChrome as coreGetProjectChrome,
   getProjectGraphSlim as coreGetProjectGraphSlim,
   listProjectsSlim as coreListProjectsSlim,
+  listProjectIndex as coreListProjectIndex,
 } from "@/lib/data/project";
 import {
   searchTasksAcrossProjects as coreSearchTasksAcrossProjects,
@@ -14,7 +15,7 @@ import {
   type CrossProjectSearchResult,
 } from "@/lib/data/task";
 import { loadProjectAccess } from "@/lib/auth/authorization";
-import type { MyTask } from "@/lib/data/views";
+import type { MyTask, ProjectIndexEntry } from "@/lib/data/views";
 
 export type {
   TaskSlim,
@@ -28,6 +29,7 @@ export type { ProjectTag } from "@/lib/data/project";
 export type {
   ProjectChrome,
   ProjectGraphSlim,
+  ProjectIndexEntry,
   ProjectListEntry,
   ProjectListOrganization,
 } from "@/lib/data/views";
@@ -51,6 +53,17 @@ export type MyTasksListFailureCode =
 export type MyTasksListResultPayload =
   | { ok: true; rows: MyTask[] }
   | { ok: false; code: MyTasksListFailureCode };
+
+/** Closed set of failure codes for `listProjectIndex`. */
+export type ProjectIndexFailureCode =
+  | "unauthorized"
+  | "rate_limited"
+  | "unknown";
+
+/** Discriminated result for the command-palette project-index server action. */
+export type ProjectIndexResultPayload =
+  | { ok: true; rows: ProjectIndexEntry[] }
+  | { ok: false; code: ProjectIndexFailureCode };
 
 /**
  * Server action wrapper — fetches the chrome view of a project (header
@@ -127,6 +140,45 @@ export async function searchTasksAcrossProjects(
     return { ok: true, rows };
   } catch (err) {
     console.error("searchTasksAcrossProjects failed", err);
+    return { ok: false, code: "unknown" };
+  }
+}
+
+/**
+ * Server action wrapper — full slim project index for the ⌘K palette's
+ * project jump-to. Returns every project the caller can reach (capped in the
+ * data layer), not just the paginated sidebar window, so the palette never
+ * silently hides a project. Fetched once when the palette first opens.
+ * Throttled at 30/min per-user and 60/min per-IP via the shared `actions`
+ * slot; unauth callers throttle by IP only.
+ *
+ * @returns `{ ok: true, rows }` newest-first, or a typed failure.
+ */
+export async function listProjectIndex(): Promise<ProjectIndexResultPayload> {
+  // Resolve user id before the rate-limit check so authed callers throttle
+  // per-user, not per-IP (IP keys collide on shared NATs).
+  const session = await getSession();
+  const userId = session?.user.id ?? null;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "palette.project-index",
+      windowSeconds: 60,
+      perUserMax: 30,
+      perIpMax: 60,
+    },
+    userId,
+  );
+  if (!limit.ok) return { ok: false, code: "rate_limited" };
+
+  if (!userId) return { ok: false, code: "unauthorized" };
+
+  try {
+    const ctx = await getAuthContext();
+    const rows = await coreListProjectIndex(ctx);
+    return { ok: true, rows };
+  } catch (err) {
+    console.error("listProjectIndex failed", err);
     return { ok: false, code: "unknown" };
   }
 }

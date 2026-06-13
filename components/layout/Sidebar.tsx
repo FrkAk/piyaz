@@ -781,9 +781,7 @@ function ShowMoreProjects({ loading, error, onClick }: ShowMoreProjectsProps) {
       type="button"
       onClick={onClick}
       disabled={loading}
-      title={
-        error ? "Couldn't load more projects — click to retry" : undefined
-      }
+      title={error ? "Couldn't load more projects — click to retry" : undefined}
       className="mt-1 flex h-[26px] w-full cursor-pointer items-center justify-center gap-1.5 rounded-md font-mono text-[10px] font-semibold uppercase tracking-[0.10em] text-text-muted transition-colors hover:bg-surface-hover/50 hover:text-text-secondary disabled:cursor-default disabled:opacity-70"
     >
       {!loading && (

@@ -11,6 +11,8 @@ import {
 } from "react";
 import { CommandPalette } from "@/components/shared/CommandPalette";
 import { useSidebarProjects } from "@/components/layout/SidebarProjectsProvider";
+import { listProjectIndex } from "@/lib/graph/queries";
+import type { SidebarProject } from "@/components/layout/Sidebar";
 
 /** Shape exposed to consumers of {@link useCommandPalette}. */
 interface CommandPaletteValue {
@@ -34,8 +36,9 @@ interface CommandPaletteProviderProps {
  * keydown listener that toggles the palette. Skips the shortcut when an
  * input, textarea, or contenteditable element is focused so the palette
  * never steals ⌘K from a text field. Mounted by AppShell so every
- * authenticated route can call {@link useCommandPalette}. The jump-to list
- * tracks the shared sidebar projects, so it grows as the user loads more.
+ * authenticated route can call {@link useCommandPalette}. The first time the
+ * palette opens it lazily loads the complete project index so jump-to reaches
+ * every accessible project, not just the paginated sidebar window.
  *
  * @param props - Subtree.
  * @returns Context provider rendering its children plus a single
@@ -44,10 +47,31 @@ interface CommandPaletteProviderProps {
 export function CommandPaletteProvider({
   children,
 }: CommandPaletteProviderProps) {
-  const { projects } = useSidebarProjects();
+  const { projects: sidebarProjects } = useSidebarProjects();
   const [open, setOpen] = useState(false);
+  const [fullProjects, setFullProjects] = useState<SidebarProject[] | null>(
+    null,
+  );
+  const loadedRef = useRef(false);
   const openPalette = useCallback(() => setOpen(true), []);
   const closePalette = useCallback(() => setOpen(false), []);
+
+  // Load the full project index the first time the palette opens — one slim
+  // request per session, paid only when ⌘K is actually used. The sidebar
+  // list is the instant fallback until it resolves; the result is kept even
+  // if the palette closes mid-flight, and a failure clears the guard so the
+  // next open retries instead of falling back to the sidebar window forever.
+  useEffect(() => {
+    if (!open || loadedRef.current) return;
+    loadedRef.current = true;
+    void (async () => {
+      const payload = await listProjectIndex();
+      if (payload.ok) setFullProjects(payload.rows);
+      else loadedRef.current = false;
+    })();
+  }, [open]);
+
+  const projects = fullProjects ?? sidebarProjects;
 
   /** Mirrors `open` so the keydown listener reads the current value
    *  without re-binding on every toggle. */
