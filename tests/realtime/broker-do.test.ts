@@ -529,9 +529,12 @@ test("hibernation rehydration — a woken DO rebuilds subs from storage", async 
   ctx.data.set("subs:u1", [["project:p1", null]]);
   const ws = fakeSocket();
   ctx.acceptWebSocket(ws, ["u1"]);
-  const broker = new MymirBroker(ctx as never, {
-    BROKER_DO_SECRET: TEST_SECRET,
-  } as never);
+  const broker = new MymirBroker(
+    ctx as never,
+    {
+      BROKER_DO_SECRET: TEST_SECRET,
+    } as never,
+  );
 
   const r = await rpc(broker, {
     op: "dispatch",
@@ -547,9 +550,12 @@ test("hibernation rehydration — a woken DO rebuilds subs from storage", async 
 test("register persists the user's sub set into storage", async () => {
   const ctx = fakeCtxWithStorage();
   ctx.acceptWebSocket(fakeSocket(), ["u1"]);
-  const broker = new MymirBroker(ctx as never, {
-    BROKER_DO_SECRET: TEST_SECRET,
-  } as never);
+  const broker = new MymirBroker(
+    ctx as never,
+    {
+      BROKER_DO_SECRET: TEST_SECRET,
+    } as never,
+  );
 
   await rpc(broker, { op: "register", userId: "u1", key: "project:p1" });
   await rpc(broker, {

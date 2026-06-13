@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   await requireMembership();
 
-  const [projects, teamsResult] = await Promise.all([
+  const [projectsPage, teamsResult] = await Promise.all([
     loadSidebarProjects(),
     loadUserTeams(),
   ]);
@@ -33,7 +33,10 @@ export default async function HomePage() {
   const teams = teamsResult.ok ? teamsResult.data : [];
 
   const qc = getServerQueryClient();
-  qc.setQueryData(projectKeys.list(), projects);
+  qc.setQueryData(projectKeys.list(), {
+    pages: [projectsPage],
+    pageParams: [null],
+  });
 
   return (
     <AppShell>

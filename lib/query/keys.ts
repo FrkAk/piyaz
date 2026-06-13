@@ -21,8 +21,11 @@ export const taskKeys = {
   /** Full task body for the detail panel. */
   detail: (projectId: string, taskId: string) =>
     ["task", projectId, taskId] as const,
-  /** Three-bundle markdown for the MD toggle. */
-  context: (projectId: string, taskId: string) =>
+  /** One bundle kind's structured sections for the MD toggle / drawers. */
+  context: (projectId: string, taskId: string, kind: string) =>
+    ["task", projectId, taskId, "context", kind] as const,
+  /** Prefix matching every bundle kind — used for invalidation. */
+  contextAll: (projectId: string, taskId: string) =>
     ["task", projectId, taskId, "context"] as const,
 } as const;
 

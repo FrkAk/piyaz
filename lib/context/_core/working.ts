@@ -3,10 +3,11 @@ import "server-only";
 import type { AcceptanceCriterion } from "@/lib/types";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import {
-  section,
   formatCriteria,
+  formatLinkLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
+import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   resolveWorkingData,
@@ -83,6 +84,82 @@ export async function buildWorkingContext(
 }
 
 /**
+ * Assemble the working context as structured bundle parts.
+ *
+ * Meta, Tags, and Hierarchy are adjacent and share the `meta` part id — the
+ * preview drawer renders them as one compact row (declared N:1 grouping).
+ *
+ * @param ctx - The raw working context object.
+ * @returns Ordered bundle parts; join with {@link joinParts} for markdown.
+ */
+export function formatWorkingContextParts(ctx: WorkingContext): BundlePart[] {
+  const node = ctx.node;
+  const title = (node.title as string) ?? "Untitled";
+  const status = (node.status as string) ?? "draft";
+  const description = (node.description as string) ?? "";
+
+  const parts: BundlePart[] = [
+    {
+      id: "notice",
+      heading: null,
+      markdown: untrustedContentNotice("working"),
+    },
+    {
+      id: "header",
+      heading: null,
+      markdown: `# ${ctx.taskRef ? `\`${ctx.taskRef}\` ` : ""}"${title}" (${status})`,
+    },
+  ];
+
+  if (description) {
+    parts.push({
+      id: "spec",
+      heading: "Description",
+      markdown: `## Description\n${description}`,
+    });
+  }
+
+  const meta = formatMetaSection(node, ctx.assignees, ctx.links);
+  if (meta) parts.push({ id: "meta", heading: "Meta", markdown: meta });
+
+  const tags = formatTagsSection(node);
+  if (tags) parts.push({ id: "meta", heading: "Tags", markdown: tags });
+
+  const hierarchy = formatHierarchySection(ctx, title);
+  if (hierarchy) {
+    parts.push({ id: "meta", heading: "Hierarchy", markdown: hierarchy });
+  }
+
+  const criteria = formatCriteriaSection(node);
+  if (criteria) {
+    parts.push({
+      id: "criteria",
+      heading: "Acceptance Criteria",
+      markdown: criteria,
+    });
+  }
+
+  const decisions = formatDecisionsSection(node);
+  if (decisions) {
+    parts.push({ id: "decisions", heading: "Decisions", markdown: decisions });
+  }
+
+  const edges = formatEdgesSection(ctx.edges);
+  if (edges) {
+    parts.push({
+      id: "connected",
+      heading: "Connected Tasks",
+      markdown: edges,
+    });
+  }
+
+  const links = formatLinksSection(ctx.links);
+  if (links) parts.push({ id: "links", heading: "Links", markdown: links });
+
+  return parts;
+}
+
+/**
  * Format working context as structured markdown for AI consumption.
  * @param ctx - The raw working context object.
  * @returns Human-readable markdown string.
@@ -90,39 +167,7 @@ export async function buildWorkingContext(
 export async function formatWorkingContext(
   ctx: WorkingContext,
 ): Promise<string> {
-  const node = ctx.node;
-  const title = (node.title as string) ?? "Untitled";
-  const status = (node.status as string) ?? "draft";
-  const description = (node.description as string) ?? "";
-
-  const parts: string[] = [
-    `# ${ctx.taskRef ? `\`${ctx.taskRef}\` ` : ""}"${title}" (${status})`,
-  ];
-
-  if (description) parts.push(`\n## Description\n${description}`);
-
-  const meta = formatMetaSection(node, ctx.assignees, ctx.links);
-  if (meta) parts.push(meta);
-
-  const tags = formatTagsSection(node);
-  if (tags) parts.push(tags);
-
-  const criteria = formatCriteriaSection(node);
-  if (criteria) parts.push(criteria);
-
-  const hierarchy = formatHierarchySection(ctx, title);
-  if (hierarchy) parts.push(hierarchy);
-
-  const decisions = formatDecisionsSection(node);
-  if (decisions) parts.push(decisions);
-
-  const edges = formatEdgesSection(ctx.edges);
-  if (edges) parts.push(edges);
-
-  const links = formatLinksSection(ctx.links);
-  if (links) parts.push(links);
-
-  return untrustedContentNotice() + "\n\n" + parts.join("\n");
+  return joinParts(formatWorkingContextParts(ctx));
 }
 
 /**
@@ -151,7 +196,7 @@ function formatMetaSection(
   const prLink = links.find((l) => l.kind === "pull_request");
   if (prLink) lines.push(`- PR: ${prLink.url}`);
   if (lines.length === 0) return "";
-  return "\n## Meta\n" + lines.join("\n");
+  return "## Meta\n" + lines.join("\n");
 }
 
 /**
@@ -162,18 +207,7 @@ function formatMetaSection(
  */
 function formatLinksSection(links: TaskLinkRef[]): string {
   if (links.length === 0) return "";
-  const lines = ["\n## Links"];
-  for (const l of links) {
-    let host = "";
-    try {
-      host = new URL(l.url).host;
-    } catch {
-      host = l.url;
-    }
-    const display = l.label ?? host;
-    lines.push(`- [${l.kind}] ${display} — ${l.url}`);
-  }
-  return lines.join("\n");
+  return ["## Links", ...links.map(formatLinkLine)].join("\n");
 }
 
 /**
@@ -184,7 +218,7 @@ function formatLinksSection(links: TaskLinkRef[]): string {
 function formatTagsSection(node: Record<string, unknown>): string {
   const tags = (node.tags as string[]) ?? [];
   if (tags.length === 0) return "";
-  return `\n## Tags\n${tags.map((t) => `\`${t}\``).join(", ")}`;
+  return `## Tags\n${tags.map((t) => `\`${t}\``).join(", ")}`;
 }
 
 /**
@@ -195,7 +229,7 @@ function formatTagsSection(node: Record<string, unknown>): string {
 function formatCriteriaSection(node: Record<string, unknown>): string {
   const criteria = (node.acceptanceCriteria as AcceptanceCriterion[]) ?? [];
   if (criteria.length === 0) return "";
-  return section("Acceptance Criteria") + "\n" + formatCriteria(criteria);
+  return "## Acceptance Criteria\n\n" + formatCriteria(criteria);
 }
 
 /**
@@ -207,7 +241,7 @@ function formatDecisionsSection(node: Record<string, unknown>): string {
   const decisions =
     (node.decisions as { text: string; source: string; date: string }[]) ?? [];
   if (decisions.length === 0) return "";
-  const lines = ["\n## Decisions"];
+  const lines = ["## Decisions"];
   for (const d of decisions) {
     lines.push(`- [${d.source}] ${d.text} (${d.date})`);
   }
@@ -226,7 +260,7 @@ function formatHierarchySection(ctx: WorkingContext, title: string): string {
     .reverse()
     .map((a) => `${a.type}: "${a.title}"`)
     .join(" > ");
-  return `\n## Hierarchy\n${path} > task: "${title}"`;
+  return `## Hierarchy\n${path} > task: "${title}"`;
 }
 
 /**
@@ -236,7 +270,7 @@ function formatHierarchySection(ctx: WorkingContext, title: string): string {
  */
 function formatEdgesSection(edges: WorkingContext["edges"]): string {
   if (edges.length === 0) return "";
-  const lines = ["\n## Connected Tasks"];
+  const lines = ["## Connected Tasks"];
   for (const e of edges) {
     const arrow = e.direction === "outgoing" ? "→" : "←";
     let line = `- ${e.edgeType} ${arrow} \`${e.taskRef}\` "${e.title}" (${e.status})`;
