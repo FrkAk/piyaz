@@ -27,14 +27,23 @@ export function _clearEtagCache(): void {
  * per-client — the WeakSet ensures one subscription per QueryClient and
  * lets the QueryClient be garbage-collected normally.
  *
+ * Also drops the per-page validators that {@link conditionalFetchPage}
+ * stores under `[...queryKey, pageParam]`: an infinite query keeps every
+ * page under one cache key, so when that key is removed every page entry —
+ * serialised with the bare key as a prefix — must go too.
+ *
  * @param queryClient - QueryClient whose cache we should mirror.
  */
 function bindToQueryCache(queryClient: QueryClient): void {
   if (boundClients.has(queryClient)) return;
   boundClients.add(queryClient);
   queryClient.getQueryCache().subscribe((event) => {
-    if (event.type === "removed") {
-      etagByKey.delete(JSON.stringify(event.query.queryKey));
+    if (event.type !== "removed") return;
+    const removed = JSON.stringify(event.query.queryKey);
+    etagByKey.delete(removed);
+    const pagePrefix = `${removed.slice(0, -1)},`;
+    for (const key of etagByKey.keys()) {
+      if (key.startsWith(pagePrefix)) etagByKey.delete(key);
     }
   });
 }

@@ -85,6 +85,56 @@ test("GET /api/projects — cursor paginates through the list", async () => {
   expect(second.rows[0].id).not.toBe(first.rows[0].id);
 });
 
+test("GET /api/projects — a malformed cursor falls back to the first page, not a 500", async () => {
+  const f = await seedUserOrgProject("projlist-badcursor");
+  setSession({ user: { id: f.userId } });
+
+  const crafted = Buffer.from(
+    JSON.stringify({ u: "not-a-date", i: "x" }),
+    "utf8",
+  ).toString("base64url");
+  const res = await GET(
+    new Request(
+      `http://test/api/projects?cursor=${encodeURIComponent(crafted)}`,
+    ),
+  );
+
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { rows: Array<{ id: string }> };
+  expect(body.rows.some((p) => p.id === f.projectId)).toBe(true);
+});
+
+test("GET /api/projects — an empty ?limit= falls back to the default page, not a 1-row page", async () => {
+  const f = await seedUserOrgProject("projlist-emptylimit");
+  setSession({ user: { id: f.userId } });
+
+  const sqlc = superuserPool();
+  try {
+    await sqlc`
+      INSERT INTO projects ("organization_id", "title", "identifier", "updated_at")
+      VALUES
+        (${f.organizationId}, 'Second', 'SECOND2', ${new Date(Date.now() + 1000)})
+    `;
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const res = await GET(new Request("http://test/api/projects?limit="));
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { rows: Array<{ id: string }> };
+  expect(body.rows).toHaveLength(2);
+});
+
+test("GET /api/projects — a fractional ?limit= does not reach the DB as a 500", async () => {
+  const f = await seedUserOrgProject("projlist-fraclimit");
+  setSession({ user: { id: f.userId } });
+
+  const res = await GET(new Request("http://test/api/projects?limit=1.5"));
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { rows: Array<{ id: string }> };
+  expect(body.rows.some((p) => p.id === f.projectId)).toBe(true);
+});
+
 test("GET /api/projects — 304 when If-None-Match matches the current ETag", async () => {
   const f = await seedUserOrgProject("projlist-304");
   setSession({ user: { id: f.userId } });

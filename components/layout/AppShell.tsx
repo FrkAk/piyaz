@@ -14,6 +14,7 @@ import {
 } from "@/components/layout/Sidebar";
 import { WorkspaceLabelProvider } from "@/components/layout/WorkspaceLabelProvider";
 import { SidebarCollapseProvider } from "@/components/layout/SidebarCollapseProvider";
+import { SidebarProjectsProvider } from "@/components/layout/SidebarProjectsProvider";
 import { CommandPaletteProvider } from "@/components/layout/CommandPaletteProvider";
 import {
   MobileNavDrawer,
@@ -79,29 +80,32 @@ export async function AppShell({ children }: AppShellProps) {
 
   return (
     <WorkspaceLabelProvider value={workspaceLabel}>
-      <SidebarCollapseProvider initialCollapsed={initialSidebarCollapsed}>
-        <CommandPaletteProvider projects={sidebarProjects}>
-          <MobileNavProvider>
-            <div className="flex h-[var(--viewport-height)] overflow-hidden">
-              <Sidebar
+      <SidebarProjectsProvider
+        initialProjects={sidebarProjects}
+        initialCursor={projectsPage.nextCursor}
+      >
+        <SidebarCollapseProvider initialCollapsed={initialSidebarCollapsed}>
+          <CommandPaletteProvider>
+            <MobileNavProvider>
+              <div className="flex h-[var(--viewport-height)] overflow-hidden">
+                <Sidebar
+                  user={user}
+                  workspaceLabel={workspaceLabel}
+                  teams={sidebarTeams}
+                />
+                <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                  {children}
+                </main>
+              </div>
+              <MobileNavDrawer
                 user={user}
                 workspaceLabel={workspaceLabel}
-                projects={sidebarProjects}
                 teams={sidebarTeams}
               />
-              <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-                {children}
-              </main>
-            </div>
-            <MobileNavDrawer
-              user={user}
-              workspaceLabel={workspaceLabel}
-              projects={sidebarProjects}
-              teams={sidebarTeams}
-            />
-          </MobileNavProvider>
-        </CommandPaletteProvider>
-      </SidebarCollapseProvider>
+            </MobileNavProvider>
+          </CommandPaletteProvider>
+        </SidebarCollapseProvider>
+      </SidebarProjectsProvider>
     </WorkspaceLabelProvider>
   );
 }

@@ -40,11 +40,10 @@ async function handle(req: Request): Promise<Response> {
     const params = new URL(req.url).searchParams;
     const cursor = params.get("cursor");
     const limitRaw = params.get("limit");
-    const limit = limitRaw !== null ? Number(limitRaw) : undefined;
-    const page = await listProjectsSlim(ctx, {
-      cursor,
-      limit: Number.isFinite(limit) ? limit : undefined,
-    });
+    const parsedLimit = limitRaw !== null ? Number(limitRaw) : Number.NaN;
+    const limit =
+      Number.isInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+    const page = await listProjectsSlim(ctx, { cursor, limit });
     return conditionalRespond(req, page, max);
   } catch (err) {
     return internalError("projects", err);

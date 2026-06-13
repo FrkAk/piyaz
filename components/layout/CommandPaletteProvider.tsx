@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { CommandPalette } from "@/components/shared/CommandPalette";
-import type { SidebarProject } from "@/components/layout/Sidebar";
+import { useSidebarProjects } from "@/components/layout/SidebarProjectsProvider";
 
 /** Shape exposed to consumers of {@link useCommandPalette}. */
 interface CommandPaletteValue {
@@ -25,8 +25,6 @@ interface CommandPaletteValue {
 const CommandPaletteContext = createContext<CommandPaletteValue | null>(null);
 
 interface CommandPaletteProviderProps {
-  /** Project list already loaded by AppShell (avoids a redundant fetch). */
-  projects: SidebarProject[];
   /** Subtree that gets access to {@link useCommandPalette}. */
   children: ReactNode;
 }
@@ -36,16 +34,17 @@ interface CommandPaletteProviderProps {
  * keydown listener that toggles the palette. Skips the shortcut when an
  * input, textarea, or contenteditable element is focused so the palette
  * never steals ⌘K from a text field. Mounted by AppShell so every
- * authenticated route can call {@link useCommandPalette}.
+ * authenticated route can call {@link useCommandPalette}. The jump-to list
+ * tracks the shared sidebar projects, so it grows as the user loads more.
  *
- * @param props - Project list + subtree.
+ * @param props - Subtree.
  * @returns Context provider rendering its children plus a single
  *   `<CommandPalette>` mount.
  */
 export function CommandPaletteProvider({
-  projects,
   children,
 }: CommandPaletteProviderProps) {
+  const { projects } = useSidebarProjects();
   const [open, setOpen] = useState(false);
   const openPalette = useCallback(() => setOpen(true), []);
   const closePalette = useCallback(() => setOpen(false), []);

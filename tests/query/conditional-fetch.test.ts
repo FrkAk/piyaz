@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import {
   _clearEtagCache,
   conditionalFetch,
+  conditionalFetchPage,
 } from "@/lib/query/conditional-fetch";
 
 beforeEach(() => {
@@ -155,6 +156,51 @@ test("side-channel drops ETag when Query removes the entry", async () => {
     }),
   );
   await conditionalFetch({ url: "/api/x", queryKey: ["x"], queryClient: qc });
+
+  const init = fn.mock.calls[0]![1] as RequestInit;
+  expect(init.headers).toEqual({});
+});
+
+test("page side-channel drops its ETag when the infinite query is removed", async () => {
+  // conditionalFetchPage keys the validator by `[...queryKey, pageParam]`,
+  // but an infinite query stores every page under the bare queryKey. When
+  // Query evicts that key the per-page validators must go too, or the next
+  // page-1 fetch sends a stale If-None-Match and 304s into a body it no
+  // longer has cached.
+  const qc = new QueryClient();
+  const queryKey = ["projects", "list"] as const;
+
+  fetchMock(
+    new Response(JSON.stringify({ rows: [], nextCursor: null }), {
+      status: 200,
+      headers: { ETag: ETAG },
+    }),
+  );
+  const page = await conditionalFetchPage<{
+    rows: unknown[];
+    nextCursor: string | null;
+  }>({
+    url: "/api/projects",
+    queryKey,
+    pageParam: null,
+    queryClient: qc,
+  });
+  qc.setQueryData(queryKey, { pages: [page], pageParams: [null] });
+
+  qc.removeQueries({ queryKey });
+
+  const fn = fetchMock(
+    new Response(JSON.stringify({ rows: [], nextCursor: null }), {
+      status: 200,
+      headers: { ETag: ETAG_NEXT },
+    }),
+  );
+  await conditionalFetchPage({
+    url: "/api/projects",
+    queryKey,
+    pageParam: null,
+    queryClient: qc,
+  });
 
   const init = fn.mock.calls[0]![1] as RequestInit;
   expect(init.headers).toEqual({});
