@@ -75,6 +75,143 @@ export async function insertActivityEvents(
   );
 }
 
+/** Minimal criterion shape needed to diff. */
+type CriterionLike = { id: string; text: string; checked: boolean };
+/** Minimal decision shape needed to diff. */
+type DecisionLike = { id: string; text: string };
+
+/**
+ * Diff acceptance criteria into add/remove/check/uncheck events.
+ *
+ * @param projectId - Owning project id.
+ * @param taskId - Task id.
+ * @param before - Criteria prior to the write.
+ * @param after - Criteria after the write.
+ * @returns Discrete events.
+ */
+export function diffCriteria(
+  projectId: string,
+  taskId: string,
+  before: CriterionLike[],
+  after: CriterionLike[],
+): ActivityEventInput[] {
+  const events: ActivityEventInput[] = [];
+  const base = { projectId, taskId };
+  const beforeById = new Map(before.map((c) => [c.id, c]));
+  const afterById = new Map(after.map((c) => [c.id, c]));
+  for (const c of after) {
+    const prev = beforeById.get(c.id);
+    if (!prev) {
+      events.push({
+        ...base,
+        type: "criterion_added",
+        summary: `added criterion "${c.text}"`,
+        targetRef: c.id,
+      });
+    } else if (prev.checked !== c.checked) {
+      events.push({
+        ...base,
+        type: c.checked ? "criterion_checked" : "criterion_unchecked",
+        summary: `${c.checked ? "checked" : "unchecked"} "${c.text}"`,
+        targetRef: c.id,
+      });
+    }
+  }
+  for (const c of before) {
+    if (!afterById.has(c.id)) {
+      events.push({
+        ...base,
+        type: "criterion_removed",
+        summary: `removed criterion "${c.text}"`,
+        targetRef: c.id,
+      });
+    }
+  }
+  return events;
+}
+
+/**
+ * Diff decisions into add/remove events.
+ *
+ * @param projectId - Owning project id.
+ * @param taskId - Task id.
+ * @param before - Decisions prior to the write.
+ * @param after - Decisions after the write.
+ * @returns Discrete events.
+ */
+export function diffDecisions(
+  projectId: string,
+  taskId: string,
+  before: DecisionLike[],
+  after: DecisionLike[],
+): ActivityEventInput[] {
+  const events: ActivityEventInput[] = [];
+  const base = { projectId, taskId };
+  const beforeIds = new Set(before.map((d) => d.id));
+  const afterIds = new Set(after.map((d) => d.id));
+  for (const d of after) {
+    if (!beforeIds.has(d.id)) {
+      events.push({
+        ...base,
+        type: "decision_added",
+        summary: `recorded decision "${d.text}"`,
+        targetRef: d.id,
+      });
+    }
+  }
+  for (const d of before) {
+    if (!afterIds.has(d.id)) {
+      events.push({
+        ...base,
+        type: "decision_removed",
+        summary: `removed decision "${d.text}"`,
+        targetRef: d.id,
+      });
+    }
+  }
+  return events;
+}
+
+/**
+ * Diff assignee id sets into add/remove events.
+ *
+ * @param projectId - Owning project id.
+ * @param taskId - Task id.
+ * @param before - Assignee user ids prior to the write.
+ * @param after - Assignee user ids after the write.
+ * @returns Discrete events.
+ */
+export function diffAssignees(
+  projectId: string,
+  taskId: string,
+  before: string[],
+  after: string[],
+): ActivityEventInput[] {
+  const events: ActivityEventInput[] = [];
+  const base = { projectId, taskId };
+  const beforeSet = new Set(before);
+  const afterSet = new Set(after);
+  for (const id of after) {
+    if (!beforeSet.has(id))
+      events.push({
+        ...base,
+        type: "assignee_added",
+        summary: "added an assignee",
+        targetRef: id,
+      });
+  }
+  for (const id of before) {
+    if (!afterSet.has(id))
+      events.push({
+        ...base,
+        type: "assignee_removed",
+        summary: "removed an assignee",
+        targetRef: id,
+      });
+  }
+  return events;
+}
+
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
