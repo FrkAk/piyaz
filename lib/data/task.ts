@@ -32,7 +32,6 @@ import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
 import type {
   AcceptanceCriterion,
   Decision,
-  HistoryEntry,
   TaskStatus,
   Priority,
   Estimate,
@@ -618,7 +617,6 @@ function mapTaskFullRow(r: TaskFullRawRow): TaskFull {
     priority: r.priority as Priority | null,
     estimate: r.estimate as Estimate | null,
     files: r.files ?? [],
-    history: (r.history ?? []) as HistoryEntry[],
     createdAt:
       r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
     updatedAt:

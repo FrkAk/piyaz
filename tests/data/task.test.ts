@@ -972,7 +972,6 @@ test("getTaskFull returns the full row with composed taskRef", async () => {
   expect(t.id).toBe(created.id);
   expect(t.title).toBe("T2");
   expect(t.taskRef).toMatch(/^[A-Za-z0-9]+-\d+$/);
-  expect(Array.isArray(t.history)).toBe(true);
   expect(Array.isArray(t.acceptanceCriteria)).toBe(true);
 });
 

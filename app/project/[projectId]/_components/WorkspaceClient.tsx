@@ -448,7 +448,6 @@ function useSelectedTaskBody(
         priority: slim.priority ?? null,
         estimate: slim.estimate ?? null,
         files: [],
-        history: [],
         createdAt: new Date(),
         updatedAt: slim.updatedAt,
         taskRef: slim.taskRef,
