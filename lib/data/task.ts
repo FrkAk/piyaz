@@ -49,7 +49,10 @@ import {
 } from "@/lib/graph/effective-deps";
 import { projectDependsOnEdgesStmt } from "@/lib/data/edge";
 import { projectAccessGateStmt } from "@/lib/data/access";
-import type { ActivityEventInput } from "@/lib/data/activity";
+import {
+  insertActivityEvents,
+  type ActivityEventInput,
+} from "@/lib/data/activity";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
@@ -2207,14 +2210,6 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
         ...taskFields,
         order,
         sequenceNumber,
-        history: [
-          makeHistoryEntry({
-            type: "created",
-            label: "Task created",
-            description: `Task "${taskFields.title}" created.`,
-            actor: "ai",
-          }),
-        ],
       })
       .returning();
 
@@ -2245,6 +2240,15 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
           target: [taskLinks.taskId, taskLinks.url],
         });
     }
+
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: task.projectId,
+        taskId: task.id,
+        type: "task_created",
+        summary: `created task "${task.title}"`,
+      },
+    ]);
 
     return {
       id: task.id,
