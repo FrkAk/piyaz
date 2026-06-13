@@ -24,7 +24,7 @@ import {
 } from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
-import type { HistoryEntry } from "@/lib/types";
+import { insertActivityEvents } from "@/lib/data/activity";
 import {
   asIdentifier,
   deriveIdentifier,
@@ -65,21 +65,6 @@ import {
   emitProjectListEvent,
 } from "@/lib/realtime/events";
 import { decodeCursor, encodeCursor, type Cursor } from "@/lib/data/cursor";
-
-/**
- * Build a timestamped history entry.
- * @param entry - Partial entry without id/date.
- * @returns Complete history entry with generated id and current date.
- */
-function makeHistoryEntry(
-  entry: Omit<HistoryEntry, "id" | "date">,
-): HistoryEntry {
-  return {
-    ...entry,
-    id: crypto.randomUUID(),
-    date: new Date().toISOString(),
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Single-entity queries
@@ -1084,16 +1069,18 @@ export async function createProject(
           ...data,
           identifier,
           organizationId: targetOrgId,
-          history: [
-            makeHistoryEntry({
-              type: "created",
-              label: "Project created",
-              description: `Project "${data.title}" created.`,
-              actor: "user",
-            }),
-          ],
         })
         .returning();
+
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: row.id,
+          taskId: null,
+          type: "project_created",
+          summary: `created project "${row.title}"`,
+        },
+      ]);
+
       return { project: row, targetOrgId };
     },
   );
