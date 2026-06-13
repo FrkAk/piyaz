@@ -91,21 +91,6 @@ import { emitTaskEvent } from "@/lib/realtime/events";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
 
 /**
- * Build a timestamped history entry.
- * @param entry - Partial entry without id/date.
- * @returns Complete history entry with generated id and current date.
- */
-function makeHistoryEntry(
-  entry: Omit<HistoryEntry, "id" | "date">,
-): HistoryEntry {
-  return {
-    ...entry,
-    id: crypto.randomUUID(),
-    date: new Date().toISOString(),
-  };
-}
-
-/**
  * Compute one discrete activity event per changed task field. Scalars compare
  * by value; tags diff per element. Unchanged fields produce nothing.
  *
@@ -240,48 +225,6 @@ export function diffTaskChanges(
     });
   }
   return events;
-}
-
-/**
- * Append the same history entry to multiple tasks in a single UPDATE.
- * Used by edge mutations to log "edge created/updated/deleted" on both
- * endpoints with one wire round-trip instead of two serial UPDATEs
- * inside the transaction.
- *
- * Runs under RLS: callers must supply either an active transaction handle
- * (`opts.tx`, when the append participates in a larger same-transaction
- * mutation) or a `userId` to drive a fresh `withUserContext` frame. The
- * discriminated union prevents a bare call from silently default-denying
- * under `app_user`. Caller is responsible for asserting access to every
- * task in `taskIds`. Duplicates and empty arrays are handled gracefully
- * (no-op for empty input).
- *
- * @param taskIds - UUIDs of the tasks to append to. Duplicates dedup'd.
- * @param entry - The history entry to append to every supplied task.
- * @param opts - Either `{ tx }` (run inside the supplied transaction) or
- *   `{ userId }` (open a fresh `withUserContext` frame).
- */
-export async function appendTaskHistoryMany(
-  taskIds: string[],
-  entry: HistoryEntry,
-  opts: { tx: Tx } | { userId: string },
-): Promise<void> {
-  const dedup = [...new Set(taskIds)];
-  if (dedup.length === 0) return;
-  const run = async (handle: Tx) => {
-    await handle
-      .update(tasks)
-      .set({
-        history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
-        updatedAt: new Date(),
-      })
-      .where(inArray(tasks.id, dedup));
-  };
-  if ("tx" in opts) {
-    await run(opts.tx);
-    return;
-  }
-  await withUserContext(opts.userId, run);
 }
 
 /**
