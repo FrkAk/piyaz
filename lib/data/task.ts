@@ -19,6 +19,7 @@ import {
   taskDecisions,
   taskLinks,
   type NewTask,
+  type Task,
   type Project,
   type TaskLink,
 } from "@/lib/db/schema";
@@ -48,6 +49,7 @@ import {
 } from "@/lib/graph/effective-deps";
 import { projectDependsOnEdgesStmt } from "@/lib/data/edge";
 import { projectAccessGateStmt } from "@/lib/data/access";
+import type { ActivityEventInput } from "@/lib/data/activity";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
@@ -95,6 +97,143 @@ function makeHistoryEntry(
     id: crypto.randomUUID(),
     date: new Date().toISOString(),
   };
+}
+
+/**
+ * Compute one discrete activity event per changed task field. Scalars compare
+ * by value; tags diff per element. Unchanged fields produce nothing.
+ *
+ * @param projectId - Owning project id.
+ * @param taskId - Task being updated.
+ * @param current - The row before the update.
+ * @param changes - The partial column changes being applied.
+ * @returns Discrete events to insert for this update.
+ */
+export function diffTaskChanges(
+  projectId: string,
+  taskId: string,
+  current: Task,
+  changes: Partial<Task>,
+): ActivityEventInput[] {
+  const events: ActivityEventInput[] = [];
+  const base = { projectId, taskId };
+
+  if (changes.title !== undefined && changes.title !== current.title) {
+    events.push({
+      ...base,
+      type: "title_changed",
+      summary: `renamed to "${changes.title}"`,
+    });
+  }
+  if (
+    changes.description !== undefined &&
+    changes.description !== current.description
+  ) {
+    events.push({
+      ...base,
+      type: "description_changed",
+      summary: "updated the description",
+    });
+  }
+  if (changes.status !== undefined && changes.status !== current.status) {
+    events.push({
+      ...base,
+      type: "status_changed",
+      summary: `moved to ${changes.status}`,
+      metadata: { from: current.status, to: changes.status },
+    });
+  }
+  if (changes.priority !== undefined && changes.priority !== current.priority) {
+    events.push({
+      ...base,
+      type: "priority_changed",
+      summary: changes.priority
+        ? `set priority to ${changes.priority}`
+        : "cleared priority",
+      metadata: { from: current.priority, to: changes.priority },
+    });
+  }
+  if (changes.estimate !== undefined && changes.estimate !== current.estimate) {
+    events.push({
+      ...base,
+      type: "estimate_changed",
+      summary:
+        changes.estimate != null
+          ? `set estimate to ${changes.estimate}`
+          : "cleared estimate",
+      metadata: { from: current.estimate, to: changes.estimate },
+    });
+  }
+  if (changes.category !== undefined && changes.category !== current.category) {
+    events.push({
+      ...base,
+      type: "category_changed",
+      summary: changes.category
+        ? `set category to ${changes.category}`
+        : "cleared category",
+    });
+  }
+  if (
+    changes.implementationPlan !== undefined &&
+    changes.implementationPlan !== current.implementationPlan
+  ) {
+    events.push({
+      ...base,
+      type: "plan_set",
+      summary: "updated the implementation plan",
+    });
+  }
+  if (
+    changes.executionRecord !== undefined &&
+    changes.executionRecord !== current.executionRecord
+  ) {
+    events.push({
+      ...base,
+      type: "record_set",
+      summary: "updated the execution record",
+    });
+  }
+  if (changes.order !== undefined && changes.order !== current.order) {
+    events.push({
+      ...base,
+      type: "moved",
+      summary: "reordered the task",
+      metadata: { from: current.order, to: changes.order },
+    });
+  }
+  if (changes.tags !== undefined) {
+    const before = new Set(current.tags);
+    const after = new Set(changes.tags);
+    for (const tag of changes.tags) {
+      if (!before.has(tag))
+        events.push({
+          ...base,
+          type: "tag_added",
+          summary: `added tag ${tag}`,
+          targetRef: tag,
+        });
+    }
+    for (const tag of current.tags) {
+      if (!after.has(tag))
+        events.push({
+          ...base,
+          type: "tag_removed",
+          summary: `removed tag ${tag}`,
+          targetRef: tag,
+        });
+    }
+  }
+  if (
+    changes.files !== undefined &&
+    JSON.stringify(changes.files) !== JSON.stringify(current.files)
+  ) {
+    events.push({
+      ...base,
+      type: "files_changed",
+      summary: "updated linked files",
+    });
+  }
+  return events;
 }
 
 /**
