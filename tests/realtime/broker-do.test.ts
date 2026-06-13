@@ -491,3 +491,144 @@ test("dispatch tolerates a throwing socket without dropping siblings", async () 
   expect(r.status).toBe(204);
   expect(good.send).toHaveBeenCalledTimes(1);
 });
+
+/**
+ * Build a fake ctx variant with a Map-backed `storage.kv` facade, modeling
+ * the SQLite-backed DO storage the broker persists subscription entries
+ * into. The map outlives broker reconstruction in a test the way SQLite
+ * storage outlives DO hibernation in workerd.
+ */
+function fakeCtxWithStorage() {
+  const base = fakeCtx();
+  const data = new Map<string, unknown>();
+  return {
+    ...base,
+    data,
+    storage: {
+      kv: {
+        get(key: string): unknown {
+          return data.get(key);
+        },
+        put(key: string, value: unknown): void {
+          data.set(key, value);
+        },
+        delete(key: string): void {
+          data.delete(key);
+        },
+      },
+    },
+  };
+}
+
+test("hibernation rehydration — a woken DO rebuilds subs from storage", async () => {
+  // Model a wake from hibernation: u1's subscription entries were persisted
+  // into storage before the DO was evicted, and the fresh instance starts
+  // with an empty in-memory map. The hibernating client never reconnects, so
+  // no re-register RPC arrives; the DO must rebuild from storage alone.
+  const ctx = fakeCtxWithStorage();
+  ctx.data.set("subs:u1", [["project:p1", null]]);
+  const ws = fakeSocket();
+  ctx.acceptWebSocket(ws, ["u1"]);
+  const broker = new MymirBroker(
+    ctx as never,
+    {
+      BROKER_DO_SECRET: TEST_SECRET,
+    } as never,
+  );
+
+  const r = await rpc(broker, {
+    op: "dispatch",
+    key: "project:p1",
+    payload: { kind: "project", projectId: "p1" },
+  });
+
+  expect(r.status).toBe(204);
+  const frame = `data: ${JSON.stringify({ kind: "project", projectId: "p1" })}\n\n`;
+  expect(ws.send).toHaveBeenCalledWith(frame);
+});
+
+test("register persists the user's sub set into storage", async () => {
+  const ctx = fakeCtxWithStorage();
+  ctx.acceptWebSocket(fakeSocket(), ["u1"]);
+  const broker = new MymirBroker(
+    ctx as never,
+    {
+      BROKER_DO_SECRET: TEST_SECRET,
+    } as never,
+  );
+
+  await rpc(broker, { op: "register", userId: "u1", key: "project:p1" });
+  await rpc(broker, {
+    op: "register",
+    userId: "u1",
+    key: "task:t1",
+    ttlMs: 60_000,
+  });
+
+  const entries = ctx.data.get("subs:u1") as Array<[string, number | null]>;
+  expect(entries.map((entry) => entry[0]).sort()).toEqual([
+    "project:p1",
+    "task:t1",
+  ]);
+});
+
+test("register-many — one RPC registers every key for the user", async () => {
+  const { ctx, broker } = makeBroker();
+  const ws = attach(ctx, "u1");
+  const r = await rpc(broker, {
+    op: "register-many",
+    userId: "u1",
+    items: [{ key: "project:p1" }, { key: "project-list:u1" }],
+  });
+  expect(r.status).toBe(204);
+
+  await rpc(broker, {
+    op: "dispatch",
+    key: "project:p1",
+    payload: { kind: "project", projectId: "p1" },
+  });
+  await rpc(broker, {
+    op: "dispatch",
+    key: "project-list:u1",
+    payload: { kind: "project-list", orgId: "o1" },
+  });
+  expect(ws.send).toHaveBeenCalledTimes(2);
+});
+
+test("register-many — rejects non-array items with 400", async () => {
+  const { broker } = makeBroker();
+  const r = await rpc(broker, {
+    op: "register-many",
+    userId: "u1",
+    items: "nope",
+  });
+  expect(r.status).toBe(400);
+});
+
+test("register without a live socket is dropped — mirrors self-host connected-only subs", async () => {
+  // grantOrgAccess registers project subs eagerly for members who may be
+  // offline. With no socket for u1, the register must be a no-op so a later
+  // dispatch reaches no one and no orphan sub lingers.
+  const { ctx, broker } = makeBroker();
+  await rpc(broker, { op: "register", userId: "u1", key: "project:p1" });
+
+  const ws = attach(ctx, "u1");
+  await rpc(broker, {
+    op: "dispatch",
+    key: "project:p1",
+    payload: { ok: true },
+  });
+  expect(ws.send).not.toHaveBeenCalled();
+});
+
+test("register without a live socket does not persist to storage", async () => {
+  const ctx = fakeCtxWithStorage();
+  const broker = new MymirBroker(
+    ctx as never,
+    { BROKER_DO_SECRET: TEST_SECRET } as never,
+  );
+
+  await rpc(broker, { op: "register", userId: "u1", key: "project:p1" });
+
+  expect(ctx.data.get("subs:u1")).toBeUndefined();
+});
