@@ -12,6 +12,15 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
  */
 const etagByKey = new Map<string, string>();
 
+/**
+ * Prefix for {@link conditionalFetchPage} per-page validators. Plain
+ * {@link conditionalFetch} keys are `JSON.stringify(queryKey)` and always
+ * start with `[`, so this namespace keeps page entries from colliding with —
+ * or being prefix-matched against — a plain key that is a JSON prefix of a
+ * longer sibling (e.g. `["task",p,t]` vs `["task",p,t,"context"]`).
+ */
+const PAGE_KEY_PREFIX = "page::";
+
 /** QueryClients we've already attached the cache-removal subscriber to. */
 const boundClients = new WeakSet<QueryClient>();
 
@@ -27,14 +36,26 @@ export function _clearEtagCache(): void {
  * per-client — the WeakSet ensures one subscription per QueryClient and
  * lets the QueryClient be garbage-collected normally.
  *
+ * Also drops the per-page validators that {@link conditionalFetchPage}
+ * stores under `${PAGE_KEY_PREFIX}[...queryKey, pageParam]`: an infinite query
+ * keeps every page under one cache key, so when that key is removed every page
+ * entry must go too. The page namespace confines this prefix sweep to page
+ * entries — a plain sibling key that is a JSON prefix of the removed key
+ * (e.g. removing `["task",p,t]` while `["task",p,t,"context"]` is still live)
+ * is never matched.
+ *
  * @param queryClient - QueryClient whose cache we should mirror.
  */
 function bindToQueryCache(queryClient: QueryClient): void {
   if (boundClients.has(queryClient)) return;
   boundClients.add(queryClient);
   queryClient.getQueryCache().subscribe((event) => {
-    if (event.type === "removed") {
-      etagByKey.delete(JSON.stringify(event.query.queryKey));
+    if (event.type !== "removed") return;
+    const removed = JSON.stringify(event.query.queryKey);
+    etagByKey.delete(removed);
+    const pagePrefix = `${PAGE_KEY_PREFIX}${removed.slice(0, -1)},`;
+    for (const key of etagByKey.keys()) {
+      if (key.startsWith(pagePrefix)) etagByKey.delete(key);
     }
   });
 }
@@ -119,4 +140,94 @@ export async function conditionalFetch<T>({
   const etag = res.headers.get("ETag");
   if (etag) etagByKey.set(keyStr, etag);
   return (await res.json()) as T;
+}
+
+/** Arguments accepted by {@link conditionalFetchPage}. */
+export interface ConditionalFetchPageArgs {
+  /** Endpoint URL including any cursor query param, relative to origin. */
+  url: string;
+  /** Base infinite-query key; pages share it and are addressed by `pageParam`. */
+  queryKey: QueryKey;
+  /** Param identifying this page (`null` for the first page). */
+  pageParam: unknown;
+  /** QueryClient used to read the cached page on 304. */
+  queryClient: QueryClient;
+  /** AbortSignal forwarded to `fetch`. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Conditional GET for one page of an infinite query. Mirrors
+ * {@link conditionalFetch} but tracks the `ETag` per `(queryKey, pageParam)`
+ * and resolves a 304 from the matching page inside the cached `InfiniteData`,
+ * since an infinite query stores every page under one key.
+ *
+ * @param args - URL plus infinite-page bundle.
+ * @returns Parsed page body. Always defined — never `undefined`.
+ * @throws Error When the status is not 200 or 304, or the defensive refetch fails.
+ */
+export async function conditionalFetchPage<T>({
+  url,
+  queryKey,
+  pageParam,
+  queryClient,
+  signal,
+}: ConditionalFetchPageArgs): Promise<T> {
+  bindToQueryCache(queryClient);
+
+  const keyStr =
+    PAGE_KEY_PREFIX +
+    JSON.stringify([...(queryKey as readonly unknown[]), pageParam]);
+  const previous = etagByKey.get(keyStr);
+  const headers: HeadersInit = previous ? { "If-None-Match": previous } : {};
+
+  const res = await fetch(url, {
+    headers,
+    signal,
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+
+  if (res.status === 304) {
+    const cached = readCachedPage<T>(queryClient, queryKey, pageParam);
+    if (cached !== undefined) return cached;
+    etagByKey.delete(keyStr);
+    const fresh = await fetch(url, {
+      signal,
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!fresh.ok) throw new Error(`${fresh.status} ${fresh.statusText}`);
+    const freshEtag = fresh.headers.get("ETag");
+    if (freshEtag) etagByKey.set(keyStr, freshEtag);
+    return (await fresh.json()) as T;
+  }
+
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+  const etag = res.headers.get("ETag");
+  if (etag) etagByKey.set(keyStr, etag);
+  return (await res.json()) as T;
+}
+
+/**
+ * Read the cached page whose stored param matches `pageParam` out of an
+ * infinite query's `InfiniteData`.
+ *
+ * @param queryClient - QueryClient holding the infinite cache.
+ * @param queryKey - Base infinite-query key.
+ * @param pageParam - Param identifying the page to read.
+ * @returns The cached page, or `undefined` when absent.
+ */
+function readCachedPage<T>(
+  queryClient: QueryClient,
+  queryKey: QueryKey,
+  pageParam: unknown,
+): T | undefined {
+  const data = queryClient.getQueryData<{ pages: T[]; pageParams: unknown[] }>(
+    queryKey,
+  );
+  if (!data) return undefined;
+  const idx = data.pageParams.findIndex((p) => Object.is(p, pageParam));
+  return idx >= 0 ? data.pages[idx] : undefined;
 }

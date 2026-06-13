@@ -13,7 +13,6 @@ import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
   SidebarPanel,
-  type SidebarProject,
   type SidebarTeam,
   type SidebarUser,
 } from "@/components/layout/Sidebar";
@@ -75,8 +74,6 @@ interface MobileNavDrawerProps {
   user: SidebarUser;
   /** Label rendered on the workspace switcher row. */
   workspaceLabel: string;
-  /** Projects owned by the user (across teams), pre-sorted newest first. */
-  projects: SidebarProject[];
   /** Teams the caller is a member of, ordered by membership creation. */
   teams: SidebarTeam[];
 }
@@ -95,7 +92,6 @@ interface MobileNavDrawerProps {
 export function MobileNavDrawer({
   user,
   workspaceLabel,
-  projects,
   teams,
 }: MobileNavDrawerProps) {
   const { open, closeNav } = useMobileNav();
@@ -144,7 +140,6 @@ export function MobileNavDrawer({
             <SidebarPanel
               user={user}
               workspaceLabel={workspaceLabel}
-              projects={projects}
               teams={teams}
               dismissLabel="Close navigation"
               dismissIcon={<IconX size={13} />}

@@ -3,7 +3,11 @@
 import { useState, useCallback } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { TeamChip } from "@/components/shared/TeamChip";
 import {
   ProjectStatusModal,
@@ -13,6 +17,12 @@ import { IconMore, IconTrash } from "@/components/shared/icons";
 import { projectColor } from "@/lib/ui/project-color";
 import { deleteProjectAction } from "@/lib/actions/project";
 import { projectKeys } from "@/lib/query/keys";
+import {
+  removeProjectFromList,
+  type ProjectListPage,
+} from "@/lib/query/queries";
+import { useSidebarProjects } from "@/components/layout/SidebarProjectsProvider";
+import type { ProjectTaskStats, ProgressBucket } from "@/lib/data/views";
 
 interface ProjectCardProps {
   /** @param id - Project ID. */
@@ -25,14 +35,8 @@ interface ProjectCardProps {
   description: string;
   /** @param status - Project lifecycle status. */
   status: string;
-  /** @param tasksDone - Number of completed tasks. */
-  tasksDone: number;
-  /** @param totalTasks - Total number of tasks. */
-  totalTasks: number;
-  /** @param cancelledTasks - Number of cancelled tasks excluded from progress. */
-  cancelledTasks?: number;
-  /** @param tasksInProgress - Number of in-progress tasks. */
-  tasksInProgress: number;
+  /** @param taskStats - Per-status task counts driving the percent label and lifecycle bar. */
+  taskStats: ProjectTaskStats;
   /** @param lastActive - Relative time string. */
   lastActive: string;
   /** @param canDelete - True when the caller's role grants delete in the owning team. */
@@ -67,15 +71,13 @@ export function ProjectCard({
   title,
   description,
   status,
-  tasksDone,
-  totalTasks,
-  cancelledTasks = 0,
-  tasksInProgress,
+  taskStats,
   lastActive,
   canDelete,
   team,
 }: ProjectCardProps) {
   const qc = useQueryClient();
+  const { removeProject: removeSidebarProject } = useSidebarProjects();
   const [confirming, setConfirming] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -85,6 +87,14 @@ export function ProjectCard({
     mutationFn: () => deleteProjectAction(id),
     onSuccess: (result) => {
       if (result.ok) {
+        // The list ETag is a max-updated-at validator that can't observe a
+        // deletion, so drop the card from the cache before revalidating —
+        // otherwise the refetch 304s and the deleted project reappears.
+        qc.setQueryData<InfiniteData<ProjectListPage>>(
+          projectKeys.list(),
+          (old) => removeProjectFromList(old, id),
+        );
+        removeSidebarProject(id);
         qc.invalidateQueries({ queryKey: projectKeys.list() });
         return;
       }
@@ -93,10 +103,9 @@ export function ProjectCard({
     },
   });
   const opensWorkspace = status === "active" || status === "archived";
-  const activeTotal = Math.max(totalTasks - cancelledTasks, 0);
+  const activeTotal = Math.max(taskStats.total - taskStats.cancelled, 0);
   const percent =
-    activeTotal > 0 ? Math.round((tasksDone / activeTotal) * 100) : 0;
-  const pending = Math.max(activeTotal - tasksDone - tasksInProgress, 0);
+    activeTotal > 0 ? Math.round((taskStats.done / activeTotal) * 100) : 0;
   const color = projectColor(identifier);
   const initial = (identifier[0] ?? title[0] ?? "?").toUpperCase();
 
@@ -195,15 +204,10 @@ export function ProjectCard({
             <span className="ml-1">complete</span>
           </span>
           <span className="font-mono tabular-nums text-text-faint">
-            {tasksDone}/{activeTotal}
+            {taskStats.done}/{activeTotal}
           </span>
         </div>
-        <LifecycleBar
-          done={tasksDone}
-          inProgress={tasksInProgress}
-          pending={pending}
-          totalActive={activeTotal}
-        />
+        <LifecycleBar stats={taskStats} totalActive={activeTotal} />
       </div>
 
       <div className="flex items-center gap-2 border-t border-border/60 pt-2.5">
@@ -275,30 +279,44 @@ function BrandMark({ initial, color }: BrandMarkProps) {
 }
 
 interface LifecycleBarProps {
-  /** Tasks finished. */
-  done: number;
-  /** Tasks currently in progress. */
-  inProgress: number;
-  /** Tasks not yet started (draft + planned + ready + blocked, lumped). */
-  pending: number;
-  /** Sum of done + inProgress + pending — denominator for segment widths. */
+  /** Per-status task counts for the project. */
+  stats: ProjectTaskStats;
+  /** Active-task denominator (`total - cancelled`) for segment widths. */
   totalActive: number;
 }
 
 /**
- * Slim 5px lifecycle bar showing pending → in-progress → done split.
- * Uses the existing taskStats shape (no schema change); draft/planned/
- * ready/blocked all collapse into the leading `pending` band.
+ * Canonical `--color-glyph-*` colour per progress bucket. Typed
+ * `Record<ProgressBucket, …>` so a newly added status (once it reaches
+ * {@link ProgressBucket}) is a compile error here until it gets a colour —
+ * the bar can never silently under-fill. `cancelled` is absent by design:
+ * it's excluded from the denominator, not shown as progress.
+ */
+const BAND_COLORS: Record<ProgressBucket, string> = {
+  draft: "var(--color-glyph-draft)",
+  planned: "var(--color-glyph-planned)",
+  inProgress: "var(--color-glyph-progress)",
+  inReview: "var(--color-glyph-review)",
+  done: "var(--color-glyph-done)",
+};
+
+/** Band render order, draft → done, so completed work fills the right edge. */
+const BAND_ORDER: readonly ProgressBucket[] = [
+  "draft",
+  "planned",
+  "inProgress",
+  "inReview",
+  "done",
+];
+
+/**
+ * Slim 5px lifecycle bar with one coloured band per task status, filling
+ * draft → done so completed work reads at the right edge.
  *
- * @param props - Counts plus the active-task denominator.
+ * @param props - Per-status counts plus the active-task denominator.
  * @returns Segmented bar with 2px gaps and rounded ends.
  */
-function LifecycleBar({
-  done,
-  inProgress,
-  pending,
-  totalActive,
-}: LifecycleBarProps) {
+function LifecycleBar({ stats, totalActive }: LifecycleBarProps) {
   if (totalActive === 0) {
     return (
       <div
@@ -307,30 +325,23 @@ function LifecycleBar({
       />
     );
   }
-  const pct = (n: number) => `${(n / totalActive) * 100}%`;
   return (
     <div className="flex h-[5px] gap-[2px] overflow-hidden rounded-full bg-border/70">
-      {pending > 0 && (
-        <span
-          aria-hidden="true"
-          className="rounded-sm bg-text-muted/30"
-          style={{ width: pct(pending) }}
-        />
-      )}
-      {inProgress > 0 && (
-        <span
-          aria-hidden="true"
-          className="rounded-sm bg-progress"
-          style={{ width: pct(inProgress) }}
-        />
-      )}
-      {done > 0 && (
-        <span
-          aria-hidden="true"
-          className="rounded-sm bg-done"
-          style={{ width: pct(done) }}
-        />
-      )}
+      {BAND_ORDER.map((key) => {
+        const count = stats[key];
+        if (count <= 0) return null;
+        return (
+          <span
+            key={key}
+            aria-hidden="true"
+            className="rounded-sm"
+            style={{
+              width: `${(count / totalActive) * 100}%`,
+              background: BAND_COLORS[key],
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

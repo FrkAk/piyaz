@@ -24,7 +24,8 @@ import {
 } from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
-import type { HistoryEntry } from "@/lib/types";
+import type { HistoryEntry, TaskStatus } from "@/lib/types";
+import { STATUS_BUCKET } from "@/lib/data/views";
 import {
   asIdentifier,
   deriveIdentifier,
@@ -34,6 +35,7 @@ import {
 import type {
   ProjectChrome,
   ProjectGraphSlim,
+  ProjectIndexEntry,
   ProjectListEntry,
   ProjectListEntryMcp,
   ProjectMeta,
@@ -79,6 +81,42 @@ function makeHistoryEntry(
     id: crypto.randomUUID(),
     date: new Date().toISOString(),
   };
+}
+
+/**
+ * Zeroed {@link ProjectTaskStats} accumulator for the status-grouped
+ * progress roll-up.
+ *
+ * @returns Stats object with every bucket at 0.
+ */
+function emptyTaskStats(): ProjectTaskStats {
+  return {
+    total: 0,
+    done: 0,
+    inReview: 0,
+    inProgress: 0,
+    planned: 0,
+    draft: 0,
+    cancelled: 0,
+  };
+}
+
+/**
+ * Fold one status-grouped count into a stats accumulator. Unknown statuses
+ * still contribute to `total` so the denominator stays whole.
+ *
+ * @param stats - Accumulator mutated in place.
+ * @param status - Persisted task status the count belongs to.
+ * @param count - Number of tasks with that status.
+ */
+function accumulateTaskStats(
+  stats: ProjectTaskStats,
+  status: string,
+  count: number,
+): void {
+  stats.total += count;
+  const bucket = STATUS_BUCKET[status as TaskStatus];
+  if (bucket) stats[bucket] += count;
 }
 
 // ---------------------------------------------------------------------------
@@ -554,17 +592,9 @@ export async function getProjectMeta(
         .groupBy(tasks.status),
     ]);
 
-    const taskStats: ProjectTaskStats = {
-      total: 0,
-      done: 0,
-      inProgress: 0,
-      cancelled: 0,
-    };
+    const taskStats = emptyTaskStats();
     for (const c of statusCounts) {
-      taskStats.total += c.count;
-      if (c.status === "done") taskStats.done = c.count;
-      else if (c.status === "in_progress") taskStats.inProgress = c.count;
-      else if (c.status === "cancelled") taskStats.cancelled = c.count;
+      accumulateTaskStats(taskStats, c.status, c.count);
     }
     const denominator = taskStats.total - taskStats.cancelled;
     const progress =
@@ -678,7 +708,7 @@ export type ProjectSlimPage = {
  * per-session "active" filter.
  *
  * @param ctx - Resolved auth context.
- * @param opts - Pagination options. `limit` defaults to 50, capped at 100.
+ * @param opts - Pagination options. `limit` defaults to 15, capped at 100.
  *   `cursor` is the opaque token from a previous page's `nextCursor`.
  * @returns Page of project entries plus the cursor for the next page (or
  *   `null` when the page is the last one).
@@ -687,13 +717,18 @@ export async function listProjectsSlim(
   ctx: AuthContext,
   opts: { limit?: number; cursor?: Cursor | string | null } = {},
 ): Promise<ProjectSlimPage> {
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
+  const limit = Math.min(Math.max(opts.limit ?? 15, 1), 100);
   const after = decodeCursor(opts.cursor);
 
+  // The cursor stores `updated_at` at millisecond precision (JS `Date` → ISO)
+  // while Postgres `timestamptz` keeps microseconds. Compare and order on the
+  // same millisecond-truncated key so rows sharing a millisecond across a page
+  // boundary are neither skipped nor duplicated.
   const afterIso = after?.updatedAt.toISOString();
+  const updatedAtMs = sql`date_trunc('milliseconds', ${projects.updatedAt})`;
   const cursorClause = after
-    ? sql`(${projects.updatedAt} < ${afterIso}::timestamptz
-            OR (${projects.updatedAt} = ${afterIso}::timestamptz AND ${projects.id} < ${after.id}))`
+    ? sql`(${updatedAtMs} < ${afterIso}::timestamptz
+            OR (${updatedAtMs} = ${afterIso}::timestamptz AND ${projects.id} < ${after.id}))`
     : sql`TRUE`;
 
   return withUserContext(ctx.userId, async (tx) => {
@@ -719,7 +754,7 @@ export async function listProjectsSlim(
         })
         .from(projects)
         .where(cursorClause)
-        .orderBy(desc(projects.updatedAt), desc(projects.id))
+        .orderBy(desc(updatedAtMs), desc(projects.id))
         .limit(limit + 1),
     ]);
 
@@ -760,16 +795,8 @@ export async function listProjectsSlim(
 
     const statsByProject = new Map<string, ProjectTaskStats>();
     for (const c of counts) {
-      const stats = statsByProject.get(c.projectId) ?? {
-        total: 0,
-        done: 0,
-        inProgress: 0,
-        cancelled: 0,
-      };
-      stats.total += c.count;
-      if (c.status === "done") stats.done = c.count;
-      else if (c.status === "in_progress") stats.inProgress = c.count;
-      else if (c.status === "cancelled") stats.cancelled = c.count;
+      const stats = statsByProject.get(c.projectId) ?? emptyTaskStats();
+      accumulateTaskStats(stats, c.status, c.count);
       statsByProject.set(c.projectId, stats);
     }
 
@@ -780,12 +807,7 @@ export async function listProjectsSlim(
           `listProjectsSlim: project ${project.id} has no matching org in current_user_orgs()`,
         );
       }
-      const taskStats = statsByProject.get(project.id) ?? {
-        total: 0,
-        done: 0,
-        inProgress: 0,
-        cancelled: 0,
-      };
+      const taskStats = statsByProject.get(project.id) ?? emptyTaskStats();
       const denominator = taskStats.total - taskStats.cancelled;
       return {
         ...project,
@@ -801,6 +823,41 @@ export async function listProjectsSlim(
 
     return { rows, nextCursor };
   });
+}
+
+/**
+ * Hard cap on the command-palette project index — far beyond any realistic
+ * per-user project count, so the slim payload stays bounded while still
+ * covering every accessible project for ⌘K jump-to.
+ */
+const PROJECT_INDEX_CAP = 1000;
+
+/**
+ * Minimal project nav list for the ⌘K command palette. Selects only the four
+ * columns jump-to renders (id, organizationId, title, identifier) — no task
+ * stats, joins, or timestamps — so the caller's entire accessible set fits in
+ * one slim payload, fetched once when the palette first opens. RLS scopes the
+ * rows to the caller's memberships. Ordered `updatedAt DESC, id DESC` so
+ * recent work leads; capped at {@link PROJECT_INDEX_CAP}.
+ *
+ * @param ctx - Resolved auth context.
+ * @returns Slim project nav rows, newest first.
+ */
+export async function listProjectIndex(
+  ctx: AuthContext,
+): Promise<ProjectIndexEntry[]> {
+  return withUserContext(ctx.userId, async (tx) =>
+    tx
+      .select({
+        id: projects.id,
+        organizationId: projects.organizationId,
+        title: projects.title,
+        identifier: projects.identifier,
+      })
+      .from(projects)
+      .orderBy(desc(projects.updatedAt), desc(projects.id))
+      .limit(PROJECT_INDEX_CAP),
+  );
 }
 
 /**
@@ -871,16 +928,8 @@ export async function listProjectsForMcp(
 
     const statsByProject = new Map<string, ProjectTaskStats>();
     for (const c of counts) {
-      const stats = statsByProject.get(c.projectId) ?? {
-        total: 0,
-        done: 0,
-        inProgress: 0,
-        cancelled: 0,
-      };
-      stats.total += c.count;
-      if (c.status === "done") stats.done = c.count;
-      else if (c.status === "in_progress") stats.inProgress = c.count;
-      else if (c.status === "cancelled") stats.cancelled = c.count;
+      const stats = statsByProject.get(c.projectId) ?? emptyTaskStats();
+      accumulateTaskStats(stats, c.status, c.count);
       statsByProject.set(c.projectId, stats);
     }
 
@@ -891,12 +940,7 @@ export async function listProjectsForMcp(
           `listProjectsForMcp: project ${row.id} has no matching org in current_user_orgs()`,
         );
       }
-      const taskStats = statsByProject.get(row.id) ?? {
-        total: 0,
-        done: 0,
-        inProgress: 0,
-        cancelled: 0,
-      };
+      const taskStats = statsByProject.get(row.id) ?? emptyTaskStats();
       const denominator = taskStats.total - taskStats.cancelled;
       return {
         id: row.id,
