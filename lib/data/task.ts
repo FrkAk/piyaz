@@ -51,6 +51,9 @@ import { projectDependsOnEdgesStmt } from "@/lib/data/edge";
 import { projectAccessGateStmt } from "@/lib/data/access";
 import {
   insertActivityEvents,
+  diffCriteria,
+  diffDecisions,
+  diffAssignees,
   type ActivityEventInput,
 } from "@/lib/data/activity";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
@@ -2471,49 +2474,51 @@ export async function updateTask(
       changes.files = [...merged];
     }
 
-    const isStatusChange =
-      "status" in changes && current.status !== changes.status;
-    const fieldList = [
-      ...Object.keys(changes),
-      ...(assigneeIds !== undefined ? ["assigneeIds"] : []),
-      ...(formattedCriteria !== undefined ? ["acceptanceCriteria"] : []),
-      ...(formattedDecisions !== undefined ? ["decisions"] : []),
-      ...(hasPrUrl ? ["prUrl"] : []),
-    ];
-    const entry = makeHistoryEntry({
-      type: isStatusChange ? "status_change" : "refined",
-      label: isStatusChange
-        ? `Status: ${current.status} → ${changes.status}`
-        : "Task updated",
-      description: `Updated task fields: ${fieldList.join(", ")}.`,
-      actor: "ai",
-    });
-
     let row = current;
     if (Object.keys(changes).length > 0) {
       const [updatedRow] = await tx
         .update(tasks)
         .set({
           ...changes,
-          history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
           updatedAt: new Date(),
         })
         .where(eq(tasks.id, taskId))
         .returning();
       row = updatedRow;
     } else {
-      // No `tasks` row column changed; still append the history entry and
-      // bump updated_at so the cache validator advances on this turn.
+      // No `tasks` row column changed; still bump updated_at so the cache
+      // validator advances on this turn.
       const [updatedRow] = await tx
         .update(tasks)
         .set({
-          history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
           updatedAt: new Date(),
         })
         .where(eq(tasks.id, taskId))
         .returning();
       row = updatedRow;
     }
+
+    // Discrete activity: scalar/tag diff now, collection diffs after the
+    // child-table writes below. Snapshot child + assignee state pre-write.
+    const eventInputs: ActivityEventInput[] = diffTaskChanges(
+      current.projectId,
+      taskId,
+      current,
+      changes as Partial<Task>,
+    );
+    const childrenBefore =
+      formattedCriteria !== undefined || formattedDecisions !== undefined
+        ? await fetchTaskChildren(tx, taskId)
+        : null;
+    const assigneesBefore =
+      assigneeIds !== undefined
+        ? (
+            await tx
+              .select({ userId: taskAssignees.userId })
+              .from(taskAssignees)
+              .where(eq(taskAssignees.taskId, taskId))
+          ).map((a) => a.userId)
+        : null;
 
     if (formattedCriteria !== undefined) {
       await applyCriteriaWrite(
@@ -2542,6 +2547,60 @@ export async function updateTask(
       );
     }
 
+    if (childrenBefore) {
+      const childrenAfter = await fetchTaskChildren(tx, taskId);
+      if (formattedCriteria !== undefined) {
+        eventInputs.push(
+          ...diffCriteria(
+            current.projectId,
+            taskId,
+            (childrenBefore.acceptance_criteria ?? []).map((c) => ({
+              id: c.id,
+              text: c.text,
+              checked: c.checked,
+            })),
+            (childrenAfter.acceptance_criteria ?? []).map((c) => ({
+              id: c.id,
+              text: c.text,
+              checked: c.checked,
+            })),
+          ),
+        );
+      }
+      if (formattedDecisions !== undefined) {
+        eventInputs.push(
+          ...diffDecisions(
+            current.projectId,
+            taskId,
+            (childrenBefore.decisions ?? []).map((d) => ({
+              id: d.id,
+              text: d.text,
+            })),
+            (childrenAfter.decisions ?? []).map((d) => ({
+              id: d.id,
+              text: d.text,
+            })),
+          ),
+        );
+      }
+    }
+    if (assigneesBefore && assigneeIds !== undefined) {
+      const assigneesAfter = (
+        await tx
+          .select({ userId: taskAssignees.userId })
+          .from(taskAssignees)
+          .where(eq(taskAssignees.taskId, taskId))
+      ).map((a) => a.userId);
+      eventInputs.push(
+        ...diffAssignees(
+          current.projectId,
+          taskId,
+          assigneesBefore,
+          assigneesAfter,
+        ),
+      );
+    }
+
     if (hasPrUrl) {
       if (typeof prUrl !== "string" || prUrl.length === 0) {
         await tx
@@ -2552,6 +2611,12 @@ export async function updateTask(
               eq(taskLinks.kind, "pull_request"),
             ),
           );
+        eventInputs.push({
+          projectId: current.projectId,
+          taskId,
+          type: "link_removed",
+          summary: "removed the pull request link",
+        });
       } else {
         const classified = classifyLink(prUrl);
         await tx
@@ -2566,7 +2631,18 @@ export async function updateTask(
           .onConflictDoNothing({
             target: [taskLinks.taskId, taskLinks.url],
           });
+        eventInputs.push({
+          projectId: current.projectId,
+          taskId,
+          type: "link_added",
+          summary: `linked ${classified.label ?? classified.kind}`,
+          targetRef: classified.url,
+        });
       }
+    }
+
+    if (eventInputs.length > 0) {
+      await insertActivityEvents(tx, ctx.actor, eventInputs);
     }
     let criteriaResult: AcceptanceCriterion[] | null = null;
     let decisionsResult: Decision[] | null = null;

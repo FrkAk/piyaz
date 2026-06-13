@@ -36,20 +36,30 @@ test("concurrent createTask calls allocate distinct sequenceNumbers", async () =
   expect(seqs).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
 });
 
-test("concurrent updateTask calls preserve every history entry", async () => {
+test("concurrent updateTask calls record every activity event", async () => {
   const f = await seedUserOrgProject("histrace");
   const ctx = makeAuthContext(f.userId);
   const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
 
-  // Fire 5 concurrent updates on the same task; each appends one history entry.
+  // Fire 5 concurrent updates on the same task; each inserts its own event
+  // row, so none can be lost to a read-modify-write race.
   const calls = Array.from({ length: 5 }, (_, i) =>
     updateTask(ctx, task.id, { description: `desc-${i}` }),
   );
   await Promise.all(calls);
 
-  const final = await updateTask(ctx, task.id, { description: "final" });
-  // 1 created + 5 concurrent updates + 1 final = 7 total entries.
-  expect(final.history.length).toBe(7);
+  await updateTask(ctx, task.id, { description: "final" });
+
+  const sr = serviceRoleConnect();
+  try {
+    const [{ count }] = await sr<{ count: number }[]>`
+      SELECT count(*)::int AS count
+      FROM activity_events WHERE task_id = ${task.id}`;
+    // 1 created + 5 concurrent updates + 1 final = 7 total events.
+    expect(count).toBe(7);
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
 });
 
 test("concurrent updateTask calls preserve every appended decision", async () => {
