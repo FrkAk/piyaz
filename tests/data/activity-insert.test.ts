@@ -23,19 +23,15 @@ describe("insertActivityEvents", () => {
     }
 
     await withUserContext(fx.userId, async (tx) => {
-      await insertActivityEvents(
-        tx,
-        { source: "web", userId: fx.userId },
-        [
-          {
-            projectId: fx.projectId,
-            taskId,
-            type: "status_changed",
-            summary: "moved to done",
-            metadata: { from: "draft", to: "done" },
-          },
-        ],
-      );
+      await insertActivityEvents(tx, { source: "web", userId: fx.userId }, [
+        {
+          projectId: fx.projectId,
+          taskId,
+          type: "status_changed",
+          summary: "moved to done",
+          metadata: { from: "draft", to: "done" },
+        },
+      ]);
     });
 
     const sr2 = serviceRoleConnect();
