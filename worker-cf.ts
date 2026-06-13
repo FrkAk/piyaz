@@ -196,6 +196,13 @@ async function handleRealtimeUpgrade(
         projectIds: string[];
       };
     }
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "realtime_authorize_parse_failed",
+        reason: String(err),
+      }),
+    );
   } finally {
     await teardown();
   }
