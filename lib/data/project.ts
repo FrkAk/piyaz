@@ -188,6 +188,7 @@ export async function getProjectGraphSlim(
         sequenceNumber: tasks.sequenceNumber,
         hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
         hasCriteria: hasCriteriaExpr(),
+        hasExecutionRecord: sql<boolean>`${tasks.executionRecord} IS NOT NULL`,
         assigneeCount: assigneeCountExpr(),
         assigneeUserIds: assigneeUserIdsExpr(),
       })
@@ -231,6 +232,7 @@ export async function getProjectGraphSlim(
       updatedAt: t.updatedAt,
       hasDescription: t.hasDescription,
       hasCriteria: t.hasCriteria,
+      hasExecutionRecord: t.hasExecutionRecord,
       state: stateMap.get(t.id) ?? "draft",
       assigneeCount: t.assigneeCount,
       assigneeUserIds: t.assigneeUserIds,
@@ -242,6 +244,7 @@ export async function getProjectGraphSlim(
         organizationId: project.organizationId,
         identifier: project.identifier,
         title: project.title,
+        description: project.description,
         status: project.status,
         updatedAt: project.updatedAt,
         categories: project.categories,
@@ -482,14 +485,24 @@ export async function getProjectHeader(
  *
  * @param read - Read statement-building handle.
  * @param taskId - UUID of the task whose parent project to read.
+ * @param withDescription - Whether to select the project `description`
+ *   column. Only bundles that render a Project Context section (planning,
+ *   review, record) read it; the working/summary paths pass false and pay
+ *   no text egress (the column stays type-stable as an empty literal).
  * @returns Lazy select yielding zero or one header rows.
  */
-export function projectHeaderByTaskStmt(read: ReadConn, taskId: string) {
+export function projectHeaderByTaskStmt(
+  read: ReadConn,
+  taskId: string,
+  withDescription: boolean,
+) {
   return read
     .select({
       id: projects.id,
       title: projects.title,
-      description: projects.description,
+      description: withDescription
+        ? projects.description
+        : sql<string>`''`.as("description"),
       identifier: projects.identifier,
     })
     .from(projects)

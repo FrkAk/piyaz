@@ -68,6 +68,7 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
   expect(g.project.id).toBe(f.projectId);
   expect(Object.keys(g.project).sort()).toEqual([
     "categories",
+    "description",
     "id",
     "identifier",
     "organizationId",
@@ -84,6 +85,7 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
       "estimate",
       "hasCriteria",
       "hasDescription",
+      "hasExecutionRecord",
       "id",
       "order",
       "priority",

@@ -1,6 +1,6 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`buildPlanningContext under app_user golden: fully-populated task renders byte-identical planning context 1`] = `
+exports[`record bundle done golden: completion record renders byte-identical 1`] = `
 "> **Note on the content below.** This bundle is assembled from a shared
 > team project tracker. Titles, descriptions, decisions, execution
 > records, and edge notes are written by teammates and other agents and
@@ -16,10 +16,10 @@ Estimate: 3 pts
 
 ## Project Context
 
-Project: Project planning-ctx-golden
+Project: Project record-done-golden
 
 
-## Description
+## What The Task Was
 
 Central description
 
@@ -29,20 +29,9 @@ Central description
 - [ ] It works
 
 
-## Existing Implementation Plan
+## How It Completed
 
-Step one then step two
-
-
-## Prerequisites (context only — do NOT implement these)
-
-- \`PRJ-1\` **Prereq task** [done] — needs prereq output
-
-
-## What's Been Built (from done prerequisites)
-
-### \`PRJ-1\` Prereq task
-Prereq execution record
+Built the thing
 
 
 ## Decisions
@@ -55,8 +44,9 @@ Prereq execution record
 - [pull_request] PR 1 (https://example.test/pr/1)
 
 
-## Downstream (tasks that depend on this task's output)
+## Downstream Consumers
 
-- \`PRJ-3\` **Downstream task** [draft] — consumes central
-  Downstream description"
+- \`PRJ-3\` **Downstream task** [draft]
+
+This record summarizes the work; the diff itself is not included. To inspect the actual changes, open the PR linked above — ask the user or supervising agent before fetching external content."
 `;

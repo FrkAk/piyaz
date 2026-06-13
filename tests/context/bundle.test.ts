@@ -1,14 +1,16 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
-import { seedUserOrgProject } from "@/tests/setup/seed";
+import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { seedRichContextTask } from "@/tests/context/fixtures";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import { makeAuthContext } from "@/lib/auth/context";
 import * as rls from "@/lib/db/rls";
 import {
-  resolveContextBundle,
+  RecordNotTerminalError,
+  resolveAgentBundleData,
   resolveDependencyClosure,
   resolvePlanningData,
+  resolveRecordData,
   resolveWorkingData,
 } from "@/lib/context/_core/bundle";
 import { buildSummaryContext } from "@/lib/context/_core/summary";
@@ -19,42 +21,41 @@ afterEach(async () => {
   await truncateAll();
 });
 
-test("resolveContextBundle assembles task, closure, header, edges, ancestors", async () => {
+test("resolveDependencyClosure assembles task, walks, notes, and summaries", async () => {
   const fx = await seedRichContextTask("bundle-full");
 
-  const bundle = await resolveContextBundle(fx.userId, fx.taskId);
+  const closure = await resolveDependencyClosure(fx.userId, fx.taskId, "agent");
 
-  expect(bundle.task.id).toBe(fx.taskId);
-  expect(bundle.task.title).toBe("Central task");
-  expect(bundle.task.implementationPlan).toBe("Step one then step two");
-  expect(bundle.deps).toHaveLength(1);
-  expect(bundle.downstream).toHaveLength(1);
-  expect(bundle.depTasks.map((d) => d.title)).toEqual(["Prereq task"]);
-  expect(bundle.downstreamSummaries.map((d) => d.title)).toEqual([
+  expect(closure.task.id).toBe(fx.taskId);
+  expect(closure.task.title).toBe("Central task");
+  expect(closure.task.implementationPlan).toBe("Step one then step two");
+  expect(closure.deps).toEqual([
+    expect.objectContaining({ depth: 1 }) as never,
+  ]);
+  expect(closure.downstream).toEqual([
+    expect.objectContaining({ depth: 1 }) as never,
+  ]);
+  expect(closure.depTasks.map((d) => d.title)).toEqual(["Prereq task"]);
+  expect(closure.downstreamSummaries.map((d) => d.title)).toEqual([
     "Downstream task",
   ]);
-  expect(bundle.upstreamEdgeNotes.size).toBe(1);
-  expect(bundle.downstreamEdgeNotes.size).toBe(1);
-  expect(bundle.project?.title).toBe("Project bundle-full");
-  expect(bundle.detailedEdges).toHaveLength(2);
-  expect(bundle.ancestors).toEqual([
-    expect.objectContaining({ type: "project", title: "Project bundle-full" }),
-  ]);
+  expect(closure.upstreamEdgeNotes.size).toBe(1);
+  expect(closure.downstreamEdgeNotes.size).toBe(1);
 });
 
-test("resolveContextBundle resolves in two read batches for a connected task", async () => {
+test("resolveDependencyClosure resolves in two read batches for a connected task", async () => {
   const fx = await seedRichContextTask("bundle-batches");
   const readSpy = spyOn(rls, "withUserContextRead");
 
   try {
-    await resolveContextBundle(fx.userId, fx.taskId);
+    await resolveDependencyClosure(fx.userId, fx.taskId, "agent");
     expect(readSpy).toHaveBeenCalledTimes(2);
   } finally {
     readSpy.mockRestore();
   }
 });
 
-test("resolveContextBundle skips the secondary batch for an isolated task", async () => {
+test("resolveDependencyClosure skips the secondary batch for an isolated task", async () => {
   const fx = await seedUserOrgProject("bundle-isolated");
   const { superuserPool } = await import("@/tests/setup/global");
   const su = superuserPool();
@@ -66,31 +67,31 @@ test("resolveContextBundle skips the secondary batch for an isolated task", asyn
   const readSpy = spyOn(rls, "withUserContextRead");
 
   try {
-    const bundle = await resolveContextBundle(fx.userId, task.id);
+    const closure = await resolveDependencyClosure(fx.userId, task.id, "agent");
     expect(readSpy).toHaveBeenCalledTimes(1);
-    expect(bundle.deps).toEqual([]);
-    expect(bundle.downstream).toEqual([]);
-    expect(bundle.detailedEdges).toEqual([]);
+    expect(closure.deps).toEqual([]);
+    expect(closure.downstream).toEqual([]);
+    expect(closure.depTasks).toEqual([]);
   } finally {
     readSpy.mockRestore();
   }
 });
 
-test("resolveContextBundle throws ForbiddenError for a cross-tenant caller", async () => {
+test("resolveDependencyClosure throws ForbiddenError for a cross-tenant caller", async () => {
   const fx = await seedRichContextTask("bundle-owner");
   const stranger = await seedUserOrgProject("bundle-stranger");
 
   await expect(
-    resolveContextBundle(stranger.userId, fx.taskId),
+    resolveDependencyClosure(stranger.userId, fx.taskId, "agent"),
   ).rejects.toThrow(ForbiddenError);
 });
 
-test("resolveContextBundle throws ForbiddenError for a malformed task id", async () => {
+test("resolveDependencyClosure throws ForbiddenError for a malformed task id", async () => {
   const fx = await seedUserOrgProject("bundle-badid");
 
-  await expect(resolveContextBundle(fx.userId, "not-a-uuid")).rejects.toThrow(
-    ForbiddenError,
-  );
+  await expect(
+    resolveDependencyClosure(fx.userId, "not-a-uuid", "agent"),
+  ).rejects.toThrow(ForbiddenError);
 });
 
 test("resolveDependencyClosure returns the depth-scoped closure", async () => {
@@ -113,6 +114,101 @@ test("resolvePlanningData includes the parent project header", async () => {
 
   expect(data.project?.title).toBe("Project closure-planning");
   expect(data.task.implementationPlan).toBe("Step one then step two");
+  expect(data.abandonedDeps).toEqual([]);
+});
+
+test("resolvePlanningData surfaces direct cancelled deps with records", async () => {
+  const fx = await seedRichContextTask("closure-abandoned");
+  const sr = serviceRoleConnect();
+  try {
+    const [dead] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, description, status, execution_record)
+      SELECT project_id, 'Dead approach', 8, 'dropped', 'cancelled', 'Tried Z; failed'
+      FROM tasks WHERE id = ${fx.taskId} RETURNING id`;
+    await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
+             VALUES (${fx.taskId}, ${dead.id}, 'depends_on', 'old route')`;
+    await sr`INSERT INTO task_links (task_id, url, kind)
+             VALUES (${dead.id}, 'https://example.test/pr/66', 'pull_request')`;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+
+  const data = await resolvePlanningData(fx.userId, fx.taskId);
+
+  expect(data.abandonedDeps.map((d) => d.title)).toEqual(["Dead approach"]);
+  expect(data.abandonedDeps[0].executionRecord).toBe("Tried Z; failed");
+  expect(data.abandonedDeps[0].prUrl).toBe("https://example.test/pr/66");
+  expect(data.deps.map((d) => d.id)).not.toContain(data.abandonedDeps[0].id);
+});
+
+test("resolveRecordData resolves in two read batches and skips upstream data", async () => {
+  const fx = await seedRichContextTask("record-slim");
+  const sr = serviceRoleConnect();
+  try {
+    await sr`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+  const readSpy = spyOn(rls, "withUserContextRead");
+
+  try {
+    const data = await resolveRecordData(fx.userId, fx.taskId);
+    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(data.project?.title).toBe("Project record-slim");
+    expect(data.downstreamSummaries.map((d) => d.title)).toEqual([
+      "Downstream task",
+    ]);
+    expect(data.downstreamSummaries[0].description).toBe("");
+    expect("depTasks" in data).toBe(false);
+  } finally {
+    readSpy.mockRestore();
+  }
+});
+
+test("resolveRecordData rejects a non-terminal task (TOCTOU guard)", async () => {
+  const fx = await seedRichContextTask("record-nonterminal");
+  // The task is in_review (non-terminal); the resolver must refuse to render
+  // a retrospective record even if a caller reached it, so a status flip
+  // between the access gate and this fetch cannot serve a wrong bundle.
+  await expect(resolveRecordData(fx.userId, fx.taskId)).rejects.toThrow(
+    RecordNotTerminalError,
+  );
+});
+
+test("agent-depth dispatch drops the implementation plan for terminal tasks", async () => {
+  const fx = await seedRichContextTask("agent-terminal-plan");
+  const sr = serviceRoleConnect();
+  try {
+    await sr`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+  const resolved = await resolveAgentBundleData(fx.userId, fx.taskId);
+  expect(resolved.kind).toBe("record");
+  // The `active-only` plan projection NULLs the column for terminal rows, so
+  // the (often largest) implementationPlan never egresses on the done path.
+  expect(resolved.data.task.implementationPlan).toBeNull();
+});
+
+test("resolveRecordData skips the secondary batch without dependents", async () => {
+  const fx = await seedUserOrgProject("record-isolated");
+  const { superuserPool } = await import("@/tests/setup/global");
+  const su = superuserPool();
+  const [task] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number", "status")
+    VALUES (${fx.projectId}, 'Isolated done task', 1, 'done')
+    RETURNING id
+  `;
+  const readSpy = spyOn(rls, "withUserContextRead");
+
+  try {
+    const data = await resolveRecordData(fx.userId, task.id);
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(data.downstream).toEqual([]);
+    expect(data.downstreamSummaries).toEqual([]);
+  } finally {
+    readSpy.mockRestore();
+  }
 });
 
 test("resolveWorkingData assembles detailed edges and ancestors", async () => {
@@ -161,15 +257,12 @@ test("buildReviewContext resolves in read batches with no interactive frame", as
 
 test("buildProjectOverview resolves in one read batch with no interactive frame", async () => {
   const fx = await seedRichContextTask("topo-overview");
-  const projectRows = await resolveContextBundle(fx.userId, fx.taskId);
+  const { task } = await resolveWorkingData(fx.userId, fx.taskId);
   const readSpy = spyOn(rls, "withUserContextRead");
   const interactiveSpy = spyOn(rls, "withUserContext");
 
   try {
-    await buildProjectOverview(
-      makeAuthContext(fx.userId),
-      projectRows.task.projectId,
-    );
+    await buildProjectOverview(makeAuthContext(fx.userId), task.projectId);
     expect(readSpy).toHaveBeenCalledTimes(1);
     expect(interactiveSpy).toHaveBeenCalledTimes(0);
   } finally {
