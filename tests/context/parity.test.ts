@@ -34,7 +34,7 @@ afterEach(async () => {
 /**
  * Project builder parts onto the drawer-section id sequence, applying the
  * declared parity overrides from the spec (§1):
- * - notice and nudge parts are parity-exempt;
+ * - notice, status-note, and nudge parts are parity-exempt;
  * - the header is exempt except in the agent bundle, where the description
  *   is header-inline and maps onto the drawer `spec` row;
  * - consecutive parts sharing an id collapse to one drawer row (the working
@@ -53,7 +53,7 @@ function drawerOrder(
   const ids: BundleSectionId[] = [];
   for (const part of parts) {
     let id: BundlePartId = part.id;
-    if (id === "notice" || id === "nudge") continue;
+    if (id === "notice" || id === "nudge" || id === "status-note") continue;
     if (id === "header") {
       if (variant !== "agent") continue;
       id = "spec";

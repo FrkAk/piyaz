@@ -78,7 +78,7 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
 
   if (status !== "in_review") {
     parts.push({
-      id: "notice",
+      id: "status-note",
       heading: null,
       markdown: `> **Note:** task status is \`${status}\`, not \`in_review\`. The review bundle is meant for \`in_review\` tasks; confirm the dispatch is intentional before producing a verdict.`,
     });
@@ -118,7 +118,7 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
       section("Implementation Plan (as planned)") +
       "\n" +
       (task.implementationPlan ??
-        "None recorded. Plan-vs-files drift cannot be computed without a plan."),
+        "None recorded. Reconcile the diff against the task description and acceptance criteria instead."),
   });
 
   parts.push({

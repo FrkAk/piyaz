@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 import {
+  ALWAYS_RENDERED_BY_BUNDLE,
   BUNDLE_BY_STAGE,
   BUNDLE_LABEL_BY_STAGE,
+  SECTIONS_BY_BUNDLE,
   resolveStage,
   variantOf,
+  type BundleVariant,
 } from "@/components/workspace/bundle-tables";
 
 test("blocked state splits on schema status: draft stays working, planned goes agent", () => {
@@ -35,4 +38,22 @@ test("record kind splits into done and cancelled variants with distinct labels",
   expect(variantOf("ready")).toBe("agent");
   expect(BUNDLE_LABEL_BY_STAGE.done).toBe("Completion Record");
   expect(BUNDLE_LABEL_BY_STAGE.cancelled).toBe("Cancellation Record");
+});
+
+test("always-rendered sections are a subset of each variant's section list", () => {
+  for (const variant of Object.keys(
+    ALWAYS_RENDERED_BY_BUNDLE,
+  ) as BundleVariant[]) {
+    for (const id of ALWAYS_RENDERED_BY_BUNDLE[variant]) {
+      expect(SECTIONS_BY_BUNDLE[variant]).toContain(id);
+    }
+  }
+});
+
+test("fallback-bearing sections always render: record execution, review plan", () => {
+  expect(ALWAYS_RENDERED_BY_BUNDLE["record-done"]).toContain("execution");
+  expect(ALWAYS_RENDERED_BY_BUNDLE["record-cancelled"]).toContain("execution");
+  expect(ALWAYS_RENDERED_BY_BUNDLE.review).toContain("plan");
+  expect(ALWAYS_RENDERED_BY_BUNDLE.review).toContain("execution");
+  expect(ALWAYS_RENDERED_BY_BUNDLE.working).toEqual([]);
 });

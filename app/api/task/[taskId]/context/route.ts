@@ -82,7 +82,10 @@ async function buildSections(
  * payload. `?bundle=<kind>` selects exactly one bundle; the response is
  * `{ sections }` where each section is `{ id, heading, markdown }` and the
  * MD view is the deterministic join. Missing/unknown kind → 400;
- * `bundle=record` on a non-terminal task → 400.
+ * `bundle=record` on a non-terminal task → 400. `bundle=agent` on a
+ * `done`/`cancelled` task resolves the retrospective record bundle —
+ * mirroring the MCP `depth='agent'` dispatch — using the status already on
+ * the access gate, at the slimmer `record` column projection.
  *
  * The validator path reads only the slim access gate, so HEAD/304 never pay
  * for a full task. `Last-Modified` stays the project-max validator (see
@@ -108,20 +111,18 @@ async function handle(req: Request, taskId: string): Promise<Response> {
 
   try {
     const gate = await assertTaskAccess(taskId, ctx);
-    if (
-      kind === "record" &&
-      gate.status !== "done" &&
-      gate.status !== "cancelled"
-    ) {
+    const terminal = gate.status === "done" || gate.status === "cancelled";
+    if (kind === "record" && !terminal) {
       return error("record bundle requires a done or cancelled task", 400);
     }
+    const effectiveKind = kind === "agent" && terminal ? "record" : kind;
     const max = await getProjectMaxUpdatedAt(ctx, gate.projectId);
 
     if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);
     }
 
-    const sections = await buildSections(ctx.userId, taskId, kind);
+    const sections = await buildSections(ctx.userId, taskId, effectiveKind);
     return conditionalRespond(req, { sections }, max);
   } catch (err) {
     if (err instanceof ForbiddenError) {

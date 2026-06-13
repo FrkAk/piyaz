@@ -119,4 +119,15 @@ describe("record bundle", () => {
     const result = await recordBundle(fx.userId, fx.taskId);
     expect(result).not.toContain(NUDGE);
   });
+
+  test("done without a PR link omits the nudge", async () => {
+    const fx = await seedRichContextTask("record-done-no-pr");
+    await srRun(async (sr) => {
+      await sr`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+      await sr`DELETE FROM task_links WHERE task_id = ${fx.taskId}`;
+    });
+    const result = await recordBundle(fx.userId, fx.taskId);
+    expect(result).not.toContain(NUDGE);
+    expect(result).toContain("## How It Completed");
+  });
 });

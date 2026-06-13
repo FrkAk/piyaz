@@ -149,3 +149,23 @@ export const SECTIONS_BY_BUNDLE: Record<
     "links",
   ],
 };
+
+/**
+ * Sections each builder emits unconditionally with fallback text (`None` /
+ * `None recorded.`), per variant. The drawer renders these even when the
+ * local data is empty so it mirrors the bundle markdown instead of hiding a
+ * section the agent actually receives; everything else stays
+ * render-if-nonempty. Change together with the builders in
+ * `lib/context/_core/*`.
+ */
+export const ALWAYS_RENDERED_BY_BUNDLE: Record<
+  BundleVariant,
+  readonly BundleSectionId[]
+> = {
+  working: [],
+  planning: ["spec", "criteria"],
+  agent: ["spec", "criteria"],
+  review: ["spec", "criteria", "plan", "execution"],
+  "record-done": ["spec", "execution"],
+  "record-cancelled": ["spec", "execution"],
+};

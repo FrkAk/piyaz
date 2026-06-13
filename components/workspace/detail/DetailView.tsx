@@ -18,6 +18,7 @@ import {
   BUNDLE_LABEL_BY_STAGE,
   resolveStage,
 } from "@/components/workspace/bundle-tables";
+import { effectiveDirectPrerequisiteIds } from "@/lib/ui/effective-prereqs";
 import { DetailHeader } from "./DetailHeader";
 import { DescriptionSection } from "./DescriptionSection";
 import { CriteriaSection } from "./CriteriaSection";
@@ -129,6 +130,10 @@ export function DetailView({
     () => buildPrerequisites(taskId, allEdges, taskMap),
     [taskId, allEdges, taskMap],
   );
+  const blockedBy = useMemo(
+    () => buildBlockedBy(taskId, allEdges, taskMap),
+    [taskId, allEdges, taskMap],
+  );
   const connected = useMemo(
     () => buildConnected(taskId, edges, taskMap),
     [taskId, edges, taskMap],
@@ -196,6 +201,7 @@ export function DetailView({
                 criteria={task.acceptanceCriteria ?? []}
                 plan={task.implementationPlan}
                 prerequisites={prerequisites}
+                blockedBy={blockedBy}
                 connected={connected}
                 downstream={downstream}
                 decisions={task.decisions ?? []}
@@ -291,6 +297,36 @@ function buildPrerequisites(
     if (!info) continue;
     out.push({
       id: edge.targetTaskId,
+      taskRef: info.taskRef,
+      title: info.title,
+      status: info.status,
+    });
+  }
+  return out;
+}
+
+/**
+ * Build the unfinished effective direct prerequisites — the same
+ * cancelled-transparent walk the agent builder runs for its blocked notice,
+ * computed from the slim graph so the chip and blocked drawer mirror the
+ * bundle exactly.
+ *
+ * @param taskId - Current task UUID.
+ * @param edges - All slim project edges.
+ * @param taskMap - Map of task IDs to title/status/taskRef.
+ * @returns Unfinished effective direct prerequisite rows.
+ */
+function buildBlockedBy(
+  taskId: string,
+  edges: TaskGraphEdge[],
+  taskMap: Map<string, { title: string; status: string; taskRef: string }>,
+): BundleNeighbor[] {
+  const out: BundleNeighbor[] = [];
+  for (const id of effectiveDirectPrerequisiteIds(taskId, edges, taskMap)) {
+    const info = taskMap.get(id);
+    if (!info || info.status === "done") continue;
+    out.push({
+      id,
       taskRef: info.taskRef,
       title: info.title,
       status: info.status,

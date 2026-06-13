@@ -53,8 +53,9 @@ function formatRecordLinks(links: TaskLinkRef[], cancelled: boolean): string {
  * (rationale, lessons in decisions, remaining direct dependents, closed-PR
  * label). Recorded file lists are deliberately absent — the PR diff is the
  * source of truth for what changed. The footer nudge points readers at the
- * PR — always for done, only when a PR exists for cancelled. Pure: reads
- * only its argument, issues no queries.
+ * PR, so it renders only when a `pull_request` link exists (a research or
+ * decision-only task has no diff to point at). Pure: reads only its
+ * argument, issues no queries.
  *
  * @param data Resolved record data (closure at record depth plus project header).
  * @returns Ordered bundle parts; join with {@link joinParts} for markdown.
@@ -155,7 +156,9 @@ export function buildRecordContextParts(data: RecordContextData): BundlePart[] {
     if (linksPart) parts.push(linksPart);
     const consumersPart = buildConsumersPart(data);
     if (consumersPart) parts.push(consumersPart);
-    parts.push({ id: "nudge", heading: null, markdown: READ_PR_NUDGE });
+    if (prLink) {
+      parts.push({ id: "nudge", heading: null, markdown: READ_PR_NUDGE });
+    }
   }
 
   return parts;

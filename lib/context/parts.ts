@@ -29,7 +29,12 @@ export type BundleSectionId =
   | "lens";
 
 /** Part identifiers: drawer sections plus bundle-only chrome. */
-export type BundlePartId = BundleSectionId | "notice" | "header" | "nudge";
+export type BundlePartId =
+  | BundleSectionId
+  | "notice"
+  | "header"
+  | "nudge"
+  | "status-note";
 
 /** One structured section of a context bundle. */
 export type BundlePart = {

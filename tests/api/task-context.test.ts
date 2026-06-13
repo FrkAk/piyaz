@@ -104,6 +104,51 @@ test("GET context — record returns sections for a done task", async () => {
   expect(body.sections.map((s) => s.id)).toContain("execution");
 });
 
+test("GET context — record returns sections for a cancelled task", async () => {
+  const fx = await seedRichContextTask("ctx-record-cancelled-route");
+  const sql = superuserPool();
+  try {
+    await sql`UPDATE tasks SET status = 'cancelled' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+  const res = await getContext(fx.taskId, fx.userId, "record");
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { sections: BundlePart[] };
+  const execution = body.sections.find((s) => s.id === "execution");
+  expect(execution?.heading).toBe("Why It Was Cancelled");
+});
+
+test("GET context — agent kind serves the record bundle for a done task", async () => {
+  const fx = await seedRichContextTask("ctx-agent-done-route");
+  const sql = superuserPool();
+  try {
+    await sql`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+  const res = await getContext(fx.taskId, fx.userId, "agent");
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { sections: BundlePart[] };
+  const joined = body.sections.map((s) => s.markdown).join("\n\n");
+  // Byte-parity with the MCP agent depth, which dispatches terminal tasks
+  // to the same record builder.
+  expect(joined).toBe(
+    await buildAgentContext(makeAuthContext(fx.userId), fx.taskId),
+  );
+  expect(joined).toContain("## How It Completed");
+  expect(joined).not.toContain("## Implementation Plan");
+});
+
+test("GET context — planning succeeds for an isolated task", async () => {
+  const f = await seedUserOrgProject("ctx-planning-isolated");
+  const taskId = await addTask(f.projectId, "ctx-planning-isolated");
+  const res = await getContext(taskId, f.userId, "planning");
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { sections: BundlePart[] };
+  expect(body.sections.length).toBeGreaterThan(0);
+});
+
 test("GET context — per-kind section shape and joined-markdown parity", async () => {
   const fx = await seedRichContextTask("ctx-kinds");
   for (const kind of ["working", "planning", "agent", "review"] as const) {

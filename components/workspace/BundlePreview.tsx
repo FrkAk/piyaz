@@ -14,6 +14,7 @@ import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import type { BundleSectionId } from "@/lib/context/parts";
 import { REVIEW_LENS_PROMPTS } from "@/lib/context/lens";
 import {
+  ALWAYS_RENDERED_BY_BUNDLE,
   BUNDLE_BY_STAGE,
   BUNDLE_LABEL_BY_STAGE,
   SECTIONS_BY_BUNDLE,
@@ -139,6 +140,8 @@ interface BundlePreviewProps {
   plan: string | null;
   /** Direct `depends_on` prerequisites. */
   prerequisites: BundleNeighbor[];
+  /** Unfinished effective direct prerequisites (cancelled-transparent walk). */
+  blockedBy: BundleNeighbor[];
   /** All 1-hop edges, both directions, with type and note. */
   connected: BundleConnectedEdge[];
   /** Direct `depends_on` dependents. */
@@ -151,20 +154,6 @@ interface BundlePreviewProps {
   executionRecord: string | null;
   /** Click a neighbor row to navigate to that task. */
   onSelectTask?: (taskId: string) => void;
-}
-
-/**
- * Direct prerequisites that are not finished — the client-side approximation
- * of the blocked list (cancelled deps are transparent in the effective walk,
- * so they never block).
- *
- * @param props - Bundle props.
- * @returns Unfinished direct prerequisite rows.
- */
-function unfinishedPrereqs(props: BundlePreviewProps): BundleNeighbor[] {
-  return props.prerequisites.filter(
-    (p) => p.status !== "done" && p.status !== "cancelled",
-  );
 }
 
 /**
@@ -191,9 +180,11 @@ function cancelledPrereqs(props: BundlePreviewProps): BundleNeighbor[] {
 }
 
 /**
- * Whether a section has any data to show (render-if-nonempty). All bodies
- * render from props already loaded with the detail panel — no section
- * expansion triggers a fetch.
+ * Whether a section has any data to show. Sections the builder emits
+ * unconditionally with fallback text bypass this check via
+ * {@link ALWAYS_RENDERED_BY_BUNDLE}; everything else is render-if-nonempty.
+ * All bodies render from props already loaded with the detail panel — no
+ * section expansion triggers a fetch.
  *
  * @param id - Section identifier.
  * @param props - Bundle props.
@@ -230,7 +221,7 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
     case "execution":
       return (props.executionRecord ?? "").trim().length > 0;
     case "blocked":
-      return props.state === "blocked" || unfinishedPrereqs(props).length > 0;
+      return props.blockedBy.length > 0;
   }
 }
 
@@ -289,7 +280,7 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
     case "dependents":
       return Math.max(refLen(props.downstream), 1);
     case "blocked":
-      return Math.max(refLen(unfinishedPrereqs(props)), 1);
+      return Math.max(refLen(props.blockedBy), 1);
     case "lens":
       return REVIEW_LENS_PROMPTS.length;
     case "execution":
@@ -318,17 +309,21 @@ export function BundlePreview(props: BundlePreviewProps) {
   const variant = variantOf(stage);
   const kind = BUNDLE_BY_STAGE[stage];
   const bundleName = BUNDLE_LABEL_BY_STAGE[stage];
-  // Chip mirrors the bundle content: it shows exactly when the agent bundle
-  // carries the blocked section — authoritative server state for blocked
-  // planned tasks, the direct-prereq approximation for premature
-  // in_progress claims. A blocked draft previews the working bundle, which
-  // has no blocked treatment, so it gets no chip.
-  const isBlocked =
-    stage === "planned-blocked" ||
-    (stage === "in_progress" && unfinishedPrereqs(props).length > 0);
+  // Chip mirrors the bundle content: it shows exactly when the previewed
+  // agent bundle carries the blocked section. `blockedBy` is the same
+  // cancelled-transparent effective walk the builder runs, computed from the
+  // slim graph, so chip, drawer section, and bundle markdown agree. A
+  // blocked draft previews the working bundle, which has no blocked
+  // treatment, so it gets no chip.
+  const isBlocked = kind === "agent" && props.blockedBy.length > 0;
 
   const sectionIds = useMemo(
-    () => SECTIONS_BY_BUNDLE[variant].filter((id) => hasLocalData(id, props)),
+    () =>
+      SECTIONS_BY_BUNDLE[variant].filter(
+        (id) =>
+          ALWAYS_RENDERED_BY_BUNDLE[variant].includes(id) ||
+          hasLocalData(id, props),
+      ),
     [variant, props],
   );
 
@@ -633,7 +628,7 @@ function sectionSummary(
       : `${props.downstream.length} remaining dependents`;
   }
   if (id === "blocked") {
-    const n = unfinishedPrereqs(props).length;
+    const n = props.blockedBy.length;
     return `${n} unfinished prerequisite${n === 1 ? "" : "s"}`;
   }
   if (id === "project") return props.projectName;
@@ -654,9 +649,12 @@ function sectionSummary(
     return dead.length > 2 ? `${refs} · +${dead.length - 2} more` : refs;
   }
   if (id === "lens") return "review lens prompts";
-  return props.executionRecord && props.executionRecord.trim().length > 0
-    ? "shipped record"
-    : "no execution record yet";
+  if (!props.executionRecord || props.executionRecord.trim().length === 0) {
+    return "no execution record yet";
+  }
+  return props.status === "cancelled"
+    ? "cancellation record"
+    : "shipped record";
 }
 
 interface SectionBodyProps {
@@ -963,8 +961,8 @@ interface BlockedBodyProps {
 }
 
 /**
- * Blocked callout: the lifecycle warning plus the unfinished direct
- * prerequisites blocking this task.
+ * Blocked callout: the lifecycle warning plus the unfinished effective
+ * direct prerequisites blocking this task.
  *
  * @param props - Bundle props and navigation handler.
  * @returns Blocked body element.
@@ -977,7 +975,7 @@ function BlockedBody({ props, onSelectTask }: BlockedBodyProps) {
         unshipped interfaces. Read-ahead context only.
       </p>
       <NeighborList
-        items={unfinishedPrereqs(props)}
+        items={props.blockedBy}
         emptyHint="No unfinished prerequisites."
         onSelectTask={onSelectTask}
       />
