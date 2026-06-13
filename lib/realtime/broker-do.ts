@@ -266,13 +266,25 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   }
 
   /**
-   * Record a subscription for the user and persist their sub set.
+   * Record a subscription and persist the user's sub set — but only when the
+   * user holds at least one live WebSocket. Mirrors the self-host broker,
+   * where `register` runs only after the SSE connection attaches: a sub for a
+   * disconnected user has no socket to deliver to, and an indefinite
+   * `project:*` key would orphan a `subs:<userId>` storage entry that no
+   * `webSocketClose` ever cleans (that callback only fires for sockets that
+   * existed). `grantOrgAccess` registers eagerly for members who may be
+   * offline; this gate is what keeps those calls from leaking. Dropping an
+   * offline register loses nothing — the user's next `connect` re-derives
+   * `project:*` from the authorize route. The worker-entry `register-many`
+   * path is intentionally ungated: it always runs immediately after the
+   * socket is accepted.
    *
    * @param userId - Caller user id.
    * @param key - Resource key.
    * @param ttlMs - Optional TTL in ms.
    */
   private register(userId: string, key: ResourceKey, ttlMs?: number): void {
+    if (this.ctx.getWebSockets(userId).length === 0) return;
     this.addSub(userId, key, ttlMs);
     this.persistUser(userId);
   }

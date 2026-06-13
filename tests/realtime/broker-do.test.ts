@@ -604,3 +604,31 @@ test("register-many — rejects non-array items with 400", async () => {
   });
   expect(r.status).toBe(400);
 });
+
+test("register without a live socket is dropped — mirrors self-host connected-only subs", async () => {
+  // grantOrgAccess registers project subs eagerly for members who may be
+  // offline. With no socket for u1, the register must be a no-op so a later
+  // dispatch reaches no one and no orphan sub lingers.
+  const { ctx, broker } = makeBroker();
+  await rpc(broker, { op: "register", userId: "u1", key: "project:p1" });
+
+  const ws = attach(ctx, "u1");
+  await rpc(broker, {
+    op: "dispatch",
+    key: "project:p1",
+    payload: { ok: true },
+  });
+  expect(ws.send).not.toHaveBeenCalled();
+});
+
+test("register without a live socket does not persist to storage", async () => {
+  const ctx = fakeCtxWithStorage();
+  const broker = new MymirBroker(
+    ctx as never,
+    { BROKER_DO_SECRET: TEST_SECRET } as never,
+  );
+
+  await rpc(broker, { op: "register", userId: "u1", key: "project:p1" });
+
+  expect(ctx.data.get("subs:u1")).toBeUndefined();
+});
