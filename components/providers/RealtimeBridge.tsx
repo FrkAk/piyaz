@@ -72,14 +72,20 @@ function applyRealtimeEvent(qc: QueryClient, raw: string): void {
 /**
  * Extract the JSON payload from a DO WebSocket frame. The broker encodes each
  * event as an SSE `data: <json>\n\n` frame (`broker-do.ts`), matching the
- * EventSource wire format; comment / heartbeat lines (`: ...`) yield `null`.
+ * EventSource wire format. Collects every `data:` line per the SSE spec,
+ * stripping one optional leading space and a trailing `\r` from each and
+ * joining multi-line payloads with `\n`; comment / heartbeat frames
+ * (`: ...`) yield `null`.
  *
  * @param frame - Raw WebSocket message text.
- * @returns The `data:` payload, or `null` when the frame carries none.
+ * @returns The joined `data:` payload, or `null` when the frame carries none.
  */
-function parseSseFrame(frame: string): string | null {
-  const line = frame.split("\n").find((l) => l.startsWith("data:"));
-  return line ? line.slice(5).trimStart() : null;
+export function parseSseFrame(frame: string): string | null {
+  const datas = frame
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).replace(/^ /, "").replace(/\r$/, ""));
+  return datas.length > 0 ? datas.join("\n") : null;
 }
 
 /**
@@ -87,9 +93,10 @@ function parseSseFrame(frame: string): string | null {
  * events into the shared TanStack Query cache. Self-host uses `EventSource`;
  * Cloudflare uses a WebSocket to the broker Durable Object. Both reconnect on
  * drop with capped exponential backoff (30 s) and run one full
- * `invalidateQueries()` on reconnect to catch up on anything missed while
- * disconnected. Strict-Mode-safe: cleanup closes the transport and clears any
- * pending reconnect timer.
+ * `invalidateQueries()` on every open — the first open reconciles mutations
+ * that landed in the connect-to-subscribe window, reconnects catch up on
+ * anything missed while disconnected. Strict-Mode-safe: cleanup closes the
+ * transport and clears any pending reconnect timer.
  *
  * @returns null — provider mounts side-effects only.
  */
@@ -107,9 +114,8 @@ export function RealtimeBridge() {
     let ws: WebSocket | null = null;
 
     const onOpen = () => {
-      const isReconnect = backoff !== INITIAL_BACKOFF_MS;
       backoff = INITIAL_BACKOFF_MS;
-      if (isReconnect) qc.invalidateQueries();
+      qc.invalidateQueries();
     };
 
     const scheduleReconnect = (reopen: () => void) => {

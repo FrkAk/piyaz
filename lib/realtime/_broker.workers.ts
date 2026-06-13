@@ -22,7 +22,7 @@ import {
 interface DurableObjectStub {
   fetch(url: string, init?: RequestInit): Promise<DurableObjectResponse>;
 }
-interface DurableObjectNamespace {
+export interface DurableObjectNamespace {
   idFromName(name: string): unknown;
   get(id: unknown): DurableObjectStub;
 }
@@ -147,27 +147,34 @@ function enrollInWaitUntil(promise: Promise<unknown>): void {
  */
 class WorkersBroker {
   /**
-   * Resolve the stub for the broker-global DO. Reads the binding from the
-   * Cloudflare request context rather than `globalThis`: modules-format
-   * Workers never expose bindings on the global object, so the old read
-   * silently no-oped every dispatch. Logs once per isolate when the binding
-   * is missing or the context is unavailable so misconfigured deploys are
-   * diagnosable without spamming.
+   * Resolve the stub for the broker-global DO. Uses {@link namespace} when
+   * the caller passes the binding explicitly (the raw worker entry runs
+   * outside OpenNext's request-context ALS, where `getCloudflareContext`
+   * throws). Otherwise reads the binding from the Cloudflare request
+   * context rather than `globalThis`: modules-format Workers never expose
+   * bindings on the global object, so the old read silently no-oped every
+   * dispatch. Logs once per isolate when the binding is missing or the
+   * context is unavailable so misconfigured deploys are diagnosable
+   * without spamming.
    *
+   * @param namespace - Explicit `MYMIR_BROKER` binding from the worker
+   *   entry's `env`; omit inside route handlers.
    * @returns The DO stub, or `null` when `MYMIR_BROKER` is not bound.
    */
-  private stub(): DurableObjectStub | null {
-    let namespace: DurableObjectNamespace | undefined;
-    try {
-      namespace = (
-        getCloudflareContext({ async: false }).env as {
-          MYMIR_BROKER?: DurableObjectNamespace;
-        }
-      ).MYMIR_BROKER;
-    } catch {
-      namespace = undefined;
+  private stub(namespace?: DurableObjectNamespace): DurableObjectStub | null {
+    let resolved = namespace;
+    if (!resolved) {
+      try {
+        resolved = (
+          getCloudflareContext({ async: false }).env as {
+            MYMIR_BROKER?: DurableObjectNamespace;
+          }
+        ).MYMIR_BROKER;
+      } catch {
+        resolved = undefined;
+      }
     }
-    if (!namespace) {
+    if (!resolved) {
       if (!warnedMissingBinding) {
         console.error(
           "[realtime] MYMIR_BROKER binding missing — realtime fanout will silently no-op",
@@ -176,8 +183,8 @@ class WorkersBroker {
       }
       return null;
     }
-    const id = namespace.idFromName(BROKER_DO_NAME);
-    return namespace.get(id);
+    const id = resolved.idFromName(BROKER_DO_NAME);
+    return resolved.get(id);
   }
 
   /**
@@ -227,6 +234,47 @@ class WorkersBroker {
    */
   register(userId: string, key: ResourceKey, ttlMs?: number): void {
     this.fireAndForget({ op: "register", userId, key, ttlMs });
+  }
+
+  /**
+   * Register many subscriptions for the user in a single awaited DO RPC.
+   * Used by the worker entry to complete every registration before the 101
+   * returns, so the socket is never connected-but-deaf. Unlike
+   * {@link register}, this is not fire-and-forget: the caller awaits the
+   * DO acknowledgment and handles failures itself.
+   *
+   * @param userId - Caller user id.
+   * @param keys - Resource keys to register (no TTL).
+   * @param namespace - Explicit `MYMIR_BROKER` binding from the worker
+   *   entry's `env`; omit inside route handlers.
+   * @throws When the binding or signing secret is missing, or the DO
+   *   fetch rejects.
+   */
+  async registerMany(
+    userId: string,
+    keys: ResourceKey[],
+    namespace?: DurableObjectNamespace,
+  ): Promise<void> {
+    const stub = this.stub(namespace);
+    if (!stub) {
+      throw new Error(
+        "MymirBroker binding missing — cannot register subscriptions",
+      );
+    }
+    const msg: BrokerMessage = {
+      op: "register-many",
+      userId,
+      items: keys.map((key) => ({ key })),
+    };
+    const body = JSON.stringify(msg);
+    const { init, secretPresent } = await signedRequestInit("POST", body, "");
+    if (!secretPresent) {
+      throw new Error(
+        "BROKER_DO_SECRET unset — refusing to send an unsigned " +
+          "register-many to the broker DO",
+      );
+    }
+    await stub.fetch(BROKER_URL, init);
   }
 
   /**
@@ -291,12 +339,17 @@ class WorkersBroker {
    * incoming frames into the SSE response stream.
    *
    * @param userId - Caller user id; attached as the DO-side tag.
+   * @param namespace - Explicit `MYMIR_BROKER` binding from the worker
+   *   entry's `env`; omit inside route handlers.
    * @returns The client end of the WebSocket pair.
    * @throws When the binding is missing, the secret is missing, or the DO
    *   rejects the upgrade.
    */
-  async connect(userId: string): Promise<WebSocket> {
-    const stub = this.stub();
+  async connect(
+    userId: string,
+    namespace?: DurableObjectNamespace,
+  ): Promise<WebSocket> {
+    const stub = this.stub(namespace);
     if (!stub) {
       throw new Error(
         "MymirBroker binding missing — cannot open WebSocket to DO",
@@ -357,15 +410,18 @@ class WorkersBroker {
   }
 
   /**
-   * Connection-tracking surface — not callable on Workers. The DO owns the
-   * WebSocket set and would require an extra round-trip per call.
+   * Whether the user may hold a live connection. The DO owns the WebSocket
+   * set, so the entry/route cannot synchronously know liveness; assume
+   * possibly-connected so the caller's lazy `task:` / `project:`
+   * registration proceeds. Registering a sub for a user with no live
+   * socket is harmless: the DO only delivers to real sockets, and `task:`
+   * subs carry a TTL.
    *
-   * @throws Always.
+   * @param _userId - Caller user id (unused).
+   * @returns Always true.
    */
   hasConnections(_userId: string): boolean {
-    throw new Error(
-      "MymirBroker WorkersBroker: hasConnections is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
-    );
+    return true;
   }
 
   /**

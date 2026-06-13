@@ -22,7 +22,11 @@ import {
   scheduleRequestDbTeardown,
   withRequestDb,
 } from "./lib/db/request-scope.workers";
-import { broker } from "./lib/realtime/_broker.workers";
+import {
+  broker,
+  type DurableObjectNamespace,
+  type ResourceKey,
+} from "./lib/realtime/_broker.workers";
 import { MymirBroker } from "./lib/realtime/broker-do";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- generated entry; tsc resolves it but @ts-expect-error trips "unused directive".
@@ -49,6 +53,7 @@ interface WorkerEnv {
   DATABASE_SERVICE_ROLE_URL?: string;
   RATE_LIMIT_API?: CloudflareRateLimitBinding;
   RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
+  MYMIR_BROKER?: DurableObjectNamespace;
 }
 
 /**
@@ -197,11 +202,12 @@ async function handleRealtimeUpgrade(
   if (!authorized) return new Response("Unauthorized", { status: 401 });
 
   try {
-    const client = await broker.connect(authorized.userId);
-    for (const projectId of authorized.projectIds) {
-      broker.register(authorized.userId, `project:${projectId}`);
-    }
-    broker.register(authorized.userId, `project-list:${authorized.userId}`);
+    const keys: ResourceKey[] = [
+      ...authorized.projectIds.map((id): ResourceKey => `project:${id}`),
+      `project-list:${authorized.userId}`,
+    ];
+    const client = await broker.connect(authorized.userId, env.MYMIR_BROKER);
+    await broker.registerMany(authorized.userId, keys, env.MYMIR_BROKER);
     return new Response(null, {
       status: 101,
       webSocket: client,

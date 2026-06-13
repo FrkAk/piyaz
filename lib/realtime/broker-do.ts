@@ -18,6 +18,11 @@ import {
  */
 export type BrokerMessage =
   | { op: "register"; userId: string; key: ResourceKey; ttlMs?: number }
+  | {
+      op: "register-many";
+      userId: string;
+      items: Array<{ key: ResourceKey; ttlMs?: number }>;
+    }
   | { op: "unregister"; userId: string; key: ResourceKey }
   | { op: "clear-task-subs"; userId: string }
   | { op: "detach"; userId: string }
@@ -44,29 +49,18 @@ interface BrokerEnv {
 const MAX_CONNECTIONS_PER_USER = 20;
 
 /**
- * Per-connection state persisted via the Hibernation API's
- * `serializeAttachment`, so a user's subscriptions survive DO hibernation
- * (which clears every in-memory field). Mirrored onto every socket the user
- * holds and merged back into {@link MymirBroker} on wake.
- */
-interface SocketAttachment {
-  userId: string;
-  subs: Array<[ResourceKey, number | null]>;
-}
-
-/**
  * Cloudflare Durable Object that replaces the self-host in-memory broker for
  * the Workers deploy target. A single global instance (id derived from a
  * stable name) multiplexes every user's subscription state and WebSocket
  * connections, matching the self-host single-process broker semantics.
  *
- * The subscription map is an in-memory hot cache backed by per-connection
- * `serializeAttachment` state. Hibernation clears memory and reruns the
- * constructor, but the connected WebSockets survive with their attachments
- * intact; on the first operation after a wake, {@link ensureHydrated}
- * rebuilds the map from those attachments. This is what keeps a hibernating
- * socket (which, unlike SSE, never reconnects to re-register) receiving
- * events after an idle cycle.
+ * The subscription map is an in-memory hot cache backed by per-user entries
+ * in the DO's SQLite KV storage (`subs:<userId>`). Hibernation clears memory
+ * and reruns the constructor, but the connected WebSockets survive with
+ * their tags and storage is durable; on the first operation after a wake,
+ * {@link ensureHydrated} rebuilds the map from storage for users with live
+ * sockets. This is what keeps a hibernating socket (which, unlike SSE,
+ * never reconnects to re-register) receiving events after an idle cycle.
  */
 export class MymirBroker extends DurableObject<BrokerEnv> {
   private subs = new Map<string, Map<ResourceKey, number | null>>();
@@ -105,7 +99,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
       return new Response(authResult.error, { status: authResult.status });
     }
     this.ensureHydrated();
-    if (request.headers.get("Upgrade") === "websocket") {
+    if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       return this.handleUpgrade(request);
     }
     return this.handleRpc(authResult.body);
@@ -217,6 +211,17 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
       case "register":
         this.register(msg.userId, msg.key, msg.ttlMs);
         return new Response(null, { status: 204 });
+      case "register-many":
+        if (!Array.isArray(msg.items)) {
+          return new Response("register-many: items must be an array", {
+            status: 400,
+          });
+        }
+        for (const item of msg.items) {
+          this.addSub(msg.userId, item.key, item.ttlMs);
+        }
+        this.persistUser(msg.userId);
+        return new Response(null, { status: 204 });
       case "unregister":
         this.unregister(msg.userId, msg.key);
         return new Response(null, { status: 204 });
@@ -242,21 +247,33 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   }
 
   /**
-   * Record a subscription for the user. `ttlMs` produces a lazy-expiring
-   * entry (cleaned on next `subscribers` iteration); omit for indefinite.
+   * Add one subscription to the in-memory map without persisting. `ttlMs`
+   * produces a lazy-expiring entry (cleaned on next `subscribers`
+   * iteration); omit for indefinite.
    *
    * @param userId - Caller user id.
    * @param key - Resource key.
    * @param ttlMs - Optional TTL in ms.
    */
-  private register(userId: string, key: ResourceKey, ttlMs?: number): void {
-    const expiresAt = ttlMs ? Date.now() + ttlMs : null;
+  private addSub(userId: string, key: ResourceKey, ttlMs?: number): void {
+    const expiresAt = ttlMs != null ? Date.now() + ttlMs : null;
     let userMap = this.subs.get(userId);
     if (!userMap) {
       userMap = new Map();
       this.subs.set(userId, userMap);
     }
     userMap.set(key, expiresAt);
+  }
+
+  /**
+   * Record a subscription for the user and persist their sub set.
+   *
+   * @param userId - Caller user id.
+   * @param key - Resource key.
+   * @param ttlMs - Optional TTL in ms.
+   */
+  private register(userId: string, key: ResourceKey, ttlMs?: number): void {
+    this.addSub(userId, key, ttlMs);
     this.persistUser(userId);
   }
 
@@ -337,8 +354,9 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   /**
    * Hibernation-API callback fired when a WebSocket closes. Reads the user
    * id from the tags attached at `acceptWebSocket` time and, when no
-   * sockets remain for that user, clears their subscription map — matching
-   * the self-host broker's "drop subs on last detach" semantics.
+   * sockets remain for that user, clears their subscription map and the
+   * persisted storage entry — matching the self-host broker's "drop subs
+   * on last detach" semantics.
    *
    * Lean on the workerd hibernation contract that the closing socket is
    * already absent from `getWebSockets(userId)` by the time the callback
@@ -366,6 +384,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
     if (!userId) return;
     if (this.ctx.getWebSockets(userId).length === 0) {
       this.subs.delete(userId);
+      this.ctx.storage?.kv?.delete(`subs:${userId}`);
     }
   }
 
@@ -382,57 +401,48 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   }
 
   /**
-   * Rebuild the in-memory subscription map from live socket attachments on
-   * the first operation after a wake. Hibernation clears {@link subs} and
-   * reruns the constructor, but the connected WebSockets persist with their
-   * `serializeAttachment` payloads; hibernating clients never reconnect, so
-   * re-reading those attachments is the only way to restore who-is-subscribed
-   * without dropping events. Idempotent: the guard flag makes every call
-   * after the first a no-op within a live instance.
+   * Rebuild the in-memory subscription map from SQLite KV storage on the
+   * first operation after a wake, restricted to users with live sockets.
+   * Hibernation clears {@link subs} and reruns the constructor, but the
+   * connected WebSockets persist with their tags and the per-user entries
+   * persist in storage; hibernating clients never reconnect, so re-reading
+   * storage is the only way to restore who-is-subscribed without dropping
+   * events. Idempotent: the guard flag makes every call after the first a
+   * no-op within a live instance.
    */
   private ensureHydrated(): void {
     if (this.hydrated) return;
     this.hydrated = true;
+    const kv = this.ctx.storage?.kv;
+    if (!kv) return;
+    const seen = new Set<string>();
     for (const ws of this.ctx.getWebSockets()) {
-      const attachment = this.readAttachment(ws);
-      if (!attachment) continue;
-      this.subs.set(attachment.userId, new Map(attachment.subs));
+      const userId = this.ctx.getTags(ws)[0];
+      if (!userId || seen.has(userId)) continue;
+      seen.add(userId);
+      const entries = kv.get(`subs:${userId}`);
+      if (Array.isArray(entries)) {
+        this.subs.set(
+          userId,
+          new Map(entries as Array<[ResourceKey, number | null]>),
+        );
+      }
     }
   }
 
   /**
-   * Mirror a user's current subscription map onto the `serializeAttachment`
-   * of every socket the user holds, so the set survives hibernation. Sockets
-   * that do not expose the attachment API (test fakes) are skipped.
+   * Persist the user's current subscription entries into the DO's SQLite
+   * KV storage (`subs:<userId>`) so the set survives hibernation. Unlike
+   * per-socket `serializeAttachment` (~2KB ceiling, overflows past ~30
+   * subscriptions), storage is uncapped for this payload size. Storage is
+   * feature-guarded with optional chaining so test fakes without `storage`
+   * skip persistence. An empty set deletes the key instead of writing `[]`.
    *
-   * @param userId - User whose sockets to update.
+   * @param userId - User whose entries to persist.
    */
   private persistUser(userId: string): void {
-    const attachment: SocketAttachment = {
-      userId,
-      subs: [...(this.subs.get(userId)?.entries() ?? [])],
-    };
-    for (const ws of this.ctx.getWebSockets(userId)) {
-      ws.serializeAttachment?.(attachment);
-    }
-  }
-
-  /**
-   * Read a socket's persisted {@link SocketAttachment}, or `null` when the
-   * socket carries none or does not expose the attachment API.
-   *
-   * @param ws - Socket to read.
-   * @returns The parsed attachment, or `null`.
-   */
-  private readAttachment(ws: WebSocketLike): SocketAttachment | null {
-    const raw = ws.deserializeAttachment?.();
-    if (!raw || typeof raw !== "object") return null;
-    const attachment = raw as Partial<SocketAttachment>;
-    if (
-      typeof attachment.userId !== "string" ||
-      !Array.isArray(attachment.subs)
-    )
-      return null;
-    return { userId: attachment.userId, subs: attachment.subs };
+    const entries = [...(this.subs.get(userId)?.entries() ?? [])];
+    if (entries.length) this.ctx.storage?.kv?.put(`subs:${userId}`, entries);
+    else this.ctx.storage?.kv?.delete(`subs:${userId}`);
   }
 }
