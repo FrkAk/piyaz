@@ -4,10 +4,10 @@ import { and, eq, or, sql } from "drizzle-orm";
 import { uuidArray, type Conn, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges, type NewTaskEdge } from "@/lib/db/schema";
-import type { EdgeType, HistoryEntry } from "@/lib/types";
+import type { EdgeType } from "@/lib/types";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import { fetchDependencyChain } from "@/lib/db/raw/fetch-dependency-chain";
-import { appendTaskHistoryMany } from "@/lib/data/task";
+import { insertActivityEvents } from "@/lib/data/activity";
 import { formatMarkdown } from "@/lib/markdown/format";
 import type { AuthContext } from "@/lib/auth/context";
 import {
@@ -19,21 +19,6 @@ import {
 } from "@/lib/auth/authorization";
 import { taskAccessGateStmt } from "@/lib/data/access";
 import { emitEdgeMutation } from "@/lib/realtime/events";
-
-/**
- * Build a timestamped history entry.
- * @param entry - Partial entry without id/date.
- * @returns Complete history entry with generated id and current date.
- */
-function makeHistoryEntry(
-  entry: Omit<HistoryEntry, "id" | "date">,
-): HistoryEntry {
-  return {
-    ...entry,
-    id: crypto.randomUUID(),
-    date: new Date().toISOString(),
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Edge queries
@@ -415,18 +400,22 @@ export async function createEdge(
 
     const [created] = await tx.insert(taskEdges).values(data).returning();
 
-    const historyEntry = makeHistoryEntry({
-      type: "edge_added",
-      label: `Edge: ${data.edgeType}`,
-      description: `${data.edgeType} edge created.`,
-      actor: "ai",
-    });
-
-    await appendTaskHistoryMany(
-      [data.sourceTaskId, data.targetTaskId],
-      historyEntry,
-      { tx },
-    );
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: sourceTask.projectId,
+        taskId: data.sourceTaskId,
+        type: "edge_added",
+        summary: `added ${data.edgeType} → target`,
+        targetRef: data.targetTaskId,
+      },
+      {
+        projectId: sourceTask.projectId,
+        taskId: data.targetTaskId,
+        type: "edge_added",
+        summary: `added ${data.edgeType} ← source`,
+        targetRef: data.sourceTaskId,
+      },
+    ]);
 
     return { edge: created, projectId: sourceTask.projectId };
   });
@@ -554,20 +543,22 @@ export async function updateEdge(
         .where(eq(taskEdges.id, edgeId))
         .returning();
 
-      const historyEntry = makeHistoryEntry({
-        type: "edge_updated",
-        label: `Edge updated: ${row.edgeType}`,
-        description: `Edge updated${updates.edgeType ? ` to ${updates.edgeType}` : ""}${
-          updates.note !== undefined ? " with new note" : ""
-        }.`,
-        actor: "ai",
-      });
-
-      await appendTaskHistoryMany(
-        [existing.sourceTaskId, existing.targetTaskId],
-        historyEntry,
-        { tx },
-      );
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId,
+          taskId: existing.sourceTaskId,
+          type: "edge_updated",
+          summary: `updated the ${row.edgeType} edge → target`,
+          targetRef: existing.targetTaskId,
+        },
+        {
+          projectId,
+          taskId: existing.targetTaskId,
+          type: "edge_updated",
+          summary: `updated the ${row.edgeType} edge ← source`,
+          targetRef: existing.sourceTaskId,
+        },
+      ]);
 
       return { updated: row, existing, projectId };
     },
@@ -594,18 +585,22 @@ export async function removeEdge(ctx: AuthContext, edgeId: string) {
 
     await tx.delete(taskEdges).where(eq(taskEdges.id, edgeId));
 
-    const historyEntry = makeHistoryEntry({
-      type: "edge_removed",
-      label: `Edge removed: ${edge.edgeType}`,
-      description: `${edge.edgeType} edge removed.`,
-      actor: "user",
-    });
-
-    await appendTaskHistoryMany(
-      [edge.sourceTaskId, edge.targetTaskId],
-      historyEntry,
-      { tx },
-    );
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId,
+        taskId: edge.sourceTaskId,
+        type: "edge_removed",
+        summary: `removed the ${edge.edgeType} edge → target`,
+        targetRef: edge.targetTaskId,
+      },
+      {
+        projectId,
+        taskId: edge.targetTaskId,
+        type: "edge_removed",
+        summary: `removed the ${edge.edgeType} edge ← source`,
+        targetRef: edge.sourceTaskId,
+      },
+    ]);
 
     return { edge, projectId };
   });
