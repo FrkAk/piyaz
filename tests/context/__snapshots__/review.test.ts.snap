@@ -72,11 +72,13 @@ Prereq execution record
 
 ## Review Lens Prompts
 
-When producing the structured verdict, address each lens against the diff and the executionRecord above. Cite real file paths and line numbers; \`no findings\` is a valid answer.
+**The PR diff is the artifact under review.** Everything above — description, plan, execution record, decisions — is context the implementer recorded and may have drifted from the code. Verify claims against the code; never inherit them.
 
-- **Security**: trust-boundary input validation, authn / authz on new endpoints, secret handling, SQL or command injection surfaces, deserialization of untrusted data.
-- **Performance**: N+1 query patterns, unbounded memory growth, synchronous I/O on hot paths, missing indexes implied by new query shapes.
-- **Reliability**: failure modes the plan listed vs the diff's handling, silent error swallowing, idempotency on retry-eligible paths, transactional boundaries.
-- **Observability**: logs / metrics / traces consistent with the rest of the codebase, no high-cardinality dimensions that blow the metrics backend.
-- **Codebase standards**: project conventions from \`CLAUDE.md\` and the patterns upstream executionRecord entries cite. Lint and formatting belong to the toolchain; flag substantive deviations only."
+Work from your harness, not from this bundle: read the full diff (\`gh pr diff\`), walk the touched files in the repo, run the project's tests / typecheck / lint when available, and check CI state. Then address each lens against the actual code. Cite real file paths and line numbers; \`no findings\` is a valid answer.
+
+- **Security**: input validation at trust boundaries, authn / authz on any new surface (endpoint, RPC, IPC, message handler, tool), secret and credential handling, injection of untrusted data (query, command, path, deserialization), unsafe concurrency or memory handling where the language allows it.
+- **Performance**: work added to hot paths, repeated or N+1 I/O, unbounded growth (memory, queues, caches, files), algorithmic complexity against realistic data sizes, storage access shapes that imply a missing index or batch.
+- **Reliability**: failure modes the plan claimed vs what the diff handles, swallowed or silent errors, idempotency on retry-eligible paths, atomicity and transactional boundaries, resource cleanup, behavior under partial failure.
+- **Observability**: failures and key state transitions surfaced through the project's existing logging / metrics / tracing idiom, no new silent failure paths, no unbounded-cardinality dimensions.
+- **Codebase standards**: conventions from the project's agent-instruction files (\`CLAUDE.md\`, \`AGENTS.md\`, or equivalent) and the neighboring code. Lint and formatting belong to the toolchain; flag substantive deviations only."
 `;

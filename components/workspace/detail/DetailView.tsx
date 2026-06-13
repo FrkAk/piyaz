@@ -243,16 +243,16 @@ interface BundleStageBadgeProps {
 }
 
 /**
- * Mono lowercase tag rendered next to the "Context bundle preview" section
- * label — surfaces the bundle the next lifecycle consumer receives at this
- * point in the lifecycle.
+ * Mono tag rendered next to the "Context bundle preview" section label —
+ * surfaces the bundle the next lifecycle consumer receives at this point in
+ * the lifecycle.
  *
  * @param props - Badge props.
  * @returns Inline badge element.
  */
 function BundleStageBadge({ status, state }: BundleStageBadgeProps) {
   return (
-    <span className="inline-flex items-center rounded-md border border-accent/25 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] font-medium lowercase tracking-wider text-accent-light">
+    <span className="inline-flex items-center rounded-md border border-accent/25 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wider text-accent-light">
       {BUNDLE_LABEL_BY_STAGE[resolveStage(status, state)]}
     </span>
   );

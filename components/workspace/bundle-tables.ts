@@ -62,14 +62,14 @@ export const BUNDLE_BY_STAGE: Record<BundleStage, BundleKind> = {
 
 /** Header label / badge caption per stage. */
 export const BUNDLE_LABEL_BY_STAGE: Record<BundleStage, string> = {
-  draft: "working bundle",
-  plannable: "planning bundle",
-  "planned-blocked": "agent bundle",
-  ready: "agent bundle",
-  in_progress: "agent bundle",
-  in_review: "review bundle",
-  done: "completion record",
-  cancelled: "cancellation record",
+  draft: "Working Bundle",
+  plannable: "Planning Bundle",
+  "planned-blocked": "Agent Bundle",
+  ready: "Agent Bundle",
+  in_progress: "Agent Bundle",
+  in_review: "Review Bundle",
+  done: "Completion Record",
+  cancelled: "Cancellation Record",
 };
 
 /**

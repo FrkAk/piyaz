@@ -33,6 +33,6 @@ test("record kind splits into done and cancelled variants with distinct labels",
   expect(variantOf("done")).toBe("record-done");
   expect(variantOf("cancelled")).toBe("record-cancelled");
   expect(variantOf("ready")).toBe("agent");
-  expect(BUNDLE_LABEL_BY_STAGE.done).toBe("completion record");
-  expect(BUNDLE_LABEL_BY_STAGE.cancelled).toBe("cancellation record");
+  expect(BUNDLE_LABEL_BY_STAGE.done).toBe("Completion Record");
+  expect(BUNDLE_LABEL_BY_STAGE.cancelled).toBe("Cancellation Record");
 });

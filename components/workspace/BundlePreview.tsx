@@ -706,7 +706,7 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
     return (
       <RecordRefList
         items={donePrereqs(props)}
-        hint="Execution records are inlined in the bundle (MD view). Open a task to read its record."
+        hint="Execution records are inlined in the actual bundle. Open a task to read its record."
         emptyHint="No done prerequisites."
         onSelectTask={onSelectTask}
       />
@@ -716,7 +716,7 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
     return (
       <RecordRefList
         items={cancelledPrereqs(props)}
-        hint="Cancellation records are inlined in the bundle (MD view). Open a task to read its record."
+        hint="Cancellation records are inlined in the actual bundle. Open a task to read its record."
         emptyHint="No cancelled prerequisites."
         onSelectTask={onSelectTask}
       />
