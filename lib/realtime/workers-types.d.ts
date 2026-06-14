@@ -19,11 +19,18 @@ interface WebSocketLike {
   close(code?: number, reason?: string): void;
 }
 
-/** Minimal `DurableObjectState` shape — only methods the broker calls. */
+/** Minimal `DurableObjectState` shape — only members the broker calls. */
 interface DurableObjectStateLike {
   acceptWebSocket(ws: WebSocketLike, tags?: string[]): void;
   getWebSockets(tag?: string): WebSocketLike[];
   getTags(ws: WebSocketLike): string[];
+  storage?: {
+    kv?: {
+      get(key: string): unknown;
+      put(key: string, value: unknown): void;
+      delete(key: string): void;
+    };
+  };
 }
 
 /** Local declaration of workerd's `WebSocketPair` global. */

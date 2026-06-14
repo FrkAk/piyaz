@@ -36,11 +36,21 @@ export type HeaderRule = {
  *
  * @param opts.isProd - True when running in production.
  * @param opts.nonce - Per-request nonce. Required when `isProd` is true.
+ * @param opts.wsOrigin - Same-origin WebSocket origin (e.g. `wss://app.host`)
+ *   to allow in `connect-src`. Set on the Cloudflare deploy, whose realtime
+ *   runs over a same-origin WebSocket; `'self'` alone does not reliably match
+ *   `wss:` schemes across browsers (w3c/webappsec-csp#7). Passing the exact
+ *   origin keeps the allowance same-origin only, rather than the blanket
+ *   `wss:` scheme that would let injected script reach any host.
  * @returns Serialized CSP directive string.
  * @throws Error if `isProd` is true and no `nonce` is supplied.
  */
-export function buildCsp(opts: { isProd: boolean; nonce?: string }): string {
-  const { isProd, nonce } = opts;
+export function buildCsp(opts: {
+  isProd: boolean;
+  nonce?: string;
+  wsOrigin?: string;
+}): string {
+  const { isProd, nonce, wsOrigin } = opts;
 
   let scriptSrc: string;
   let connectSrc: string;
@@ -51,7 +61,9 @@ export function buildCsp(opts: { isProd: boolean; nonce?: string }): string {
       throw new Error("buildCsp: nonce is required in production");
     }
     scriptSrc = `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`;
-    connectSrc = "connect-src 'self'";
+    connectSrc = wsOrigin
+      ? `connect-src 'self' ${wsOrigin}`
+      : "connect-src 'self'";
     workerSrc = "worker-src 'self'";
   } else {
     scriptSrc = "script-src 'self' 'unsafe-eval' 'unsafe-inline'";

@@ -8,4 +8,4 @@
  *
  * Call sites import from this file so the alias swap is transparent.
  */
-export * from "./_broker";
+export * from "@/lib/realtime/_broker";

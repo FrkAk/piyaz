@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
@@ -8,8 +8,10 @@ import { initials } from "@/lib/ui/initials";
 import { teamAvatarGradient } from "@/lib/ui/team-avatar";
 import { formatAbsolute } from "@/lib/ui/relative-time";
 import { updateProfileAction } from "@/lib/actions/profile";
+import { changePasswordAction } from "@/lib/actions/password";
 
 const NAME_MAX = 80;
+const PASSWORD_MIN = 8;
 
 const INPUT_CLASS =
   "w-full rounded-md border border-border-strong bg-base px-3 py-2.5 text-[13px] text-text-primary placeholder:text-text-muted outline-none transition-colors focus:border-accent";
@@ -25,18 +27,22 @@ interface AccountTabProps {
     email: string;
     createdAt: Date | string;
   };
+  /** Credential row's updatedAt (password last changed); null hides the
+   *  password card (no password-bearing credential account). */
+  passwordUpdatedAt: Date | string | null;
 }
 
 /**
- * Account tab — single identity card (56px gradient avatar, locked email,
- * editable display name) plus a danger-zone card with the account-deletion
+ * Account tab — identity card (56px gradient avatar, locked email, editable
+ * display name), password card (collapsed disclosure backed by
+ * `changePasswordAction`), and a danger-zone card with the account-deletion
  * placeholder. Photo upload and account deletion are wired-once-backend-lands
  * placeholders — see DESIGN §11 conventions for non-functional buttons.
  *
- * @param props - Identity slice.
- * @returns Tab body with H1, identity card, danger zone.
+ * @param props - Identity slice + password metadata.
+ * @returns Tab body with H1, identity card, password card, danger zone.
  */
-export function AccountTab({ user }: AccountTabProps) {
+export function AccountTab({ user, passwordUpdatedAt }: AccountTabProps) {
   const router = useRouter();
   const [name, setName] = useState(user.name);
   const [pending, startTransition] = useTransition();
@@ -172,7 +178,257 @@ export function AccountTab({ user }: AccountTabProps) {
         </div>
       </form>
 
+      {passwordUpdatedAt !== null ? (
+        <PasswordSection lastChanged={passwordUpdatedAt} />
+      ) : null}
+
       <DangerZone />
+    </section>
+  );
+}
+
+/**
+ * Password card — collapsed disclosure showing a masked motif plus the
+ * last-changed date; expands into current/new/confirm fields submitted
+ * through `changePasswordAction`. A successful change revokes every other
+ * session and all authorized agents server-side, so the helper copy says
+ * exactly that. Collapse resets all field state so reopening always starts
+ * clean.
+ *
+ * @param props - `lastChanged` from the credential account row.
+ * @returns Card with disclosure form between identity card and danger zone.
+ */
+function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
+  const router = useRouter();
+  const fieldId = useId();
+  const [open, setOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState(false);
+  // isPending only flips after a re-render, so two submits in one event
+  // batch (double Enter) would both pass the `pending` guard and fire two
+  // server actions — burning two rate-limit slots and landing the loser's
+  // stale error on the collapsed form. The ref closes synchronously.
+  const inFlightRef = useRef(false);
+
+  const mismatch =
+    confirmPassword.length > 0 && confirmPassword !== newPassword;
+  const sameAsCurrent =
+    newPassword.length > 0 && newPassword === currentPassword;
+  const submittable =
+    currentPassword.length > 0 &&
+    newPassword.length >= PASSWORD_MIN &&
+    newPassword !== currentPassword &&
+    confirmPassword === newPassword;
+
+  const close = () => {
+    setOpen(false);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setError(null);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape" && !pending) close();
+  };
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!submittable || pending || inFlightRef.current) return;
+    inFlightRef.current = true;
+    setError(null);
+    startTransition(async () => {
+      try {
+        const result = await changePasswordAction({
+          currentPassword,
+          newPassword,
+        });
+        if (!result.ok) {
+          setError(result.message);
+          return;
+        }
+        close();
+        setSavedFlash(true);
+        window.setTimeout(() => setSavedFlash(false), 900);
+        router.refresh();
+      } catch {
+        setError(
+          "Something went wrong reaching the server. Check your connection and try again.",
+        );
+      } finally {
+        inFlightRef.current = false;
+      }
+    });
+  };
+
+  return (
+    <section className="relative rounded-[10px] border border-border bg-surface p-5 shadow-[var(--shadow-card)]">
+      <AnimatePresence>
+        {savedFlash ? (
+          <motion.span
+            key="password-saved-flash"
+            aria-hidden="true"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.45, ease: "easeOut" }}
+            className="pointer-events-none absolute inset-0 rounded-[10px] shadow-[var(--shadow-glow-done)]"
+          />
+        ) : null}
+      </AnimatePresence>
+
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-text-primary">
+            Password
+          </p>
+          <p
+            aria-hidden="true"
+            className="mt-0.5 select-none text-[13px] leading-none tracking-[0.2em] text-text-muted"
+          >
+            ••••••••••
+          </p>
+          <p className="mt-1.5 text-[11.5px] text-text-muted">
+            Last changed {formatAbsolute(lastChanged)}
+          </p>
+        </div>
+        {!open ? (
+          <Button variant="secondary" size="md" onClick={() => setOpen(true)}>
+            Change password
+          </Button>
+        ) : null}
+      </div>
+
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            key="password-form"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
+            style={{ overflow: "hidden" }}
+          >
+            <form
+              onSubmit={handleSubmit}
+              onKeyDown={handleKeyDown}
+              className="mt-5 space-y-4"
+            >
+              <label className="block">
+                <span className={FIELD_LABEL_CLASS}>Current password</span>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  autoComplete="current-password"
+                  autoFocus
+                  className={INPUT_CLASS}
+                />
+              </label>
+
+              <label className="block">
+                <span className={FIELD_LABEL_CLASS}>New password</span>
+                {/* No maxLength: clipping a pasted 140-char generated
+                    password here would silently store the truncated form.
+                    The zod max in changePasswordAction rejects loudly. */}
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  autoComplete="new-password"
+                  aria-invalid={sameAsCurrent ? true : undefined}
+                  aria-describedby={
+                    sameAsCurrent
+                      ? `${fieldId}-new-error`
+                      : `${fieldId}-new-hint`
+                  }
+                  className={INPUT_CLASS}
+                />
+                {sameAsCurrent ? (
+                  <p
+                    id={`${fieldId}-new-error`}
+                    role="alert"
+                    className="mt-1 text-[11px] text-cancelled"
+                  >
+                    New password must be different from your current one.
+                  </p>
+                ) : (
+                  <p
+                    id={`${fieldId}-new-hint`}
+                    className="mt-1 text-[11px] text-text-muted"
+                  >
+                    At least {PASSWORD_MIN} characters.
+                  </p>
+                )}
+              </label>
+
+              <label className="block">
+                <span className={FIELD_LABEL_CLASS}>Confirm new password</span>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  autoComplete="new-password"
+                  aria-invalid={mismatch ? true : undefined}
+                  aria-describedby={
+                    mismatch ? `${fieldId}-confirm-error` : undefined
+                  }
+                  className={INPUT_CLASS}
+                />
+                {mismatch ? (
+                  <p
+                    id={`${fieldId}-confirm-error`}
+                    role="alert"
+                    className="mt-1 text-[11px] text-cancelled"
+                  >
+                    Passwords don&apos;t match.
+                  </p>
+                ) : null}
+              </label>
+
+              <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
+                <p className="min-w-0 text-[11.5px] leading-relaxed text-text-muted">
+                  Changing your password signs out all your other devices and
+                  revokes connected agents.
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="md"
+                    onClick={close}
+                    disabled={pending}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    disabled={!submittable}
+                    isLoading={pending}
+                  >
+                    Change password
+                  </Button>
+                </div>
+              </div>
+
+              {error ? (
+                <p
+                  role="alert"
+                  className="rounded-md border border-cancelled/25 bg-cancelled/10 px-3 py-2 text-[12px] text-cancelled"
+                >
+                  {error}
+                </p>
+              ) : null}
+            </form>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </section>
   );
 }

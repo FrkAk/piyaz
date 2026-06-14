@@ -79,9 +79,9 @@ Six tools. Read tools have cost (slim → very heavy); pick the lightest that an
 |---|---|---|
 | `summary` | slim | quick status check on a single task (status, edge counts). |
 | `working` | medium | refining, discussing, or reviewing a task (criteria, decisions, 1-hop edges, siblings). |
-| `agent` | heavy | handing off to a coding agent. Includes implementation plan, multi-hop upstream execution records, files, "Done Means", downstream specs. ~4-8K tokens. |
-| `planning` | heavy | writing an implementation plan. Includes project description, acceptance criteria, upstream execution records, downstream specs. |
-| `review` | heavy | reviewing an `in_review` task. Renders `implementationPlan` alongside `executionRecord`, surfaces the PR link from `task_links` (kind `pull_request`), computes plan-vs-files drift, lists downstream impact, emits review-lens prompts (security / perf / reliability / observability / codebase standards). Read by `mymir:review` in composer Phase 4 and in direct review dispatch. |
+| `agent` | heavy | handing off to a coding agent. Includes implementation plan, multi-hop upstream execution records (each with its PR link), "Done Means", downstream specs. ~4-8K tokens. Includes a ⚠ Blocked section when direct prerequisites are unfinished. For `done`/`cancelled` tasks returns the retrospective record bundle (project, what the task was, outcome, decisions, PR link) instead of the implementation shape. No bundle renders recorded file lists; the linked PR diff is the source of truth for what changed. |
+| `planning` | heavy | writing an implementation plan. Includes project description, acceptance criteria, upstream execution records, downstream specs. Also includes task links and abandoned approaches (cancelled-dep execution records with their closed-PR links). |
+| `review` | heavy | reviewing an `in_review` task. Renders `implementationPlan` alongside `executionRecord`, surfaces the PR link from `task_links` (kind `pull_request`), lists downstream impact, emits review-lens prompts; the PR diff is the source of truth for what changed (security / perf / reliability / observability / codebase standards). Read by `mymir:review` in composer Phase 4 and in direct review dispatch. |
 
 `mymir_query type='search'` returns `_hints` that tell you which depth to use. Follow them. Don't guess.
 
@@ -159,8 +159,8 @@ You handle most Mymir interactions inline. The four agents are escalations for h
 
 Three distinct cases:
 
-- **Dispatching a coding sub-agent to implement a single task** (the most common case in a multi-session workflow). Brief them that they are dispatched. They follow the Completion Protocol (lifecycle §2): mark the task `in_review` directly with the full Completion Protocol payload (the implementer's terminal write; HOTL flips to `done` after PR approval), no asking, return one-sentence summary. They open a PR per lifecycle §2.3 if the work changed code.
-- **Dispatching the review sub-agent (`mymir:review`)** for an `in_review` task or a PR. The subagent reads `mymir_context depth='review'` and returns a structured verdict (`approve` / `request-changes` / `block`) with per-lens reasoning, AC evaluation against the diff, plan-vs-files drift, and downstream impact. It is read-only over Mymir; it does not flip status, write to `decisions`, or touch the working tree. Surface the verdict to the user verbatim; HOTL still owns `in_review → done` on GitHub.
+- **Dispatching a coding sub-agent to implement a single task** (the most common case in a multi-session workflow). Brief them that they are dispatched. They follow the Completion Protocol (lifecycle §2): mark the task `in_review` directly with the full Completion Protocol payload (the implementer's terminal write; HOTL flips to `done` after PR approval), no asking, return one-sentence summary. They open a PR per §10 step 3 if the work changed code.
+- **Dispatching the review sub-agent (`mymir:review`)** for an `in_review` task or a PR. The subagent reads `mymir_context depth='review'` and returns a structured verdict (`approve` / `request-changes` / `block`) with per-lens reasoning, AC evaluation against the diff, plan-vs-diff drift, and downstream impact. It is read-only over Mymir; it does not flip status, write to `decisions`, or touch the working tree. Surface the verdict to the user verbatim; HOTL still owns `in_review → done` on GitHub.
 - **Dispatching a meta-agent (`mymir:brainstorm` / `mymir:decompose` / `mymir:decompose-task` / `mymir:decompose-feature` / `mymir:onboarding` / `mymir:manage`)**. Each has its own gates and reporting style documented in its agent file. The Completion Protocol applies only when they themselves mark a task done as part of their work. Brief them on the user intent, then trust their phase-gating.
 
 ## Workflows
@@ -249,7 +249,7 @@ Direct-mode counterpart to composer Phase 4. Use when the user says "review DRF-
    ```
 
    The PR URL is optional when `task.links` already carries a `kind='pull_request'` entry; pass it through when you have it to keep the dispatch self-contained.
-4. **Surface the verdict verbatim.** The reviewer returns a structured verdict (`approve` / `request-changes` / `block`) with file-cited reasoning per lens, AC evaluation, plan-vs-files drift, and downstream impact. Do not paraphrase, do not auto-act. The verdict is advisory; HOTL still owns the `in_review → done` transition on GitHub.
+4. **Surface the verdict verbatim.** The reviewer returns a structured verdict (`approve` / `request-changes` / `block`) with file-cited reasoning per lens, AC evaluation, plan-vs-diff drift, and downstream impact. Do not paraphrase, do not auto-act. The verdict is advisory; HOTL still owns the `in_review → done` transition on GitHub.
 5. **Optional follow-up.** If the verdict's downstream-impact section flags edges that need attention, run propagation per lifecycle §3 to keep the graph honest. Do not flip the task status based on the verdict; only the HOTL operator can move `in_review → done`.
 
 ### Dispatch coding agents in parallel
