@@ -4,6 +4,12 @@ How tasks move through state, what each state means, the Completion Protocol (wi
 
 Agents read this file before any status transition, before marking a task done or cancelled, and after every status change to propagate.
 
+## Contents
+
+- §1 Status lifecycle: what each state means, requires, and forbids
+- §2 Completion Protocol: mode detection, required fields, PR-opening, checklist
+- §3 Propagate after every change (Iron Law)
+
 ---
 
 ## 1. Status lifecycle
@@ -20,7 +26,7 @@ draft → planned → in_progress → in_review → done
 | `draft` | `description`, `acceptanceCriteria` | `executionRecord`, `implementationPlan` | implementation plan saved → `planned` |
 | `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `action='update' status='in_progress'` → `in_progress` |
 | `in_progress` | + active worker (one only) | — | work complete + record + ACs + Completion Protocol §2 run → `in_review` |
-| `in_review` | + `executionRecord`, `decisions`, `files`, every AC evaluated, `prUrl` (optional sugar — when a PR was opened; backend upserts a `task_links` row with `kind='pull_request'`) | — | HOTL operator inspects PR and flips → `done` (or back to `in_progress` for rework) |
+| `in_review` | + `executionRecord`, `decisions`, `files`, every AC evaluated, `prUrl` (optional sugar, set when a PR was opened; backend upserts a `task_links` row with `kind='pull_request'`) | — | HOTL operator inspects PR and flips → `done` (or back to `in_progress` for rework) |
 | `done` | (inherited from `in_review`) | — | terminal |
 | `cancelled` | + `executionRecord` (rationale + what was tried), `decisions` | — | terminal |
 
@@ -63,12 +69,25 @@ draft → planned → in_progress → in_review → done
 
 ## 2. Completion Protocol
 
-Before transitioning a task to `in_review`, `done`, or `cancelled`:
+Before transitioning a task to `in_review`, `done`, or `cancelled`. Copy this checklist and check items off as you complete them; the subsections below carry the full rules per item:
+
+```
+Completion Protocol:
+- [ ] Mode detected: dispatched (mark in_review directly) or direct (ask first) (§2.1)
+- [ ] executionRecord: 3-5 sentences, grounded, HOW it was built (§2.2)
+- [ ] decisions: CHOICE + WHY one-liners from the conversation (§2.2)
+- [ ] files: every repo path touched; files=[] explicitly when none (§2.2)
+- [ ] acceptanceCriteria: each item evaluated true/false against the work (§2.2)
+- [ ] PR opened if the work changed code; template detected and filled (§2.3, §2.4)
+- [ ] prUrl passed on the in_review update when a PR exists (§2.2)
+- [ ] Response _hints read; required-field hints cleared before continuing
+- [ ] Propagation run (§3)
+```
 
 ### 2.1. Detect mode by transcript
 
 - **Dispatched mode**: your context shows you were invoked via the Task tool by a parent agent. Mark `in_review` directly with the full payload (the implementer's terminal write); the HOTL operator finalizes to `done`. Return to the parent with the task ref and a one-sentence summary. Do not ask.
-- **Direct mode**: invoked by the user in a normal session. Ask "Ready to mark this `in_review`?" with a one-sentence executionRecord preview. Wait for explicit confirmation; the HOTL operator finalizes to `done` after PR approval.
+- **Direct mode**: invoked by the user in a normal session. Ask "Ready to mark this `in_review`?" with a one-sentence executionRecord preview. Wait for explicit confirmation; the HOTL operator finalizes to `done` after PR approval. An explicit user order ("mark EDR-5 done") is itself the confirmation; do not re-ask. "Don't ask me anything" waives the question, never the required fields' honesty: record only what you can cite, leave unevidenced ACs unchecked, and tell the user which fields still need input.
 - **Uncertain**: default to asking. A spurious confirmation prompt is cheap; an unauthorized status change is expensive.
 
 ### 2.2. Populate the required fields
@@ -76,6 +95,8 @@ Before transitioning a task to `in_review`, `done`, or `cancelled`:
 `executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
 
 For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+
+Evaluating existing acceptance criteria passes `{text, checked}` objects; this updates the rows in place. `overwriteArrays=true` is never part of the Completion Protocol; if you find yourself reaching for it here, stop and re-read the red flags in SKILL.md.
 
 ### 2.3. Open a PR if the work changed code
 
@@ -90,7 +111,7 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 
 **If a template exists**: fill it. Map task fields onto template sections only where they fit. Leave a section blank rather than invent content. Common mappings:
 
-- Linked issue / linked task: include the `taskRef` in `[BRACKETS]` (e.g. `[MYMR-83]`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference any related tasks elsewhere as plain links (no brackets). Add `Closes #N` on its own line if a GitHub issue is being resolved.
+- Linked issue / linked task: include the `taskRef` in `[BRACKETS]` (e.g. `[LSQ-38]`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference any related tasks elsewhere as plain links (no brackets). Add `Closes #N` on its own line if a GitHub issue is being resolved.
 - Summary section: 2 to 3 sentences from `executionRecord`.
 - Test plan / verification section: the `acceptanceCriteria` items that are checked.
 - Decisions or notes-for-reviewer section if present: relevant entries from `decisions`.
@@ -100,7 +121,7 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 ```markdown
 ## Summary
 
-**Task Reference**: [MYMR-XXX]
+**Task Reference**: [PREFIX-N]
 <!-- The ONE primary task this PR builds. Brackets trigger Mymir
      PR-status tracking. Use them only here. Reference any related
      tasks elsewhere as plain links (no brackets). -->
