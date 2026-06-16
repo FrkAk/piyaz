@@ -38,8 +38,8 @@ Two failure modes, both lethal to Piyaz's value:
 After any approved gate (decompose Phase 1, onboarding Phase 3, brainstorm synthesis), append the approved plan to the project's `description` field.
 
 - **Why.** The project description is durable across machines and survives session compaction. The chat does not.
-- **Caveat.** `mymir_project action='update' description='...'` REPLACES the field; it does not append. Read-modify-write.
-- **Effect.** The plan becomes recoverable on any session restart. `mymir_project action='select'` returns the description including your plan. Token-cheap retrieval.
+- **Caveat.** `piyaz_project action='update' description='...'` REPLACES the field; it does not append. Read-modify-write.
+- **Effect.** The plan becomes recoverable on any session restart. `piyaz_project action='select'` returns the description including your plan. Token-cheap retrieval.
 
 **Read-modify-write procedure:**
 
@@ -54,7 +54,7 @@ After any approved gate (decompose Phase 1, onboarding Phase 3, brainstorm synth
 
    <plan markdown>
    ```
-3. `mymir_project action='update' description='<combined>'`.
+3. `piyaz_project action='update' description='<combined>'`.
 
 ---
 
@@ -118,7 +118,7 @@ status: in-progress
 3. **Read first on resume**, when session-start runs resume mode or a compaction signal triggers mid-session.
    - Check the local file first via `Read`. If found, it has progress and notes; use it.
    - If missing, fall back to the project description (cross-machine scenario).
-   - Either way, re-fetch `mymir_query type='list'` and dedupe.
+   - Either way, re-fetch `piyaz_query type='list'` and dedupe.
 4. **Cleanup or archive** when the workflow completes. Either:
    - Delete `.piyaz/<workflow>-<projectIdentifier>.md`, or
    - Rename to `.piyaz/archive/<workflow>-<projectIdentifier>-<date>.md` if the user wants a paper trail.
@@ -129,10 +129,10 @@ The `.piyaz/` directory is scratch. Never committed. The first write should ensu
 
 ## 4. Resume mode (always run before any write phase)
 
-At the start of any decompose / onboarding session, before any `mymir_task action='create'`:
+At the start of any decompose / onboarding session, before any `piyaz_task action='create'`:
 
 1. **Check the local working file first.** `Read` `.piyaz/<workflow>-<projectIdentifier>.md`. If it exists, that is your working state.
-2. If the local file is missing, `mymir_query type='list'` (slim) plus re-read the project description from the `select` response. If a Decomposition Plan or Onboarding Proposal section exists in the description, that is your authoritative plan.
+2. If the local file is missing, `piyaz_query type='list'` (slim) plus re-read the project description from the `select` response. If a Decomposition Plan or Onboarding Proposal section exists in the description, that is your authoritative plan.
 3. Compare: which planned tasks already exist (match by title), which are missing.
 4. **If existing tasks > 0:** you are resuming. Surface this to the user: "I see N tasks already exist in this project. The approved plan calls for M tasks. I'll create the M-N missing ones." Do NOT recreate existing tasks.
 5. **If existing tasks == 0:** fresh run. Proceed normally.
@@ -145,7 +145,7 @@ At the start of any decompose / onboarding session, before any `mymir_task actio
 **Build a known-titles set once at the start of the write phase, then dedupe in memory.**
 
 ```
-existing = { task.title.lower() for task in mymir_query_list_result }
+existing = { task.title.lower() for task in piyaz_query_list_result }
 for planned_task in plan:
     if planned_task.title.lower() in existing:
         skip; continue
@@ -175,7 +175,7 @@ The audit:
    - ACs: 2 to 4 binary criteria? If single or vague, REWRITE.
    - Tags: all three dimensions (work-type, cross-cutting, tech) present? If any missing, FIX. Priority lives in the `priority` field, not in `tags`.
    - Category: matches a project category, not a forbidden one? If wrong, FIX.
-3. If any of those need fixing, run `mymir_task action='update'` BEFORE creating more.
+3. If any of those need fixing, run `piyaz_task action='update'` BEFORE creating more.
 
 Quality drift compounds. A bad task at position 15 is a 5-second fix. The same drift discovered at position 50 means rewriting 35 tasks.
 
@@ -199,7 +199,7 @@ Do not power through. The user invoked you to produce quality work, not to resta
 ## 8. What this means in practice
 
 - Plan is durable: it lives in the project description (cross-machine) and the local working file (in-session).
-- Progress is durable: progress checklist in the local working file; derivable from `mymir_query type='list'` if the local file is missing.
+- Progress is durable: progress checklist in the local working file; derivable from `piyaz_query type='list'` if the local file is missing.
 - Quality is enforced: periodic self-audit catches drift.
 - Recovery is automatic: resume mode runs at every session start, reads local file first, falls back to project description.
 
@@ -228,7 +228,7 @@ Some Piyaz conventions are validated by the server; others depend on agent disci
 - Acceptance criteria: 2 to 4 binary items, no "works correctly" filler.
 - Edge note quality: substantive, no "needed" / "depends" placeholders.
 - Lifecycle monotonicity: `draft → planned → in_progress → done`. The server does not block direct draft → done jumps.
-- `mymir_query type='overview'` frequency: at most once per session. Skill discipline only.
+- `piyaz_query type='overview'` frequency: at most once per session. Skill discipline only.
 - `overwriteArrays=true` confirmation: the server does NOT warn when the new array is shorter than the existing array. Confirm with the user before passing it.
 
 When in doubt, treat any rule that lives in `references/artifacts.md` or `references/lifecycle.md` as agent-enforced unless this section says otherwise.

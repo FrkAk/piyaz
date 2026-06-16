@@ -44,7 +44,7 @@ LLMs forget over long sessions. Refresh any reference mid-session when uncertain
 
 The Piyaz MCP server's instructions cover multi-team awareness, session setup, and tool semantics. Tool descriptions and `_hints` arrays are runtime instructions; read them on every call.
 
-Tools you will use: `mymir_project` (`select`, `update` only when persisting a large-feature plan to the description), `mymir_query` (`meta`, `list`, `search`, `edges`), `mymir_context` (any depth, when verifying integration points), `mymir_task` (`create`), `mymir_edge` (`create`). You do not implement tasks, mark them done, or open PRs; you scaffold the new work.
+Tools you will use: `piyaz_project` (`select`, `update` only when persisting a large-feature plan to the description), `piyaz_query` (`meta`, `list`, `search`, `edges`), `piyaz_context` (any depth, when verifying integration points), `piyaz_task` (`create`), `piyaz_edge` (`create`). You do not implement tasks, mark them done, or open PRs; you scaffold the new work.
 
 ## Refusal: out-of-scope additions
 
@@ -81,9 +81,9 @@ Do not proceed. A vague feature begets vague tasks.
 
 ## Session setup
 
-1. **Resolve the project.** `mymir_project action='list'` then `action='select' projectId='<id>'`. The user names the project; if ambiguous (multiple projects whose scope could absorb this feature), ASK before selecting. Surface candidates and the feature description: "I see `<A>` and `<B>` could plausibly own this feature. Which one are we extending?"
-2. `mymir_query type='meta' projectId='<id>'`. Returns existing categories, tag vocabulary, and status counts. **Cache; do not repeat in the session.** New tasks must use these categories and reuse this tag vocabulary.
-3. `mymir_query type='list' projectId='<id>'`. Returns the existing task titles. Build a known-titles set for idempotent creation. Also identify integration points: tasks the new feature will likely depend on (auth, schema, core utilities, agent loop, HAL primitives, depending on project shape).
+1. **Resolve the project.** `piyaz_project action='list'` then `action='select' projectId='<id>'`. The user names the project; if ambiguous (multiple projects whose scope could absorb this feature), ASK before selecting. Surface candidates and the feature description: "I see `<A>` and `<B>` could plausibly own this feature. Which one are we extending?"
+2. `piyaz_query type='meta' projectId='<id>'`. Returns existing categories, tag vocabulary, and status counts. **Cache; do not repeat in the session.** New tasks must use these categories and reuse this tag vocabulary.
+3. `piyaz_query type='list' projectId='<id>'`. Returns the existing task titles. Build a known-titles set for idempotent creation. Also identify integration points: tasks the new feature will likely depend on (auth, schema, core utilities, agent loop, HAL primitives, depending on project shape).
 4. **Resume mode** (only when a prior decompose-feature run for this feature was interrupted; large features only):
    - Check for `.piyaz/decompose-feature-<projectIdentifier>-<feature-slug>.md`. If it exists, that is your working state.
    - Otherwise, fresh run.
@@ -139,7 +139,7 @@ Plan task granularity per artifacts §5:
 
 **Use the project's existing categories. Do not coin new ones mid-feature.** The project's category list is fixed scaffolding (artifacts §4); coining a new category mid-feature pollutes drawer grouping for every existing task. If no existing category fits, ask the user whether to add one to the project's scaffolding before proceeding (separate, explicit decision; do not bundle it into the feature plan).
 
-**Reuse existing tags.** Pull from `mymir_query type='meta'`. Coining new cross-cutting tags is acceptable when the feature genuinely introduces a new quality concern (e.g. the project gains a `safety` dimension it did not have); coining new tech tags is acceptable when the feature adds a new dep to the manifest. Coining new work-type or area-shaped tags is forbidden.
+**Reuse existing tags.** Pull from `piyaz_query type='meta'`. Coining new cross-cutting tags is acceptable when the feature genuinely introduces a new quality concern (e.g. the project gains a `safety` dimension it did not have); coining new tech tags is acceptable when the feature adds a new dep to the manifest. Coining new work-type or area-shaped tags is forbidden.
 
 Write a structured feature decomposition plan and present it to the user:
 
@@ -184,7 +184,7 @@ Present the plan to the user. Wait for explicit "yes, proceed" or
 "approved" or unambiguous green light. Do NOT interpret hedging ("looks
 fine", "sure", "I trust you") as approval.
 
-You may not call mymir_task action='create' or mymir_edge action='create'
+You may not call piyaz_task action='create' or piyaz_edge action='create'
 before this gate clears.
 
 The user may edit the plan: add tasks, remove tasks, rewrite descriptions,
@@ -220,7 +220,7 @@ For features with > 10 tasks, follow resilience §2 and §3 in scaled form:
 
    <plan content from Phase 1, verbatim>
    ```
-3. `mymir_project action='update' description='<combined>'`.
+3. `piyaz_project action='update' description='<combined>'`.
 
 ### Step B: write the local working file
 
@@ -260,7 +260,7 @@ For features with ≤ 10 tasks, proceed to Phase 2 directly. Idempotent creation
 
 Only after approval AND, for large features, after the plan is persisted.
 
-For each task in the approved plan, `mymir_task action='create'` with:
+For each task in the approved plan, `piyaz_task action='create'` with:
 
 - **title**: verb plus noun, imperative.
 - **description**: 2 to 4 sentences. Cover what plus why plus how it fits the feature and the project.
@@ -276,7 +276,7 @@ For each task in the approved plan, `mymir_task action='create'` with:
 
 Build the known-titles set from the resume-mode `list` call. Before each create, check the title (lowercased) against the set. If present, skip; otherwise create and add the title to the set. The slim `list` is one MCP roundtrip; in-memory dedupe is free.
 
-### Quality bar before each `mymir_task action='create'`
+### Quality bar before each `piyaz_task action='create'`
 
 - [ ] Title verb plus noun, specific (not generic)
 - [ ] Description 2 to 4 sentences
@@ -298,7 +298,7 @@ For large features only: tick off created tasks in the working file's Progress s
 
 ## Phase 3: Create edges
 
-For each dependency from your plan, `mymir_edge action='create'`:
+For each dependency from your plan, `piyaz_edge action='create'`:
 
 - **type**: `depends_on` (source needs target's output) or `relates_to` (informational link, neither blocks the other). Litmus test per artifacts §3.
 - **note**: brief to a developer about to start the source task. What does this task get from the target? Empty notes ("needed", "depends") are forbidden.
@@ -306,9 +306,9 @@ For each dependency from your plan, `mymir_edge action='create'`:
 Two flavors of edge:
 
 - **Within-feature edges**: between the new tasks. Same shape as decompose.md's Phase 3.
-- **Cross-feature edges**: between a new task and an existing project task. Verify the existing task's UUID via `mymir_query type='search' query='<existingRef>'` before creating. Edge notes for cross-feature edges should explicitly name what the new task gets from the existing one (or vice versa).
+- **Cross-feature edges**: between a new task and an existing project task. Verify the existing task's UUID via `piyaz_query type='search' query='<existingRef>'` before creating. Edge notes for cross-feature edges should explicitly name what the new task gets from the existing one (or vice versa).
 
-After all edges created: `mymir_query type='edges' taskId='<id>'` per high-degree task. Confirm direction and notes look right.
+After all edges created: `piyaz_query type='edges' taskId='<id>'` per high-degree task. Confirm direction and notes look right.
 
 ---
 
@@ -325,7 +325,7 @@ Run through this checklist mentally. If anything fails, fix it (update or delete
 - [ ] **Tag completeness**: all three dimensions per task; `priority` set.
 - [ ] **Category sanity**: every task uses a project category, no new ones invented mid-feature.
 
-**Project status is unchanged.** Decompose-feature does not call `mymir_project action='update' status='active'`; the project was already active when this session started, and adding a feature does not re-gate it.
+**Project status is unchanged.** Decompose-feature does not call `piyaz_project action='update' status='active'`; the project was already active when this session started, and adding a feature does not re-gate it.
 
 Summary (markdown, to the user):
 
@@ -345,7 +345,7 @@ For large features, mention the working file location so the user can clean it u
 - Phase 1 is read-only. The plan is presented as markdown text.
 - Phase 2 is N task creates (typically 5 to 20). Each is ~1 MCP roundtrip.
 - Phase 3 is N edge creates plus verification reads.
-- Run `mymir_query type='meta'` exactly once at session setup. Do not repeat.
+- Run `piyaz_query type='meta'` exactly once at session setup. Do not repeat.
 - Bundle related task creates into the same response when possible (parallel calls).
 - Re-read references mid-session if your sense of the rules drifts. Refreshing is cheap.
 

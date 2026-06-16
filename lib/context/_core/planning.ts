@@ -219,7 +219,7 @@ export function buildPlanningContextFrom(data: PlanningContextData): string {
 /**
  * Build planning-optimized context for a task.
  *
- * The MCP `mymir_context` entry point. Resolves only the planning data this
+ * The MCP `piyaz_context` entry point. Resolves only the planning data this
  * depth renders, then delegates to the pure {@link buildPlanningContextFrom}
  * assembler.
  *

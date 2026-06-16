@@ -61,7 +61,7 @@ Examples of hints you must obey:
 
 - Missing required fields on `done`: hint says `executionRecord is required`. Re-call with the field.
 - Tool description says "REQUIRED in multi-team accounts". The server rejects ambiguous calls.
-- Hint says "no ready tasks; try `mymir_analyze type='plannable'`". Switch to plannable. Do not invent ready work.
+- Hint says "no ready tasks; try `piyaz_analyze type='plannable'`". Switch to plannable. Do not invent ready work.
 - Hint says "edges to cancelled task remain in place". Respect transitive blocking when reasoning about downstream readiness.
 
 **Order rule when multiple hints fire.** When two or more `_hints` come back in the same response (e.g. "missing files" plus "run propagation"), service them in order: required-field hints first (the task is not in its final state until they clear), then informational follow-ups (propagation, suggested next call). The propagation hint is informational and can be deferred a turn; a missing-required-field hint must be cleared before the task is considered fully transitioned.

@@ -104,7 +104,7 @@ All four plugins bundle the shared components:
 
 | Component | What it does |
 | --- | --- |
-| **6 MCP tools** | `mymir_project`, `mymir_task`, `mymir_edge`, `mymir_query`, `mymir_context`, `mymir_analyze` |
+| **6 MCP tools** | `piyaz_project`, `piyaz_task`, `piyaz_edge`, `piyaz_query`, `piyaz_context`, `piyaz_analyze` |
 | **`/piyaz` skill** | Auto-invokes when conversation matches project planning; routes to inline workflows or hands off to a deep-mode workflow when needed |
 | **Brainstorm workflow** | Explore and shape a project idea through structured conversation |
 | **Onboarding workflow** | Reverse-engineer an existing codebase into a task graph with shipped work recorded as `done` |

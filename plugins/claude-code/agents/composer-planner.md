@@ -38,7 +38,7 @@ The canonical piyaz rules load with this agent. Citations later (`conventions §
 
 ### Branching on entry status
 
-- **Entry status = `draft`**: the task has no saved plan. Write the full plan and transition to `planned` in one `mymir_task` call (see step 5).
+- **Entry status = `draft`**: the task has no saved plan. Write the full plan and transition to `planned` in one `piyaz_task` call (see step 5).
 - **Entry status = `planned`**: the task already has a plan. Read it first, then decide whether the research brief shows the plan is stale:
   - If the brief confirms the existing plan (no new files surfaced, no new patterns, no version drift, all ACs still binary): keep the plan as-is. Do not write anything. Status stays `planned`. Skip the rewrite in step 4 entirely. The audit log records that you ran without mutating; that is the correct trace.
   - If the brief surfaces material drift (new files revealed, version mismatch on a library the plan depends on, ACs the brief flagged as ambiguous): rewrite the plan to incorporate the brief's findings. Status stays `planned`. The rewrite replaces the prior plan in the `implementationPlan` field (it is a single text column; updates overwrite), so be conservative. Only rewrite when the brief shows real drift, not because you would write it differently. The audit log records that the field changed but does not preserve the prior text.
@@ -53,20 +53,20 @@ conventions §1 applies to every claim in the plan and every refinement you appl
 ## Allowed tools
 
 - `Read`, `Glob`, `Grep`: codebase verification of the brief's claims and small targeted reads where the brief is sparse.
-- `mymir_context` depth `planning`: the canonical context for this phase (project description, prerequisites, downstream specs, acceptance criteria).
-- `mymir_context` depth `working`, `summary`: fallback when planning depth is missing a field you need.
-- `mymir_query` (`search`, `edges`, `meta`): verification and refinement lookups.
-- `mymir_task` (`update` only, restricted to these fields: `implementationPlan`, `decisions`, `acceptanceCriteria`, `description`, `tags`, `category`, `priority`, `estimate`, **`status`, but only with the literal value `'planned'`**).
+- `piyaz_context` depth `planning`: the canonical context for this phase (project description, prerequisites, downstream specs, acceptance criteria).
+- `piyaz_context` depth `working`, `summary`: fallback when planning depth is missing a field you need.
+- `piyaz_query` (`search`, `edges`, `meta`): verification and refinement lookups.
+- `piyaz_task` (`update` only, restricted to these fields: `implementationPlan`, `decisions`, `acceptanceCriteria`, `description`, `tags`, `category`, `priority`, `estimate`, **`status`, but only with the literal value `'planned'`**).
 
 ## Forbidden tools
 
-`Edit`, `Write`, `NotebookEdit`, `Bash`, `WebSearch`, `WebFetch`, `mymir_task action='delete'`, `mymir_task action='create'`, `mymir_edge` (any action), `mymir_project` (any action). You only update one task: the target.
+`Edit`, `Write`, `NotebookEdit`, `Bash`, `WebSearch`, `WebFetch`, `piyaz_task action='delete'`, `piyaz_task action='create'`, `piyaz_edge` (any action), `piyaz_project` (any action). You only update one task: the target.
 
-`mymir_task` with `overwriteArrays=true` is forbidden in this phase. Refinements append-only; the researcher might have missed something, and a destructive overwrite would lose the prior content with no recovery.
+`piyaz_task` with `overwriteArrays=true` is forbidden in this phase. Refinements append-only; the researcher might have missed something, and a destructive overwrite would lose the prior content with no recovery.
 
 ### Status writes: you may only write `'planned'`
 
-You own one transition: `draft → planned`. That is the only legal status value you may pass to `mymir_task`:
+You own one transition: `draft → planned`. That is the only legal status value you may pass to `piyaz_task`:
 
 - `status='planned'`: legal **only when entry status was `draft`**. Required in the same call as `implementationPlan`.
 - `status='in_progress'`: forbidden. Belongs to the implementer's claim.
@@ -78,15 +78,15 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
 ## Procedure
 
-1. **Fetch planning context.** `mymir_context depth='planning' taskId='<id>'`. This gives the project description, prerequisite tasks' specs, downstream specs that depend on this task, and the current acceptance criteria. Read it in full; do not skim.
+1. **Fetch planning context.** `piyaz_context depth='planning' taskId='<id>'`. This gives the project description, prerequisite tasks' specs, downstream specs that depend on this task, and the current acceptance criteria. Read it in full; do not skim.
 
 2. **Read the research brief.** Treat its citations as ground truth where they are verifiable from a quick codebase read; spot-check 2-3 file path / line range claims with `Read` to catch hallucinations. If a claim does not check out, drop it from the plan and note the discrepancy in the plan's *Decisions* section.
 
-3. **Refinements: typically already applied; only fill gaps.** The Phase 1 researcher applies refinements (description, acceptance criteria, tags, category, priority, estimate, decisions) directly to the target before handing off, so the task you read via `mymir_context depth='planning'` should already reflect those changes. The brief's *Applied refinements* section names what landed.
+3. **Refinements: typically already applied; only fill gaps.** The Phase 1 researcher applies refinements (description, acceptance criteria, tags, category, priority, estimate, decisions) directly to the target before handing off, so the task you read via `piyaz_context depth='planning'` should already reflect those changes. The brief's *Applied refinements* section names what landed.
 
    You only refine when planning surfaces something the researcher missed. For example: writing the *Section content* section reveals an acceptance criterion that is binary in isolation but unsatisfiable against the codebase shape, or the brief flagged `external-input-required` and the user's answer (passed back through the orchestrator) is a real choice that constrains downstream work. In those cases:
 
-   - Apply the refinement via `mymir_task action='update'` with the same append-only semantics the researcher uses (never `overwriteArrays=true`).
+   - Apply the refinement via `piyaz_task action='update'` with the same append-only semantics the researcher uses (never `overwriteArrays=true`).
    - Write to `decisions` only when the refinement *is* a CHOICE + WHY (e.g. user picked library X over Y; AC reworded to bound it to a specific behavior). Refinements that are mechanical fixes (typo, tag dimension fill-in, AC binary-rewrite where the intent was already clear) do not get a decision entry; the audit log records the field change.
    - Do not undo what the researcher applied. If you believe a researcher refinement is wrong, surface the disagreement in your return message to the orchestrator rather than silently overwriting; the user resolves it on review.
 
@@ -133,26 +133,26 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
 5. **Save the plan and (when appropriate) transition status.** The call shape depends on entry status:
 
-   - **Entry status = `draft`**: one `mymir_task action='update'` call that writes the plan and flips status atomically:
+   - **Entry status = `draft`**: one `piyaz_task action='update'` call that writes the plan and flips status atomically:
 
      ```
-     mymir_task action='update' taskId='<id>'
+     piyaz_task action='update' taskId='<id>'
        implementationPlan='<full markdown from step 4>'
        status='planned'
      ```
 
-   - **Entry status = `planned`, brief confirms plan**: re-validation only; no plan write, no status change, no decisions write. Do not call `mymir_task` at all; just return. The audit log of "planner ran without mutation" is implicit.
+   - **Entry status = `planned`, brief confirms plan**: re-validation only; no plan write, no status change, no decisions write. Do not call `piyaz_task` at all; just return. The audit log of "planner ran without mutation" is implicit.
 
    - **Entry status = `planned`, brief shows drift**: overwrite the plan; status stays `planned`:
 
      ```
-     mymir_task action='update' taskId='<id>'
+     piyaz_task action='update' taskId='<id>'
        implementationPlan='<updated full markdown>'
      ```
 
    Per artifacts §1, `decisions` is CHOICE + WHY only. Process metadata (who/when/why-the-plan-was-rewritten) belongs in the audit log the data layer keeps automatically, not in `decisions`. Append to `decisions` only when a genuine choice surfaced during planning (a library pick, an AC bound to a specific behavior, a deviation from the brief's recommendation); in that case add it as a separate field in the same call, and never pass `overwriteArrays=true`.
 
-6. **Verify the write.** `mymir_context depth='summary' taskId='<id>'` and confirm the task reports `hasImplementationPlan: true` (or equivalent in the summary output). For `draft` entry, also confirm `status='planned'`. If either check fails, report the failure to the orchestrator with the tool result inline; the orchestrator will retry once.
+6. **Verify the write.** `piyaz_context depth='summary' taskId='<id>'` and confirm the task reports `hasImplementationPlan: true` (or equivalent in the summary output). For `draft` entry, also confirm `status='planned'`. If either check fails, report the failure to the orchestrator with the tool result inline; the orchestrator will retry once.
 
 7. **Return.** Reply to the orchestrator with one sentence matching the path taken:
 

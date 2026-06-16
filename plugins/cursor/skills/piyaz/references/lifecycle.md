@@ -39,7 +39,7 @@ draft → planned → in_progress → in_review → done
 ### `planned`
 
 - **What it means.** Implementation plan is written. All `depends_on` blockers are themselves `done`. Ready for someone to claim and code.
-- **Transitions to `in_progress`:** when someone explicitly claims via `mymir_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
+- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
 
 ### `in_progress`
 
@@ -174,8 +174,8 @@ The graph is Piyaz's value. Skip once and it lies: ready tasks that aren't ready
 
 After any status change or significant refinement:
 
-1. `mymir_query type='edges'` on the changed task. Current relationships.
-2. `mymir_analyze type='downstream'`. Who depends on this task.
+1. `piyaz_query type='edges'` on the changed task. Current relationships.
+2. `piyaz_analyze type='downstream'`. Who depends on this task.
 3. For each downstream task, evaluate:
    - Do edge notes need updating to reflect new decisions?
    - Are there NEW relationships revealed by this change?
