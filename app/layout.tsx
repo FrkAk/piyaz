@@ -12,10 +12,35 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+// Canonical production origin for metadata/OG/canonical URLs. Hardcoded so it
+// stays correct whether a route is statically prerendered or rendered at
+// runtime (the BETTER_AUTH_URL runtime var is absent at build time).
+const siteUrl = "https://app.piyaz.ai";
+const description =
+  "A structure that supports organic growth. Track projects created by your coding agent.";
+
 export const metadata: Metadata = {
-  title: "piyaz",
-  description:
-    "A structure that supports organic growth. Track projects created by your coding agent.",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: "Piyaz",
+    template: "%s · Piyaz",
+  },
+  description,
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "Piyaz",
+    url: "/",
+    title: "Piyaz",
+    description,
+  },
+  twitter: {
+    card: "summary",
+    title: "Piyaz",
+    description,
+  },
 };
 
 /**
