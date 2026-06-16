@@ -26,6 +26,13 @@ export const metadata: Metadata = {
     template: "%s · Piyaz",
   },
   description,
+  // App host is invite-only — keep it out of search indexes entirely. SEO
+  // belongs to the apex marketing site (piyaz.ai). robots.txt blocks crawling;
+  // this guarantees deindexing even for externally-linked URLs.
+  robots: {
+    index: false,
+    follow: false,
+  },
   alternates: {
     canonical: "/",
   },
