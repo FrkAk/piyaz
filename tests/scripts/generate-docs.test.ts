@@ -187,6 +187,23 @@ describe("renderToolPage Required column", () => {
   });
 });
 
+describe("renderToolPage union-array types", () => {
+  test("renders an array of a union as its members, not unknown[]", () => {
+    const task = renderToolPage(TOOLS.find((t) => t.name === "mymir_task")!);
+    const acRow = task
+      .split("\n")
+      .find((l) => l.startsWith("| `acceptanceCriteria` |"));
+    expect(acRow).toContain("(string \\| object)[]");
+    expect(acRow).not.toContain("unknown[]");
+  });
+
+  test("renders a url field as string (url), not bare string", () => {
+    const task = renderToolPage(TOOLS.find((t) => t.name === "mymir_task")!);
+    const prUrlRow = task.split("\n").find((l) => l.startsWith("| `prUrl` |"));
+    expect(prUrlRow).toContain("string (url) \\| null");
+  });
+});
+
 describe("normalizeProseDashes standalone cells", () => {
   test("a lone em-dash table cell becomes a single hyphen", () => {
     expect(normalizeProseDashes("| `field` | — | note |")).toBe(

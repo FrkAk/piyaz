@@ -21,7 +21,7 @@ interface JsonSchemaProperty {
   type?: string;
   description?: string;
   enum?: string[];
-  items?: { type?: string; enum?: string[] };
+  items?: { type?: string; enum?: string[]; anyOf?: JsonSchemaProperty[] };
   format?: string;
   default?: unknown;
   anyOf?: JsonSchemaProperty[];
@@ -115,11 +115,13 @@ function renderType(prop: JsonSchemaProperty): string {
   if (prop.enum) return prop.enum.map((v) => `"${v}"`).join(" \\| ");
   if (prop.type === "array") {
     const items = prop.items;
+    if (items?.anyOf) return `(${items.anyOf.map(renderType).join(" \\| ")})[]`;
     if (items?.enum)
       return `(${items.enum.map((v) => `"${v}"`).join(" \\| ")})[]`;
     return `${items?.type ?? "unknown"}[]`;
   }
   if (prop.format === "uuid") return "string (uuid)";
+  if (prop.format === "uri") return "string (url)";
   return prop.type ?? "unknown";
 }
 
