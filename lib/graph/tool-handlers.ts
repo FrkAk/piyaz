@@ -15,7 +15,7 @@ import {
   listProjectsForMcp,
   listUserTeams,
   getProjectTags,
-  getProjectTagsTx,
+  fetchProjectTagsRead,
   getProjectMeta,
 } from "@/lib/data/project";
 import {
@@ -23,7 +23,8 @@ import {
   updateTask,
   deleteTask,
   deleteTaskPreview,
-  searchTasksTx,
+  getSearchProjectGate,
+  searchTasksRead,
   getProjectTasksSlim,
   getTaskFull,
   fetchAssigneesUnchecked,
@@ -83,7 +84,6 @@ import type { AuthContext } from "@/lib/auth/context";
 import {
   ForbiddenError,
   InsufficientRoleError,
-  assertProjectAccessTx,
   assertTaskAccess,
 } from "@/lib/auth/authorization";
 import { withUserContext } from "@/lib/db/rls";
@@ -515,7 +515,7 @@ function inReviewStatusHints(
     );
   }
   hints.push(
-    "Next call for the review subagent (composer Phase 4 or direct review dispatch): mymir_context depth='review' taskId='<this task>'. The bundle renders implementationPlan alongside executionRecord, surfaces the PR link, computes plan-vs-files drift, and emits review-lens prompts.",
+    "Next call for the review subagent (composer Phase 4 or direct review dispatch): mymir_context depth='review' taskId='<this task>'. The bundle renders implementationPlan alongside executionRecord, surfaces the PR link, and emits review-lens prompts; no file list is recorded — review the actual changes from the PR diff.",
   );
   hints.push(
     "Run mymir_analyze type='downstream' to propagate (lifecycle §3): update edge notes, retire stale edges, surface new dependencies revealed by this completion.",
@@ -558,14 +558,14 @@ const STATE_HINTS: Record<TaskState, string> = {
   plannable:
     "Plannable. Recommend this task to the user (direct mode) or return to the orchestrator (dispatched mode); wait for explicit pick before acting. After confirmation: write the implementation plan, then status='planned'. Fetch depth='planning' (project description, upstream executionRecords, downstream specs). Before writing: search the codebase for what already exists, read current docs for any new dependency, reason through edge cases. No speculation. Save the unabridged plan; do not summarize.",
   ready:
-    "Ready. Recommend this task to the user (direct mode) or return to the orchestrator (dispatched mode); wait for explicit pick before claiming. After confirmation: status='in_progress' to claim, then fetch depth='agent' (multi-hop deps, upstream executionRecords, files, downstream specs); read the relevant code; refer to current docs; reason through edge cases. Understand before doing.",
+    "Ready. Recommend this task to the user (direct mode) or return to the orchestrator (dispatched mode); wait for explicit pick before claiming. After confirmation: status='in_progress' to claim, then fetch depth='agent' (multi-hop deps, upstream executionRecords, downstream specs); read the relevant code; refer to current docs; reason through edge cases. Understand before doing.",
   blocked:
     "Blocked. Cannot advance until upstream deps complete. Run mymir_analyze type='blocked' for blocker details, or fetch depth='summary' for this task's edges. Surface the choices to the user/leader: pick a different ready task, or unblock by completing a dep. Do not pick silently.",
   in_progress:
     "Claimed (one worker per task; lifecycle §1). Take-over is not automatic: confirm with the user (direct mode) or orchestrator (dispatched mode) that the prior worker has gone away before resuming. After confirmation: fetch depth='agent', read prior notes plus upstream executionRecords. To finish: populate executionRecord, decisions, files, evaluate every AC (do not auto-check), open a PR if files changed, then transition to `in_review` (the implementer's terminal write; HOTL flips to `done` after PR approval) per the Completion Protocol (lifecycle §2).",
   in_review:
     "In review (implementer terminal write; lifecycle §1). The implementer subagent has shipped the PR with tests green and populated executionRecord/decisions/files/acceptanceCriteria. The HOTL operator inspects the PR and flips to `done` after approval, or back to `in_progress` if rework is required. Agents do not self-promote to `done` from here; surface the PR for review and stop.",
-  done: "Terminal (HOTL-finalized). The PR has been approved and the operator has flipped the task from `in_review` to `done`. Fetch depth='agent' for the full executionRecord, decisions, and files (depth='working' renders ACs/decisions/edges but not executionRecord or files; depth='summary' is just the header + edges). Then mymir_analyze type='downstream' to propagate decisions onto dependents (edge notes, descriptions, new edges, stale edges). After propagation, ask the user/leader what's next; do not auto-proceed to another task.",
+  done: "Terminal (HOTL-finalized). The PR has been approved and the operator has flipped the task from `in_review` to `done`. Fetch depth='agent' for the retrospective record (outcome, decisions, PR link — no file list is rendered; the PR diff is the source of truth for what changed). depth='working' renders ACs/decisions/edges but not executionRecord; depth='summary' is just the header + edges. Then mymir_analyze type='downstream' to propagate decisions onto dependents (edge notes, descriptions, new edges, stale edges). After propagation, ask the user/leader what's next; do not auto-proceed to another task.",
   cancelled:
     "Terminal (abandoned). Fetch depth='agent' for the cancellation rationale (lives in executionRecord) and decisions; depth='working' renders decisions but not the rationale. Edges remain in place; cancellation is transparent (dependents stay blocked through this task's own unsatisfied deps; lifecycle §3). Ask the user/leader: is there a replacement? If yes, rewire dependents to it. If not, dependents may need cancelling or re-scoping. Do not decide silently.",
   draft:
@@ -1326,56 +1326,39 @@ export async function handleQuery(
         }
 
         const projectId = p.projectId;
-        const outcome = await withUserContext(ctx.userId, async (tx) => {
-          const { project } = await assertProjectAccessTx(tx, projectId);
+        const project = await getSearchProjectGate(ctx.userId, projectId);
 
-          if (
-            trimmedCategory.length > 0 &&
-            !project.categories.includes(trimmedCategory)
-          ) {
-            return {
-              kind: "invalid_category" as const,
-              categories: project.categories,
-            };
-          }
+        if (
+          trimmedCategory.length > 0 &&
+          !project.categories.includes(trimmedCategory)
+        ) {
+          return fail(
+            `Category "${trimmedCategory}" not in this project's categories: [${project.categories.join(", ")}]. Run mymir_query type='meta' for the current list.`,
+          );
+        }
 
-          const projectTagVocab =
-            tagFilter.length > 0
-              ? (await getProjectTagsTx(tx, projectId)).map((t) => t.tag)
-              : [];
-
-          const results = await searchTasksTx(tx, project, {
+        const [results, projectTags] = await Promise.all([
+          searchTasksRead(ctx.userId, project, {
             query: p.query,
             tags: tagFilter,
             category: trimmedCategory || undefined,
-          });
+          }),
+          tagFilter.length > 0
+            ? fetchProjectTagsRead(ctx.userId, projectId)
+            : Promise.resolve([]),
+        ]);
 
-          return { kind: "ok" as const, projectTagVocab, results };
-        });
-
-        switch (outcome.kind) {
-          case "invalid_category":
-            return fail(
-              `Category "${trimmedCategory}" not in this project's categories: [${outcome.categories.join(", ")}]. Run mymir_query type='meta' for the current list.`,
-            );
-          case "ok": {
-            const variantHints =
-              tagFilter.length > 0
-                ? tagVariantHints(tagFilter, outcome.projectTagVocab)
-                : [];
-            const hintParts: string[] = [...variantHints];
-            if (outcome.results.length === 1)
-              hintParts.push(stateHint(outcome.results[0].state));
-            const hint =
-              hintParts.length > 0 ? hintParts.join("\n> ") : undefined;
-            return ok(formatSearchResults(outcome.results, hint));
-          }
-          default:
-            outcome satisfies never;
-            throw new Error(
-              `unreachable: unhandled search outcome ${JSON.stringify(outcome)}`,
-            );
-        }
+        const variantHints =
+          tagFilter.length > 0
+            ? tagVariantHints(
+                tagFilter,
+                projectTags.map((t) => t.tag),
+              )
+            : [];
+        const hintParts: string[] = [...variantHints];
+        if (results.length === 1) hintParts.push(stateHint(results[0].state));
+        const hint = hintParts.length > 0 ? hintParts.join("\n> ") : undefined;
+        return ok(formatSearchResults(results, hint));
       }
       case "list": {
         if (!p.projectId)

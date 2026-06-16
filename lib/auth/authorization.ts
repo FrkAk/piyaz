@@ -230,3 +230,89 @@ export async function assertTaskAccessTx(
   if (!task) throw new ForbiddenError("Forbidden", "task", taskId);
   return task;
 }
+
+/**
+ * Reject a malformed task id before any statement is built. The batch read
+ * path counterpart of the `isUuid` pre-check inside
+ * {@link assertTaskAccessTx}: a non-UUID id must surface as a 404-shaped
+ * ForbiddenError, not as a Postgres `22P02` cast failure mid-batch.
+ *
+ * @param taskId - Candidate task id from the caller.
+ * @throws ForbiddenError when the id is not UUID-shaped.
+ */
+export function assertValidTaskId(taskId: string): void {
+  if (!isUuid(taskId)) {
+    throw new ForbiddenError("Forbidden", "task", taskId);
+  }
+}
+
+/**
+ * Reject a malformed project id before any statement is built. See
+ * {@link assertValidTaskId}.
+ *
+ * @param projectId - Candidate project id from the caller.
+ * @throws ForbiddenError when the id is not UUID-shaped.
+ */
+export function assertValidProjectId(projectId: string): void {
+  if (!isUuid(projectId)) {
+    throw new ForbiddenError("Forbidden", "project", projectId);
+  }
+}
+
+/**
+ * The single RLS read-path gate contract: an empty batch result means the
+ * resource is missing or cross-team — both 404-shaped. Every batch gate
+ * evaluator delegates here so the emptiness rule cannot drift per resource.
+ *
+ * @param resource - Resource kind for the error payload.
+ * @param id - UUID the gate statement targeted.
+ * @param rows - Rows from the batch result.
+ * @returns The first visible row.
+ * @throws ForbiddenError when no row is visible to the caller.
+ */
+export function firstRowOrForbidden<T>(
+  resource: ForbiddenResource,
+  id: string,
+  rows: readonly T[],
+): T {
+  const row = rows[0];
+  if (!row) throw new ForbiddenError("Forbidden", resource, id);
+  return row;
+}
+
+/**
+ * Evaluate the access-gate rows returned by a `projectAccessGateStmt`
+ * batch statement. RLS scopes `projects` rows to the caller's memberships,
+ * so an empty result means missing project or cross-team access. Read-path
+ * only: unlike {@link assertProjectAccessTx} this carries no member role,
+ * so it cannot answer permission (`required`) questions.
+ *
+ * @param projectId - UUID of the project the gate statement targeted.
+ * @param rows - Gate rows from the batch result.
+ * @returns The authorized project slice.
+ * @throws ForbiddenError when no project row is visible to the caller.
+ */
+export function assertProjectGateRows<T>(
+  projectId: string,
+  rows: readonly T[],
+): T {
+  return firstRowOrForbidden("project", projectId, rows);
+}
+
+/**
+ * Evaluate the access-gate rows returned by a `taskAccessGateStmt` batch
+ * statement. The batch read path counterpart of {@link assertTaskAccessTx}:
+ * RLS already filtered invisible rows, so an empty result means missing
+ * task or cross-team access — both 404-shaped.
+ *
+ * @param taskId - UUID of the task the gate statement targeted.
+ * @param rows - Gate rows from the batch result.
+ * @returns The slim gate row for the task.
+ * @throws ForbiddenError when no gate row is visible to the caller.
+ */
+export function assertTaskGateRows(
+  taskId: string,
+  rows: readonly TaskAccessGate[],
+): TaskAccessGate {
+  return firstRowOrForbidden("task", taskId, rows);
+}

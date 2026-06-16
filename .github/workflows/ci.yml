@@ -40,7 +40,11 @@ jobs:
         run: bun install
         if: github.actor == 'dependabot[bot]'
       - name: Audit dependencies
-        run: bun audit --audit-level=high
+        # GHSA-gv7w-rqvm-qjhr: esbuild Deno-installer integrity flaw; not
+        # exploitable here (bun installs from the committed lockfile). Drop
+        # the ignore once wrangler / drizzle-kit / @opennextjs pull
+        # esbuild >= 0.28.1.
+        run: bun audit --audit-level=high --ignore=GHSA-gv7w-rqvm-qjhr
       - name: Validate PR title
         if: github.event_name == 'pull_request'
         env:

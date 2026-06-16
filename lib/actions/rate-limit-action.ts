@@ -18,6 +18,19 @@ export type ActionRateLimitConfig = {
   perUserMax: number;
   /** Per-IP budget within the window. */
   perIpMax: number;
+  /**
+   * Backend slot to count against. Defaults to `"actions"` (per-isolate
+   * memory on Workers; that slot is intentionally never bound to a CF
+   * rate-limit binding because most actions declare tighter limits than
+   * any binding could honor). A high-value secret-verification action
+   * passes `"auth"` to get per-PoP durable enforcement on Workers — but
+   * the binding enforces its own `simple.limit` (5/60) per key regardless
+   * of the declared max, so EVERY limit routed here must equal 5/60 or
+   * Workers silently enforces 5 while self-host enforces the declared
+   * value. Self-host lazily builds a separate per-process memory backend
+   * per slot, each enforcing declared limits exactly.
+   */
+  backendKind?: "actions" | "auth";
 };
 
 /**
@@ -72,7 +85,7 @@ export async function checkActionIpRateLimit(
   config: ActionRateLimitConfig,
 ): Promise<ActionRateLimitOutcome> {
   const ip = await getActionClientIp();
-  const result = await getBackend("actions").check(
+  const result = await getBackend(config.backendKind ?? "actions").check(
     `action:${config.action}:ip:${ip}`,
     config.perIpMax,
     config.windowSeconds,
@@ -90,7 +103,7 @@ export async function checkActionUserRateLimit(
   config: ActionRateLimitConfig,
   userId: string,
 ): Promise<ActionRateLimitOutcome> {
-  const result = await getBackend("actions").check(
+  const result = await getBackend(config.backendKind ?? "actions").check(
     `action:${config.action}:user:${userId}`,
     config.perUserMax,
     config.windowSeconds,
@@ -101,12 +114,14 @@ export async function checkActionUserRateLimit(
 /**
  * Apply two-key rate limiting (per-user AND per-IP) to a server action.
  * The first key to exceed its budget rejects the call; both buckets get
- * decremented on every successful pass. Uses the dedicated `"actions"`
- * backend slot from `lib/api/rate-limit.ts`, which is intentionally never
- * wired to a Cloudflare rate-limit binding — actions declare tighter
- * `perUserMax`/`perIpMax` values (3-30) than the API binding's 100/60 cap
- * could honor, so the per-isolate `MemoryRateLimitBackend` enforces them
- * exactly instead of being silently relaxed to the binding limit.
+ * decremented on every successful pass. Counts against the slot named by
+ * `config.backendKind` (default `"actions"`) from `lib/api/rate-limit.ts`.
+ * The `"actions"` slot is intentionally never wired to a Cloudflare
+ * rate-limit binding — most actions declare tighter `perUserMax`/`perIpMax`
+ * values (3-30) than the API binding's 100/60 cap could honor, so the
+ * per-isolate `MemoryRateLimitBackend` enforces them exactly instead of
+ * being silently relaxed. Actions that opt into `"auth"` accept the
+ * binding's 5/60 per-PoP enforcement deliberately (see `backendKind`).
  *
  * Both buckets are consulted (and incremented) atomically — when only
  * one rejects, the other has already counted the attempt. That tightens

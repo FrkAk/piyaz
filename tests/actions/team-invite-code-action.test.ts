@@ -13,6 +13,7 @@ import { auth } from "@/lib/auth";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
+import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
 
 /**
  * End-to-end coverage of `joinTeamByCodeAction`. Spies on the BA
@@ -40,9 +41,7 @@ type AddMemberImpl = (...args: unknown[]) => Promise<unknown>;
 let nextAddMember: AddMemberImpl = async () => ({});
 let addMemberSpy: ReturnType<typeof spyOn>;
 
-mock.module("next/headers", () => ({
-  headers: async () => new Headers(),
-}));
+mock.module("next/headers", nextHeadersMockModule);
 
 const setSession = (
   globalThis as unknown as {

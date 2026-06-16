@@ -14,7 +14,8 @@ export type TaskChildrenRow = {
 
 /**
  * Fetch a task's criteria and decisions in a single round-trip via two
- * `json_agg` subqueries. Sibling of {@link fetchTaskFull}; used by the
+ * `json_agg` subqueries. Sibling of `taskFullStmt` in
+ * `fetch-task-full.ts`; used by the
  * `updateTask` post-write hot path to surface the freshest child state to
  * callers without paying two separate sequential reads.
  *

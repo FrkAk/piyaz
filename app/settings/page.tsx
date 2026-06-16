@@ -3,6 +3,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession } from "@/lib/auth/session";
 import { listOAuthSessionsAction } from "@/lib/actions/oauth-session";
+import { getPasswordUpdatedAt } from "@/lib/data/account";
 import { loadUserTeams } from "@/lib/server/request-loaders";
 import { SettingsView } from "./_components/SettingsView";
 
@@ -21,9 +22,14 @@ export default async function SettingsPage() {
   const session = await getSession();
   if (!session) redirect("/sign-in");
 
-  const [sessionsResult, teamsResult] = await Promise.all([
+  // getPasswordUpdatedAt rejects loudly on DB failure (no .ok wrapper):
+  // null is semantic ("no credential account" hides the password card),
+  // so degrading errors to null would silently remove a security
+  // affordance. A thrown error failing the page is the intended posture.
+  const [sessionsResult, teamsResult, passwordUpdatedAt] = await Promise.all([
     listOAuthSessionsAction(),
     loadUserTeams(),
+    getPasswordUpdatedAt(session.user.id),
   ]);
 
   const initialSessions = sessionsResult.ok ? sessionsResult.data : [];
@@ -39,6 +45,7 @@ export default async function SettingsPage() {
           email: session.user.email,
           createdAt: session.user.createdAt,
         }}
+        passwordUpdatedAt={passwordUpdatedAt}
         initialSessions={initialSessions}
         initialTeams={initialTeams}
       />

@@ -22,6 +22,11 @@ import {
   scheduleRequestDbTeardown,
   withRequestDb,
 } from "./lib/db/request-scope.workers";
+import {
+  broker,
+  type DurableObjectNamespace,
+  type ResourceKey,
+} from "./lib/realtime/_broker.workers";
 import { MymirBroker } from "./lib/realtime/broker-do";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- generated entry; tsc resolves it but @ts-expect-error trips "unused directive".
@@ -48,6 +53,7 @@ interface WorkerEnv {
   DATABASE_SERVICE_ROLE_URL?: string;
   RATE_LIMIT_API?: CloudflareRateLimitBinding;
   RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
+  MYMIR_BROKER?: DurableObjectNamespace;
 }
 
 /**
@@ -113,6 +119,114 @@ function initRateLimitBindings(env: WorkerEnv): void {
   );
 }
 
+/** Repo-relative path the realtime WebSocket upgrade targets. */
+const REALTIME_PATH = "/api/events";
+
+/**
+ * Extract the DB binding URLs `withRequestDb` needs from the Worker env.
+ *
+ * @param env - Worker bindings.
+ * @returns The three role connection strings (any may be undefined).
+ */
+function dbBindings(env: WorkerEnv) {
+  return {
+    databaseUrl: env.DATABASE_URL,
+    databaseAuthUrl: env.DATABASE_AUTH_URL,
+    databaseServiceRoleUrl: env.DATABASE_SERVICE_ROLE_URL,
+  };
+}
+
+/**
+ * Whether the request is the browser realtime WebSocket upgrade. Next route
+ * handlers cannot return a 101 through OpenNext, so the worker entry
+ * intercepts it here, ahead of `openNext.fetch`.
+ *
+ * @param request - Incoming request.
+ * @returns True for an `Upgrade: websocket` request to {@link REALTIME_PATH}.
+ */
+function isRealtimeUpgrade(request: Request): boolean {
+  return (
+    request.headers.get("Upgrade")?.toLowerCase() === "websocket" &&
+    new URL(request.url).pathname === REALTIME_PATH
+  );
+}
+
+/**
+ * Terminate the realtime WebSocket upgrade against the `MymirBroker` Durable
+ * Object. Authorization (session + accessible projects) runs through the
+ * Next/webpack bundle via an internal sub-fetch to `/api/events/authorize`,
+ * wrapped in a request DB frame that is torn down before the upgrade
+ * returns: every DB read completes ahead of the 101, because post-teardown
+ * pool builds throw by design. The DO WebSocket and subscription
+ * registration use the entry-safe broker adapter (no DB), so the Node
+ * Postgres driver never enters this bundle.
+ *
+ * @param request - The upgrade request (carries the session cookie).
+ * @param env - Worker bindings.
+ * @param ctx - Execution context for `waitUntil`-backed teardown.
+ * @returns 101 with the client WebSocket on success, 401 when unauthenticated,
+ *   503 when the broker binding or secret is unavailable.
+ */
+async function handleRealtimeUpgrade(
+  request: Request,
+  env: WorkerEnv,
+  ctx: WorkerCtx,
+): Promise<Response> {
+  const authorizeUrl = new URL("/api/events/authorize", request.url);
+  const headers = new Headers(request.headers);
+  for (const stripped of [
+    "upgrade",
+    "connection",
+    "sec-websocket-key",
+    "sec-websocket-version",
+    "sec-websocket-extensions",
+    "sec-websocket-protocol",
+  ])
+    headers.delete(stripped);
+
+  const { result, teardown } = await withRequestDb(
+    () => openNext.fetch(new Request(authorizeUrl, { headers }), env, ctx),
+    dbBindings(env),
+  );
+  let authorized: { userId: string; projectIds: string[] } | null = null;
+  try {
+    if (result.status === 200) {
+      authorized = (await result.json()) as {
+        userId: string;
+        projectIds: string[];
+      };
+    }
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "realtime_authorize_parse_failed",
+        reason: String(err),
+      }),
+    );
+  } finally {
+    await teardown();
+  }
+  if (!authorized) return new Response("Unauthorized", { status: 401 });
+
+  try {
+    const keys: ResourceKey[] = [
+      ...authorized.projectIds.map((id): ResourceKey => `project:${id}`),
+      `project-list:${authorized.userId}`,
+    ];
+    const client = await broker.connect(authorized.userId, env.MYMIR_BROKER);
+    await broker.registerMany(authorized.userId, keys, env.MYMIR_BROKER);
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+    } as ResponseInit & { webSocket: typeof client });
+  } catch (err) {
+    console.error(
+      JSON.stringify({ event: "realtime_upgrade_failed", reason: String(err) }),
+    );
+    return new Response("Realtime unavailable", { status: 503 });
+  }
+}
+
 const handler = {
   /**
    * Delegate to the OpenNext handler inside a per-request DB frame.
@@ -136,13 +250,12 @@ const handler = {
     ctx: WorkerCtx,
   ): Promise<Response> {
     initRateLimitBindings(env);
+    if (isRealtimeUpgrade(request)) {
+      return handleRealtimeUpgrade(request, env, ctx);
+    }
     const { result, teardown } = await withRequestDb(
       () => openNext.fetch(request, env, ctx),
-      {
-        databaseUrl: env.DATABASE_URL,
-        databaseAuthUrl: env.DATABASE_AUTH_URL,
-        databaseServiceRoleUrl: env.DATABASE_SERVICE_ROLE_URL,
-      },
+      dbBindings(env),
     );
     return scheduleRequestDbTeardown(result, teardown, (promise) =>
       ctx.waitUntil(promise),
