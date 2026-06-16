@@ -683,7 +683,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "piyaz", version: "1.9.1" },
+    { name: "piyaz", version: "0.1.0" },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);
