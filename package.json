@@ -4,6 +4,11 @@
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
+  "//overrides": "TEMP security pins for transitive CVEs whose parent ranges already allow the fix but bun won't bump on its own. REMOVE each entry once its parent ships the fix and `bun audit --audit-level=high` passes without it. form-data >=4.0.6 (GHSA-hmw2-7cc7-3qxx, via @types/node-fetch). hono >=4.12.25 (GHSA-88fw-hqm2-52qc, via @modelcontextprotocol/sdk). ws is handled separately via a CI --ignore (no upstream fix). Tracked in MYMR-226.",
+  "overrides": {
+    "form-data": ">=4.0.6",
+    "hono": ">=4.12.25"
+  },
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
