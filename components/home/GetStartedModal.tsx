@@ -24,29 +24,29 @@ const HOSTED_CLI_INSTALLS: readonly CliInstall[] = [
   {
     name: "Claude Code",
     install:
-      "claude plugin marketplace add FrkAk/mymir\nclaude plugin install mymir@mymir",
+      "claude plugin marketplace add FrkAk/mymir\nclaude plugin install piyaz@piyaz",
     setupNote:
-      "Run /mcp, select mymir, and complete the browser sign-in. The mymir skill auto-invokes when you talk about projects.",
+      "Run /mcp, select piyaz, and complete the browser sign-in. The piyaz skill auto-invokes when you talk about projects.",
   },
   {
     name: "Codex",
     install: "codex plugin marketplace add FrkAk/mymir",
     setupNote:
-      "Run /plugin, install Mymir, restart Codex, and authenticate when prompted. Invoke the main skill with $mymir.",
+      "Run /plugin, install Piyaz, restart Codex, and authenticate when prompted. Invoke the main skill with $piyaz.",
   },
   {
     name: "Antigravity",
     install:
-      '{\n  "mcpServers": {\n    "mymir": { "serverUrl": "https://app.mymir.dev/api/mcp" }\n  }\n}',
+      '{\n  "mcpServers": {\n    "piyaz": { "serverUrl": "https://app.piyaz.ai/api/mcp" }\n  }\n}',
     setupNote:
       "Add this to ~/.gemini/config/mcp_config.json, then run /mcp and Authenticate. Antigravity handles OAuth automatically.",
   },
   {
     name: "Cursor",
     install:
-      "cursor://anysphere.cursor-deeplink/mcp/install?name=mymir&config=eyJ1cmwiOiJodHRwczovL2FwcC5teW1pci5kZXYvYXBpL21jcCJ9",
+      "cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5teW1pci5kZXYvYXBpL21jcCJ9",
     setupNote:
-      "Open the deeplink, then sign in when the first Mymir MCP tool call triggers OAuth.",
+      "Open the deeplink, then sign in when the first Piyaz MCP tool call triggers OAuth.",
   },
 ];
 
@@ -54,27 +54,27 @@ const SELF_HOST_CLI_INSTALLS: readonly CliInstall[] = [
   {
     name: "Claude Code",
     install:
-      "claude plugin marketplace add ./plugins/claude-code\nclaude plugin install mymir@mymir-local",
+      "claude plugin marketplace add ./plugins/claude-code\nclaude plugin install piyaz@piyaz-local",
     setupNote:
-      "Authenticate with /mcp, select mymir-local, and complete the browser sign-in against http://localhost:3000.",
+      "Authenticate with /mcp, select piyaz-local, and complete the browser sign-in against http://localhost:3000.",
   },
   {
     name: "Codex",
     install: "codex plugin marketplace add ./plugins",
     setupNote:
-      "Run /plugin, search for mymir, install, then restart Codex. Select mymir-local for http://localhost:3000/api/mcp.",
+      "Run /plugin, search for piyaz, install, then restart Codex. Select piyaz-local for http://localhost:3000/api/mcp.",
   },
   {
     name: "Antigravity",
-    install: "cp -r ./plugins/antigravity ~/.gemini/config/plugins/mymir",
+    install: "cp -r ./plugins/antigravity ~/.gemini/config/plugins/piyaz",
     setupNote:
-      "Run /mcp, select mymir-local, Authenticate, and complete the browser sign-in against http://localhost:3000.",
+      "Run /mcp, select piyaz-local, Authenticate, and complete the browser sign-in against http://localhost:3000.",
   },
   {
     name: "Cursor",
-    install: 'ln -s "$(pwd)/plugins/cursor" ~/.cursor/plugins/local/mymir',
+    install: 'ln -s "$(pwd)/plugins/cursor" ~/.cursor/plugins/local/piyaz',
     setupNote:
-      "Restart Cursor. The MCP server and skills load automatically; mymir-local points at http://localhost:3000/api/mcp.",
+      "Restart Cursor. The MCP server and skills load automatically; piyaz-local points at http://localhost:3000/api/mcp.",
   },
 ];
 
@@ -137,8 +137,8 @@ function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
   return (
     <>
       <p className="text-sm leading-relaxed text-text-secondary">
-        mymir runs in your coding agent, which has the file context an in-app
-        chat never will. Install or configure Mymir for your tool, then describe
+        piyaz runs in your coding agent, which has the file context an in-app
+        chat never will. Install or configure Piyaz for your tool, then describe
         what you&apos;re building.
       </p>
 
@@ -162,7 +162,7 @@ function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
       <section className="space-y-1.5 rounded-lg border border-accent/20 bg-accent/[0.04] p-4">
         <h3 className={SECTION_LABEL_CLASS}>Then say something like</h3>
         <p className="font-mono text-xs leading-relaxed text-text-primary">
-          ❯ Describe what you are building. The mymir skill picks up from there.
+          ❯ Describe what you are building. The piyaz skill picks up from there.
         </p>
         <p className="text-xs leading-relaxed text-text-muted">
           {MULTI_TEAM_HINT}
@@ -195,8 +195,8 @@ function ReturningBody({ readmeSetupUrl }: ReturningBodyProps) {
   return (
     <>
       <p className="text-sm leading-relaxed text-text-secondary">
-        mymir projects start in your coding agent. Open it and describe what
-        you&apos;re building. The mymir skill creates the project, and
+        piyaz projects start in your coding agent. Open it and describe what
+        you&apos;re building. The piyaz skill creates the project, and
         it&apos;ll show up here once it&apos;s active.
       </p>
 

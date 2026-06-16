@@ -1,11 +1,11 @@
 {
-  "name": "mymir-local",
+  "name": "piyaz-local",
   "interface": {
-    "displayName": "Mymir Local"
+    "displayName": "Piyaz Local"
   },
   "plugins": [
     {
-      "name": "mymir",
+      "name": "piyaz",
       "source": {
         "source": "local",
         "path": "./codex"

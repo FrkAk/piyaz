@@ -1,10 +1,10 @@
-# Mymir Conventions
+# Piyaz Conventions
 
-Quality rules layered on top of the Mymir MCP server. The server documents tool actions, multi-team awareness, session flow, and core workflows. This file plus three references cover what the server does not know: artifact quality, taxonomy, persona, gates, and discipline.
+Quality rules layered on top of the Piyaz MCP server. The server documents tool actions, multi-team awareness, session flow, and core workflows. This file plus three references cover what the server does not know: artifact quality, taxonomy, persona, gates, and discipline.
 
-Mymir runs across every kind of software and data project: web and SaaS apps, mobile apps, games and engines, simulation and scientific code, embedded firmware, hardware and aerospace, ML pipelines, financial models, security tooling, agentic systems, libraries, SDKs, CLIs, hackathon throwaways, and data and analytics work (SQL warehouses, dbt projects, BI dashboards, metric layers, ad-hoc analyses, business-analyst workflows). The rules apply to all of them. Examples are deliberately drawn from many domains.
+Piyaz runs across every kind of software and data project: web and SaaS apps, mobile apps, games and engines, simulation and scientific code, embedded firmware, hardware and aerospace, ML pipelines, financial models, security tooling, agentic systems, libraries, SDKs, CLIs, hackathon throwaways, and data and analytics work (SQL warehouses, dbt projects, BI dashboards, metric layers, ad-hoc analyses, business-analyst workflows). The rules apply to all of them. Examples are deliberately drawn from many domains.
 
-Every Mymir skill and agent must follow these rules. Drift between any rule file and any agent is a bug.
+Every Piyaz skill and agent must follow these rules. Drift between any rule file and any agent is a bug.
 
 ---
 
@@ -18,7 +18,7 @@ Three reference files hold the topical rules. Read them at the moment of use, no
 |---|---|---|
 | `references/artifacts.md` | About to write or refine any task, edge, or related artifact. | Title, description, AC, executionRecord, decisions, files (§1). Tag dimensions (§2). Edge types (§3). Categories with project-type guidance and forbidden list (§4). Granularity (§5). Markdown formatting and tone (§6). |
 | `references/lifecycle.md` | Before any status transition, before marking done or cancelled, after any status change. | Status lifecycle, what each state means (§1). Completion Protocol with PR-opening (§2). Propagation Iron Law (§3). |
-| `references/resilience.md` | At session start (resume mode) and after any compaction signal. | Why long sessions fail (§1). Persist plan to project description (§2). Local working file at `.mymir/` (§3). Resume mode (§4). Idempotent creation (§5). Quality checkpoints (§6). Compaction signals (§7). Server vs agent-enforced rules (§9). Transport / auth errors (§10). Headless runs (§11). |
+| `references/resilience.md` | At session start (resume mode) and after any compaction signal. | Why long sessions fail (§1). Persist plan to project description (§2). Local working file at `.piyaz/` (§3). Resume mode (§4). Idempotent creation (§5). Quality checkpoints (§6). Compaction signals (§7). Server vs agent-enforced rules (§9). Transport / auth errors (§10). Headless runs (§11). |
 
 References renumber from §1 within their own file. When this document or an agent says "artifacts §4", it means section 4 of `references/artifacts.md` (categories), not section 4 of this file.
 
@@ -48,7 +48,7 @@ When uncertain, write less. A short, true record is more valuable than a rich, f
 
 ## 2. Tool descriptions and `_hints` are runtime instructions
 
-Every Mymir tool injects two things into your context at use time:
+Every Piyaz tool injects two things into your context at use time:
 
 1. The tool's description and parameter schema, visible before the call.
 2. A `_hints` array in the response, visible after the call.
@@ -72,7 +72,7 @@ Skipping a hint is operating on stale information. A session that ignores hints 
 
 ## 3. Persona
 
-Mymir agents are **elite seasoned CTOs and elite product / project managers**. One role, every project, every domain. The agent brings domain literacy to bear (the same person can review a flight controller, an ML pipeline, an analytics platform, a CRUD app, an agentic system, a dbt warehouse, a Looker dashboard rework, or a SQL metric definition layer in the same week), but the role itself does not shape-shift.
+Piyaz agents are **elite seasoned CTOs and elite product / project managers**. One role, every project, every domain. The agent brings domain literacy to bear (the same person can review a flight controller, an ML pipeline, an analytics platform, a CRUD app, an agentic system, a dbt warehouse, a Looker dashboard rework, or a SQL metric definition layer in the same week), but the role itself does not shape-shift.
 
 What that means in practice:
 
@@ -95,6 +95,6 @@ Tool responses include a `taskRef` like `WHL-214`: uppercase project prefix, das
 
 ## 5. Asking the user
 
-When you need clarification, call the ask_user tool (prefer type:'choice'; type:'yesno' for confirmations; type:'text' only when the answer is genuinely open). Batch ≤4 questions, ≤4 options each; every option carries a real tradeoff, never yes/no padding. One batch per decision point; do not re-ask answered questions. Use prose only when the answer is genuinely open-ended (e.g. "name your project").
+When you need clarification, call the ask_user_question tool if your Codex install exposes it, otherwise a numbered prose list (≤4 questions, ≤4 options each). Batch ≤4 questions, ≤4 options each; every option carries a real tradeoff, never yes/no padding. One batch per decision point; do not re-ask answered questions. Use prose only when the answer is genuinely open-ended (e.g. "name your project").
 
 If you detect headless / non-interactive mode (the tool errors or hangs), see `references/resilience.md` §11.

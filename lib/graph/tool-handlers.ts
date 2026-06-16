@@ -1,10 +1,10 @@
 /**
- * Tool handlers for the 6 Mymir tools, called by the MCP server.
+ * Tool handlers for the 6 Piyaz tools, called by the MCP server.
  * Business logic lives in lib/graph/_core/* and lib/context/_core/*;
  * handlers do validation, authorization, routing, and runtime steering
  * (token-dense fail messages and `_hints` arrays that point the agent
  * at the next correct call). The skill files under
- * `plugins/<host>/skills/mymir/` are the doctrine; this file's prose
+ * `plugins/<host>/skills/piyaz/` are the doctrine; this file's prose
  * is steering, not duplication.
  */
 
@@ -122,7 +122,7 @@ const EDGE_NOTE_PLACEHOLDERS = new Set(["needed", "depends", "related"]);
  * Build hints for tag-taxonomy violations. Kebab-case is structural and
  * universal. The work-type dimension check is heuristic: the server
  * matches against the canonical English closed vocabulary documented in
- * `references/artifacts.md` §2, but Mymir runs across projects authored
+ * `references/artifacts.md` §2, but Piyaz runs across projects authored
  * in any language. When the canonical match misses, the hint refers the
  * agent to the reference rather than enumerating English values inline,
  * so localized tag sets are not penalized.
@@ -427,7 +427,7 @@ function doneStatusHints(
   const persistedFiles = payload.files ?? persisted.files ?? [];
   if (persistedFiles.length > 0) {
     hints.push(
-      "Code change shipped. Open a PR per Completion Protocol (lifecycle §2 step 3): detect a template (.github/PULL_REQUEST_TEMPLATE.md and variants); fill it concisely from executionRecord and ACs; use [taskRef] bracket form for the ONE primary task this PR builds (triggers Mymir PR-status tracking). Skip for research / decision-only / Mymir-only refinements.",
+      "Code change shipped. Open a PR per Completion Protocol (lifecycle §2 step 3): detect a template (.github/PULL_REQUEST_TEMPLATE.md and variants); fill it concisely from executionRecord and ACs; use [taskRef] bracket form for the ONE primary task this PR builds (triggers Piyaz PR-status tracking). Skip for research / decision-only / Piyaz-only refinements.",
     );
   }
   hints.push(

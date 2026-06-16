@@ -1,11 +1,11 @@
 {
-  "name": "mymir",
+  "name": "piyaz",
   "interface": {
-    "displayName": "Mymir"
+    "displayName": "Piyaz"
   },
   "plugins": [
     {
-      "name": "mymir",
+      "name": "piyaz",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/FrkAk/mymir.git",

@@ -1,10 +1,10 @@
 ---
 name: decompose-task
 description: >
-  Explicit doorway to the Mymir decompose-task subagent. Use only when the user types
-  /mymir:decompose-task directly. For natural-language requests to split an existing
+  Explicit doorway to the Piyaz decompose-task subagent. Use only when the user types
+  /piyaz:decompose-task directly. For natural-language requests to split an existing
   oversize task (the user says "split this task" or composer's oversize handler
-  routes here), the /mymir skill or the assistant dispatches the decompose-task
+  routes here), the /piyaz skill or the assistant dispatches the decompose-task
   agent via the Task tool. Do not invoke this skill for that path.
 ---
 

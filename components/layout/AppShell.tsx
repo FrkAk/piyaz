@@ -22,7 +22,7 @@ import {
 } from "@/components/layout/MobileNav";
 
 /** Cookie that persists the sidebar collapse preference. Mirrors the constant in `SidebarCollapseProvider`. */
-const SIDEBAR_COLLAPSE_COOKIE = "mymir-sidebar-collapsed";
+const SIDEBAR_COLLAPSE_COOKIE = "piyaz-sidebar-collapsed";
 
 interface AppShellProps {
   /** @param children - Page content rendered inside the main column. */

@@ -105,9 +105,9 @@ function toMcp(result: ToolResult) {
   return json(result.data);
 }
 
-const INSTRUCTIONS = `Mymir is an agentic project management server for software projects. It tracks tasks, dependencies, decisions, and execution records across sessions and teammates so coding agents and engineers can hand work to each other. Stateless HTTP endpoint with no server-side session state; pass \`projectId\` explicitly on every call.
+const INSTRUCTIONS = `Piyaz is an agentic project management server for software projects. It tracks tasks, dependencies, decisions, and execution records across sessions and teammates so coding agents and engineers can hand work to each other. Stateless HTTP endpoint with no server-side session state; pass \`projectId\` explicitly on every call.
 
-This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the three-dimension tag taxonomy plus the first-class \`priority\` / \`estimate\` / \`assigneeIds\` fields, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`mymir\` skill on your platform (Claude Code, Codex, Cursor, Antigravity) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
+This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the three-dimension tag taxonomy plus the first-class \`priority\` / \`estimate\` / \`assigneeIds\` fields, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`piyaz\` skill on your platform (Claude Code, Codex, Cursor, Antigravity) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
 
 ## Multi-team awareness
 The caller's account spans every membership. There is no 'active' team. Read tools span every team you belong to; writes name \`organizationId\` or auto-resolve when the account has exactly one membership.
@@ -174,13 +174,13 @@ Run before transitioning a task to \`in_review\`, \`done\`, or \`cancelled\`. Th
 2. Populate required fields. \`executionRecord\`, \`decisions\`, \`files\`, \`acceptanceCriteria\`, and \`prUrl\` when a PR was opened (backend upserts a \`task_links\` row with kind='pull_request'). The server returns \`_hints\` for any missing fields; re-call with the additions before continuing. For \`cancelled\`: \`executionRecord\` carries the rationale (why abandoned, what was tried) and \`decisions\` records anything learned.
 
 3. Open a PR if the work changed code. Detect a template at \`.github/PULL_REQUEST_TEMPLATE.md\`, \`.github/pull_request_template.md\`, \`.github/PULL_REQUEST_TEMPLATE/<name>.md\`, or \`docs/pull_request_template.md\`. If a template exists, fill it; map task fields onto template sections only where they fit, and leave a section blank rather than invent content. Common mappings:
-   - Linked issue / linked task: include the \`taskRef\` in \`[BRACKETS]\` (e.g. \`[MYMR-83]\`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference related tasks elsewhere as plain links (no brackets). Add \`Closes #N\` on its own line if a GitHub issue is being resolved.
+   - Linked issue / linked task: include the \`taskRef\` in \`[BRACKETS]\` (e.g. \`[MYMR-83]\`). Bracket form triggers Piyaz PR-status tracking; use it for the ONE primary task this PR builds. Reference related tasks elsewhere as plain links (no brackets). Add \`Closes #N\` on its own line if a GitHub issue is being resolved.
    - Summary: 2 to 3 sentences from \`executionRecord\`.
    - Test plan / verification: the checked \`acceptanceCriteria\` items.
    - Decisions or notes-for-reviewer: relevant entries from \`decisions\`.
    If no template exists, use a concise default with Summary (containing the bracketed task reference and an optional \`Closes #N\` line), Type of change, Testing, and Notes for reviewer. Always concise; empty optional sections beat fabricated content.
 
-4. Skip the PR for these task types: research / investigation (no code change), decision-only, pure-Mymir refinement (no repo changes), tasks the user explicitly said "no PR" on. When in doubt, ask before opening.
+4. Skip the PR for these task types: research / investigation (no code change), decision-only, pure-Piyaz refinement (no repo changes), tasks the user explicitly said "no PR" on. When in doubt, ask before opening.
 
 ## Propagate after every change
 After any status change or significant refinement:
@@ -191,7 +191,7 @@ After any status change or significant refinement:
 
 For cancellations: edges to a cancelled task remain in place because cancellation is transitive-aware (dependents stay blocked through the cancelled task's own unsatisfied prereqs). Ask whether there is a replacement. If yes, rewire dependents to the replacement. If no, dependents may need to be cancelled too or re-scoped to no longer require the cancelled work.
 
-Skipping propagation is how dependency graphs go stale. Stale graphs make Mymir useless.
+Skipping propagation is how dependency graphs go stale. Stale graphs make Piyaz useless.
 
 ## Tool descriptions and \`_hints\` are runtime instructions
 Every tool injects two things into your context: the parameter schema before the call, and a \`_hints\` array in the response. These are not optional commentary. They are server-side rules and state you cannot see otherwise, and they override any prior plan you had. Read on every tool call; act on them before continuing. Skipping a hint is operating on stale information. Errors are token dense and self correcting; the message often names the next call with the team or task list inline. Re-read errors and act on them before falling back to asking the user.
@@ -206,7 +206,7 @@ Update array fields (\`decisions\`, \`acceptanceCriteria\`, \`files\`) APPEND by
 This is a stateless HTTP endpoint. No session state is persisted server-side. The \`select\` action on \`mymir_project\` returns a confirmation but does not set server state. Always pass \`projectId\` explicitly on every subsequent call.`;
 
 /**
- * Register all 6 Mymir tools on a server instance, bound to the caller's
+ * Register all 6 Piyaz tools on a server instance, bound to the caller's
  * auth context. Each tool handler receives `ctx` as its second arg so
  * authorization and team scoping happen inside the data layer.
  * @param server - Any object with a registerTool method (McpServer or mock).
@@ -683,7 +683,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "mymir", version: "1.9.1" },
+    { name: "piyaz", version: "1.9.1" },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);

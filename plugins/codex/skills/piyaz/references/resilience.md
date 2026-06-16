@@ -1,4 +1,4 @@
-# Mymir mid-session resilience
+# Piyaz mid-session resilience
 
 How to survive long sessions: compaction, restart-from-scratch, and quality decay.
 
@@ -7,8 +7,8 @@ Agents read this file at session start (for resume mode) and after any compactio
 ## Contents
 
 - §1 Why long sessions fail
-- §2 Persist the plan to Mymir, not to the chat
-- §3 Local working file (`.mymir/`)
+- §2 Persist the plan to Piyaz, not to the chat
+- §3 Local working file (`.piyaz/`)
 - §4 Resume mode (run before any write phase)
 - §5 Idempotent task creation
 - §6 Quality checkpoints
@@ -22,18 +22,18 @@ Agents read this file at session start (for resume mode) and after any compactio
 
 ## 1. Why long sessions fail
 
-Two failure modes, both lethal to Mymir's value:
+Two failure modes, both lethal to Piyaz's value:
 
 1. **Compaction.** The conversation is summarized to fit context limits. The agent's memory of the plan, the decisions, and what it has already done gets reduced to whatever the summarizer keeps. When the agent wakes back up, it has less context than when it started.
 2. **Quality decay.** As the session grows, agents get lazier. Task 5 has a 3-sentence description and 4 binary ACs; task 35 has a single sentence and "works correctly" as an AC. Token pressure compounds the laziness.
 
 > **Worst-case outcome:** a decompose run restarts from scratch and creates LUM-1..12 again on top of the existing LUM-1..12. Polluted graph, no clear truth, lost user trust.
 
-**The principle that prevents both:** treat Mymir state plus a local working file as the agent's memory, not the conversation.
+**The principle that prevents both:** treat Piyaz state plus a local working file as the agent's memory, not the conversation.
 
 ---
 
-## 2. Persist the plan to Mymir, not to the chat
+## 2. Persist the plan to Piyaz, not to the chat
 
 After any approved gate (decompose Phase 1, onboarding Phase 3, brainstorm synthesis), append the approved plan to the project's `description` field.
 
@@ -64,16 +64,16 @@ For high-write phases (decompose Phase 2, onboarding Phase 4), maintain a local 
 
 | | Project description | Local working file |
 |---|---|---|
-| **Stored in** | Mymir server | `.mymir/<workflow>-<projectIdentifier>.md` |
+| **Stored in** | Piyaz server | `.piyaz/<workflow>-<projectIdentifier>.md` |
 | **Best at** | Authoritative cross-machine plan | Progress checklist, scratch notes, in-flight decisions |
 | **Cost to write** | MCP roundtrip | Local I/O (free) |
 | **Survives** | Any session, any machine | Compaction on the same machine |
 | **Limit** | Stay concise; it is the user's project description | Richer; full discovery notes are welcome |
 
-**Location:** `.mymir/<workflow>-<projectIdentifier>.md`. Examples:
+**Location:** `.piyaz/<workflow>-<projectIdentifier>.md`. Examples:
 
-- `.mymir/decompose-LUM.md`
-- `.mymir/onboarding-KRN.md`
+- `.piyaz/decompose-LUM.md`
+- `.piyaz/onboarding-KRN.md`
 
 **Structure:**
 
@@ -108,10 +108,10 @@ status: in-progress
 **Lifecycle:**
 
 1. **Initialize**, immediately after the HARD-GATE clears and the plan is persisted to the project description.
-   - `Bash`: `mkdir -p .mymir`
-   - `Bash`: append `.mymir/` to `.gitignore` if not already present:
+   - `Bash`: `mkdir -p .piyaz`
+   - `Bash`: append `.piyaz/` to `.gitignore` if not already present:
      ```
-     grep -qxF '.mymir/' .gitignore 2>/dev/null || echo '.mymir/' >> .gitignore
+     grep -qxF '.piyaz/' .gitignore 2>/dev/null || echo '.piyaz/' >> .gitignore
      ```
    - `Write` the file using the structure above.
 2. **Update** the progress checklist after every batch of task creates: every 5 to 10 tasks for decompose, 3 to 5 for onboarding. Update the notes section as new questions or in-flight decisions surface.
@@ -120,10 +120,10 @@ status: in-progress
    - If missing, fall back to the project description (cross-machine scenario).
    - Either way, re-fetch `mymir_query type='list'` and dedupe.
 4. **Cleanup or archive** when the workflow completes. Either:
-   - Delete `.mymir/<workflow>-<projectIdentifier>.md`, or
-   - Rename to `.mymir/archive/<workflow>-<projectIdentifier>-<date>.md` if the user wants a paper trail.
+   - Delete `.piyaz/<workflow>-<projectIdentifier>.md`, or
+   - Rename to `.piyaz/archive/<workflow>-<projectIdentifier>-<date>.md` if the user wants a paper trail.
 
-The `.mymir/` directory is scratch. Never committed. The first write should ensure `.gitignore` excludes it.
+The `.piyaz/` directory is scratch. Never committed. The first write should ensure `.gitignore` excludes it.
 
 ---
 
@@ -131,7 +131,7 @@ The `.mymir/` directory is scratch. Never committed. The first write should ensu
 
 At the start of any decompose / onboarding session, before any `mymir_task action='create'`:
 
-1. **Check the local working file first.** `Read` `.mymir/<workflow>-<projectIdentifier>.md`. If it exists, that is your working state.
+1. **Check the local working file first.** `Read` `.piyaz/<workflow>-<projectIdentifier>.md`. If it exists, that is your working state.
 2. If the local file is missing, `mymir_query type='list'` (slim) plus re-read the project description from the `select` response. If a Decomposition Plan or Onboarding Proposal section exists in the description, that is your authoritative plan.
 3. Compare: which planned tasks already exist (match by title), which are missing.
 4. **If existing tasks > 0:** you are resuming. Surface this to the user: "I see N tasks already exist in this project. The approved plan calls for M tasks. I'll create the M-N missing ones." Do NOT recreate existing tasks.
@@ -203,13 +203,13 @@ Do not power through. The user invoked you to produce quality work, not to resta
 - Quality is enforced: periodic self-audit catches drift.
 - Recovery is automatic: resume mode runs at every session start, reads local file first, falls back to project description.
 
-The conversation can compact, the session can crash, the agent can lose track. Mymir state plus the local working file are the source of truth. Read from them, write to them, and trust them over your own memory.
+The conversation can compact, the session can crash, the agent can lose track. Piyaz state plus the local working file are the source of truth. Read from them, write to them, and trust them over your own memory.
 
 ---
 
 ## 9. Server vs agent-enforced rules
 
-Some Mymir conventions are validated by the server; others depend on agent discipline. Knowing which is which prevents the agent from assuming a safety net that does not exist.
+Some Piyaz conventions are validated by the server; others depend on agent discipline. Knowing which is which prevents the agent from assuming a safety net that does not exist.
 
 **Server-enforced** (the server rejects or warns):
 
@@ -237,7 +237,7 @@ When in doubt, treat any rule that lives in `references/artifacts.md` or `refere
 
 ## 10. Transport / auth errors are not retryable in-session
 
-If a Mymir tool call returns one of these, **stop and surface to the user**:
+If a Piyaz tool call returns one of these, **stop and surface to the user**:
 
 - `requires re-authorization`, `token expired`, 401 / 403 from the MCP transport.
 - 5xx from the server.
@@ -247,7 +247,7 @@ These mean the host's authentication or the connection itself is broken. The age
 
 1. Stop. Do not retry the same call. Do not silently proceed to the next step assuming the prior write succeeded.
 2. Do not fabricate the downstream artifacts that would have followed a successful call. The Iron Law (`conventions.md` §1) applies: you cannot cite what you do not have.
-3. Surface the failure to the user with the exact error text and the last completed step ("Mymir auth expired after creating LUM-12. Re-authenticate and I will resume from LUM-13.").
+3. Surface the failure to the user with the exact error text and the last completed step ("Piyaz auth expired after creating LUM-12. Re-authenticate and I will resume from LUM-13.").
 4. Wait for confirmation that the connection is restored before resuming.
 
 A session that silently retries a 401 in a loop wastes tokens and produces nothing. A session that fabricates the rest of the workflow on the assumption the call succeeded produces actively misleading state.
@@ -256,7 +256,7 @@ A session that silently retries a 401 in a loop wastes tokens and produces nothi
 
 ## 11. Headless / non-interactive runs
 
-The ask_user tool requires a user attached to the session. Codex `exec`, Claude Agent SDK without a `canUseTool` callback, Gemini policy-deny contexts, and CI environments all reject or hang on the call. When you detect headless mode (tool errors with "no input available", "policy denied", or equivalent), do NOT loop or fabricate a default silently:
+The ask_user_question tool requires a user attached to the session. Codex `exec`, Claude Agent SDK without a `canUseTool` callback, Gemini policy-deny contexts, and CI environments all reject or hang on the call. When you detect headless mode (tool errors with "no input available", "policy denied", or equivalent), do NOT loop or fabricate a default silently:
 
 1. Pick the safest, most reversible default for the decision at hand.
 2. Record both the question you would have asked and the default you chose in the task's `executionRecord` (or the local working file if you are pre-task).

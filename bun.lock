@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "mymir",
+      "name": "piyaz",
       "dependencies": {
         "@better-auth/oauth-provider": "1.6.14",
         "@fontsource-variable/geist-mono": "^5.2.8",

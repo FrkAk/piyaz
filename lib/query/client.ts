@@ -30,7 +30,7 @@ export function makeQueryClient(): QueryClient {
 export const getServerQueryClient = cache(makeQueryClient);
 
 type BrowserGlobals = typeof globalThis & {
-  __mymirQueryClient?: QueryClient;
+  __piyazQueryClient?: QueryClient;
 };
 
 /**
@@ -41,6 +41,6 @@ type BrowserGlobals = typeof globalThis & {
  */
 export function getBrowserQueryClient(): QueryClient {
   const g = globalThis as BrowserGlobals;
-  if (!g.__mymirQueryClient) g.__mymirQueryClient = makeQueryClient();
-  return g.__mymirQueryClient;
+  if (!g.__piyazQueryClient) g.__piyazQueryClient = makeQueryClient();
+  return g.__piyazQueryClient;
 }

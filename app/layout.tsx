@@ -13,13 +13,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "mymir",
+  title: "piyaz",
   description:
     "A structure that supports organic growth. Track projects created by your coding agent.",
 };
 
 /**
- * Root layout for the Mymir application.
+ * Root layout for the Piyaz application.
  * Reads theme from cookie for SSR so the correct mode paints on first frame.
  * @param props - Layout props with children.
  * @returns The root HTML structure with fonts and theme applied.
@@ -30,7 +30,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const cookieStore = await cookies();
-  const raw = cookieStore.get("mymir-theme")?.value;
+  const raw = cookieStore.get("piyaz-theme")?.value;
   const theme = raw === "light" ? "light" : "dark";
 
   return (

@@ -32,7 +32,7 @@ export function AuthHero() {
               letterSpacing: "0.14em",
             }}
           >
-            Live · Project: Mymir
+            Live · Project: Piyaz
           </span>
         </div>
         <div

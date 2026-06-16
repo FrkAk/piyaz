@@ -2,8 +2,8 @@ import postgres from "postgres";
 import { applyMigrations } from "./migrate";
 
 declare global {
-  var __mymirTestSetupRan: boolean | undefined;
-  var __mymirTestUrl: string | undefined;
+  var __piyazTestSetupRan: boolean | undefined;
+  var __piyazTestUrl: string | undefined;
 }
 
 /**
@@ -22,13 +22,13 @@ const DEFAULT_LOCAL_URL = "postgres://mymir:mymir@localhost:5433/mymir_test";
  * @throws Error when `setup()` has not yet completed.
  */
 export function getConnectionString(): string {
-  if (!globalThis.__mymirTestUrl) {
+  if (!globalThis.__piyazTestUrl) {
     throw new Error(
       "Test database not initialized. Did `setup()` run? " +
         "Run `bun run db:test:up` locally, or set TEST_DATABASE_URL.",
     );
   }
-  return globalThis.__mymirTestUrl;
+  return globalThis.__piyazTestUrl;
 }
 
 /**
@@ -157,15 +157,15 @@ export function serviceRolePool(): Sql {
  * Subsequent calls are no-ops.
  */
 export async function setup(): Promise<void> {
-  if (globalThis.__mymirTestSetupRan) return;
+  if (globalThis.__piyazTestSetupRan) return;
   const url = process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_URL;
   await waitForPostgres(url);
-  globalThis.__mymirTestUrl = url;
+  globalThis.__piyazTestUrl = url;
   const rewriteRole = (role: string) =>
     url.replace(/^(postgres(?:ql)?):\/\/[^:]+:[^@]+@/, `$1://${role}:${role}@`);
   await applyMigrations(url);
   process.env.DATABASE_URL = rewriteRole("app_user");
   process.env.DATABASE_AUTH_URL = rewriteRole("auth_role");
   process.env.DATABASE_SERVICE_ROLE_URL = rewriteRole("service_role");
-  globalThis.__mymirTestSetupRan = true;
+  globalThis.__piyazTestSetupRan = true;
 }

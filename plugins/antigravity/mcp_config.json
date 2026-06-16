@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "mymir": {
-      "serverUrl": "https://app.mymir.dev/api/mcp"
+    "piyaz": {
+      "serverUrl": "https://app.piyaz.ai/api/mcp"
     },
-    "mymir-local": {
+    "piyaz-local": {
       "serverUrl": "http://localhost:3000/api/mcp"
     }
   }

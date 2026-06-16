@@ -92,7 +92,7 @@ export async function clearOrgMembershipArtifacts(
         ),
       );
     // BA's `oauthConsent` lookup keys on (clientId, userId) only, but
-    // mymir wires `consentReferenceId → activeOrganizationId` so the row
+    // piyaz wires `consentReferenceId → activeOrganizationId` so the row
     // carries an org pointer that ends up in the access-token claims.
     // Deleting org-scoped consent rows forces re-consent for that client
     // so a removed member can't mint tokens claiming the old org.

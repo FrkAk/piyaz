@@ -282,7 +282,7 @@ export default function ConsentPage() {
               {brandName}
             </h1>
             <p className="text-sm text-text-muted">
-              wants to access your mymir account.
+              wants to access your piyaz account.
             </p>
           </div>
         </div>

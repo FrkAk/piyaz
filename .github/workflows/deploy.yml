@@ -22,7 +22,7 @@ jobs:
       contents: read
     environment:
       name: production
-      url: https://app.mymir.dev
+      url: https://app.piyaz.ai
     steps:
       - name: Checkout the commit that passed Quality Check
         uses: actions/checkout@v6
@@ -50,7 +50,7 @@ jobs:
       - name: Deploy to Cloudflare Workers (production)
         env:
           DEPLOY_TARGET: cloudflare
-          BETTER_AUTH_URL: https://app.mymir.dev
+          BETTER_AUTH_URL: https://app.piyaz.ai
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: bun run deploy:cf
