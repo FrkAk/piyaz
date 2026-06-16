@@ -11,7 +11,7 @@ declare global {
  * host port exposed by `docker-compose.test.yml`. CI sets the env var
  * explicitly to point at the Actions `services: postgres:` sidecar.
  */
-const DEFAULT_LOCAL_URL = "postgres://mymir:mymir@localhost:5433/mymir_test";
+const DEFAULT_LOCAL_URL = "postgres://piyaz:piyaz@localhost:5433/piyaz_test";
 
 /**
  * Read the superuser connection string used by helpers that need to seed
@@ -114,7 +114,7 @@ function rewriteRoleUrl(url: string, role: string): string {
 }
 
 /**
- * Cached pool bound to the container superuser (`mymir/mymir`). Used by
+ * Cached pool bound to the container superuser (`piyaz/piyaz`). Used by
  * seed helpers and `truncateAll`. Stays warm for the whole test process.
  *
  * @returns Postgres-js client (with `.end` no-op'd) for superuser SQL.

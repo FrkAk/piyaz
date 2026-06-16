@@ -13,13 +13,13 @@ jobs:
       postgres:
         image: postgres:17.6
         env:
-          POSTGRES_USER: mymir
-          POSTGRES_PASSWORD: mymir
-          POSTGRES_DB: mymir_test
+          POSTGRES_USER: piyaz
+          POSTGRES_PASSWORD: piyaz
+          POSTGRES_DB: piyaz_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U mymir -d mymir_test"
+          --health-cmd "pg_isready -U piyaz -d piyaz_test"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
@@ -64,7 +64,7 @@ jobs:
         run: bun run typecheck
       - name: Test
         env:
-          TEST_DATABASE_URL: postgres://mymir:mymir@localhost:5432/mymir_test
+          TEST_DATABASE_URL: postgres://piyaz:piyaz@localhost:5432/piyaz_test
         run: bun run test
       - name: Check plugin drift
         run: bun run check:plugins
