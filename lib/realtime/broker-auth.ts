@@ -1,8 +1,8 @@
 /**
- * HMAC-SHA256 signing envelope for the `MymirBroker` Durable Object RPC
+ * HMAC-SHA256 signing envelope for the `PiyazBroker` Durable Object RPC
  * surface. Authenticates every fetch the Workers broker adapter sends to
  * the DO so callers cannot spoof a `userId` or fabricate dispatches even
- * if they obtain the `MYMIR_BROKER` binding through some other path.
+ * if they obtain the `PIYAZ_BROKER` binding through some other path.
  *
  * Signing inputs (canonical string):
  *
@@ -15,11 +15,11 @@
  *     60-second freshness window
  *   - `bodyHashHex` — SHA-256 hex digest of the raw request body bytes
  *     (`""` when there is no body)
- *   - `userId` — value of `X-Mymir-User-Id` when set (upgrade only),
+ *   - `userId` — value of `X-Piyaz-User-Id` when set (upgrade only),
  *     empty string otherwise; included so the user-id header cannot be
  *     swapped post-signing
  *
- * Header format: `X-Mymir-Broker-Sig: t=<ts>,n=<nonce>,v=<hex>`.
+ * Header format: `X-Piyaz-Broker-Sig: t=<ts>,n=<nonce>,v=<hex>`.
  *
  * Workers-only: this file is imported by `_broker.workers.ts` (adapter)
  * and `broker-do.ts` (DO). The self-host bundle ignores both, so this
@@ -30,10 +30,10 @@
 export const BROKER_SIG_MAX_SKEW_MS = 60_000;
 
 /** Header name carrying the signed envelope. */
-export const BROKER_SIG_HEADER = "X-Mymir-Broker-Sig";
+export const BROKER_SIG_HEADER = "X-Piyaz-Broker-Sig";
 
 /** Header name carrying the user id on the WS upgrade. */
-export const BROKER_USER_ID_HEADER = "X-Mymir-User-Id";
+export const BROKER_USER_ID_HEADER = "X-Piyaz-User-Id";
 
 /**
  * Parse a signed-envelope header into its three fields, or `null` when
@@ -114,7 +114,7 @@ export async function hmacSha256Hex(
  * @param ts - Unix milliseconds.
  * @param nonce - Random nonce hex.
  * @param bodyHashHex - SHA-256 hex of the body (or empty string).
- * @param userId - `X-Mymir-User-Id` header value, or empty string.
+ * @param userId - `X-Piyaz-User-Id` header value, or empty string.
  * @returns Canonical signing string.
  */
 export function buildSigningString(

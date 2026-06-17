@@ -25,7 +25,7 @@ const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
  * On the Cloudflare deploy the browser opens a WebSocket, not this SSE
  * stream: the worker entry (`worker-cf.ts`) intercepts the `Upgrade:
  * websocket` request to `/api/events` ahead of OpenNext and terminates it
- * against the `MymirBroker` Durable Object (zero-cost while idle via the
+ * against the `PiyazBroker` Durable Object (zero-cost while idle via the
  * Hibernation API). This handler therefore only runs on Cloudflare for a
  * non-upgrade GET, where it short-circuits to 204 with `Retry-After` so a
  * stray `EventSource` cannot open a wall-clock-billed stream or

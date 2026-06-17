@@ -11,7 +11,7 @@
  *   - `env.production` exists.
  *   - No KV namespace `id` in `env.production` is all zeros.
  *   - No D1 `database_id` in `env.production` is the zero UUID.
- *   - No R2 binding in `env.production` references a `mymir-placeholder-*` bucket.
+ *   - No R2 binding in `env.production` references a `piyaz-placeholder-*` bucket.
  *   - Every required production secret is registered in the production
  *     Wrangler env: BROKER_DO_SECRET (broker DO HMAC key), BETTER_AUTH_SECRET
  *     (Better-auth signing key), DATABASE_URL / DATABASE_SERVICE_ROLE_URL /
@@ -30,7 +30,7 @@ const WRANGLER_JSONC = path.join(ROOT, "wrangler.jsonc");
 
 const ZERO_KV_ID = "00000000000000000000000000000000";
 const ZERO_D1_ID = "00000000-0000-0000-0000-000000000000";
-const PLACEHOLDER_BUCKET_RE = /^mymir-placeholder-/i;
+const PLACEHOLDER_BUCKET_RE = /^piyaz-placeholder-/i;
 
 interface KvBinding {
   binding: string;
