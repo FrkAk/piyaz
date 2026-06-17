@@ -1,4 +1,4 @@
-![Piyaz](assets/mymir-logo.png)
+![Piyaz](assets/piyaz-logo.png)
 > Context management for the agent-native engineering era.
 
 <p align="center">
