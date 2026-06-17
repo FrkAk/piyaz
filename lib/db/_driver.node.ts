@@ -51,7 +51,7 @@ export function buildAppPool(): DbBundle<AppDb> {
 /**
  * Build the Better-auth Drizzle client backed by postgres-js.
  *
- * @returns Pool + Drizzle instance bound to the neon_auth schema.
+ * @returns Pool + Drizzle instance bound to the piyaz_auth schema.
  * @throws Error when `DATABASE_AUTH_URL` is unset.
  */
 export function buildAuthPool(): DbBundle<AuthDb> {
@@ -59,7 +59,7 @@ export function buildAuthPool(): DbBundle<AuthDb> {
   if (!url) {
     throw new Error(
       "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
-        "(DML on neon_auth.*, no public-schema access).",
+        "(DML on piyaz_auth.*, no public-schema access).",
     );
   }
   const pool = postgres(url, POSTGRES_OPTS);

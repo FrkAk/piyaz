@@ -9,7 +9,7 @@ afterEach(async () => {
   await truncateAll();
 });
 
-describe("app_user neon_auth lockdown", () => {
+describe("app_user piyaz_auth lockdown", () => {
   const tables = [
     "user",
     "session",
@@ -26,10 +26,10 @@ describe("app_user neon_auth lockdown", () => {
   ];
 
   for (const t of tables) {
-    test(`app_user cannot SELECT from neon_auth.${t}`, async () => {
+    test(`app_user cannot SELECT from piyaz_auth.${t}`, async () => {
       const c = appUserConnect();
       await expectQueryRejects(
-        c.unsafe(`SELECT 1 FROM neon_auth."${t}" LIMIT 1`),
+        c.unsafe(`SELECT 1 FROM piyaz_auth."${t}" LIMIT 1`),
         /permission denied/i,
       );
     });
@@ -96,7 +96,7 @@ describe("app_user neon_auth lockdown", () => {
     }
   });
 
-  test("app_user has zero rows in information_schema.table_privileges for schema neon_auth", async () => {
+  test("app_user has zero rows in information_schema.table_privileges for schema piyaz_auth", async () => {
     // The runtime SELECT-deny probes above prove the surface is
     // unreachable, but a catalog assertion is the static-shape backup —
     // a future docker/grants.sql edit that accidentally added a grant
@@ -109,12 +109,12 @@ describe("app_user neon_auth lockdown", () => {
         SELECT grantee, table_name, privilege_type
         FROM information_schema.table_privileges
         WHERE grantee = 'app_user'
-          AND table_schema = 'neon_auth'
+          AND table_schema = 'piyaz_auth'
       `;
       const found = rows.map((r) => `${r.table_name}.${r.privilege_type}`);
       expect(
         found,
-        `app_user must have zero table privileges in neon_auth (found: ${found.join(", ")})`,
+        `app_user must have zero table privileges in piyaz_auth (found: ${found.join(", ")})`,
       ).toEqual([]);
     } finally {
       await su.end({ timeout: 5 });
@@ -202,7 +202,7 @@ describe("auth_role public.* lockdown", () => {
   });
 });
 
-describe("service_role neon_auth grants pin the call-site contract", () => {
+describe("service_role piyaz_auth grants pin the call-site contract", () => {
   // The data-layer call sites in lib/data/oauth-session.ts and
   // lib/data/account.ts rely on a documented, MINIMAL set of grants. If
   // grants.sql ever loses one of these, the affected UI surface dies
@@ -232,20 +232,20 @@ describe("service_role neon_auth grants pin the call-site contract", () => {
   }
 
   for (const { table, needs } of requiredGrants) {
-    test(`service_role has the documented grants on neon_auth.${table}`, async () => {
+    test(`service_role has the documented grants on piyaz_auth.${table}`, async () => {
       const c = serviceRolePool();
       try {
         for (const priv of needs) {
           const [row] = await c<Array<{ has: boolean }>>`
             SELECT has_table_privilege(
               'service_role',
-              ${'neon_auth."' + table + '"'},
+              ${'piyaz_auth."' + table + '"'},
               ${priv}
             ) AS has
           `;
           expect(
             row.has,
-            `service_role must have ${priv} on neon_auth.${table}`,
+            `service_role must have ${priv} on piyaz_auth.${table}`,
           ).toBe(true);
         }
       } finally {

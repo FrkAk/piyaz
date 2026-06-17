@@ -14,7 +14,7 @@ test("container is reachable and migrations applied", async () => {
   try {
     const rows = await sql<{ name: string }[]>`
       SELECT table_name AS name FROM information_schema.tables
-      WHERE table_schema IN ('public', 'neon_auth')
+      WHERE table_schema IN ('public', 'piyaz_auth')
       ORDER BY table_name
     `;
     const names = rows.map((r) => r.name);

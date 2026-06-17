@@ -1,7 +1,7 @@
 name: piyaz
 services:
   db:
-    image: postgres:17.10
+    image: postgres:18
     restart: unless-stopped
     environment:
       POSTGRES_USER: piyaz
@@ -15,7 +15,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
       - ./docker/init-auth.sql:/docker-entrypoint-initdb.d/01-auth.sql:ro
       - ./docker/init-rls.sh:/docker-entrypoint-initdb.d/02-rls.sh:ro
       - ./docker/grants.sql:/opt/postgres-init/grants.sql:ro

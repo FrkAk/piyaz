@@ -633,12 +633,12 @@ describe("is_caller_in_invitation_org SECURITY DEFINER", () => {
   ): Promise<{ id: string }> {
     const su = superuserPool();
     const [row] = await su<{ id: string }[]>`
-      INSERT INTO neon_auth."invitation"
+      INSERT INTO piyaz_auth."invitation"
         ("organizationId", "email", "role", "status", "expiresAt", "inviterId")
       VALUES (
         ${orgId}, ${email}, 'member', 'pending',
         ${new Date(Date.now() + 7 * 86400_000)},
-        (SELECT "userId" FROM neon_auth."member" WHERE "organizationId" = ${orgId} LIMIT 1)
+        (SELECT "userId" FROM piyaz_auth."member" WHERE "organizationId" = ${orgId} LIMIT 1)
       )
       RETURNING id
     `;
@@ -673,7 +673,7 @@ describe("is_caller_in_invitation_org SECURITY DEFINER", () => {
     const fxB = await seedUserOrgProject("inv-bind-b");
     const su = superuserPool();
     await su`
-      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
       VALUES (${fxB.organizationId}, ${fxA.userId}, 'member', now())
     `;
     const inv = await seedInvitation(fxA.organizationId, "bind@test.local");
@@ -773,7 +773,7 @@ describe("SECURITY DEFINER catalog invariants", () => {
 
 /**
  * Every `*_visible` SECURITY DEFINER below carries an inline
- * `EXISTS (SELECT 1 FROM neon_auth."member" caller WHERE …)` guard on
+ * `EXISTS (SELECT 1 FROM piyaz_auth."member" caller WHERE …)` guard on
  * the caller's GUC-supplied user_id. If a future regression drops that
  * guard, an app_user session in team B could read team A's data
  * through the SDF — the brand types and the EXECUTE grant matrix would
@@ -872,7 +872,7 @@ describe("SECURITY DEFINER — cross-team caller-membership re-checks", () => {
     const teamB = await seedUserOrgProject("sdf-cuvm-b");
     const su = superuserPool();
     const [member] = await su<{ id: string }[]>`
-      SELECT id FROM neon_auth."member"
+      SELECT id FROM piyaz_auth."member"
       WHERE "organizationId" = ${teamA.organizationId} AND "userId" = ${teamA.userId}
     `;
     const c = appUserConnect();
