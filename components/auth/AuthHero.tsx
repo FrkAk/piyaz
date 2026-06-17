@@ -45,13 +45,13 @@ export function AuthHero() {
           <div>
             <span style={{ color: "var(--color-accent-light)" }}>❯</span>{" "}
             claude: I picked up{" "}
-            <span className="text-text-primary">MYMR-104</span>
+            <span className="text-text-primary">PYZ-104</span>
           </div>
           <div className="pl-3.5 text-text-muted">
             → working bundle: 1,284 / 8,000 tokens
           </div>
           <div className="pl-3.5 text-text-muted">
-            → surfaced upstream record from MYMR-101
+            → surfaced upstream record from PYZ-101
           </div>
           <div className="pl-3.5 text-text-muted">
             → 3/5 acceptance criteria pre-validated
@@ -64,7 +64,7 @@ export function AuthHero() {
           <div>
             <span style={{ color: "var(--color-progress)" }}>◐</span> agent:
             claude implementing{" "}
-            <span className="text-text-primary">MYMR-103</span> · 0:42
+            <span className="text-text-primary">PYZ-103</span> · 0:42
           </div>
         </div>
         <p className="mt-6 max-w-md text-[12.5px] text-text-muted">

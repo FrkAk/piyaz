@@ -1,6 +1,6 @@
 /**
- * Brand stamp shown at the top of every auth form — 30×30 gradient `m` mark
- * paired with a lowercase `piyaz` wordmark. Slightly larger than the
+ * Brand stamp shown at the top of every auth form: a 30×30 transparent piyaz
+ * mark paired with a lowercase `piyaz` wordmark. Slightly larger than the
  * sidebar variant (22×22) because the auth surface is a destination, not
  * a chrome accessory.
  *
@@ -9,17 +9,15 @@
 export function AuthBrand() {
   return (
     <div className="mb-8 flex items-center gap-2.5">
-      <span
+      {/* eslint-disable-next-line @next/next/no-img-element -- brand mark is a 30px static asset; next/image optimization is overkill and unconfigured on the Cloudflare build */}
+      <img
+        src="/piyaz-mark.png"
+        alt=""
         aria-hidden="true"
-        className="inline-flex h-[30px] w-[30px] items-center justify-center font-mono text-[15px] font-bold"
-        style={{
-          background: "var(--color-accent-grad)",
-          borderRadius: 7,
-          color: "#0b0c10",
-        }}
-      >
-        m
-      </span>
+        width={30}
+        height={30}
+        className="h-[30px] w-[30px] object-contain"
+      />
       <span
         className="text-[16px] font-semibold text-text-primary"
         style={{ letterSpacing: "-0.005em" }}

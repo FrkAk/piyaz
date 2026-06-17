@@ -1,4 +1,4 @@
-![Piyaz](assets/mymir-logo.png)
+![Piyaz](assets/piyaz-logo.png)
 > Context management for the agent-native engineering era.
 
 <p align="center">
@@ -47,7 +47,7 @@ Open Codex, run `/plugin`, install **Piyaz**, restart, and authenticate when pro
 - **MCP only, any plan (quick start):** open the install deeplink, then sign in on the first tool call:
 
   ```text
-  cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5teW1pci5kZXYvYXBpL21jcCJ9
+  cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5waXlhei5haS9hcGkvbWNwIn0=
   ```
 
 - **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/mymir`. Team Marketplaces is a Teams/Enterprise feature.
