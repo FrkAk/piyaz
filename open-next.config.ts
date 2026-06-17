@@ -18,9 +18,10 @@ import doQueue from "@opennextjs/cloudflare/overrides/queue/do-queue";
  *     PPR support is on the roadmap (see MYMR-167 follow-ups). Flip to
  *     `true` only after measuring the cache-hit win against the PPR loss.
  *
- * `PiyazBroker` is injected into `.open-next/worker.js` by
- * `scripts/postbuild-cf.ts`; re-exporting it here is dead code because the
- * OpenNext worker template does not consume user exports from this file.
+ * `PiyazBroker` is re-exported from the worker entry (`worker-cf.ts`) and
+ * resolved at runtime via the `PIYAZ_BROKER` binding in `wrangler.jsonc`;
+ * re-exporting it here is dead code because the OpenNext worker template
+ * does not consume user exports from this file.
  */
 export default defineCloudflareConfig({
   incrementalCache: r2IncrementalCache,
