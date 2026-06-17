@@ -1,4 +1,4 @@
-# Piyaz lifecycle rules
+# Mymir lifecycle rules
 
 How tasks move through state, what each state means, the Completion Protocol (with PR-opening), and the propagation Iron Law.
 
@@ -39,7 +39,7 @@ draft → planned → in_progress → in_review → done
 ### `planned`
 
 - **What it means.** Implementation plan is written. All `depends_on` blockers are themselves `done`. Ready for someone to claim and code.
-- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
+- **Transitions to `in_progress`:** when someone explicitly claims via `mymir_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
 
 ### `in_progress`
 
@@ -94,13 +94,13 @@ Completion Protocol:
 
 `executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
 
-For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
 Evaluating existing acceptance criteria passes `{text, checked}` objects; this updates the rows in place. `overwriteArrays=true` is never part of the Completion Protocol; if you find yourself reaching for it here, stop and re-read the red flags in SKILL.md.
 
 ### 2.3. Open a PR if the work changed code
 
-If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Piyaz-only refinement):
+If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Mymir-only refinement):
 
 **Detect a PR template** in the repo at one of these paths (or similar):
 
@@ -111,7 +111,7 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 
 **If a template exists**: fill it. Map task fields onto template sections only where they fit. Leave a section blank rather than invent content. Common mappings:
 
-- Linked issue / linked task: include the `taskRef` in `[BRACKETS]` (e.g. `[LSQ-38]`). Bracket form triggers Piyaz PR-status tracking; use it for the ONE primary task this PR builds. Reference any related tasks elsewhere as plain links (no brackets). Add `Closes #N` on its own line if a GitHub issue is being resolved.
+- Linked issue / linked task: include the `taskRef` in `[BRACKETS]` (e.g. `[LSQ-38]`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference any related tasks elsewhere as plain links (no brackets). Add `Closes #N` on its own line if a GitHub issue is being resolved.
 - Summary section: 2 to 3 sentences from `executionRecord`.
 - Test plan / verification section: the `acceptanceCriteria` items that are checked.
 - Decisions or notes-for-reviewer section if present: relevant entries from `decisions`.
@@ -122,7 +122,7 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 ## Summary
 
 **Task Reference**: [PREFIX-N]
-<!-- The ONE primary task this PR builds. Brackets trigger Piyaz
+<!-- The ONE primary task this PR builds. Brackets trigger Mymir
      PR-status tracking. Use them only here. Reference any related
      tasks elsewhere as plain links (no brackets). -->
 
@@ -156,7 +156,7 @@ Open the PR with `gh pr create --title '<task title>' --body "$(cat <<'EOF' ... 
 
 - Research / investigation tasks (no code change).
 - Decision-only tasks.
-- Pure-Piyaz refinement tasks (no repo changes).
+- Pure-Mymir refinement tasks (no repo changes).
 - Tasks the user explicitly said "no PR" on.
 - Data and BA work without a code repo (a Looker dashboard tweak applied via the Looker UI, a Tableau workbook published from Desktop, a metric definition signed off in a doc, an ad-hoc SQL analysis attached to a ticket, a BRD update in Confluence). In these cases the deliverable lives outside git; record the artifact link or path in `executionRecord` and `files` instead of opening a PR. When the data work IS in a git repo (a dbt project, a SQL repo, a notebook collection under version control), open a PR per the standard rules above.
 
@@ -170,12 +170,12 @@ When in doubt, ask the user before opening.
 A change that does not propagate did not happen.
 ```
 
-The graph is Piyaz's value. Skip once and it lies: ready tasks that aren't ready, blockers pointing at shipped work, every future session picking the wrong next step.
+The graph is Mymir's value. Skip once and it lies: ready tasks that aren't ready, blockers pointing at shipped work, every future session picking the wrong next step.
 
 After any status change or significant refinement:
 
-1. `piyaz_query type='edges'` on the changed task. Current relationships.
-2. `piyaz_analyze type='downstream'`. Who depends on this task.
+1. `mymir_query type='edges'` on the changed task. Current relationships.
+2. `mymir_analyze type='downstream'`. Who depends on this task.
 3. For each downstream task, evaluate:
    - Do edge notes need updating to reflect new decisions?
    - Are there NEW relationships revealed by this change?
@@ -190,4 +190,4 @@ After any status change or significant refinement:
   - **Yes** (a new task supersedes the cancelled one): rewire dependents to point at the replacement.
   - **No** (the scope is genuinely abandoned): dependents may need to be cancelled too, or re-scoped to no longer require the cancelled work.
 
-Skipping propagation is how dependency graphs go stale. Stale graphs make Piyaz useless.
+Skipping propagation is how dependency graphs go stale. Stale graphs make Mymir useless.

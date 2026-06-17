@@ -1,9 +1,9 @@
 ---
 name: manage
 description: >
-  Explicit doorway to the Piyaz manage subagent. Use only when the user types
-  /piyaz:manage directly. For natural-language manage requests (strategic review,
-  graph health audit, rebalancing, deep planning, housekeeping), the /piyaz skill
+  Explicit doorway to the Mymir manage subagent. Use only when the user types
+  /mymir:manage directly. For natural-language manage requests (strategic review,
+  graph health audit, rebalancing, deep planning, housekeeping), the /mymir skill
   or the assistant dispatches the manage agent via the Task tool — do not invoke
   this skill for that path.
 ---

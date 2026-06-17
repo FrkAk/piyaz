@@ -256,12 +256,12 @@ class Broker {
   }
 }
 
-const g = globalThis as { __piyazBroker?: Broker };
+const g = globalThis as { __mymirBroker?: Broker };
 
 /**
  * Process-wide broker singleton. Stored on `globalThis` so HMR + Next's
  * per-route module isolation share one instance.
  */
-export const broker: Broker = (g.__piyazBroker ??= new Broker());
+export const broker: Broker = (g.__mymirBroker ??= new Broker());
 
 export type { Broker };

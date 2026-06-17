@@ -228,7 +228,7 @@ export function buildAgentContextFrom(data: AgentContextData): string {
 /**
  * Build lean, position-optimized context for external coding agents.
  *
- * The MCP `piyaz_context depth='agent'` entry point. For `done` /
+ * The MCP `mymir_context depth='agent'` entry point. For `done` /
  * `cancelled` tasks it delegates to the retrospective record builder; the
  * status dispatch happens inside {@link resolveAgentBundleData}, which
  * reads it from the closure-core batch so both shapes resolve in two read

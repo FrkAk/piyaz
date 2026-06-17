@@ -2,13 +2,13 @@ import { test, expect } from "bun:test";
 import { evaluateRedirect, safeLinkHost } from "@/lib/auth/safe-redirect";
 
 test("evaluateRedirect: null URI fails closed with (missing)", () => {
-  const result = evaluateRedirect(null, "piyaz.com");
+  const result = evaluateRedirect(null, "mymir.com");
   expect(result.safe).toBe(false);
   expect(result.display).toBe("(missing)");
 });
 
 test("evaluateRedirect: unparseable URI fails closed and echoes raw input", () => {
-  const result = evaluateRedirect("not a url", "piyaz.com");
+  const result = evaluateRedirect("not a url", "mymir.com");
   expect(result.safe).toBe(false);
   expect(result.display).toBe("not a url");
 });
@@ -44,25 +44,25 @@ test("evaluateRedirect: http://[::1] is trusted", () => {
 });
 
 test("evaluateRedirect: same-host redirect is trusted when ownHost is set", () => {
-  const result = evaluateRedirect("https://piyaz.com/cb", "piyaz.com");
+  const result = evaluateRedirect("https://mymir.com/cb", "mymir.com");
   expect(result.safe).toBe(true);
-  expect(result.display).toBe("piyaz.com");
+  expect(result.display).toBe("mymir.com");
 });
 
 test("evaluateRedirect: same-host redirect with non-default port matches host including port", () => {
   expect(
-    evaluateRedirect("https://piyaz.com:8443/cb", "piyaz.com:8443").safe,
+    evaluateRedirect("https://mymir.com:8443/cb", "mymir.com:8443").safe,
   ).toBe(true);
 });
 
 test("evaluateRedirect: same-host with ownHost null (SSR) fails closed", () => {
-  const result = evaluateRedirect("https://piyaz.com/cb", null);
+  const result = evaluateRedirect("https://mymir.com/cb", null);
   expect(result.safe).toBe(false);
-  expect(result.display).toBe("piyaz.com");
+  expect(result.display).toBe("mymir.com");
 });
 
 test("evaluateRedirect: cross-origin https redirect is unsafe", () => {
-  const result = evaluateRedirect("https://attacker.com/cb", "piyaz.com");
+  const result = evaluateRedirect("https://attacker.com/cb", "mymir.com");
   expect(result.safe).toBe(false);
   expect(result.display).toBe("attacker.com");
 });

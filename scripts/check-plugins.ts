@@ -53,48 +53,48 @@ const platformSubs: PlatformSubs[] = [
 
 const shared: SharedGroup[] = [
   {
-    name: "skills/piyaz/SKILL.md",
-    canonical: "plugins/claude-code/skills/piyaz/SKILL.md",
+    name: "skills/mymir/SKILL.md",
+    canonical: "plugins/claude-code/skills/mymir/SKILL.md",
     copies: [
-      "plugins/codex/skills/piyaz/SKILL.md",
-      "plugins/cursor/skills/piyaz/SKILL.md",
-      "plugins/antigravity/skills/piyaz/SKILL.md",
+      "plugins/codex/skills/mymir/SKILL.md",
+      "plugins/cursor/skills/mymir/SKILL.md",
+      "plugins/antigravity/skills/mymir/SKILL.md",
     ],
   },
   {
-    name: "skills/piyaz/references/conventions.md",
-    canonical: "plugins/claude-code/skills/piyaz/references/conventions.md",
+    name: "skills/mymir/references/conventions.md",
+    canonical: "plugins/claude-code/skills/mymir/references/conventions.md",
     copies: [
-      "plugins/codex/skills/piyaz/references/conventions.md",
-      "plugins/cursor/skills/piyaz/references/conventions.md",
-      "plugins/antigravity/skills/piyaz/references/conventions.md",
+      "plugins/codex/skills/mymir/references/conventions.md",
+      "plugins/cursor/skills/mymir/references/conventions.md",
+      "plugins/antigravity/skills/mymir/references/conventions.md",
     ],
   },
   {
-    name: "skills/piyaz/references/artifacts.md",
-    canonical: "plugins/claude-code/skills/piyaz/references/artifacts.md",
+    name: "skills/mymir/references/artifacts.md",
+    canonical: "plugins/claude-code/skills/mymir/references/artifacts.md",
     copies: [
-      "plugins/codex/skills/piyaz/references/artifacts.md",
-      "plugins/cursor/skills/piyaz/references/artifacts.md",
-      "plugins/antigravity/skills/piyaz/references/artifacts.md",
+      "plugins/codex/skills/mymir/references/artifacts.md",
+      "plugins/cursor/skills/mymir/references/artifacts.md",
+      "plugins/antigravity/skills/mymir/references/artifacts.md",
     ],
   },
   {
-    name: "skills/piyaz/references/lifecycle.md",
-    canonical: "plugins/claude-code/skills/piyaz/references/lifecycle.md",
+    name: "skills/mymir/references/lifecycle.md",
+    canonical: "plugins/claude-code/skills/mymir/references/lifecycle.md",
     copies: [
-      "plugins/codex/skills/piyaz/references/lifecycle.md",
-      "plugins/cursor/skills/piyaz/references/lifecycle.md",
-      "plugins/antigravity/skills/piyaz/references/lifecycle.md",
+      "plugins/codex/skills/mymir/references/lifecycle.md",
+      "plugins/cursor/skills/mymir/references/lifecycle.md",
+      "plugins/antigravity/skills/mymir/references/lifecycle.md",
     ],
   },
   {
-    name: "skills/piyaz/references/resilience.md",
-    canonical: "plugins/claude-code/skills/piyaz/references/resilience.md",
+    name: "skills/mymir/references/resilience.md",
+    canonical: "plugins/claude-code/skills/mymir/references/resilience.md",
     copies: [
-      "plugins/codex/skills/piyaz/references/resilience.md",
-      "plugins/cursor/skills/piyaz/references/resilience.md",
-      "plugins/antigravity/skills/piyaz/references/resilience.md",
+      "plugins/codex/skills/mymir/references/resilience.md",
+      "plugins/cursor/skills/mymir/references/resilience.md",
+      "plugins/antigravity/skills/mymir/references/resilience.md",
     ],
   },
   {

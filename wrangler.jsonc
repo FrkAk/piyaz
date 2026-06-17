@@ -64,7 +64,7 @@
           "simple": { "limit": 5, "period": 60 }
         }
       ],
-      "routes": [{ "pattern": "app.piyaz.ai", "custom_domain": true }],
+      "routes": [{ "pattern": "app.mymir.dev", "custom_domain": true }],
       "observability": {
         "enabled": true,
         "head_sampling_rate": 1,
@@ -82,7 +82,7 @@
       },
       "vars": {
         "DEPLOY_TARGET": "cloudflare",
-        "BETTER_AUTH_URL": "https://app.piyaz.ai"
+        "BETTER_AUTH_URL": "https://app.mymir.dev"
       }
     }
   }

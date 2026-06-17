@@ -9,7 +9,7 @@ import postgres from "postgres";
  * documented bypass call sites).
  *
  * The testcontainer can't run `docker/init-rls.sh` from
- * `/docker-entrypoint-initdb.d/` (it ships POSTGRES_USER=piyaz without
+ * `/docker-entrypoint-initdb.d/` (it ships POSTGRES_USER=mymir without
  * the password env vars), so we replicate the role + grant steps here.
  *
  * @param sql - Active postgres client (must be the container superuser).

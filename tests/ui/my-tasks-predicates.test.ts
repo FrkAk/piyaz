@@ -47,7 +47,7 @@ function row(
     project: {
       id: "p",
       identifier: "MYMR",
-      title: "Piyaz",
+      title: "Mymir",
       color: "hsl(0 0% 50%)",
     },
     upstreamCount: overrides.upstreamCount ?? 0,

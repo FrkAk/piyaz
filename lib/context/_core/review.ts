@@ -234,7 +234,7 @@ export function buildReviewContextFrom(data: ReviewContextData): string {
 /**
  * Build review-optimized context for an `in_review` task.
  *
- * The MCP `piyaz_context depth='review'` entry point. Resolves only the
+ * The MCP `mymir_context depth='review'` entry point. Resolves only the
  * review data this depth renders, then delegates to the pure
  * {@link buildReviewContextFrom} assembler.
  *

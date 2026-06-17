@@ -9,7 +9,7 @@
     { "path": "plugins/antigravity/plugin.json", "field": "version" },
     {
       "path": "lib/mcp/create-server.ts",
-      "pattern": "name: \"piyaz\", version: \"{version}\""
+      "pattern": "name: \"mymir\", version: \"{version}\""
     }
   ]
 }

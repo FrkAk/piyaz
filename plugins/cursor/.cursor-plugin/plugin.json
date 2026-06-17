@@ -1,12 +1,12 @@
 {
-  "name": "piyaz",
+  "name": "mymir",
   "version": "1.9.1",
   "description": "Persistent context network for coding projects. Tracks tasks, dependencies, and decisions across sessions.",
   "author": {
-    "name": "Piyaz",
-    "email": "hello@piyaz.ai"
+    "name": "Mymir",
+    "email": "hello@mymir.dev"
   },
-  "homepage": "https://www.piyaz.ai",
+  "homepage": "https://www.mymir.dev",
   "repository": "https://github.com/FrkAk/mymir",
   "license": "AGPL-3.0",
   "keywords": [

@@ -22,16 +22,16 @@ type PoolInternals = {
 
 /** Dummy DSNs — `new NeonPool(...)` parses the string without any I/O. */
 const DUMMY_URLS = {
-  DATABASE_URL: "postgres://app:app@db.test.invalid:5432/piyaz",
-  DATABASE_AUTH_URL: "postgres://auth:auth@db.test.invalid:5432/piyaz",
-  DATABASE_SERVICE_ROLE_URL: "postgres://svc:svc@db.test.invalid:5432/piyaz",
+  DATABASE_URL: "postgres://app:app@db.test.invalid:5432/mymir",
+  DATABASE_AUTH_URL: "postgres://auth:auth@db.test.invalid:5432/mymir",
+  DATABASE_SERVICE_ROLE_URL: "postgres://svc:svc@db.test.invalid:5432/mymir",
 } as const;
 
 const EXPLICIT_URLS = {
-  databaseUrl: "postgres://explicit-app:app@db.test.invalid:5432/piyaz",
-  databaseAuthUrl: "postgres://explicit-auth:auth@db.test.invalid:5432/piyaz",
+  databaseUrl: "postgres://explicit-app:app@db.test.invalid:5432/mymir",
+  databaseAuthUrl: "postgres://explicit-auth:auth@db.test.invalid:5432/mymir",
   databaseServiceRoleUrl:
-    "postgres://explicit-svc:svc@db.test.invalid:5432/piyaz",
+    "postgres://explicit-svc:svc@db.test.invalid:5432/mymir",
 } as const;
 
 const ENV_KEYS = [
@@ -357,9 +357,9 @@ describe("connection proxies on the Workers target", () => {
   useSavedDbEnv();
 
   type GlobalCache = {
-    __piyazAppDb?: unknown;
-    __piyazAuthDb?: unknown;
-    __piyazServiceRoleDb?: unknown;
+    __mymirAppDb?: unknown;
+    __mymirAuthDb?: unknown;
+    __mymirServiceRoleDb?: unknown;
   };
   let savedCaches: GlobalCache;
 
@@ -367,13 +367,13 @@ describe("connection proxies on the Workers target", () => {
     process.env.DEPLOY_TARGET = "cloudflare";
     const g = globalThis as GlobalCache;
     savedCaches = {
-      __piyazAppDb: g.__piyazAppDb,
-      __piyazAuthDb: g.__piyazAuthDb,
-      __piyazServiceRoleDb: g.__piyazServiceRoleDb,
+      __mymirAppDb: g.__mymirAppDb,
+      __mymirAuthDb: g.__mymirAuthDb,
+      __mymirServiceRoleDb: g.__mymirServiceRoleDb,
     };
-    g.__piyazAppDb = undefined;
-    g.__piyazAuthDb = undefined;
-    g.__piyazServiceRoleDb = undefined;
+    g.__mymirAppDb = undefined;
+    g.__mymirAuthDb = undefined;
+    g.__mymirServiceRoleDb = undefined;
   });
 
   afterEach(() => {

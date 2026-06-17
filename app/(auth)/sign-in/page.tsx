@@ -11,7 +11,7 @@ import { SignInForm } from "@/components/auth/SignInForm";
  * Left column hosts the email/password form plus disabled-with-tooltip
  * GitHub and Google buttons (backend providers not yet wired in
  * `lib/auth.ts`). Right column renders the static `AuthHero` mock; the
- * webapp never streams live agent data — Piyaz is MCP-first.
+ * webapp never streams live agent data — Mymir is MCP-first.
  *
  * The post-sign-in redirect targets `/`, where `requireMembership`
  * forwards new accounts to `/onboarding/team`.
@@ -52,7 +52,7 @@ export default function SignInPage() {
               </span>
             ) : (
               <>
-                New to Piyaz?{" "}
+                New to Mymir?{" "}
                 <Link
                   href="/sign-up"
                   className="text-accent-light hover:underline"

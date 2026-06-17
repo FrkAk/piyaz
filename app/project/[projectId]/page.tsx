@@ -36,7 +36,7 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
 
   const cookieStore = await cookies();
   const railCollapsed =
-    cookieStore.get("piyaz-graph-rail-collapsed")?.value === "1";
+    cookieStore.get("mymir-graph-rail-collapsed")?.value === "1";
 
   return (
     <HydrationBoundary state={dehydrate(qc)}>

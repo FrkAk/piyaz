@@ -12,39 +12,14 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-// Canonical production origin for metadata/OG/canonical URLs. Hardcoded so it
-// stays correct whether a route is statically prerendered or rendered at
-// runtime (the BETTER_AUTH_URL runtime var is absent at build time).
-const siteUrl = "https://app.piyaz.ai";
-const description =
-  "A structure that supports organic growth. Track projects created by your coding agent.";
-
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
-  title: {
-    default: "Piyaz",
-    template: "%s · Piyaz",
-  },
-  description,
-  alternates: {
-    canonical: "/",
-  },
-  openGraph: {
-    type: "website",
-    siteName: "Piyaz",
-    url: "/",
-    title: "Piyaz",
-    description,
-  },
-  twitter: {
-    card: "summary",
-    title: "Piyaz",
-    description,
-  },
+  title: "mymir",
+  description:
+    "A structure that supports organic growth. Track projects created by your coding agent.",
 };
 
 /**
- * Root layout for the Piyaz application.
+ * Root layout for the Mymir application.
  * Reads theme from cookie for SSR so the correct mode paints on first frame.
  * @param props - Layout props with children.
  * @returns The root HTML structure with fonts and theme applied.
@@ -55,7 +30,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const cookieStore = await cookies();
-  const raw = cookieStore.get("piyaz-theme")?.value;
+  const raw = cookieStore.get("mymir-theme")?.value;
   const theme = raw === "light" ? "light" : "dark";
 
   return (

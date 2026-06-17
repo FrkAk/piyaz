@@ -69,7 +69,7 @@ export function buildWorkingContextFrom(
  *
  * Resolves only the working data this depth renders (no dependency closure or
  * project header), then delegates to the pure {@link buildWorkingContextFrom}
- * assembler. Used by MCP for `piyaz_context depth='working'`.
+ * assembler. Used by MCP for `mymir_context depth='working'`.
  *
  * @param ctx Resolved auth context.
  * @param taskId UUID of the task.

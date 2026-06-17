@@ -80,7 +80,7 @@ function err(message: string) {
  * default: a silent env-var change can never start leaking SQL fragments,
  * bound parameters, or stack traces to MCP clients.
  *
- * @param label - Tool name (e.g. `"piyaz_project"`).
+ * @param label - Tool name (e.g. `"mymir_project"`).
  * @param e - The thrown error.
  * @returns MCP error response.
  */
@@ -105,30 +105,30 @@ function toMcp(result: ToolResult) {
   return json(result.data);
 }
 
-const INSTRUCTIONS = `Piyaz is an agentic project management server for software projects. It tracks tasks, dependencies, decisions, and execution records across sessions and teammates so coding agents and engineers can hand work to each other. Stateless HTTP endpoint with no server-side session state; pass \`projectId\` explicitly on every call.
+const INSTRUCTIONS = `Mymir is an agentic project management server for software projects. It tracks tasks, dependencies, decisions, and execution records across sessions and teammates so coding agents and engineers can hand work to each other. Stateless HTTP endpoint with no server-side session state; pass \`projectId\` explicitly on every call.
 
-This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the three-dimension tag taxonomy plus the first-class \`priority\` / \`estimate\` / \`assigneeIds\` fields, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`piyaz\` skill on your platform (Claude Code, Codex, Cursor, Antigravity) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
+This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the three-dimension tag taxonomy plus the first-class \`priority\` / \`estimate\` / \`assigneeIds\` fields, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`mymir\` skill on your platform (Claude Code, Codex, Cursor, Antigravity) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
 
 ## Multi-team awareness
 The caller's account spans every membership. There is no 'active' team. Read tools span every team you belong to; writes name \`organizationId\` or auto-resolve when the account has exactly one membership.
-- \`piyaz_project action='list'\`: projects with team metadata. Skips teams with zero projects, so pair with \`teams\` for the full set.
-- \`piyaz_project action='teams'\`: every membership (id, name, slug, role, projectCount). Includes empty teams. Run before \`create\`, when \`list\` is empty, or when the user names a team \`list\` did not surface.
+- \`mymir_project action='list'\`: projects with team metadata. Skips teams with zero projects, so pair with \`teams\` for the full set.
+- \`mymir_project action='teams'\`: every membership (id, name, slug, role, projectCount). Includes empty teams. Run before \`create\`, when \`list\` is empty, or when the user names a team \`list\` did not surface.
 - Out-of-team probes (an id from a team you do not belong to) return 404-shaped. Within-team-other-project reads succeed by design; every team member can read all projects in their teams. Only trust ids returned by list, teams, search, or context.
 
 ## Session start
-1. \`piyaz_project action='list'\`.
-2. \`piyaz_project action='teams'\` if \`list\` was empty or the user names a team it missed.
-3. \`piyaz_project action='select' projectId='...'\` to confirm. Pass \`projectId\` on every subsequent call.
+1. \`mymir_project action='list'\`.
+2. \`mymir_project action='teams'\` if \`list\` was empty or the user names a team it missed.
+3. \`mymir_project action='select' projectId='...'\` to confirm. Pass \`projectId\` on every subsequent call.
 
 ## Find work
-Lead with \`piyaz_analyze\` (all variants slim):
+Lead with \`mymir_analyze\` (all variants slim):
 - \`critical_path\` first on continue / resume / "what's next"; the bottleneck dictates priority.
 - \`ready\` for unblocked planned tasks (drafts with satisfied deps surface as \`plannable\`, not \`ready\`); pick from \`ready ∩ critical_path\` for the highest-impact unblocked work.
 - \`plannable\` when nothing is ready to code (drafts with description + criteria + deps satisfied).
 - \`blocked\` to diagnose what's stuck (waiting tasks with blocker detail).
 - \`downstream\` for impact analysis before a status change, refinement, or cancellation; not for picking next work.
 
-Drop to \`piyaz_query\` for browse / lookup:
+Drop to \`mymir_query\` for browse / lookup:
 - \`search\` (slim): find a task by taskRef, title fragment, or tag substring; \`tags=[...]\` for exact-tag OR-filter; single-result responses carry a state hint pointing at the right next call.
 - \`list\` (medium): every task in the project, slim per-task fields, ordered by position.
 - \`edges\` (slim): one task's relationships (connected ref, title, status, direction, note).
@@ -136,16 +136,16 @@ Drop to \`piyaz_query\` for browse / lookup:
 - \`overview\` (very heavy): full structure (every task, every edge, full tag vocab, progress). Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session. Do not run on routine status questions.
 
 ## Refine a task
-1. \`piyaz_context taskId='...' depth='working'\` for current state and 1-hop edges.
-2. Before proposing changes, explore. Search related tasks (\`piyaz_query type='search'\` by tag or title fragment), read current docs for any framework or library the task touches, check the actual codebase for what already exists. No speculation. If you don't know, look; if you can't find it, ask. Refining on assumptions is how vague tasks survive review.
+1. \`mymir_context taskId='...' depth='working'\` for current state and 1-hop edges.
+2. Before proposing changes, explore. Search related tasks (\`mymir_query type='search'\` by tag or title fragment), read current docs for any framework or library the task touches, check the actual codebase for what already exists. No speculation. If you don't know, look; if you can't find it, ask. Refining on assumptions is how vague tasks survive review.
 3. Improve description, acceptance criteria, decisions, dependencies. Push back on vagueness; rewrite single-sentence descriptions and "works correctly" ACs before saving.
-4. \`piyaz_task action='update'\`. The default appends to array fields; \`overwriteArrays=true\` REPLACES them and is destructive. Confirm with the user before using it.
+4. \`mymir_task action='update'\`. The default appends to array fields; \`overwriteArrays=true\` REPLACES them and is destructive. Confirm with the user before using it.
 5. Propagate per the Propagate section if decisions changed.
 
 ## Implement a task
 0. If the task is \`draft\`, plan it first (see Plan a draft task).
-1. Claim. \`piyaz_task action='update' status='in_progress'\`. Prevents two agents grabbing the same task.
-2. Context. \`piyaz_context taskId='...' depth='agent'\`. Multi-hop dependencies, upstream execution records, acceptance criteria.
+1. Claim. \`mymir_task action='update' status='in_progress'\`. Prevents two agents grabbing the same task.
+2. Context. \`mymir_context taskId='...' depth='agent'\`. Multi-hop dependencies, upstream execution records, acceptance criteria.
 3. Understand before doing. Read the description, the executionRecords from upstream tasks, and the relevant code. Reason about what could go wrong. Ask if anything is unclear. Then implement. Rushing here produces work that misses the actual requirement.
 4. Build the work.
 5. Mark in_review via the Completion Protocol below. The \`in_review\` update carries:
@@ -159,9 +159,9 @@ Drop to \`piyaz_query\` for browse / lookup:
 6. Propagate per the Propagate section.
 
 ## Plan a draft task
-1. \`piyaz_context taskId='...' depth='planning'\` for project description, prerequisites, downstream specs.
+1. \`mymir_context taskId='...' depth='planning'\` for project description, prerequisites, downstream specs.
 2. Write the implementation plan. Search the codebase for what already exists, read up-to-date docs for any new dependency, clarify open questions with the user, reason through edge cases. File paths, line numbers, specific changes, verification steps. No speculation.
-3. \`piyaz_task action='update' implementationPlan='<full markdown>' status='planned'\`. Save the complete unabridged plan. Do not summarize.
+3. \`mymir_task action='update' implementationPlan='<full markdown>' status='planned'\`. Save the complete unabridged plan. Do not summarize.
 
 ## Completion Protocol
 Run before transitioning a task to \`in_review\`, \`done\`, or \`cancelled\`. The implementer phase terminates at \`in_review\` with the full payload; \`done\` is reserved for the HOTL operator after PR approval (no extra fields required, transition only).
@@ -174,24 +174,24 @@ Run before transitioning a task to \`in_review\`, \`done\`, or \`cancelled\`. Th
 2. Populate required fields. \`executionRecord\`, \`decisions\`, \`files\`, \`acceptanceCriteria\`, and \`prUrl\` when a PR was opened (backend upserts a \`task_links\` row with kind='pull_request'). The server returns \`_hints\` for any missing fields; re-call with the additions before continuing. For \`cancelled\`: \`executionRecord\` carries the rationale (why abandoned, what was tried) and \`decisions\` records anything learned.
 
 3. Open a PR if the work changed code. Detect a template at \`.github/PULL_REQUEST_TEMPLATE.md\`, \`.github/pull_request_template.md\`, \`.github/PULL_REQUEST_TEMPLATE/<name>.md\`, or \`docs/pull_request_template.md\`. If a template exists, fill it; map task fields onto template sections only where they fit, and leave a section blank rather than invent content. Common mappings:
-   - Linked issue / linked task: include the \`taskRef\` in \`[BRACKETS]\` (e.g. \`[MYMR-83]\`). Bracket form triggers Piyaz PR-status tracking; use it for the ONE primary task this PR builds. Reference related tasks elsewhere as plain links (no brackets). Add \`Closes #N\` on its own line if a GitHub issue is being resolved.
+   - Linked issue / linked task: include the \`taskRef\` in \`[BRACKETS]\` (e.g. \`[MYMR-83]\`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference related tasks elsewhere as plain links (no brackets). Add \`Closes #N\` on its own line if a GitHub issue is being resolved.
    - Summary: 2 to 3 sentences from \`executionRecord\`.
    - Test plan / verification: the checked \`acceptanceCriteria\` items.
    - Decisions or notes-for-reviewer: relevant entries from \`decisions\`.
    If no template exists, use a concise default with Summary (containing the bracketed task reference and an optional \`Closes #N\` line), Type of change, Testing, and Notes for reviewer. Always concise; empty optional sections beat fabricated content.
 
-4. Skip the PR for these task types: research / investigation (no code change), decision-only, pure-Piyaz refinement (no repo changes), tasks the user explicitly said "no PR" on. When in doubt, ask before opening.
+4. Skip the PR for these task types: research / investigation (no code change), decision-only, pure-Mymir refinement (no repo changes), tasks the user explicitly said "no PR" on. When in doubt, ask before opening.
 
 ## Propagate after every change
 After any status change or significant refinement:
-1. \`piyaz_query type='edges'\` on the changed task to see current relationships.
-2. \`piyaz_analyze type='downstream'\` to enumerate dependents.
+1. \`mymir_query type='edges'\` on the changed task to see current relationships.
+2. \`mymir_analyze type='downstream'\` to enumerate dependents.
 3. For each downstream task evaluate: do edge notes need updating to reflect new decisions; are there NEW relationships revealed by this change; are there STALE relationships that no longer hold; do downstream descriptions need updating based on the decisions made.
 4. Create, update, or remove edges as needed.
 
 For cancellations: edges to a cancelled task remain in place because cancellation is transitive-aware (dependents stay blocked through the cancelled task's own unsatisfied prereqs). Ask whether there is a replacement. If yes, rewire dependents to the replacement. If no, dependents may need to be cancelled too or re-scoped to no longer require the cancelled work.
 
-Skipping propagation is how dependency graphs go stale. Stale graphs make Piyaz useless.
+Skipping propagation is how dependency graphs go stale. Stale graphs make Mymir useless.
 
 ## Tool descriptions and \`_hints\` are runtime instructions
 Every tool injects two things into your context: the parameter schema before the call, and a \`_hints\` array in the response. These are not optional commentary. They are server-side rules and state you cannot see otherwise, and they override any prior plan you had. Read on every tool call; act on them before continuing. Skipping a hint is operating on stale information. Errors are token dense and self correcting; the message often names the next call with the team or task list inline. Re-read errors and act on them before falling back to asking the user.
@@ -200,13 +200,13 @@ Every tool injects two things into your context: the parameter schema before the
 Never write what you cannot cite or do not know. Applies wherever an agent generates \`executionRecord\`, \`decisions\`, \`description\`, or \`files\`. When uncertain, write less; a short true record is more valuable than a rich fabricated one. The full quality bar for titles, descriptions, ACs, tag dimensions, categories, edge notes, and markdown tone lives in the skill's \`artifacts.md\`.
 
 ## Mutation safety
-Update array fields (\`decisions\`, \`acceptanceCriteria\`, \`files\`) APPEND by default. Pass \`overwriteArrays=true\` only when replacing is the intent and the user has confirmed. \`piyaz_task action='delete'\` defaults to \`preview=true\`; show impact, get explicit confirmation, then \`preview=false\`. For abandoned scope prefer \`status='cancelled'\` with rationale in \`executionRecord\` over deletion; edges to cancelled tasks remain in place and cancellation is transitive-aware.
+Update array fields (\`decisions\`, \`acceptanceCriteria\`, \`files\`) APPEND by default. Pass \`overwriteArrays=true\` only when replacing is the intent and the user has confirmed. \`mymir_task action='delete'\` defaults to \`preview=true\`; show impact, get explicit confirmation, then \`preview=false\`. For abandoned scope prefer \`status='cancelled'\` with rationale in \`executionRecord\` over deletion; edges to cancelled tasks remain in place and cancellation is transitive-aware.
 
 ## Remote mode
-This is a stateless HTTP endpoint. No session state is persisted server-side. The \`select\` action on \`piyaz_project\` returns a confirmation but does not set server state. Always pass \`projectId\` explicitly on every subsequent call.`;
+This is a stateless HTTP endpoint. No session state is persisted server-side. The \`select\` action on \`mymir_project\` returns a confirmation but does not set server state. Always pass \`projectId\` explicitly on every subsequent call.`;
 
 /**
- * Register all 6 Piyaz tools on a server instance, bound to the caller's
+ * Register all 6 Mymir tools on a server instance, bound to the caller's
  * auth context. Each tool handler receives `ctx` as its second arg so
  * authorization and team scoping happen inside the data layer.
  * @param server - Any object with a registerTool method (McpServer or mock).
@@ -214,14 +214,14 @@ This is a stateless HTTP endpoint. No session state is persisted server-side. Th
  */
 export function registerAllTools(server: McpServer, ctx: AuthContext): void {
   server.registerTool(
-    "piyaz_project",
+    "mymir_project",
     {
-      description: DESCRIPTIONS.piyaz_project,
+      description: DESCRIPTIONS.mymir_project,
       inputSchema: z.object({
         action: z
           .enum(["list", "teams", "create", "select", "update"])
           .describe(
-            "list=projects across every team you belong to (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via piyaz_query type='meta'. teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields.",
+            "list=projects across every team you belong to (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via mymir_query type='meta'. teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields.",
           ),
         projectId: z
           .uuid()
@@ -279,7 +279,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         if (params.action === "select") {
           if (!params.projectId)
             return err(
-              "projectId required for select. Call piyaz_project action='list' first to enumerate your projects.",
+              "projectId required for select. Call mymir_project action='list' first to enumerate your projects.",
             );
           return json({
             selected: params.projectId,
@@ -295,15 +295,15 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         );
         return toMcp(result);
       } catch (e) {
-        return mcpError("piyaz_project", e);
+        return mcpError("mymir_project", e);
       }
     },
   );
 
   server.registerTool(
-    "piyaz_task",
+    "mymir_task",
     {
-      description: DESCRIPTIONS.piyaz_task,
+      description: DESCRIPTIONS.mymir_task,
       inputSchema: z.object({
         action: z
           .enum(["create", "update", "delete"])
@@ -377,14 +377,14 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           .max(LIMITS.tags)
           .optional()
           .describe(
-            "Kebab-case. Every task carries three tag dimensions: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched). Priority is the `priority` field, not a tag. Do NOT tag codebase area (use category) or status. Run piyaz_query type='meta' before coining new tags.",
+            "Kebab-case. Every task carries three tag dimensions: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched). Priority is the `priority` field, not a tag. Do NOT tag codebase area (use category) or status. Run mymir_query type='meta' before coining new tags.",
           ),
         category: z
           .string()
           .max(LIMITS.category)
           .optional()
           .describe(
-            "Architectural layer / subsystem this task belongs to (exactly one). Reuse a project category; do not silently coin mid-task. The project's 4-8 categories are set on creation or via decompose/onboarding gates. Run piyaz_query type='meta' to see them. Artifacts §4.",
+            "Architectural layer / subsystem this task belongs to (exactly one). Reuse a project category; do not silently coin mid-task. The project's 4-8 categories are set on creation or via decompose/onboarding gates. Run mymir_query type='meta' to see them. Artifacts §4.",
           ),
         priority: z
           .enum(["urgent", "core", "normal", "backlog"])
@@ -468,15 +468,15 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleTask(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return mcpError("piyaz_task", e);
+        return mcpError("mymir_task", e);
       }
     },
   );
 
   server.registerTool(
-    "piyaz_edge",
+    "mymir_edge",
     {
-      description: DESCRIPTIONS.piyaz_edge,
+      description: DESCRIPTIONS.mymir_edge,
       inputSchema: z.object({
         action: z
           .enum(["create", "update", "remove"])
@@ -528,15 +528,15 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleEdge(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return mcpError("piyaz_edge", e);
+        return mcpError("mymir_edge", e);
       }
     },
   );
 
   server.registerTool(
-    "piyaz_query",
+    "mymir_query",
     {
-      description: DESCRIPTIONS.piyaz_query,
+      description: DESCRIPTIONS.mymir_query,
       inputSchema: z.object({
         type: z
           .enum(["search", "list", "edges", "meta", "overview"])
@@ -562,7 +562,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
           .max(LIMITS.category)
           .optional()
           .describe(
-            "Filter to tasks in exactly this category (AND with `query`/`tags`). Must be one of the project's categories (closed vocabulary); unknown values are rejected. Run piyaz_query type='meta' for the current list.",
+            "Filter to tasks in exactly this category (AND with `query`/`tags`). Must be one of the project's categories (closed vocabulary); unknown values are rejected. Run mymir_query type='meta' for the current list.",
           ),
         taskId: z.uuid().optional().describe("Task UUID for type='edges'."),
         projectId: z
@@ -583,22 +583,22 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleQuery(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return mcpError("piyaz_query", e);
+        return mcpError("mymir_query", e);
       }
     },
   );
 
   server.registerTool(
-    "piyaz_context",
+    "mymir_context",
     {
-      description: DESCRIPTIONS.piyaz_context,
+      description: DESCRIPTIONS.mymir_context,
       inputSchema: z.object({
         taskId: z.uuid().describe("Task UUID."),
         depth: z
           .enum(["summary", "working", "agent", "planning", "review"])
           .default("working")
           .describe(
-            "summary=task header + description + counts + 1-hop edges with notes (folds in `piyaz_query type='edges'`). working=criteria, decisions, 1-hop edges (both depends_on and relates_to, both directions, with notes) — does NOT render executionRecord, files, or implementationPlan. agent=multi-hop deps + upstream execution records (each with its PR link) + downstream; includes a ⚠ Blocked section when direct prerequisites are unfinished; for done/cancelled tasks returns the retrospective record bundle (project, what the task was, outcome, decisions, PR link) instead of the implementation shape (use BEFORE coding, and to read a finished task's record). No bundle renders recorded file lists — the linked PR diff is the source of truth for what changed. planning=project description, prereqs, ACs, downstream specs, links, and abandoned approaches (cancelled-dep execution records with their closed-PR links) (use BEFORE writing the implementation plan). review=in_review review bundle: implementationPlan alongside executionRecord, PR link surfaced, AC evaluation, downstream impact, review-lens prompts (security / perf / reliability / observability / codebase standards); review the actual changes from the PR diff. The review subagent reads this depth.",
+            "summary=task header + description + counts + 1-hop edges with notes (folds in `mymir_query type='edges'`). working=criteria, decisions, 1-hop edges (both depends_on and relates_to, both directions, with notes) — does NOT render executionRecord, files, or implementationPlan. agent=multi-hop deps + upstream execution records (each with its PR link) + downstream; includes a ⚠ Blocked section when direct prerequisites are unfinished; for done/cancelled tasks returns the retrospective record bundle (project, what the task was, outcome, decisions, PR link) instead of the implementation shape (use BEFORE coding, and to read a finished task's record). No bundle renders recorded file lists — the linked PR diff is the source of truth for what changed. planning=project description, prereqs, ACs, downstream specs, links, and abandoned approaches (cancelled-dep execution records with their closed-PR links) (use BEFORE writing the implementation plan). review=in_review review bundle: implementationPlan alongside executionRecord, PR link surfaced, AC evaluation, downstream impact, review-lens prompts (security / perf / reliability / observability / codebase standards); review the actual changes from the PR diff. The review subagent reads this depth.",
           ),
         projectId: z
           .uuid()
@@ -618,15 +618,15 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleContext(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return mcpError("piyaz_context", e);
+        return mcpError("mymir_context", e);
       }
     },
   );
 
   server.registerTool(
-    "piyaz_analyze",
+    "mymir_analyze",
     {
-      description: DESCRIPTIONS.piyaz_analyze,
+      description: DESCRIPTIONS.mymir_analyze,
       inputSchema: z.object({
         type: z
           .enum([
@@ -663,7 +663,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         const result = await handleAnalyze(params, ctx);
         return toMcp(result);
       } catch (e) {
-        return mcpError("piyaz_analyze", e);
+        return mcpError("mymir_analyze", e);
       }
     },
   );
@@ -675,7 +675,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  * Read tools (`list`, queries, context) span every team the caller is a
  * member of. Writes either name an explicit `organizationId` (membership-
  * checked) or auto-resolve when the caller belongs to exactly one team.
- * Multi-team callers must pass `organizationId` on `piyaz_project create`;
+ * Multi-team callers must pass `organizationId` on `mymir_project create`;
  * the server returns a hard error with the team list inline otherwise.
  *
  * @param ctx - Resolved auth context derived from the OAuth JWT.
@@ -683,7 +683,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "piyaz", version: "1.9.1" },
+    { name: "mymir", version: "1.9.1" },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);

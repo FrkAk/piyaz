@@ -6,7 +6,7 @@ import type { IconProps } from "./icons";
 // The five brand icons are official marks pulled from Simple Icons (CC0).
 // The globe fallback is from Heroicons. All paths render at 24x24 with a
 // `currentColor` fill, so they pick up the surrounding text color the same
-// way the stroke-based Piyaz icons do. Visual weight is heavier than the
+// way the stroke-based Mymir icons do. Visual weight is heavier than the
 // rest of the icon set by design — chips identify external systems, and
 // brand-faithfulness reads better here than a stroke redrawing.
 // ---------------------------------------------------------------------------

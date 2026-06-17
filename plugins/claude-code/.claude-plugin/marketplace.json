@@ -1,11 +1,11 @@
 {
-  "name": "piyaz-local",
+  "name": "mymir-local",
   "owner": {
-    "name": "Piyaz"
+    "name": "Mymir"
   },
   "plugins": [
     {
-      "name": "piyaz",
+      "name": "mymir",
       "source": "./",
       "description": "Persistent context network for coding projects. Tracks tasks, dependencies, and decisions across sessions."
     }

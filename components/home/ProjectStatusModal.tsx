@@ -114,7 +114,7 @@ export function ProjectStatusModal({
             <code>{promptText}</code>
           </pre>
           <p className="text-xs leading-relaxed text-text-muted">
-            Paste into your coding agent with the piyaz plugin installed.
+            Paste into your coding agent with the mymir plugin installed.
           </p>
         </section>
 

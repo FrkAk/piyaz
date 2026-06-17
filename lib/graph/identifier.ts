@@ -52,8 +52,8 @@ export function parseIdentifier(raw: string): ParseResult<Identifier> {
 /**
  * Derive a short uppercase prefix from a project title.
  *
- * Multi-word titles yield initials (e.g. "Piyaz Platform" → "MP").
- * Single-word titles yield the full cleaned word (e.g. "Piyaz" → "PIYAZ").
+ * Multi-word titles yield initials (e.g. "Mymir Platform" → "MP").
+ * Single-word titles yield the full cleaned word (e.g. "Mymir" → "MYMIR").
  * Non-alphanumerics are stripped before derivation, so unicode-only titles
  * (e.g. "日本語") and single-char inputs (e.g. "A") fall through to the
  * "PROJECT" fallback since they cannot satisfy the 2-12 char rule.

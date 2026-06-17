@@ -1,11 +1,11 @@
 {
-  "name": "piyaz",
+  "name": "mymir",
   "owner": {
-    "name": "Piyaz"
+    "name": "Mymir"
   },
   "plugins": [
     {
-      "name": "piyaz",
+      "name": "mymir",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/FrkAk/mymir.git",

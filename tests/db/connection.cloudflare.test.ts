@@ -24,10 +24,10 @@ describe("getScopedOrGlobal on Cloudflare", () => {
   beforeEach(() => {
     originalTarget = process.env.DEPLOY_TARGET;
     process.env.DEPLOY_TARGET = "cloudflare";
-    delete (globalThis as { __piyazAppDb?: unknown }).__piyazAppDb;
-    delete (globalThis as { __piyazAuthDb?: unknown }).__piyazAuthDb;
-    delete (globalThis as { __piyazServiceRoleDb?: unknown })
-      .__piyazServiceRoleDb;
+    delete (globalThis as { __mymirAppDb?: unknown }).__mymirAppDb;
+    delete (globalThis as { __mymirAuthDb?: unknown }).__mymirAuthDb;
+    delete (globalThis as { __mymirServiceRoleDb?: unknown })
+      .__mymirServiceRoleDb;
   });
 
   afterEach(() => {

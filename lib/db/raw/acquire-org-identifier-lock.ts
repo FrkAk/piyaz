@@ -19,7 +19,7 @@ export async function acquireOrgIdentifierLock(
   await executeRawDiscard(
     tx,
     sql`SELECT pg_advisory_xact_lock(
-      hashtext(${`piyaz:project-identifier:${organizationId}`})
+      hashtext(${`mymir:project-identifier:${organizationId}`})
     )`,
   );
 }

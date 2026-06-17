@@ -174,7 +174,7 @@ export function SidebarPanel({
         >
           <BrandMark />
           <div className="min-w-0 flex-1 text-[13px] font-semibold leading-tight text-text-primary">
-            piyaz
+            mymir
           </div>
         </Link>
         <button
