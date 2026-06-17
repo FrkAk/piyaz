@@ -142,7 +142,7 @@ export const appDb = new Proxy({} as AppUserConn, {
  * Lazily initialized Better-auth Drizzle client.
  *
  * Same driver-selection and caching semantics as {@link appDb} but bound
- * to the `neon_auth` schema used by `drizzleAdapter` in {@link auth}.
+ * to the `piyaz_auth` schema used by `drizzleAdapter` in {@link auth}.
  */
 export const authDb = new Proxy({} as AuthDb, {
   get(_target, prop, receiver) {

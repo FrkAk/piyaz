@@ -16,7 +16,7 @@ import { projects, tasks, taskAssignees } from "@/lib/db/schema";
  * changed. The row's `updatedAt` bumps on every password write, so it
  * doubles as "password last changed" for the settings UI.
  *
- * Reads through `authDb` (auth_role): `neon_auth.account` holds password
+ * Reads through `authDb` (auth_role): `piyaz_auth.account` holds password
  * hashes, so `docker/grants.sql` deliberately excludes it from
  * `service_role`'s table grants. Only the auth layer's role may touch it.
  *
@@ -104,7 +104,7 @@ export async function clearOrgMembershipArtifacts(
           eq(oauthConsent.referenceId, orgId),
         ),
       );
-    // `task_assignees` FK to `neon_auth.user` only cascades on full user
+    // `task_assignees` FK to `piyaz_auth.user` only cascades on full user
     // deletion, not on team-membership removal. A removed member would
     // otherwise keep appearing in `getTaskFull(...).assignees` for tasks
     // in the org they left. Scrub their junction rows scoped to tasks

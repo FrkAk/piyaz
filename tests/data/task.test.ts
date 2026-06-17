@@ -999,7 +999,7 @@ test("createTask with assigneeIds rejects non-team-member users", async () => {
   let strangerId: string;
   try {
     const [u] = await sqlc<{ id: string }[]>`
-      INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
       VALUES ('Stranger', 'stranger@test.local', true, now())
       RETURNING id
     `;
@@ -1032,13 +1032,13 @@ test("updateTask appends assigneeIds by default and replaces with overwriteArray
   let secondId: string;
   try {
     const [u] = await sqlc<{ id: string }[]>`
-      INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
       VALUES ('Second', 'second@test.local', true, now())
       RETURNING id
     `;
     secondId = u.id;
     await sqlc`
-      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
       VALUES (${f.organizationId}, ${secondId}, 'member', now())
     `;
   } finally {

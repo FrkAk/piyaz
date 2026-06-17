@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 /**
  * Check whether the caller can administer the named team. Delegates to
  * Better Auth's `/organization/has-permission` API, which reads the
- * caller's role from `neon_auth.member` for the supplied `organizationId`
+ * caller's role from `piyaz_auth.member` for the supplied `organizationId`
  * and consults the active access-control policy. Returns `false` (never
  * throws) so callers can collapse the result into a typed `forbidden`
  * failure.

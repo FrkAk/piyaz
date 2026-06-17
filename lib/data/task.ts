@@ -616,7 +616,7 @@ export async function getTaskFullWithEdges(
 /**
  * Fetch the assignee projection (userId + name + email) for a task,
  * routed through the `task_assignees_visible` SECURITY DEFINER function
- * so `app_user` can read `neon_auth.user` under the Option-B lockdown.
+ * so `app_user` can read `piyaz_auth.user` under the Option-B lockdown.
  *
  * UNCHECKED: the SDF itself re-checks caller membership of the task's
  * org, but the upstream `assertTaskAccess` is still the contract. The

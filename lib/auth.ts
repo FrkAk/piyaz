@@ -39,7 +39,7 @@ if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
 
 /**
  * Better Auth server instance with email/password auth and
- * organization-based team management. Adapts the `neon_auth` schema via
+ * organization-based team management. Adapts the `piyaz_auth` schema via
  * drizzleAdapter.
  */
 export const auth = betterAuth({

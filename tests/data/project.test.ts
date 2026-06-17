@@ -257,7 +257,7 @@ test("getProjectMaxUpdatedAt returns the latest updated_at across project + task
 
 test("getProjectListMaxUpdatedAt returns the latest updated_at across the caller's accessible scope", async () => {
   // RLS scopes the row sets; the helper aggregates MAX(updated_at) with
-  // no neon_auth join (app_user has no grant there).
+  // no piyaz_auth join (app_user has no grant there).
   const f = await seedUserOrgProject("listmax");
   const ctx = makeAuthContext(f.userId);
 
@@ -530,12 +530,12 @@ test("listProjectsForMcp skips teams with zero projects", async () => {
   const sqlc = superuserPool();
   try {
     const [emptyOrg] = await sqlc<{ id: string }[]>`
-      INSERT INTO neon_auth."organization" ("name", "slug", "createdAt")
+      INSERT INTO piyaz_auth."organization" ("name", "slug", "createdAt")
       VALUES ('Empty Team Mcp', 'empty-team-mcp', now())
       RETURNING id
     `;
     await sqlc`
-      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
       VALUES (${emptyOrg.id}, ${f.userId}, 'owner', now())
     `;
   } finally {

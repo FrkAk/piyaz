@@ -72,7 +72,7 @@ describe("RLS data-ring discipline — withUserContext wrappers", () => {
     }
 
     // teamB's admin should NOT see teamA's invite-code row. The policy
-    // joins through neon_auth.member, which has no (teamA.org, teamB.user)
+    // joins through piyaz_auth.member, which has no (teamA.org, teamB.user)
     // pairing, so the USING predicate filters the row out.
     const leak = await findTeamInviteCode(
       makeAuthContext(teamB.userId),

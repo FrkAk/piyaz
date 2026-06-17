@@ -155,7 +155,7 @@ test("revokeOrgAccess enumerates and unregisters subs for every project in the o
   // RLS predicate. revokeOrgAccess must instead route through an admin path
   // so the project enumeration still works after membership is gone.
   const f = await seedUserOrgProject("revoke-rt-no-membership");
-  // Use the testcontainer superuser for DELETE on neon_auth.member — neither
+  // Use the testcontainer superuser for DELETE on piyaz_auth.member — neither
   // app_user nor service_role have DELETE on that table; only auth_role does
   // and it has no public-schema access, so the simplest path is the same
   // superuser the seed helper uses.
@@ -167,7 +167,7 @@ test("revokeOrgAccess enumerates and unregisters subs for every project in the o
       VALUES (${f.organizationId}, 'Second project', 'PRJ2')
       RETURNING id`;
     project2Id = p2.id;
-    await su`DELETE FROM neon_auth."member"
+    await su`DELETE FROM piyaz_auth."member"
              WHERE "userId" = ${f.userId}
                AND "organizationId" = ${f.organizationId}`;
   } finally {

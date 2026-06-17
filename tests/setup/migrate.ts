@@ -109,7 +109,7 @@ async function applyRlsFunctions(
 }
 
 /**
- * Apply `docker/init-auth.sql` (the neon_auth schema for self-hosted
+ * Apply `docker/init-auth.sql` (the piyaz_auth schema for self-hosted
  * Postgres), provision the RLS role split (`app_user` + `service_role`),
  * run `drizzle-kit push` to create the public schema, then apply
  * `docker/rls-policies.sql` so RLS policies land. Run once per container
@@ -133,10 +133,10 @@ export async function applyMigrations(url: string): Promise<void> {
       "utf8",
     );
     await sql.unsafe(initAuth);
-    // `init-auth.sql` calls `SET search_path TO neon_auth` for the duration
+    // `init-auth.sql` calls `SET search_path TO piyaz_auth` for the duration
     // of its CREATE TABLEs. The setting persists on the pooled connection;
     // reset it so subsequent statements land in the `public` schema.
-    await sql.unsafe("SET search_path TO public, neon_auth");
+    await sql.unsafe("SET search_path TO public, piyaz_auth");
     await provisionRoles(sql);
   } finally {
     await sql.end({ timeout: 5 });

@@ -20,7 +20,7 @@ import {
  * policy so the join flow still works for non-admin members.
  *
  * Membership-role changes use the testcontainer superuser (`getConnectionString`)
- * because `service_role` only has SELECT/REFERENCES on `neon_auth."member"`
+ * because `service_role` only has SELECT/REFERENCES on `piyaz_auth."member"`
  * by design (see `docker/grants.sql`).
  */
 
@@ -33,7 +33,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     const fx = await seedUserOrgProject("ic-member");
     const seed = superuserPool();
     try {
-      await seed`UPDATE neon_auth."member" SET "role" = 'member'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'member'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
       await seed.end({ timeout: 5 });
@@ -54,7 +54,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     const fx = await seedUserOrgProject("ic-admin");
     const seed = superuserPool();
     try {
-      await seed`UPDATE neon_auth."member" SET "role" = 'admin'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'admin'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
       await seed.end({ timeout: 5 });
@@ -193,7 +193,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     const fx = await seedUserOrgProject("tc3-member");
     const seed = superuserPool();
     try {
-      await seed`UPDATE neon_auth."member" SET "role" = 'member'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'member'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
       await seed`CREATE POLICY temp_member_can_write ON team_invite_code
                  AS PERMISSIVE FOR INSERT TO app_user WITH CHECK (true)`;
@@ -328,7 +328,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     try {
       await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
                  VALUES (${fx.organizationId}, 'h1selmember', 'member')`;
-      await seed`UPDATE neon_auth."member" SET "role" = 'member'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'member'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
       await seed.end({ timeout: 5 });
@@ -353,7 +353,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     try {
       await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
                  VALUES (${fx.organizationId}, 'h1seladmin', 'member')`;
-      await seed`UPDATE neon_auth."member" SET "role" = 'admin'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'admin'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
       await seed.end({ timeout: 5 });
@@ -379,7 +379,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     try {
       await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
                  VALUES (${fx.organizationId}, 'h7updmember', 'member')`;
-      await seed`UPDATE neon_auth."member" SET "role" = 'member'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'member'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
       await seed.end({ timeout: 5 });
@@ -415,7 +415,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     try {
       await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
                  VALUES (${fx.organizationId}, 'h7delmember', 'member')`;
-      await seed`UPDATE neon_auth."member" SET "role" = 'member'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'member'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
       await seed.end({ timeout: 5 });
@@ -450,7 +450,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     try {
       await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
                  VALUES (${fx.organizationId}, 'h7updadmin', 'member')`;
-      await seed`UPDATE neon_auth."member" SET "role" = 'admin'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'admin'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
       await seed.end({ timeout: 5 });
@@ -477,7 +477,7 @@ describe("team_invite_code RLS — admin-only writes", () => {
     try {
       await seed`INSERT INTO team_invite_code (organization_id, code, default_role)
                  VALUES (${fx.organizationId}, 'h7deladmin', 'member')`;
-      await seed`UPDATE neon_auth."member" SET "role" = 'admin'
+      await seed`UPDATE piyaz_auth."member" SET "role" = 'admin'
                  WHERE "userId" = ${fx.userId} AND "organizationId" = ${fx.organizationId}`;
     } finally {
       await seed.end({ timeout: 5 });

@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17.6
+        image: postgres:18
         env:
           POSTGRES_USER: piyaz
           POSTGRES_PASSWORD: piyaz

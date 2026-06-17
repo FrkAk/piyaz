@@ -120,7 +120,7 @@ describe("dual-org member cannot reparent rows under app_user", () => {
     const su = superuserPool();
     try {
       await su`
-        INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+        INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
         VALUES (${b.organizationId}::uuid, ${a.userId}::uuid, 'member', now())
       `;
     } finally {
@@ -144,7 +144,7 @@ describe("dual-org member cannot reparent rows under app_user", () => {
     let taskId: string;
     try {
       await su`
-        INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+        INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
         VALUES (${b.organizationId}::uuid, ${a.userId}::uuid, 'member', now())
       `;
       const [t] = await su<{ id: string }[]>`
@@ -173,7 +173,7 @@ describe("dual-org member cannot reparent rows under app_user", () => {
     let codeId: string;
     try {
       await su`
-        INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+        INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
         VALUES (${b.organizationId}::uuid, ${a.userId}::uuid, 'admin', now())
       `;
       const [row] = await su<{ id: string }[]>`

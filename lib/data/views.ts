@@ -11,7 +11,7 @@ import type {
 /**
  * Lightweight assignee projection used by surfaces that render
  * the people assigned to a task. Source: `task_assignees` joined
- * to `neon_auth.user`.
+ * to `piyaz_auth.user`.
  */
 export type AssigneeRef = {
   userId: string;
