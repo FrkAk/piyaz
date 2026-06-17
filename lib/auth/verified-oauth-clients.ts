@@ -12,7 +12,7 @@ import "server-only";
  * not on the name. Clients not on this list render their raw registered name
  * verbatim so the user sees exactly what asked for access.
  *
- * Populated from `MYMIR_VERIFIED_OAUTH_CLIENT_IDS` (comma-separated client
+ * Populated from `PIYAZ_VERIFIED_OAUTH_CLIENT_IDS` (comma-separated client
  * ids). The parsed set is memoized keyed on the raw env string — env vars
  * are fixed per deploy on both Workers and self-host, so in practice the
  * parse runs once per process/isolate, and the re-key keeps the function
@@ -31,7 +31,7 @@ let verifiedClientIds: ReadonlySet<string> = new Set();
  * @returns True when the client is on the verified allowlist.
  */
 export function isVerifiedOAuthClient(clientId: string): boolean {
-  const raw = process.env.MYMIR_VERIFIED_OAUTH_CLIENT_IDS ?? "";
+  const raw = process.env.PIYAZ_VERIFIED_OAUTH_CLIENT_IDS ?? "";
   if (raw !== cachedRaw) {
     cachedRaw = raw;
     verifiedClientIds = new Set(

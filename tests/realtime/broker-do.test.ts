@@ -35,7 +35,7 @@ mock.module("cloudflare:workers", () => ({
   1 = { __side: "server" } as unknown;
 };
 
-const { MymirBroker } = await import("@/lib/realtime/broker-do");
+const { PiyazBroker } = await import("@/lib/realtime/broker-do");
 
 const TEST_SECRET = "test-broker-secret";
 
@@ -76,14 +76,14 @@ function fakeSocket(): FakeSocket {
   };
 }
 
-/** Build a `MymirBroker` with our fake ctx and the test secret bound. */
+/** Build a `PiyazBroker` with our fake ctx and the test secret bound. */
 function makeBroker(
   env: { BROKER_DO_SECRET?: string } = {
     BROKER_DO_SECRET: TEST_SECRET,
   },
 ) {
   const ctx = fakeCtx();
-  const broker = new MymirBroker(ctx as never, env as never);
+  const broker = new PiyazBroker(ctx as never, env as never);
   return { ctx, broker };
 }
 
@@ -92,7 +92,7 @@ function makeBroker(
  * tests exercise the same code path the DO sees in workerd.
  */
 async function rpc(
-  broker: InstanceType<typeof MymirBroker>,
+  broker: InstanceType<typeof PiyazBroker>,
   body: unknown,
   opts?: { secret?: string; tsOverride?: number },
 ) {
@@ -124,11 +124,11 @@ async function rpc(
 
 /**
  * Sign and dispatch a WebSocket upgrade. Carries the userId header inside
- * the signing input so an unsigned `X-Mymir-User-Id` swap cannot reach the
+ * the signing input so an unsigned `X-Piyaz-User-Id` swap cannot reach the
  * DO.
  */
 async function upgrade(
-  broker: InstanceType<typeof MymirBroker>,
+  broker: InstanceType<typeof PiyazBroker>,
   userId: string,
   opts?: { secret?: string },
 ) {
@@ -286,7 +286,7 @@ test("TTL expiry — expired entries are cleaned and not delivered", async () =>
   expect(ws.send).not.toHaveBeenCalled();
 });
 
-test("WebSocket upgrade — missing X-Mymir-User-Id returns 400", async () => {
+test("WebSocket upgrade — missing X-Piyaz-User-Id returns 400", async () => {
   const { broker } = makeBroker();
   // Sign with userId="" so the envelope passes; the handler then sees the
   // missing header and answers 400.
@@ -529,7 +529,7 @@ test("hibernation rehydration — a woken DO rebuilds subs from storage", async 
   ctx.data.set("subs:u1", [["project:p1", null]]);
   const ws = fakeSocket();
   ctx.acceptWebSocket(ws, ["u1"]);
-  const broker = new MymirBroker(
+  const broker = new PiyazBroker(
     ctx as never,
     {
       BROKER_DO_SECRET: TEST_SECRET,
@@ -550,7 +550,7 @@ test("hibernation rehydration — a woken DO rebuilds subs from storage", async 
 test("register persists the user's sub set into storage", async () => {
   const ctx = fakeCtxWithStorage();
   ctx.acceptWebSocket(fakeSocket(), ["u1"]);
-  const broker = new MymirBroker(
+  const broker = new PiyazBroker(
     ctx as never,
     {
       BROKER_DO_SECRET: TEST_SECRET,
@@ -623,7 +623,7 @@ test("register without a live socket is dropped — mirrors self-host connected-
 
 test("register without a live socket does not persist to storage", async () => {
   const ctx = fakeCtxWithStorage();
-  const broker = new MymirBroker(
+  const broker = new PiyazBroker(
     ctx as never,
     { BROKER_DO_SECRET: TEST_SECRET } as never,
   );
