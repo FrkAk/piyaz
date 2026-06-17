@@ -1,10 +1,10 @@
 /**
- * Tool handlers for the 6 Mymir tools, called by the MCP server.
+ * Tool handlers for the 6 Piyaz tools, called by the MCP server.
  * Business logic lives in lib/graph/_core/* and lib/context/_core/*;
  * handlers do validation, authorization, routing, and runtime steering
  * (token-dense fail messages and `_hints` arrays that point the agent
  * at the next correct call). The skill files under
- * `plugins/<host>/skills/mymir/` are the doctrine; this file's prose
+ * `plugins/<host>/skills/piyaz/` are the doctrine; this file's prose
  * is steering, not duplication.
  */
 
@@ -122,7 +122,7 @@ const EDGE_NOTE_PLACEHOLDERS = new Set(["needed", "depends", "related"]);
  * Build hints for tag-taxonomy violations. Kebab-case is structural and
  * universal. The work-type dimension check is heuristic: the server
  * matches against the canonical English closed vocabulary documented in
- * `references/artifacts.md` §2, but Mymir runs across projects authored
+ * `references/artifacts.md` §2, but Piyaz runs across projects authored
  * in any language. When the canonical match misses, the hint refers the
  * agent to the reference rather than enumerating English values inline,
  * so localized tag sets are not penalized.
@@ -365,7 +365,7 @@ function cancelledStatusHints(
     );
   }
   hints.push(
-    "Cancellation is transparent in the dep graph: dependents stay blocked through this task's own unsatisfied prereqs (lifecycle §3). Run mymir_analyze type='downstream' and decide deliberately: is there a replacement task? If yes, rewire dependents to it. If not, dependents may need cancelling or re-scoping. Do not decide silently.",
+    "Cancellation is transparent in the dep graph: dependents stay blocked through this task's own unsatisfied prereqs (lifecycle §3). Run piyaz_analyze type='downstream' and decide deliberately: is there a replacement task? If yes, rewire dependents to it. If not, dependents may need cancelling or re-scoping. Do not decide silently.",
   );
   return hints;
 }
@@ -427,11 +427,11 @@ function doneStatusHints(
   const persistedFiles = payload.files ?? persisted.files ?? [];
   if (persistedFiles.length > 0) {
     hints.push(
-      "Code change shipped. Open a PR per Completion Protocol (lifecycle §2 step 3): detect a template (.github/PULL_REQUEST_TEMPLATE.md and variants); fill it concisely from executionRecord and ACs; use [taskRef] bracket form for the ONE primary task this PR builds (triggers Mymir PR-status tracking). Skip for research / decision-only / Mymir-only refinements.",
+      "Code change shipped. Open a PR per Completion Protocol (lifecycle §2 step 3): detect a template (.github/PULL_REQUEST_TEMPLATE.md and variants); fill it concisely from executionRecord and ACs; use [taskRef] bracket form for the ONE primary task this PR builds (triggers Piyaz PR-status tracking). Skip for research / decision-only / Piyaz-only refinements.",
     );
   }
   hints.push(
-    "Run mymir_analyze type='downstream' to propagate (lifecycle §3): update edge notes, retire stale edges, surface new dependencies revealed by this completion.",
+    "Run piyaz_analyze type='downstream' to propagate (lifecycle §3): update edge notes, retire stale edges, surface new dependencies revealed by this completion.",
   );
   return hints;
 }
@@ -515,10 +515,10 @@ function inReviewStatusHints(
     );
   }
   hints.push(
-    "Next call for the review subagent (composer Phase 4 or direct review dispatch): mymir_context depth='review' taskId='<this task>'. The bundle renders implementationPlan alongside executionRecord, surfaces the PR link, and emits review-lens prompts; no file list is recorded — review the actual changes from the PR diff.",
+    "Next call for the review subagent (composer Phase 4 or direct review dispatch): piyaz_context depth='review' taskId='<this task>'. The bundle renders implementationPlan alongside executionRecord, surfaces the PR link, and emits review-lens prompts; no file list is recorded — review the actual changes from the PR diff.",
   );
   hints.push(
-    "Run mymir_analyze type='downstream' to propagate (lifecycle §3): update edge notes, retire stale edges, surface new dependencies revealed by this completion.",
+    "Run piyaz_analyze type='downstream' to propagate (lifecycle §3): update edge notes, retire stale edges, surface new dependencies revealed by this completion.",
   );
   return hints;
 }
@@ -560,12 +560,12 @@ const STATE_HINTS: Record<TaskState, string> = {
   ready:
     "Ready. Recommend this task to the user (direct mode) or return to the orchestrator (dispatched mode); wait for explicit pick before claiming. After confirmation: status='in_progress' to claim, then fetch depth='agent' (multi-hop deps, upstream executionRecords, downstream specs); read the relevant code; refer to current docs; reason through edge cases. Understand before doing.",
   blocked:
-    "Blocked. Cannot advance until upstream deps complete. Run mymir_analyze type='blocked' for blocker details, or fetch depth='summary' for this task's edges. Surface the choices to the user/leader: pick a different ready task, or unblock by completing a dep. Do not pick silently.",
+    "Blocked. Cannot advance until upstream deps complete. Run piyaz_analyze type='blocked' for blocker details, or fetch depth='summary' for this task's edges. Surface the choices to the user/leader: pick a different ready task, or unblock by completing a dep. Do not pick silently.",
   in_progress:
     "Claimed (one worker per task; lifecycle §1). Take-over is not automatic: confirm with the user (direct mode) or orchestrator (dispatched mode) that the prior worker has gone away before resuming. After confirmation: fetch depth='agent', read prior notes plus upstream executionRecords. To finish: populate executionRecord, decisions, files, evaluate every AC (do not auto-check), open a PR if files changed, then transition to `in_review` (the implementer's terminal write; HOTL flips to `done` after PR approval) per the Completion Protocol (lifecycle §2).",
   in_review:
     "In review (implementer terminal write; lifecycle §1). The implementer subagent has shipped the PR with tests green and populated executionRecord/decisions/files/acceptanceCriteria. The HOTL operator inspects the PR and flips to `done` after approval, or back to `in_progress` if rework is required. Agents do not self-promote to `done` from here; surface the PR for review and stop.",
-  done: "Terminal (HOTL-finalized). The PR has been approved and the operator has flipped the task from `in_review` to `done`. Fetch depth='agent' for the retrospective record (outcome, decisions, PR link — no file list is rendered; the PR diff is the source of truth for what changed). depth='working' renders ACs/decisions/edges but not executionRecord; depth='summary' is just the header + edges. Then mymir_analyze type='downstream' to propagate decisions onto dependents (edge notes, descriptions, new edges, stale edges). After propagation, ask the user/leader what's next; do not auto-proceed to another task.",
+  done: "Terminal (HOTL-finalized). The PR has been approved and the operator has flipped the task from `in_review` to `done`. Fetch depth='agent' for the retrospective record (outcome, decisions, PR link — no file list is rendered; the PR diff is the source of truth for what changed). depth='working' renders ACs/decisions/edges but not executionRecord; depth='summary' is just the header + edges. Then piyaz_analyze type='downstream' to propagate decisions onto dependents (edge notes, descriptions, new edges, stale edges). After propagation, ask the user/leader what's next; do not auto-proceed to another task.",
   cancelled:
     "Terminal (abandoned). Fetch depth='agent' for the cancellation rationale (lives in executionRecord) and decisions; depth='working' renders decisions but not the rationale. Edges remain in place; cancellation is transparent (dependents stay blocked through this task's own unsatisfied deps; lifecycle §3). Ask the user/leader: is there a replacement? If yes, rewire dependents to it. If not, dependents may need cancelling or re-scoping. Do not decide silently.",
   draft:
@@ -618,7 +618,7 @@ function translateError(e: unknown): ToolResult {
   if (e instanceof MultiTeamAmbiguityError) {
     const list = e.teams.map((t) => `${t.name} (${t.id})`).join(", ");
     return fail(
-      `organizationId required: multi-team account. Teams: ${list}. Ask the user which team, then retry with organizationId='<uuid>'. mymir_project action='teams' returns the same list anytime, with role + projectCount.`,
+      `organizationId required: multi-team account. Teams: ${list}. Ask the user which team, then retry with organizationId='<uuid>'. piyaz_project action='teams' returns the same list anytime, with role + projectCount.`,
     );
   }
   if (e instanceof NoTeamMembershipError) {
@@ -636,25 +636,25 @@ function translateError(e: unknown): ToolResult {
     switch (e.resource) {
       case "project":
         return fail(
-          `Project '${id}' not found in any team you belong to. Run mymir_project action='list' to see available projects across all your teams.`,
+          `Project '${id}' not found in any team you belong to. Run piyaz_project action='list' to see available projects across all your teams.`,
         );
       case "task":
         return fail(
-          `Task '${id}' not found in any team you belong to. Run mymir_query type='search' with a projectId, or type='list' to enumerate tasks.`,
+          `Task '${id}' not found in any team you belong to. Run piyaz_query type='search' with a projectId, or type='list' to enumerate tasks.`,
         );
       case "edge":
         return fail(
-          `Edge '${id}' not found. Run mymir_query type='edges' with a taskId to see current edges on that task.`,
+          `Edge '${id}' not found. Run piyaz_query type='edges' with a taskId to see current edges on that task.`,
         );
       case "team":
         return fail(
           e.resourceId
-            ? `organizationId '${e.resourceId}' is not a team you belong to. Run mymir_project action='teams' to see valid ids, then ask the user which team before retrying.`
+            ? `organizationId '${e.resourceId}' is not a team you belong to. Run piyaz_project action='teams' to see valid ids, then ask the user which team before retrying.`
             : e.message,
         );
       default:
         return fail(
-          "Not found in any team you belong to. Run mymir_project action='list' to see what you can access.",
+          "Not found in any team you belong to. Run piyaz_project action='list' to see what you can access.",
         );
     }
   }
@@ -686,39 +686,39 @@ function translateError(e: unknown): ToolResult {
 
 /** Tool descriptions shared between MCP and web app. */
 export const DESCRIPTIONS = {
-  mymir_project:
+  piyaz_project:
     "List, create, and update projects, plus enumerate team memberships. Spans every team the caller belongs to; no server-side session state, so pass projectId explicitly on every downstream call. " +
-    "list=projects (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via mymir_query type='meta'. " +
+    "list=projects (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via piyaz_query type='meta'. " +
     "teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. " +
     "select=confirm working project; pass returned projectId on every subsequent call. " +
     "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline; auto-resolves single-team). " +
     "update=title, description, status, categories, or identifier. Renaming identifier cascades every taskRef and breaks external references (PR titles, docs, commits).",
-  mymir_task:
+  piyaz_task:
     "Create, update, or delete tasks. Lifecycle: draft → planned → in_progress → in_review → done. The implementer subagent's terminal write is `in_review` (PR opened, tests green); the HOTL gate flips to `done` after PR approval. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
-    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, three tag dimensions (work-type, cross-cutting, tech), one project category. priority, estimate, and assigneeIds are first-class fields, not tags: priority (urgent / core / normal / backlog), estimate (Fibonacci story points 1/2/3/5/8/13), assigneeIds (array of team-member user UUIDs). After create: search precedents/coordinators by verb+noun+surface, wire mymir_edge, verify with mymir_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
+    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, three tag dimensions (work-type, cross-cutting, tech), one project category. priority, estimate, and assigneeIds are first-class fields, not tags: priority (urgent / core / normal / backlog), estimate (Fibonacci story points 1/2/3/5/8/13), assigneeIds (array of team-member user UUIDs). After create: search precedents/coordinators by verb+noun+surface, wire piyaz_edge, verify with piyaz_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
     "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files, assigneeIds) APPEND by default; overwriteArrays=true REPLACES them. Destructive, NO undo (history is an audit log); confirm with user first. " +
     "delete: preview=true (default) shows impact; preview=false executes. Prefer status='cancelled' for abandoned scope so the rationale is preserved. " +
-    "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run mymir_analyze type='downstream' to propagate.",
-  mymir_edge:
+    "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run piyaz_analyze type='downstream' to propagate.",
+  piyaz_edge:
     "Create, update, or remove dependency edges between tasks. depends_on=source needs target's output (target must be done first). relates_to=informational link, neither blocks the other. Litmus test: removing the target makes the source impossible → depends_on; just makes it harder → relates_to. " +
     "create: edge note REQUIRED and substantive; notes propagate to downstream agent context, and placeholders ('needed', 'depends') are rejected. Write it as a brief to the developer about to start the source task. " +
     "update: change edgeType or note by edgeId. " +
     "remove: by edgeId OR by sourceTaskId+targetTaskId+edgeType. " +
-    "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with mymir_query type='edges'.",
-  mymir_query:
+    "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with piyaz_query type='edges'.",
+  piyaz_query:
     "Search and browse project data. Pick the slim tool first; reserve overview for unfamiliar projects. " +
     "search=tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass tags=[...] for exact tag match (OR-within); combine with `query` to AND-narrow. Pass category='...' for exact project-category match (closed vocabulary; unknown values rejected with the valid list inline); combines with query/tags via AND. Single-result responses include a state hint pointing to the right next call. " +
     "list=every task in the project (slim, ordered by position). " +
     "edges=relationships on one task (connected title, status, direction, note). " +
     "meta=slim project metadata: header, description, status, categories, tag vocabulary (with usage counts), progress + status counts. No task list, no edges. Use this to look up categories before setting one, or the tag vocabulary before coining new tags. " +
     "overview=full project structure: every task, every edge, full tag vocab, progress. VERY HEAVY. Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session. For just categories or tag vocab, use meta.",
-  mymir_context:
+  piyaz_context:
     "Retrieve task context at varying depth. ALWAYS fetch context before reasoning about a task; pick the lightest depth that answers the question. " +
-    "summary=task header + description + counts (criteria, decisions, plan flag, edge counts) + full 1-hop edges WITH notes. The lightest depth that still carries edge notes; folds in what `mymir_query type='edges'` would give. " +
+    "summary=task header + description + counts (criteria, decisions, plan flag, edge counts) + full 1-hop edges WITH notes. The lightest depth that still carries edge notes; folds in what `piyaz_query type='edges'` would give. " +
     "working=detailed (criteria, decisions, 1-hop edges) for refinement and review. " +
     "agent=multi-hop dependency chains with upstream execution records (~4-8K tokens); fetch BEFORE coding. " +
     "planning=spec-focused (project description, prereqs, acceptance criteria, downstream specs); fetch BEFORE writing the implementation plan.",
-  mymir_analyze:
+  piyaz_analyze:
     "Analyze the project dependency graph. All variants slim; lead with these for status, prioritization, 'what's next', 'what's stuck'. " +
     "critical_path=longest dep chain (project bottleneck, minimum duration). Lead with this on continue / resume / 'guide me forward'; the most important type for prioritization. " +
     "ready=planned tasks with all effective deps done (only `status='planned'` reaches this state; drafts with satisfied deps surface as `plannable`, not `ready`). Pick from `ready ∩ critical_path` for the highest-impact unblocked work. " +
@@ -731,7 +731,7 @@ export const DESCRIPTIONS = {
 // Param types
 // ---------------------------------------------------------------------------
 
-/** Params for mymir_project (handler covers list/create/update/teams; MCP handles select separately). */
+/** Params for piyaz_project (handler covers list/create/update/teams; MCP handles select separately). */
 export type ProjectParams = {
   action: "list" | "create" | "update" | "teams";
   projectId?: string;
@@ -748,7 +748,7 @@ export type ProjectParams = {
   organizationId?: string;
 };
 
-/** Params for mymir_task. */
+/** Params for piyaz_task. */
 export type TaskParams = {
   action: "create" | "update" | "delete";
   projectId?: string;
@@ -777,7 +777,7 @@ export type TaskParams = {
   overwriteArrays?: boolean;
 };
 
-/** Params for mymir_edge. */
+/** Params for piyaz_edge. */
 export type EdgeParams = {
   action: "create" | "update" | "remove";
   edgeId?: string;
@@ -787,7 +787,7 @@ export type EdgeParams = {
   note?: string;
 };
 
-/** Params for mymir_query. */
+/** Params for piyaz_query. */
 export type QueryParams = {
   type: "search" | "list" | "edges" | "meta" | "overview";
   projectId?: string;
@@ -797,14 +797,14 @@ export type QueryParams = {
   taskId?: string;
 };
 
-/** Params for mymir_context. */
+/** Params for piyaz_context. */
 export type ContextParams = {
   taskId: string;
   depth: "summary" | "working" | "agent" | "planning" | "review";
   projectId?: string;
 };
 
-/** Params for mymir_analyze. */
+/** Params for piyaz_analyze. */
 export type AnalyzeParams = {
   type: "ready" | "blocked" | "downstream" | "critical_path" | "plannable";
   projectId?: string;
@@ -816,7 +816,7 @@ export type AnalyzeParams = {
 // ---------------------------------------------------------------------------
 
 /**
- * Handle mymir_project actions (list/create/update).
+ * Handle piyaz_project actions (list/create/update).
  * @param p - Validated project params.
  * @param ctx - Resolved auth context.
  * @returns Tool result with project data.
@@ -865,7 +865,7 @@ export async function handleProject(
       case "update": {
         if (!p.projectId)
           return fail(
-            "projectId required for update. Run mymir_project action='list' to find it.",
+            "projectId required for update. Run piyaz_project action='list' to find it.",
           );
         if (
           p.title === undefined &&
@@ -917,7 +917,7 @@ export async function handleProject(
 }
 
 /**
- * Handle mymir_task actions.
+ * Handle piyaz_task actions.
  * @param p - Validated task params. projectId required for create.
  * @param ctx - Resolved auth context.
  * @returns Tool result with task data.
@@ -931,7 +931,7 @@ export async function handleTask(
       case "create": {
         if (!p.projectId)
           return fail(
-            "projectId required for create. Run mymir_project action='list' or 'select' first.",
+            "projectId required for create. Run piyaz_project action='list' or 'select' first.",
           );
         if (!p.title)
           return fail(
@@ -1017,23 +1017,23 @@ export async function handleTask(
         // Informational follow-ups
         if (!p.acceptanceCriteria || p.acceptanceCriteria.length === 0) {
           createHints.push(
-            "No acceptance criteria. Add 2-4 binary done-conditions with mymir_task action='update'. Artifacts §1.",
+            "No acceptance criteria. Add 2-4 binary done-conditions with piyaz_task action='update'. Artifacts §1.",
           );
         }
         if (!p.category) {
           createHints.push(
-            "No category. Run mymir_query type='meta' to see this project's categories, then set one with mymir_task action='update'.",
+            "No category. Run piyaz_query type='meta' to see this project's categories, then set one with piyaz_task action='update'.",
           );
         }
         createHints.push(
-          "No edges yet. Bare tasks orphan from critical_path, downstream, depth='agent' propagation. Search precedents/coordinators by verb + noun + surface; wire mymir_edge with substantive notes; verify with mymir_query type='edges'.",
+          "No edges yet. Bare tasks orphan from critical_path, downstream, depth='agent' propagation. Search precedents/coordinators by verb + noun + surface; wire piyaz_edge with substantive notes; verify with piyaz_query type='edges'.",
         );
         return ok({ ...task, _hints: createHints });
       }
       case "update": {
         if (!p.taskId)
           return fail(
-            "taskId required for update. Use mymir_query type='search' to find it.",
+            "taskId required for update. Use piyaz_query type='search' to find it.",
           );
         if (
           p.title === undefined &&
@@ -1167,12 +1167,12 @@ export async function handleTask(
         // Status-transition steering
         if (p.status === "planned") {
           updateHints.push(
-            "Planned. Plan saved. Task surfaces in mymir_analyze type='ready' once depends_on chain reaches done. To claim: status='in_progress'.",
+            "Planned. Plan saved. Task surfaces in piyaz_analyze type='ready' once depends_on chain reaches done. To claim: status='in_progress'.",
           );
         }
         if (p.status === "in_progress") {
           updateHints.push(
-            "Claimed (one worker per task; lifecycle §1). Run mymir_context depth='agent' for multi-hop deps and upstream executionRecords before starting.",
+            "Claimed (one worker per task; lifecycle §1). Run piyaz_context depth='agent' for multi-hop deps and upstream executionRecords before starting.",
           );
           updateHints.push(
             "Before marking done: confirm with the user (direct mode) or return one-sentence summary to the orchestrator (dispatched mode). Completion Protocol (lifecycle §2).",
@@ -1247,7 +1247,7 @@ export async function handleTask(
       case "delete": {
         if (!p.taskId)
           return fail(
-            "taskId required for delete. Use mymir_query type='search' to find it.",
+            "taskId required for delete. Use piyaz_query type='search' to find it.",
           );
         if (p.preview !== false) {
           const result = await deleteTaskPreview(ctx, p.taskId);
@@ -1267,7 +1267,7 @@ export async function handleTask(
 }
 
 /**
- * Handle mymir_edge actions.
+ * Handle piyaz_edge actions.
  * @param p - Validated edge params.
  * @param ctx - Resolved auth context.
  * @returns Tool result with edge data.
@@ -1281,7 +1281,7 @@ export async function handleEdge(
       case "create": {
         if (!p.sourceTaskId || !p.targetTaskId)
           return fail(
-            "sourceTaskId and targetTaskId required for create. Use mymir_query type='search' to find task IDs.",
+            "sourceTaskId and targetTaskId required for create. Use piyaz_query type='search' to find task IDs.",
           );
         if (!p.edgeType)
           return fail(
@@ -1306,7 +1306,7 @@ export async function handleEdge(
       case "update": {
         if (!p.edgeId)
           return fail(
-            "edgeId required for update. Use mymir_query type='edges' to find edge IDs.",
+            "edgeId required for update. Use piyaz_query type='edges' to find edge IDs.",
           );
         if (p.edgeType === undefined && p.note === undefined)
           return fail(
@@ -1333,14 +1333,14 @@ export async function handleEdge(
           );
           if (!edge) {
             return fail(
-              `No matching edge for ${p.sourceTaskId} -[${p.edgeType}]-> ${p.targetTaskId}. Use mymir_query type='edges' to list current edges on either task.`,
+              `No matching edge for ${p.sourceTaskId} -[${p.edgeType}]-> ${p.targetTaskId}. Use piyaz_query type='edges' to list current edges on either task.`,
             );
           }
           await removeEdge(ctx, edge.id);
           return ok({ removed: edge.id });
         }
         return fail(
-          "Provide edgeId OR sourceTaskId+targetTaskId+edgeType. Use mymir_query type='edges' to find edge details.",
+          "Provide edgeId OR sourceTaskId+targetTaskId+edgeType. Use piyaz_query type='edges' to find edge details.",
         );
       }
     }
@@ -1350,7 +1350,7 @@ export async function handleEdge(
 }
 
 /**
- * Handle mymir_query actions.
+ * Handle piyaz_query actions.
  * @param p - Validated query params. projectId required for search/list/overview.
  * @param ctx - Resolved auth context.
  * @returns Tool result with query data.
@@ -1364,7 +1364,7 @@ export async function handleQuery(
       case "search": {
         if (!p.projectId)
           return fail(
-            "projectId required for search. Run mymir_project action='list' first.",
+            "projectId required for search. Run piyaz_project action='list' first.",
           );
         const hasQuery = (p.query?.trim() ?? "").length > 0;
         const tagFilter = normalizeTags(p.tags);
@@ -1387,7 +1387,7 @@ export async function handleQuery(
           !project.categories.includes(trimmedCategory)
         ) {
           return fail(
-            `Category "${trimmedCategory}" not in this project's categories: [${project.categories.join(", ")}]. Run mymir_query type='meta' for the current list.`,
+            `Category "${trimmedCategory}" not in this project's categories: [${project.categories.join(", ")}]. Run piyaz_query type='meta' for the current list.`,
           );
         }
 
@@ -1417,7 +1417,7 @@ export async function handleQuery(
       case "list": {
         if (!p.projectId)
           return fail(
-            "projectId required for list. Run mymir_project action='list' first.",
+            "projectId required for list. Run piyaz_project action='list' first.",
           );
         return ok(formatTaskList(await getProjectTasksSlim(ctx, p.projectId)));
       }
@@ -1433,14 +1433,14 @@ export async function handleQuery(
       case "meta": {
         if (!p.projectId)
           return fail(
-            "projectId required for meta. Run mymir_project action='list' first.",
+            "projectId required for meta. Run piyaz_project action='list' first.",
           );
         return ok(formatProjectMeta(await getProjectMeta(ctx, p.projectId)));
       }
       case "overview": {
         if (!p.projectId)
           return fail(
-            "projectId required for overview. Run mymir_project action='list' first.",
+            "projectId required for overview. Run piyaz_project action='list' first.",
           );
         const overview = await buildProjectOverview(ctx, p.projectId);
         return ok(overview ? formatOverview(overview) : "Project not found.");
@@ -1452,7 +1452,7 @@ export async function handleQuery(
 }
 
 /**
- * Handle mymir_context actions. Returns structured data for summary depth,
+ * Handle piyaz_context actions. Returns structured data for summary depth,
  * formatted string for other depths.
  * @param p - Validated context params. projectId required for working depth.
  * @param ctx - Resolved auth context.
@@ -1469,14 +1469,14 @@ export async function handleContext(
       case "working": {
         if (!p.projectId)
           return fail(
-            "projectId required for working depth. Run mymir_project action='list' or pass the projectId you already have.",
+            "projectId required for working depth. Run piyaz_project action='list' or pass the projectId you already have.",
           );
         // assertTaskAccess gates on membership; the projectId comparison protects
         // against passing a different project's UUID alongside our own task.
         const task = await assertTaskAccess(p.taskId, ctx);
         if (task.projectId !== p.projectId) {
           return fail(
-            `Task '${p.taskId}' belongs to project '${task.projectId}', not '${p.projectId}'. Run mymir_query type='search' to find the correct projectId.`,
+            `Task '${p.taskId}' belongs to project '${task.projectId}', not '${p.projectId}'. Run piyaz_query type='search' to find the correct projectId.`,
           );
         }
         const result = await buildWorkingContext(ctx, p.taskId);
@@ -1495,7 +1495,7 @@ export async function handleContext(
 }
 
 /**
- * Handle mymir_analyze actions.
+ * Handle piyaz_analyze actions.
  * @param p - Validated analyze params.
  * @param ctx - Resolved auth context.
  * @returns Tool result with analysis data.
@@ -1509,35 +1509,35 @@ export async function handleAnalyze(
       case "ready": {
         if (!p.projectId)
           return fail(
-            "projectId required for ready. Run mymir_project action='list' first.",
+            "projectId required for ready. Run piyaz_project action='list' first.",
           );
         return ok(formatReadyTasks(await getReadyTasks(ctx, p.projectId)));
       }
       case "blocked": {
         if (!p.projectId)
           return fail(
-            "projectId required for blocked. Run mymir_project action='list' first.",
+            "projectId required for blocked. Run piyaz_project action='list' first.",
           );
         return ok(formatBlockedTasks(await getBlockedTasks(ctx, p.projectId)));
       }
       case "downstream": {
         if (!p.taskId)
           return fail(
-            "taskId required for downstream analysis. Use mymir_query type='search' to find it.",
+            "taskId required for downstream analysis. Use piyaz_query type='search' to find it.",
           );
         return ok(formatDownstream(await getDownstream(ctx, p.taskId)));
       }
       case "critical_path": {
         if (!p.projectId)
           return fail(
-            "projectId required for critical_path. Run mymir_project action='list' first.",
+            "projectId required for critical_path. Run piyaz_project action='list' first.",
           );
         return ok(formatCriticalPath(await getCriticalPath(ctx, p.projectId)));
       }
       case "plannable": {
         if (!p.projectId)
           return fail(
-            "projectId required for plannable. Run mymir_project action='list' first.",
+            "projectId required for plannable. Run piyaz_project action='list' first.",
           );
         return ok(
           formatPlannableTasks(await getPlannableTasks(ctx, p.projectId)),

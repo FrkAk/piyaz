@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in Mymir
+description: Report a bug in Piyaz
 labels: ["bug"]
 body:
   - type: textarea

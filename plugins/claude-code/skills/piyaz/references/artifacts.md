@@ -1,6 +1,6 @@
-# Mymir artifact rules
+# Piyaz artifact rules
 
-Quality bar for everything an agent writes into Mymir: titles, descriptions, acceptance criteria, executionRecords, decisions, files, tags, edges, categories, and the markdown tone of all of it.
+Quality bar for everything an agent writes into Piyaz: titles, descriptions, acceptance criteria, executionRecords, decisions, files, tags, edges, categories, and the markdown tone of all of it.
 
 Agents read this file when about to create, refine, or audit an artifact. The Iron Law of grounding (`conventions.md` §1) applies at every step.
 
@@ -156,7 +156,7 @@ One-liner per decision. Format: **CHOICE + WHY**.
 Where decisions come from:
 
 - **Refinement, planning, or implementation conversation.** When the user and the agent (or two agents) settle on a choice, that's a decision. The agent should automatically record it without being asked. If the agent is uncertain whether a choice rises to "decision" level, ask the user briefly to confirm.
-- **Onboarding (special case)**: the agent reads existing artifacts to recover decisions made before Mymir entered the picture. Sources: manifest files (`package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Package.swift`), README and design docs, commit messages with words like *chose*, *switched*, *replaced*, *migrated*. If a decision is not grounded in any of those, omit it. Better a shorter list than fabrication.
+- **Onboarding (special case)**: the agent reads existing artifacts to recover decisions made before Piyaz entered the picture. Sources: manifest files (`package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Package.swift`), README and design docs, commit messages with words like *chose*, *switched*, *replaced*, *migrated*. If a decision is not grounded in any of those, omit it. Better a shorter list than fabrication.
 
 ```
 GOOD (web): "Chose Redis for refresh tokens. Need fast revocation lookups."
@@ -180,13 +180,13 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 - **Format:** plain repo-relative path strings. No backticks, no quoting.
 - **Coverage:** every file created or modified for `done` tasks.
-- **Empty `files=[]` is the correct value whenever paths cannot be cited:** pre-implementation tasks (`draft`, `planned`) where the code does not exist yet, research or decision-only tasks, Mymir-only refinements. **Leave empty rather than speculate.**
+- **Empty `files=[]` is the correct value whenever paths cannot be cited:** pre-implementation tasks (`draft`, `planned`) where the code does not exist yet, research or decision-only tasks, Piyaz-only refinements. **Leave empty rather than speculate.**
 
 ---
 
 ## 2. Tag dimensions and first-class fields
 
-Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `mymir_query type='overview'` before coining new ones.
+Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `piyaz_query type='overview'` before coining new ones.
 
 | Dimension | Count | Vocabulary |
 |---|---|---|
@@ -196,7 +196,7 @@ Every task, in every status, must carry tags across the three tag dimensions bel
 
 ### First-class fields (priority, estimate, assignees)
 
-These are top-level columns on every task, set via `mymir_task` parameters of the same name. They are NOT tags.
+These are top-level columns on every task, set via `piyaz_task` parameters of the same name. They are NOT tags.
 
 - **`priority`** (one of `urgent`, `core`, `normal`, `backlog`). Required-on-create-by-convention: pick deliberately. Defaults: onboarding (shipped features) lands at `core`; decompose picks per task and avoids `core` everywhere or `urgent` everywhere (the dimension carries no signal then). A 30-task project usually has 3 to 6 `urgent` tasks and the rest split between `core`, `normal`, and `backlog`.
 - **`estimate`** (Fibonacci story points: `1`, `2`, `3`, `5`, `8`, `13`). Optional. `1` is trivial, `2` and `3` are routine, `5` is nontrivial, `8` and `13` are risky or multi-day. If a task feels larger than `13`, split it (§5).
@@ -387,7 +387,7 @@ Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementati
 
 ### Tone: never sound like AI
 
-The text you write into Mymir is read by other engineers. It must read like an engineer wrote it, not a chatbot.
+The text you write into Piyaz is read by other engineers. It must read like an engineer wrote it, not a chatbot.
 
 **Do not use:**
 

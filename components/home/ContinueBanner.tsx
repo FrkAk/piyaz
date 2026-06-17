@@ -20,7 +20,7 @@ interface ContinueBannerProps {
 /**
  * Banner highlighting the most recently touched project. Renders the
  * gradient accent strip per spec; agent activity is intentionally not
- * surfaced here — agents reach Mymir via MCP, the webapp is the
+ * surfaced here — agents reach Piyaz via MCP, the webapp is the
  * artefact viewer, not a live presence indicator.
  *
  * @param props - Banner data.

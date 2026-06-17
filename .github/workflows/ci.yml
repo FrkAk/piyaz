@@ -13,13 +13,13 @@ jobs:
       postgres:
         image: postgres:17.6
         env:
-          POSTGRES_USER: mymir
-          POSTGRES_PASSWORD: mymir
-          POSTGRES_DB: mymir_test
+          POSTGRES_USER: piyaz
+          POSTGRES_PASSWORD: piyaz
+          POSTGRES_DB: piyaz_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U mymir -d mymir_test"
+          --health-cmd "pg_isready -U piyaz -d piyaz_test"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
@@ -44,7 +44,12 @@ jobs:
         # exploitable here (bun installs from the committed lockfile). Drop
         # the ignore once wrangler / drizzle-kit / @opennextjs pull
         # esbuild >= 0.28.1.
-        run: bun audit --audit-level=high --ignore=GHSA-gv7w-rqvm-qjhr
+        # GHSA-96hv-2xvq-fx4p: ws DoS via tiny fragments. Dev-only (wrangler
+        # > miniflare), never shipped to the deployed Worker. No upstream fix:
+        # miniflare pins ws@8.20.1 exactly, even in the latest wrangler. Drop
+        # the ignore once miniflare bumps ws >= 8.21.0. (form-data + hono are
+        # fixed via package.json overrides; see the //overrides note there.)
+        run: bun audit --audit-level=high --ignore=GHSA-gv7w-rqvm-qjhr --ignore=GHSA-96hv-2xvq-fx4p
       - name: Validate PR title
         if: github.event_name == 'pull_request'
         env:
@@ -64,7 +69,7 @@ jobs:
         run: bun run typecheck
       - name: Test
         env:
-          TEST_DATABASE_URL: postgres://mymir:mymir@localhost:5432/mymir_test
+          TEST_DATABASE_URL: postgres://piyaz:piyaz@localhost:5432/piyaz_test
         run: bun run test
       - name: Check plugin drift
         run: bun run check:plugins

@@ -43,9 +43,9 @@ export type RlsTx = Parameters<Parameters<AppDb["transaction"]>[0]>[0] & {
 };
 
 declare global {
-  var __mymirAppDb: AppDb | undefined;
-  var __mymirAuthDb: AuthDb | undefined;
-  var __mymirServiceRoleDb: AppDb | undefined;
+  var __piyazAppDb: AppDb | undefined;
+  var __piyazAuthDb: AuthDb | undefined;
+  var __piyazServiceRoleDb: AppDb | undefined;
 }
 
 /** Per-request DB bundle seeded by `withRequestDb` on Cloudflare Workers. */
@@ -70,7 +70,7 @@ export interface RequestScopedDb {
 
 export { requestDbStore } from "./request-store";
 
-type GlobalKey = "__mymirAppDb" | "__mymirAuthDb" | "__mymirServiceRoleDb";
+type GlobalKey = "__piyazAppDb" | "__piyazAuthDb" | "__piyazServiceRoleDb";
 
 type RoleKey = "appDb" | "authDb" | "serviceRoleDb";
 
@@ -95,7 +95,7 @@ type RoleKey = "appDb" | "authDb" | "serviceRoleDb";
  * built lazily and reused across requests via standard pg pooling.
  *
  * @param key - Which role to read from the request-scope bundle.
- * @param globalKey - Matching `globalThis.__mymir*` slot (self-host only).
+ * @param globalKey - Matching `globalThis.__piyaz*` slot (self-host only).
  * @param builder - Factory invoked at most once to populate the slot.
  * @returns Drizzle instance for the role.
  * @throws Error on Workers when no request frame is active.
@@ -133,7 +133,7 @@ function getScopedOrGlobal<TDb extends AppDb | AuthDb>(
  */
 export const appDb = new Proxy({} as AppUserConn, {
   get(_target, prop, receiver) {
-    const db = getScopedOrGlobal<AppDb>("appDb", "__mymirAppDb", buildAppPool);
+    const db = getScopedOrGlobal<AppDb>("appDb", "__piyazAppDb", buildAppPool);
     return Reflect.get(db, prop, receiver);
   },
 });
@@ -148,7 +148,7 @@ export const authDb = new Proxy({} as AuthDb, {
   get(_target, prop, receiver) {
     const db = getScopedOrGlobal<AuthDb>(
       "authDb",
-      "__mymirAuthDb",
+      "__piyazAuthDb",
       buildAuthPool,
     );
     return Reflect.get(db, prop, receiver);
@@ -174,7 +174,7 @@ export const serviceRoleDb = new Proxy({} as ServiceRoleConn, {
   get(_target, prop, receiver) {
     const db = getScopedOrGlobal<AppDb>(
       "serviceRoleDb",
-      "__mymirServiceRoleDb",
+      "__piyazServiceRoleDb",
       buildServicePool,
     );
     return Reflect.get(db, prop, receiver);

@@ -1,11 +1,12 @@
+name: piyaz
 services:
   db:
     image: postgres:17.10
     restart: unless-stopped
     environment:
-      POSTGRES_USER: mymir
-      POSTGRES_PASSWORD: mymir
-      POSTGRES_DB: mymir
+      POSTGRES_USER: piyaz
+      POSTGRES_PASSWORD: piyaz
+      POSTGRES_DB: piyaz
       # Passed through to init-rls.sql so it can provision app_user and
       # service_role with caller-generated passwords (see .env.local.example).
       APP_USER_PASSWORD: ${APP_USER_PASSWORD:?missing APP_USER_PASSWORD; generate via `openssl rand -base64 24` and add to .env.local}
@@ -19,7 +20,7 @@ services:
       - ./docker/init-rls.sh:/docker-entrypoint-initdb.d/02-rls.sh:ro
       - ./docker/grants.sql:/opt/postgres-init/grants.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mymir"]
+      test: ["CMD-SHELL", "pg_isready -U piyaz"]
       interval: 5s
       timeout: 3s
       retries: 5

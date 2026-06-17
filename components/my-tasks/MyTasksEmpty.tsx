@@ -29,7 +29,7 @@ export function MyTasksEmpty() {
 
       <span className="inline-block max-w-full rounded-lg border border-border-strong bg-surface px-4 py-2.5 text-left font-mono text-[12.5px] shadow-[var(--shadow-card)]">
         <span className="text-text-faint">$</span>{" "}
-        <span className="font-semibold text-accent-light">/mymir</span>{" "}
+        <span className="font-semibold text-accent-light">/piyaz</span>{" "}
         <span className="italic tracking-[0.002em] text-text-secondary">
           what&apos;s the next task or critical path I should pick up?
         </span>

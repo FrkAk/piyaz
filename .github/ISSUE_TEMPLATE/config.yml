@@ -8,7 +8,7 @@ contact_links:
     about: Feature ideas and suggestions go in Discussions (Ideas) where the community can upvote.
   - name: Show and tell
     url: https://github.com/FrkAk/mymir/discussions/categories/show-and-tell
-    about: Share what you built with Mymir.
+    about: Share what you built with Piyaz.
   - name: Report a security vulnerability
     url: https://github.com/FrkAk/mymir/security/advisories/new
     about: Use private vulnerability reporting — do not open a public issue.

@@ -1,5 +1,5 @@
 /**
- * Cloudflare Workers entry point for Mymir's OpenNext build.
+ * Cloudflare Workers entry point for Piyaz's OpenNext build.
  *
  * Re-exports the Durable Object classes wrangler instantiates at runtime
  * (`MymirBroker`, `DOQueueHandler`) and delegates `fetch` to the

@@ -20,7 +20,7 @@ export async function acquireOwnerDemoteLock(
   await executeRawDiscard(
     tx,
     sql`SELECT pg_advisory_xact_lock(
-      hashtext(${`mymir:team-owners:${organizationId}`})
+      hashtext(${`piyaz:team-owners:${organizationId}`})
     )`,
   );
 }

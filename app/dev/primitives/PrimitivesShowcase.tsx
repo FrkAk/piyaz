@@ -705,7 +705,7 @@ export function PrimitivesShowcase() {
               alignItems: "center",
             }}
           >
-            <TeamChip team={{ id: "team-1", name: "mymir" }} />
+            <TeamChip team={{ id: "team-1", name: "piyaz" }} />
             <TeamChip team={{ id: "team-2", name: "partners" }} size="sm" />
             <TeamChip
               team={{ id: "team-3", name: "platform" }}

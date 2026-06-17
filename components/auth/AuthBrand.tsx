@@ -1,6 +1,6 @@
 /**
  * Brand stamp shown at the top of every auth form — 30×30 gradient `m` mark
- * paired with a lowercase `mymir` wordmark. Slightly larger than the
+ * paired with a lowercase `piyaz` wordmark. Slightly larger than the
  * sidebar variant (22×22) because the auth surface is a destination, not
  * a chrome accessory.
  *
@@ -24,7 +24,7 @@ export function AuthBrand() {
         className="text-[16px] font-semibold text-text-primary"
         style={{ letterSpacing: "-0.005em" }}
       >
-        mymir
+        piyaz
       </span>
     </div>
   );
