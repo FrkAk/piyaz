@@ -14,7 +14,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.repository == 'FrkAk/mymir'
+      github.repository == 'FrkAk/piyaz'
     concurrency:
       group: deploy-main
       cancel-in-progress: false

@@ -24,13 +24,13 @@ const HOSTED_CLI_INSTALLS: readonly CliInstall[] = [
   {
     name: "Claude Code",
     install:
-      "claude plugin marketplace add FrkAk/mymir\nclaude plugin install piyaz@piyaz",
+      "claude plugin marketplace add FrkAk/piyaz\nclaude plugin install piyaz@piyaz",
     setupNote:
       "Run /mcp, select piyaz, and complete the browser sign-in. The piyaz skill auto-invokes when you talk about projects.",
   },
   {
     name: "Codex",
-    install: "codex plugin marketplace add FrkAk/mymir",
+    install: "codex plugin marketplace add FrkAk/piyaz",
     setupNote:
       "Run /plugin, install Piyaz, restart Codex, and authenticate when prompted. Invoke the main skill with $piyaz.",
   },
@@ -79,9 +79,9 @@ const SELF_HOST_CLI_INSTALLS: readonly CliInstall[] = [
 ];
 
 const HOSTED_README_SETUP_URL =
-  "https://github.com/FrkAk/mymir#use-the-hosted-version-no-clone";
+  "https://github.com/FrkAk/piyaz#use-the-hosted-version-no-clone";
 const SELF_HOST_README_SETUP_URL =
-  "https://github.com/FrkAk/mymir#self-host-contribute";
+  "https://github.com/FrkAk/piyaz#self-host-contribute";
 
 const SECTION_LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted";

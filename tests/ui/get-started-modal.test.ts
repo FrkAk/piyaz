@@ -58,9 +58,9 @@ test("hosted deploy shows hosted setup snippets without local checkout paths", a
     "Antigravity",
     "Cursor",
   ]);
-  expect(text).toContain("claude plugin marketplace add FrkAk/mymir");
+  expect(text).toContain("claude plugin marketplace add FrkAk/piyaz");
   expect(text).toContain("claude plugin install piyaz@piyaz");
-  expect(text).toContain("codex plugin marketplace add FrkAk/mymir");
+  expect(text).toContain("codex plugin marketplace add FrkAk/piyaz");
   expect(text).toContain("https://app.piyaz.ai/api/mcp");
   expect(text).toContain("cursor://anysphere.cursor-deeplink/mcp/install");
   expect(text).not.toContain("./plugins");
@@ -83,6 +83,6 @@ test("self-host deploy keeps local plugin install commands", async () => {
   expect(text).toContain("plugins/cursor");
   expect(text).toContain("piyaz-local");
   expect(text).toContain("localhost");
-  expect(text).not.toContain("FrkAk/mymir");
+  expect(text).not.toContain("FrkAk/piyaz");
   expect(getReadmeSetupUrl("")).toContain("#self-host-contribute");
 });

@@ -1,14 +1,14 @@
 blank_issues_enabled: false
 contact_links:
   - name: Ask a question
-    url: https://github.com/FrkAk/mymir/discussions/categories/q-a
+    url: https://github.com/FrkAk/piyaz/discussions/categories/q-a
     about: Questions, help, and troubleshooting go in Discussions (Q&A).
   - name: Suggest an idea
-    url: https://github.com/FrkAk/mymir/discussions/categories/ideas
+    url: https://github.com/FrkAk/piyaz/discussions/categories/ideas
     about: Feature ideas and suggestions go in Discussions (Ideas) where the community can upvote.
   - name: Show and tell
-    url: https://github.com/FrkAk/mymir/discussions/categories/show-and-tell
+    url: https://github.com/FrkAk/piyaz/discussions/categories/show-and-tell
     about: Share what you built with Piyaz.
   - name: Report a security vulnerability
-    url: https://github.com/FrkAk/mymir/security/advisories/new
+    url: https://github.com/FrkAk/piyaz/security/advisories/new
     about: Use private vulnerability reporting — do not open a public issue.

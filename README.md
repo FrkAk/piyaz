@@ -28,7 +28,7 @@ Piyaz is hosted at [app.piyaz.ai](https://app.piyaz.ai). The plugin installs int
 ### Claude Code
 
 ```bash
-claude plugin marketplace add FrkAk/mymir
+claude plugin marketplace add FrkAk/piyaz
 claude plugin install piyaz@piyaz
 ```
 
@@ -37,7 +37,7 @@ Then run `/mcp`, select **piyaz**, and complete the browser sign-in.
 ### Codex
 
 ```bash
-codex plugin marketplace add FrkAk/mymir
+codex plugin marketplace add FrkAk/piyaz
 ```
 
 Open Codex, run `/plugin`, install **Piyaz**, restart, and authenticate when prompted. Invoke the main skill with `$piyaz`. (If your Codex build can't resolve the root marketplace, append `--sparse plugins`.)
@@ -50,7 +50,7 @@ Open Codex, run `/plugin`, install **Piyaz**, restart, and authenticate when pro
   cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5waXlhei5haS9hcGkvbWNwIn0=
   ```
 
-- **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/mymir`. Team Marketplaces is a Teams/Enterprise feature.
+- **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/piyaz`. Team Marketplaces is a Teams/Enterprise feature.
 - **Public Marketplace:** listing in the [Cursor Marketplace](https://cursor.com/marketplace) requires submission and manual review. Search-and-install lands once Piyaz is published.
 
 ### Antigravity
@@ -78,7 +78,7 @@ Self-hosting is free under AGPL-3.0. You run the Piyaz server yourself and point
 You need [Bun](https://bun.sh) (v1.0+) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Linux, macOS, or Windows with WSL2.
 
 ```bash
-git clone git@github.com:FrkAk/mymir.git
+git clone git@github.com:FrkAk/piyaz.git
 cd piyaz
 bun install --production
 cp .env.local.example .env.local
@@ -154,7 +154,7 @@ Piyaz ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 
 ```text
 ❯ What should I work on next?
-❯ Plan and implement MYMR-101
+❯ Plan and implement PYZ-101
 ```
 
 **Add and refine mid-flow.** Spot something missing, describe it, and push back until it's right:
@@ -176,7 +176,7 @@ Piyaz ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 Or take one specific task all the way to a PR:
 
 ```text
-❯ /piyaz:composer MYMR-101
+❯ /piyaz:composer PYZ-101
 ```
 
 Composer dispatches three subagents per task in clean per-phase contexts (researcher → planner → implementer). The orchestrator stays out of the work itself and only picks tasks, hands off, and propagates.
@@ -256,9 +256,9 @@ Next.js 16, TypeScript 6, React 19, PostgreSQL, Drizzle ORM, Tailwind CSS v4, Mo
 
 <a href="https://www.star-history.com/?repos=FrkAk%2Fpiyaz&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=FrkAk/mymir&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=FrkAk/mymir&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=FrkAk/mymir&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=FrkAk/piyaz&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=FrkAk/piyaz&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=FrkAk/piyaz&type=date&legend=top-left" />
  </picture>
 </a>
 

@@ -377,7 +377,7 @@ export function PrimitivesShowcase() {
                 letterSpacing: "0.02em",
               }}
             >
-              MYMR-104 — mono 11 / 500
+              PYZ-104 — mono 11 / 500
             </p>
           </div>
         </Section>
@@ -563,10 +563,10 @@ export function PrimitivesShowcase() {
                 background: "var(--color-border)",
               }}
             />
-            <MonoId id="MYMR-104" />
-            <MonoId id="MYMR-220" />
-            <MonoId id="MYMR-301" dim />
-            <MonoId id="MYMR-410" copyable={false} />
+            <MonoId id="PYZ-104" />
+            <MonoId id="PYZ-220" />
+            <MonoId id="PYZ-301" dim />
+            <MonoId id="PYZ-410" copyable={false} />
           </div>
         </Section>
 
@@ -715,7 +715,7 @@ export function PrimitivesShowcase() {
         </Section>
 
         <Section title="CopyButton">
-          <CopyButton text="MYMR-104" />
+          <CopyButton text="PYZ-104" />
         </Section>
 
         <Section title="Modal">

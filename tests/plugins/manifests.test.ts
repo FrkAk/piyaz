@@ -12,7 +12,7 @@ test("Claude root marketplace sources the claude-code subdir via git-subdir", ()
   const plugin = mkt.plugins.find((p: { name: string }) => p.name === "piyaz");
   expect(plugin).toBeDefined();
   expect(plugin.source.source).toBe("git-subdir");
-  expect(plugin.source.url).toBe("https://github.com/FrkAk/mymir.git");
+  expect(plugin.source.url).toBe("https://github.com/FrkAk/piyaz.git");
   expect(plugin.source.path).toBe("plugins/claude-code");
 });
 
@@ -23,7 +23,7 @@ test("Codex root marketplace sources the codex subdir via git-subdir", () => {
   const plugin = mkt.plugins.find((p: { name: string }) => p.name === "piyaz");
   expect(plugin).toBeDefined();
   expect(plugin.source.source).toBe("git-subdir");
-  expect(plugin.source.url).toBe("https://github.com/FrkAk/mymir.git");
+  expect(plugin.source.url).toBe("https://github.com/FrkAk/piyaz.git");
   expect(plugin.source.path).toBe("plugins/codex");
 });
 
