@@ -154,7 +154,7 @@ Piyaz ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 
 ```text
 ❯ What should I work on next?
-❯ Plan and implement MYMR-101
+❯ Plan and implement PYZ-101
 ```
 
 **Add and refine mid-flow.** Spot something missing, describe it, and push back until it's right:
@@ -176,7 +176,7 @@ Piyaz ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 Or take one specific task all the way to a PR:
 
 ```text
-❯ /piyaz:composer MYMR-101
+❯ /piyaz:composer PYZ-101
 ```
 
 Composer dispatches three subagents per task in clean per-phase contexts (researcher → planner → implementer). The orchestrator stays out of the work itself and only picks tasks, hands off, and propagates.
