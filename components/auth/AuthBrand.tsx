@@ -1,5 +1,5 @@
 /**
- * Brand stamp shown at the top of every auth form — 30×30 gradient `m` mark
+ * Brand stamp shown at the top of every auth form — 30×30 gradient `p` mark
  * paired with a lowercase `piyaz` wordmark. Slightly larger than the
  * sidebar variant (22×22) because the auth surface is a destination, not
  * a chrome accessory.
@@ -18,7 +18,7 @@ export function AuthBrand() {
           color: "#0b0c10",
         }}
       >
-        m
+        p
       </span>
       <span
         className="text-[16px] font-semibold text-text-primary"

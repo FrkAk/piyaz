@@ -44,7 +44,7 @@ const HOSTED_CLI_INSTALLS: readonly CliInstall[] = [
   {
     name: "Cursor",
     install:
-      "cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5teW1pci5kZXYvYXBpL21jcCJ9",
+      "cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5waXlhei5haS9hcGkvbWNwIn0=",
     setupNote:
       "Open the deeplink, then sign in when the first Piyaz MCP tool call triggers OAuth.",
   },

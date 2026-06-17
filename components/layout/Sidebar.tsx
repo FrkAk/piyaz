@@ -517,7 +517,7 @@ function CompactNavIcon({
 }
 
 /**
- * Brand mark — 22×22 rounded square with `m` glyph on the indigo→teal gradient.
+ * Brand mark — 22×22 rounded square with `p` glyph on the indigo→teal gradient.
  * @returns Inline mark element.
  */
 function BrandMark() {
@@ -531,7 +531,7 @@ function BrandMark() {
         color: "#0b0c10",
       }}
     >
-      m
+      p
     </span>
   );
 }

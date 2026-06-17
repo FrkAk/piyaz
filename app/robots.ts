@@ -1,7 +1,5 @@
 import type { MetadataRoute } from "next";
 
-// Canonical production origin. Hardcoded because robots.txt is statically
-// prerendered at build time, where the BETTER_AUTH_URL runtime var is absent.
 const baseUrl = "https://app.piyaz.ai";
 
 /**
