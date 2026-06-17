@@ -1,6 +1,6 @@
 ## Summary
 
-**Task Reference**: [MYMR-XXX] <!-- The ONE primary task this PR builds. Brackets trigger Piyaz PR-status tracking — use them only here. Reference any related tasks elsewhere without brackets (plain link, not tracked). -->
+**Task Reference**: [PYZ-XXX] <!-- The ONE primary task this PR builds. Brackets trigger Piyaz PR-status tracking — use them only here. Reference any related tasks elsewhere without brackets (plain link, not tracked). -->
 
 <!-- What does this PR change and why? Link the related issue: "Closes #N" -->
 
