@@ -8,7 +8,7 @@ interface CliInstall {
 
 interface GetStartedModalModule {
   getCliInstalls?: (deployTarget?: string) => readonly CliInstall[];
-  getReadmeSetupUrl?: (deployTarget?: string) => string;
+  getDocsSetupUrl?: (deployTarget?: string) => string;
 }
 
 /**
@@ -18,20 +18,20 @@ interface GetStartedModalModule {
  */
 async function loadGetStartedModalModule(): Promise<{
   getCliInstalls: NonNullable<GetStartedModalModule["getCliInstalls"]>;
-  getReadmeSetupUrl: NonNullable<GetStartedModalModule["getReadmeSetupUrl"]>;
+  getDocsSetupUrl: NonNullable<GetStartedModalModule["getDocsSetupUrl"]>;
 }> {
   const modal = (await import(
     "@/components/home/GetStartedModal"
   )) as GetStartedModalModule;
 
   expect(typeof modal.getCliInstalls).toBe("function");
-  expect(typeof modal.getReadmeSetupUrl).toBe("function");
+  expect(typeof modal.getDocsSetupUrl).toBe("function");
   return {
     getCliInstalls: modal.getCliInstalls as NonNullable<
       GetStartedModalModule["getCliInstalls"]
     >,
-    getReadmeSetupUrl: modal.getReadmeSetupUrl as NonNullable<
-      GetStartedModalModule["getReadmeSetupUrl"]
+    getDocsSetupUrl: modal.getDocsSetupUrl as NonNullable<
+      GetStartedModalModule["getDocsSetupUrl"]
     >,
   };
 }
@@ -47,7 +47,7 @@ function installText(installs: readonly CliInstall[]): string {
 }
 
 test("hosted deploy shows hosted setup snippets without local checkout paths", async () => {
-  const { getCliInstalls, getReadmeSetupUrl } =
+  const { getCliInstalls, getDocsSetupUrl } =
     await loadGetStartedModalModule();
   const installs = getCliInstalls("cloudflare");
   const text = installText(installs);
@@ -66,13 +66,13 @@ test("hosted deploy shows hosted setup snippets without local checkout paths", a
   expect(text).not.toContain("./plugins");
   expect(text).not.toContain("localhost");
   expect(text).not.toContain("piyaz-local");
-  expect(getReadmeSetupUrl("cloudflare")).toContain(
-    "#use-the-hosted-version-no-clone",
+  expect(getDocsSetupUrl("cloudflare")).toContain(
+    "docs.piyaz.ai/docs/get-started/install",
   );
 });
 
 test("self-host deploy keeps local plugin install commands", async () => {
-  const { getCliInstalls, getReadmeSetupUrl } =
+  const { getCliInstalls, getDocsSetupUrl } =
     await loadGetStartedModalModule();
   const installs = getCliInstalls("");
   const text = installText(installs);
@@ -84,5 +84,5 @@ test("self-host deploy keeps local plugin install commands", async () => {
   expect(text).toContain("piyaz-local");
   expect(text).toContain("localhost");
   expect(text).not.toContain("FrkAk/piyaz");
-  expect(getReadmeSetupUrl("")).toContain("#self-host-contribute");
+  expect(getDocsSetupUrl("")).toContain("docs.piyaz.ai/docs/guides/self-host");
 });
