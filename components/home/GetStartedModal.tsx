@@ -78,10 +78,8 @@ const SELF_HOST_CLI_INSTALLS: readonly CliInstall[] = [
   },
 ];
 
-const HOSTED_README_SETUP_URL =
-  "https://github.com/FrkAk/piyaz#use-the-hosted-version-no-clone";
-const SELF_HOST_README_SETUP_URL =
-  "https://github.com/FrkAk/piyaz#self-host-contribute";
+const HOSTED_DOCS_SETUP_URL = "https://docs.piyaz.ai/docs/get-started/install";
+const SELF_HOST_DOCS_SETUP_URL = "https://docs.piyaz.ai/docs/guides/self-host";
 
 const SECTION_LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted";
@@ -92,13 +90,13 @@ const MULTI_TEAM_HINT =
 interface FirstTimeBodyProps {
   /** Target-specific install snippets to render. */
   cliInstalls: readonly CliInstall[];
-  /** Target-specific README setup anchor. */
-  readmeSetupUrl: string;
+  /** Target-specific docs setup URL. */
+  docsSetupUrl: string;
 }
 
 interface ReturningBodyProps {
-  /** Target-specific README setup anchor. */
-  readmeSetupUrl: string;
+  /** Target-specific docs setup URL. */
+  docsSetupUrl: string;
 }
 
 /**
@@ -115,16 +113,16 @@ export function getCliInstalls(
 }
 
 /**
- * Select the setup guide anchor for the active deploy target.
+ * Select the docs setup URL for the active deploy target.
  * @param deployTarget - Build-time deploy target exposed to client bundles.
- * @returns Hosted or self-host README setup URL.
+ * @returns Hosted or self-host docs setup URL.
  */
-export function getReadmeSetupUrl(
+export function getDocsSetupUrl(
   deployTarget = process.env.NEXT_PUBLIC_DEPLOY_TARGET ?? "",
 ): string {
   return deployTarget === HOSTED_DEPLOY_TARGET
-    ? HOSTED_README_SETUP_URL
-    : SELF_HOST_README_SETUP_URL;
+    ? HOSTED_DOCS_SETUP_URL
+    : SELF_HOST_DOCS_SETUP_URL;
 }
 
 /**
@@ -133,7 +131,7 @@ export function getReadmeSetupUrl(
  * @param props - Target-specific install copy.
  * @returns First-time install instructions.
  */
-function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
+function FirstTimeBody({ cliInstalls, docsSetupUrl }: FirstTimeBodyProps) {
   return (
     <>
       <p className="text-sm leading-relaxed text-text-secondary">
@@ -172,12 +170,12 @@ function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
       <p className="text-xs leading-relaxed text-text-muted">
         Full setup details (auth, updates, self-hosting) in the{" "}
         <a
-          href={readmeSetupUrl}
+          href={docsSetupUrl}
           target="_blank"
           rel="noreferrer"
           className="text-accent underline-offset-2 hover:underline"
         >
-          project README
+          documentation
         </a>
         .
       </p>
@@ -191,7 +189,7 @@ function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
  * @param props - Target-specific setup link.
  * @returns Returning-user "go talk to your agent" hint.
  */
-function ReturningBody({ readmeSetupUrl }: ReturningBodyProps) {
+function ReturningBody({ docsSetupUrl }: ReturningBodyProps) {
   return (
     <>
       <p className="text-sm leading-relaxed text-text-secondary">
@@ -214,12 +212,12 @@ function ReturningBody({ readmeSetupUrl }: ReturningBodyProps) {
         Setting up another tool, or starting from a fresh machine? Install
         commands live in the{" "}
         <a
-          href={readmeSetupUrl}
+          href={docsSetupUrl}
           target="_blank"
           rel="noreferrer"
           className="text-accent underline-offset-2 hover:underline"
         >
-          project README
+          documentation
         </a>
         .
       </p>
@@ -240,7 +238,7 @@ export function GetStartedModal({
   hasProjects = false,
 }: GetStartedModalProps) {
   const cliInstalls = getCliInstalls();
-  const readmeSetupUrl = getReadmeSetupUrl();
+  const docsSetupUrl = getDocsSetupUrl();
 
   return (
     <Modal
@@ -251,11 +249,11 @@ export function GetStartedModal({
     >
       <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
         {hasProjects ? (
-          <ReturningBody readmeSetupUrl={readmeSetupUrl} />
+          <ReturningBody docsSetupUrl={docsSetupUrl} />
         ) : (
           <FirstTimeBody
             cliInstalls={cliInstalls}
-            readmeSetupUrl={readmeSetupUrl}
+            docsSetupUrl={docsSetupUrl}
           />
         )}
       </div>
