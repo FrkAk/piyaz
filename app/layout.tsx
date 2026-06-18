@@ -23,6 +23,17 @@ export const metadata: Metadata = {
     template: "%s · Piyaz",
   },
   description,
+  icons: {
+    icon: [
+      { url: "/favicon.ico?v=3", sizes: "any" },
+      { url: "/piyaz-mark.png?v=3", type: "image/png", sizes: "1024x1024" },
+    ],
+    apple: {
+      url: "/piyaz-icon-dark.png?v=3",
+      type: "image/png",
+      sizes: "512x512",
+    },
+  },
   robots: {
     index: false,
     follow: false,

@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/mymir-demo.gif" alt="Piyaz demo" width="900" />
+  <img src="assets/piyaz-demo.gif" alt="Piyaz demo" width="900" />
 </p>
 
 Most of us aren't really writing code anymore, we're directing agents that do. But those agents have no memory. Every session starts from zero, and engineers end up spending their time re-explaining what was built, why decisions were made, and what still needs to happen. That's not engineering, that's babysitting.

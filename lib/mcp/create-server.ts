@@ -683,7 +683,26 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
  */
 export function createMcpServer(ctx: AuthContext): McpServer {
   const server = new McpServer(
-    { name: "piyaz", version: "0.1.0" },
+    {
+      name: "piyaz",
+      title: "Piyaz",
+      version: "0.1.0",
+      websiteUrl: "https://www.piyaz.ai",
+      icons: [
+        {
+          src: "https://app.piyaz.ai/piyaz-icon-light.png",
+          mimeType: "image/png",
+          sizes: ["512x512"],
+          theme: "light",
+        },
+        {
+          src: "https://app.piyaz.ai/piyaz-icon-dark.png",
+          mimeType: "image/png",
+          sizes: ["512x512"],
+          theme: "dark",
+        },
+      ],
+    },
     { instructions: INSTRUCTIONS },
   );
   registerAllTools(server, ctx);
