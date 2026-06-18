@@ -1,5 +1,5 @@
 ![Piyaz](assets/piyaz-logo.png)
-> Context management for the agent-native engineering era.
+> The agentic workspace where people and AI coding agents work together on every project.
 
 <p align="center">
   <a href="#claude-code"><img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-D97757?style=flat-square&logo=anthropic&logoColor=white" /></a>
@@ -17,7 +17,7 @@
 
 Most of us aren't really writing code anymore, we're directing agents that do. But those agents have no memory. Every session starts from zero, and engineers end up spending their time re-explaining what was built, why decisions were made, and what still needs to happen. That's not engineering, that's babysitting.
 
-Piyaz replaces that cycle. It's not just a context layer your agents read from, it's an end-to-end project management tool that agents operate natively. Piyaz creates tasks, refines them, plans implementations, provides the right context at the right stage, and tracks everything that happens. Your agent harness doesn't need a briefing. It walks into every session knowing exactly what to do next and why.
+Piyaz replaces that cycle. It's not just a context layer your agents read from, it's an agentic workspace where people and AI agents work together on the same project: project management, agent collaboration, and a shared context network in one place. Piyaz creates tasks, refines them, plans implementations, provides the right context at the right stage, and tracks everything that happens. Your agent harness doesn't need a briefing. It walks into every session knowing exactly what to do next and why.
 
 Full setup, guides, and reference live at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
 
