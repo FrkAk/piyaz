@@ -19,6 +19,8 @@ Most of us aren't really writing code anymore, we're directing agents that do. B
 
 Piyaz replaces that cycle. It's not just a context layer your agents read from, it's an end-to-end project management tool that agents operate natively. Piyaz creates tasks, refines them, plans implementations, provides the right context at the right stage, and tracks everything that happens. Your agent harness doesn't need a briefing. It walks into every session knowing exactly what to do next and why.
 
+Full setup, guides, and reference live at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
+
 ---
 
 ## Use the hosted version (no clone)
