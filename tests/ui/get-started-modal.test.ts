@@ -47,8 +47,7 @@ function installText(installs: readonly CliInstall[]): string {
 }
 
 test("hosted deploy shows hosted setup snippets without local checkout paths", async () => {
-  const { getCliInstalls, getDocsSetupUrl } =
-    await loadGetStartedModalModule();
+  const { getCliInstalls, getDocsSetupUrl } = await loadGetStartedModalModule();
   const installs = getCliInstalls("cloudflare");
   const text = installText(installs);
 
@@ -72,8 +71,7 @@ test("hosted deploy shows hosted setup snippets without local checkout paths", a
 });
 
 test("self-host deploy keeps local plugin install commands", async () => {
-  const { getCliInstalls, getDocsSetupUrl } =
-    await loadGetStartedModalModule();
+  const { getCliInstalls, getDocsSetupUrl } = await loadGetStartedModalModule();
   const installs = getCliInstalls("");
   const text = installText(installs);
 
