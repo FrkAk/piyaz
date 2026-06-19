@@ -177,13 +177,13 @@ The workflow self-selects each phase's model and effort from the pick facts and 
 
 | Phase | est 1–2 | est 3 | est 5 | est 8–13 / unset |
 | --- | --- | --- | --- | --- |
-| Researcher | sonnet (haiku only if est 1 and docs/chore) | sonnet | opus | opus |
+| Researcher | sonnet | sonnet | opus | opus |
 | Planner | opus | opus | opus | opus |
 | Implementer | sonnet (also docs/test/chore) | sonnet if docs/test/chore, else opus | opus | opus |
 | CI gate | haiku | haiku | haiku | haiku |
 | Reviewer | opus | opus | opus | opus — never downgrade |
 
-Research correctness is load-bearing: a mis-refined task wastes far more downstream opus tokens than a cheaper research model saves, so haiku research is reserved for trivial, unambiguous work only, and the floor rises to opus on substantial or risky tasks.
+Research correctness is load-bearing: a mis-refined task wastes far more downstream opus tokens than a cheaper research model saves, so the researcher never runs below sonnet, and the floor rises to opus on substantial or risky tasks. (CI watching is mechanical, so the cheap haiku tier holds there only.)
 
 Guardrails force opus and higher effort on the planner and implementer regardless of estimate when any holds: a `security`/`safety`/`compliance` tag; estimate 8, 13, or missing; a fix-mode rotation; any retry or partial-success recovery; `priority='urgent'`; or a risk-bearing research flag (`security-boundary-uncovered`, `version-drift-major`, `dep-mismatch`). These are encoded in `compose-task.js`; this table is the human-readable mirror.
 

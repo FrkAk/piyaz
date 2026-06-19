@@ -124,7 +124,20 @@ const VERDICT_SCHEMA = {
   },
 };
 
-const a = args || {};
+/**
+ * Resolves the workflow args, tolerating both an object and a JSON string.
+ * The harness passes `args` verbatim; some serialization paths deliver it as a
+ * JSON-encoded string, which would otherwise leave every field undefined.
+ * @param {unknown} raw - The global `args` value.
+ * @returns {object} The args object.
+ */
+function resolveArgs(raw) {
+  if (raw && typeof raw === "object") return raw;
+  if (typeof raw === "string" && raw.trim()) return JSON.parse(raw);
+  return {};
+}
+
+const a = resolveArgs(args);
 const PHASE_ORDER = ["research", "plan", "implement", "fix"];
 const RISK_TAGS = ["security", "safety", "compliance"];
 const RISK_FLAGS = ["security-boundary-uncovered", "version-drift-major", "dep-mismatch"];
@@ -174,7 +187,6 @@ function forceOpus(est, flags) {
 function researchModel() {
   const e = a.pickEstimate;
   if (hasRiskTag(a.tags) || a.thinDescription || (e != null && e >= 5)) return "opus";
-  if (e != null && e <= 1 && ["docs", "chore"].includes(a.workType)) return "haiku";
   return "sonnet";
 }
 
@@ -235,7 +247,7 @@ function formatFindings(findings) {
     .join("\n");
 }
 
-const head = `Target task: ${a.taskRef} (taskId ${a.taskId}).`;
+const head = `Target task: ${a.taskRef} (taskId ${a.taskId}) in project ${a.projectId}. Pass that projectId on every Piyaz tool call.`;
 
 // --- Research ---------------------------------------------------------------
 phase("Research");
@@ -248,7 +260,7 @@ if (shouldRun("research")) {
   research = await agent(prompt, {
     agentType: "piyaz:composer-researcher",
     model: researchModel(),
-    effort: researchModel() === "haiku" ? "low" : "medium",
+    effort: "medium",
     schema: RESEARCH_SCHEMA,
     label: `research:${a.taskRef}`,
     phase: "Research",

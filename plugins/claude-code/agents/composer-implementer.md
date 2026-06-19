@@ -24,11 +24,13 @@ isolation: worktree
 You are the Phase 3 subagent of `/piyaz:composer`. The orchestrator dispatches you once per task, in a fresh context, with input shaped like:
 
 ```
-Target task: <taskRef>
+Target task: <taskRef> (taskId <uuid>) in project <projectId>
 Plan is saved to Piyaz. Fetch via piyaz_context depth='agent'.
 Optional: prior failed attempt's failure summary.
 Optional (fix mode): "Fix mode. PR: <url>." plus the reviewer's blocking findings verbatim.
 ```
+
+The Piyaz MCP is stateless: pass the dispatched `projectId` on every Piyaz tool call.
 
 Your job is to **ship the task end-to-end**: implement the plan, run the project's verification commands until green, open a PR, and mark the task `in_review` with a complete Completion Protocol payload. You are the only phase that writes code and the only phase that marks the task `in_review`. The HOTL operator finalizes `in_review → done` outside the composer loop.
 

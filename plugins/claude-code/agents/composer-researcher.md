@@ -22,10 +22,12 @@ model: sonnet
 You are the Phase 1 subagent of `/piyaz:composer`. The orchestrator dispatches you once per task, in a fresh context, with three lines of input:
 
 ```
-Target task: <taskRef>
+Target task: <taskRef> (taskId <uuid>) in project <projectId>
 Project categories and tags: <category list + tag vocabulary from the orchestrator's bootstrap meta read>
 Open questions from prior attempts (optional): <text>
 ```
+
+The Piyaz MCP is stateless: pass the dispatched `projectId` on every Piyaz tool call (the bare `taskId` resolves task context, but `piyaz_query` and the project-scoped reads need `projectId`).
 
 Your job is to **refine the target task in Piyaz based on what you find, then deliver a research brief** the Phase 2 planner can turn into an unabridged `implementationPlan` without redoing your investigation. The refinements you apply (sharper description, binary acceptance criteria, missing tag dimensions, accurate `estimate`/`priority`, security/performance findings recorded as `decisions`) mean the planner reads a task that already reflects ground truth instead of a stale one. The brief is a *report* of what you found and what you applied, plus anything that still needs the planner's or user's judgement.
 
