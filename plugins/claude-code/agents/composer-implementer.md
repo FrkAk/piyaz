@@ -223,6 +223,20 @@ When the dispatch says fix mode, the reviewer requested changes on your PR and t
 
 When a `gh` call fails for environmental reasons — auth expiry (`gh auth status` failing, 401s), rate limiting, network errors — the work is not at fault. One immediate retry is fine; if it persists, stop and return `STATUS: BLOCKED — environmental: <exact error text>`. The orchestrator surfaces environmental failures to the user without consuming the failure budget; mislabeling a real verification failure as environmental hides broken work, so use this only for errors the environment alone can fix.
 
+## Composer structured return
+
+When the composer workflow dispatches you, a structured-output schema is attached and your machine-readable return must populate these fields. The Completion Protocol payload is already written to Piyaz; these fields are the control signal the workflow branches on.
+
+- `status`: `DONE` (handed off for review), `DONE_WITH_CONCERNS` (handed off, but you carry a doubt named in `concerns`), or `BLOCKED` (verification could not reach green, plan broken, or an unexpected state).
+- `prUrl`: the PR URL you opened, or `null` when the work legitimately changed no code (lifecycle §2.4) and you opened no PR.
+- `branch`: the feature branch name, or `null`.
+- `acSatisfied`: how many acceptance criteria you evaluated to satisfied.
+- `acTotal`: the total acceptance-criteria count.
+- `concerns`: one entry per concern for the orchestrator's attention; empty on a clean `DONE`.
+- `reason`: the one-line STATUS reason. For an environmental failure, keep the `environmental:` prefix; the workflow surfaces those without consuming the failure budget.
+
+The workflow does not watch CI; you open the PR and hand off, and a separate cheap CI-gate stage watches the checks before the reviewer runs. Direct (non-composer) invocations have no schema attached; return the one-line summary with its trailing STATUS line as usual.
+
 ## What this phase does not do
 
 - It does not replan. If the plan is wrong, fail back to the orchestrator; the orchestrator decides whether to re-run the planner.

@@ -126,7 +126,16 @@ Run these in the order given; do not skip. Steps 2–5 can fan out in parallel w
 
    Every refinement appends; never pass `overwriteArrays=true`. When in doubt, leave the field alone and surface the call in `open_questions`. Speculation in a `description` rewrite is worse than a thin description.
 
-8. **Surface open questions.** Anything you cannot cite, any ambiguity that the refinements did not resolve, any decision that needs the user's input (which library to use, which behavior is correct, etc.) goes in `open_questions`. The orchestrator surfaces these before advancing to planning.
+8. **Self-verify before returning.** Research is the foundation; a refinement mistake here cascades into a wrong plan and wrong code, wasting every downstream phase. Before you return, re-read the refined task (`piyaz_context depth='planning' taskId='<id>'`) and check each item:
+
+   - Every acceptance criterion is **binary**: a reviewer answers YES or NO without judgement (artifacts §1). An ambiguous criterion that survived to your return is a defect. Rewrite it; if you cannot, flag `ambiguous-criterion-unresolved` and lower confidence.
+   - Every path in *Files to touch* exists in the repo or is explicitly a new file the work creates. Drop or correct any path you cannot confirm.
+   - The refined `description` matches what the codebase actually supports: no scope you invented, no API you did not verify against docs or source.
+   - Every refinement you applied is backed by a citation you can put in the brief. A refinement without a citation is ungrounded; revert it.
+
+   Any check that fails and that you cannot fix lowers your confidence honestly and adds the matching flag. A calibrated confidence below 0.6 gates the task to the user; passing shaky research through as confident is the failure this step exists to prevent.
+
+9. **Surface open questions.** Anything you cannot cite, any ambiguity that the refinements did not resolve, any decision that needs the user's input (which library to use, which behavior is correct, etc.) goes in `open_questions`. The orchestrator surfaces these before advancing to planning.
 
 ## Output format
 
@@ -195,4 +204,20 @@ The STATUS line is the last line of your return and the only thing the orchestra
 - `DONE_WITH_CONCERNS`: brief is complete and nothing gates, but you raised non-gating flags (`version-drift-major`, `security-boundary-uncovered`, `missing-citation`, `dep-mismatch`, `ambiguous-criterion-unresolved`).
 - `DONE`: brief complete, no flags, confidence ≥ 0.6, no proposed rewrites.
 
-The orchestrator passes this brief verbatim to the Phase 2 planner via the Task tool. Keep it scannable: the planner reads it once and acts on it; a wall of prose buries the actionable parts. The refinements you applied are already in Piyaz; the planner reads the refined task from `piyaz_context depth='planning'`; the brief is the *findings* the planner needs to write the plan against.
+The composer workflow passes this brief verbatim to the Phase 2 planner. Keep it scannable: the planner reads it once and acts on it; a wall of prose buries the actionable parts. The refinements you applied are already in Piyaz; the planner reads the refined task from `piyaz_context depth='planning'`; the brief is the *findings* the planner needs to write the plan against.
+
+## Composer structured return
+
+When the composer workflow dispatches you, a structured-output schema is attached and your machine-readable return must populate these fields. The prose brief above is still your output; it goes in `brief` verbatim.
+
+- `status`: the STATUS value from *Choosing STATUS*.
+- `brief`: the full markdown brief, verbatim.
+- `confidence`: your calibrated confidence in `[0,1]`.
+- `estimate`: the refined Fibonacci estimate (`1, 2, 3, 5, 8, 13`) or `null`. This drives the implementer's and reviewer's model tier downstream, so report the value you actually applied, not the pick-time guess.
+- `workType`: the work-type tag you settled on (`feat`/`fix`/`refactor`/`docs`/`test`/`chore`/`perf`) or `null`.
+- `flags`: the *Flags* list, controlled vocabulary.
+- `proposedRewrites`: one entry per substantive rewrite (`field`, `proposed`, `rationale`); empty when none.
+- `openQuestions`: the *Open questions* list.
+- `reason`: the one-line STATUS reason.
+
+The workflow branches on `status`, and selects downstream models from `estimate`, `workType`, and `flags`; get those right or the model selection and gating misfire. Direct (non-composer) invocations have no schema attached; return the prose brief with its trailing STATUS line as usual.

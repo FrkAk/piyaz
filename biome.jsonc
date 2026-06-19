@@ -23,7 +23,8 @@
       "!cloudflare-env.d.ts",
       "!bun.lock",
       "!migrations/**",
-      "!drizzle/**"
+      "!drizzle/**",
+      "!plugins/**/workflows/**"
     ]
   },
   "formatter": {

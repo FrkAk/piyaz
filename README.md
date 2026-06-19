@@ -119,8 +119,8 @@ In Codex, Cursor, and Antigravity each workflow is a skill invoked by slash comm
 
 | Component | What it does |
 | --- | --- |
-| **`/piyaz:composer` skill** | End-to-end task orchestrator. Picks the highest-value ready task (or one named ref), drives it through research → plan → implement → propagate via three dispatched subagents per task in clean per-phase contexts, loops until queue empty or user stops. Requires `/goal` harness for backlog mode (composer emits it on first turn; user pastes). |
-| **Composer subagents** | `piyaz:composer-researcher` gathers grounded context and refines the task; `piyaz:composer-planner` writes the unabridged implementation plan; `piyaz:composer-implementer` ships the code, opens a PR, and marks the task done. |
+| **`/piyaz:composer` skill** | End-to-end task orchestrator. Picks the highest-value ready task (or one named ref), drives it through research → plan → implement → review → propagate via a per-task workflow that dispatches phase subagents in clean per-phase contexts, merges the PR and continues when the user authorizes it, and loops until queue empty or user stops. Requires `/goal` harness for backlog mode (composer emits it on first turn; user pastes). |
+| **Composer subagents** | `piyaz:composer-researcher` gathers grounded context and refines the task; `piyaz:composer-planner` writes the unabridged implementation plan; `piyaz:composer-implementer` ships the code, opens a PR, and marks the task `in_review`; `piyaz:review` returns the verdict that drives the bounded fix loop. |
 | **`piyaz:decompose-task` agent** | Splits an existing oversize task in an active project into 2 to N children, rewires every dependency edge touching the parent, cancels the parent with rationale citing the children. Composer's oversize handler routes here. |
 | **`piyaz:decompose-feature` agent** | Adds a new feature or capability cluster to an active project. Reuses existing categories and tag vocabulary; creates 5 to 20 tasks plus internal and integration edges. |
 
@@ -169,7 +169,7 @@ Piyaz ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 ❯ Priority is urgent, draft ACs are enough, and monorepo detection should ask the user.
 ```
 
-**Drive end-to-end (Claude Code).** Once a project is active and tasks are ready, composer can take over. Pick the next task off the critical path, research it in context, plan it, implement it, open the PR, propagate the result, and loop:
+**Drive end-to-end (Claude Code).** Once a project is active and tasks are ready, composer can take over. Pick the next task off the critical path, research it in context, plan it, implement it, open the PR, review and fix until it is ready, propagate the result (and merge when you authorize it), and loop:
 
 ```text
 ❯ /piyaz:composer
@@ -181,7 +181,7 @@ Or take one specific task all the way to a PR:
 ❯ /piyaz:composer PYZ-101
 ```
 
-Composer dispatches three subagents per task in clean per-phase contexts (researcher → planner → implementer). The orchestrator stays out of the work itself and only picks tasks, hands off, and propagates.
+Composer runs a per-task workflow that dispatches phase subagents in clean per-phase contexts (researcher → planner → implementer → review), with a bounded fix loop until the PR is ready. The orchestrator stays out of the work itself: it picks tasks, resolves gates, merges when authorized, and propagates.
 
 **Tune in the UI.** Inspect edges, read execution records, and edit descriptions, ACs, tags, or dependencies directly. The agent loop and the UI write to the same store, so edits land by the next tool call.
 

@@ -77,7 +77,9 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
 1. **Fetch planning context.** `piyaz_context depth='planning' taskId='<id>'`. This gives the project description, prerequisite tasks' specs, downstream specs that depend on this task, and the current acceptance criteria. Read it in full; do not skim.
 
-2. **Read the research brief.** Treat its citations as ground truth where they are verifiable from a quick codebase read; spot-check 2-3 file path / line range claims with `Read` to catch hallucinations. If a claim does not check out, drop it from the plan and note the discrepancy in the plan's *Decisions* section.
+2. **Read the research brief and guard the foundation.** You are not only the brief's consumer; you are the last check on it before code gets written. Treat its citations as ground truth where they are verifiable from a quick codebase read; spot-check 2-3 file path / line range claims with `Read` to catch hallucinations. A claim that does not check out gets dropped from the plan with the discrepancy noted in the plan's *Decisions* section.
+
+   When the failure is not one stray claim but the **foundation** — the refined description describes a task the codebase cannot support, the acceptance criteria are unverifiable or contradict each other, or the files the brief names do not exist and no plausible target does — do not plan on top of it. A plan built on a wrong task produces wrong code. Stop and return `STATUS: BLOCKED — foundation-unsound: <one sentence>`; the orchestrator re-runs research once before retrying you. Reserve this for a genuinely broken foundation, not for a brief you would have written differently.
 
 3. **Refinements: typically already applied; only fill gaps.** The Phase 1 researcher applies refinements (description, acceptance criteria, tags, category, priority, estimate, decisions) directly to the target before handing off, so the task you read via `piyaz_context depth='planning'` should already reflect those changes. The brief's *Applied refinements* section names what landed.
 
@@ -169,7 +171,19 @@ When entry status was already `planned`, do **not** pass the `status` field at a
    - `DONE`: plan saved and verified, or silent re-validation kept an existing valid plan.
    - `DONE_WITH_CONCERNS`: plan saved, but you noted risks the implementer should see (name them in the confirmation sentence).
    - `NEEDS_DECISION`: the brief left an open question the plan cannot resolve without the user (rare; the researcher should have gated it).
-   - `BLOCKED`: the plan write failed verification after your own retry, or the task is in a state you must not plan from.
+   - `BLOCKED`: the plan write failed verification after your own retry, the task is in a state you must not plan from, or the research foundation is unsound (`foundation-unsound:` prefix; step 2). The orchestrator re-runs research once on a `foundation-unsound` block.
+
+## Composer structured return
+
+When the composer workflow dispatches you, a structured-output schema is attached and your machine-readable return must populate these fields. The plan itself is already saved to Piyaz; these fields are the control signal, not the plan.
+
+- `status`: the STATUS value above.
+- `sections`: the number of `##` sections in the plan you wrote (or re-validated).
+- `buildSteps`: the number of numbered steps in the plan's *Build sequence*.
+- `openQuestions`: the *Open questions* list, the items the implementer must escalate before guessing.
+- `reason`: the one-line STATUS reason; for a `foundation-unsound` block, the `foundation-unsound:` prefix must be present here.
+
+Direct (non-composer) invocations have no schema attached; return the one-sentence confirmation with its trailing STATUS line as usual.
 
 ## What this phase does not do
 
