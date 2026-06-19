@@ -38,7 +38,12 @@ export async function middleware(request: NextRequest) {
 
   const isProd = process.env.NODE_ENV === "production";
   const nonce = isProd ? generateNonce() : undefined;
-  const csp = buildCsp({ isProd, nonce });
+  const wsScheme = request.nextUrl.protocol === "https:" ? "wss" : "ws";
+  const wsOrigin =
+    isProd && process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare"
+      ? `${wsScheme}://${request.nextUrl.host}`
+      : undefined;
+  const csp = buildCsp({ isProd, nonce, wsOrigin });
   const withCsp = <T extends NextResponse>(response: T): T => {
     response.headers.set("Content-Security-Policy", csp);
     return response;

@@ -12,7 +12,7 @@ export type InvitationView = {
   expiresAt: Date;
   /** When the invitation was issued. */
   createdAt: Date;
-  /** Inviter display name (joined from `neon_auth.user.name`). */
+  /** Inviter display name (joined from `piyaz_auth.user.name`). */
   inviterName: string;
 };
 

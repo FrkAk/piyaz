@@ -1,10 +1,10 @@
 # Implementer rules (composer Phase 3 extract)
 
-Slim extract of the canonical mymir references for the composer
-implementer. Mirrors: `skills/mymir/references/conventions.md` §1, §2,
-`skills/mymir/references/lifecycle.md` §1 (Summary, `in_progress`,
+Slim extract of the canonical piyaz references for the composer
+implementer. Mirrors: `skills/piyaz/references/conventions.md` §1, §2,
+`skills/piyaz/references/lifecycle.md` §1 (Summary, `in_progress`,
 `in_review`), §2 (entire Completion Protocol, 2.1–2.4), and
-`skills/mymir/references/artifacts.md` §1 (`executionRecord`,
+`skills/piyaz/references/artifacts.md` §1 (`executionRecord`,
 `decisions`, `files`), §6. Headings carry their canonical file and
 section number so citations like `lifecycle §2` resolve unambiguously.
 When editing a mirrored section, edit BOTH files.
@@ -31,7 +31,7 @@ When uncertain, write less. A short, true record is more valuable than a rich, f
 
 ## conventions §2 — Tool descriptions and `_hints` are runtime instructions
 
-Every Mymir tool injects two things into your context at use time:
+Every Piyaz tool injects two things into your context at use time:
 
 1. The tool's description and parameter schema, visible before the call.
 2. A `_hints` array in the response, visible after the call.
@@ -44,7 +44,7 @@ Examples of hints you must obey:
 
 - Missing required fields on `done`: hint says `executionRecord is required`. Re-call with the field.
 - Tool description says "REQUIRED in multi-team accounts". The server rejects ambiguous calls.
-- Hint says "no ready tasks; try `mymir_analyze type='plannable'`". Switch to plannable. Do not invent ready work.
+- Hint says "no ready tasks; try `piyaz_analyze type='plannable'`". Switch to plannable. Do not invent ready work.
 - Hint says "edges to cancelled task remain in place". Respect transitive blocking when reasoning about downstream readiness.
 
 **Order rule when multiple hints fire.** When two or more `_hints` come back in the same response (e.g. "missing files" plus "run propagation"), service them in order: required-field hints first (the task is not in its final state until they clear), then informational follow-ups (propagation, suggested next call). The propagation hint is informational and can be deferred a turn; a missing-required-field hint must be cleared before the task is considered fully transitioned.
@@ -100,11 +100,11 @@ Before transitioning a task to `in_review`, `done`, or `cancelled`:
 
 `executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
 
-For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
 ### 2.3. Open a PR if the work changed code
 
-If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Mymir-only refinement):
+If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Piyaz-only refinement):
 
 **Detect a PR template** in the repo at one of these paths (or similar):
 
@@ -115,7 +115,7 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 
 **If a template exists**: fill it. Map task fields onto template sections only where they fit. Leave a section blank rather than invent content. Common mappings:
 
-- Linked issue / linked task: include the `taskRef` in `[BRACKETS]` (e.g. `[MYMR-83]`). Bracket form triggers Mymir PR-status tracking; use it for the ONE primary task this PR builds. Reference any related tasks elsewhere as plain links (no brackets). Add `Closes #N` on its own line if a GitHub issue is being resolved.
+- Linked issue / linked task: include the `taskRef` in `[BRACKETS]` (e.g. `[MYMR-83]`). Bracket form triggers Piyaz PR-status tracking; use it for the ONE primary task this PR builds. Reference any related tasks elsewhere as plain links (no brackets). Add `Closes #N` on its own line if a GitHub issue is being resolved.
 - Summary section: 2 to 3 sentences from `executionRecord`.
 - Test plan / verification section: the `acceptanceCriteria` items that are checked.
 - Decisions or notes-for-reviewer section if present: relevant entries from `decisions`.
@@ -126,7 +126,7 @@ If `files` is non-empty AND the work was a real code change (not research, not d
 ## Summary
 
 **Task Reference**: [MYMR-XXX]
-<!-- The ONE primary task this PR builds. Brackets trigger Mymir
+<!-- The ONE primary task this PR builds. Brackets trigger Piyaz
      PR-status tracking. Use them only here. Reference any related
      tasks elsewhere as plain links (no brackets). -->
 
@@ -160,7 +160,7 @@ Open the PR with `gh pr create --title '<task title>' --body "$(cat <<'EOF' ... 
 
 - Research / investigation tasks (no code change).
 - Decision-only tasks.
-- Pure-Mymir refinement tasks (no repo changes).
+- Pure-Piyaz refinement tasks (no repo changes).
 - Tasks the user explicitly said "no PR" on.
 - Data and BA work without a code repo (a Looker dashboard tweak applied via the Looker UI, a Tableau workbook published from Desktop, a metric definition signed off in a doc, an ad-hoc SQL analysis attached to a ticket, a BRD update in Confluence). In these cases the deliverable lives outside git; record the artifact link or path in `executionRecord` and `files` instead of opening a PR. When the data work IS in a git repo (a dbt project, a SQL repo, a notebook collection under version control), open a PR per the standard rules above.
 
@@ -203,7 +203,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 - **Format:** plain repo-relative path strings. No backticks, no quoting.
 - **Coverage:** every file created or modified for `done` tasks.
-- **Empty `files=[]` is the correct value whenever paths cannot be cited:** pre-implementation tasks (`draft`, `planned`) where the code does not exist yet, research or decision-only tasks, Mymir-only refinements. **Leave empty rather than speculate.**
+- **Empty `files=[]` is the correct value whenever paths cannot be cited:** pre-implementation tasks (`draft`, `planned`) where the code does not exist yet, research or decision-only tasks, Piyaz-only refinements. **Leave empty rather than speculate.**
 
 ---
 
@@ -220,7 +220,7 @@ Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementati
 
 ### Tone: never sound like AI
 
-The text you write into Mymir is read by other engineers. It must read like an engineer wrote it, not a chatbot.
+The text you write into Piyaz is read by other engineers. It must read like an engineer wrote it, not a chatbot.
 
 **Do not use:**
 

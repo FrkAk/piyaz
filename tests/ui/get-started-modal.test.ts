@@ -8,7 +8,7 @@ interface CliInstall {
 
 interface GetStartedModalModule {
   getCliInstalls?: (deployTarget?: string) => readonly CliInstall[];
-  getReadmeSetupUrl?: (deployTarget?: string) => string;
+  getDocsSetupUrl?: (deployTarget?: string) => string;
 }
 
 /**
@@ -18,20 +18,20 @@ interface GetStartedModalModule {
  */
 async function loadGetStartedModalModule(): Promise<{
   getCliInstalls: NonNullable<GetStartedModalModule["getCliInstalls"]>;
-  getReadmeSetupUrl: NonNullable<GetStartedModalModule["getReadmeSetupUrl"]>;
+  getDocsSetupUrl: NonNullable<GetStartedModalModule["getDocsSetupUrl"]>;
 }> {
   const modal = (await import(
     "@/components/home/GetStartedModal"
   )) as GetStartedModalModule;
 
   expect(typeof modal.getCliInstalls).toBe("function");
-  expect(typeof modal.getReadmeSetupUrl).toBe("function");
+  expect(typeof modal.getDocsSetupUrl).toBe("function");
   return {
     getCliInstalls: modal.getCliInstalls as NonNullable<
       GetStartedModalModule["getCliInstalls"]
     >,
-    getReadmeSetupUrl: modal.getReadmeSetupUrl as NonNullable<
-      GetStartedModalModule["getReadmeSetupUrl"]
+    getDocsSetupUrl: modal.getDocsSetupUrl as NonNullable<
+      GetStartedModalModule["getDocsSetupUrl"]
     >,
   };
 }
@@ -47,8 +47,7 @@ function installText(installs: readonly CliInstall[]): string {
 }
 
 test("hosted deploy shows hosted setup snippets without local checkout paths", async () => {
-  const { getCliInstalls, getReadmeSetupUrl } =
-    await loadGetStartedModalModule();
+  const { getCliInstalls, getDocsSetupUrl } = await loadGetStartedModalModule();
   const installs = getCliInstalls("cloudflare");
   const text = installText(installs);
 
@@ -58,22 +57,21 @@ test("hosted deploy shows hosted setup snippets without local checkout paths", a
     "Antigravity",
     "Cursor",
   ]);
-  expect(text).toContain("claude plugin marketplace add FrkAk/mymir");
-  expect(text).toContain("claude plugin install mymir@mymir");
-  expect(text).toContain("codex plugin marketplace add FrkAk/mymir");
-  expect(text).toContain("https://app.mymir.dev/api/mcp");
+  expect(text).toContain("claude plugin marketplace add FrkAk/piyaz");
+  expect(text).toContain("claude plugin install piyaz@piyaz");
+  expect(text).toContain("codex plugin marketplace add FrkAk/piyaz");
+  expect(text).toContain("https://app.piyaz.ai/api/mcp");
   expect(text).toContain("cursor://anysphere.cursor-deeplink/mcp/install");
   expect(text).not.toContain("./plugins");
   expect(text).not.toContain("localhost");
-  expect(text).not.toContain("mymir-local");
-  expect(getReadmeSetupUrl("cloudflare")).toContain(
-    "#use-the-hosted-version-no-clone",
+  expect(text).not.toContain("piyaz-local");
+  expect(getDocsSetupUrl("cloudflare")).toContain(
+    "docs.piyaz.ai/docs/get-started/install",
   );
 });
 
 test("self-host deploy keeps local plugin install commands", async () => {
-  const { getCliInstalls, getReadmeSetupUrl } =
-    await loadGetStartedModalModule();
+  const { getCliInstalls, getDocsSetupUrl } = await loadGetStartedModalModule();
   const installs = getCliInstalls("");
   const text = installText(installs);
 
@@ -81,8 +79,8 @@ test("self-host deploy keeps local plugin install commands", async () => {
   expect(text).toContain("codex plugin marketplace add ./plugins");
   expect(text).toContain("./plugins/antigravity");
   expect(text).toContain("plugins/cursor");
-  expect(text).toContain("mymir-local");
+  expect(text).toContain("piyaz-local");
   expect(text).toContain("localhost");
-  expect(text).not.toContain("FrkAk/mymir");
-  expect(getReadmeSetupUrl("")).toContain("#self-host-contribute");
+  expect(text).not.toContain("FrkAk/piyaz");
+  expect(getDocsSetupUrl("")).toContain("docs.piyaz.ai/docs/guides/self-host");
 });

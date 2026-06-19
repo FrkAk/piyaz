@@ -41,17 +41,17 @@ export type Fixture = {
 export async function seedUserOrgProject(suffix = "1"): Promise<Fixture> {
   const sql = superuserPool();
   const [u] = await sql<{ id: string }[]>`
-    INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
     VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
     RETURNING id
   `;
   const [o] = await sql<{ id: string }[]>`
-    INSERT INTO neon_auth."organization" ("name", "slug", "createdAt")
+    INSERT INTO piyaz_auth."organization" ("name", "slug", "createdAt")
     VALUES (${"Team " + suffix}, ${"team-" + suffix}, now())
     RETURNING id
   `;
   await sql`
-    INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
     VALUES (${o.id}, ${u.id}, 'owner', now())
   `;
   const [p] = await sql<{ id: string }[]>`

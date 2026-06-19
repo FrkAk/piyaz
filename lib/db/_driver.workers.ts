@@ -47,7 +47,7 @@ const DB_URL_REQUIRED = {
   app: "DATABASE_URL is required for the app runtime connection (app_user role).",
   auth:
     "DATABASE_AUTH_URL is required — Better Auth must connect via auth_role " +
-    "(DML on neon_auth.*, no public-schema access).",
+    "(DML on piyaz_auth.*, no public-schema access).",
   service: "DATABASE_SERVICE_ROLE_URL is required for service-role data access",
 } as const;
 
@@ -132,7 +132,7 @@ export function buildAppPool(url = process.env.DATABASE_URL): DbBundle<AppDb> {
  * Fresh request-scoped Pool per call; see {@link buildAppPool}.
  *
  * @param url - Connection string, defaulting to `DATABASE_AUTH_URL`.
- * @returns Pool + Drizzle instance bound to the neon_auth schema.
+ * @returns Pool + Drizzle instance bound to the piyaz_auth schema.
  * @throws Error when `DATABASE_AUTH_URL` is unset.
  */
 export function buildAuthPool(

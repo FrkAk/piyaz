@@ -1,9 +1,9 @@
 # Reviewer rules (composer Phase 4 extract)
 
-Slim extract of the canonical mymir references for the review agent.
-Mirrors: `skills/mymir/references/conventions.md` §1,
-`skills/mymir/references/lifecycle.md` §2.2, §2.3, §2.4, §3, and
-`skills/mymir/references/artifacts.md` §1 (`executionRecord`,
+Slim extract of the canonical piyaz references for the review agent.
+Mirrors: `skills/piyaz/references/conventions.md` §1,
+`skills/piyaz/references/lifecycle.md` §2.2, §2.3, §2.4, §3, and
+`skills/piyaz/references/artifacts.md` §1 (`executionRecord`,
 `decisions`), §6. Headings carry their canonical file and section number
 so citations like `lifecycle §2.2` resolve unambiguously. When editing a
 mirrored section, edit BOTH files.
@@ -29,14 +29,14 @@ Applies wherever an agent generates `executionRecord`, `decisions`, `description
 
 `executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing.
 
-For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, `files=[]` is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, `files=[]` is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
 ## lifecycle §2.3 — Open a PR if the work changed code (what the implementer owed)
 
-If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Mymir-only refinement), the implementer must have opened a PR:
+If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Piyaz-only refinement), the implementer must have opened a PR:
 
 - PR body follows the repo's PR template when one exists (`.github/PULL_REQUEST_TEMPLATE.md` and variants), the canonical concise default otherwise.
-- The `taskRef` appears in `[BRACKETS]` (e.g. `[MYMR-83]`) exactly once, for the ONE primary task the PR builds. Bracket form triggers Mymir PR-status tracking. Related tasks are referenced as plain links, no brackets.
+- The `taskRef` appears in `[BRACKETS]` (e.g. `[MYMR-83]`) exactly once, for the ONE primary task the PR builds. Bracket form triggers Piyaz PR-status tracking. Related tasks are referenced as plain links, no brackets.
 - Summary maps from `executionRecord` (2 to 3 sentences); test plan maps from checked `acceptanceCriteria`; notes-for-reviewer maps from `decisions`.
 - Sections are concise; empty optional sections beat fabricated content.
 
@@ -48,7 +48,7 @@ A missing PR is legitimate (not a finding) for:
 
 - Research / investigation tasks (no code change).
 - Decision-only tasks.
-- Pure-Mymir refinement tasks (no repo changes).
+- Pure-Piyaz refinement tasks (no repo changes).
 - Tasks the user explicitly said "no PR" on.
 - Data and BA work without a code repo (dashboard tweaks, workbooks, metric sign-offs, ad-hoc SQL attached to a ticket). The deliverable lives outside git; the artifact link or path belongs in `executionRecord` and `files`. When the data work IS in a git repo (a dbt project, a versioned SQL or notebook repo), the standard PR rules apply.
 
@@ -60,12 +60,12 @@ A missing PR is legitimate (not a finding) for:
 A change that does not propagate did not happen.
 ```
 
-The graph is Mymir's value. Skip once and it lies: ready tasks that aren't ready, blockers pointing at shipped work, every future session picking the wrong next step.
+The graph is Piyaz's value. Skip once and it lies: ready tasks that aren't ready, blockers pointing at shipped work, every future session picking the wrong next step.
 
 After any status change or significant refinement:
 
-1. `mymir_query type='edges'` on the changed task. Current relationships.
-2. `mymir_analyze type='downstream'`. Who depends on this task.
+1. `piyaz_query type='edges'` on the changed task. Current relationships.
+2. `piyaz_analyze type='downstream'`. Who depends on this task.
 3. For each downstream task, evaluate:
    - Do edge notes need updating to reflect new decisions?
    - Are there NEW relationships revealed by this change?

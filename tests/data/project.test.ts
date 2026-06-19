@@ -10,7 +10,9 @@ import {
   getProjectListMaxUpdatedAt,
   getProjectMeta,
   listProjectsSlim,
+  listProjectIndex,
   listProjectsForMcp,
+  type ProjectSlimPage,
 } from "@/lib/data/project";
 import { findProjectAccess } from "@/lib/data/access";
 import { makeAuthContext } from "@/lib/auth/context";
@@ -66,6 +68,7 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
   expect(g.project.id).toBe(f.projectId);
   expect(Object.keys(g.project).sort()).toEqual([
     "categories",
+    "description",
     "id",
     "identifier",
     "organizationId",
@@ -82,6 +85,7 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
       "estimate",
       "hasCriteria",
       "hasDescription",
+      "hasExecutionRecord",
       "id",
       "order",
       "priority",
@@ -183,7 +187,10 @@ test("getProjectMeta returns header + tag vocabulary + status-grouped stats", as
   expect(m.taskStats).toEqual({
     total: 5,
     done: 2,
+    inReview: 0,
     inProgress: 1,
+    planned: 1,
+    draft: 0,
     cancelled: 1,
   });
   // 2 done out of (5 total - 1 cancelled) = 50%
@@ -208,7 +215,10 @@ test("getProjectMeta on an empty project reports zero stats and empty vocab", as
   expect(m.taskStats).toEqual({
     total: 0,
     done: 0,
+    inReview: 0,
     inProgress: 0,
+    planned: 0,
+    draft: 0,
     cancelled: 0,
   });
   expect(m.progress).toBe(0);
@@ -247,7 +257,7 @@ test("getProjectMaxUpdatedAt returns the latest updated_at across project + task
 
 test("getProjectListMaxUpdatedAt returns the latest updated_at across the caller's accessible scope", async () => {
   // RLS scopes the row sets; the helper aggregates MAX(updated_at) with
-  // no neon_auth join (app_user has no grant there).
+  // no piyaz_auth join (app_user has no grant there).
   const f = await seedUserOrgProject("listmax");
   const ctx = makeAuthContext(f.userId);
 
@@ -315,7 +325,10 @@ test("listProjectsSlim aggregates statuses via grouped COUNT", async () => {
   expect(row?.taskStats).toEqual({
     total: 6,
     done: 3,
+    inReview: 0,
     inProgress: 2,
+    planned: 0,
+    draft: 0,
     cancelled: 1,
   });
   expect(row?.progress).toBe(60);
@@ -360,6 +373,81 @@ test("listProjectsSlim caps limit at 100", async () => {
   const ctx = makeAuthContext(f.userId);
   const page = await listProjectsSlim(ctx, { limit: 500 });
   expect(page.rows.length).toBeLessThanOrEqual(100);
+});
+
+test("listProjectsSlim does not skip rows that share a sub-millisecond timestamp across a page boundary", async () => {
+  const f = await seedUserOrgProject("microsec");
+  const ctx = makeAuthContext(f.userId);
+
+  const ids: string[] = [];
+  const sqlc = superuserPool();
+  try {
+    await sqlc`DELETE FROM projects WHERE id = ${f.projectId}`;
+    for (let i = 0; i < 5; i++) {
+      const [r] = await sqlc<{ id: string }[]>`
+        INSERT INTO projects ("organization_id", "title", "identifier", "updated_at")
+        VALUES (${f.organizationId}, ${"M" + i}, ${"MIC" + i}, '2026-05-07 20:22:32.747123+00')
+        RETURNING id
+      `;
+      ids.push(r.id);
+    }
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  for (let guard = 0; guard < 10; guard++) {
+    const page: ProjectSlimPage = await listProjectsSlim(ctx, {
+      limit: 2,
+      cursor,
+    });
+    for (const row of page.rows) seen.add(row.id);
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+
+  expect(seen.size).toBe(5);
+  for (const id of ids) expect(seen.has(id)).toBe(true);
+});
+
+test("listProjectIndex returns the slim nav shape, newest first", async () => {
+  const f = await seedUserOrgProject("index");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    for (let i = 0; i < 3; i++) {
+      await sqlc`
+        INSERT INTO projects ("organization_id", "title", "identifier", "updated_at")
+        VALUES (${f.organizationId}, ${"P" + i}, ${"IDX" + i}, ${new Date(Date.now() + (i + 1) * 1000)})
+      `;
+    }
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+
+  const rows = await listProjectIndex(ctx);
+  expect(rows.length).toBe(4);
+  expect(Object.keys(rows[0]!).sort()).toEqual([
+    "id",
+    "identifier",
+    "organizationId",
+    "title",
+  ]);
+  expect(rows[0]!.identifier).toBe("IDX2");
+  expect(rows[rows.length - 1]!.id).toBe(f.projectId);
+});
+
+test("listProjectIndex is RLS-scoped to the caller's memberships", async () => {
+  const mine = await seedUserOrgProject("index-mine");
+  const theirs = await seedUserOrgProject("index-theirs");
+  const ctx = makeAuthContext(mine.userId);
+
+  const rows = await listProjectIndex(ctx);
+  const ids = new Set(rows.map((r) => r.id));
+  expect(ids.has(mine.projectId)).toBe(true);
+  expect(ids.has(theirs.projectId)).toBe(false);
 });
 
 test("listProjectsForMcp returns the slim agent shape without description, history, categories, or timestamps", async () => {
@@ -426,7 +514,10 @@ test("listProjectsForMcp aggregates task stats and progress like listProjectsSli
   expect(row?.taskStats).toEqual({
     total: 6,
     done: 3,
+    inReview: 0,
     inProgress: 2,
+    planned: 0,
+    draft: 0,
     cancelled: 1,
   });
   expect(row?.progress).toBe(60);
@@ -439,12 +530,12 @@ test("listProjectsForMcp skips teams with zero projects", async () => {
   const sqlc = superuserPool();
   try {
     const [emptyOrg] = await sqlc<{ id: string }[]>`
-      INSERT INTO neon_auth."organization" ("name", "slug", "createdAt")
+      INSERT INTO piyaz_auth."organization" ("name", "slug", "createdAt")
       VALUES ('Empty Team Mcp', 'empty-team-mcp', now())
       RETURNING id
     `;
     await sqlc`
-      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
       VALUES (${emptyOrg.id}, ${f.userId}, 'owner', now())
     `;
   } finally {

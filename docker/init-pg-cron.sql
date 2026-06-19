@@ -14,9 +14,9 @@ SELECT cron.schedule(
   'purge-oauth-tokens',
   '0 3 * * *',
   $$
-  DELETE FROM neon_auth."oauthRefreshToken"
+  DELETE FROM piyaz_auth."oauthRefreshToken"
    WHERE revoked IS NOT NULL OR "expiresAt" < now();
-  DELETE FROM neon_auth."oauthAccessToken"
+  DELETE FROM piyaz_auth."oauthAccessToken"
    WHERE "expiresAt" < now();
   $$
 );

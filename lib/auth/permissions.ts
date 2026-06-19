@@ -24,7 +24,7 @@ const memberProjectActions = ["create", "read", "update"] as const;
 
 /**
  * Statement extending Better Auth's organization defaults with the
- * Mymir-specific `project` resource. Mirroring `defaultStatements` keeps
+ * Piyaz-specific `project` resource. Mirroring `defaultStatements` keeps
  * BA's built-in `organization`/`member`/`invitation`/`team`/`ac` policy
  * intact so team-management endpoints continue to enforce admin gating.
  */

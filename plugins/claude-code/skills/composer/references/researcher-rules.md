@@ -1,8 +1,8 @@
 # Researcher rules (composer Phase 1 extract)
 
-Slim extract of the canonical mymir references for the composer researcher.
-Mirrors: `skills/mymir/references/conventions.md` §1, §4 and
-`skills/mymir/references/artifacts.md` §1 (`description`,
+Slim extract of the canonical piyaz references for the composer researcher.
+Mirrors: `skills/piyaz/references/conventions.md` §1, §4 and
+`skills/piyaz/references/artifacts.md` §1 (`description`,
 `acceptanceCriteria`, `decisions`), §2, §5, §6. Headings carry their
 canonical file and section number so citations like `conventions §1`
 resolve unambiguously. When editing a mirrored section, edit BOTH files.
@@ -124,7 +124,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ## artifacts §2 — Tag dimensions and first-class fields
 
-Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `mymir_query type='meta'` before coining new ones.
+Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `piyaz_query type='meta'` before coining new ones.
 
 | Dimension | Count | Vocabulary |
 |---|---|---|
@@ -134,7 +134,7 @@ Every task, in every status, must carry tags across the three tag dimensions bel
 
 ### First-class fields (priority, estimate, assignees)
 
-These are top-level columns on every task, set via `mymir_task` parameters of the same name. They are NOT tags.
+These are top-level columns on every task, set via `piyaz_task` parameters of the same name. They are NOT tags.
 
 - **`priority`** (one of `urgent`, `core`, `normal`, `backlog`). Required-on-create-by-convention: pick deliberately. Defaults: onboarding (shipped features) lands at `core`; decompose picks per task and avoids `core` everywhere or `urgent` everywhere (the dimension carries no signal then). A 30-task project usually has 3 to 6 `urgent` tasks and the rest split between `core`, `normal`, and `backlog`.
 - **`estimate`** (Fibonacci story points: `1`, `2`, `3`, `5`, `8`, `13`). Optional. `1` is trivial, `2` and `3` are routine, `5` is nontrivial, `8` and `13` are risky or multi-day. If a task feels larger than `13`, split it (§5).
@@ -183,7 +183,7 @@ Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementati
 
 ### Tone: never sound like AI
 
-The text you write into Mymir is read by other engineers. It must read like an engineer wrote it, not a chatbot.
+The text you write into Piyaz is read by other engineers. It must read like an engineer wrote it, not a chatbot.
 
 **Do not use:**
 

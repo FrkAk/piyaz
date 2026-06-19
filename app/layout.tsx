@@ -12,14 +12,51 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+const siteUrl = "https://app.piyaz.ai";
+const description =
+  "A structure that supports organic growth. Track projects created by your coding agent.";
+
 export const metadata: Metadata = {
-  title: "mymir",
-  description:
-    "A structure that supports organic growth. Track projects created by your coding agent.",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: "Piyaz",
+    template: "%s · Piyaz",
+  },
+  description,
+  icons: {
+    icon: [
+      { url: "/favicon.ico?v=3", sizes: "any" },
+      { url: "/piyaz-mark.png?v=3", type: "image/png", sizes: "1024x1024" },
+    ],
+    apple: {
+      url: "/piyaz-icon-dark.png?v=3",
+      type: "image/png",
+      sizes: "512x512",
+    },
+  },
+  robots: {
+    index: false,
+    follow: false,
+  },
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "Piyaz",
+    url: "/",
+    title: "Piyaz",
+    description,
+  },
+  twitter: {
+    card: "summary",
+    title: "Piyaz",
+    description,
+  },
 };
 
 /**
- * Root layout for the Mymir application.
+ * Root layout for the Piyaz application.
  * Reads theme from cookie for SSR so the correct mode paints on first frame.
  * @param props - Layout props with children.
  * @returns The root HTML structure with fonts and theme applied.
@@ -30,7 +67,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const cookieStore = await cookies();
-  const raw = cookieStore.get("mymir-theme")?.value;
+  const raw = cookieStore.get("piyaz-theme")?.value;
   const theme = raw === "light" ? "light" : "dark";
 
   return (

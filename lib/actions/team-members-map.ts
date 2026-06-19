@@ -7,9 +7,9 @@ export type MemberView = {
   id: string;
   /** User id behind the membership — drives gradient avatar and self-row checks. */
   userId: string;
-  /** Display name from `neon_auth.user.name`. */
+  /** Display name from `piyaz_auth.user.name`. */
   name: string;
-  /** Sign-in email from `neon_auth.user.email`. */
+  /** Sign-in email from `piyaz_auth.user.email`. */
   email: string;
   /** Raw `member.role` string (e.g. "owner", "admin", "member"). */
   role: string;

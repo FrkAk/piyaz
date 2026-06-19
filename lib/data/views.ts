@@ -5,12 +5,13 @@ import type {
   Decision,
   Priority,
   Estimate,
+  TaskStatus,
 } from "@/lib/types";
 
 /**
  * Lightweight assignee projection used by surfaces that render
  * the people assigned to a task. Source: `task_assignees` joined
- * to `neon_auth.user`.
+ * to `piyaz_auth.user`.
  */
 export type AssigneeRef = {
   userId: string;
@@ -43,12 +44,44 @@ export type ProjectListOrganization = {
   slug: string;
 };
 
-/** Per-project task progress counts shown on the home grid. */
+/**
+ * Per-project task progress counts shown on the home grid. One bucket per
+ * persisted task status so the lifecycle bar can colour each status band;
+ * `total` is the sum across every bucket.
+ */
 export type ProjectTaskStats = {
   total: number;
   done: number;
+  inReview: number;
   inProgress: number;
+  planned: number;
+  draft: number;
   cancelled: number;
+};
+
+/**
+ * Progress buckets the lifecycle bar renders as bands — every
+ * {@link ProjectTaskStats} count except the `total` roll-up and `cancelled`
+ * (excluded from the denominator, not shown as progress).
+ */
+export type ProgressBucket = Exclude<
+  keyof ProjectTaskStats,
+  "total" | "cancelled"
+>;
+
+/**
+ * Canonical persisted-status → {@link ProjectTaskStats} bucket map: the single
+ * source of truth shared by the server roll-up (`accumulateTaskStats`) and the
+ * client lifecycle bar. Typed `Record<TaskStatus, …>` so adding or renaming a
+ * status is a compile error here instead of a silently under-filled bar.
+ */
+export const STATUS_BUCKET: Record<TaskStatus, keyof ProjectTaskStats> = {
+  draft: "draft",
+  planned: "planned",
+  in_progress: "inProgress",
+  in_review: "inReview",
+  done: "done",
+  cancelled: "cancelled",
 };
 
 /**
@@ -74,10 +107,20 @@ export type ProjectListEntry = Pick<
 };
 
 /**
+ * Minimal project nav row returned by `listProjectIndex` — the columns the
+ * ⌘K command palette needs to jump to a project. No task stats, joins, or
+ * timestamps, so the whole accessible set fits in one slim payload.
+ */
+export type ProjectIndexEntry = Pick<
+  Project,
+  "id" | "organizationId" | "title" | "identifier"
+>;
+
+/**
  * Slim project entry returned by `listProjectsForMcp` — the agent-facing
- * shape for `mymir_project action='list'`. Strips description, history,
+ * shape for `piyaz_project action='list'`. Strips description, history,
  * categories, and timestamps to keep the payload tight; agents fetch the
- * description and tag vocabulary on demand via `mymir_query type='meta'`.
+ * description and tag vocabulary on demand via `piyaz_query type='meta'`.
  */
 export type ProjectListEntryMcp = Pick<
   Project,
@@ -107,6 +150,12 @@ export type TaskGraphSlim = Pick<
   hasDescription: boolean;
   /** True when `acceptanceCriteria` has at least one entry. */
   hasCriteria: boolean;
+  /**
+   * True when `executionRecord` is non-null. Lets the bundle preview mirror
+   * the builders' record-gated lists (Abandoned Approaches, upstream
+   * execution records) without shipping record text in the slim payload.
+   */
+  hasExecutionRecord: boolean;
   /**
    * Derived state computed server-side using the project's effective
    * dependency graph. The schema only stores `status`; this is the
@@ -146,6 +195,7 @@ export type ProjectGraphSlim = {
     | "organizationId"
     | "identifier"
     | "title"
+    | "description"
     | "status"
     | "updatedAt"
     | "categories"
@@ -198,7 +248,7 @@ export type ProjectMeta = Pick<
  */
 export type MyTask = Omit<
   TaskGraphSlim,
-  "assigneeCount" | "assigneeUserIds"
+  "assigneeCount" | "assigneeUserIds" | "hasExecutionRecord"
 > & {
   project: {
     id: string;

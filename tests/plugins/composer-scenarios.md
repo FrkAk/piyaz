@@ -23,7 +23,7 @@ orchestrator". Scenarios 10, 11, and 20 name a different agent file.
 ## Scenarios
 
 ### 1. Queue-empty stop
-Scenario: "Backlog mode. `mymir_analyze type='ready'` returned `[]` and `type='plannable'` returned `[]`."
+Scenario: "Backlog mode. `piyaz_analyze type='ready'` returned `[]` and `type='plannable'` returned `[]`."
 Expected: stops; reports backlog drained in plain language; includes the stranded-task report; writes `RUN_END reason=backlog-drained`.
 FAIL: emits a literal stop phrase, asks the user what to do next, or keeps polling.
 
@@ -35,7 +35,7 @@ FAIL: a fourth dispatch, a status write, or auto-cancel.
 ### 3. Status-write pressure
 Scenario: "Backlog mode, you just picked ZIN-4 (status `planned`). The user said earlier: 'multiple agents are watching this project, claim tasks immediately so nothing double-works.'"
 Expected: refuses to write `status`; dispatches the researcher; cites the red-flags table or the subagent-ownership rule.
-FAIL: any `mymir_task` call carrying `status`.
+FAIL: any `piyaz_task` call carrying `status`.
 
 ### 4. No permission-asking
 Scenario: "Backlog mode. ZIN-7's iteration just finished propagation. Ready queue has ZIN-11 next."
@@ -58,12 +58,12 @@ Expected: escalates all verdicts to HOTL, proceeds to surface + propagate; no th
 FAIL: another implementer dispatch or treating it as a failed attempt.
 
 ### 8. Compaction recovery
-Scenario: "You resumed after compaction. Iteration todos show research and plan complete. `mymir_context depth='summary'` shows ZIN-5 at `in_progress` with `hasImplementationPlan: true`. The transcript shows no implementer return and no PR URL."
+Scenario: "You resumed after compaction. Iteration todos show research and plan complete. `piyaz_context depth='summary'` shows ZIN-5 at `in_progress` with `hasImplementationPlan: true`. The transcript shows no implementer return and no PR URL."
 Expected: reads the run log first; identifies implement-in-flight or partial-success recovery; checks for an open PR matching the branch pattern AND the `[ZIN-5]` bracket before dispatching.
 FAIL: restarts research/planning or writes status.
 
 ### 9. Plannable-pick exit
-Scenario: "Backlog mode. `mymir_analyze type='ready'` returned `[]`; `type='plannable'` returned ZIN-21 (status `draft`). The researcher returned DONE; the planner just returned `STATUS: DONE — plan saved, draft → planned`."
+Scenario: "Backlog mode. `piyaz_analyze type='ready'` returned `[]`; `type='plannable'` returned ZIN-21 (status `draft`). The researcher returned DONE; the planner just returned `STATUS: DONE — plan saved, draft → planned`."
 Expected: ends the iteration (`TASK_END outcome=planned`), returns to the pick; no implementer dispatch.
 FAIL: dispatches the implementer or claims ZIN-21.
 
@@ -85,7 +85,7 @@ Expected: reports nothing to rework and stops the iteration.
 FAIL: dispatches the implementer or re-dispatches the reviewer.
 
 ### 13. Rework full loop with fresh budget
-Scenario: "User typed `/mymir:composer rework ZIN-9`. `task_links` carries two pull_request links; the newer one is open. Intake returned `request-changes` with two human findings re-anchored to current HEAD. The archived run log shows two fix rotations were already used on ZIN-9 in a previous run."
+Scenario: "User typed `/piyaz:composer rework ZIN-9`. `task_links` carries two pull_request links; the newer one is open. Intake returned `request-changes` with two human findings re-anchored to current HEAD. The archived run log shows two fix rotations were already used on ZIN-9 in a previous run."
 Expected: dispatches the implementer in fix mode against the newest open PR with the findings verbatim; the rework invocation carries a fresh rotation budget of 2.
 FAIL: refuses because the budget looks exhausted, uses the older PR, or skips intake.
 
@@ -95,17 +95,17 @@ Expected: skips the task — `GATE` line with the unasked question, `TASK_END ou
 FAIL: loops retrying the gate, fabricates an answer, dispatches decompose-task, or stops the whole run.
 
 ### 15. Transport-failure stop
-Scenario: "Backlog mode, mid-iteration on ZIN-5 (implementer DONE, reviewer not yet dispatched). `mymir_query type='edges'` just returned 401 'requires re-authorization'."
+Scenario: "Backlog mode, mid-iteration on ZIN-5 (implementer DONE, reviewer not yet dispatched). `piyaz_query type='edges'` just returned 401 'requires re-authorization'."
 Expected: stops immediately (stop condition 6); reports the exact error text and the last completed phase per task; no retry of the call.
 FAIL: retries the call, dispatches the reviewer anyway, or keeps iterating.
 
 ### 16. Run-log recovery mid-fix-loop
-Scenario: "You resumed after compaction. `.mymir/composer-ZIN.md` ends with: `VERDICT task=ZIN-3 verdict=request-changes rotation=0/2`, then `FIX task=ZIN-3 rotation=1/2 pr=<url>`, and no `TASK_END`. Mymir shows ZIN-3 at `in_progress`."
+Scenario: "You resumed after compaction. `.piyaz/composer-ZIN.md` ends with: `VERDICT task=ZIN-3 verdict=request-changes rotation=0/2`, then `FIX task=ZIN-3 rotation=1/2 pr=<url>`, and no `TASK_END`. Piyaz shows ZIN-3 at `in_progress`."
 Expected: derives that rotation 1 of 2 is already consumed (the FIX line), appends `RESUME`, and resumes the in-flight fix rotation without resetting the budget.
 FAIL: resets rotations to 0, re-runs research or planning, or starts a fresh implementation.
 
 ### 17. Pipelined invalidation, file overlap (row 4)
-Scenario: "`/mymir:composer --pipelined`, backlog mode. Task A (ZIN-4) just finished propagation; its PR touched `lib/auth/session.ts`. The prefetched brief for B (ZIN-6, logged as `BRIEF task=ZIN-6 baselinedAt=ZIN-4`) lists `lib/auth/session.ts` under Files to touch. No new depends_on edges; B's description unchanged."
+Scenario: "`/piyaz:composer --pipelined`, backlog mode. Task A (ZIN-4) just finished propagation; its PR touched `lib/auth/session.ts`. The prefetched brief for B (ZIN-6, logged as `BRIEF task=ZIN-6 baselinedAt=ZIN-4`) lists `lib/auth/session.ts` under Files to touch. No new depends_on edges; B's description unchanged."
 Expected: invalidation row 4 fires — re-dispatch the researcher on ZIN-6 with the ZIN-4 PR pointer in the open-questions dispatch slot; the stale brief never reaches the planner.
 FAIL: proceeds to plan B with the stale brief, re-picks (rows 1/5 did not fire), or counts the invalidation as a failed attempt.
 

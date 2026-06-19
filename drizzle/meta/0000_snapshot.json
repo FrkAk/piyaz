@@ -98,7 +98,7 @@
           "name": "projects_organization_id_organization_id_fk",
           "tableFrom": "projects",
           "tableTo": "organization",
-          "schemaTo": "neon_auth",
+          "schemaTo": "piyaz_auth",
           "columnsFrom": [
             "organization_id"
           ],
@@ -286,7 +286,7 @@
           "name": "task_assignees_user_id_user_id_fk",
           "tableFrom": "task_assignees",
           "tableTo": "user",
-          "schemaTo": "neon_auth",
+          "schemaTo": "piyaz_auth",
           "columnsFrom": [
             "user_id"
           ],
@@ -653,7 +653,7 @@
           "name": "task_links_created_by_user_id_fk",
           "tableFrom": "task_links",
           "tableTo": "user",
-          "schemaTo": "neon_auth",
+          "schemaTo": "piyaz_auth",
           "columnsFrom": [
             "created_by"
           ],
@@ -940,7 +940,7 @@
           "name": "team_invite_code_organization_id_organization_id_fk",
           "tableFrom": "team_invite_code",
           "tableTo": "organization",
-          "schemaTo": "neon_auth",
+          "schemaTo": "piyaz_auth",
           "columnsFrom": [
             "organization_id"
           ],
@@ -954,7 +954,7 @@
           "name": "team_invite_code_created_by_user_id_fk",
           "tableFrom": "team_invite_code",
           "tableTo": "user",
-          "schemaTo": "neon_auth",
+          "schemaTo": "piyaz_auth",
           "columnsFrom": [
             "created_by"
           ],

@@ -34,27 +34,6 @@ Step one then step two
 Prereq execution record
 
 
-## Constraints
-
-- [explicit] Use approach X
-
-
-## Done Means
-
-- [ ] \`<uuid>\` It works
-
-
-## Files
-
-- lib/a.ts
-- lib/b.ts
-
-
-## Assignees
-
-- User agent-ctx-golden <useragent-ctx-golden@test.local>
-
-
 ## Links
 
 - [pull_request] PR 1 (https://example.test/pr/1)
@@ -67,5 +46,15 @@ Built the thing
 
 ## Downstream (what depends on this task's output)
 
-- \`PRJ-3\` **Downstream task** [draft] — consumes central"
+- \`PRJ-3\` **Downstream task** [draft] — consumes central
+
+
+## Constraints
+
+- [explicit] Use approach X
+
+
+## Done Means
+
+- [ ] \`<uuid>\` It works"
 `;

@@ -1,7 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { isVerifiedOAuthClient } from "@/lib/auth/verified-oauth-clients";
 
-const ENV_KEY = "MYMIR_VERIFIED_OAUTH_CLIENT_IDS";
+const ENV_KEY = "PIYAZ_VERIFIED_OAUTH_CLIENT_IDS";
 const originalValue = process.env[ENV_KEY];
 
 afterEach(() => {

@@ -13,23 +13,23 @@ import { organization, user } from "@/lib/db/auth-schema";
 /**
  * Shareable team invite codes — one row per organization in v1.
  *
- * Lives in `public` (drizzle-managed) and references `neon_auth.organization`
- * + `neon_auth.user` via cross-schema FKs. Kept separate from `lib/db/schema.ts`
+ * Lives in `public` (drizzle-managed) and references `piyaz_auth.organization`
+ * + `piyaz_auth.user` via cross-schema FKs. Kept separate from `lib/db/schema.ts`
  * because it's a join concept between the auth and app schemas — same split
  * we already use for `auth-schema.ts` vs `schema.ts`.
  *
- * Distinct from `neon_auth.invitation`: that table is per-recipient-email and
+ * Distinct from `piyaz_auth.invitation`: that table is per-recipient-email and
  * Better Auth's `acceptInvitation` enforces `invitation.email === session.user.email`.
  * A team-wide code can't ride that flow without forging email, so we use
  * `auth.api.addMember` against this separate table instead.
  *
  * RLS is enabled here via `.enableRLS()`; the policy DDL itself lives in
- * `docker/rls-policies.sql` (1-hop membership through `neon_auth.member`,
+ * `docker/rls-policies.sql` (1-hop membership through `piyaz_auth.member`,
  * applied after `db:push`). The three join-path helpers in
  * `lib/data/team-invite-code.ts` (`reserveInviteCodeSlot`,
  * `releaseInviteCodeSlot`, `diagnoseTeamInviteCode`) call SECURITY DEFINER
  * SQL functions (see `docker/rls-functions.sql`) because the joining user
- * has no `neon_auth.member` row at the moment of lookup — the functions
+ * has no `piyaz_auth.member` row at the moment of lookup — the functions
  * run as their owner and have a narrow audited surface. The four admin
  * helpers (`findTeamInviteCode`, `createTeamInviteCode`,
  * `rotateTeamInviteCode`, `revokeTeamInviteCode`) run under

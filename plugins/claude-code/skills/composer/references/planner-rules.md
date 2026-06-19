@@ -1,10 +1,10 @@
 # Planner rules (composer Phase 2 extract)
 
-Slim extract of the canonical mymir references for the composer planner.
-Mirrors: `skills/mymir/references/conventions.md` §1,
-`skills/mymir/references/artifacts.md` §1 (`description`,
+Slim extract of the canonical piyaz references for the composer planner.
+Mirrors: `skills/piyaz/references/conventions.md` §1,
+`skills/piyaz/references/artifacts.md` §1 (`description`,
 `acceptanceCriteria`, `decisions`), §6, and
-`skills/mymir/references/lifecycle.md` §1 (Summary, `draft`, `planned`),
+`skills/piyaz/references/lifecycle.md` §1 (Summary, `draft`, `planned`),
 §2.2 (Completion Protocol payload fields). Headings carry their canonical
 file and section number so citations like `lifecycle §2.2` resolve
 unambiguously. When editing a mirrored section, edit BOTH files.
@@ -56,7 +56,7 @@ draft → planned → in_progress → in_review → done
 ### `planned`
 
 - **What it means.** Implementation plan is written. All `depends_on` blockers are themselves `done`. Ready for someone to claim and code.
-- **Transitions to `in_progress`:** when someone explicitly claims via `mymir_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
+- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
 
 ---
 
@@ -64,7 +64,7 @@ draft → planned → in_progress → in_review → done
 
 `executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
 
-For pure spec-review / docs / decision-only / Mymir-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
 (The planner pre-fills the plan's Completion Protocol template section against these field requirements; the implementer executes the full protocol from its own extract.)
 
@@ -166,7 +166,7 @@ Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementati
 
 ### Tone: never sound like AI
 
-The text you write into Mymir is read by other engineers. It must read like an engineer wrote it, not a chatbot.
+The text you write into Piyaz is read by other engineers. It must read like an engineer wrote it, not a chatbot.
 
 **Do not use:**
 

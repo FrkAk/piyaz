@@ -19,12 +19,12 @@ test("listMembershipsWithCounts paginates by (createdAt, id) cursor", async () =
   try {
     for (let i = 0; i < 5; i++) {
       const [o] = await sqlc<{ id: string }[]>`
-        INSERT INTO neon_auth."organization" ("name", "slug", "createdAt")
+        INSERT INTO piyaz_auth."organization" ("name", "slug", "createdAt")
         VALUES (${"Extra " + i}, ${"extra-" + i}, ${new Date(Date.now() + (i + 1) * 1000)})
         RETURNING id
       `;
       await sqlc`
-        INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+        INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
         VALUES (${o.id}, ${base.userId}, 'owner', now())
       `;
     }
@@ -56,12 +56,12 @@ describe("demoteMemberWithGuard", () => {
     let secondMemberId: string;
     try {
       const [u] = await sqlc<{ id: string }[]>`
-        INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+        INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
         VALUES ('Second', 'second-demote-ok@test.local', true, now())
         RETURNING id
       `;
       const [m] = await sqlc<{ id: string }[]>`
-        INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+        INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
         VALUES (${f.organizationId}, ${u.id}, 'admin', now())
         RETURNING id
       `;
@@ -117,7 +117,7 @@ describe("demoteMemberWithGuard", () => {
     let bMemberId: string;
     try {
       const [m] = await sqlc<{ id: string }[]>`
-        SELECT id FROM neon_auth."member"
+        SELECT id FROM piyaz_auth."member"
         WHERE "organizationId" = ${b.organizationId} AND "userId" = ${b.userId}
         LIMIT 1
       `;
@@ -155,7 +155,7 @@ describe("demoteMemberWithGuard", () => {
     let memberId: string;
     try {
       const [m] = await sqlc<{ id: string }[]>`
-        SELECT id FROM neon_auth."member"
+        SELECT id FROM piyaz_auth."member"
         WHERE "organizationId" = ${f.organizationId} AND "userId" = ${f.userId}
         LIMIT 1
       `;
@@ -191,19 +191,19 @@ describe("demoteMemberWithGuard", () => {
     let secondMemberId: string;
     try {
       const [m1] = await sqlc<{ id: string }[]>`
-        SELECT id FROM neon_auth."member"
+        SELECT id FROM piyaz_auth."member"
         WHERE "organizationId" = ${f.organizationId} AND "userId" = ${f.userId}
         LIMIT 1
       `;
       firstMemberId = m1.id;
 
       const [u] = await sqlc<{ id: string }[]>`
-        INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+        INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
         VALUES ('Second Owner', 'second-owner-race@test.local', true, now())
         RETURNING id
       `;
       const [m2] = await sqlc<{ id: string }[]>`
-        INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+        INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
         VALUES (${f.organizationId}, ${u.id}, 'owner', now())
         RETURNING id
       `;
@@ -216,7 +216,7 @@ describe("demoteMemberWithGuard", () => {
       const c = superuserPool();
       try {
         await c`
-          UPDATE neon_auth."member"
+          UPDATE piyaz_auth."member"
           SET role = 'member'
           WHERE id = ${memberId}
         `;

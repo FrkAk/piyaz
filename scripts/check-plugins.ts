@@ -59,48 +59,48 @@ const platformSubs: PlatformSubs[] = [
 
 const shared: SharedGroup[] = [
   {
-    name: "skills/mymir/SKILL.md",
-    canonical: "plugins/claude-code/skills/mymir/SKILL.md",
+    name: "skills/piyaz/SKILL.md",
+    canonical: "plugins/claude-code/skills/piyaz/SKILL.md",
     copies: [
-      "plugins/codex/skills/mymir/SKILL.md",
-      "plugins/cursor/skills/mymir/SKILL.md",
-      "plugins/antigravity/skills/mymir/SKILL.md",
+      "plugins/codex/skills/piyaz/SKILL.md",
+      "plugins/cursor/skills/piyaz/SKILL.md",
+      "plugins/antigravity/skills/piyaz/SKILL.md",
     ],
   },
   {
-    name: "skills/mymir/references/conventions.md",
-    canonical: "plugins/claude-code/skills/mymir/references/conventions.md",
+    name: "skills/piyaz/references/conventions.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/conventions.md",
     copies: [
-      "plugins/codex/skills/mymir/references/conventions.md",
-      "plugins/cursor/skills/mymir/references/conventions.md",
-      "plugins/antigravity/skills/mymir/references/conventions.md",
+      "plugins/codex/skills/piyaz/references/conventions.md",
+      "plugins/cursor/skills/piyaz/references/conventions.md",
+      "plugins/antigravity/skills/piyaz/references/conventions.md",
     ],
   },
   {
-    name: "skills/mymir/references/artifacts.md",
-    canonical: "plugins/claude-code/skills/mymir/references/artifacts.md",
+    name: "skills/piyaz/references/artifacts.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/artifacts.md",
     copies: [
-      "plugins/codex/skills/mymir/references/artifacts.md",
-      "plugins/cursor/skills/mymir/references/artifacts.md",
-      "plugins/antigravity/skills/mymir/references/artifacts.md",
+      "plugins/codex/skills/piyaz/references/artifacts.md",
+      "plugins/cursor/skills/piyaz/references/artifacts.md",
+      "plugins/antigravity/skills/piyaz/references/artifacts.md",
     ],
   },
   {
-    name: "skills/mymir/references/lifecycle.md",
-    canonical: "plugins/claude-code/skills/mymir/references/lifecycle.md",
+    name: "skills/piyaz/references/lifecycle.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/lifecycle.md",
     copies: [
-      "plugins/codex/skills/mymir/references/lifecycle.md",
-      "plugins/cursor/skills/mymir/references/lifecycle.md",
-      "plugins/antigravity/skills/mymir/references/lifecycle.md",
+      "plugins/codex/skills/piyaz/references/lifecycle.md",
+      "plugins/cursor/skills/piyaz/references/lifecycle.md",
+      "plugins/antigravity/skills/piyaz/references/lifecycle.md",
     ],
   },
   {
-    name: "skills/mymir/references/resilience.md",
-    canonical: "plugins/claude-code/skills/mymir/references/resilience.md",
+    name: "skills/piyaz/references/resilience.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/resilience.md",
     copies: [
-      "plugins/codex/skills/mymir/references/resilience.md",
-      "plugins/cursor/skills/mymir/references/resilience.md",
-      "plugins/antigravity/skills/mymir/references/resilience.md",
+      "plugins/codex/skills/piyaz/references/resilience.md",
+      "plugins/cursor/skills/piyaz/references/resilience.md",
+      "plugins/antigravity/skills/piyaz/references/resilience.md",
     ],
   },
   {
@@ -343,7 +343,7 @@ function checkIncludeTargets(root: string): number {
 
 /**
  * Verifies the composer extracts' canonical-source hash pins. The extracts
- * hand-mirror sections of the canonical mymir references; the pin file
+ * hand-mirror sections of the canonical piyaz references; the pin file
  * records the canonical files' hashes the extracts were last reviewed
  * against. Any canonical edit fails the check until the extracts are
  * reviewed and the pins refreshed (`--fix` refreshes them, loudly).

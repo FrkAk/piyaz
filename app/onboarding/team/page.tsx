@@ -46,7 +46,7 @@ export default async function OnboardingTeamPage() {
           className="mb-7 text-[13.5px] text-text-muted"
           style={{ lineHeight: 1.55 }}
         >
-          Mymir is team-scoped. Create a fresh workspace, or paste the
+          Piyaz is team-scoped. Create a fresh workspace, or paste the
           21-character invite code your team admin shared.
         </p>
         <OnboardingForm userName={session.user.name} />

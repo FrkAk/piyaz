@@ -9,7 +9,7 @@ import {
 } from "react";
 
 /** Cookie name for the sidebar collapsed-state preference. Server-readable so SSR can render the correct width on first paint and avoid a hydration flash. */
-const COOKIE_NAME = "mymir-sidebar-collapsed";
+const COOKIE_NAME = "piyaz-sidebar-collapsed";
 /** Cookie max-age in seconds (1 year). */
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
@@ -107,7 +107,7 @@ interface SidebarCollapseProviderProps {
  * and the in-canvas fold button stay in sync without explicit prop drilling.
  *
  * Uses {@link useSyncExternalStore} with a server snapshot derived from the
- * `mymir-sidebar-collapsed` cookie — SSR renders the persisted width
+ * `piyaz-sidebar-collapsed` cookie — SSR renders the persisted width
  * directly, so refreshing on a collapsed sidebar paints collapsed-first
  * with no flash.
  *

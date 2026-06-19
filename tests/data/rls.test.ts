@@ -582,7 +582,7 @@ describe("RLS — defense-in-depth on team isolation", () => {
     let taskBId: string;
     try {
       await su`
-        INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+        INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
         VALUES (${teamB.organizationId}, ${teamA.userId}, 'member', now())
       `;
       const [a] = await su<{ id: string }[]>`
@@ -740,12 +740,12 @@ describe("RLS — defense-in-depth on team isolation", () => {
     const teamA = await seedUserOrgProject("rls-x-tic-floor-admin");
     const su = superuserPool();
     const [u] = await su<{ id: string }[]>`
-      INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
       VALUES ('Regular Member', 'regular@test.local', true, now())
       RETURNING id
     `;
     await su`
-      INSERT INTO neon_auth."member" ("organizationId", "userId", "role", "createdAt")
+      INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
       VALUES (${teamA.organizationId}, ${u.id}, 'member', now())
     `;
 

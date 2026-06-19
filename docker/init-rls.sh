@@ -2,7 +2,7 @@
 # Provision RLS-aware roles for self-hosted Postgres. Idempotent.
 #
 # Roles:
-#   * mymir         — Docker superuser / DB owner. Not used by the app.
+#   * piyaz         — Docker superuser / DB owner. Not used by the app.
 #   * service_role  — BYPASSRLS + CREATE on schema public. Migrations
 #                     and the documented bypass sites (see lib/db/connection.ts).
 #   * app_user      — NOBYPASSRLS runtime role. RLS fires on every query.

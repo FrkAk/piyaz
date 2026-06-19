@@ -22,12 +22,14 @@ const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
  * `attach`) so dispatches racing with the function return don't yield a
  * subscriber-without-connection.
  *
- * The Cloudflare Workers target short-circuits to 204 with `Retry-After`:
- * the self-host in-memory broker is single-process and leaks `subs`/`conns`
- * on Workers because stream `cancel` fires in a dead I/O context so
- * `detach` never runs; the Durable-Object-backed broker is the planned
- * replacement. While disabled, data freshness comes from React Query's
- * `staleTime` + focus-refetch.
+ * On the Cloudflare deploy the browser opens a WebSocket, not this SSE
+ * stream: the worker entry (`worker-cf.ts`) intercepts the `Upgrade:
+ * websocket` request to `/api/events` ahead of OpenNext and terminates it
+ * against the `PiyazBroker` Durable Object (zero-cost while idle via the
+ * Hibernation API). This handler therefore only runs on Cloudflare for a
+ * non-upgrade GET, where it short-circuits to 204 with `Retry-After` so a
+ * stray `EventSource` cannot open a wall-clock-billed stream or
+ * reconnect-storm. Self-host keeps the long-lived SSE stream below.
  *
  * @param req - Incoming request — only the abort signal is consumed.
  * @returns 200 with `text/event-stream`, 401 when unauthenticated, 429
