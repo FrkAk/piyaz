@@ -27,7 +27,7 @@ project: "Project working-ctx-golden" > task: "Central task"
 
 ## Acceptance Criteria
 
-- [ ] It works
+- [ ] \`<uuid>\` It works
 
 ## Decisions
 - [explicit] Use approach X (2026-05-16)

@@ -6,6 +6,8 @@ Piyaz runs across every kind of software and data project: web and SaaS apps, mo
 
 Every Piyaz skill and agent must follow these rules. Drift between any rule file and any agent is a bug.
 
+> Sections of this file are mirrored by the composer phase extracts in the claude-code plugin (`plugins/claude-code/skills/composer/references/`); when you edit a mirrored section, update those extracts and bump the pin in their `sources.json`.
+
 ---
 
 ## How this is split

@@ -4,6 +4,8 @@ Quality bar for everything an agent writes into Piyaz: titles, descriptions, acc
 
 Agents read this file when about to create, refine, or audit an artifact. The Iron Law of grounding (`conventions.md` §1) applies at every step.
 
+> Sections of this file are mirrored by the composer phase extracts in the claude-code plugin (`plugins/claude-code/skills/composer/references/`); when you edit a mirrored section, update those extracts and bump the pin in their `sources.json`.
+
 ## Contents
 
 - §1 Task artifact quality: title, description, acceptanceCriteria, executionRecord, decisions, files
@@ -140,7 +142,7 @@ BAD:
 
 Single-AC tasks are rejected. Tasks with vague ACs ("works correctly", "is complete", "performs well") are rejected.
 
-### `executionRecord` (only on `done` and `cancelled`)
+### `executionRecord` (only on `in_review`, `done`, and `cancelled`)
 
 - **Length:** 3 to 5 sentences.
 - **Distinct from `description`:** description = scope + role; executionRecord = HOW it was built (or WHY it was abandoned).
@@ -186,7 +188,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ## 2. Tag dimensions and first-class fields
 
-Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `piyaz_query type='overview'` before coining new ones.
+Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `piyaz_query type='meta'` before coining new ones.
 
 | Dimension | Count | Vocabulary |
 |---|---|---|
@@ -408,29 +410,6 @@ The text you write into Piyaz is read by other engineers. It must read like an e
 - Specific over vague. "Stripe webhook handler" beats "payment integration".
 - Cut adverbs.
 - One idea per sentence.
-
-### Em-dash replacements
-
-```
-BAD  (web):     "Custom auth — months of work — is off the table."
-GOOD:           "Custom auth is off the table. Months of work, easy to leak data."
-
-BAD  (web):     "The API uses Bearer tokens — validated against the users table."
-GOOD:           "The API validates Bearer tokens against the users table."
-
-BAD  (sim):     "Rejected — see line 42 of the spec."
-GOOD:           "Rejected. See line 42 of the spec."
-
-BAD  (agentic): "The agent loop dispatches tools — validated against the
-                 registry — then streams the model output."
-GOOD:           "The agent loop validates each tool against the registry
-                 before dispatching, then streams the model output."
-
-BAD  (firmware):"BMP280 returns 0xFF — the i2c clock-stretch fix is not
-                 backported."
-GOOD:           "BMP280 returns 0xFF. The i2c clock-stretch fix is not
-                 backported."
-```
 
 ### Length
 
