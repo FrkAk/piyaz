@@ -1,5 +1,5 @@
 /**
- * docs:gen. Emits generated documentation into the mymir-docs content tree.
+ * docs:gen. Emits generated documentation into the piyaz-docs content tree.
  *
  * Outputs:
  *   mcp/tools/<tool>.mdx + meta.json   from lib/mcp/schemas.ts
@@ -7,7 +7,10 @@
  *   reference/skills-and-agents.mdx    catalog from plugin frontmatter
  *
  * Run: bun scripts/generate-docs.ts [--out <content-dir>]
- * Default out dir: ../mymir-docs/content/docs relative to the piyaz repo.
+ * Default out dir: ../piyaz-docs/content/docs relative to the piyaz repo.
+ *
+ * Output is additive (upsert): a removed tool or reference leaves a stale
+ * page in the docs repo that must be deleted by hand.
  */
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -34,13 +37,35 @@ interface JsonSchemaObject {
 }
 
 /**
- * Replace em/en-dashes in prose with commas or hyphens, leaving code intact.
- * Fenced code blocks and inline code spans are preserved verbatim so docs
- * generated from product strings satisfy the no-dash content style rule.
- * @param text - Markdown or prose, possibly containing code.
- * @returns Text with prose dashes normalized and code untouched.
+ * Apply a transform to the prose segments of text, leaving inline code spans
+ * (backtick-delimited) verbatim.
+ * @param text - Text that may contain inline code spans.
+ * @param transform - Applied to each segment that is not a code span.
+ * @returns The text with the transform applied outside code spans.
  */
-export function normalizeProseDashes(text: string): string {
+function mapProseSegments(
+  text: string,
+  transform: (segment: string) => string,
+): string {
+  return text
+    .split(/(`[^`]*`)/)
+    .map((seg) =>
+      seg.startsWith("`") && seg.endsWith("`") ? seg : transform(seg),
+    )
+    .join("");
+}
+
+/**
+ * Apply a transform to prose, skipping fenced code blocks and inline code
+ * spans so code examples are never rewritten.
+ * @param text - Markdown text that may contain fences and inline code.
+ * @param transform - Applied to each prose segment outside code.
+ * @returns The text with the transform applied only to prose.
+ */
+function mapProse(
+  text: string,
+  transform: (segment: string) => string,
+): string {
   const lines = text.split("\n");
   let inFence = false;
   return lines
@@ -50,38 +75,40 @@ export function normalizeProseDashes(text: string): string {
         return line;
       }
       if (inFence) return line;
-      const segments = line.split(/(`[^`]*`)/);
-      return segments
-        .map((seg) =>
-          seg.startsWith("`") && seg.endsWith("`")
-            ? seg
-            : seg
-                .replace(/(\d)\s*[–]\s*(\d)/g, "$1-$2")
-                .replace(/(?<=[^\s|])\s*[—–]\s*(?=[^\s|])/g, ", ")
-                .replace(/[—–]/g, "-")
-                .replace(/ ,/g, ","),
-        )
-        .join("");
+      return mapProseSegments(line, transform);
     })
     .join("\n");
 }
 
 /**
+ * Replace em/en-dashes in prose with commas or hyphens, leaving code intact.
+ * Fenced code blocks and inline code spans are preserved verbatim so docs
+ * generated from product strings satisfy the no-dash content style rule.
+ * @param text - Markdown or prose, possibly containing code.
+ * @returns Text with prose dashes normalized and code untouched.
+ */
+export function normalizeProseDashes(text: string): string {
+  return mapProse(text, (seg) =>
+    seg
+      .replace(/(\d)\s*[—–]\s*(\d)/g, "$1-$2")
+      .replace(/(?<=[^\s|])\s*[—–]\s*(?=[^\s|])/g, ", ")
+      .replace(/[—–]/g, "-")
+      .replace(/ ,/g, ","),
+  );
+}
+
+/**
  * Escape characters MDX would parse as JSX in prose positions.
- * Inline code spans are left verbatim: backticked text is literal in MDX, so
- * escaping `<` or `{` inside it would render the entity instead of the source.
- * @param text - Raw prose.
- * @returns Prose safe to embed in MDX body text.
+ * Fenced code blocks and inline code spans are left verbatim: their text is
+ * literal in MDX, so escaping `<` or `{` there would render the entity
+ * instead of the source.
+ * @param text - Raw markdown prose, possibly multi-line with code.
+ * @returns Prose safe to embed in an MDX document body.
  */
 export function escapeProse(text: string): string {
-  return normalizeProseDashes(text)
-    .split(/(`[^`]*`)/)
-    .map((seg) =>
-      seg.startsWith("`") && seg.endsWith("`")
-        ? seg
-        : seg.replaceAll("<", "&lt;").replaceAll("{", "&#123;"),
-    )
-    .join("");
+  return mapProse(normalizeProseDashes(text), (seg) =>
+    seg.replaceAll("<", "&lt;").replaceAll("{", "&#123;"),
+  );
 }
 
 /**
@@ -163,11 +190,11 @@ export function renderToolPage(tool: ToolDefinition): string {
   const schema = z.toJSONSchema(tool.inputSchema) as JsonSchemaObject;
   const props = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
-  const discriminatorName = Object.keys(props).find((k) => props[k]?.enum);
-  const discriminator = discriminatorName
-    ? props[discriminatorName]
-    : undefined;
+  const discriminatorName = tool.discriminator;
+  const discriminator = props[discriminatorName];
   const actions = discriminator?.enum ?? [];
+  const actionLabel =
+    discriminatorName.charAt(0).toUpperCase() + discriminatorName.slice(1);
   const firstSentence = `${tool.description.split(". ")[0]}.`;
 
   const paramNames = Object.keys(props).sort((a, b) => {
@@ -187,7 +214,7 @@ export function renderToolPage(tool: ToolDefinition): string {
   ).map(({ action, purpose }) => `| \`${action}\` | ${escapeCell(purpose)} |`);
 
   return `---
-title: ${tool.name}
+title: ${yamlQuote(tool.name)}
 description: ${yamlQuote(firstSentence)}
 ---
 
@@ -197,9 +224,9 @@ ${GENERATED_NOTE}
 
 ${escapeProse(tool.description)}
 
-## Actions
+## ${actionLabel}s
 
-| Action | Purpose |
+| ${actionLabel} | Purpose |
 |---|---|
 ${actionRows.join("\n")}
 
@@ -260,9 +287,9 @@ export function transformReference(raw: string, file: string): string {
     /`references\/(conventions|artifacts|lifecycle|resilience)\.md`/g,
     "[`references/$1.md`](/docs/reference/$1/)",
   );
-  const normalizedBody = normalizeProseDashes(linked);
+  const safeBody = escapeProse(linked);
   return `---
-title: ${title}
+title: ${yamlQuote(title)}
 description: ${yamlQuote(ref.description)}
 ---
 
@@ -271,14 +298,15 @@ import { Callout } from 'fumadocs-ui/components/callout';
 ${GENERATED_NOTE}
 
 <Callout type="info">
-  Canonical skill reference. This page is synced verbatim from
-  plugins/claude-code/skills/piyaz/references/${file} in the piyaz repo.
-  The Piyaz skills and agents follow exactly this text.
+  Canonical skill reference, synced from
+  plugins/claude-code/skills/piyaz/references/${file} in the piyaz repo with
+  prose dashes normalized for the docs style guide. The Piyaz skills and
+  agents follow this reference.
 </Callout>
 
 # ${title}
 
-${normalizedBody}
+${safeBody}
 `;
 }
 
@@ -365,8 +393,9 @@ ${agentSections.join("\n\n")}
  */
 function parseArgs(): { out: string } {
   const idx = process.argv.indexOf("--out");
-  const fallback = resolve(import.meta.dir, "../../mymir-docs/content/docs");
-  return { out: idx === -1 ? fallback : resolve(process.argv[idx + 1]) };
+  const value = idx === -1 ? undefined : process.argv[idx + 1];
+  const fallback = resolve(import.meta.dir, "../../piyaz-docs/content/docs");
+  return { out: value ? resolve(value) : fallback };
 }
 
 /**
@@ -405,6 +434,15 @@ async function main(): Promise<void> {
   await writeFile(
     join(referenceDir, "skills-and-agents.mdx"),
     await renderCatalog(pluginRoot),
+  );
+
+  const referenceSlugs = [
+    ...SKILL_REFERENCES.map((ref) => ref.slug),
+    "skills-and-agents",
+  ];
+  await writeFile(
+    join(referenceDir, "meta.json"),
+    `${JSON.stringify({ title: "Reference", pages: referenceSlugs }, null, 2)}\n`,
   );
 
   console.log(

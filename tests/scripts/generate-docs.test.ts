@@ -39,7 +39,7 @@ describe("renderToolPage", () => {
   const page = renderToolPage(TOOLS[0]);
 
   test("emits frontmatter, marker, and sections", () => {
-    expect(page).toStartWith("---\ntitle: piyaz_project\n");
+    expect(page).toStartWith('---\ntitle: "piyaz_project"\n');
     expect(page).toContain("Do not edit by hand");
     expect(page).toContain("## Actions");
     expect(page).toContain("## Parameters");
@@ -69,7 +69,7 @@ describe("transformReference", () => {
   const out = transformReference(raw, "conventions.md");
 
   test("extracts the title into frontmatter and keeps the h1", () => {
-    expect(out).toContain("title: Piyaz Conventions");
+    expect(out).toContain('title: "Piyaz Conventions"');
     expect(out).toContain("# Piyaz Conventions");
   });
 
@@ -150,13 +150,14 @@ describe("escapeProse", () => {
 
 describe("renderToolPage covers every tool", () => {
   for (const tool of TOOLS) {
-    test(`${tool.name} has a populated Actions table`, () => {
+    test(`${tool.name} has a populated values table`, () => {
       const page = renderToolPage(tool);
-      const actionsSection = page.slice(
-        page.indexOf("## Actions"),
-        page.indexOf("## Parameters"),
+      const firstHeading = page.indexOf("\n## ");
+      const valuesSection = page.slice(
+        firstHeading,
+        page.indexOf("\n## ", firstHeading + 4),
       );
-      const bodyRows = actionsSection
+      const bodyRows = valuesSection
         .split("\n")
         .filter((l) => l.startsWith("| `"));
       expect(bodyRows.length).toBeGreaterThan(0);
@@ -201,6 +202,50 @@ describe("renderToolPage union-array types", () => {
     const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
     const prUrlRow = task.split("\n").find((l) => l.startsWith("| `prUrl` |"));
     expect(prUrlRow).toContain("string (url) \\| null");
+  });
+});
+
+describe("renderToolPage values-section label", () => {
+  test("labels the section by the discriminator, not always 'Actions'", () => {
+    const ctx = renderToolPage(TOOLS.find((t) => t.name === "piyaz_context")!);
+    expect(ctx).toContain("## Depths");
+    expect(ctx).toContain("| Depth | Purpose |");
+    expect(ctx).not.toContain("## Actions");
+
+    const analyze = renderToolPage(
+      TOOLS.find((t) => t.name === "piyaz_analyze")!,
+    );
+    expect(analyze).toContain("## Types");
+    expect(analyze).not.toContain("## Actions");
+
+    const project = renderToolPage(
+      TOOLS.find((t) => t.name === "piyaz_project")!,
+    );
+    expect(project).toContain("## Actions");
+  });
+});
+
+describe("transformReference MDX escaping", () => {
+  test("escapes angle brackets and braces in prose but not in code", () => {
+    const raw =
+      "# T\n\nUse <Foo> and {bar} in prose.\n\n```\nkeep <Baz> raw\n```\n";
+    const out = transformReference(raw, "conventions.md");
+    expect(out).toContain("Use &lt;Foo> and &#123;bar} in prose.");
+    expect(out).toContain("keep <Baz> raw");
+  });
+});
+
+describe("renderToolPage discriminator selection", () => {
+  test("uses the declared discriminator, not an incidental enum field", () => {
+    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
+    const actionsSection = task.slice(
+      task.indexOf("## Actions"),
+      task.indexOf("## Parameters"),
+    );
+    for (const action of ["create", "update", "delete"]) {
+      expect(actionsSection).toContain(`| \`${action}\` |`);
+    }
+    expect(actionsSection).not.toContain("| `draft` |");
   });
 });
 

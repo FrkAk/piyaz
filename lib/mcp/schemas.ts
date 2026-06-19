@@ -392,6 +392,8 @@ export interface ToolDefinition {
   title: string;
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
+  /** Name of the enum field that selects the tool's action/variant. */
+  discriminator: string;
 }
 
 /** All 6 tools in registration order. Titles match the MCP annotations. */
@@ -401,35 +403,41 @@ export const TOOLS: readonly ToolDefinition[] = [
     title: "Manage Project",
     description: DESCRIPTIONS.piyaz_project,
     inputSchema: projectInputSchema,
+    discriminator: "action",
   },
   {
     name: "piyaz_task",
     title: "Manage Task",
     description: DESCRIPTIONS.piyaz_task,
     inputSchema: taskInputSchema,
+    discriminator: "action",
   },
   {
     name: "piyaz_edge",
     title: "Manage Edge",
     description: DESCRIPTIONS.piyaz_edge,
     inputSchema: edgeInputSchema,
+    discriminator: "action",
   },
   {
     name: "piyaz_query",
     title: "Query Tasks",
     description: DESCRIPTIONS.piyaz_query,
     inputSchema: queryInputSchema,
+    discriminator: "type",
   },
   {
     name: "piyaz_context",
     title: "Get Task Context",
     description: DESCRIPTIONS.piyaz_context,
     inputSchema: contextInputSchema,
+    discriminator: "depth",
   },
   {
     name: "piyaz_analyze",
     title: "Analyze Graph",
     description: DESCRIPTIONS.piyaz_analyze,
     inputSchema: analyzeInputSchema,
+    discriminator: "type",
   },
 ] as const;

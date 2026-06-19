@@ -6,6 +6,7 @@ on:
     paths:
       - "lib/mcp/**"
       - "lib/graph/tool-handlers.ts"
+      - "lib/graph/identifier.ts"
       - "plugins/claude-code/**"
       - "scripts/generate-docs.ts"
   workflow_dispatch:
@@ -32,13 +33,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Checkout mymir-docs
+      - name: Checkout piyaz-docs
         uses: actions/checkout@v6
         with:
-          repository: FrkAk/mymir-docs
+          repository: FrkAk/piyaz-docs
           token: ${{ secrets.DOCS_REPO_TOKEN }}
           path: docs-repo
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Regenerate docs
         run: bun scripts/generate-docs.ts --out docs-repo/content/docs

@@ -23,6 +23,6 @@
 
 ## Docs impact
 
-<!-- Does this change UI flows, env vars, setup steps, or workflows documented at docs.piyaz.dev? List affected pages, or write "none". Generated reference (MCP tools, skill references, skills/agents catalog) syncs automatically via the Docs Sync workflow. -->
+<!-- Does this change UI flows, env vars, setup steps, or workflows documented at docs.piyaz.ai? List affected pages, or write "none". Generated reference (MCP tools, skill references, skills/agents catalog) syncs automatically via the Docs Sync workflow. -->
 
 - 
