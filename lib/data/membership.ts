@@ -1,7 +1,7 @@
 /**
  * Membership helpers.
  *
- * `app_user` has no grants on `neon_auth.*`; every read here routes through
+ * `app_user` has no grants on `piyaz_auth.*`; every read here routes through
  * the `public.current_user_*` / `public.team_*_visible` SECURITY DEFINER
  * functions that read `app.user_id` from the GUC `withUserContext` sets.
  */

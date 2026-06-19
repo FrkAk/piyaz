@@ -150,7 +150,7 @@ test("HSTS host exclusion matches loopback names but not real domains", () => {
   expect(regex.test("127.0.0.1:3000")).toBe(true);
   expect(regex.test("[::1]")).toBe(true);
   expect(regex.test("[::1]:3000")).toBe(true);
-  expect(regex.test("mymir.dev")).toBe(false);
+  expect(regex.test("piyaz.ai")).toBe(false);
   expect(regex.test("evil-localhost.com")).toBe(false);
   expect(regex.test("127.0.0.1.evil.com")).toBe(false);
 });

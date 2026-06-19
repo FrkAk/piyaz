@@ -1,4 +1,4 @@
-# Contributing to Mymir
+# Contributing to Piyaz
 
 ## Prerequisites
 

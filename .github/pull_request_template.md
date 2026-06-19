@@ -1,6 +1,6 @@
 ## Summary
 
-**Task Reference**: [MYMR-XXX] <!-- The ONE primary task this PR builds. Brackets trigger Mymir PR-status tracking — use them only here. Reference any related tasks elsewhere without brackets (plain link, not tracked). -->
+**Task Reference**: [PYZ-XXX] <!-- The ONE primary task this PR builds. Brackets trigger Piyaz PR-status tracking — use them only here. Reference any related tasks elsewhere without brackets (plain link, not tracked). -->
 
 <!-- What does this PR change and why? Link the related issue: "Closes #N" -->
 
@@ -23,6 +23,6 @@
 
 ## Docs impact
 
-<!-- Does this change UI flows, env vars, setup steps, or workflows documented at docs.mymir.dev? List affected pages, or write "none". Generated reference (MCP tools, skill references, skills/agents catalog) syncs automatically via the Docs Sync workflow. -->
+<!-- Does this change UI flows, env vars, setup steps, or workflows documented at docs.piyaz.dev? List affected pages, or write "none". Generated reference (MCP tools, skill references, skills/agents catalog) syncs automatically via the Docs Sync workflow. -->
 
 - 

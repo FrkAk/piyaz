@@ -1,7 +1,7 @@
 /**
  * OAuth session helpers.
  *
- * `app_user` has no grants on `neon_auth.oauth*`; every helper here goes
+ * `app_user` has no grants on `piyaz_auth.oauth*`; every helper here goes
  * through `serviceRoleDb` (BYPASSRLS). Callers must pass a `userId` that
  * `requireSession` verified — the WHERE clause is the effective scope.
  */

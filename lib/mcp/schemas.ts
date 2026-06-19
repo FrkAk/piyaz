@@ -1,5 +1,5 @@
 /**
- * MCP tool input schemas, descriptions, and metadata for the 6 Mymir tools.
+ * MCP tool input schemas, descriptions, and metadata for the 6 Piyaz tools.
  *
  * Standalone module with no data-layer imports so it can be consumed by
  * both the MCP server (lib/mcp/create-server.ts) and the docs generator
@@ -48,39 +48,39 @@ export const LIMITS = {
 
 /** Tool descriptions shared between the MCP server and the docs generator. */
 export const DESCRIPTIONS = {
-  mymir_project:
+  piyaz_project:
     "List, create, and update projects, plus enumerate team memberships. Spans every team the caller belongs to; no server-side session state, so pass projectId explicitly on every downstream call. " +
-    "list=projects (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via mymir_query type='meta'. " +
+    "list=projects (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via piyaz_query type='meta'. " +
     "teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. " +
     "select=confirm working project; pass returned projectId on every subsequent call. " +
     "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline; auto-resolves single-team). " +
     "update=title, description, status, categories, or identifier. Renaming identifier cascades every taskRef and breaks external references (PR titles, docs, commits).",
-  mymir_task:
+  piyaz_task:
     "Create, update, or delete tasks. Lifecycle: draft → planned → in_progress → in_review → done. The implementer subagent's terminal write is `in_review` (PR opened, tests green); the HOTL gate flips to `done` after PR approval. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
-    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, three tag dimensions (work-type, cross-cutting, tech), one project category. priority, estimate, and assigneeIds are first-class fields, not tags: priority (urgent / core / normal / backlog), estimate (Fibonacci story points 1/2/3/5/8/13), assigneeIds (array of team-member user UUIDs). After create: search precedents/coordinators by verb+noun+surface, wire mymir_edge, verify with mymir_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
+    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, three tag dimensions (work-type, cross-cutting, tech), one project category. priority, estimate, and assigneeIds are first-class fields, not tags: priority (urgent / core / normal / backlog), estimate (Fibonacci story points 1/2/3/5/8/13), assigneeIds (array of team-member user UUIDs). After create: search precedents/coordinators by verb+noun+surface, wire piyaz_edge, verify with piyaz_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
     "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files, assigneeIds) APPEND by default; overwriteArrays=true REPLACES them. Destructive, NO undo (history is an audit log); confirm with user first. " +
     "delete: preview=true (default) shows impact; preview=false executes. Prefer status='cancelled' for abandoned scope so the rationale is preserved. " +
-    "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run mymir_analyze type='downstream' to propagate.",
-  mymir_edge:
+    "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run piyaz_analyze type='downstream' to propagate.",
+  piyaz_edge:
     "Create, update, or remove dependency edges between tasks. depends_on=source needs target's output (target must be done first). relates_to=informational link, neither blocks the other. Litmus test: removing the target makes the source impossible → depends_on; just makes it harder → relates_to. " +
     "create: edge note REQUIRED and substantive; notes propagate to downstream agent context, and placeholders ('needed', 'depends') are rejected. Write it as a brief to the developer about to start the source task. " +
     "update: change edgeType or note by edgeId. " +
     "remove: by edgeId OR by sourceTaskId+targetTaskId+edgeType. " +
-    "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with mymir_query type='edges'.",
-  mymir_query:
+    "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with piyaz_query type='edges'.",
+  piyaz_query:
     "Search and browse project data. Pick the slim tool first; reserve overview for unfamiliar projects. " +
     "search=tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass tags=[...] for exact tag match (OR-within); combine with `query` to AND-narrow. Pass category='...' for exact project-category match (closed vocabulary; unknown values rejected with the valid list inline); combines with query/tags via AND. Single-result responses include a state hint pointing to the right next call. " +
     "list=every task in the project (slim, ordered by position). " +
     "edges=relationships on one task (connected title, status, direction, note). " +
     "meta=slim project metadata: header, description, status, categories, tag vocabulary (with usage counts), progress + status counts. No task list, no edges. Use this to look up categories before setting one, or the tag vocabulary before coining new tags. " +
     "overview=full project structure: every task, every edge, full tag vocab, progress. VERY HEAVY. Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session. For just categories or tag vocab, use meta.",
-  mymir_context:
+  piyaz_context:
     "Retrieve task context at varying depth. ALWAYS fetch context before reasoning about a task; pick the lightest depth that answers the question. " +
-    "summary=task header + description + counts (criteria, decisions, plan flag, edge counts) + full 1-hop edges WITH notes. The lightest depth that still carries edge notes; folds in what `mymir_query type='edges'` would give. " +
+    "summary=task header + description + counts (criteria, decisions, plan flag, edge counts) + full 1-hop edges WITH notes. The lightest depth that still carries edge notes; folds in what `piyaz_query type='edges'` would give. " +
     "working=detailed (criteria, decisions, 1-hop edges) for refinement and review. " +
     "agent=multi-hop dependency chains with upstream execution records (~4-8K tokens); fetch BEFORE coding. " +
     "planning=spec-focused (project description, prereqs, acceptance criteria, downstream specs); fetch BEFORE writing the implementation plan.",
-  mymir_analyze:
+  piyaz_analyze:
     "Analyze the project dependency graph. All variants slim; lead with these for status, prioritization, 'what's next', 'what's stuck'. " +
     "critical_path=longest dep chain (project bottleneck, minimum duration). Lead with this on continue / resume / 'guide me forward'; the most important type for prioritization. " +
     "ready=planned tasks with all effective deps done (only `status='planned'` reaches this state; drafts with satisfied deps surface as `plannable`, not `ready`). Pick from `ready ∩ critical_path` for the highest-impact unblocked work. " +
@@ -93,7 +93,7 @@ export const projectInputSchema = z.object({
   action: z
     .enum(["list", "teams", "create", "select", "update"])
     .describe(
-      "list=projects across every team you belong to (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via mymir_query type='meta'. teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields.",
+      "list=projects across every team you belong to (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via piyaz_query type='meta'. teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields.",
     ),
   projectId: z
     .uuid()
@@ -205,14 +205,14 @@ export const taskInputSchema = z.object({
     .max(LIMITS.tags)
     .optional()
     .describe(
-      "Kebab-case. Every task carries three tag dimensions: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched). Priority is the `priority` field, not a tag. Do NOT tag codebase area (use category) or status. Run mymir_query type='meta' before coining new tags.",
+      "Kebab-case. Every task carries three tag dimensions: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched). Priority is the `priority` field, not a tag. Do NOT tag codebase area (use category) or status. Run piyaz_query type='meta' before coining new tags.",
     ),
   category: z
     .string()
     .max(LIMITS.category)
     .optional()
     .describe(
-      "Architectural layer / subsystem this task belongs to (exactly one). Reuse a project category; do not silently coin mid-task. The project's 4-8 categories are set on creation or via decompose/onboarding gates. Run mymir_query type='meta' to see them. Artifacts §4.",
+      "Architectural layer / subsystem this task belongs to (exactly one). Reuse a project category; do not silently coin mid-task. The project's 4-8 categories are set on creation or via decompose/onboarding gates. Run piyaz_query type='meta' to see them. Artifacts §4.",
     ),
   priority: z
     .enum(["urgent", "core", "normal", "backlog"])
@@ -348,7 +348,7 @@ export const queryInputSchema = z.object({
     .max(LIMITS.category)
     .optional()
     .describe(
-      "Filter to tasks in exactly this category (AND with `query`/`tags`). Must be one of the project's categories (closed vocabulary); unknown values are rejected. Run mymir_query type='meta' for the current list.",
+      "Filter to tasks in exactly this category (AND with `query`/`tags`). Must be one of the project's categories (closed vocabulary); unknown values are rejected. Run piyaz_query type='meta' for the current list.",
     ),
   taskId: z.uuid().optional().describe("Task UUID for type='edges'."),
   projectId: z
@@ -363,7 +363,7 @@ export const contextInputSchema = z.object({
     .enum(["summary", "working", "agent", "planning", "review"])
     .default("working")
     .describe(
-      "summary=task header + description + counts + 1-hop edges with notes (folds in `mymir_query type='edges'`). working=criteria, decisions, 1-hop edges (both depends_on and relates_to, both directions, with notes) — does NOT render executionRecord, files, or implementationPlan. agent=multi-hop deps + upstream execution records (each with its PR link) + downstream; includes a ⚠ Blocked section when direct prerequisites are unfinished; for done/cancelled tasks returns the retrospective record bundle (project, what the task was, outcome, decisions, PR link) instead of the implementation shape (use BEFORE coding, and to read a finished task's record). No bundle renders recorded file lists — the linked PR diff is the source of truth for what changed. planning=project description, prereqs, ACs, downstream specs, links, and abandoned approaches (cancelled-dep execution records with their closed-PR links) (use BEFORE writing the implementation plan). review=in_review review bundle: implementationPlan alongside executionRecord, PR link surfaced, AC evaluation, downstream impact, review-lens prompts (security / perf / reliability / observability / codebase standards); review the actual changes from the PR diff. The review subagent reads this depth.",
+      "summary=task header + description + counts + 1-hop edges with notes (folds in `piyaz_query type='edges'`). working=criteria, decisions, 1-hop edges (both depends_on and relates_to, both directions, with notes) — does NOT render executionRecord, files, or implementationPlan. agent=multi-hop deps + upstream execution records (each with its PR link) + downstream; includes a ⚠ Blocked section when direct prerequisites are unfinished; for done/cancelled tasks returns the retrospective record bundle (project, what the task was, outcome, decisions, PR link) instead of the implementation shape (use BEFORE coding, and to read a finished task's record). No bundle renders recorded file lists — the linked PR diff is the source of truth for what changed. planning=project description, prereqs, ACs, downstream specs, links, and abandoned approaches (cancelled-dep execution records with their closed-PR links) (use BEFORE writing the implementation plan). review=in_review review bundle: implementationPlan alongside executionRecord, PR link surfaced, AC evaluation, downstream impact, review-lens prompts (security / perf / reliability / observability / codebase standards); review the actual changes from the PR diff. The review subagent reads this depth.",
     ),
   projectId: z
     .uuid()
@@ -397,39 +397,39 @@ export interface ToolDefinition {
 /** All 6 tools in registration order. Titles match the MCP annotations. */
 export const TOOLS: readonly ToolDefinition[] = [
   {
-    name: "mymir_project",
+    name: "piyaz_project",
     title: "Manage Project",
-    description: DESCRIPTIONS.mymir_project,
+    description: DESCRIPTIONS.piyaz_project,
     inputSchema: projectInputSchema,
   },
   {
-    name: "mymir_task",
+    name: "piyaz_task",
     title: "Manage Task",
-    description: DESCRIPTIONS.mymir_task,
+    description: DESCRIPTIONS.piyaz_task,
     inputSchema: taskInputSchema,
   },
   {
-    name: "mymir_edge",
+    name: "piyaz_edge",
     title: "Manage Edge",
-    description: DESCRIPTIONS.mymir_edge,
+    description: DESCRIPTIONS.piyaz_edge,
     inputSchema: edgeInputSchema,
   },
   {
-    name: "mymir_query",
+    name: "piyaz_query",
     title: "Query Tasks",
-    description: DESCRIPTIONS.mymir_query,
+    description: DESCRIPTIONS.piyaz_query,
     inputSchema: queryInputSchema,
   },
   {
-    name: "mymir_context",
+    name: "piyaz_context",
     title: "Get Task Context",
-    description: DESCRIPTIONS.mymir_context,
+    description: DESCRIPTIONS.piyaz_context,
     inputSchema: contextInputSchema,
   },
   {
-    name: "mymir_analyze",
+    name: "piyaz_analyze",
     title: "Analyze Graph",
-    description: DESCRIPTIONS.mymir_analyze,
+    description: DESCRIPTIONS.piyaz_analyze,
     inputSchema: analyzeInputSchema,
   },
 ] as const;

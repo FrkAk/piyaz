@@ -9,7 +9,7 @@ import {
 } from "react";
 
 /** Cookie name for the graph-rail collapsed-state preference. Server-readable so SSR can render the correct width on first paint and avoid a hydration flash. */
-const COOKIE_NAME = "mymir-graph-rail-collapsed";
+const COOKIE_NAME = "piyaz-graph-rail-collapsed";
 /** Cookie max-age in seconds (1 year). */
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 

@@ -633,7 +633,7 @@ export async function getProjectMeta(
 
 /** Team entry returned by {@link listUserTeams}. */
 export type UserTeamEntry = {
-  /** Team UUID — pass to `mymir_project create organizationId='...'`. */
+  /** Team UUID — pass to `piyaz_project create organizationId='...'`. */
   id: string;
   /** Display name shown in the home grid and settings. */
   name: string;
@@ -874,13 +874,13 @@ export async function listProjectIndex(
 }
 
 /**
- * Lean project list for the MCP `mymir_project action='list'` tool. Selects
+ * Lean project list for the MCP `piyaz_project action='list'` tool. Selects
  * only the columns the agent skill consumes (id, organizationId, title,
  * identifier, status) plus the team chip and rolled-up task counts, and
  * skips the heavy `description`, `history`, `categories`, and timestamp
  * columns at the SQL projection so wire bytes are saved off the Postgres
  * round-trip — not just trimmed in JS. Agents fetch description and tag
- * vocabulary on demand via `mymir_query type='meta'`.
+ * vocabulary on demand via `piyaz_query type='meta'`.
  *
  * No pagination; returns every project the caller can see, ordered by
  * `updatedAt DESC, id DESC` to match `listProjectsSlim`.

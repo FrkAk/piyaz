@@ -13,12 +13,12 @@ import { TOOLS } from "../../lib/mcp/schemas";
 describe("TOOLS", () => {
   test("exposes all six tools", () => {
     expect(TOOLS.map((t) => t.name)).toEqual([
-      "mymir_project",
-      "mymir_task",
-      "mymir_edge",
-      "mymir_query",
-      "mymir_context",
-      "mymir_analyze",
+      "piyaz_project",
+      "piyaz_task",
+      "piyaz_edge",
+      "piyaz_query",
+      "piyaz_context",
+      "piyaz_analyze",
     ]);
   });
 });
@@ -39,7 +39,7 @@ describe("renderToolPage", () => {
   const page = renderToolPage(TOOLS[0]);
 
   test("emits frontmatter, marker, and sections", () => {
-    expect(page).toStartWith("---\ntitle: mymir_project\n");
+    expect(page).toStartWith("---\ntitle: piyaz_project\n");
     expect(page).toContain("Do not edit by hand");
     expect(page).toContain("## Actions");
     expect(page).toContain("## Parameters");
@@ -65,18 +65,18 @@ describe("renderToolPage", () => {
 });
 
 describe("transformReference", () => {
-  const raw = "# Mymir Conventions\n\nRead `references/artifacts.md` first.\n";
+  const raw = "# Piyaz Conventions\n\nRead `references/artifacts.md` first.\n";
   const out = transformReference(raw, "conventions.md");
 
   test("extracts the title into frontmatter and keeps the h1", () => {
-    expect(out).toContain("title: Mymir Conventions");
-    expect(out).toContain("# Mymir Conventions");
+    expect(out).toContain("title: Piyaz Conventions");
+    expect(out).toContain("# Piyaz Conventions");
   });
 
   test("adds the canonical banner with the source path", () => {
     expect(out).toContain("Canonical skill reference");
     expect(out).toContain(
-      "plugins/claude-code/skills/mymir/references/conventions.md",
+      "plugins/claude-code/skills/piyaz/references/conventions.md",
     );
   });
 
@@ -92,8 +92,8 @@ describe("renderCatalog", () => {
     const out = await renderCatalog(
       resolve(import.meta.dir, "../../plugins/claude-code"),
     );
-    expect(out).toContain("### /mymir");
-    expect(out).toContain("### /mymir:composer");
+    expect(out).toContain("### /piyaz");
+    expect(out).toContain("### /piyaz:composer");
     expect(out).toContain("## Agents");
     expect(out).not.toMatch(/<PR/);
   });
@@ -170,7 +170,7 @@ describe("renderToolPage covers every tool", () => {
 
 describe("renderToolPage Required column", () => {
   test("default-valued fields are not marked Required", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "mymir_task")!);
+    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
     const previewRow = task
       .split("\n")
       .find((l) => l.startsWith("| `preview` |"));
@@ -179,7 +179,7 @@ describe("renderToolPage Required column", () => {
   });
 
   test("the discriminator field itself stays Required", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "mymir_task")!);
+    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
     const actionRow = task
       .split("\n")
       .find((l) => l.startsWith("| `action` |"));
@@ -189,7 +189,7 @@ describe("renderToolPage Required column", () => {
 
 describe("renderToolPage union-array types", () => {
   test("renders an array of a union as its members, not unknown[]", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "mymir_task")!);
+    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
     const acRow = task
       .split("\n")
       .find((l) => l.startsWith("| `acceptanceCriteria` |"));
@@ -198,7 +198,7 @@ describe("renderToolPage union-array types", () => {
   });
 
   test("renders a url field as string (url), not bare string", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "mymir_task")!);
+    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
     const prUrlRow = task.split("\n").find((l) => l.startsWith("| `prUrl` |"));
     expect(prUrlRow).toContain("string (url) \\| null");
   });

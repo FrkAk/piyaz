@@ -14,14 +14,14 @@ jobs:
   sync:
     name: Regenerate docs and open PR
     runs-on: ubuntu-latest
-    if: github.repository == 'FrkAk/mymir'
+    if: github.repository == 'FrkAk/piyaz'
     concurrency:
       group: docs-sync
       cancel-in-progress: false
     permissions:
       contents: read
     steps:
-      - name: Checkout mymir
+      - name: Checkout piyaz
         uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -50,9 +50,9 @@ jobs:
           token: ${{ secrets.DOCS_REPO_TOKEN }}
           branch: docs-sync/auto
           delete-branch: true
-          commit-message: "docs: sync generated reference from mymir"
-          title: "docs: sync generated reference from mymir"
+          commit-message: "docs: sync generated reference from piyaz"
+          title: "docs: sync generated reference from piyaz"
           body: |
-            Automated regeneration triggered by FrkAk/mymir@${{ github.sha }}.
+            Automated regeneration triggered by FrkAk/piyaz@${{ github.sha }}.
             Sources: MCP schemas, tool descriptions, or plugin skill files.
           signoff: false

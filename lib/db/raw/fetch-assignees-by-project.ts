@@ -13,7 +13,7 @@ export type AssigneeByProjectRow = {
 /**
  * Every visible task assignee in a project, as a lazy batch statement.
  * Routes through the `task_assignees_for_project_visible` SECURITY DEFINER
- * function so `app_user` can read `neon_auth.user` under the Option-B
+ * function so `app_user` can read `piyaz_auth.user` under the Option-B
  * lockdown. Normalize the batch result with
  * `normalizeExecuteResult<AssigneeByProjectRow>` and fold with
  * {@link mapAssigneesByProjectRows}.

@@ -13,7 +13,7 @@ import { executeRaw, type Conn } from "@/lib/db/raw";
  * membership-derived scope (`docker/rls-policies.sql`). The helper must
  * therefore run inside `withUserContext` so `app.user_id` is set.
  *
- * Three independent table aggregates — no `neon_auth.member` join
+ * Three independent table aggregates — no `piyaz_auth.member` join
  * (app_user has no grant there). Each `MAX(updated_at)` runs over the
  * RLS-filtered row set, so non-members see zero rows and GREATEST
  * collapses to epoch-0.

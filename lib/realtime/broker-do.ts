@@ -12,7 +12,7 @@ import {
 } from "./broker-auth";
 
 /**
- * Wire message sent to the `MymirBroker` Durable Object over the
+ * Wire message sent to the `PiyazBroker` Durable Object over the
  * `fetch(request)` boundary. The DO holds the single broker-global view of
  * every user's subscriptions and connected WebSockets.
  */
@@ -62,7 +62,7 @@ const MAX_CONNECTIONS_PER_USER = 20;
  * sockets. This is what keeps a hibernating socket (which, unlike SSE,
  * never reconnects to re-register) receiving events after an idle cycle.
  */
-export class MymirBroker extends DurableObject<BrokerEnv> {
+export class PiyazBroker extends DurableObject<BrokerEnv> {
   private subs = new Map<string, Map<ResourceKey, number | null>>();
 
   /** False until {@link ensureHydrated} rebuilds {@link subs} after a wake. */
@@ -73,7 +73,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
    * HMAC envelope, then routes WebSocket upgrades to the hibernation
    * accept path and JSON RPCs to the subscription / dispatch handlers.
    *
-   * The DO is only reachable to Workers that hold the `MYMIR_BROKER`
+   * The DO is only reachable to Workers that hold the `PIYAZ_BROKER`
    * binding, but the binding alone is not authentication: any caller
    * with the binding could spoof `userId` or fabricate dispatches if the
    * envelope check were skipped. The check rejects every unsigned or
@@ -163,7 +163,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
 
   /**
    * Accept a new WebSocket on behalf of the user named in
-   * `X-Mymir-User-Id`. Enforces the per-user cap before allocating the
+   * `X-Piyaz-User-Id`. Enforces the per-user cap before allocating the
    * socket pair so a saturated user is rejected without consuming resources.
    *
    * @param request - Upgrade request carrying the user id header.
@@ -173,7 +173,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   private handleUpgrade(request: Request): Response {
     const userId = request.headers.get(BROKER_USER_ID_HEADER);
     if (!userId) {
-      return new Response("Missing X-Mymir-User-Id", { status: 400 });
+      return new Response("Missing X-Piyaz-User-Id", { status: 400 });
     }
     if (this.ctx.getWebSockets(userId).length >= MAX_CONNECTIONS_PER_USER) {
       return new Response("Connection limit reached", { status: 429 });

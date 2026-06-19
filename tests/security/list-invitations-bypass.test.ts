@@ -101,7 +101,7 @@ afterEach(async () => {
  * `expiresAt` is +24h from now, well outside any plausible test runtime.
  *
  * @param orgId - Organization that owns the invitation.
- * @param inviterId - User who issued the invitation (FK into `neon_auth.user`).
+ * @param inviterId - User who issued the invitation (FK into `piyaz_auth.user`).
  * @param email - Invitee email.
  * @returns The inserted row id.
  */
@@ -113,7 +113,7 @@ async function seedInvitation(
   const su = superuserPool();
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
   const [row] = await su<{ id: string }[]>`
-    INSERT INTO neon_auth."invitation"
+    INSERT INTO piyaz_auth."invitation"
       ("organizationId", "email", "role", "status", "expiresAt", "inviterId")
     VALUES
       (${orgId}, ${email}, 'member', 'pending', ${expiresAt}, ${inviterId})
@@ -207,10 +207,10 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
     });
     const su = superuserPool();
     const [attacker] = await su<{ id: string }[]>`
-      SELECT id FROM neon_auth."user" WHERE email = ${attackerEmail}
+      SELECT id FROM piyaz_auth."user" WHERE email = ${attackerEmail}
     `;
     await su`
-      INSERT INTO neon_auth."member"
+      INSERT INTO piyaz_auth."member"
         ("organizationId", "userId", "role", "createdAt")
       VALUES
         (${targetOrg.organizationId}, ${attacker.id}, 'member', now())
@@ -271,7 +271,7 @@ describe("listPendingInvitationsAction (MYMR-155)", () => {
     const targetOrg = await seedUserOrgProject("mymr155-target-action");
     const su = superuserPool();
     const [member] = await su<{ id: string }[]>`
-      INSERT INTO neon_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
       VALUES (
         'MYMR-155 Non-admin Member',
         'mymr155-nonadmin-member-action@test.local',
@@ -281,7 +281,7 @@ describe("listPendingInvitationsAction (MYMR-155)", () => {
       RETURNING id
     `;
     await su`
-      INSERT INTO neon_auth."member"
+      INSERT INTO piyaz_auth."member"
         ("organizationId", "userId", "role", "createdAt")
       VALUES
         (${targetOrg.organizationId}, ${member.id}, 'member', now())

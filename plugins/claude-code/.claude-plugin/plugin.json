@@ -1,9 +1,9 @@
 {
-  "name": "mymir",
+  "name": "piyaz",
   "description": "Persistent context network for coding projects. Tracks tasks, dependencies, and decisions across sessions.",
-  "version": "1.9.1",
+  "version": "0.1.1",
   "author": {
-    "name": "Mymir"
+    "name": "Piyaz"
   },
   "keywords": [
     "project-management",

@@ -9,23 +9,23 @@ import {
 } from "drizzle-orm/pg-core";
 
 /**
- * Drizzle table definitions for the neon_auth schema.
- * Uses pgSchema("neon_auth") for fully-qualified table names
- * (e.g. "neon_auth"."user") so queries work with connection
+ * Drizzle table definitions for the piyaz_auth schema.
+ * Uses pgSchema("piyaz_auth") for fully-qualified table names
+ * (e.g. "piyaz_auth"."user") so queries work with connection
  * poolers (PgBouncer) that reset search_path.
  *
- * Matches Neon Auth's actual DB structure exactly:
+ * Self-managed schema (the project does not use Neon Auth Managed):
  * - uuid IDs with gen_random_uuid() default
  * - timestamptz for all date columns
  * - camelCase column names (PostgreSQL quoted identifiers)
  *
  * Used by drizzleAdapter to map Better Auth models to DB tables.
  * NOT managed by drizzle-kit — auth tables are created by
- * Neon Auth (hosted) or docker/init-auth.sql (self-hosted).
+ * docker/init-auth.sql.
  */
-const neonAuth = pgSchema("neon_auth");
+const piyazAuth = pgSchema("piyaz_auth");
 
-export const user = neonAuth.table("user", {
+export const user = piyazAuth.table("user", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
@@ -43,7 +43,7 @@ export const user = neonAuth.table("user", {
   banExpires: timestamp("banExpires", { withTimezone: true }),
 });
 
-export const session = neonAuth.table(
+export const session = piyazAuth.table(
   "session",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -64,7 +64,7 @@ export const session = neonAuth.table(
   (table) => [index("session_userId_idx").on(table.userId)],
 );
 
-export const account = neonAuth.table(
+export const account = piyazAuth.table(
   "account",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -92,7 +92,7 @@ export const account = neonAuth.table(
   (table) => [index("account_userId_idx").on(table.userId)],
 );
 
-export const verification = neonAuth.table(
+export const verification = piyazAuth.table(
   "verification",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -109,7 +109,7 @@ export const verification = neonAuth.table(
   (table) => [index("verification_identifier_idx").on(table.identifier)],
 );
 
-export const organization = neonAuth.table(
+export const organization = piyazAuth.table(
   "organization",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -122,7 +122,7 @@ export const organization = neonAuth.table(
   (table) => [uniqueIndex("organization_slug_uidx").on(table.slug)],
 );
 
-export const member = neonAuth.table(
+export const member = piyazAuth.table(
   "member",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -141,7 +141,7 @@ export const member = neonAuth.table(
   ],
 );
 
-export const invitation = neonAuth.table(
+export const invitation = piyazAuth.table(
   "invitation",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -165,7 +165,7 @@ export const invitation = neonAuth.table(
   ],
 );
 
-export const jwks = neonAuth.table("jwks", {
+export const jwks = piyazAuth.table("jwks", {
   id: uuid("id").primaryKey().defaultRandom(),
   publicKey: text("publicKey").notNull(),
   privateKey: text("privateKey").notNull(),
@@ -179,7 +179,7 @@ export const jwks = neonAuth.table("jwks", {
  * and user consent records for the MCP auth flow.
  */
 
-export const oauthClient = neonAuth.table(
+export const oauthClient = piyazAuth.table(
   "oauthClient",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -223,7 +223,7 @@ export const oauthClient = neonAuth.table(
   ],
 );
 
-export const oauthAccessToken = neonAuth.table(
+export const oauthAccessToken = piyazAuth.table(
   "oauthAccessToken",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -245,7 +245,7 @@ export const oauthAccessToken = neonAuth.table(
   ],
 );
 
-export const oauthRefreshToken = neonAuth.table(
+export const oauthRefreshToken = piyazAuth.table(
   "oauthRefreshToken",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -270,7 +270,7 @@ export const oauthRefreshToken = neonAuth.table(
   ],
 );
 
-export const oauthConsent = neonAuth.table(
+export const oauthConsent = piyazAuth.table(
   "oauthConsent",
   {
     id: uuid("id").primaryKey().defaultRandom(),

@@ -153,8 +153,8 @@ GRANT EXECUTE ON FUNCTION public.list_org_project_ids(uuid) TO service_role;
 
 
 -- ---------------------------------------------------------------------------
--- current_user_* helpers — app_user's only path to neon_auth.*.
--- STABLE plpgsql; pinned search_path defeats neon_auth.* shadowing.
+-- current_user_* helpers — app_user's only path to piyaz_auth.*.
+-- STABLE plpgsql; pinned search_path defeats piyaz_auth.* shadowing.
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public.current_user_org_ids()
@@ -162,7 +162,7 @@ RETURNS uuid[]
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN (
@@ -170,7 +170,7 @@ BEGIN
       array_agg("organizationId") FILTER (WHERE "organizationId" IS NOT NULL),
       ARRAY[]::uuid[]
     )
-    FROM neon_auth."member"
+    FROM piyaz_auth."member"
     WHERE "userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
   );
 END;
@@ -183,13 +183,13 @@ RETURNS text
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 DECLARE
   v_role text;
 BEGIN
   SELECT role INTO v_role
-  FROM neon_auth."member"
+  FROM piyaz_auth."member"
   WHERE "organizationId" = p_org_id
     AND "userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
   LIMIT 1;
@@ -214,7 +214,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
@@ -223,11 +223,11 @@ BEGIN
     o.name,
     o.slug,
     m.role,
-    (SELECT count(*)::int FROM neon_auth."member" mc WHERE mc."organizationId" = o.id) AS member_count,
+    (SELECT count(*)::int FROM piyaz_auth."member" mc WHERE mc."organizationId" = o.id) AS member_count,
     m."createdAt",
     o."createdAt"
-  FROM neon_auth."member" m
-  INNER JOIN neon_auth."organization" o ON o.id = m."organizationId"
+  FROM piyaz_auth."member" m
+  INNER JOIN piyaz_auth."organization" o ON o.id = m."organizationId"
   WHERE m."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
   ORDER BY m."createdAt" ASC, o.id ASC;
 END;
@@ -240,12 +240,12 @@ RETURNS boolean
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN EXISTS (
     SELECT 1
-    FROM neon_auth."member"
+    FROM piyaz_auth."member"
     WHERE "userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
   );
 END;
@@ -260,16 +260,16 @@ RETURNS TABLE (id uuid, role text, organization_id uuid)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
   SELECT m.id, m.role, m."organizationId"
-  FROM neon_auth."member" m
+  FROM piyaz_auth."member" m
   WHERE m.id = p_member_id
     AND EXISTS (
       SELECT 1
-      FROM neon_auth."member" caller
+      FROM piyaz_auth."member" caller
       WHERE caller."organizationId" = m."organizationId"
         AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
     )
@@ -284,16 +284,16 @@ RETURNS TABLE (role text)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
   SELECT m.role
-  FROM neon_auth."member" m
+  FROM piyaz_auth."member" m
   WHERE m."organizationId" = p_org_id
     AND EXISTS (
       SELECT 1
-      FROM neon_auth."member" caller
+      FROM piyaz_auth."member" caller
       WHERE caller."organizationId" = p_org_id
         AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
     );
@@ -317,7 +317,7 @@ RETURNS TABLE (id uuid, name text)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   IF cardinality(p_user_ids) > 1000 THEN
@@ -326,12 +326,12 @@ BEGIN
   END IF;
   RETURN QUERY
   SELECT u.id, u.name
-  FROM neon_auth."user" u
+  FROM piyaz_auth."user" u
   WHERE u.id = ANY (p_user_ids)
     AND EXISTS (
       SELECT 1
-      FROM neon_auth."member" m1
-      INNER JOIN neon_auth."member" m2
+      FROM piyaz_auth."member" m1
+      INNER JOIN piyaz_auth."member" m2
         ON m2."organizationId" = m1."organizationId"
       WHERE m1."userId" = u.id
         AND m2."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
@@ -353,19 +353,19 @@ RETURNS TABLE (user_id uuid, name text, email text)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = public, neon_auth, pg_catalog, pg_temp
+SET search_path = public, piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
   SELECT ta.user_id, u.name, u.email
   FROM public.task_assignees ta
-  INNER JOIN neon_auth."user" u ON u.id = ta.user_id
+  INNER JOIN piyaz_auth."user" u ON u.id = ta.user_id
   WHERE ta.task_id = p_task_id
     AND EXISTS (
       SELECT 1
       FROM public.tasks t
       INNER JOIN public.projects pj ON pj.id = t.project_id
-      INNER JOIN neon_auth."member" caller
+      INNER JOIN piyaz_auth."member" caller
         ON caller."organizationId" = pj.organization_id
       WHERE t.id = p_task_id
         AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
@@ -386,19 +386,19 @@ RETURNS TABLE (task_id uuid, user_id uuid, name text, email text)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = public, neon_auth, pg_catalog, pg_temp
+SET search_path = public, piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
   SELECT ta.task_id, ta.user_id, u.name, u.email
   FROM public.tasks t
   INNER JOIN public.task_assignees ta ON ta.task_id = t.id
-  INNER JOIN neon_auth."user" u ON u.id = ta.user_id
+  INNER JOIN piyaz_auth."user" u ON u.id = ta.user_id
   WHERE t.project_id = p_project_id
     AND EXISTS (
       SELECT 1
       FROM public.projects pj
-      INNER JOIN neon_auth."member" caller
+      INNER JOIN piyaz_auth."member" caller
         ON caller."organizationId" = pj.organization_id
       WHERE pj.id = p_project_id
         AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
@@ -422,17 +422,17 @@ RETURNS TABLE (user_id uuid)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
   SELECT m."userId"
-  FROM neon_auth."member" m
+  FROM piyaz_auth."member" m
   WHERE m."organizationId" = p_org_id
     AND m."userId" = ANY (p_user_ids)
     AND EXISTS (
       SELECT 1
-      FROM neon_auth."member" caller
+      FROM piyaz_auth."member" caller
       WHERE caller."organizationId" = p_org_id
         AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
     );
@@ -454,13 +454,13 @@ CREATE OR REPLACE FUNCTION public.is_caller_in_invitation_org(
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN EXISTS (
     SELECT 1
-    FROM neon_auth.invitation i
-    INNER JOIN neon_auth."member" caller
+    FROM piyaz_auth.invitation i
+    INNER JOIN piyaz_auth."member" caller
       ON caller."organizationId" = i."organizationId"
     WHERE i.id = p_invitation_id
       AND i."organizationId" = p_expected_org_id
@@ -600,11 +600,11 @@ RETURNS TABLE (user_id uuid)
 LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
-SET search_path = neon_auth, pg_catalog, pg_temp
+SET search_path = piyaz_auth, pg_catalog, pg_temp
 AS $$
 BEGIN
   RETURN QUERY
-  SELECT m."userId" FROM neon_auth."member" m WHERE m."organizationId" = p_org_id;
+  SELECT m."userId" FROM piyaz_auth."member" m WHERE m."organizationId" = p_org_id;
 END;
 $$;
 REVOKE EXECUTE ON FUNCTION public.find_org_member_user_ids_as_admin(uuid) FROM public;

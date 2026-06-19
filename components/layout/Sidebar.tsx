@@ -174,7 +174,7 @@ export function SidebarPanel({
         >
           <BrandMark />
           <div className="min-w-0 flex-1 text-[13px] font-semibold leading-tight text-text-primary">
-            mymir
+            piyaz
           </div>
         </Link>
         <button
@@ -517,21 +517,21 @@ function CompactNavIcon({
 }
 
 /**
- * Brand mark — 22×22 rounded square with `m` glyph on the indigo→teal gradient.
+ * Brand mark: 22×22 transparent piyaz mark.
  * @returns Inline mark element.
  */
 function BrandMark() {
   return (
-    <span
-      aria-hidden="true"
-      className="inline-flex h-[22px] w-[22px] items-center justify-center font-mono text-[11px] font-bold"
-      style={{
-        background: "var(--color-accent-grad)",
-        borderRadius: 5,
-        color: "#0b0c10",
-      }}
-    >
-      m
+    <span className="inline-flex h-[22px] w-[22px]">
+      {/* eslint-disable-next-line @next/next/no-img-element -- brand mark is a 22px static asset; next/image optimization is overkill and unconfigured on the Cloudflare build */}
+      <img
+        src="/piyaz-mark.png"
+        alt=""
+        aria-hidden="true"
+        width={22}
+        height={22}
+        className="h-full w-full object-contain"
+      />
     </span>
   );
 }

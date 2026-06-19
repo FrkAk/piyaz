@@ -14,7 +14,7 @@ const MAX_BACKOFF_MS = 30_000;
  * `EventSource` against the in-memory SSE broker (`_broker.node.ts`). On
  * Cloudflare Workers a long-lived SSE connection bills the wall-clock as
  * compute and isolates do not share broker state, so the client instead opens
- * a WebSocket to the hibernating `MymirBroker` Durable Object (zero compute
+ * a WebSocket to the hibernating `PiyazBroker` Durable Object (zero compute
  * while idle). Both transports feed the same invalidation switch
  * ({@link applyRealtimeEvent}); the DO sends SSE-framed payloads over the
  * socket so the wire shape matches the EventSource path.

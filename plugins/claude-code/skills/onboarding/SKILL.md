@@ -1,9 +1,9 @@
 ---
 name: onboarding
 description: >
-  Explicit doorway to the Mymir onboarding subagent. Use only when the user types
-  /mymir:onboarding directly. For natural-language onboarding requests (the user
-  asks to import an existing repo into Mymir), the /mymir skill or the assistant
+  Explicit doorway to the Piyaz onboarding subagent. Use only when the user types
+  /piyaz:onboarding directly. For natural-language onboarding requests (the user
+  asks to import an existing repo into Piyaz), the /piyaz skill or the assistant
   dispatches the onboarding agent via the Task tool — do not invoke this skill
   for that path.
 ---

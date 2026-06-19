@@ -1,5 +1,5 @@
-![Mymir](assets/mymir-logo.png)
-> Context management for the agent-native engineering era.
+![Piyaz](assets/piyaz-logo.png)
+> The agentic workspace where people and AI coding agents work together on every project.
 
 <p align="center">
   <a href="#claude-code"><img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-D97757?style=flat-square&logo=anthropic&logoColor=white" /></a>
@@ -12,60 +12,62 @@
 </p>
 
 <p align="center">
-  <img src="assets/mymir-demo.gif" alt="Mymir demo" width="900" />
+  <img src="assets/piyaz-demo.gif" alt="Piyaz demo" width="900" />
 </p>
 
 Most of us aren't really writing code anymore, we're directing agents that do. But those agents have no memory. Every session starts from zero, and engineers end up spending their time re-explaining what was built, why decisions were made, and what still needs to happen. That's not engineering, that's babysitting.
 
-Mymir replaces that cycle. It's not just a context layer your agents read from, it's an end-to-end project management tool that agents operate natively. Mymir creates tasks, refines them, plans implementations, provides the right context at the right stage, and tracks everything that happens. Your agent harness doesn't need a briefing. It walks into every session knowing exactly what to do next and why.
+Piyaz replaces that cycle. It's not just a context layer your agents read from, it's an agentic workspace where people and AI agents work together on the same project: project management, agent collaboration, and a shared context network in one place. Piyaz creates tasks, refines them, plans implementations, provides the right context at the right stage, and tracks everything that happens. Your agent harness doesn't need a briefing. It walks into every session knowing exactly what to do next and why.
+
+Full setup, guides, and reference live at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
 
 ---
 
 ## Use the hosted version (no clone)
 
-Mymir is hosted at [app.mymir.dev](https://app.mymir.dev). The plugin installs into your coding agent once, at the user level, and works in every project you open, no clone required. Run the one-time install for your agent and sign in when prompted (OAuth, once per machine).
+Piyaz is hosted at [app.piyaz.ai](https://app.piyaz.ai). The plugin installs into your coding agent once, at the user level, and works in every project you open, no clone required. Run the one-time install for your agent and sign in when prompted (OAuth, once per machine).
 
 ### Claude Code
 
 ```bash
-claude plugin marketplace add FrkAk/mymir
-claude plugin install mymir@mymir
+claude plugin marketplace add FrkAk/piyaz
+claude plugin install piyaz@piyaz
 ```
 
-Then run `/mcp`, select **mymir**, and complete the browser sign-in.
+Then run `/mcp`, select **piyaz**, and complete the browser sign-in.
 
 ### Codex
 
 ```bash
-codex plugin marketplace add FrkAk/mymir
+codex plugin marketplace add FrkAk/piyaz
 ```
 
-Open Codex, run `/plugin`, install **Mymir**, restart, and authenticate when prompted. Invoke the main skill with `$mymir`. (If your Codex build can't resolve the root marketplace, append `--sparse plugins`.)
+Open Codex, run `/plugin`, install **Piyaz**, restart, and authenticate when prompted. Invoke the main skill with `$piyaz`. (If your Codex build can't resolve the root marketplace, append `--sparse plugins`.)
 
 ### Cursor
 
 - **MCP only, any plan (quick start):** open the install deeplink, then sign in on the first tool call:
 
   ```text
-  cursor://anysphere.cursor-deeplink/mcp/install?name=mymir&config=eyJ1cmwiOiJodHRwczovL2FwcC5teW1pci5kZXYvYXBpL21jcCJ9
+  cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5waXlhei5haS9hcGkvbWNwIn0=
   ```
 
-- **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/mymir`. Team Marketplaces is a Teams/Enterprise feature.
-- **Public Marketplace:** listing in the [Cursor Marketplace](https://cursor.com/marketplace) requires submission and manual review. Search-and-install lands once Mymir is published.
+- **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/piyaz`. Team Marketplaces is a Teams/Enterprise feature.
+- **Public Marketplace:** listing in the [Cursor Marketplace](https://cursor.com/marketplace) requires submission and manual review. Search-and-install lands once Piyaz is published.
 
 ### Antigravity
 
-Add the Mymir MCP server to your global config and authenticate (Antigravity handles OAuth automatically). The IDE and the CLI share one config at `~/.gemini/config/mcp_config.json` (in the IDE: MCP Store → Manage MCP Servers → View raw config):
+Add the Piyaz MCP server to your global config and authenticate (Antigravity handles OAuth automatically). The IDE and the CLI share one config at `~/.gemini/config/mcp_config.json` (in the IDE: MCP Store → Manage MCP Servers → View raw config):
 
 ```json
 {
   "mcpServers": {
-    "mymir": { "serverUrl": "https://app.mymir.dev/api/mcp" }
+    "piyaz": { "serverUrl": "https://app.piyaz.ai/api/mcp" }
   }
 }
 ```
 
-Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. The workflow skills ship as a bundled plugin: clone this repo and copy `plugins/antigravity/` into `~/.gemini/config/plugins/` (global) or `.agents/plugins/` at your workspace root. The bundled `mcp_config.json` also includes a `mymir-local` server for self-host.
+Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. The workflow skills ship as a bundled plugin: clone this repo and copy `plugins/antigravity/` into `~/.gemini/config/plugins/` (global) or `.agents/plugins/` at your workspace root. The bundled `mcp_config.json` also includes a `piyaz-local` server for self-host.
 
 > **Gemini CLI users:** Antigravity replaces Gemini CLI (consumer access ends 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
 
@@ -73,13 +75,13 @@ Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. The workfl
 
 ## Self-host / contribute
 
-Self-hosting is free under AGPL-3.0. You run the Mymir server yourself and point the plugin's **`mymir-local`** server at it, no env vars required.
+Self-hosting is free under AGPL-3.0. You run the Piyaz server yourself and point the plugin's **`piyaz-local`** server at it, no env vars required.
 
 You need [Bun](https://bun.sh) (v1.0+) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Linux, macOS, or Windows with WSL2.
 
 ```bash
-git clone git@github.com:FrkAk/mymir.git
-cd mymir
+git clone git@github.com:FrkAk/piyaz.git
+cd piyaz
 bun install --production
 cp .env.local.example .env.local
 ```
@@ -92,7 +94,7 @@ bun run build
 bun run start
 ```
 
-Install the plugin for your agent as above, but select the **`mymir-local`** server (it points at `http://localhost:3000/api/mcp`). Advanced self-hosters on a custom domain can set `MYMIR_URL` to repoint the default `mymir` server in Claude Code; Codex and Cursor read a hardcoded hosted URL, so edit their `mcp.json` directly if you need a custom domain.
+Install the plugin for your agent as above, but select the **`piyaz-local`** server (it points at `http://localhost:3000/api/mcp`). Advanced self-hosters on a custom domain can set `PIYAZ_URL` to repoint the default `piyaz` server in Claude Code; Codex and Cursor read a hardcoded hosted URL, so edit their `mcp.json` directly if you need a custom domain.
 
 Contributors install from the local checkout: `claude plugin marketplace add ./plugins/claude-code` (Claude Code), `codex plugin marketplace add ./plugins` (Codex), or copy `plugins/cursor` into `~/.cursor/plugins/local/`. Shared skills live in `plugins/claude-code/` (canonical); after editing them run `bun run sync:plugins` to regenerate every brand's copy (`bun run check:plugins` is CI-enforced).
 
@@ -104,23 +106,23 @@ All four plugins bundle the shared components:
 
 | Component | What it does |
 | --- | --- |
-| **6 MCP tools** | `mymir_project`, `mymir_task`, `mymir_edge`, `mymir_query`, `mymir_context`, `mymir_analyze` |
-| **`/mymir` skill** | Auto-invokes when conversation matches project planning; routes to inline workflows or hands off to a deep-mode workflow when needed |
+| **6 MCP tools** | `piyaz_project`, `piyaz_task`, `piyaz_edge`, `piyaz_query`, `piyaz_context`, `piyaz_analyze` |
+| **`/piyaz` skill** | Auto-invokes when conversation matches project planning; routes to inline workflows or hands off to a deep-mode workflow when needed |
 | **Brainstorm workflow** | Explore and shape a project idea through structured conversation |
 | **Onboarding workflow** | Reverse-engineer an existing codebase into a task graph with shipped work recorded as `done` |
 | **Decompose workflow** | Break a project brief into a dependency graph |
 | **Manage workflow** | Strategic CTO-mode review: rebalance the graph, audit dependencies, prune orphans, consolidate categories |
 
-In Codex, Cursor, and Antigravity each workflow is a skill invoked by slash command. In Claude Code each is also available as a dispatchable agent (via the Task tool) so the main `/mymir` skill can hand off work in a clean per-agent context.
+In Codex, Cursor, and Antigravity each workflow is a skill invoked by slash command. In Claude Code each is also available as a dispatchable agent (via the Task tool) so the main `/piyaz` skill can hand off work in a clean per-agent context.
 
 **Claude Code additionally bundles:**
 
 | Component | What it does |
 | --- | --- |
-| **`/mymir:composer` skill** | End-to-end task orchestrator. Picks the highest-value ready task (or one named ref), drives it through research → plan → implement → propagate via three dispatched subagents per task in clean per-phase contexts, loops until queue empty or user stops. Requires `/goal` harness for backlog mode (composer emits it on first turn; user pastes). |
-| **Composer subagents** | `mymir:composer-researcher` gathers grounded context and refines the task; `mymir:composer-planner` writes the unabridged implementation plan; `mymir:composer-implementer` ships the code, opens a PR, and marks the task done. |
-| **`mymir:decompose-task` agent** | Splits an existing oversize task in an active project into 2 to N children, rewires every dependency edge touching the parent, cancels the parent with rationale citing the children. Composer's oversize handler routes here. |
-| **`mymir:decompose-feature` agent** | Adds a new feature or capability cluster to an active project. Reuses existing categories and tag vocabulary; creates 5 to 20 tasks plus internal and integration edges. |
+| **`/piyaz:composer` skill** | End-to-end task orchestrator. Picks the highest-value ready task (or one named ref), drives it through research → plan → implement → review → propagate via a per-task workflow that dispatches phase subagents in clean per-phase contexts, merges the PR and continues when the user authorizes it, and loops until queue empty or user stops. Requires `/goal` harness for backlog mode (composer emits it on first turn; user pastes). |
+| **Composer subagents** | `piyaz:composer-researcher` gathers grounded context and refines the task; `piyaz:composer-planner` writes the unabridged implementation plan; `piyaz:composer-implementer` ships the code, opens a PR, and marks the task `in_review`; `piyaz:review` returns the verdict that drives the bounded fix loop. |
+| **`piyaz:decompose-task` agent** | Splits an existing oversize task in an active project into 2 to N children, rewires every dependency edge touching the parent, cancels the parent with rationale citing the children. Composer's oversize handler routes here. |
+| **`piyaz:decompose-feature` agent** | Adds a new feature or capability cluster to an active project. Reuses existing categories and tag vocabulary; creates 5 to 20 tasks plus internal and integration edges. |
 
 (Composer depends on a subagent dispatch primitive for clean per-phase contexts and tool-restriction enforcement. Codex, Cursor, and Antigravity do not yet have an equivalent, so composer is Claude Code only for now.)
 
@@ -128,7 +130,7 @@ In Codex, Cursor, and Antigravity each workflow is a skill invoked by slash comm
 
 ## How it runs
 
-Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Codex, Cursor, and Antigravity. Each plugin bundles 6 MCP tools, the four core workflows (brainstorm, onboarding, decompose, manage), and a `/mymir` skill that auto-invokes when you talk about projects, tasks, or planning. Claude Code adds end-to-end task orchestration via `/mymir:composer` plus `decompose-task` and `decompose-feature` for surgical decomposition within active projects. You don't call tools manually, you just talk.
+Piyaz ships as a Next.js web app plus vendor-native plugins for Claude Code, Codex, Cursor, and Antigravity. Each plugin bundles 6 MCP tools, the four core workflows (brainstorm, onboarding, decompose, manage), and a `/piyaz` skill that auto-invokes when you talk about projects, tasks, or planning. Claude Code adds end-to-end task orchestration via `/piyaz:composer` plus `decompose-task` and `decompose-feature` for surgical decomposition within active projects. You don't call tools manually, you just talk.
 
 **Three entry paths, one graph.**
 
@@ -144,17 +146,17 @@ Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 ❯ Onboard this existing codebase
 ```
 
-*Ongoing project.* The `/mymir` skill detects the repo and picks up where you left off:
+*Ongoing project.* The `/piyaz` skill detects the repo and picks up where you left off:
 
 ```text
 ❯ What's the status of the project?
 ```
 
-**Skip the context briefing.** Name a task or ask what's next. Mymir delivers the right bundle for that task's state, so you don't write "here's what you need to know" prompts yourself:
+**Skip the context briefing.** Name a task or ask what's next. Piyaz delivers the right bundle for that task's state, so you don't write "here's what you need to know" prompts yourself:
 
 ```text
 ❯ What should I work on next?
-❯ Plan and implement MYMR-101
+❯ Plan and implement PYZ-101
 ```
 
 **Add and refine mid-flow.** Spot something missing, describe it, and push back until it's right:
@@ -167,19 +169,19 @@ Mymir ships as a Next.js web app plus vendor-native plugins for Claude Code, Cod
 ❯ Priority is urgent, draft ACs are enough, and monorepo detection should ask the user.
 ```
 
-**Drive end-to-end (Claude Code).** Once a project is active and tasks are ready, composer can take over. Pick the next task off the critical path, research it in context, plan it, implement it, open the PR, propagate the result, and loop:
+**Drive end-to-end (Claude Code).** Once a project is active and tasks are ready, composer can take over. Pick the next task off the critical path, research it in context, plan it, implement it, open the PR, review and fix until it is ready, propagate the result (and merge when you authorize it), and loop:
 
 ```text
-❯ /mymir:composer
+❯ /piyaz:composer
 ```
 
 Or take one specific task all the way to a PR:
 
 ```text
-❯ /mymir:composer MYMR-101
+❯ /piyaz:composer PYZ-101
 ```
 
-Composer dispatches three subagents per task in clean per-phase contexts (researcher → planner → implementer). The orchestrator stays out of the work itself and only picks tasks, hands off, and propagates.
+Composer runs a per-task workflow that dispatches phase subagents in clean per-phase contexts (researcher → planner → implementer → review), with a bounded fix loop until the PR is ready. The orchestrator stays out of the work itself: it picks tasks, resolves gates, merges when authorized, and propagates.
 
 **Tune in the UI.** Inspect edges, read execution records, and edit descriptions, ACs, tags, or dependencies directly. The agent loop and the UI write to the same store, so edits land by the next tool call.
 
@@ -187,9 +189,9 @@ Composer dispatches three subagents per task in clean per-phase contexts (resear
 
 ## How it works
 
-Instead of docs, wikis, or messy markdown files, Mymir treats project context as a live knowledge base agents can reason from.
+Instead of docs, wikis, or messy markdown files, Piyaz treats project context as a live knowledge base agents can reason from.
 
-We built Mymir around two core concepts:
+We built Piyaz around two core concepts:
 
 **Context network.** A living map of your project that captures not just what was built, but why decisions were made, what was tried and abandoned, and how different parts of the codebase relate to each other.
 
@@ -202,13 +204,13 @@ We built Mymir around two core concepts:
 | `planning` | Writing an implementation plan | Project brief, prerequisites, upstream execution records, downstream specs |
 | `agent` | Coding the task | Implementation plan, multi-hop upstream execution records, file paths, acceptance criteria |
 
-Together, they don't just inform your agent, they drive it. Mymir manages the full lifecycle: **Brainstorm > Decompose > Refine > Plan > Execute > Track**.
+Together, they don't just inform your agent, they drive it. Piyaz manages the full lifecycle: **Brainstorm > Decompose > Refine > Plan > Execute > Track**.
 
-Describe your idea and Mymir decomposes it into tasks with dependency edges, determines what's ready to plan or implement, and hands your agent the exact context it needs for that stage. When a task is plannable, your agent gets the spec, prerequisites, and related work. When it's ready to implement, your agent gets the full execution context: upstream decisions, file paths, and acceptance criteria.
+Describe your idea and Piyaz decomposes it into tasks with dependency edges, determines what's ready to plan or implement, and hands your agent the exact context it needs for that stage. When a task is plannable, your agent gets the spec, prerequisites, and related work. When it's ready to implement, your agent gets the full execution context: upstream decisions, file paths, and acceptance criteria.
 
 The agent moves from task to task with the right context at every step, no manual handoff required.
 
-*We're building Mymir using Mymir, so everything described here is something we're living in real time.*
+*We're building Piyaz using Piyaz, so everything described here is something we're living in real time.*
 
 ---
 
@@ -242,7 +244,7 @@ The hosted version will be a paid service. We can't bear the infrastructure cost
 
 We believe everyone should have access to tools that help them build better things. Open source is how we make that real.
 
-It also means we ship faster. Community contributions, bug reports, and ideas make Mymir better for everyone. If you care about better infrastructure for agent-driven development, come build with us.
+It also means we ship faster. Community contributions, bug reports, and ideas make Piyaz better for everyone. If you care about better infrastructure for agent-driven development, come build with us.
 
 ---
 
@@ -254,11 +256,11 @@ Next.js 16, TypeScript 6, React 19, PostgreSQL, Drizzle ORM, Tailwind CSS v4, Mo
 
 ## Stargazers
 
-<a href="https://www.star-history.com/?repos=FrkAk%2Fmymir&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=FrkAk%2Fpiyaz&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=FrkAk/mymir&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=FrkAk/mymir&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=FrkAk/mymir&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=FrkAk/piyaz&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=FrkAk/piyaz&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=FrkAk/piyaz&type=date&legend=top-left" />
  </picture>
 </a>
 
@@ -270,4 +272,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and PR guidelines.
 
 ## License
 
-Mymir is licensed under [AGPL-3.0](LICENSE). A commercial license is also available, see [LICENSING.md](LICENSING.md) for details.
+Piyaz is licensed under [AGPL-3.0](LICENSE). A commercial license is also available, see [LICENSING.md](LICENSING.md) for details.

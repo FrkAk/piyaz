@@ -65,13 +65,13 @@ test("writeVersion refuses a nested field that precedes the top-level one", () =
 test("pattern round-trips and leaves surrounding code untouched", () => {
   const path = tempFile(
     "create-server.ts",
-    `const s = { name: "mymir", version: "1.0.0" };\n`,
+    `const s = { name: "piyaz", version: "1.0.0" };\n`,
   );
-  const entry: Entry = { path, pattern: `name: "mymir", version: "{version}"` };
+  const entry: Entry = { path, pattern: `name: "piyaz", version: "{version}"` };
   expect(readVersion(entry)).toBe("1.0.0");
   writeVersion(entry, "2.0.0");
   expect(readFileSync(path, "utf8")).toBe(
-    `const s = { name: "mymir", version: "2.0.0" };\n`,
+    `const s = { name: "piyaz", version: "2.0.0" };\n`,
   );
 });
 

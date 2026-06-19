@@ -1,15 +1,15 @@
 {
-  "name": "mymir",
+  "name": "piyaz",
   "owner": {
-    "name": "Mymir",
-    "email": "hello@mymir.dev"
+    "name": "Piyaz",
+    "email": "hello@piyaz.ai"
   },
   "metadata": {
     "description": "Persistent context network for coding agents."
   },
   "plugins": [
     {
-      "name": "mymir",
+      "name": "piyaz",
       "source": "plugins/cursor",
       "description": "Persistent context network for coding projects. Tracks tasks, dependencies, and decisions across sessions."
     }
