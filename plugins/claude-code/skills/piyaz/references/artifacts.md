@@ -396,10 +396,10 @@ The text you write into Piyaz is read by other engineers. It must read like an e
 - Em dashes (the `—` character). Use periods, commas, parentheses, or colons.
 - Hedging openers: "I think", "perhaps", "seems to", "might be", "arguably".
 - Enthusiasm: "Great question", "Awesome", "Exciting", "Love this".
-- Throat-clearing: "Let me dive into", "I hope this helps", "Here's the thing", "To be honest".
-- Marketing words: "comprehensive", "robust", "powerful", "leverage", "utilize", "ensure", "facilitate", "seamless", "game-changer", "best-in-class".
+- Throat-clearing: `Let me dive into`, `I hope this helps`, `Here's the thing`, `To be honest`.
+- Marketing words: `comprehensive`, `robust`, `powerful`, `leverage`, `utilize`, `ensure`, `facilitate`, `seamless`, `game-changer`, `best-in-class`.
 - Adverb-heavy openers: "Importantly", "Crucially", "Notably", "Essentially", "Basically".
-- Empty filler: "It's worth noting that", "It should be mentioned", "As a matter of fact".
+- Empty filler: `It's worth noting that`, `It should be mentioned`, `As a matter of fact`.
 - Performative summaries at the end: "I hope this helps!", "Let me know if you need anything else!"
 
 **Do:**

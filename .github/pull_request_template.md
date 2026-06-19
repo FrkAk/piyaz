@@ -20,3 +20,9 @@
 ## Notes for reviewer
 
 <!-- Anything non-obvious about the implementation, tradeoffs, or follow-up work -->
+
+## Docs impact
+
+<!-- Does this change UI flows, env vars, setup steps, or workflows documented at docs.piyaz.ai? List affected pages, or write "none". Generated reference (MCP tools, skill references, skills/agents catalog) syncs automatically via the Docs Sync workflow. -->
+
+- 

@@ -30,6 +30,7 @@
     "sync:plugins": "bun run scripts/check-plugins.ts --fix",
     "check:version": "bun run scripts/bump-version.ts --check",
     "bump:version": "bun run scripts/bump-version.ts",
+    "docs:gen": "bun scripts/generate-docs.ts",
     "db:setup": "docker compose --env-file .env.local up -d --wait && docker exec -i piyaz-db-1 psql -U piyaz -d piyaz < docker/init-auth.sql && docker exec piyaz-db-1 /docker-entrypoint-initdb.d/02-rls.sh && bun run db:push && docker exec -i piyaz-db-1 psql -U piyaz -d piyaz < docker/grants.sql && docker exec -i piyaz-db-1 psql -U piyaz -d piyaz < docker/rls-functions.sql && docker exec -i piyaz-db-1 psql -U piyaz -d piyaz < docker/rls-policies.sql",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",

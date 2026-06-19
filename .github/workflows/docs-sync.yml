@@ -1,0 +1,59 @@
+name: Docs Sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lib/mcp/**"
+      - "lib/graph/tool-handlers.ts"
+      - "lib/graph/identifier.ts"
+      - "plugins/claude-code/**"
+      - "scripts/generate-docs.ts"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Regenerate docs and open PR
+    runs-on: ubuntu-latest
+    if: github.repository == 'FrkAk/piyaz'
+    concurrency:
+      group: docs-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout piyaz
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Checkout piyaz-docs
+        uses: actions/checkout@v6
+        with:
+          repository: FrkAk/piyaz-docs
+          token: ${{ secrets.DOCS_REPO_TOKEN }}
+          path: docs-repo
+          persist-credentials: false
+
+      - name: Regenerate docs
+        run: bun scripts/generate-docs.ts --out docs-repo/content/docs
+
+      - name: Open PR if changed
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: docs-repo
+          token: ${{ secrets.DOCS_REPO_TOKEN }}
+          branch: docs-sync/auto
+          delete-branch: true
+          commit-message: "docs: sync generated reference from piyaz"
+          title: "docs: sync generated reference from piyaz"
+          body: |
+            Automated regeneration triggered by FrkAk/piyaz@${{ github.sha }}.
+            Sources: MCP schemas, tool descriptions, or plugin skill files.
+          signoff: false
