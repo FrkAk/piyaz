@@ -106,6 +106,10 @@ test("dev CSP omits upgrade-insecure-requests (HMR on http://localhost)", () => 
 
 test("headerRules(false) has the always-on security rule and no HSTS", () => {
   const rules = headerRules(false);
+  // Security rule + 3 auth-page Cache-Control rules, no HSTS in dev. The
+  // count anchor catches an accidentally duplicated or dropped rule; the
+  // auth-page values themselves are asserted in tests/auth/cache-control.
+  expect(rules).toHaveLength(4);
   // Always-on security headers on every path, never host-scoped.
   const securityRule = rules.find((r) => r.source === "/:path*")!;
   expect(securityRule).toBeTruthy();
@@ -119,8 +123,10 @@ test("headerRules(false) has the always-on security rule and no HSTS", () => {
 
 test("headerRules(true) adds a host-scoped HSTS rule", () => {
   const rules = headerRules(true);
-  // One HSTS rule present in prod (auth-page Cache-Control rules are
-  // asserted separately in tests/auth/cache-control.test.ts).
+  // Security + HSTS + 3 auth-page rules; count anchor guards against a
+  // duplicated/missing rule. The single HSTS rule is asserted below; the
+  // auth-page Cache-Control values live in tests/auth/cache-control.test.ts.
+  expect(rules).toHaveLength(5);
   expect(
     rules.filter((r) =>
       r.headers.some((h) => h.key === "Strict-Transport-Security"),

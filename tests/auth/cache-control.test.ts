@@ -36,10 +36,11 @@ import { truncateAll } from "@/tests/setup/schema";
  * `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL` before any test file loads, so
  * the static imports boot BA correctly regardless of import order.
  *
- * Loopback IP range: this file owns `127.0.0.40+` via `cf-connecting-ip`
+ * Loopback IP range: this file owns `127.0.3.x` via `cf-connecting-ip`
  * (`lib/auth.ts:117` `ipAddressHeaders`) to keep BA's in-memory rate-limit
- * bucket isolated. `cookie-attributes.test.ts` owns `127.0.0.10-15`;
- * `rate-limit.test.ts` owns `127.0.1.x`. Do not reuse these.
+ * bucket isolated — it is not reset by `truncateAll`. `cookie-attributes`
+ * owns the whole `127.0.0.x`, `rate-limit` owns `127.0.1.x`, and
+ * `change-password` owns `127.0.2.x`. Do not reuse these.
  */
 
 const BASE = "https://example.test/api/auth";
@@ -48,9 +49,14 @@ afterEach(async () => {
   await truncateAll();
 });
 
-test("config pin: headerRules includes Cache-Control: no-store for /sign-in, /sign-up, /consent", () => {
+test("config pin: headerRules pins a non-cacheable Cache-Control for /sign-in, /sign-up, /consent", () => {
   // AC #1. Pin the static config the Next.js `headers()` pipeline consumes,
-  // for both prod and dev — auth pages must not be cached in either.
+  // for both prod and dev — auth pages must not be cached in either. The
+  // exact value must match Next's dynamic-render default so the config rule
+  // never downgrades it; assert the literal so a regression to bare
+  // `no-store` (which drops private/no-cache/must-revalidate) is caught here,
+  // since Bun cannot exercise the Next pipeline to check the wire header.
+  const expected = "private, no-cache, no-store, max-age=0, must-revalidate";
   for (const isProd of [false, true]) {
     const rules = headerRules(isProd);
     for (const source of ["/sign-in", "/sign-up", "/consent"]) {
@@ -58,7 +64,7 @@ test("config pin: headerRules includes Cache-Control: no-store for /sign-in, /si
         (r) =>
           r.source === source &&
           r.headers.some(
-            (h) => h.key === "Cache-Control" && h.value === "no-store",
+            (h) => h.key === "Cache-Control" && h.value === expected,
           ),
       );
       expect(rule, `${source} (isProd=${isProd})`).toBeDefined();
@@ -74,7 +80,7 @@ test("BA core /sign-in/email response carries Cache-Control: no-store via the ca
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "cf-connecting-ip": "127.0.0.40",
+        "cf-connecting-ip": "127.0.3.40",
       },
       body: JSON.stringify({
         email: "no-such-user@test.local",
@@ -92,7 +98,7 @@ test("BA core /sign-up/email response carries Cache-Control: no-store", async ()
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "cf-connecting-ip": "127.0.0.41",
+        "cf-connecting-ip": "127.0.3.41",
       },
       body: JSON.stringify({
         email: "cache-signup@test.local",
@@ -112,7 +118,7 @@ test("BA core /sign-out response carries Cache-Control: no-store", async () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "cf-connecting-ip": "127.0.0.42",
+        "cf-connecting-ip": "127.0.3.42",
       },
     }),
   );
@@ -125,14 +131,14 @@ test("BA core /get-session response carries Cache-Control: no-store", async () =
   const response = await authCatchAllGET(
     new Request(`${BASE}/get-session`, {
       method: "GET",
-      headers: { "cf-connecting-ip": "127.0.0.43" },
+      headers: { "cf-connecting-ip": "127.0.3.43" },
     }),
   );
   expect(response.headers.get("cache-control")).toBe("no-store");
 });
 
 test("/oauth2/token response carries Cache-Control: no-store (BA + wrapper guard)", async () => {
-  // AC #3. Drive the dedicated route POST so the withNoStore wrapper runs.
+  // AC #3. Drive the dedicated route POST so the ensureNoStore wrapper runs.
   // An invalid grant yields a 4xx; BA sets no-store on it (index.mjs:600)
   // and the wrapper is a no-op-on-write, but either way the header is set.
   const body = new URLSearchParams({ grant_type: "client_credentials" });
@@ -141,7 +147,7 @@ test("/oauth2/token response carries Cache-Control: no-store (BA + wrapper guard
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
-        "cf-connecting-ip": "127.0.0.44",
+        "cf-connecting-ip": "127.0.3.44",
       },
       body: body.toString(),
     }),
@@ -157,7 +163,7 @@ test("/oauth2/userinfo response carries Cache-Control: no-store (wrapper-supplie
       method: "GET",
       headers: {
         authorization: "Bearer invalid-token",
-        "cf-connecting-ip": "127.0.0.45",
+        "cf-connecting-ip": "127.0.3.45",
       },
     }),
   );
@@ -171,7 +177,7 @@ test("/oauth2/introspect response carries Cache-Control: no-store (wrapper-suppl
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
-        "cf-connecting-ip": "127.0.0.46",
+        "cf-connecting-ip": "127.0.3.46",
       },
       body: new URLSearchParams({
         client_id: "no-such-client",
@@ -189,7 +195,7 @@ test("/oauth2/revoke response carries Cache-Control: no-store (wrapper-supplied)
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
-        "cf-connecting-ip": "127.0.0.47",
+        "cf-connecting-ip": "127.0.3.47",
       },
       body: new URLSearchParams({
         client_id: "no-such-client",
@@ -207,7 +213,7 @@ test("well-known discovery doc keeps BA's public cache hint (wrapper does not do
   const response = await authCatchAllGET(
     new Request(`${BASE}/.well-known/oauth-authorization-server`, {
       method: "GET",
-      headers: { "cf-connecting-ip": "127.0.0.48" },
+      headers: { "cf-connecting-ip": "127.0.3.48" },
     }),
   );
   const cacheControl = response.headers.get("cache-control");

@@ -18,6 +18,18 @@ const PERMISSIONS_POLICY =
 
 const HSTS_VALUE = "max-age=31536000; includeSubDomains";
 
+/**
+ * Cache-Control for the rendered auth pages. Identical to the directive Next
+ * emits for a dynamically-rendered page (`getCacheControlHeader({revalidate:
+ * 0})`, `next/dist/server/lib/cache-control.js`), so pinning it never
+ * downgrades a dynamic render — and it overrides the `s-maxage=31536000`
+ * Next would otherwise emit if any of these pages is statically prerendered
+ * (they are plain server components today). Either way a shared cache (CDN,
+ * proxy, browser bfcache) cannot store and replay session-bearing auth HTML.
+ */
+const AUTH_PAGE_CACHE_CONTROL =
+  "private, no-cache, no-store, max-age=0, must-revalidate";
+
 /** Anchored regex matching loopback Host headers excluded from HSTS. */
 const LOOPBACK_HOST_REGEX = "^(localhost|127\\.0\\.0\\.1|\\[::1\\])(:\\d+)?$";
 
@@ -96,6 +108,24 @@ export function securityHeaders(): HeaderEntry[] {
 }
 
 /**
+ * Backfill `Cache-Control: no-store` on an API-route response that lacks the
+ * header, so shared caches cannot store a session-bearing response. Next does
+ * not apply its page-level Cache-Control default to route handlers, so these
+ * surfaces otherwise ship with none. Guarded with `has` so upstream-owned
+ * directives pass through unchanged — notably Better Auth's
+ * `public, max-age=15` on the well-known discovery docs.
+ *
+ * @param response - Response to harden in place.
+ * @returns The same response, with `Cache-Control: no-store` ensured.
+ */
+export function ensureNoStore(response: Response): Response {
+  if (!response.headers.has("cache-control")) {
+    response.headers.set("cache-control", "no-store");
+  }
+  return response;
+}
+
+/**
  * Build Next.js header rules: always-on security headers plus production
  * HSTS scoped to non-loopback hosts.
  *
@@ -115,23 +145,26 @@ export function headerRules(isProd: boolean): HeaderRule[] {
     });
   }
 
-  // Pin `Cache-Control: no-store` on the rendered auth pages so a shared
+  // Pin a non-cacheable Cache-Control on the rendered auth pages so a shared
   // cache (CDN, corporate proxy, browser bfcache) cannot store and replay
-  // session-bearing HTML to a different user. Exact-source patterns: each
-  // route is a single Next page. Independent of `isProd` — caching dev
-  // sign-in HTML is the same fixation risk in a different deployment.
+  // session-bearing HTML to a different user. The value matches Next's
+  // dynamic-render default (so this never weakens it) and overrides the
+  // year-long `s-maxage` Next emits if a page prerenders statically — see
+  // `AUTH_PAGE_CACHE_CONTROL`. Exact-source patterns: each route is a single
+  // Next page. Independent of `isProd` — caching dev sign-in HTML is the same
+  // fixation risk in a different deployment.
   rules.push(
     {
       source: "/sign-in",
-      headers: [{ key: "Cache-Control", value: "no-store" }],
+      headers: [{ key: "Cache-Control", value: AUTH_PAGE_CACHE_CONTROL }],
     },
     {
       source: "/sign-up",
-      headers: [{ key: "Cache-Control", value: "no-store" }],
+      headers: [{ key: "Cache-Control", value: AUTH_PAGE_CACHE_CONTROL }],
     },
     {
       source: "/consent",
-      headers: [{ key: "Cache-Control", value: "no-store" }],
+      headers: [{ key: "Cache-Control", value: AUTH_PAGE_CACHE_CONTROL }],
     },
   );
 
