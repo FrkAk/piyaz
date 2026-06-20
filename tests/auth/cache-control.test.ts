@@ -8,7 +8,7 @@ import { headerRules } from "@/lib/security/headers";
 import { truncateAll } from "@/tests/setup/schema";
 
 /**
- * PYZ-198: pin `Cache-Control: no-store` at every Mymir-owned auth surface
+ * PYZ-198: pin `Cache-Control: no-store` at every Piyaz-owned auth surface
  * so a shared cache (CDN edge, corporate proxy, browser bfcache) cannot
  * store and replay a session-bearing response to a different user.
  *
