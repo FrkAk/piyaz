@@ -277,7 +277,21 @@ Stop and report in plain language (there are no magic stop phrases) when one hol
 5. **Rewrite denied** (single-task mode): the user rejected a proposed rewrite at the gate.
 6. **Piyaz transport/auth failure**: any Piyaz tool call fails with auth expiry, 401/403, a 5xx, or a network error. Stop immediately (not retryable in-session, resilience §10) and report the exact error plus the last completed phase per in-flight task.
 
-These six are exhaustive. Every stop appends `RUN_END` with its reason and the grep-derived counters, then offers to archive the log; the headless default is archive.
+These six are exhaustive. Every stop appends `RUN_END` with its reason and the grep-derived counters, runs *Worktree cleanup at run end*, then offers to archive the log; the headless default is inform-only on worktrees and archive on the log.
+
+## Worktree cleanup at run end
+
+The workflow dispatches the implementer and every fix rotation with `isolation:'worktree'` (`compose-task.js`), so each task leaves a git worktree under `.claude/worktrees/wf_<runId>-<n>` plus its local branch. The harness auto-removes a worktree only when it is unchanged; the implementer always commits, so they persist and accumulate across a backlog run. `gh pr merge --delete-branch` drops only the remote branch. Composer never silently mutates the filesystem (HOTL owns destructive local actions), so at every stop — after `RUN_END`, before the archive offer — it surfaces what it left behind and offers cleanup.
+
+1. **Enumerate.** `git worktree list --porcelain`; keep only entries whose path is under `.claude/worktrees/wf_*`. The `wf_<runId>` prefix is the discriminator that proves the workflow created the worktree — never the primary checkout or a user-made worktree. Capture each path and its `branch refs/heads/<name>`.
+2. **Classify against open PRs.** `gh pr list --state open --json number,headRefName,url`. A worktree whose branch equals an open PR's `headRefName` is **PR-backed** (it may be at `in_review` awaiting HOTL); every other worktree is **safe** (merged, or an orphan auto-named `worktree-wf_*` branch). If `gh` is unavailable or errors, treat every worktree as PR-backed (the conservative bucket) and inform only.
+3. **Report.** The stop report lists, per bucket, each worktree path, its branch, and the PR (for PR-backed); when none remain it says so explicitly. Always print the exact removal commands, whether or not removal is offered:
+   - worktree: `git worktree remove <path>` (no `--force`; if git refuses because the worktree is dirty or locked, surface that and leave it for the user).
+   - dangling local branch (left behind after the worktree is removed): `git branch -D <branch>`.
+   - stale administrative entries whose directory is already gone: `git worktree prune`.
+4. **Offer (interactive only).** Ask once with the AskUserQuestion tool. Default-safe options: remove the safe worktrees; remove all including the PR-backed ones (explicit opt-in); or leave everything (commands already printed). Remove only what the user picks, running the `git worktree remove` + `git branch -D` pair per selected worktree, then `git worktree prune`. A PR-backed worktree is removed only when the user explicitly chooses the include-PR-backed option.
+
+**Headless** (AskUserQuestion unavailable): inform only. Print both buckets and the exact commands; remove nothing.
 
 ## Recovering after compaction
 
