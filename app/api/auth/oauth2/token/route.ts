@@ -7,6 +7,23 @@ const mcpResource = `${origin}/api/mcp`;
 const grantsNeedingResource = new Set(["authorization_code", "refresh_token"]);
 
 /**
+ * Backfill `Cache-Control: no-store` when the response does not already
+ * carry the header. Better Auth's oauth-provider sets `no-store` on the
+ * token response today (`@better-auth/oauth-provider/dist/index.mjs:600`),
+ * so this is a no-op-on-write; the guard makes the contract project-owned
+ * so a future BA upgrade that drops the header cannot silently regress it.
+ *
+ * @param response - Response returned by `auth.handler`.
+ * @returns The same response, with `Cache-Control: no-store` ensured.
+ */
+function withNoStore(response: Response): Response {
+  if (!response.headers.has("cache-control")) {
+    response.headers.set("cache-control", "no-store");
+  }
+  return response;
+}
+
+/**
  * OAuth 2.0 token endpoint wrapper that defaults the `resource` parameter
  * for MCP clients that omit it.
  *
@@ -29,7 +46,7 @@ const grantsNeedingResource = new Set(["authorization_code", "refresh_token"]);
 export async function POST(request: Request): Promise<Response> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/x-www-form-urlencoded")) {
-    return auth.handler(request);
+    return withNoStore(await auth.handler(request));
   }
 
   const body = new URLSearchParams(await request.text());
@@ -49,5 +66,7 @@ export async function POST(request: Request): Promise<Response> {
   });
 
   const response = await auth.handler(forwarded);
-  return logTokenGrant(response, grantType, body.get("scope") ?? "");
+  return withNoStore(
+    await logTokenGrant(response, grantType, body.get("scope") ?? ""),
+  );
 }

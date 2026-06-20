@@ -63,7 +63,16 @@ async function handler(request: Request): Promise<Response> {
   if (!isAllowed(pathname)) {
     return new Response("Not Found", { status: 404 });
   }
-  return auth.handler(request);
+  const response = await auth.handler(request);
+  // Stop shared caches from storing session-bearing responses. Set
+  // unconditionally across the allowlist (all non-cacheable surfaces),
+  // but guard with `has` so BA-owned directives pass through unchanged —
+  // notably the well-known discovery docs, which BA tags
+  // `public, max-age=15` before this wrapper runs.
+  if (!response.headers.has("cache-control")) {
+    response.headers.set("cache-control", "no-store");
+  }
+  return response;
 }
 
 export const GET = handler;
