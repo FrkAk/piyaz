@@ -121,9 +121,18 @@ export function headerRules(isProd: boolean): HeaderRule[] {
   // route is a single Next page. Independent of `isProd` — caching dev
   // sign-in HTML is the same fixation risk in a different deployment.
   rules.push(
-    { source: "/sign-in", headers: [{ key: "Cache-Control", value: "no-store" }] },
-    { source: "/sign-up", headers: [{ key: "Cache-Control", value: "no-store" }] },
-    { source: "/consent", headers: [{ key: "Cache-Control", value: "no-store" }] },
+    {
+      source: "/sign-in",
+      headers: [{ key: "Cache-Control", value: "no-store" }],
+    },
+    {
+      source: "/sign-up",
+      headers: [{ key: "Cache-Control", value: "no-store" }],
+    },
+    {
+      source: "/consent",
+      headers: [{ key: "Cache-Control", value: "no-store" }],
+    },
   );
 
   return rules;
