@@ -104,18 +104,26 @@ test("dev CSP omits upgrade-insecure-requests (HMR on http://localhost)", () => 
   expect(csp).not.toContain("upgrade-insecure-requests");
 });
 
-test("headerRules(false) returns only the always-on rule with no HSTS", () => {
+test("headerRules(false) has the always-on security rule and no HSTS", () => {
   const rules = headerRules(false);
-  expect(rules).toHaveLength(1);
-  expect(rules[0]!.source).toBe("/:path*");
-  expect(rules[0]!.missing).toBeUndefined();
-  const keys = rules[0]!.headers.map((h) => h.key);
-  expect(keys).not.toContain("Strict-Transport-Security");
+  expect(rules).toHaveLength(4);
+  const securityRule = rules.find((r) => r.source === "/:path*")!;
+  expect(securityRule).toBeTruthy();
+  expect(securityRule.missing).toBeUndefined();
+  const hasHsts = rules.some((r) =>
+    r.headers.some((h) => h.key === "Strict-Transport-Security"),
+  );
+  expect(hasHsts).toBe(false);
 });
 
 test("headerRules(true) adds a host-scoped HSTS rule", () => {
   const rules = headerRules(true);
-  expect(rules).toHaveLength(2);
+  expect(rules).toHaveLength(5);
+  expect(
+    rules.filter((r) =>
+      r.headers.some((h) => h.key === "Strict-Transport-Security"),
+    ),
+  ).toHaveLength(1);
   const hstsRule = rules.find((r) =>
     r.headers.some((h) => h.key === "Strict-Transport-Security"),
   )!;
