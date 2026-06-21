@@ -6,6 +6,7 @@ import {
   parseActions,
   renderCatalog,
   renderToolPage,
+  stripProseEmoji,
   transformReference,
 } from "../../scripts/generate-docs";
 import { TOOLS } from "../../lib/mcp/schemas";
@@ -136,6 +137,35 @@ describe("normalizeProseDashes", () => {
   });
 });
 
+describe("stripProseEmoji", () => {
+  test("removes a pictographic and collapses the gap it leaves", () => {
+    expect(stripProseEmoji("includes a ⚠ Blocked section")).toBe(
+      "includes a Blocked section",
+    );
+  });
+
+  test("drops a trailing variation selector with the emoji", () => {
+    expect(stripProseEmoji("done ✅️ here")).toBe("done here");
+  });
+
+  test("preserves emoji inside an inline code span", () => {
+    expect(stripProseEmoji("use `⚠ flag` literally")).toBe(
+      "use `⚠ flag` literally",
+    );
+  });
+
+  test("preserves emoji inside a fenced code block", () => {
+    const input = "before\n```\n⚠ keep\n```\nafter ⚠ gone";
+    expect(stripProseEmoji(input)).toBe("before\n```\n⚠ keep\n```\nafter gone");
+  });
+
+  test("leaves emoji-free prose unchanged", () => {
+    expect(stripProseEmoji("draft → planned → done")).toBe(
+      "draft → planned → done",
+    );
+  });
+});
+
 describe("escapeProse", () => {
   test("escapes JSX-hostile characters in prose", () => {
     expect(escapeProse("Array<T> and {x}")).toBe("Array&lt;T> and &#123;x}");
@@ -145,6 +175,10 @@ describe("escapeProse", () => {
     expect(escapeProse("see `Array<T>` and `{x}`")).toBe(
       "see `Array<T>` and `{x}`",
     );
+  });
+
+  test("strips emoji from prose while leaving code spans intact", () => {
+    expect(escapeProse("a ⚠ b and `⚠ c`")).toBe("a b and `⚠ c`");
   });
 });
 
