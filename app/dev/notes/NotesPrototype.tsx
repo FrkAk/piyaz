@@ -1844,7 +1844,7 @@ function SettingsPane({ note, onPatch, onSelectNote }: SettingsPaneProps) {
 
         <Section label="Classification">
           <p className="mb-2 text-[11px] leading-snug text-text-muted">
-            What this note is. Shares the project's categories and tags.
+            What this note is. Shares the project’s categories and tags.
           </p>
           <FieldLabel>Category</FieldLabel>
           <div className="mb-3">
@@ -1874,8 +1874,8 @@ function SettingsPane({ note, onPatch, onSelectNote }: SettingsPaneProps) {
         <Section label="Auto-feed into tasks">
           <p className="mb-2 text-[11px] leading-snug text-text-muted">
             Controls whether agents can see this note. Off hides it entirely —
-            agents can't discover or fetch it. Any other option mentions it in
-            the agent's MCP prompt for the chosen scope.
+            agents can’t discover or fetch it. Any other option mentions it in
+            the agent’s MCP prompt for the chosen scope.
           </p>
           <FeedEditor feed={note.feed} onChange={(feed) => onPatch({ feed })} />
         </Section>
