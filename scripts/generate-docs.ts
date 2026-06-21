@@ -98,6 +98,21 @@ export function normalizeProseDashes(text: string): string {
 }
 
 /**
+ * Strip emoji and other pictographic characters from prose, leaving code intact.
+ * Uses the same `\p{Extended_Pictographic}` property the content linter bans so
+ * docs generated from product strings satisfy the no-emoji content style rule.
+ * Consumes one adjacent space on each side so a removed pictographic does not
+ * leave a double space, while indentation elsewhere on the line is untouched.
+ * @param text - Markdown or prose, possibly containing code.
+ * @returns Text with prose pictographics removed and code untouched.
+ */
+export function stripProseEmoji(text: string): string {
+  return mapProse(text, (seg) =>
+    seg.replace(/ ?\p{Extended_Pictographic}\uFE0F? ?/gu, " "),
+  );
+}
+
+/**
  * Escape characters MDX would parse as JSX in prose positions.
  * Fenced code blocks and inline code spans are left verbatim: their text is
  * literal in MDX, so escaping `<` or `{` there would render the entity
@@ -106,7 +121,7 @@ export function normalizeProseDashes(text: string): string {
  * @returns Prose safe to embed in an MDX document body.
  */
 export function escapeProse(text: string): string {
-  return mapProse(normalizeProseDashes(text), (seg) =>
+  return mapProse(stripProseEmoji(normalizeProseDashes(text)), (seg) =>
     seg.replaceAll("<", "&lt;").replaceAll("{", "&#123;"),
   );
 }
