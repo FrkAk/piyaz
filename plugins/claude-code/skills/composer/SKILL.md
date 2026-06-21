@@ -83,7 +83,7 @@ Once per session, before the first iteration:
 1. **Resolve the project.** `piyaz_project action='list'` → `action='select' projectId='...'`. Single-task mode: also `piyaz_query type='search' query='<taskRef>'` to resolve the task UUID and current status.
 2. **Read meta.** `piyaz_query type='meta'`. Keep the categories and tag vocabulary for the workflow's research args; drop the status counts.
 3. **Stale-claim sweep.** Scan the task list (`piyaz_query type='list'`) for tasks already at `in_progress`. Surface possible stale claims from dead sessions in the first pick rationale.
-4. **Set the merge policy.** Ask once with `the AskUserQuestion tool`: `never` (default; HOTL owns the merge), `ask-each` (confirm per PR), or `auto-on-approve` (merge automatically on an `approve` verdict with green CI). Record the choice; it holds for the whole run. When `AskUserQuestion` is unavailable (headless), default to `never`.
+4. **Set the merge policy.** Ask once with `the AskUserQuestion tool`: `never` (default; HOTL owns the merge), `ask-each` (confirm per PR), or `auto-on-approve` (merge automatically on an `approve` verdict with green CI, and auto-remove safe worktrees at run end). Record the choice; it holds for the whole run. When `AskUserQuestion` is unavailable (headless), default to `never`.
 5. **Init the run log.** `mkdir -p .piyaz` and guard the gitignore (`grep -qxF '.piyaz/' .gitignore 2>/dev/null || printf '\n.piyaz/\n' >> .gitignore`). If `.piyaz/composer-<projectIdentifier>.md` exists and ends with `RUN_END`, archive it to `.piyaz/archive/composer-<projectIdentifier>-<date>.md` and start fresh; if it exists *without* a `RUN_END`, that is a resume signal — see *Recovering after compaction* first. When the unfinished log's `RUN_START mode=` differs from this invocation, append `RUN_END reason=superseded-by-<mode>`, archive, and start fresh. Then append `RUN_START mode=<...> mergePolicy=<...> project=<identifier>`.
 
 Then start iterating. There is nothing to install and nothing to confirm beyond the merge policy.
@@ -169,7 +169,7 @@ piyaz_task action='update' taskId='<id>' status='done'
   executionRecord='<append one line: merged PR #<n> via composer auto-merge after approve + green CI>'
 ```
 
-Then propagate fully (the work landed) and write `MERGE task=<ref> pr=<url> method=squash` to the run log. A failed merge (conflict, protected branch, merge-queue required) is not a task failure: report it, leave the task at `in_review` for HOTL, and continue.
+Then propagate fully (the work landed) and write `MERGE task=<ref> pr=<url> method=squash` to the run log. **Drop the merged worktree before the next pick:** locate the `.claude/worktrees/wf_*` entry whose `branch` matches the PR's `headRefName` (`git worktree list --porcelain`) and run `git worktree remove <path>` + `git branch -D <branch>` (no `--force`; if git refuses on a dirty or locked tree, surface it and leave it for *Worktree cleanup at run end*). A failed merge (conflict, protected branch, merge-queue required) is not a task failure: report it, leave the task at `in_review` for HOTL, and continue.
 
 ## Model selection
 
@@ -277,7 +277,22 @@ Stop and report in plain language (there are no magic stop phrases) when one hol
 5. **Rewrite denied** (single-task mode): the user rejected a proposed rewrite at the gate.
 6. **Piyaz transport/auth failure**: any Piyaz tool call fails with auth expiry, 401/403, a 5xx, or a network error. Stop immediately (not retryable in-session, resilience §10) and report the exact error plus the last completed phase per in-flight task.
 
-These six are exhaustive. Every stop appends `RUN_END` with its reason and the grep-derived counters, then offers to archive the log; the headless default is archive.
+These six are exhaustive. Every stop appends `RUN_END` with its reason and the grep-derived counters, runs *Worktree cleanup at run end*, then offers to archive the log; the headless default is inform-only on worktrees and archive on the log.
+
+## Worktree cleanup at run end
+
+The workflow dispatches the implementer and every fix rotation with `isolation:'worktree'` (`compose-task.js`), so each task leaves a git worktree under `.claude/worktrees/wf_<runId>-<n>` plus its local branch. The harness auto-removes a worktree only when it is unchanged; the implementer always commits, so a worktree outlives its task. The merge gate removes each merged task's worktree eagerly (`gh pr merge --delete-branch` drops only the *remote* branch — the local removal is composer's), so what reaches run end is the unmerged remainder: PR-backed worktrees awaiting HOTL, orphans, and — under `never` — every worktree. Composer never silently mutates the filesystem (HOTL owns destructive local actions), so at every stop — after `RUN_END`, before the archive offer — it surfaces what it left behind and cleans up per the run's merge policy.
+
+1. **Enumerate.** `git worktree list --porcelain`; keep only paths under `.claude/worktrees/wf_*`. The `wf_<runId>` prefix is the discriminator that proves the workflow created the worktree — never the primary checkout or a user-made one. Capture each path and its `branch refs/heads/<name>`.
+2. **Classify against open PRs.** `gh pr list --state open --json number,headRefName,url`. A worktree whose branch equals an open PR's `headRefName` is **PR-backed** (may be at `in_review` awaiting HOTL); every other is **safe** (its branch backs no open PR — merged, or an orphan `worktree-wf_*` branch). If `gh` is unavailable or errors, treat every worktree as PR-backed and inform only.
+3. **Report.** Per bucket, list each worktree path, its branch, and the PR (PR-backed); say so explicitly when none remain. Always print the exact commands:
+   - worktree: `git worktree remove <path>` (no `--force`; surface git's refusal on a dirty or locked tree and leave it).
+   - dangling local branch: `git branch -D <branch>` — `-D` not `-d` is intentional; orphan `worktree-wf_*` branches never merge upstream, so `-d` refuses them. For a PR-backed branch this drops only the *local* ref; the PR, its remote branch, and `git fetch` recovery survive.
+   - stale entries whose directory is already gone: `git worktree prune`.
+4. **Clean up (per merge policy).**
+   - **`auto-on-approve`**: auto-remove the safe bucket — the `git worktree remove` + `git branch -D` pair per worktree, then one `git worktree prune` — no prompt; the run-start delegation that authorized auto-merge covers it. PR-backed worktrees are surfaced (step 3), never auto-removed.
+   - **`never` / `ask-each`**: ask once with the AskUserQuestion tool — remove safe / remove all incl. PR-backed (explicit opt-in) / leave all. Remove only the pick, PR-backed only under the include option.
+   - **Headless** (AskUserQuestion unavailable): inform only; remove nothing.
 
 ## Recovering after compaction
 
