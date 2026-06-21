@@ -19,13 +19,12 @@ const PERMISSIONS_POLICY =
 const HSTS_VALUE = "max-age=31536000; includeSubDomains";
 
 /**
- * Cache-Control for the rendered auth pages. Identical to the directive Next
- * emits for a dynamically-rendered page (`getCacheControlHeader({revalidate:
- * 0})`, `next/dist/server/lib/cache-control.js`), so pinning it never
- * downgrades a dynamic render — and it overrides the `s-maxage=31536000`
- * Next would otherwise emit if any of these pages is statically prerendered
- * (they are plain server components today). Either way a shared cache (CDN,
- * proxy, browser bfcache) cannot store and replay session-bearing auth HTML.
+ * Cache-Control for the rendered auth pages. Matches the directive Next emits
+ * for a dynamically-rendered page (`getCacheControlHeader({ revalidate: 0 })`).
+ * These pages render dynamically today (the root layout reads `cookies()`), so
+ * this never downgrades the framework default; it also stops a shared cache
+ * (CDN, proxy) from storing session-bearing auth HTML should a page ever be
+ * statically prerendered.
  */
 const AUTH_PAGE_CACHE_CONTROL =
   "private, no-cache, no-store, max-age=0, must-revalidate";
@@ -108,26 +107,43 @@ export function securityHeaders(): HeaderEntry[] {
 }
 
 /**
- * Backfill `Cache-Control: no-store` on an API-route response that lacks the
- * header, so shared caches cannot store a session-bearing response. Next does
- * not apply its page-level Cache-Control default to route handlers, so these
- * surfaces otherwise ship with none. Guarded with `has` so upstream-owned
- * directives pass through unchanged — notably Better Auth's
- * `public, max-age=15` on the well-known discovery docs.
+ * Backfill a `Cache-Control` value on a response that lacks the header. Next
+ * does not apply its page-level Cache-Control default to route handlers, so
+ * auth API surfaces otherwise ship with none. Guarded with `has` so an
+ * upstream-owned directive (e.g. Better Auth's public hint on the discovery
+ * metadata) passes through unchanged.
  *
  * @param response - Response to harden in place.
- * @returns The same response, with `Cache-Control: no-store` ensured.
+ * @param value - Cache-Control to set when the response carries none.
+ * @returns The same response, with a `Cache-Control` ensured.
  */
-export function ensureNoStore(response: Response): Response {
+export function ensureCacheControl(
+  response: Response,
+  value: string,
+): Response {
   if (!response.headers.has("cache-control")) {
-    response.headers.set("cache-control", "no-store");
+    response.headers.set("cache-control", value);
   }
   return response;
 }
 
 /**
- * Build Next.js header rules: always-on security headers plus production
- * HSTS scoped to non-loopback hosts.
+ * Pin `Cache-Control: no-store` on a session-bearing auth response that lacks
+ * the header, so shared caches cannot store and replay it.
+ *
+ * @param response - Response to harden in place.
+ * @returns The same response, with `Cache-Control: no-store` ensured.
+ */
+export function ensureNoStore(response: Response): Response {
+  return ensureCacheControl(response, "no-store");
+}
+
+/**
+ * Build Next.js header rules: always-on security headers, production HSTS
+ * scoped to non-loopback hosts, and a non-cacheable Cache-Control on the
+ * rendered auth pages (`/sign-in`, `/sign-up`, `/consent`) so a shared cache
+ * cannot store and replay session-bearing auth HTML. The auth-page rules apply
+ * in every environment — caching dev auth HTML is the same fixation risk.
  *
  * @param isProd - True when `NODE_ENV === 'production'`.
  * @returns Header rules for `next.config.ts` `headers()`.
@@ -145,14 +161,6 @@ export function headerRules(isProd: boolean): HeaderRule[] {
     });
   }
 
-  // Pin a non-cacheable Cache-Control on the rendered auth pages so a shared
-  // cache (CDN, corporate proxy, browser bfcache) cannot store and replay
-  // session-bearing HTML to a different user. The value matches Next's
-  // dynamic-render default (so this never weakens it) and overrides the
-  // year-long `s-maxage` Next emits if a page prerenders statically — see
-  // `AUTH_PAGE_CACHE_CONTROL`. Exact-source patterns: each route is a single
-  // Next page. Independent of `isProd` — caching dev sign-in HTML is the same
-  // fixation risk in a different deployment.
   rules.push(
     {
       source: "/sign-in",

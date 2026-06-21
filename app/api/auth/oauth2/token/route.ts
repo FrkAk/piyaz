@@ -7,11 +7,6 @@ const origin = new URL(baseUrl).origin;
 const mcpResource = `${origin}/api/mcp`;
 const grantsNeedingResource = new Set(["authorization_code", "refresh_token"]);
 
-// Better Auth's oauth-provider sets `no-store` on the token response today
-// (`@better-auth/oauth-provider/dist/index.mjs:600`), so `ensureNoStore` is a
-// no-op-on-write here; the guard keeps the contract project-owned so a future
-// BA upgrade that drops the header cannot silently regress it.
-
 /**
  * OAuth 2.0 token endpoint wrapper that defaults the `resource` parameter
  * for MCP clients that omit it.
@@ -29,8 +24,14 @@ const grantsNeedingResource = new Set(["authorization_code", "refresh_token"]);
  * The grant outcome (grant type, whether a refresh token was issued, and
  * the error reason on failure) is logged for diagnosability; token values
  * are never logged.
+ *
+ * Both return paths are hardened with `ensureNoStore`. Better Auth sets
+ * `no-store` on a successful token response but leaves its error responses
+ * header-less, so the wrapper guarantees `no-store` on every outcome and keeps
+ * the directive project-owned against a future Better Auth change.
+ *
  * @param request - Incoming POST to `/api/auth/oauth2/token`.
- * @returns Better Auth token response.
+ * @returns Better Auth token response, pinned to `Cache-Control: no-store`.
  */
 export async function POST(request: Request): Promise<Response> {
   const contentType = request.headers.get("content-type") ?? "";
