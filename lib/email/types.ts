@@ -11,18 +11,20 @@
 /**
  * Outcome of an `EmailSender.send()` call. Discriminated on `kind` so callers
  * must handle both arms: the `ok` arm carries the provider-returned
- * `messageId`; the `error` arm carries a machine-readable `code` (transport
- * specific) and a human-readable `message`.
+ * `messageId` when one is available (optional, since transports like the
+ * Cloudflare `send_email` binding return no provider id); the `error` arm
+ * carries a machine-readable `code` (transport specific) and a human-readable
+ * `message`.
  */
 export type EmailSendResult =
-  | { kind: "ok"; messageId: string }
+  | { kind: "ok"; messageId?: string }
   | { kind: "error"; code: string; message: string };
 
 /**
  * A single transactional email to deliver. `to` is a single recipient (all
  * downstream flows are single-recipient transactional mail). Both `html` and
  * `text` are required for deliverability. `replyTo` is optional and distinct
- * from `from`. `category` is open metadata only — never a routing instruction;
+ * from `from`. `category` is optional open metadata only — never a routing instruction;
  * purpose→address routing lives in the brand resolver, not here.
  */
 export interface EmailMessage {
@@ -32,7 +34,7 @@ export interface EmailMessage {
   subject: string;
   html: string;
   text: string;
-  category: string;
+  category?: string;
 }
 
 /**
