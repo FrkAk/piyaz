@@ -3,7 +3,7 @@
  * (Cloudflare Workers, SMTP, Log, Fake) implements `EmailSender`, and every
  * producer (templates, brand resolver, Better Auth wiring) consumes these
  * types. This module has zero runtime imports and no side effects, so it
- * compiles identically into the Node and Workers bundles — the `server-only`
+ * compiles identically into the Node and Workers bundles. The `server-only`
  * boundary lives in the transport adapters, not here, mirroring the
  * import-free guarantee of `lib/realtime/types.ts`.
  */
@@ -24,7 +24,7 @@ export type EmailSendResult =
  * A single transactional email to deliver. `to` is a single recipient (all
  * downstream flows are single-recipient transactional mail). Both `html` and
  * `text` are required for deliverability. `replyTo` is optional and distinct
- * from `from`. `category` is optional open metadata only — never a routing instruction;
+ * from `from`. `category` is optional open metadata only, never a routing instruction;
  * purpose→address routing lives in the brand resolver, not here.
  */
 export interface EmailMessage {
