@@ -37,7 +37,9 @@ export function decodeCursor(
     if (typeof parsed.u !== "string" || typeof parsed.i !== "string") {
       return null;
     }
-    return { updatedAt: new Date(parsed.u), id: parsed.i };
+    const updatedAt = new Date(parsed.u);
+    if (Number.isNaN(updatedAt.getTime())) return null;
+    return { updatedAt, id: parsed.i };
   } catch {
     return null;
   }

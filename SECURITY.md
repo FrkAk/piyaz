@@ -2,11 +2,11 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Mymir, please report it responsibly.
+If you discover a security vulnerability in Piyaz, please report it responsibly.
 
 **Do not open a public issue.**
 
-Instead, use [GitHub's private vulnerability reporting](https://github.com/FrkAk/mymir/security/advisories/new) to submit your report. This ensures the issue can be addressed before public disclosure.
+Instead, use [GitHub's private vulnerability reporting](https://github.com/FrkAk/piyaz/security/advisories/new) to submit your report. This ensures the issue can be addressed before public disclosure.
 
 ## What to include
 
@@ -21,4 +21,4 @@ You can expect an initial response within 72 hours. We will work with you to und
 
 ## Scope
 
-This policy applies to the latest version of Mymir on the `main` branch.
+This policy applies to the latest version of Piyaz on the `main` branch.

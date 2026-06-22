@@ -9,35 +9,25 @@ import { StatusGlyph } from "@/components/shared/StatusGlyph";
 import { CopyButton } from "@/components/shared/CopyButton";
 import { IconBundle, IconChevronRight } from "@/components/shared/icons";
 import type { AcceptanceCriterion, Decision, TaskStatus } from "@/lib/types";
+import type { TaskState } from "@/lib/data/task";
+import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
+import type { BundleSectionId } from "@/lib/context/parts";
+import { REVIEW_LENS_PROMPTS } from "@/lib/context/lens";
+import {
+  ALWAYS_RENDERED_BY_BUNDLE,
+  BUNDLE_BY_STAGE,
+  BUNDLE_LABEL_BY_STAGE,
+  SECTIONS_BY_BUNDLE,
+  resolveStage,
+  variantOf,
+  type BundleVariant,
+} from "@/components/workspace/bundle-tables";
 import { taskKeys } from "@/lib/query/keys";
 import { fetchTaskContext } from "@/lib/query/queries";
 
-/** Resolved bundle stage — adds derived `plannable` and `ready` sub-stages. */
-type BundleStage =
-  | "draft"
-  | "plannable"
-  | "planned"
-  | "ready"
-  | "in_progress"
-  | "in_review"
-  | "done"
-  | "cancelled";
-
-/** Section identifiers — also used as React keys. */
-type SectionId =
-  | "spec"
-  | "criteria"
-  | "plan"
-  | "prerequisites"
-  | "neighbors"
-  | "decisions"
-  | "files"
-  | "downstream"
-  | "execution";
-
 interface BundleSectionMeta {
   /** Stable identifier. */
-  id: SectionId;
+  id: BundleSectionId;
   /** Mono uppercase label rendered in the section header. */
   label: string;
   /** CSS color used for the left strip and bar slice. */
@@ -45,8 +35,9 @@ interface BundleSectionMeta {
 }
 
 /** Section metadata table — color cues match DESIGN.md §3.9. */
-const SECTION_META: Record<SectionId, BundleSectionMeta> = {
+const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
   spec: { id: "spec", label: "spec", color: "var(--color-accent-light)" },
+  meta: { id: "meta", label: "meta", color: "var(--color-planned)" },
   criteria: {
     id: "criteria",
     label: "criteria",
@@ -58,20 +49,36 @@ const SECTION_META: Record<SectionId, BundleSectionMeta> = {
     label: "prerequisites",
     color: "var(--color-done)",
   },
-  neighbors: {
-    id: "neighbors",
-    label: "neighbors",
-    color: "var(--color-accent-2)",
+  built: { id: "built", label: "built", color: "var(--color-done)" },
+  abandoned: {
+    id: "abandoned",
+    label: "abandoned",
+    color: "var(--color-cancelled)",
   },
   decisions: {
     id: "decisions",
     label: "decisions",
     color: "var(--color-accent)",
   },
-  files: { id: "files", label: "files", color: "var(--color-progress)" },
+  constraints: {
+    id: "constraints",
+    label: "constraints",
+    color: "var(--color-accent)",
+  },
+  connected: {
+    id: "connected",
+    label: "connected",
+    color: "var(--color-accent-2)",
+  },
+  links: { id: "links", label: "links", color: "var(--color-accent-light)" },
   downstream: {
     id: "downstream",
     label: "downstream",
+    color: "var(--color-relates)",
+  },
+  dependents: {
+    id: "dependents",
+    label: "dependents",
     color: "var(--color-relates)",
   },
   execution: {
@@ -79,75 +86,12 @@ const SECTION_META: Record<SectionId, BundleSectionMeta> = {
     label: "execution",
     color: "var(--color-done)",
   },
+  project: { id: "project", label: "project", color: "var(--color-relates)" },
+  blocked: { id: "blocked", label: "blocked", color: "var(--color-danger)" },
+  lens: { id: "lens", label: "lens", color: "var(--color-accent)" },
 };
 
-/**
- * Section list per stage — mirrors what each `lib/context/_core/*` builder
- * actually emits in the order the agent receives. U-shaped attention puts
- * the spec first and downstream last so the model anchors on inputs and
- * exits on consumers.
- *
- * - `draft` → planning context with no prereqs yet (`planning.ts`)
- * - `plannable` (derived: draft with criteria + done deps) → `planning.ts`
- * - `planned` → `working.ts` 1-hop shape (criteria → decisions → connected)
- * - `ready` (derived: planned + all deps done) → `planning.ts` shape with plan
- * - `in_progress` → `agent.ts` lean execution shape
- * - `done` / `cancelled` → execution record on top, artefacts below
- */
-const SHAPE_BY_STAGE: Record<BundleStage, readonly SectionId[]> = {
-  draft: ["spec", "criteria"],
-  plannable: ["spec", "criteria", "prerequisites", "decisions", "downstream"],
-  planned: ["spec", "criteria", "decisions", "prerequisites", "neighbors"],
-  ready: [
-    "spec",
-    "criteria",
-    "plan",
-    "prerequisites",
-    "decisions",
-    "downstream",
-  ],
-  in_progress: [
-    "spec",
-    "plan",
-    "prerequisites",
-    "decisions",
-    "criteria",
-    "files",
-    "downstream",
-  ],
-  in_review: ["execution", "spec", "criteria", "files", "downstream"],
-  done: ["execution", "spec", "criteria", "files", "downstream"],
-  cancelled: ["execution"],
-};
-
-/** Bundle name shown in the preview header — matches the `lib/context` builder that runs at this stage. */
-const BUNDLE_NAME: Record<BundleStage, string> = {
-  draft: "planning bundle",
-  plannable: "planning bundle",
-  planned: "working bundle",
-  ready: "planning bundle",
-  in_progress: "agent bundle",
-  in_review: "execution record",
-  done: "execution record",
-  cancelled: "execution record",
-};
-
-/** Which raw bundle string powers the MD toggle for each stage. */
-const BUNDLE_SOURCE: Record<
-  BundleStage,
-  "agent" | "planning" | "working" | "execution"
-> = {
-  draft: "planning",
-  plannable: "planning",
-  planned: "working",
-  ready: "planning",
-  in_progress: "agent",
-  in_review: "execution",
-  done: "execution",
-  cancelled: "execution",
-};
-
-interface BundleNeighbor {
+export interface BundleNeighbor {
   /** Task UUID. */
   id: string;
   /** Composed task identifier (e.g. `MYMR-104`). */
@@ -158,33 +102,69 @@ interface BundleNeighbor {
   status: string;
 }
 
+/** A prerequisite row carrying the record flag the built list filters on. */
+export interface BundlePrereqRef extends BundleNeighbor {
+  /** True when the task carries an execution record. */
+  hasExecutionRecord: boolean;
+}
+
+/** A dependent row carrying its effective depth from the previewed task. */
+export interface BundleDownstreamRef extends BundleNeighbor {
+  /** Minimum effective hops from the previewed task (1 = direct). */
+  depth: number;
+}
+
+/** A 1-hop edge row for the connected drawer section. */
+export interface BundleConnectedEdge extends BundleNeighbor {
+  /** Edge type (depends_on / relates_to / …). */
+  edgeType: string;
+  /** Direction relative to the previewed task. */
+  direction: "outgoing" | "incoming";
+  /** Edge note, when present. */
+  note: string | null;
+}
+
 interface BundlePreviewProps {
   /** Task UUID — used by the lazy bundle fetch. */
   taskId: string;
   /** Project UUID — used by the lazy bundle fetch's query key. */
   projectId: string;
-  /** Task status — drives the section shape. */
+  /** Schema task status. */
   status: TaskStatus;
-  /** Whether the task is derived-ready (planned + all deps done). */
-  isReady: boolean;
-  /** Whether the task is a plannable draft (description + criteria + done deps). */
-  isPlannable: boolean;
+  /** Server-derived state; undefined when the task is missing from the slim payload. */
+  state?: TaskState;
+  /** Project display name — drives the hierarchy line in the meta row. */
+  projectName: string;
+  /** Project description — drives the project-context drawer body. */
+  projectDescription: string | null;
   /** Task spec (description). */
   spec: string;
-  /** Acceptance criteria — drives the criteria section. */
+  /** Task tags. */
+  tags: string[];
+  /** Task priority. */
+  priority: string | null;
+  /** Task estimate in points. */
+  estimate: number | null;
+  /** Resolved assignees. */
+  assignees: AssigneeRef[];
+  /** Acceptance criteria. */
   criteria: AcceptanceCriterion[];
-  /** Implementation plan markdown — drives the plan section. */
+  /** Implementation plan markdown. */
   plan: string | null;
-  /** Upstream `depends_on` task neighbors. */
-  prerequisites: BundleNeighbor[];
-  /** Sibling `relates_to` task neighbors. */
-  neighbors: BundleNeighbor[];
-  /** Downstream `depends_on` consumers. */
-  downstream: BundleNeighbor[];
+  /** Effective prerequisites within the closure depth (cancelled-transparent walk). */
+  prerequisites: BundlePrereqRef[];
+  /** Direct cancelled prerequisites with execution records ("Abandoned Approaches"). */
+  abandoned: BundleNeighbor[];
+  /** Unfinished effective direct prerequisites (cancelled-transparent walk). */
+  blockedBy: BundleNeighbor[];
+  /** All 1-hop edges, both directions, with type and note. */
+  connected: BundleConnectedEdge[];
+  /** Effective dependents within the closure depth, with effective depth. */
+  downstream: BundleDownstreamRef[];
   /** Pinned decisions. */
   decisions: Decision[];
-  /** File paths the task touches. */
-  files: string[];
+  /** Task links. */
+  links: TaskLinkRef[];
   /** Execution record markdown. */
   executionRecord: string | null;
   /** Click a neighbor row to navigate to that task. */
@@ -192,148 +172,228 @@ interface BundlePreviewProps {
 }
 
 /**
- * Resolve the visible bundle stage from DB status plus the derived
- * `isReady` and `isPlannable` flags so the preview reflects what the agent
- * would get if picked up right now:
+ * Resolve the drawer-section variant from the props' status and state.
  *
- * - `planned` whose effective deps are done → `ready`
- * - `draft` with description + criteria + done deps → `plannable`
- *
- * @param status - DB status of the task.
- * @param isReady - Derived-ready flag from `lib/ui/taskState`.
- * @param isPlannable - Derived-plannable flag from `lib/ui/taskState`.
- * @returns Resolved bundle stage.
+ * @param props - Bundle props.
+ * @returns Variant key into the per-bundle section tables.
  */
-function resolveStage(
-  status: TaskStatus,
-  isReady: boolean,
-  isPlannable: boolean,
-): BundleStage {
-  if (status === "planned" && isReady) return "ready";
-  if (status === "draft" && isPlannable) return "plannable";
-  return status;
+function variantFor(props: BundlePreviewProps): BundleVariant {
+  return variantOf(resolveStage(props.status, props.state));
 }
 
 /**
- * Approximate visual weight of a section so the proportional bar reflects
- * the section's relative size without exposing a token number to the user.
+ * Record-bearing prerequisites — mirrors the builders' upstream-execution-
+ * record lists: the agent bundle inlines any effective dep's record, while
+ * planning/review additionally require the dep to be done.
+ *
+ * @param props - Bundle props.
+ * @returns Prerequisite rows whose records the bundle inlines.
+ */
+function builtPrereqs(props: BundlePreviewProps): BundlePrereqRef[] {
+  if (variantFor(props) === "agent") {
+    return props.prerequisites.filter((p) => p.hasExecutionRecord);
+  }
+  return props.prerequisites.filter(
+    (p) => p.status === "done" && p.hasExecutionRecord,
+  );
+}
+
+/**
+ * Effective direct dependents — mirrors the cancellation record's Remaining
+ * Dependents list (effective depth 1 only).
+ *
+ * @param props - Bundle props.
+ * @returns Direct dependent rows.
+ */
+function dependentRefs(props: BundlePreviewProps): BundleDownstreamRef[] {
+  return props.downstream.filter((d) => d.depth === 1);
+}
+
+/**
+ * Whether a section has any data to show. Sections the builder emits
+ * unconditionally with fallback text bypass this check via
+ * {@link ALWAYS_RENDERED_BY_BUNDLE}; everything else is render-if-nonempty.
+ * All bodies render from props already loaded with the detail panel — no
+ * section expansion triggers a fetch.
  *
  * @param id - Section identifier.
- * @param props - Bundle props supplying the underlying data.
- * @returns Non-negative weight (1 minimum so the slice still renders).
+ * @param props - Bundle props.
+ * @returns True when the section should render.
  */
-function sectionWeight(id: SectionId, props: BundlePreviewProps): number {
-  const len = (s: string) => s.length;
-  if (id === "spec") return Math.max(len(props.spec), 1);
-  if (id === "criteria") {
-    return Math.max(
-      props.criteria.reduce((sum, c) => sum + len(c.text), 0),
-      1,
-    );
+function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
+  switch (id) {
+    case "spec":
+      return props.spec.trim().length > 0;
+    case "meta":
+    case "project":
+    case "lens":
+      return true;
+    case "criteria":
+      return props.criteria.length > 0;
+    case "plan":
+      return (props.plan ?? "").trim().length > 0;
+    case "prerequisites":
+      return props.prerequisites.length > 0;
+    case "built":
+      return builtPrereqs(props).length > 0;
+    case "abandoned":
+      return props.abandoned.length > 0;
+    case "decisions":
+    case "constraints":
+      return props.decisions.length > 0;
+    case "connected":
+      return props.connected.length > 0;
+    case "links":
+      return props.links.length > 0;
+    case "downstream":
+      return props.downstream.length > 0;
+    case "dependents":
+      return dependentRefs(props).length > 0;
+    case "execution":
+      return (props.executionRecord ?? "").trim().length > 0;
+    case "blocked":
+      return props.blockedBy.length > 0;
   }
-  if (id === "plan") return Math.max(len(props.plan ?? ""), 1);
-  if (id === "prerequisites") {
-    return Math.max(
-      props.prerequisites.reduce(
-        (sum, n) => sum + len(`${n.taskRef} ${n.title}`),
-        0,
-      ),
-      1,
-    );
-  }
-  if (id === "neighbors") {
-    return Math.max(
-      props.neighbors.reduce(
-        (sum, n) => sum + len(`${n.taskRef} ${n.title}`),
-        0,
-      ),
-      1,
-    );
-  }
-  if (id === "decisions") {
-    return Math.max(
-      props.decisions.reduce((sum, d) => sum + len(d.text), 0),
-      1,
-    );
-  }
-  if (id === "files") return Math.max(len(props.files.join("\n")), 1);
-  if (id === "downstream") {
-    return Math.max(
-      props.downstream.reduce(
-        (sum, n) => sum + len(`${n.taskRef} ${n.title}`),
-        0,
-      ),
-      1,
-    );
-  }
-  return Math.max(len(props.executionRecord ?? ""), 1);
 }
 
 /**
- * Collapsible bundle preview — shows the working bundle the agent would
- * receive when picking up the task. Section list adapts to the task's
- * current stage so the preview tracks the real `lib/context/_core/*`
- * builder output.
+ * Approximate visual weight of a section for the proportional bar, computed
+ * entirely from prop data already on the client.
+ *
+ * @param id - Section identifier.
+ * @param props - Bundle props.
+ * @returns Non-negative weight (1 minimum).
+ */
+function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
+  const len = (s: string) => s.length;
+  const refLen = (xs: BundleNeighbor[]) =>
+    xs.reduce((sum, n) => sum + len(`${n.taskRef} ${n.title}`), 0);
+  switch (id) {
+    case "spec":
+      return Math.max(len(props.spec), 1);
+    case "meta":
+      return Math.max(
+        len(props.tags.join(" ")) + len(props.projectName) + 24,
+        1,
+      );
+    case "project":
+      return Math.max(
+        len(props.projectName) + len(props.projectDescription ?? ""),
+        1,
+      );
+    case "criteria":
+      return Math.max(
+        props.criteria.reduce((sum, c) => sum + len(c.text), 0),
+        1,
+      );
+    case "plan":
+      return Math.max(len(props.plan ?? ""), 1);
+    case "prerequisites":
+      return Math.max(refLen(props.prerequisites), 1);
+    case "built":
+      return Math.max(refLen(builtPrereqs(props)), 1);
+    case "abandoned":
+      return Math.max(refLen(props.abandoned), 1);
+    case "connected":
+      return Math.max(refLen(props.connected), 1);
+    case "decisions":
+    case "constraints":
+      return Math.max(
+        props.decisions.reduce((sum, d) => sum + len(d.text), 0),
+        1,
+      );
+    case "links":
+      return Math.max(
+        props.links.reduce((sum, l) => sum + len(l.url), 0),
+        1,
+      );
+    case "downstream":
+      return Math.max(refLen(props.downstream), 1);
+    case "dependents":
+      return Math.max(refLen(dependentRefs(props)), 1);
+    case "blocked":
+      return Math.max(refLen(props.blockedBy), 1);
+    case "lens":
+      return REVIEW_LENS_PROMPTS.length;
+    case "execution":
+      return Math.max(len(props.executionRecord ?? ""), 1);
+  }
+}
+
+/**
+ * Collapsible bundle preview — shows the exact bundle the next lifecycle
+ * consumer receives for the task's current stage. The drawer section list,
+ * header label, and MD raw view all derive from the shared per-stage tables
+ * in `bundle-tables.ts`, so the preview tracks the real
+ * `lib/context/_core/*` builder output.
+ *
+ * Every drawer body renders from data the detail panel already loaded; the
+ * server bundle is fetched only when the MD raw view is toggled on. All
+ * drawers start collapsed.
  *
  * @param props - Bundle data.
  * @returns Card containing the header, section bar, and section list.
  */
 export function BundlePreview(props: BundlePreviewProps) {
-  const {
-    taskId,
-    projectId,
-    status,
-    isReady,
-    isPlannable,
-    executionRecord,
-    onSelectTask,
-  } = props;
+  const { taskId, projectId, status, state, onSelectTask } = props;
 
-  const stage = resolveStage(status, isReady, isPlannable);
-  const sectionIds = SHAPE_BY_STAGE[stage];
-  const bundleName = BUNDLE_NAME[stage];
-  const source = BUNDLE_SOURCE[stage];
+  const stage = resolveStage(status, state);
+  const variant = variantOf(stage);
+  const kind = BUNDLE_BY_STAGE[stage];
+  const bundleName = BUNDLE_LABEL_BY_STAGE[stage];
+  // Chip mirrors the bundle content: it shows exactly when the previewed
+  // agent bundle carries the blocked section. `blockedBy` is the same
+  // cancelled-transparent effective walk the builder runs, computed from the
+  // slim graph, so chip, drawer section, and bundle markdown agree. A
+  // blocked draft previews the working bundle, which has no blocked
+  // treatment, so it gets no chip.
+  const isBlocked = kind === "agent" && props.blockedBy.length > 0;
 
-  const [expanded, setExpanded] = useState<Set<SectionId>>(
-    () => new Set<SectionId>([sectionIds[0]]),
+  // Plain derivations: `props` is a fresh object every parent render, so a
+  // useMemo keyed on it would never hit. The work is cheap (string-length
+  // sums over already-loaded slim arrays).
+  const sectionIds = SECTIONS_BY_BUNDLE[variant].filter(
+    (id) =>
+      ALWAYS_RENDERED_BY_BUNDLE[variant].includes(id) ||
+      hasLocalData(id, props),
+  );
+
+  const [expanded, setExpanded] = useState<Set<BundleSectionId>>(
+    () => new Set<BundleSectionId>(),
   );
   const [showRaw, setShowRaw] = useState(false);
 
+  // Reset the expanded set when the stage changes so a stale section from
+  // the previous shape never lingers (render-phase derived-state reset).
+  const [lastStage, setLastStage] = useState(stage);
+  if (stage !== lastStage) {
+    setLastStage(stage);
+    setExpanded(new Set<BundleSectionId>());
+  }
+
   const qc = useQueryClient();
-  // Stages whose raw bundle is the local `executionRecord` prop need no
-  // network round-trip — skip the context fetch entirely so toggling MD on
-  // a `done` / `cancelled` task doesn't burn a request.
-  const { data: bundles, isFetching: bundlesFetching } = useQuery({
-    queryKey: taskKeys.context(projectId, taskId),
-    queryFn: fetchTaskContext(qc, projectId, taskId),
-    enabled: showRaw && source !== "execution",
+  const {
+    data,
+    isFetching: bundleFetching,
+    isError: bundleError,
+    refetch: refetchBundle,
+  } = useQuery({
+    queryKey: taskKeys.context(projectId, taskId, kind),
+    queryFn: fetchTaskContext(qc, projectId, taskId, kind),
+    enabled: showRaw,
   });
+  const sections = data?.sections;
 
-  const rawText = useMemo(() => {
-    if (source === "execution") return executionRecord ?? "";
-    return bundles?.[source] ?? "";
-  }, [source, bundles, executionRecord]);
+  const rawText = useMemo(
+    () => (sections ? sections.map((s) => s.markdown).join("\n\n") : ""),
+    [sections],
+  );
 
-  const weights = useMemo(() => {
-    const out = {} as Record<SectionId, number>;
-    for (const id of sectionIds) out[id] = sectionWeight(id, props);
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    stage,
-    props.spec,
-    props.criteria,
-    props.plan,
-    props.prerequisites,
-    props.neighbors,
-    props.decisions,
-    props.files,
-    props.downstream,
-    props.executionRecord,
-  ]);
+  const weights = {} as Record<BundleSectionId, number>;
+  for (const id of sectionIds) weights[id] = sectionWeight(id, props);
 
   /** Toggle a section's expansion state without disturbing the others. */
-  const toggle = (id: SectionId) => {
+  const toggle = (id: BundleSectionId) => {
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -351,6 +411,11 @@ export function BundlePreview(props: BundlePreviewProps) {
         <span className="text-[12px] font-medium text-text-primary">
           {bundleName}
         </span>
+        {isBlocked && (
+          <span className="inline-flex items-center rounded-md border border-danger/40 bg-danger/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-danger">
+            blocked
+          </span>
+        )}
         <span className="ml-auto" />
         <button
           type="button"
@@ -371,11 +436,13 @@ export function BundlePreview(props: BundlePreviewProps) {
         {sectionIds.map((id) => (
           <div
             key={id}
+            title={SECTION_META[id].label}
             style={{
               flexGrow: weights[id],
               flexBasis: 0,
               background: SECTION_META[id].color,
               opacity: 0.85,
+              transition: "flex-grow 300ms ease",
             }}
             aria-hidden="true"
           />
@@ -384,15 +451,36 @@ export function BundlePreview(props: BundlePreviewProps) {
 
       {showRaw ? (
         <div className="space-y-2 bg-base-2 p-3">
-          <div className="flex items-center justify-end">
-            <CopyButton text={rawText} label="Copy" />
+          <div className="flex items-center justify-between">
+            {bundleError ? (
+              <button
+                type="button"
+                onClick={() => void refetchBundle()}
+                className="cursor-pointer rounded-md border border-danger/40 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-danger transition-colors hover:bg-danger/10"
+              >
+                Retry
+              </button>
+            ) : (
+              <span />
+            )}
+            {rawText.trim().length > 0 ? (
+              <CopyButton text={rawText} label="Copy" />
+            ) : (
+              <span />
+            )}
           </div>
-          <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed text-text-secondary">
-            {bundlesFetching && !rawText
-              ? "// loading bundle…"
-              : rawText.trim().length > 0
-                ? rawText
-                : "// bundle empty — add a description and prerequisites"}
+          <pre
+            className={`max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed text-text-secondary ${
+              bundleFetching && !rawText ? "animate-pulse" : ""
+            }`}
+          >
+            {bundleError
+              ? "// failed to load bundle — retry above"
+              : bundleFetching && !rawText
+                ? "// loading bundle…"
+                : rawText.trim().length > 0
+                  ? rawText
+                  : "// bundle empty — add a description and prerequisites"}
           </pre>
         </div>
       ) : (
@@ -416,7 +504,7 @@ export function BundlePreview(props: BundlePreviewProps) {
 
 interface BundleSectionProps {
   /** Section identifier. */
-  id: SectionId;
+  id: BundleSectionId;
   /** Whether the section body is expanded. */
   open: boolean;
   /** True for the last section so we can suppress the divider. */
@@ -452,6 +540,7 @@ function BundleSection({
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={open}
         className="flex w-full cursor-pointer items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-raised/40"
       >
         <span
@@ -500,8 +589,18 @@ function BundleSection({
  * @param props - Bundle props.
  * @returns Plain text summary line.
  */
-function sectionSummary(id: SectionId, props: BundlePreviewProps): string {
+function sectionSummary(
+  id: BundleSectionId,
+  props: BundlePreviewProps,
+): string {
   if (id === "spec") return "task spec";
+  if (id === "meta") {
+    const bits: string[] = [];
+    if (props.priority) bits.push(props.priority);
+    if (props.estimate) bits.push(`${props.estimate} pts`);
+    if (props.tags.length > 0) bits.push(`${props.tags.length} tags`);
+    return bits.length > 0 ? bits.join(" · ") : "meta";
+  }
   if (id === "criteria") {
     const total = props.criteria.length;
     if (total === 0) return "no acceptance criteria";
@@ -523,14 +622,14 @@ function sectionSummary(id: SectionId, props: BundlePreviewProps): string {
       ? `${refs} · +${props.prerequisites.length - 2} more`
       : refs;
   }
-  if (id === "neighbors") {
-    if (props.neighbors.length === 0) return "no 1-hop neighbors";
-    const refs = props.neighbors
+  if (id === "connected") {
+    if (props.connected.length === 0) return "no 1-hop edges";
+    const refs = props.connected
       .slice(0, 3)
       .map((p) => p.taskRef)
       .join(" · ");
-    return props.neighbors.length > 3
-      ? `${refs} · +${props.neighbors.length - 3} more`
+    return props.connected.length > 3
+      ? `${refs} · +${props.connected.length - 3} more`
       : refs;
   }
   if (id === "decisions") {
@@ -538,11 +637,13 @@ function sectionSummary(id: SectionId, props: BundlePreviewProps): string {
       ? "1 decision"
       : `${props.decisions.length} decisions`;
   }
-  if (id === "files") {
-    if (props.files.length === 0) return "no files yet";
-    return props.files.length === 1
-      ? props.files[0]
-      : `${props.files[0]} + ${props.files.length - 1} more`;
+  if (id === "constraints") {
+    return props.decisions.length === 1
+      ? "1 constraint"
+      : `${props.decisions.length} constraints`;
+  }
+  if (id === "links") {
+    return props.links.length === 1 ? "1 link" : `${props.links.length} links`;
   }
   if (id === "downstream") {
     if (props.downstream.length === 0) return "no consumers";
@@ -554,14 +655,43 @@ function sectionSummary(id: SectionId, props: BundlePreviewProps): string {
       ? `${refs} · +${props.downstream.length - 2} more`
       : refs;
   }
-  return props.executionRecord && props.executionRecord.trim().length > 0
-    ? "shipped record"
-    : "no execution record yet";
+  if (id === "dependents") {
+    const n = dependentRefs(props).length;
+    return n === 1 ? "1 remaining dependent" : `${n} remaining dependents`;
+  }
+  if (id === "blocked") {
+    const n = props.blockedBy.length;
+    return `${n} unfinished prerequisite${n === 1 ? "" : "s"}`;
+  }
+  if (id === "project") return props.projectName;
+  if (id === "built") {
+    const built = builtPrereqs(props);
+    const refs = built
+      .slice(0, 2)
+      .map((p) => p.taskRef)
+      .join(" · ");
+    return built.length > 2 ? `${refs} · +${built.length - 2} more` : refs;
+  }
+  if (id === "abandoned") {
+    const dead = props.abandoned;
+    const refs = dead
+      .slice(0, 2)
+      .map((p) => p.taskRef)
+      .join(" · ");
+    return dead.length > 2 ? `${refs} · +${dead.length - 2} more` : refs;
+  }
+  if (id === "lens") return "review lens prompts";
+  if (!props.executionRecord || props.executionRecord.trim().length === 0) {
+    return "no execution record yet";
+  }
+  return props.status === "cancelled"
+    ? "cancellation record"
+    : "shipped record";
 }
 
 interface SectionBodyProps {
   /** Section identifier. */
-  id: SectionId;
+  id: BundleSectionId;
   /** Bundle props. */
   props: BundlePreviewProps;
   /** Click a neighbor row to navigate. */
@@ -570,6 +700,7 @@ interface SectionBodyProps {
 
 /**
  * Section body dispatcher — chooses the right renderer for the active id.
+ * Every body renders from props; nothing here fetches.
  *
  * @param body - Body configuration.
  * @returns The matching body renderer.
@@ -582,6 +713,8 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
         emptyHint="No spec yet — add a description above."
       />
     );
+  if (id === "meta") return <MetaBody props={props} />;
+  if (id === "project") return <ProjectBody props={props} />;
   if (id === "criteria") return <CriteriaBody criteria={props.criteria} />;
   if (id === "plan")
     return (
@@ -599,17 +732,35 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
       />
     );
   }
-  if (id === "neighbors") {
+  if (id === "built") {
     return (
-      <NeighborList
-        items={props.neighbors}
-        emptyHint="No 1-hop neighbors."
+      <RecordRefList
+        items={builtPrereqs(props)}
+        hint="Execution records are inlined in the actual bundle. Open a task to read its record."
+        emptyHint="No prerequisites with execution records."
         onSelectTask={onSelectTask}
       />
     );
   }
-  if (id === "decisions") return <DecisionsBody decisions={props.decisions} />;
-  if (id === "files") return <FilesBody files={props.files} />;
+  if (id === "abandoned") {
+    return (
+      <RecordRefList
+        items={props.abandoned}
+        hint="Cancellation records are inlined in the actual bundle. Open a task to read its record."
+        emptyHint="No cancelled prerequisites with records."
+        onSelectTask={onSelectTask}
+      />
+    );
+  }
+  if (id === "connected") {
+    return (
+      <ConnectedList items={props.connected} onSelectTask={onSelectTask} />
+    );
+  }
+  if (id === "decisions" || id === "constraints") {
+    return <DecisionsBody decisions={props.decisions} />;
+  }
+  if (id === "links") return <LinksBody links={props.links} />;
   if (id === "downstream") {
     return (
       <NeighborList
@@ -619,11 +770,257 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
       />
     );
   }
+  if (id === "dependents") {
+    return (
+      <NeighborList
+        items={dependentRefs(props)}
+        emptyHint="No remaining direct dependents."
+        onSelectTask={onSelectTask}
+      />
+    );
+  }
+  if (id === "blocked") {
+    return <BlockedBody props={props} onSelectTask={onSelectTask} />;
+  }
+  if (id === "lens") {
+    return <MarkdownBody text={REVIEW_LENS_PROMPTS} emptyHint="" />;
+  }
   return (
     <MarkdownBody
       text={props.executionRecord ?? ""}
       emptyHint="No execution record yet — populated when the task ships."
     />
+  );
+}
+
+interface ProjectBodyProps {
+  /** Bundle props. */
+  props: BundlePreviewProps;
+}
+
+/**
+ * Project-context body: project name plus its description, mirroring the
+ * bundle's Project Context section from data already on the client.
+ *
+ * @param props - Bundle props.
+ * @returns Project body element.
+ */
+function ProjectBody({ props }: ProjectBodyProps) {
+  return (
+    <div className="space-y-1.5">
+      <p className="font-mono text-[11.5px] text-text-secondary">
+        Project: {props.projectName}
+      </p>
+      {props.projectDescription &&
+        props.projectDescription.trim().length > 0 && (
+          <Markdown className="text-[12.5px] leading-relaxed text-text-secondary">
+            {props.projectDescription}
+          </Markdown>
+        )}
+    </div>
+  );
+}
+
+interface RecordRefListProps {
+  /** Neighbor task entries. */
+  items: BundleNeighbor[];
+  /** Muted hint shown above the list. */
+  hint: string;
+  /** Italic hint shown when the list is empty. */
+  emptyHint: string;
+  /** Click a row to navigate. */
+  onSelectTask?: (taskId: string) => void;
+}
+
+/**
+ * Ref list for record-bearing prerequisites (built / abandoned): the drawer
+ * previews which tasks carry records; the records themselves stay in the
+ * bundle markdown and on each task's own detail view.
+ *
+ * @param props - Ref list configuration.
+ * @returns Hint plus neighbor list, or empty hint.
+ */
+function RecordRefList({
+  items,
+  hint,
+  emptyHint,
+  onSelectTask,
+}: RecordRefListProps) {
+  if (items.length === 0) {
+    return (
+      <p className="font-mono text-[11.5px] italic text-text-muted">
+        {emptyHint}
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <p className="text-[11.5px] leading-snug text-text-muted">{hint}</p>
+      <NeighborList
+        items={items}
+        emptyHint={emptyHint}
+        onSelectTask={onSelectTask}
+      />
+    </div>
+  );
+}
+
+interface MetaBodyProps {
+  /** Bundle props. */
+  props: BundlePreviewProps;
+}
+
+/**
+ * Compact meta row: priority / estimate / assignees, tag chips, and the
+ * project hierarchy line — one drawer row covering three adjacent bundle
+ * headings.
+ *
+ * @param props - Bundle props.
+ * @returns Meta body element.
+ */
+function MetaBody({ props }: MetaBodyProps) {
+  const bits: string[] = [];
+  if (props.priority) bits.push(`priority ${props.priority}`);
+  if (props.estimate) bits.push(`${props.estimate} pts`);
+  if (props.assignees.length > 0) {
+    bits.push(props.assignees.map((a) => a.name).join(", "));
+  }
+  return (
+    <div className="space-y-1.5">
+      {bits.length > 0 && (
+        <p className="font-mono text-[11.5px] text-text-secondary">
+          {bits.join(" · ")}
+        </p>
+      )}
+      {props.tags.length > 0 && (
+        <p className="flex flex-wrap gap-1.5">
+          {props.tags.map((t) => (
+            <span
+              key={t}
+              className="rounded-md border border-border bg-surface px-1.5 py-0.5 font-mono text-[10.5px] text-text-secondary"
+            >
+              {t}
+            </span>
+          ))}
+        </p>
+      )}
+      <p className="font-mono text-[10.5px] text-text-faint">
+        project: {props.projectName}
+      </p>
+    </div>
+  );
+}
+
+interface ConnectedListProps {
+  /** Connected edge rows. */
+  items: BundleConnectedEdge[];
+  /** Click a row to navigate. */
+  onSelectTask?: (taskId: string) => void;
+}
+
+/**
+ * All 1-hop edges with direction glyphs: `edgeType →/←` + ref + title.
+ *
+ * @param props - Connected edges and navigation handler.
+ * @returns Stack of connected rows or empty hint.
+ */
+function ConnectedList({ items, onSelectTask }: ConnectedListProps) {
+  if (items.length === 0) {
+    return (
+      <p className="font-mono text-[11.5px] italic text-text-muted">
+        No 1-hop edges.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-1">
+      {items.map((n) => (
+        <li key={`${n.edgeType}-${n.direction}-${n.id}`}>
+          <button
+            type="button"
+            onClick={() => onSelectTask?.(n.id)}
+            className="group flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-surface-hover"
+          >
+            <span className="font-mono text-[10px] text-text-faint">
+              {n.edgeType} {n.direction === "outgoing" ? "→" : "←"}
+            </span>
+            <StatusGlyph status={n.status} size={11} />
+            <MonoId id={n.taskRef} copyable={false} dim />
+            <span className="flex-1 truncate text-[12px] text-text-secondary group-hover:text-text-primary">
+              {n.title}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+interface LinksBodyProps {
+  /** Task links. */
+  links: TaskLinkRef[];
+}
+
+/**
+ * Task links list: kind chip + label or URL, mono.
+ *
+ * @param props - Task links.
+ * @returns Stack of link rows or empty hint.
+ */
+function LinksBody({ links }: LinksBodyProps) {
+  if (links.length === 0) {
+    return (
+      <p className="font-mono text-[11.5px] italic text-text-muted">
+        No links.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-1">
+      {links.map((l) => (
+        <li
+          key={l.id}
+          className="flex items-center gap-2 font-mono text-[11.5px] text-text-secondary"
+        >
+          <span className="rounded-md border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text-muted">
+            {l.kind}
+          </span>
+          <span className="truncate" title={l.url}>
+            {l.label ?? l.url}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+interface BlockedBodyProps {
+  /** Bundle props. */
+  props: BundlePreviewProps;
+  /** Click a row to navigate. */
+  onSelectTask?: (taskId: string) => void;
+}
+
+/**
+ * Blocked callout: the lifecycle warning plus the unfinished effective
+ * direct prerequisites blocking this task.
+ *
+ * @param props - Bundle props and navigation handler.
+ * @returns Blocked body element.
+ */
+function BlockedBody({ props, onSelectTask }: BlockedBodyProps) {
+  return (
+    <div className="space-y-2">
+      <p className="text-[12px] leading-snug text-text-secondary">
+        Prerequisites are not done — building now means building against
+        unshipped interfaces. Read-ahead context only.
+      </p>
+      <NeighborList
+        items={props.blockedBy}
+        emptyHint="No unfinished prerequisites."
+        onSelectTask={onSelectTask}
+      />
+    </div>
   );
 }
 
@@ -795,41 +1192,6 @@ function DecisionsBody({ decisions }: DecisionsBodyProps) {
               {d.date}
             </span>
           </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-interface FilesBodyProps {
-  /** File paths the task touches. */
-  files: string[];
-}
-
-/**
- * File list — renders each path as a mono chip. Diff stats are deferred
- * until the schema persists `{path, added, removed, commit}` shapes.
- *
- * @param props - Files list.
- * @returns Wrap of file chips or empty hint.
- */
-function FilesBody({ files }: FilesBodyProps) {
-  if (files.length === 0) {
-    return (
-      <p className="font-mono text-[11.5px] italic text-text-muted">
-        No files touched yet.
-      </p>
-    );
-  }
-  return (
-    <ul className="flex flex-wrap gap-1.5">
-      {files.map((path) => (
-        <li
-          key={path}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-text-secondary"
-          title={path}
-        >
-          {path}
         </li>
       ))}
     </ul>

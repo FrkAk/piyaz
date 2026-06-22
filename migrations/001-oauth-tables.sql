@@ -1,8 +1,8 @@
 -- OAuth 2.1 Provider tables for @better-auth/oauth-provider.
--- Run once against the neon_auth schema on hosted Neon.
+-- Run once against the piyaz_auth schema on hosted Neon.
 -- Self-hosted path: these tables are in docker/init-auth.sql instead.
 
-SET search_path TO neon_auth;
+SET search_path TO piyaz_auth;
 
 CREATE TABLE "oauthClient" (
     "id"                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),

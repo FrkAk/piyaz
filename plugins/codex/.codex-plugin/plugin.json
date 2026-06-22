@@ -1,13 +1,13 @@
 {
-  "name": "mymir",
-  "version": "1.8.0",
+  "name": "piyaz",
+  "version": "0.1.2",
   "description": "Persistent context network for coding projects. Tracks tasks, dependencies, and decisions across sessions.",
   "author": {
-    "name": "Mymir",
-    "url": "https://www.mymir.dev"
+    "name": "Piyaz",
+    "url": "https://www.piyaz.ai"
   },
-  "homepage": "https://www.mymir.dev",
-  "repository": "https://github.com/FrkAk/mymir",
+  "homepage": "https://www.piyaz.ai",
+  "repository": "https://github.com/FrkAk/piyaz",
   "license": "AGPL-3.0",
   "keywords": [
     "project-management",
@@ -20,21 +20,21 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "Mymir",
+    "displayName": "Piyaz",
     "shortDescription": "Persistent task graph and context for coding agents",
-    "longDescription": "Use Mymir to keep Codex oriented across project sessions. It tracks projects, tasks, dependency edges, implementation decisions, execution records, and stage-specific context so agents can find what is ready, what is blocked, and what to do next.",
-    "developerName": "Mymir",
+    "longDescription": "Use Piyaz to keep Codex oriented across project sessions. It tracks projects, tasks, dependency edges, implementation decisions, execution records, and stage-specific context so agents can find what is ready, what is blocked, and what to do next.",
+    "developerName": "Piyaz",
     "category": "Coding",
     "capabilities": ["Interactive", "Read", "Write"],
-    "websiteURL": "https://www.mymir.dev",
+    "websiteURL": "https://www.piyaz.ai",
     "defaultPrompt": [
-      "Use $mymir to show what's ready, blocked, and next.",
-      "Use $mymir to plan the next task.",
-      "Use $mymir to record what changed after this task."
+      "Use $piyaz to show what's ready, blocked, and next.",
+      "Use $piyaz to plan the next task.",
+      "Use $piyaz to record what changed after this task."
     ],
     "brandColor": "#14B8A6",
-    "composerIcon": "./assets/mymir-small.png",
-    "logo": "./assets/mymir-logo.png",
+    "composerIcon": "./assets/piyaz-mark-small.png",
+    "logo": "./assets/piyaz-mark.png",
     "screenshots": []
   }
 }

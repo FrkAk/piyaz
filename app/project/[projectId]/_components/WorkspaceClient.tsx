@@ -518,6 +518,7 @@ function WorkspaceDetailSlot(props: SelectedTaskSlotProps) {
       projectId={projectId}
       task={selectedTaskFull}
       parentName={graph.project.title}
+      parentDescription={graph.project.description}
       edges={taskEdges}
       allEdges={graph.edges}
       allTasks={graph.tasks}

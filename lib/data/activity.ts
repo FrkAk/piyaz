@@ -20,7 +20,7 @@ export type ActorColumns = {
 
 /**
  * Derive the durable actor columns from a request's actor descriptor. Pure —
- * no DB read, never touches `neon_auth`. Display name/avatar/harness are
+ * no DB read, never touches `piyaz_auth`. Display name/avatar/harness are
  * resolved at read time via SECURITY DEFINER functions, never written here.
  *
  * @param actor - The request's resolved actor descriptor.
@@ -46,7 +46,7 @@ export type ActivityEventInput = {
 
 /**
  * Insert activity events within an existing `app_user` transaction. Durable
- * actor columns are derived from the descriptor (pure, no `neon_auth` read)
+ * actor columns are derived from the descriptor (pure, no `piyaz_auth` read)
  * and applied to every row. No-op for an empty list.
  *
  * @param tx - Active RLS-scoped transaction handle.

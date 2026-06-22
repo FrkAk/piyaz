@@ -7,11 +7,14 @@ import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
 import { useMobileNav } from "@/components/layout/MobileNav";
 import { Kbd } from "@/components/shared/Kbd";
 import {
+  IconDoc,
   IconMenu,
   IconMoon,
   IconSearch,
   IconSun,
 } from "@/components/shared/icons";
+
+const DOCS_URL = "https://docs.piyaz.ai";
 
 interface TopBarProps {
   /** @param projectName - Optional project crumb label. When set, renders the project breadcrumb pill. */
@@ -112,6 +115,21 @@ export function TopBar({
           <span className="hidden sm:inline">Jump</span>
           <Kbd dim>⌘K</Kbd>
         </button>
+        <span
+          aria-hidden="true"
+          className="mx-1 hidden h-4 w-px bg-border md:inline-block"
+        />
+        <a
+          href={DOCS_URL}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Documentation (opens in a new tab)"
+          title="Documentation"
+          className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
+        >
+          <IconDoc size={12} />
+          <span className="hidden sm:inline">Docs</span>
+        </a>
         <span
           aria-hidden="true"
           className="mx-1 hidden h-4 w-px bg-border md:inline-block"

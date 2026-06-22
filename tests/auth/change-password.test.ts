@@ -221,16 +221,16 @@ test("password change wipes the user's OAuth agent tokens (account.update.after 
 
   const sql = superuserPool();
   const [{ id: userId }] = await sql<{ id: string }[]>`
-    SELECT id FROM neon_auth."user" WHERE email = ${email}
+    SELECT id FROM piyaz_auth."user" WHERE email = ${email}
   `;
   await sql`
-    INSERT INTO neon_auth."oauthAccessToken"
+    INSERT INTO piyaz_auth."oauthAccessToken"
       ("token", "clientId", "userId", "scopes", "expiresAt")
     VALUES ('test-access-token', 'test-client', ${userId}::uuid,
             '{openid}', now() + interval '1 hour')
   `;
   await sql`
-    INSERT INTO neon_auth."oauthRefreshToken"
+    INSERT INTO piyaz_auth."oauthRefreshToken"
       ("token", "clientId", "userId", "scopes", "expiresAt")
     VALUES ('test-refresh-token', 'test-client', ${userId}::uuid,
             '{openid}', now() + interval '7 days')
@@ -249,10 +249,10 @@ test("password change wipes the user's OAuth agent tokens (account.update.after 
   expect(response.status).toBe(200);
 
   const accessRows = await sql`
-    SELECT id FROM neon_auth."oauthAccessToken" WHERE "userId" = ${userId}::uuid
+    SELECT id FROM piyaz_auth."oauthAccessToken" WHERE "userId" = ${userId}::uuid
   `;
   const refreshRows = await sql`
-    SELECT id FROM neon_auth."oauthRefreshToken" WHERE "userId" = ${userId}::uuid
+    SELECT id FROM piyaz_auth."oauthRefreshToken" WHERE "userId" = ${userId}::uuid
   `;
   expect(accessRows.length).toBe(0);
   expect(refreshRows.length).toBe(0);

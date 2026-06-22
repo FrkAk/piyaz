@@ -10,6 +10,7 @@ import { projectColor } from "@/lib/ui/project-color";
 import { getTeamColor } from "@/lib/ui/team-color";
 import { useSidebarCollapse } from "@/components/layout/SidebarCollapseProvider";
 import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
+import { useSidebarProjects } from "@/components/layout/SidebarProjectsProvider";
 import {
   IconChevronRight,
   IconInbox,
@@ -57,8 +58,6 @@ interface SidebarProps {
   user: SidebarUser;
   /** Label rendered on the workspace switcher row. */
   workspaceLabel: string;
-  /** Projects owned by the user (across teams), pre-sorted newest first. */
-  projects: SidebarProject[];
   /** Teams the caller is a member of, ordered by membership creation. */
   teams: SidebarTeam[];
 }
@@ -72,12 +71,7 @@ interface SidebarProps {
  * @param props - User, workspace label, and project list.
  * @returns Aside element styled per the design spec.
  */
-export function Sidebar({
-  user,
-  workspaceLabel,
-  projects,
-  teams,
-}: SidebarProps) {
+export function Sidebar({ user, workspaceLabel, teams }: SidebarProps) {
   const pathname = usePathname() ?? "/";
   const activeProjectId = pathname.match(/^\/project\/([^/]+)/)?.[1];
   const myTasksActive = pathname.startsWith("/my-tasks");
@@ -97,7 +91,6 @@ export function Sidebar({
         <CompactSidebar
           user={user}
           workspaceLabel={workspaceLabel}
-          projects={projects}
           activeProjectId={activeProjectId}
           settingsActive={pathname.startsWith("/settings")}
           myTasksActive={myTasksActive}
@@ -108,7 +101,6 @@ export function Sidebar({
         <SidebarPanel
           user={user}
           workspaceLabel={workspaceLabel}
-          projects={projects}
           teams={teams}
           dismissLabel="Collapse sidebar"
           dismissIcon={<IconPanelLeft size={13} />}
@@ -141,13 +133,14 @@ interface SidebarPanelProps extends SidebarProps {
 export function SidebarPanel({
   user,
   workspaceLabel,
-  projects,
   teams,
   dismissLabel,
   dismissIcon,
   onDismiss,
   onOpenPalette,
 }: SidebarPanelProps) {
+  const { projects, hasMore, isLoadingMore, error, loadMore } =
+    useSidebarProjects();
   const [openProjects, setOpenProjects] = useState(true);
   const pathname = usePathname() ?? "/";
   const activeProjectId = pathname.match(/^\/project\/([^/]+)/)?.[1];
@@ -181,7 +174,7 @@ export function SidebarPanel({
         >
           <BrandMark />
           <div className="min-w-0 flex-1 text-[13px] font-semibold leading-tight text-text-primary">
-            mymir
+            piyaz
           </div>
         </Link>
         <button
@@ -271,6 +264,13 @@ export function SidebarPanel({
               );
             })
           )}
+          {hasMore && (
+            <ShowMoreProjects
+              loading={isLoadingMore}
+              error={error}
+              onClick={loadMore}
+            />
+          )}
         </div>
       )}
 
@@ -289,8 +289,6 @@ interface CompactSidebarProps {
   user: SidebarUser;
   /** Workspace label (used for the brand mark tooltip). */
   workspaceLabel: string;
-  /** Projects to render as colored dots. */
-  projects: SidebarProject[];
   /** Currently active project id, if any. */
   activeProjectId: string | undefined;
   /** Whether the settings route is active. */
@@ -316,7 +314,6 @@ interface CompactSidebarProps {
 function CompactSidebar({
   user,
   workspaceLabel,
-  projects,
   activeProjectId,
   settingsActive,
   myTasksActive,
@@ -324,6 +321,7 @@ function CompactSidebar({
   onOpenPalette,
 }: CompactSidebarProps) {
   const router = useRouter();
+  const { projects, hasMore, isLoadingMore, loadMore } = useSidebarProjects();
   const displayName = user.name?.trim() || user.email;
 
   /** Sign out and bounce to the sign-in page. */
@@ -401,6 +399,24 @@ function CompactSidebar({
             </Link>
           );
         })}
+        {hasMore && (
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={isLoadingMore}
+            aria-label="Show more projects"
+            title="Show more projects"
+            className="inline-flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary disabled:cursor-default disabled:opacity-60"
+          >
+            <span
+              aria-hidden="true"
+              className="inline-flex"
+              style={{ transform: "rotate(90deg)" }}
+            >
+              <IconChevronRight size={12} />
+            </span>
+          </button>
+        )}
       </div>
 
       <footer className="flex flex-col items-center gap-1 border-t border-border px-2 py-2">
@@ -501,21 +517,21 @@ function CompactNavIcon({
 }
 
 /**
- * Brand mark — 22×22 rounded square with `m` glyph on the indigo→teal gradient.
+ * Brand mark: 22×22 transparent piyaz mark.
  * @returns Inline mark element.
  */
 function BrandMark() {
   return (
-    <span
-      aria-hidden="true"
-      className="inline-flex h-[22px] w-[22px] items-center justify-center font-mono text-[11px] font-bold"
-      style={{
-        background: "var(--color-accent-grad)",
-        borderRadius: 5,
-        color: "#0b0c10",
-      }}
-    >
-      m
+    <span className="inline-flex h-[22px] w-[22px]">
+      {/* eslint-disable-next-line @next/next/no-img-element -- brand mark is a 22px static asset; next/image optimization is overkill and unconfigured on the Cloudflare build */}
+      <img
+        src="/piyaz-mark.png"
+        alt=""
+        aria-hidden="true"
+        width={22}
+        height={22}
+        className="h-full w-full object-contain"
+      />
     </span>
   );
 }
@@ -582,7 +598,7 @@ interface ProjectGroup {
 
 /**
  * Bucket projects under their owning team, preserving the team order from
- * {@link SidebarProps.teams} and the project order from {@link SidebarProps.projects}.
+ * {@link SidebarProps.teams} and the project order from the loaded list.
  * Empty teams are dropped so the sidebar stays compact; an "Other" bucket
  * collects projects whose team is missing (defensive — should not happen
  * in practice).
@@ -737,6 +753,48 @@ function ProjectNavItem({ project, color, active }: ProjectNavItemProps) {
         {project.identifier}
       </span>
     </Link>
+  );
+}
+
+interface ShowMoreProjectsProps {
+  /** Whether the next page is currently being fetched. */
+  loading: boolean;
+  /** Whether the previous fetch failed — surfaces a retry affordance. */
+  error: boolean;
+  /** Append the next keyset page. */
+  onClick: () => void;
+}
+
+/**
+ * Reveal the next keyset page of projects in the expanded sidebar. Matches
+ * the team-divider type scale; collapses to a `Loading…` state while a page
+ * is in flight and a `Retry` state after a failed fetch so a dropped request
+ * never fails silently.
+ *
+ * @param props - Loading/error state plus the load-more handler.
+ * @returns Full-width show-more row.
+ */
+function ShowMoreProjects({ loading, error, onClick }: ShowMoreProjectsProps) {
+  const label = loading ? "Loading…" : error ? "Retry" : "Show more";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      title={error ? "Couldn't load more projects — click to retry" : undefined}
+      className="mt-1 flex h-[26px] w-full cursor-pointer items-center justify-center gap-1.5 rounded-md font-mono text-[10px] font-semibold uppercase tracking-[0.10em] text-text-muted transition-colors hover:bg-surface-hover/50 hover:text-text-secondary disabled:cursor-default disabled:opacity-70"
+    >
+      {!loading && (
+        <span
+          aria-hidden="true"
+          className="inline-flex"
+          style={{ transform: "rotate(90deg)" }}
+        >
+          <IconChevronRight size={10} />
+        </span>
+      )}
+      {label}
+    </button>
   );
 }
 

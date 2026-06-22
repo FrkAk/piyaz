@@ -1,196 +1,331 @@
 ---
 name: composer
 description: >
-  Use when the user types /mymir:composer or /mymir:composer <taskRef>, or
-  asks composer to "run the next task", "ship the backlog", "compose
-  through my ready queue", "loop through mymir tasks", or otherwise
-  requests end-to-end Mymir task delivery (research → plan → implement →
-  propagate, then pick the next task and repeat). Composer dispatches one
-  fresh subagent per phase per task so each phase runs with a clean
-  context window and a focused tool set; the orchestrator itself only
-  picks tasks, hands off, and propagates. Do NOT invoke for one-off task
-  lookups, status checks, refinement of one task by hand, or planning a
-  single task interactively. Those flows belong to the mymir skill and
-  using composer for them adds latency without adding quality.
+  Use when the user types /piyaz:composer, /piyaz:composer <taskRef>, or
+  /piyaz:composer rework <taskRef|pr-url>, or asks to run the next Piyaz
+  task end-to-end, ship the backlog, compose through the ready queue, or
+  loop through Piyaz tasks until done. Composer researches, refines, plans,
+  implements, reviews, and fixes each task in a loop until the PR is ready,
+  and merges and continues when the user authorizes it. Do NOT invoke for
+  one-off task lookups, status checks, hand-refinement of one task, or
+  interactive planning of a single task; those flows belong to the piyaz
+  skill and composer adds latency without adding quality.
 ---
 
 # Composer
 
-Composer is a Mymir task orchestrator. It picks the next ready task off the project's critical path, dispatches four subagents in sequence (research, plan, implement, review) to deliver it end-to-end with production-grade quality, propagates the result through the graph, and loops until the queue is empty or the user stops. Each subagent runs in a fresh context with a focused tool set; the main orchestrator stays clean across the whole session.
+Composer is a Piyaz task orchestrator. Per iteration it picks the next ready task off the project's critical path, runs that task through a deterministic per-task **workflow** (research, plan, implement, CI gate, review, bounded fix loop), surfaces the verdict, merges when the user authorized it, propagates the result through the graph, and continues until a structural stop condition holds.
 
-Composer is glue. The heavy lifting (task selection, refinement, the Completion Protocol, propagation) already lives in the `mymir` skill (`plugins/claude-code/skills/mymir/SKILL.md`). Composer reuses those flows verbatim rather than duplicating them.
+The orchestrator (this skill, running in the main loop) owns only the **interactive seams**: pick the task, resolve gates, run the merge gate, propagate. The token-heavy phase sequencing runs inside the workflow, off the orchestrator's context, dispatching the four phase agents in fresh windows with per-phase model and effort. This is the design's main token discipline: orchestration is JavaScript, not main-loop reasoning over a transcript that grows with every phase.
+
+Composer is glue. The heavy lifting (task selection, refinement, the Completion Protocol, propagation) lives in the `piyaz` skill (`skills/piyaz/SKILL.md`); composer reuses those flows rather than duplicating them.
 
 ## Invocation
 
-Two modes, both surfaced as slash commands by the plugin:
+- **`/piyaz:composer`**: backlog mode. Pick the highest-value ready task each iteration; continue until a stop condition holds.
+- **`/piyaz:composer <taskRef>`**: single-task mode. Same pipeline applied to one task; exits after the iteration completes.
+- **`/piyaz:composer rework <taskRef|pr-url>`**: rework mode. HOTL requested changes on GitHub instead of merging; composer rounds that feedback back through the fix loop.
+- **`/piyaz:composer --pipelined`**: backlog mode with research-ahead (latency-only, costs tokens). Off by default; see *Pipelined research-ahead*.
 
-- **`/mymir:composer`**: backlog loop. The orchestrator picks the highest-value ready task each iteration and keeps going until a stop condition fires.
-- **`/mymir:composer <taskRef>`**: single-task mode (e.g. `/mymir:composer ZIN-42`). Same pipeline applied to one task; the loop exits after the reviewer hands its verdict back to the orchestrator.
+No argument means backlog mode; `rework` plus an argument means rework mode; anything else is single-task.
 
-If the user typed `/mymir:composer` with no argument, treat it as backlog mode. Anything else is single-task.
+## Piyaz operating context
 
-## The four subagents
+The canonical piyaz rules load with this skill. Downstream citations (`conventions §1`, `artifacts §3`, `lifecycle §3`) refer to this loaded text.
 
-Each subagent is a registered plugin agent. The orchestrator dispatches them via the Task tool by `subagent_type`. They have their own files; do not duplicate their logic here.
+@skills/piyaz/references/conventions.md
+@skills/piyaz/references/artifacts.md
+@skills/piyaz/references/lifecycle.md
+@skills/piyaz/references/resilience.md
 
-| Phase | `subagent_type` | File | Writes to Mymir | Returns to orchestrator |
-| --- | --- | --- | --- | --- |
-| 1. Research | `mymir:composer-researcher` | `plugins/claude-code/agents/composer-researcher.md` | Refinement fields on the target task (`description`, `acceptanceCriteria`, `tags`, `category`, `priority`, `estimate`, `decisions`); **never `status`, `implementationPlan`, `executionRecord`, or `files`** | A research brief: files to touch, existing patterns, library docs (with version-pin checks), security/perf considerations, project conventions, applied refinements with citations, open questions, flags |
-| 2. Plan | `mymir:composer-planner` | `plugins/claude-code/agents/composer-planner.md` | `implementationPlan` and `decisions`; `status='planned'` only on `draft → planned` transition; nothing else | Saves the unabridged `implementationPlan` to Mymir; transitions the task `draft → planned` when entering at `draft`; returns a one-sentence confirmation |
-| 3. Implement | `mymir:composer-implementer` | `plugins/claude-code/agents/composer-implementer.md` | `status='in_progress'` (claim) and `status='in_review'` (with Completion Protocol payload: `executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`); HOTL flips `in_review → done` post-approval, outside composer's loop | Writes code on a feature branch, runs tests/lint/typecheck, opens a PR, marks the task `in_review` in dispatched mode; returns the PR URL plus a one-sentence summary |
-| 4. Review | `mymir:review` | `plugins/claude-code/agents/review.md` | **Nothing.** Review is read-only over Mymir; the verdict travels in the return message, not in any task field. The HOTL operator owns the `in_review → done` transition regardless of the verdict | A structured verdict (`approve` / `request-changes` / `block`) with file-cited reasoning across the security, performance, reliability, observability, and codebase-standards lenses; AC evaluation against the diff; plan-vs-files drift; downstream impact list |
+## The per-task workflow
 
-The contract is intentionally tight: the researcher applies refinements directly so the task row reflects ground truth before planning starts; the brief is the planner's *findings reference*, while the refined task itself is the planner's *input*. The planner's output also lands in Mymir, so the implementer reads everything (refined description, refined ACs, the implementation plan, upstream decisions) from `mymir_context depth='agent'` rather than receiving it from the orchestrator. The reviewer reads the same task row through `mymir_context depth='review'`, which renders the implementation plan alongside the executionRecord, surfaces the PR link from `task_links`, and computes plan-vs-files drift. Every dispatch payload stays small; the source of truth is one place: the task row.
+Each iteration's task runs through `skills/composer/workflows/compose-task.js`, launched with the Workflow tool:
 
-## Mymir operating context
-
-The canonical mymir rules load with this skill. Treat their content as part of your operating context; downstream citations (`conventions §1`, `artifacts §5`, etc.) refer to the loaded text.
-
-@skills/mymir/references/conventions.md
-@skills/mymir/references/artifacts.md
-@skills/mymir/references/lifecycle.md
-@skills/mymir/references/resilience.md
-
-## Session bootstrap (first turn of every composer session)
-
-Do these once, before the first iteration:
-
-1. **Resolve the project.** `mymir_project action='list'` → confirm with `action='select' projectId='...'`. If the user is in single-task mode, also run `mymir_query type='search' query='<taskRef>'` to resolve the task UUID and surface its `state` hint.
-2. **Read project meta.** `mymir_query type='meta' projectId='...'`. Capture categories, tag vocabulary, and status counts in memory; pass them verbatim to each researcher dispatch so personas ground on the project taxonomy.
-3. **Install the goal harness.** Generate the goal-condition string below and prompt the user to paste it into `/goal`. Composer cannot install `/goal` itself; the user has to type it. Emit the literal code-fence so the user can copy-paste:
-
-   ````
-   /goal mymir_analyze type='ready' returns an empty set, OR composer reports three consecutive failed attempts on a task, OR the user types stop, OR (single-task mode) composer reports the target task marked done, OR (single-task mode) composer reports proposed rewrite denied on a task
-   ````
-
-   The `/goal` evaluator watches the transcript each turn and ends the session when one of the literal phrases above appears. Composer's job is to emit those literal phrases at the right moments (see *Stop conditions*).
-
-4. **Confirm the harness fired.** Call `AskUserQuestion`: "Did `/goal` accept the harness?" with options yes / no. On yes, proceed to the loop. On no, emit a one-line warning ("Backlog mode without `/goal` has no automatic exit; type `stop` to halt the loop.") and proceed anyway. Composer cannot force the install; it can only refuse to start silently.
-
-In backlog mode the harness is required; in single-task mode it is optional but recommended. Long single-task runs still benefit from the safety bound.
-
-## Loop
-
-```text
-pick_task → dispatch researcher → dispatch planner → dispatch implementer → dispatch reviewer → propagate → loop
+```
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/composer/workflows/compose-task.js",
+  args: { taskRef, taskId, projectId, categories, tagVocabulary,
+          pickEstimate, pickPriority, workType, tags, thinDescription,
+          mode, plannableOnly, resumeFrom, priorBrief, gateAnswers,
+          fixFindings, prUrl, priorFailure, estimate, flags },
+})
 ```
 
-Per iteration the orchestrator runs:
+If `${CLAUDE_PLUGIN_ROOT}` does not resolve in the tool argument, substitute the absolute path of this plugin's root. The workflow runs in the background; the orchestrator is suspended until it returns, so it spends no context tokens while phases run.
 
-1. **Pick the next task.**
-   - Backlog mode: `mymir_analyze type='ready' projectId='...'` ∩ `mymir_analyze type='critical_path' projectId='...'`. Rank intersection by priority (`urgent > core > normal > backlog`), break ties by lowest `estimate`. Fall back to highest-priority `ready` task if the intersection is empty. Fall back to `mymir_analyze type='plannable'` if `ready` itself is empty (route through researcher + planner first; nothing to implement yet).
-   - Single-task mode: skip selection. The task is the one the user named. If its `state` is already `done` or `cancelled`, emit the done line (see *Stop conditions*) and exit.
-   - Emit a one-paragraph **pick rationale** before claiming so the user can interject:
-     > Next pick: `<taskRef>`. Priority=`<value>`, estimate=`<value>`, on critical path=`<yes|no>`. Reason: `<one sentence>`.
+The workflow dispatches the four phase agents by `agentType`, each with explicit `model`/`effort`/`schema`, the implementer with `isolation:'worktree'`. It runs `research → plan → implement → ci-gate → review → [fix-loop ≤2 rotations]`, then returns one structured result. It does **not** merge, propagate, or touch edges; those are the orchestrator's seams. The phase contracts live in the agent files; do not duplicate them here.
 
-2. **Dispatch researcher.** One `Agent` call with `subagent_type='mymir:composer-researcher'`. The prompt body opens with `Target task: <taskRef>` and includes the project's meta payload from bootstrap step 3 verbatim. The task stays at its current status (`draft` if picked from `plannable`, `planned` if picked from `ready`). Researchers do not claim, but they **do** refine: the researcher applies sharpening edits to `description`, `acceptanceCriteria`, `tags`, `category`, `priority`, `estimate`, and `decisions` based on what it finds in the codebase, in docs, and in its security/performance review. The task row evolves under your feet during this phase; that is intentional. Await the brief. Refinement writes are append-only and cannot fail destructively; the only way Phase 1 fails is if the researcher cannot ground its findings (returns `confidence < 0.6` or flags items in *Open questions*). In that case, surface those to the user and pause for an answer before continuing.
+| Phase | `agentType` | Writes to Piyaz | Workflow captures |
+| --- | --- | --- | --- |
+| 1. Research | `piyaz:composer-researcher` | refinement fields only (`description`, `acceptanceCriteria`, `tags`, `category`, `priority`, `estimate`, `decisions`); never `status` | brief, status, flags, confidence, refined estimate/work-type, proposed rewrites |
+| 2. Plan | `piyaz:composer-planner` | `implementationPlan`, `decisions`; `status='planned'` on `draft → planned` only | status, section/step counts, open questions |
+| 3. Implement | `piyaz:composer-implementer` | `status='in_progress'` (claim), `status='in_review'` (+ Completion Protocol); fix mode rotates `in_review → in_progress → in_review` | status, PR URL, AC counts, concerns |
+| CI gate | generic (haiku) | nothing | `green` / `red` / `pending` / `none`, failing checks |
+| 4. Review | `piyaz:review` (dispatched with a verdict schema) | nothing (read-only) | verdict, blocking findings |
 
-   **Post-researcher gates.** Two signals can divert the iteration before the planner runs. If the brief carries the `oversize-task` flag, defer to *Oversize handling* below. If the brief carries a `## Proposed rewrites` section, defer to *Proposed rewrites handling* below. Estimate refinements within the bounded scale (`1, 2, 3, 5, 8, 13`) are normal refinement and do not gate.
+## The workflow result
 
-3. **Dispatch planner.** One `Agent` call with `subagent_type='mymir:composer-planner'`. The prompt body includes `Target task: <taskRef>`, the task's current `status` so the planner knows whether it is writing a new plan or re-validating an existing one, the research brief verbatim, and a pointer to `mymir_context depth='planning'` (the planner fetches it itself). The planner owns the `draft → planned` transition: when the task entered at `draft`, the planner writes the full `implementationPlan` and flips status to `planned` in one call; when the task entered at `planned`, the planner re-validates against the brief and either keeps the plan as-is without mutating the task (a silent re-validation is the correct trace) or refreshes the plan when the brief shows real drift. Verify the planner's write by polling `mymir_context depth='summary' taskId='<id>'` once before advancing. If no plan is visible after a `draft` entry (or the planner reports failure), retry once with the failure message appended to the dispatch; on a second failure, treat the iteration as a failed attempt (see *Failure handling*).
+The workflow returns exactly one of three shapes. Branch on `result.status`, not on prose:
 
-4. **Dispatch implementer.** One `Agent` call with `subagent_type='mymir:composer-implementer'`. The prompt body is short: `Target task: <taskRef>. Plan is saved to Mymir; fetch via mymir_context depth='agent'. Claim the task (planned → in_progress), implement per the implementationPlan, open a PR, mark the task `in_review` in dispatched mode per the Completion Protocol (the HOTL operator finalizes `in_review → done` after PR approval).` Await the implementer's return. The implementer owns the `planned → in_progress` claim, the `in_progress → in_review` completion, the PR creation, and the full Completion Protocol payload; the orchestrator writes none of these.
+| `status` | Meaning | Orchestrator reaction |
+| --- | --- | --- |
+| `DONE` | Task ran to `in_review` (or `planned` for a plannable-only pick) | Surface the verdict, run the *Merge gate*, propagate |
+| `NEEDS_DECISION` | The research or plan phase gated; `result.gate` carries the trigger and `result.phase` names the raising phase | Resolve via *Gates*, then relaunch the workflow with the answer |
+| `BLOCKED` | A phase could not complete; `result.phase` and `result.reason` say which and why | *Failure handling* |
 
-5. **Dispatch reviewer.** Once the implementer reports `in_review` and returns a PR URL, dispatch the review subagent. One `Agent` call with `subagent_type='mymir:review'`. The prompt body is short: `Target task: <taskRef>. PR URL: <url>. Mode: composer-phase-4. Fetch the bundle via mymir_context depth='review' taskId='<id>'.` Await the verdict. The reviewer is read-only over Mymir; it does not flip status, write to `decisions`, or touch the working tree. Surface the verdict block verbatim to the user (HOTL) so they can act on it on GitHub. The orchestrator does not interpret `request-changes` or `block` as a retry signal; the HOTL operator owns the next move. A `block` verdict still falls through to propagation (the downstream graph still needs honest edges), but the iteration ends after propagation regardless of verdict.
+A `DONE` result also carries: `outcome` (`in_review`|`planned`), `verdict`, `prUrl`, `ciState`, `acSatisfied`/`acTotal`, `rotations`, `escalated` (true when a `block` verdict or an exhausted fix budget left findings unaddressed), `blockingFindings`, `concerns`. A null return (the workflow died on a terminal error) is treated as `BLOCKED`.
 
-6. **Propagate.** After the verdict is surfaced, run propagation per lifecycle §3: `mymir_query type='edges' taskId='<id>'` then `mymir_analyze type='downstream' taskId='<id>'`. Update or retire edge notes the implementer's work invalidated. Edge-note content follows artifacts §3: one to three short sentences, written as a brief to the downstream task's coding agent (what specifically does this task get from the target). No prose recaps. Surface newly-unblocked tasks in the next pick rationale.
+## Session bootstrap
 
-7. **Loop.** Single-task mode: emit the done line (see *Stop conditions* item 4) and exit. Backlog mode: return to step 1.
+Once per session, before the first iteration:
 
-### Oversize handling
+1. **Resolve the project.** `piyaz_project action='list'` → `action='select' projectId='...'`. Single-task mode: also `piyaz_query type='search' query='<taskRef>'` to resolve the task UUID and current status.
+2. **Read meta.** `piyaz_query type='meta'`. Keep the categories and tag vocabulary for the workflow's research args; drop the status counts.
+3. **Stale-claim sweep.** Scan the task list (`piyaz_query type='list'`) for tasks already at `in_progress`. Surface possible stale claims from dead sessions in the first pick rationale.
+4. **Set the merge policy.** Ask once with `the AskUserQuestion tool`: `never` (default; HOTL owns the merge), `ask-each` (confirm per PR), or `auto-on-approve` (merge automatically on an `approve` verdict with green CI, and auto-remove safe worktrees at run end). Record the choice; it holds for the whole run. When `AskUserQuestion` is unavailable (headless), default to `never`.
+5. **Init the run log.** `mkdir -p .piyaz` and guard the gitignore (`grep -qxF '.piyaz/' .gitignore 2>/dev/null || printf '\n.piyaz/\n' >> .gitignore`). If `.piyaz/composer-<projectIdentifier>.md` exists and ends with `RUN_END`, archive it to `.piyaz/archive/composer-<projectIdentifier>-<date>.md` and start fresh; if it exists *without* a `RUN_END`, that is a resume signal — see *Recovering after compaction* first. When the unfinished log's `RUN_START mode=` differs from this invocation, append `RUN_END reason=superseded-by-<mode>`, archive, and start fresh. Then append `RUN_START mode=<...> mergePolicy=<...> project=<identifier>`.
 
-`estimate` is bounded to Fibonacci values `1, 2, 3, 5, 8, 13` (artifacts §5); no task in Mymir can carry an estimate above 13. Oversize is a *scope-detection* signal, not a numeric overflow: the researcher discovers during exploration that a task's true scope exceeds what `13` represents and raises the `oversize-task` flag in the brief.
+Then start iterating. There is nothing to install and nothing to confirm beyond the merge policy.
 
-Single checkpoint, post-researcher: if the brief carries `oversize-task`, surface the task ref and ask the user whether to dispatch `mymir:decompose-task` to split or skip and pick the next ready task. Do not write a plan. Do not claim. Composer is not a decomposer; oversize routes out to the specialist agent before the planner runs.
+## The loop
 
-Estimate refinements within the bounded scale (researcher bumps `5` to `8`, or `13` down to `8`) are normal. Needs evolve as exploration uncovers scope; the researcher updates `estimate` up or down within `[1, 13]` as warranted. That is refinement, not an oversize event.
+At the start of each iteration, materialize these todos and mark them off (the todo list is your compaction anchor): pick, launch workflow, handle result, surface verdict, merge gate, propagate.
 
-### Proposed rewrites handling
+```dot
+digraph composer_iteration {
+    "Pick next task" [shape=box];
+    "Ready or plannable task?" [shape=diamond];
+    "STOP: backlog drained" [shape=doublecircle];
+    "Launch compose-task workflow" [shape=box];
+    "Result status?" [shape=diamond];
+    "Resolve gate with user" [shape=box];
+    "Continue this task?" [shape=diamond];
+    "STOP: iteration ends (single-task)" [shape=doublecircle];
+    "Failure handling" [shape=box];
+    "outcome = planned?" [shape=diamond];
+    "Surface verdict" [shape=box];
+    "Merge gate (per policy)" [shape=box];
+    "Propagate" [shape=box];
+    "Single-task mode?" [shape=diamond];
+    "STOP: iteration complete" [shape=doublecircle];
 
-The researcher may propose substantive rewrites of `description` or `acceptanceCriteria` rather than apply them directly (researcher prose: *Substantive rewrites: propose, do not apply*). When the brief carries a `## Proposed rewrites` section, do not advance to the planner. Surface each proposal to the user via `AskUserQuestion`: show the original value, the proposed value, and the researcher's one-line rationale; offer accept / deny per field.
+    "Pick next task" -> "Ready or plannable task?";
+    "Ready or plannable task?" -> "STOP: backlog drained" [label="no"];
+    "Ready or plannable task?" -> "Launch compose-task workflow" [label="yes"];
+    "Launch compose-task workflow" -> "Result status?";
+    "Result status?" -> "outcome = planned?" [label="DONE"];
+    "Result status?" -> "Resolve gate with user" [label="NEEDS_DECISION"];
+    "Result status?" -> "Failure handling" [label="BLOCKED / null"];
+    "Resolve gate with user" -> "Continue this task?";
+    "Continue this task?" -> "Launch compose-task workflow" [label="yes: relaunch with answers"];
+    "Continue this task?" -> "Pick next task" [label="no (backlog)"];
+    "Continue this task?" -> "STOP: iteration ends (single-task)" [label="no (single-task)"];
+    "outcome = planned?" -> "Single-task mode?" [label="yes (plannable-only)"];
+    "outcome = planned?" -> "Surface verdict" [label="no"];
+    "Surface verdict" -> "Merge gate (per policy)";
+    "Merge gate (per policy)" -> "Propagate";
+    "Propagate" -> "Single-task mode?";
+    "Single-task mode?" -> "STOP: iteration complete" [label="yes"];
+    "Single-task mode?" -> "Pick next task" [label="no"];
+    "Failure handling" -> "Single-task mode?";
+}
+```
 
-On accept, apply the proposal via `mymir_task action='update'` and re-dispatch the researcher with the rewritten task. The fresh research run reads the rewritten description and AC as ground truth, writes a new brief, and the planner runs against that brief. A rewrite the user accepted invalidates the prior brief; re-dispatching is what keeps the planner grounded in the post-rewrite scope.
+### Step details
 
-On deny, end the iteration. Backlog mode: pick the next task; the denied task keeps its silently-applied refinements and stays at its current status. Single-task mode: emit `composer reports proposed rewrite denied on <taskRef>` to the transcript (matches the `/goal` clause) and exit.
+1. **Pick.** Backlog: `piyaz_analyze type='ready'` ∩ `type='critical_path'`; rank by priority (`urgent > core > normal > backlog`), tie-break by lowest estimate. Fall back to the highest-priority `ready` task when the intersection is empty, then to `piyaz_analyze type='plannable'` when `ready` is empty (plannable picks route through research + plan only; mark the pick **plannable-only**). Single-task: the named task; if `done` or `cancelled`, report and stop; if already claimed, see *Failure handling* (jump to the in-flight phase, never restart). Emit a one-paragraph pick rationale (taskRef, priority, estimate, critical-path yes/no, one-sentence reason). Do not wait for approval; the user interrupts if they disagree.
 
-Subsequent rewrite proposals on the re-dispatched run go through the same gate. The user can deny at any cycle to break out; there is no implicit cap.
+2. **Gather pick facts and launch.** Build the workflow `args` from the pick and bootstrap: `taskRef`, `taskId` (the UUID; never the ref in tool calls — conventions §4), `projectId`, `categories`, `tagVocabulary`, `pickEstimate`, `pickPriority`, `workType` and `tags` (from the task row), `thinDescription` (true when the description fails the artifacts §1 rubric on a glance), `mode`, `plannableOnly`. Write `PICK` then `WORKFLOW task=<ref> runId=<id>` to the run log, then launch the workflow and await the result.
 
-### Phase entry and exit conditions
+3. **Handle the result.** `NEEDS_DECISION` → *Gates*. `BLOCKED`/null → *Failure handling*. `DONE` with `outcome=planned` (plannable-only) → end the iteration (`TASK_END outcome=planned`); backlog returns to the pick, single-task reports and stops. `DONE` with `outcome=in_review` → step 4.
 
-| Phase | Entry condition | Exit condition | Failure surface |
-|---|---|---|---|
-| Researcher | Task at `draft` or `planned`; pick rationale emitted | Brief returned, `confidence ≥ 0.6`, no `oversize-task` flag, no pending `## Proposed rewrites` (or all accepted and re-dispatched), refinements landed in Mymir | `confidence < 0.6` pauses for user; oversize routes to *Oversize handling*; proposed rewrites route to *Proposed rewrites handling* |
-| Planner | Task at `draft` (write new plan) or `planned` (re-validate); brief in dispatch prompt | `implementationPlan` visible via `mymir_context depth='summary'`; status flipped to `planned` if entry was `draft` | No plan after one retry counts as a failed attempt per *Failure handling* |
-| Implementer | Task at `planned`; plan saved to Mymir | Status `in_review`, full Completion Protocol payload, PR URL returned (HOTL flips to `done` outside composer) | Tests/lint/typecheck red unrecoverable, or PR not opened, counts as a failed attempt; partial success (PR opened, `in_review` not marked) recovered per *Failure handling* |
-| Reviewer | Task at `in_review`; PR URL visible on `task.links` (kind `pull_request`) or supplied in dispatch | Structured verdict returned (`approve` / `request-changes` / `block`); the verdict text is the iteration's hand-off artifact to HOTL; no Mymir writes from this phase | Reviewer cannot reach `mymir_context depth='review'`, or the bundle reports status mismatch and the dispatch is genuinely premature, counts as a failed attempt per *Failure handling*. A `block` or `request-changes` verdict is NOT a failure; it is the correct outcome of a careful review and surfaces straight to HOTL. |
+4. **Surface + merge + propagate.** Quote the final verdict block verbatim (`VERDICT` to the run log). Run the *Merge gate*. Then propagate per lifecycle §3: `piyaz_query type='edges' taskId='<id>'`, `piyaz_analyze type='downstream' taskId='<id>'`; update or retire edge notes the work invalidated (edge-note shape: artifacts §3). Propagation depth: full when the PR was merged or the verdict was `approve`; otherwise provisional, each note prefixed `Provisional pending HOTL on PR #<n>:`. Surface newly-unblocked tasks in the next pick rationale. Write `PROPAGATED`, then `TASK_END outcome=in_review rotations=<n>`.
 
-**Recovering after orchestrator compaction.** Infer the current phase from the task's Mymir status alone. `draft` with no plan: researcher pending. `draft` with plan present, or `planned`: planner done, implementer pending. `in_progress`: implementer pending or partial-success recovery (see *Failure handling*). `in_review`: implementer done; reviewer pending or already returned. When the transcript shows no verdict yet, dispatch the reviewer. When the verdict is in the transcript, advance to propagation. `done`: HOTL approved; iteration complete; advance to propagation if propagation has not yet run.
+5. **Loop.** Single-task: report the outcome and stop. Backlog: next iteration, no pause.
 
-### The orchestrator does not write `status`
+## Gates
 
-This is load-bearing and the most common way an orchestrator like composer goes wrong. **Every lifecycle transition belongs to a subagent**, never to the orchestrator:
+A `NEEDS_DECISION` result means the research or plan phase needs a user decision before the task can proceed. `result.phase` names the raising phase and `result.gate` carries the trigger. Resolve with `the AskUserQuestion tool`, then relaunch the workflow:
 
-- `draft → planned`: **planner**, when it saves the `implementationPlan` in one atomic update.
-- `planned → in_progress`: **implementer**, as its claim before any code is touched.
-- `in_progress → in_review`: **implementer**, with the full Completion Protocol payload (`executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`) after the PR opens.
-- `in_review → done`: **HOTL operator**, after PR approval/merge; never automatic and never written by composer or any subagent. The reviewer's verdict is advisory; HOTL still owns the transition.
-- `* → cancelled`: never automatic; only triggered by an explicit user request, and even then routed through the appropriate subagent.
+- **Oversize** (`oversize-task` flag): offer to dispatch `piyaz:decompose-task` or skip the task. Composer never splits a task itself. On decompose, dispatch the decompose agent and end the iteration; the children land in the backlog.
+- **Proposed rewrites** (`result.gate.proposedRewrites` non-empty): show original vs proposed per field with the rationale; offer accept / deny. On accept, apply via `piyaz_task action='update'` and relaunch the workflow **fresh** (no `resumeFrom`) so research re-grounds on the rewritten task. On deny, end the iteration (backlog picks next; single-task stops).
+- **Low confidence or external input** (confidence < 0.6, `external-input-required`, or any plan-phase open question): surface the open questions, wait for answers, then relaunch — research gate relaunches **fresh** with `gateAnswers`; a plan gate relaunches with `resumeFrom='plan'`, `priorBrief=result.brief`, and `gateAnswers`, so research is not redone.
 
-The orchestrator's only Mymir writes per iteration are **edge updates during propagation** (step 6), and even those are conditional on what propagation discovers. Picking a task does not claim it. Dispatching a researcher does not claim it. Dispatching a reviewer does not flip status. The implementer is the only writer of `status='in_progress'`; the HOTL operator is the only writer of `status='done'`.
+**Headless gate fallback:** when `AskUserQuestion` is unavailable (errors or hangs), a `NEEDS_DECISION` resolves to skip-the-task: append a `GATE` line carrying the unasked question and the skip, write `TASK_END outcome=skipped`, end the iteration (backlog picks next; single-task stops). Never fabricate an answer; skipping is the reversible default (resilience §11).
 
-Violating this rule (e.g., claiming `in_progress` at pick time so "no other agent grabs the task") looks innocuous but breaks the mymir contract in three ways: it forces a `draft` task into `in_progress` without a plan, it puts the task in `in_progress` while a read-only researcher runs (misleading anyone watching the project), and it suppresses the planner's `_hints` that fire on the legitimate `draft → planned` transition.
+## Merge gate
+
+The merge gate runs after a `DONE` result with `outcome=in_review`, governed by the run's merge policy. It fires **only** when `result.verdict === 'approve'` AND `result.ciState === 'green'`; a `request-changes`, `block`, `escalated`, red, or pending result is never merged.
+
+- **`never`** (default): do not merge. HOTL owns the merge and the `in_review → done` transition, exactly as without this feature. Propagate provisionally unless the verdict was `approve`.
+- **`ask-each`**: ask `the AskUserQuestion tool` whether to merge this PR. On yes, merge as below. On no (or headless), leave it for HOTL.
+- **`auto-on-approve`**: merge without asking.
+
+To merge: `gh pr merge <url> --squash --delete-branch` (squash is the default; follow the repo's configured default method when it differs). On a clean merge, write the task `done` — this is the **one** case the orchestrator writes a status transition, authorized by the run-start merge policy:
+
+```
+piyaz_task action='update' taskId='<id>' status='done'
+  executionRecord='<append one line: merged PR #<n> via composer auto-merge after approve + green CI>'
+```
+
+Then propagate fully (the work landed) and write `MERGE task=<ref> pr=<url> method=squash` to the run log. **Drop the merged worktree before the next pick:** locate the `.claude/worktrees/wf_*` entry whose `branch` matches the PR's `headRefName` (`git worktree list --porcelain`) and run `git worktree remove <path>` + `git branch -D <branch>` (no `--force`; if git refuses on a dirty or locked tree, surface it and leave it for *Worktree cleanup at run end*). A failed merge (conflict, protected branch, merge-queue required) is not a task failure: report it, leave the task at `in_review` for HOTL, and continue.
+
+## Model selection
+
+The workflow self-selects each phase's model and effort from the pick facts and the research stage's refined estimate/work-type/flags. The orchestrator does not pass models; it passes the pick facts. The table the workflow applies:
+
+| Phase | est 1–2 | est 3 | est 5 | est 8–13 / unset |
+| --- | --- | --- | --- | --- |
+| Researcher | sonnet | sonnet | opus | opus |
+| Planner | opus | opus | opus | opus |
+| Implementer | sonnet (also docs/test/chore) | sonnet if docs/test/chore, else opus | opus | opus |
+| CI gate | haiku | haiku | haiku | haiku |
+| Reviewer | opus | opus | opus | opus — never downgrade |
+
+Research correctness is load-bearing: a mis-refined task wastes far more downstream opus tokens than a cheaper research model saves, so the researcher never runs below sonnet, and the floor rises to opus on substantial or risky tasks. (CI watching is mechanical, so the cheap haiku tier holds there only.)
+
+Guardrails force opus and higher effort on the planner and implementer regardless of estimate when any holds: a `security`/`safety`/`compliance` tag; estimate 8, 13, or missing; a fix-mode rotation; any retry or partial-success recovery; `priority='urgent'`; or a risk-bearing research flag (`security-boundary-uncovered`, `version-drift-major`, `dep-mismatch`). These are encoded in `compose-task.js`; this table is the human-readable mirror.
+
+## Run log
+
+The run log is composer's crash-safe memory: an append-only event log at `.piyaz/composer-<projectIdentifier>.md`, one active file per project. The conversation can compact; the log does not. Counters derive by grep over events **after the latest `RUN_START`**: this run's iterations = `PICK` lines; failed attempts on task X = `FAIL task=X` lines.
+
+One timestamped line per event, `key=value` pairs; multi-line payloads (blocking findings, gate questions and answers, failure summaries) follow as `> ` continuation lines. The vocabulary:
+
+| Event | Written when |
+| --- | --- |
+| `RUN_START` | bootstrap completes (`mode=backlog\|single\|rework mergePolicy=<...> project=<identifier>`) |
+| `PICK` | step 1 emits the pick rationale |
+| `WORKFLOW` | immediately after launching the workflow (`task=<ref> runId=<wf-id>`) |
+| `GATE` | a `NEEDS_DECISION` resolves — user answer or headless skip; question and answer as continuations |
+| `VERDICT` | the workflow returns DONE (`verdict=<v> rotations=<n> ci=<state> escalated=<bool>`; blocking findings as continuations) |
+| `MERGE` | the merge gate merges a PR (`task=<ref> pr=<url> method=squash`) |
+| `ESCALATE` | a `block` or rotations-exhausted result goes to HOTL |
+| `PROPAGATED` | propagation completes (`edges=<n> unblocked=<refs>`) |
+| `BRIEF` | a `--pipelined` prefetch brief lands (`task=<B-ref> baselinedAt=<A-ref>`; brief verbatim as continuations) |
+| `FAIL` | the workflow returns BLOCKED (failure summary as continuation) |
+| `TASK_END` | the iteration ends (`outcome=in_review\|planned\|stuck\|skipped rotations=<n>`) |
+| `RESUME` | recovery appends this after reading the log |
+| `RUN_END` | any stop condition (`reason=<...> picked=<n> shipped=<n> merged=<n> stuck=<n> skipped=<n>`) |
+
+Per-phase events and fix rotations live inside the workflow's own journal, not the run log; the `WORKFLOW runId` line is the bridge to it. If `.piyaz/` is not writable, fall back to any writable directory and name the chosen path in the first report; if no local write is possible, run without the log and say so — the run loses crash recovery, not correctness.
+
+## Rework mode
+
+Pull-based: the backend has no webhooks, and `task_links` is the only PR record. The user invokes rework when GitHub review feedback exists; composer fetches it, re-anchors it, and runs the fix loop on it.
+
+1. **Resolve the pair.** Given a taskRef, read `task.links` filtered to `kind='pull_request'`; given a PR URL, resolve the task from the `[<taskRef>]` bracket (verify the link row agrees). Prefer the newest open PR when several exist.
+2. **Reviewer-led intake.** Dispatch `piyaz:review` with `Target task: <taskRef>. PR URL: <url>. Mode: rework-intake.` The intake re-verifies the human feedback against current HEAD and returns a verdict.
+3. **Branch on the intake verdict.**
+   - `request-changes`: launch the workflow with `resumeFrom='fix'`, `prUrl=<url>`, and `fixFindings=<the human items with fresh file:line citations>`. The fix loop uses a **fresh rotation budget of 2** for this rework invocation (the workflow's rotation counter starts at zero per launch). Prefix the implementer dispatch context with rework so the implementer accepts an `in_progress` entry (HOTL may flip `in_review → in_progress` to signal rework).
+   - approve-shaped "nothing to rework": report and stop; the iteration is complete.
+   - `BLOCKED` (PR merged/closed, task `done`/`cancelled`): report and stop.
+4. **Finish like any iteration.** Surface the verdict, run the merge gate, propagate, `TASK_END`. The run log records `RUN_START mode=rework`.
+
+## Pipelined research-ahead (flag-gated)
+
+Only under `--pipelined`, only in backlog mode, lookahead 1. The win is latency (~15–25%), not tokens; when in doubt, run without it.
+
+- **Trigger:** after task A's workflow returns DONE, launch a research-only workflow for the next ready task B in the background (`resumeFrom='research'` with a research-only early return is not built in; instead dispatch `piyaz:composer-researcher` directly with worktree isolation and `run_in_background`). Never prefetch while A's workflow is still running.
+- **Pick B excluding A.** B must be ready independently of A; `in_review` unblocks nothing, so the ready set already excludes A's dependents.
+- **Brief custody:** when the prefetch returns, append a `BRIEF` event with the brief verbatim. The prefetch is not a `PICK`; B's `PICK` lands when B's iteration starts, so recovery's last-`PICK`-without-`TASK_END` rule still finds A. Pass the brief into B's workflow launch as `priorBrief` with `resumeFrom='plan'` only when the invalidation table below clears it.
+- **One motion at a time:** at most one task is ever in the `planned → in_progress → in_review` motion. B is never planned, claimed, or implemented early. A prefetch failure consumes no budget; drop it and research B normally.
+
+**Brief invalidation.** After propagation(A), evaluate in order; the first matching row wins:
+
+| # | Signal after propagation(A) | Action |
+| --- | --- | --- |
+| 1 | A `depends_on` edge B→(non-done task) was created | Re-pick; brief is stale |
+| 2 | B's description was updated | Re-research (relaunch fresh) |
+| 3 | Edge notes into B name files/patterns in the brief's *Files to touch* | Re-research |
+| 4 | A's files ∩ B brief's *Files to touch* ≠ ∅ | Re-research with the A PR pointer in `gateAnswers` |
+| 5 | A re-pick returns C outranking B on priority class | Re-pick to C; a tie proceeds with B |
+| 6 | Pure informational note updates, no overlap | Proceed with the brief |
+| 7 | None of the above | Proceed |
+
+**Kill switch:** after two consecutive invalidations, disable prefetch for the rest of the run and say so.
+
+## Dispatch hygiene
+
+The workflow builds every phase dispatch from the `args` you pass; the agents inherit nothing else. Keep `args` to the pick facts in *Step details* — never pass orchestrator transcript, prior-iteration summaries, full meta payloads, or piyaz reference text. The agents load their own rule extracts and fetch task context from Piyaz themselves. Oversized dispatches make agents worse, not better.
 
 ## Failure handling
 
-A failed attempt is any of: implementer reports tests/lint/typecheck red and cannot self-recover; implementer returns without opening a PR; planner cannot save a plan after one retry; reviewer cannot reach `mymir_context depth='review'` or the dispatch is premature (task not at `in_review`). A reviewer verdict of `request-changes` or `block` is NOT a failure; it is the correct outcome of a careful review and is surfaced to HOTL like any other verdict. On failure:
+`BLOCKED`/null from the workflow is a failed attempt, with exceptions:
 
-1. Do not write the failure to `decisions`. Per artifacts §1, `decisions` is CHOICE + WHY only; "attempt N failed" is process metadata and pollutes the field. Keep the failure summary in the orchestrator's own transcript (the user sees it directly there) and let the data layer's audit log carry the rest.
-2. Leave the task at its current Mymir status (do not auto-cancel; the task is not broken, the attempt was).
-3. In backlog mode, move on to the next pick. In single-task mode, retry the iteration up to three total attempts (counting attempt 1). After three failures, emit `composer reports three consecutive failed attempts on <taskRef>` to the transcript (matches the `/goal` clause) and exit.
+- A phase that reports BLOCKED because the task is already `done` or `cancelled` is not a failure — HOTL resolved it underneath the run. Run *Surface + merge + propagate* if it has not run, consume no budget, move on.
+- `BLOCKED — environmental: <error>` (gh auth, rate limits, network) is an environment problem; surface it verbatim, consume no budget, resume the same workflow (via `resumeFrom`) once the user confirms the fix.
+- `BLOCKED` from the plan phase prefixed `foundation-unsound` means the planner judged the research foundation wrong; relaunch the workflow **fresh** once to re-research, then treat a second failure normally.
 
-   **Why the asymmetry.** Backlog mode optimizes throughput across the queue; a stubborn task should not block other ready work. The failed task stays at `in_progress` for human triage. Single-task mode optimizes completion of one named task; retries are warranted because there is nothing else to fall through to.
+For every other BLOCKED:
 
-Each retry dispatches the implementer fresh with the parent attempt's failure summary appended to the prompt; the researcher and planner are not re-run unless the failure clearly traces to a planning gap (e.g., the plan references a file that does not exist).
+1. Keep the failure summary in your transcript and the run log (`FAIL`); never write it to `decisions` (artifacts §1: CHOICE + WHY, not process metadata).
+2. Leave the task at its current status. Never roll back, never cancel.
+3. Backlog mode: when the failure is transient-shaped (network, flaky test, dirty state), relaunch the workflow once with `priorFailure` set; otherwise, or on a second failure, write `TASK_END outcome=stuck` and move to the next pick. Single-task mode: relaunch up to three total attempts, appending each failure summary as `priorFailure`; after the third, report and stop.
 
-**Partial success: PR opened, `in_review` not marked.** If a retry's pre-flight finds the task at `in_progress` with an open PR matching the branch name pattern (`<type>/<taskRef-lowercased>-<title-slug>`), do not re-implement. Resume the Completion Protocol: re-evaluate acceptance criteria against the PR diff, populate `executionRecord` / `decisions` / `files`, mark `in_review`. The PR is the load-bearing artifact; the missing status write is recoverable. This is a single-attempt recovery; if it fails, count it toward the failure budget per rule 3.
+**Partial success and orphaned PRs** are handled inside the implementer's pre-flight (it resumes the Completion Protocol against an existing branch/PR rather than re-implementing). When a single-task pick is already `in_progress` or `in_review`, launch the workflow with `resumeFrom='implement'` (in_progress) or `resumeFrom='fix'` with the existing `prUrl` (in_review); the implementer's pre-flight does the rest.
 
 ## Stop conditions
 
-The orchestrator emits one of these literal phrases to the transcript when the corresponding state holds. `/goal` matches against them and ends the session.
+Stop and report in plain language (there are no magic stop phrases) when one holds:
 
-1. `mymir_analyze type='ready' returns an empty set`: backlog drained.
-2. `composer reports three consecutive failed attempts on <taskRef>`: same task failed three times in single-task mode (or after the orchestrator manually retried in backlog mode).
-3. The user typed `stop` at any prompt: exit immediately after the current in-flight write finishes.
-4. (Single-task mode only) `composer reports the target task marked done`: emitted right after step 7 reaches the loop exit (propagation done, verdict surfaced). The literal phrase contains `done` for `/goal` matching; the task itself is at `in_review` awaiting HOTL approval, not actually at `done`. Composer's iteration is what ends, not the task's lifecycle.
-5. (Single-task mode only) `composer reports proposed rewrite denied on <taskRef>`: emitted right after the user denies a substantive rewrite proposal in single-task mode (see *Proposed rewrites handling*).
+1. **Backlog drained**: `ready` and `plannable` are both empty. The stop report enumerates every task left at `in_progress`/`in_review` with its failure summary — nothing strands silently.
+2. **Failure budget exhausted**: three failed attempts on the same task (single-task mode).
+3. **User says stop**: exit after the in-flight write finishes.
+4. **Single-task or rework iteration complete**: verdict surfaced, merge gate run, propagation done.
+5. **Rewrite denied** (single-task mode): the user rejected a proposed rewrite at the gate.
+6. **Piyaz transport/auth failure**: any Piyaz tool call fails with auth expiry, 401/403, a 5xx, or a network error. Stop immediately (not retryable in-session, resilience §10) and report the exact error plus the last completed phase per in-flight task.
 
-Do not invent new stop phrases. The `/goal` condition the user pastes during bootstrap matches these five verbatim; any drift breaks the harness.
+These six are exhaustive. Every stop appends `RUN_END` with its reason and the grep-derived counters, runs *Worktree cleanup at run end*, then offers to archive the log; the headless default is inform-only on worktrees and archive on the log.
 
-## Reuse points from the mymir skill
+## Worktree cleanup at run end
 
-Composer is glue. It explicitly defers to the `mymir` skill for:
+The workflow dispatches the implementer and every fix rotation with `isolation:'worktree'` (`compose-task.js`), so each task leaves a git worktree under `.claude/worktrees/wf_<runId>-<n>` plus its local branch. The harness auto-removes a worktree only when it is unchanged; the implementer always commits, so a worktree outlives its task. The merge gate removes each merged task's worktree eagerly (`gh pr merge --delete-branch` drops only the *remote* branch — the local removal is composer's), so what reaches run end is the unmerged remainder: PR-backed worktrees awaiting HOTL, orphans, and — under `never` — every worktree. Composer never silently mutates the filesystem (HOTL owns destructive local actions), so at every stop — after `RUN_END`, before the archive offer — it surfaces what it left behind and cleans up per the run's merge policy.
 
-- **Task selection.** `mymir_analyze type='ready'` ∩ `type='critical_path'`, ranked by priority then estimate (see `plugins/claude-code/skills/mymir/SKILL.md` § *What should I work on?*).
-- **Refinement.** If the researcher's brief identifies vague acceptance criteria or a thin description, the planner applies refinements via `mymir_task action='update'` with append semantics (see § *Refine a task* in the mymir SKILL.md).
-- **Planning.** Phase 2 saves the unabridged `implementationPlan` and transitions `draft → planned` exactly as § *Plan a draft task* specifies.
-- **Implementation.** Phase 3 follows § *Implement a task* and the Completion Protocol (lifecycle §2). PR template detection, bracket form, body structure, `gh pr create` syntax all defer there. Composer adds only a conventional-commit title prefix when the project uses that format, and a `<type>/<taskRef>-<title-slug>` branch name; both live in `agents/composer-implementer.md`.
-- **Review.** Phase 4 reads `mymir_context depth='review'` and follows the five-lens persona in `agents/review.md`. The verdict shape (`approve` / `request-changes` / `block` plus per-lens prose, AC evaluation, plan-vs-files drift, downstream impact) is the reviewer's contract with the orchestrator and with HOTL.
-- **Propagation.** `mymir_query type='edges'` then `mymir_analyze type='downstream'` after every `in_review` transition (and every later `done`); update edge notes, retire stale edges.
+1. **Enumerate.** `git worktree list --porcelain`; keep only paths under `.claude/worktrees/wf_*`. The `wf_<runId>` prefix is the discriminator that proves the workflow created the worktree — never the primary checkout or a user-made one. Capture each path and its `branch refs/heads/<name>`.
+2. **Classify against open PRs.** `gh pr list --state open --json number,headRefName,url`. A worktree whose branch equals an open PR's `headRefName` is **PR-backed** (may be at `in_review` awaiting HOTL); every other is **safe** (its branch backs no open PR — merged, or an orphan `worktree-wf_*` branch). If `gh` is unavailable or errors, treat every worktree as PR-backed and inform only.
+3. **Report.** Per bucket, list each worktree path, its branch, and the PR (PR-backed); say so explicitly when none remain. Always print the exact commands:
+   - worktree: `git worktree remove <path>` (no `--force`; surface git's refusal on a dirty or locked tree and leave it).
+   - dangling local branch: `git branch -D <branch>` — `-D` not `-d` is intentional; orphan `worktree-wf_*` branches never merge upstream, so `-d` refuses them. For a PR-backed branch this drops only the *local* ref; the PR, its remote branch, and `git fetch` recovery survive.
+   - stale entries whose directory is already gone: `git worktree prune`.
+4. **Clean up (per merge policy).**
+   - **`auto-on-approve`**: auto-remove the safe bucket — the `git worktree remove` + `git branch -D` pair per worktree, then one `git worktree prune` — no prompt; the run-start delegation that authorized auto-merge covers it. PR-backed worktrees are surfaced (step 3), never auto-removed.
+   - **`never` / `ask-each`**: ask once with the AskUserQuestion tool — remove safe / remove all incl. PR-backed (explicit opt-in) / leave all. Remove only the pick, PR-backed only under the include option.
+   - **Headless** (AskUserQuestion unavailable): inform only; remove nothing.
 
-If a flow exists in the mymir skill, do not reinvent it inside a subagent. Cite the section by file path and anchor instead.
+## Recovering after compaction
+
+Read the run log first: `.piyaz/composer-<projectIdentifier>.md`. The last `PICK`/`WORKFLOW` without a matching `TASK_END` is the in-flight task. **Piyaz wins on status** — re-read the task row and never trust the log over the server. **The log wins on history** — the merge policy (`RUN_START mergePolicy=`), gate answers, verdict history, and the workflow `runId`.
+
+To resume the in-flight task:
+
+- A `WORKFLOW runId=<id>` line with no `VERDICT`/`TASK_END` after it means the workflow may still be journaled. Resume it with `Workflow({ scriptPath, resumeFromRunId: '<id>' })` — completed phases return from cache, only the unfinished phase re-runs. Stop the prior run first if it is somehow still live.
+- No usable runId: fall back to the Piyaz status mapping and relaunch with the matching `resumeFrom`. `draft` without a plan → fresh; `planned` → `resumeFrom='implement'` (or iteration end for a plannable-only pick); `in_progress` → `resumeFrom='implement'` (the implementer pre-flight resumes partial work); `in_review` → `resumeFrom='fix'` with the PR URL; `done` → HOTL or the merge gate already resolved it, run propagation if no `PROPAGATED` line exists.
+
+Append a `RESUME` line, then continue. Rebuild the backlog skip set from this run's `TASK_END outcome=stuck`/`skipped` lines. When the log is missing (different machine, sandbox), fall back to the status mapping alone; single-task mode re-invoked per task remains the lowest-risk shape for runs likely to span compaction.
+
+## Red flags — never do these
+
+| Temptation | Reality |
+| --- | --- |
+| Write `status` "so no other agent grabs the task" | Every transition belongs to a phase agent: planner `draft→planned`; implementer `planned→in_progress→in_review` plus fix rotations. The orchestrator writes only propagation edges — and `done`, but **only** when the merge gate merged the PR under an authorizing merge policy. |
+| Merge without the policy authorizing it, or merge a non-approve / non-green PR | The merge gate fires only on `approve` + green CI, only under `ask-each` (with a yes) or `auto-on-approve`. `never` means HOTL merges. |
+| Dispatch a phase agent yourself instead of launching the workflow | The orchestrator never dispatches phase agents directly (rework intake is the one exception). The workflow owns research → review; the orchestrator owns the seams. |
+| Skip research or planning to "get the claim in faster" | The phase order is fixed inside the workflow; the orchestrator cannot reorder it. |
+| Split an oversize task yourself | Oversize routes to `piyaz:decompose-task`, and only after the user gate. |
+| Treat a `request-changes` or `block` verdict as a failed attempt | A careful verdict is a successful review. The workflow's fix loop or HOTL owns the response; the failure budget is untouched. |
+| Pause between tasks to ask "should I continue?" | Continuous execution. The six stop conditions are the only exits; gates fire only on `NEEDS_DECISION`. |
+| Pad `args` with transcript, meta, or spec text | Pick facts only. Pollution makes agents worse. |
 
 ## What composer is not
 
-- **Not a decomposer.** Oversize tasks route to `mymir:decompose-task`. Composer asks first; never silently splits a task.
-- **Not a refiner.** Composer's researcher proposes refinements via the brief; the planner applies them through the canonical `mymir_task` update path. If the user wants pure refinement, they should run the `mymir` skill directly.
-- **Not the code reviewer itself.** Composer dispatches the `mymir:review` subagent in Phase 4 to produce a structured verdict, but the orchestrator does not interpret the verdict beyond surfacing it. The PR is reviewed on GitHub like any other PR; the HOTL operator owns the final `in_review → done` transition outside composer's loop, regardless of whether the reviewer recommended `approve`, `request-changes`, or `block`.
-- **Not a session-resilience layer.** Long runs that hit auto-compaction rely on `/goal` to bound the session and on `mymir_query type='meta'` plus the per-task Mymir status to re-acquire project state on resume; composer does not persist its own session file. The orchestrator's "current phase" is implicit, derived from transcript and task status; after compaction it reconstructs per the *Phase entry and exit conditions* table. For runs likely to span compaction, prefer single-task mode and re-invoke composer per task rather than running an unbounded backlog loop. See `skills/mymir/references/resilience.md` for the broader resilience primitives.
+Not a decomposer (oversize routes out). Not a hand-refiner (that is the piyaz skill, used directly). It IS, when the user authorizes it, the merge gate. The workflow is the execution engine; the run log and the workflow journal are the resilience primitives; per-task re-invocation remains the recommendation for very long runs.
 
 ## See also
 
-- `plugins/claude-code/skills/mymir/SKILL.md`: canonical Mymir flows composer reuses.
-- `skills/mymir/references/conventions.md`: Iron Law of grounding (cite real code, real refs; never speculate).
-- `skills/mymir/references/artifacts.md`: title/description/AC quality (§1), tag dimensions (§2), categories (§4), oversize threshold (§5).
-- `skills/mymir/references/lifecycle.md`: status lifecycle (§1), Completion Protocol with PR template detection (§2), propagation (§3).
-- `plugins/claude-code/agents/composer-researcher.md`, `composer-planner.md`, `composer-implementer.md`, `review.md`: the four subagent definitions composer dispatches.
-- `plugins/claude-code/agents/decompose.md`: the oversize-delegation target.
+- `skills/composer/workflows/compose-task.js`: the per-task pipeline the orchestrator launches.
+- `skills/piyaz/SKILL.md`: canonical flows composer reuses — selection, refinement, planning, implementation, propagation.
+- `agents/composer-researcher.md`, `agents/composer-planner.md`, `agents/composer-implementer.md`, `agents/review.md`: the four phase contracts and their structured returns.
+- `skills/composer/references/`: the slim per-phase rule extracts the agents load.
+- `agents/decompose-task.md`: the oversize-delegation target.

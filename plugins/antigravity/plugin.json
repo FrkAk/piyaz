@@ -1,5 +1,5 @@
 {
-  "name": "mymir",
-  "version": "1.8.0",
+  "name": "piyaz",
+  "version": "0.1.2",
   "description": "Persistent context network for coding projects. Tracks tasks, dependencies, and decisions across sessions."
 }

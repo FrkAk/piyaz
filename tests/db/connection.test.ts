@@ -4,9 +4,9 @@ import { requestDbStore } from "@/lib/db/connection";
 import { superuserPool } from "@/tests/setup/global";
 
 type GlobalCache = {
-  __mymirAppDb?: unknown;
-  __mymirAuthDb?: unknown;
-  __mymirServiceRoleDb?: unknown;
+  __piyazAppDb?: unknown;
+  __piyazAuthDb?: unknown;
+  __piyazServiceRoleDb?: unknown;
 };
 
 test("container is reachable and migrations applied", async () => {
@@ -14,7 +14,7 @@ test("container is reachable and migrations applied", async () => {
   try {
     const rows = await sql<{ name: string }[]>`
       SELECT table_name AS name FROM information_schema.tables
-      WHERE table_schema IN ('public', 'neon_auth')
+      WHERE table_schema IN ('public', 'piyaz_auth')
       ORDER BY table_name
     `;
     const names = rows.map((r) => r.name);
@@ -33,9 +33,9 @@ describe("connection.ts auth client", () => {
 
   beforeEach(() => {
     originalAuthUrl = process.env.DATABASE_AUTH_URL;
-    originalCache = (globalThis as { __mymirAuthDb?: unknown }).__mymirAuthDb;
+    originalCache = (globalThis as { __piyazAuthDb?: unknown }).__piyazAuthDb;
     delete process.env.DATABASE_AUTH_URL;
-    (globalThis as { __mymirAuthDb?: unknown }).__mymirAuthDb = undefined;
+    (globalThis as { __piyazAuthDb?: unknown }).__piyazAuthDb = undefined;
   });
 
   afterEach(() => {
@@ -44,7 +44,7 @@ describe("connection.ts auth client", () => {
     } else {
       delete process.env.DATABASE_AUTH_URL;
     }
-    (globalThis as { __mymirAuthDb?: unknown }).__mymirAuthDb =
+    (globalThis as { __piyazAuthDb?: unknown }).__piyazAuthDb =
       originalCache as never;
   });
 
@@ -62,20 +62,20 @@ describe("getScopedOrGlobal resolver", () => {
 
   beforeEach(() => {
     const g = globalThis as GlobalCache;
-    originalAppCache = g.__mymirAppDb;
-    originalAuthCache = g.__mymirAuthDb;
-    originalServiceCache = g.__mymirServiceRoleDb;
+    originalAppCache = g.__piyazAppDb;
+    originalAuthCache = g.__piyazAuthDb;
+    originalServiceCache = g.__piyazServiceRoleDb;
     originalDatabaseUrl = process.env.DATABASE_URL;
-    g.__mymirAppDb = undefined;
-    g.__mymirAuthDb = undefined;
-    g.__mymirServiceRoleDb = undefined;
+    g.__piyazAppDb = undefined;
+    g.__piyazAuthDb = undefined;
+    g.__piyazServiceRoleDb = undefined;
   });
 
   afterEach(() => {
     const g = globalThis as GlobalCache;
-    g.__mymirAppDb = originalAppCache as never;
-    g.__mymirAuthDb = originalAuthCache as never;
-    g.__mymirServiceRoleDb = originalServiceCache as never;
+    g.__piyazAppDb = originalAppCache as never;
+    g.__piyazAuthDb = originalAuthCache as never;
+    g.__piyazServiceRoleDb = originalServiceCache as never;
     if (originalDatabaseUrl !== undefined) {
       process.env.DATABASE_URL = originalDatabaseUrl;
     } else {
@@ -112,7 +112,7 @@ describe("getScopedOrGlobal resolver", () => {
   it("falls back to the globalThis cache when no ALS frame is active", async () => {
     const { appDb } = await import("@/lib/db/connection");
     const sentinel = { marker: "cached-app" };
-    (globalThis as GlobalCache).__mymirAppDb = sentinel as never;
+    (globalThis as GlobalCache).__piyazAppDb = sentinel as never;
 
     expect((appDb as unknown as { marker: string }).marker).toBe("cached-app");
   });
@@ -120,14 +120,14 @@ describe("getScopedOrGlobal resolver", () => {
   it("invokes the builder when cache is empty on self-host", async () => {
     delete process.env.DEPLOY_TARGET;
     process.env.DATABASE_URL = "postgres://invalid:invalid@127.0.0.1:1/none";
-    (globalThis as GlobalCache).__mymirAppDb = undefined;
+    (globalThis as GlobalCache).__piyazAppDb = undefined;
 
     const { appDb } = await import("@/lib/db/connection");
 
     expect(typeof (appDb as unknown as { select: unknown }).select).toBe(
       "function",
     );
-    expect((globalThis as GlobalCache).__mymirAppDb).toBeDefined();
+    expect((globalThis as GlobalCache).__piyazAppDb).toBeDefined();
   });
 
   // The Cloudflare throw-on-missing-ALS-frame branch is covered by

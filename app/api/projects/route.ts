@@ -10,6 +10,12 @@ import { error } from "@/lib/api/response";
 /**
  * Conditional handler for `GET` and `HEAD` on the home-grid project list.
  *
+ * Keyset-paginated: `?cursor=<token>` seeks past a page boundary and
+ * `?limit=<n>` caps the page (clamped 1–100 by the data layer); the response
+ * body is `{ rows, nextCursor }`. The ETag validator is the global max
+ * `updated_at` across every accessible project, so it stays valid for every
+ * page — any change anywhere revalidates the whole list.
+ *
  * Resolves `getProjectListMaxUpdatedAt(ctx)` first so a 304 short-circuit
  * avoids the heavier per-project task-stats roll-up in `listProjectsSlim`.
  *
@@ -31,8 +37,16 @@ async function handle(req: Request): Promise<Response> {
       return conditionalRespond(req, null, max);
     }
 
-    const { rows } = await listProjectsSlim(ctx);
-    return conditionalRespond(req, rows, max);
+    const params = new URL(req.url).searchParams;
+    const cursor = params.get("cursor");
+    const limitRaw = params.get("limit");
+    const parsedLimit = limitRaw !== null ? Number(limitRaw) : Number.NaN;
+    const limit =
+      Number.isInteger(parsedLimit) && parsedLimit > 0
+        ? parsedLimit
+        : undefined;
+    const page = await listProjectsSlim(ctx, { cursor, limit });
+    return conditionalRespond(req, page, max);
   } catch (err) {
     return internalError("projects", err);
   }

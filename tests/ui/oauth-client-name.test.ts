@@ -3,13 +3,13 @@ import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
 
 test("formats supported OAuth client brand names consistently", () => {
   expect(formatOAuthClientName("Codex", true)).toBe("Codex");
-  expect(formatOAuthClientName("Claude Code (plugin:mymir:mymir)", true)).toBe(
+  expect(formatOAuthClientName("Claude Code (plugin:piyaz:piyaz)", true)).toBe(
     "Claude Code",
   );
   expect(formatOAuthClientName("Cursor", true)).toBe("Cursor");
   expect(formatOAuthClientName("Antigravity", true)).toBe("Antigravity");
   expect(
-    formatOAuthClientName("Google Antigravity (plugin:mymir:mymir)", true),
+    formatOAuthClientName("Google Antigravity (plugin:piyaz:piyaz)", true),
   ).toBe("Antigravity");
   expect(formatOAuthClientName("Gemini CLI", true)).toBe("Gemini");
 });

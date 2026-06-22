@@ -12,18 +12,18 @@ test("classifies a GitHub pull request URL", () => {
 });
 
 test("classifies a GitHub issue URL", () => {
-  const result = classifyLink("https://github.com/mymir-dev/mymir/issues/87");
+  const result = classifyLink("https://github.com/piyaz-dev/piyaz/issues/87");
   expect(result.kind).toBe("issue");
-  expect(result.label).toBe("mymir-dev/mymir#87");
+  expect(result.label).toBe("piyaz-dev/piyaz#87");
   expect(result.number).toBe(87);
 });
 
 test("classifies a GitHub commit URL and shortens SHA", () => {
   const result = classifyLink(
-    "https://github.com/mymir-dev/mymir/commit/abc123def456789",
+    "https://github.com/piyaz-dev/piyaz/commit/abc123def456789",
   );
   expect(result.kind).toBe("commit");
-  expect(result.label).toBe("mymir-dev/mymir@abc123d");
+  expect(result.label).toBe("piyaz-dev/piyaz@abc123d");
 });
 
 test("classifies a GitLab merge request URL", () => {

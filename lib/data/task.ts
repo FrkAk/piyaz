@@ -1,6 +1,17 @@
 import "server-only";
 
-import { and, asc, desc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import {
   executeRaw,
   normalizeExecuteResult,
@@ -691,7 +702,7 @@ export async function getTaskFullWithEdges(
 /**
  * Fetch the assignee projection (userId + name + email) for a task,
  * routed through the `task_assignees_visible` SECURITY DEFINER function
- * so `app_user` can read `neon_auth.user` under the Option-B lockdown.
+ * so `app_user` can read `piyaz_auth.user` under the Option-B lockdown.
  *
  * UNCHECKED: the SDF itself re-checks caller membership of the task's
  * org, but the upstream `assertTaskAccess` is still the contract. The
@@ -1796,19 +1807,26 @@ type TaskSummaryRow = {
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project the tasks belong to.
  * @param taskIds - UUIDs of the tasks to summarize.
+ * @param withDescription - Whether to select the `description` column. Only
+ *   the planning bundle renders downstream descriptions; every other
+ *   consumer passes false and pays no text egress (the column stays
+ *   type-stable as an empty literal).
  * @returns Lazy select yielding summary rows.
  */
 export function taskSummariesStmt(
   read: ReadConn,
   projectId: string,
   taskIds: readonly string[],
+  withDescription: boolean,
 ) {
   return read
     .select({
       id: tasks.id,
       title: tasks.title,
       status: tasks.status,
-      description: tasks.description,
+      description: withDescription
+        ? tasks.description
+        : sql<string>`''`.as("description"),
       sequenceNumber: tasks.sequenceNumber,
       identifier: projects.identifier,
     })
@@ -1846,7 +1864,26 @@ export type DependencyTaskInfo = {
   status: string;
   executionRecord: string | null;
   taskRef: string;
+  /** Earliest `pull_request` link URL, or null when the task has none. */
+  prUrl: string | null;
 };
+
+/**
+ * Correlated scalar subquery selecting a task's earliest `pull_request` link
+ * URL — the same first-PR convention `LINKS_AGG` ordering gives
+ * `links.find(kind === 'pull_request')` consumers.
+ *
+ * @returns SQL expression yielding the PR URL or null, aliased `pr_url`.
+ */
+function depPrUrlExpr() {
+  return sql<string | null>`(
+    SELECT ${taskLinks.url} FROM ${taskLinks}
+    WHERE ${taskLinks.taskId} = ${tasks.id}
+      AND ${taskLinks.kind} = 'pull_request'
+    ORDER BY ${taskLinks.createdAt} ASC
+    LIMIT 1
+  )`.as("pr_url");
+}
 
 /**
  * Dependency-task summaries for an id list, as a lazy batch statement. `ANY` over a
@@ -1871,6 +1908,7 @@ export function dependencyTasksStmt(
       executionRecord: tasks.executionRecord,
       sequenceNumber: tasks.sequenceNumber,
       identifier: projects.identifier,
+      prUrl: depPrUrlExpr(),
     })
     .from(tasks)
     .innerJoin(projects, eq(tasks.projectId, projects.id))
@@ -1890,7 +1928,10 @@ export function dependencyTasksStmt(
  * @returns Dep-task projections including `executionRecord` and `taskRef`.
  */
 export function mapDependencyTaskRows(
-  rows: readonly (TaskSummaryRow & { executionRecord: string | null })[],
+  rows: readonly (TaskSummaryRow & {
+    executionRecord: string | null;
+    prUrl: string | null;
+  })[],
 ): DependencyTaskInfo[] {
   return rows.map((r) => ({
     id: r.id,
@@ -1898,7 +1939,49 @@ export function mapDependencyTaskRows(
     status: r.status,
     executionRecord: r.executionRecord,
     taskRef: composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber),
+    prUrl: r.prUrl,
   }));
+}
+
+/**
+ * Direct cancelled prerequisites that carry an execution record, as a lazy
+ * batch statement, for the planning bundle's "Abandoned Approaches" section.
+ * Direct 1-hop `depends_on` targets only — the effective-dep walk treats
+ * cancelled tasks as transparent, so they never appear in the closure's
+ * `deps`. Map the rows with {@link mapDependencyTaskRows}.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project the task belongs to.
+ * @param taskId - UUID of the planning task.
+ * @returns Lazy select yielding cancelled-dep rows with execution records.
+ */
+export function cancelledDepRecordsStmt(
+  read: ReadConn,
+  projectId: string,
+  taskId: string,
+) {
+  return read
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      executionRecord: tasks.executionRecord,
+      sequenceNumber: tasks.sequenceNumber,
+      identifier: projects.identifier,
+      prUrl: depPrUrlExpr(),
+    })
+    .from(taskEdges)
+    .innerJoin(tasks, eq(taskEdges.targetTaskId, tasks.id))
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(
+      and(
+        eq(taskEdges.sourceTaskId, taskId),
+        eq(taskEdges.edgeType, "depends_on"),
+        eq(tasks.projectId, projectId),
+        eq(tasks.status, "cancelled"),
+        isNotNull(tasks.executionRecord),
+      ),
+    );
 }
 
 // ---------------------------------------------------------------------------

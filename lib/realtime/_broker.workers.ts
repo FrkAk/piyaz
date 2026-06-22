@@ -22,7 +22,7 @@ import {
 interface DurableObjectStub {
   fetch(url: string, init?: RequestInit): Promise<DurableObjectResponse>;
 }
-interface DurableObjectNamespace {
+export interface DurableObjectNamespace {
   idFromName(name: string): unknown;
   get(id: unknown): DurableObjectStub;
 }
@@ -38,7 +38,7 @@ export {
 } from "./_broker.node";
 
 /** Stable name for the single broker DO that owns every user's subs. */
-const BROKER_DO_NAME = "mymir-broker-global";
+const BROKER_DO_NAME = "piyaz-broker-global";
 
 /** Canonical request URL the adapter targets — fixed so signatures match. */
 const BROKER_URL = "https://broker/";
@@ -80,7 +80,7 @@ function resolveBrokerSecret(): string | null {
  *
  * @param method - HTTP method (POST or GET).
  * @param body - Body bytes or `null` for upgrade.
- * @param userId - `X-Mymir-User-Id` value or empty string.
+ * @param userId - `X-Piyaz-User-Id` value or empty string.
  * @returns `RequestInit` with method, headers, and body populated.
  */
 async function signedRequestInit(
@@ -147,26 +147,44 @@ function enrollInWaitUntil(promise: Promise<unknown>): void {
  */
 class WorkersBroker {
   /**
-   * Resolve the stub for the broker-global DO. Logs once per isolate when
-   * the binding is missing so misconfigured deploys are diagnosable without
-   * spamming.
+   * Resolve the stub for the broker-global DO. Uses {@link namespace} when
+   * the caller passes the binding explicitly (the raw worker entry runs
+   * outside OpenNext's request-context ALS, where `getCloudflareContext`
+   * throws). Otherwise reads the binding from the Cloudflare request
+   * context rather than `globalThis`: modules-format Workers never expose
+   * bindings on the global object, so the old read silently no-oped every
+   * dispatch. Logs once per isolate when the binding is missing or the
+   * context is unavailable so misconfigured deploys are diagnosable
+   * without spamming.
    *
-   * @returns The DO stub, or `null` when `MYMIR_BROKER` is not bound.
+   * @param namespace - Explicit `PIYAZ_BROKER` binding from the worker
+   *   entry's `env`; omit inside route handlers.
+   * @returns The DO stub, or `null` when `PIYAZ_BROKER` is not bound.
    */
-  private stub(): DurableObjectStub | null {
-    const env = (globalThis as { MYMIR_BROKER?: DurableObjectNamespace })
-      .MYMIR_BROKER;
-    if (!env) {
+  private stub(namespace?: DurableObjectNamespace): DurableObjectStub | null {
+    let resolved = namespace;
+    if (!resolved) {
+      try {
+        resolved = (
+          getCloudflareContext({ async: false }).env as {
+            PIYAZ_BROKER?: DurableObjectNamespace;
+          }
+        ).PIYAZ_BROKER;
+      } catch {
+        resolved = undefined;
+      }
+    }
+    if (!resolved) {
       if (!warnedMissingBinding) {
         console.error(
-          "[realtime] MYMIR_BROKER binding missing — realtime fanout will silently no-op",
+          "[realtime] PIYAZ_BROKER binding missing — realtime fanout will silently no-op",
         );
         warnedMissingBinding = true;
       }
       return null;
     }
-    const id = env.idFromName(BROKER_DO_NAME);
-    return env.get(id);
+    const id = resolved.idFromName(BROKER_DO_NAME);
+    return resolved.get(id);
   }
 
   /**
@@ -216,6 +234,47 @@ class WorkersBroker {
    */
   register(userId: string, key: ResourceKey, ttlMs?: number): void {
     this.fireAndForget({ op: "register", userId, key, ttlMs });
+  }
+
+  /**
+   * Register many subscriptions for the user in a single awaited DO RPC.
+   * Used by the worker entry to complete every registration before the 101
+   * returns, so the socket is never connected-but-deaf. Unlike
+   * {@link register}, this is not fire-and-forget: the caller awaits the
+   * DO acknowledgment and handles failures itself.
+   *
+   * @param userId - Caller user id.
+   * @param keys - Resource keys to register (no TTL).
+   * @param namespace - Explicit `PIYAZ_BROKER` binding from the worker
+   *   entry's `env`; omit inside route handlers.
+   * @throws When the binding or signing secret is missing, or the DO
+   *   fetch rejects.
+   */
+  async registerMany(
+    userId: string,
+    keys: ResourceKey[],
+    namespace?: DurableObjectNamespace,
+  ): Promise<void> {
+    const stub = this.stub(namespace);
+    if (!stub) {
+      throw new Error(
+        "PiyazBroker binding missing — cannot register subscriptions",
+      );
+    }
+    const msg: BrokerMessage = {
+      op: "register-many",
+      userId,
+      items: keys.map((key) => ({ key })),
+    };
+    const body = JSON.stringify(msg);
+    const { init, secretPresent } = await signedRequestInit("POST", body, "");
+    if (!secretPresent) {
+      throw new Error(
+        "BROKER_DO_SECRET unset — refusing to send an unsigned " +
+          "register-many to the broker DO",
+      );
+    }
+    await stub.fetch(BROKER_URL, init);
   }
 
   /**
@@ -280,15 +339,20 @@ class WorkersBroker {
    * incoming frames into the SSE response stream.
    *
    * @param userId - Caller user id; attached as the DO-side tag.
+   * @param namespace - Explicit `PIYAZ_BROKER` binding from the worker
+   *   entry's `env`; omit inside route handlers.
    * @returns The client end of the WebSocket pair.
    * @throws When the binding is missing, the secret is missing, or the DO
    *   rejects the upgrade.
    */
-  async connect(userId: string): Promise<WebSocket> {
-    const stub = this.stub();
+  async connect(
+    userId: string,
+    namespace?: DurableObjectNamespace,
+  ): Promise<WebSocket> {
+    const stub = this.stub(namespace);
     if (!stub) {
       throw new Error(
-        "MymirBroker binding missing — cannot open WebSocket to DO",
+        "PiyazBroker binding missing — cannot open WebSocket to DO",
       );
     }
     const { init, secretPresent } = await signedRequestInit(
@@ -304,7 +368,7 @@ class WorkersBroker {
     }
     const resp = await stub.fetch(BROKER_URL, init);
     if (resp.status !== 101 || !resp.webSocket) {
-      throw new Error(`MymirBroker upgrade failed: status ${resp.status}`);
+      throw new Error(`PiyazBroker upgrade failed: status ${resp.status}`);
     }
     return resp.webSocket;
   }
@@ -317,7 +381,7 @@ class WorkersBroker {
    */
   attach(_userId: string, _conn: Connection): void {
     throw new Error(
-      "MymirBroker WorkersBroker: attach is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+      "PiyazBroker WorkersBroker: attach is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
     );
   }
 
@@ -329,7 +393,7 @@ class WorkersBroker {
    */
   tryAttach(_userId: string, _conn: Connection): boolean {
     throw new Error(
-      "MymirBroker WorkersBroker: tryAttach is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+      "PiyazBroker WorkersBroker: tryAttach is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
     );
   }
 
@@ -341,20 +405,23 @@ class WorkersBroker {
    */
   isAtConnectionLimit(_userId: string): boolean {
     throw new Error(
-      "MymirBroker WorkersBroker: isAtConnectionLimit is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+      "PiyazBroker WorkersBroker: isAtConnectionLimit is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
     );
   }
 
   /**
-   * Connection-tracking surface — not callable on Workers. The DO owns the
-   * WebSocket set and would require an extra round-trip per call.
+   * Whether the user may hold a live connection. The DO owns the WebSocket
+   * set, so the entry/route cannot synchronously know liveness; assume
+   * possibly-connected so the caller's lazy `task:` / `project:`
+   * registration proceeds. Registering a sub for a user with no live
+   * socket is harmless: the DO only delivers to real sockets, and `task:`
+   * subs carry a TTL.
    *
-   * @throws Always.
+   * @param _userId - Caller user id (unused).
+   * @returns Always true.
    */
   hasConnections(_userId: string): boolean {
-    throw new Error(
-      "MymirBroker WorkersBroker: hasConnections is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
-    );
+    return true;
   }
 
   /**
@@ -365,7 +432,7 @@ class WorkersBroker {
    */
   *subscribers(_key: ResourceKey): Iterable<string> {
     throw new Error(
-      "MymirBroker WorkersBroker: subscribers is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+      "PiyazBroker WorkersBroker: subscribers is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
     );
   }
 
@@ -377,7 +444,7 @@ class WorkersBroker {
    */
   pruneExpired(_userId: string): void {
     throw new Error(
-      "MymirBroker WorkersBroker: pruneExpired is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+      "PiyazBroker WorkersBroker: pruneExpired is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
     );
   }
 
@@ -389,7 +456,7 @@ class WorkersBroker {
    */
   _resetForTests(): void {
     throw new Error(
-      "MymirBroker WorkersBroker: _resetForTests is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
+      "PiyazBroker WorkersBroker: _resetForTests is not callable from Workers; use connect(userId) to obtain a WebSocket from the DO",
     );
   }
 }

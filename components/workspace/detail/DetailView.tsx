@@ -8,8 +8,24 @@ import type {
   TaskGraphSlim,
   TaskLinkRef,
 } from "@/lib/data/views";
+import type { TaskState } from "@/lib/data/task";
 import type { TaskStatus } from "@/lib/types";
-import { BundlePreview } from "@/components/workspace/BundlePreview";
+import {
+  BundlePreview,
+  type BundleConnectedEdge,
+  type BundleDownstreamRef,
+  type BundleNeighbor,
+  type BundlePrereqRef,
+} from "@/components/workspace/BundlePreview";
+import {
+  BUNDLE_LABEL_BY_STAGE,
+  resolveStage,
+} from "@/components/workspace/bundle-tables";
+import { CLOSURE_DEPTH } from "@/lib/context/parts";
+import {
+  effectiveDirectPrerequisiteIds,
+  effectiveNeighbors,
+} from "@/lib/ui/effective-prereqs";
 import { DetailHeader } from "./DetailHeader";
 import { DescriptionSection } from "./DescriptionSection";
 import { CriteriaSection } from "./CriteriaSection";
@@ -35,6 +51,8 @@ interface DetailViewProps {
   projectId: string;
   /** Project display name for the breadcrumb. */
   projectName: string;
+  /** Project description — feeds the bundle preview's project drawer. */
+  projectDescription: string | null;
   /** All slim project edges — used by the bundle preview to derive neighbors. */
   allEdges: TaskGraphEdge[];
   /** Edges connected to this task. */
@@ -89,6 +107,7 @@ export function DetailView({
   task,
   projectId,
   projectName,
+  projectDescription,
   allEdges,
   edges,
   allTasks,
@@ -113,16 +132,29 @@ export function DetailView({
     () => allTasks.find((t) => t.id === taskId)?.state,
     [allTasks, taskId],
   );
-  const ready = currentState === "ready";
-  const plannable = currentState === "plannable";
+
+  // Execution-record presence per task, for the record-gated drawer lists
+  // (built / abandoned) the bundle builders filter on server-side.
+  const recordFlags = useMemo(
+    () => new Map(allTasks.map((t) => [t.id, t.hasExecutionRecord])),
+    [allTasks],
+  );
 
   const prerequisites = useMemo(
-    () => buildPrerequisites(taskId, allEdges, taskMap),
+    () => buildPrerequisites(taskId, allEdges, taskMap, recordFlags),
+    [taskId, allEdges, taskMap, recordFlags],
+  );
+  const abandoned = useMemo(
+    () => buildAbandoned(taskId, allEdges, taskMap, recordFlags),
+    [taskId, allEdges, taskMap, recordFlags],
+  );
+  const blockedBy = useMemo(
+    () => buildBlockedBy(taskId, allEdges, taskMap),
     [taskId, allEdges, taskMap],
   );
-  const neighbors = useMemo(
-    () => buildNeighbors(taskId, allEdges, taskMap),
-    [taskId, allEdges, taskMap],
+  const connected = useMemo(
+    () => buildConnected(taskId, edges, taskMap),
+    [taskId, edges, taskMap],
   );
   const downstream = useMemo(
     () => buildDownstream(taskId, allEdges, taskMap),
@@ -168,29 +200,31 @@ export function DetailView({
               <SectionHeader
                 label="Context bundle preview"
                 badge={
-                  <BundleStageBadge
-                    status={task.status}
-                    isReady={ready}
-                    isPlannable={plannable}
-                  />
+                  <BundleStageBadge status={task.status} state={currentState} />
                 }
               />
               <BundlePreview
+                key={taskId}
                 taskId={taskId}
                 projectId={projectId}
                 status={task.status}
-                isReady={ready}
-                isPlannable={plannable}
+                state={currentState}
+                projectName={projectName}
+                projectDescription={projectDescription}
                 spec={task.description}
+                tags={(task.tags as string[] | null) ?? []}
+                priority={task.priority}
+                estimate={task.estimate}
+                assignees={task.assignees ?? []}
                 criteria={task.acceptanceCriteria ?? []}
                 plan={task.implementationPlan}
                 prerequisites={prerequisites}
-                neighbors={neighbors}
+                abandoned={abandoned}
+                blockedBy={blockedBy}
+                connected={connected}
                 downstream={downstream}
                 decisions={task.decisions ?? []}
-                files={Array.from(
-                  new Set((task.files as string[] | null) ?? []),
-                )}
+                links={(task.links as TaskLinkRef[] | undefined) ?? []}
                 executionRecord={task.executionRecord}
                 onSelectTask={onSelectNode}
               />
@@ -227,73 +261,82 @@ export function DetailView({
 }
 
 interface BundleStageBadgeProps {
-  /** Active task status. */
+  /** Schema task status. */
   status: TaskStatus;
-  /** True when a `planned` task has all effective deps done. */
-  isReady: boolean;
-  /** True when a `draft` task has the description + criteria + done deps to be planned. */
-  isPlannable: boolean;
+  /** Server-derived state, when the task appears in the slim payload. */
+  state?: TaskState;
 }
 
-/** Caption shown for each resolved lifecycle stage — matches the `lib/context` builder name used by BundlePreview. */
-const BUNDLE_BADGE_CAPTION: Record<string, string> = {
-  draft: "planning",
-  plannable: "planning",
-  planned: "working",
-  ready: "planning",
-  in_progress: "agent",
-  in_review: "execution",
-  done: "execution",
-  cancelled: "execution",
-};
-
 /**
- * Mono lowercase tag rendered next to the "Context bundle preview" section
- * label — surfaces the active bundle shape (including `plannable` and
- * `ready` sub-stages) so the operator sees what the agent will receive
- * at this point in the lifecycle.
+ * Mono tag rendered next to the "Context bundle preview" section label —
+ * surfaces the bundle the next lifecycle consumer receives at this point in
+ * the lifecycle.
  *
  * @param props - Badge props.
  * @returns Inline badge element.
  */
-function BundleStageBadge({
-  status,
-  isReady,
-  isPlannable,
-}: BundleStageBadgeProps) {
-  let stage: string = status;
-  if (status === "draft" && isPlannable) stage = "plannable";
-  else if (status === "planned" && isReady) stage = "ready";
+function BundleStageBadge({ status, state }: BundleStageBadgeProps) {
   return (
-    <span className="inline-flex items-center rounded-md border border-accent/25 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] font-medium lowercase tracking-wider text-accent-light">
-      {BUNDLE_BADGE_CAPTION[stage] ?? "working"}
+    <span className="inline-flex items-center rounded-md border border-accent/25 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wider text-accent-light">
+      {BUNDLE_LABEL_BY_STAGE[resolveStage(status, state)]}
     </span>
   );
 }
 
-interface BundleNeighbor {
-  /** Task UUID. */
-  id: string;
-  /** Composed identifier. */
-  taskRef: string;
-  /** Display title. */
-  title: string;
-  /** Schema status. */
-  status: string;
-}
-
 /**
- * Build the upstream bundle neighbors (`depends_on` outgoing).
+ * Build the upstream bundle neighbors — the same effective
+ * (cancelled-transparent, closure-depth) walk the bundle builders render
+ * in their Prerequisites sections, computed from the slim graph.
  *
  * @param taskId - Current task UUID.
  * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
- * @returns List of upstream bundle neighbors.
+ * @param recordFlags - Execution-record presence per task id.
+ * @returns Effective prerequisite rows, ordered by effective depth.
  */
 function buildPrerequisites(
   taskId: string,
   edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
+  recordFlags: Map<string, boolean>,
+): BundlePrereqRef[] {
+  const out: BundlePrereqRef[] = [];
+  for (const n of effectiveNeighbors(
+    taskId,
+    edges,
+    taskMap,
+    "upstream",
+    CLOSURE_DEPTH,
+  )) {
+    const info = taskMap.get(n.id);
+    if (!info) continue;
+    out.push({
+      id: n.id,
+      taskRef: info.taskRef,
+      title: info.title,
+      status: info.status,
+      hasExecutionRecord: recordFlags.get(n.id) ?? false,
+    });
+  }
+  return out;
+}
+
+/**
+ * Build the abandoned-approaches refs — direct cancelled `depends_on`
+ * prerequisites carrying execution records, mirroring the planning
+ * bundle's record-gated Abandoned Approaches list.
+ *
+ * @param taskId - Current task UUID.
+ * @param edges - All slim project edges.
+ * @param taskMap - Map of task IDs to title/status/taskRef.
+ * @param recordFlags - Execution-record presence per task id.
+ * @returns Cancelled direct prerequisite rows with records.
+ */
+function buildAbandoned(
+  taskId: string,
+  edges: TaskGraphEdge[],
+  taskMap: Map<string, { title: string; status: string; taskRef: string }>,
+  recordFlags: Map<string, boolean>,
 ): BundleNeighbor[] {
   const out: BundleNeighbor[] = [];
   for (const edge of edges) {
@@ -301,7 +344,8 @@ function buildPrerequisites(
       continue;
     if (edge.targetTaskId === taskId) continue;
     const info = taskMap.get(edge.targetTaskId);
-    if (!info) continue;
+    if (!info || info.status !== "cancelled") continue;
+    if (!recordFlags.get(edge.targetTaskId)) continue;
     out.push({
       id: edge.targetTaskId,
       taskRef: info.taskRef,
@@ -313,34 +357,27 @@ function buildPrerequisites(
 }
 
 /**
- * Build `relates_to` 1-hop siblings — surfaces the agent's "neighbors" lane.
+ * Build the unfinished effective direct prerequisites — the same
+ * cancelled-transparent walk the agent builder runs for its blocked notice,
+ * computed from the slim graph so the chip and blocked drawer mirror the
+ * bundle exactly.
  *
  * @param taskId - Current task UUID.
  * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
- * @returns List of related siblings.
+ * @returns Unfinished effective direct prerequisite rows.
  */
-function buildNeighbors(
+function buildBlockedBy(
   taskId: string,
   edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
 ): BundleNeighbor[] {
   const out: BundleNeighbor[] = [];
-  const seen = new Set<string>();
-  for (const edge of edges) {
-    if (edge.edgeType !== "relates_to") continue;
-    const otherId =
-      edge.sourceTaskId === taskId
-        ? edge.targetTaskId
-        : edge.targetTaskId === taskId
-          ? edge.sourceTaskId
-          : null;
-    if (!otherId || otherId === taskId || seen.has(otherId)) continue;
-    const info = taskMap.get(otherId);
-    if (!info) continue;
-    seen.add(otherId);
+  for (const id of effectiveDirectPrerequisiteIds(taskId, edges, taskMap)) {
+    const info = taskMap.get(id);
+    if (!info || info.status === "done") continue;
     out.push({
-      id: otherId,
+      id,
       taskRef: info.taskRef,
       title: info.title,
       status: info.status,
@@ -350,30 +387,71 @@ function buildNeighbors(
 }
 
 /**
- * Build downstream `depends_on` consumers — the tasks blocked by this one.
+ * Build all 1-hop connected edges (every type, both directions) for the
+ * bundle preview's connected row.
+ *
+ * @param taskId - Current task UUID.
+ * @param edges - Edges connected to this task (with notes).
+ * @param taskMap - Map of task IDs to title/status/taskRef.
+ * @returns Connected edge rows.
+ */
+function buildConnected(
+  taskId: string,
+  edges: TaskEdgeRef[],
+  taskMap: Map<string, { title: string; status: string; taskRef: string }>,
+): BundleConnectedEdge[] {
+  const out: BundleConnectedEdge[] = [];
+  for (const e of edges) {
+    const direction = e.sourceTaskId === taskId ? "outgoing" : "incoming";
+    const otherId = direction === "outgoing" ? e.targetTaskId : e.sourceTaskId;
+    if (otherId === taskId) continue;
+    const info = taskMap.get(otherId);
+    if (!info) continue;
+    out.push({
+      id: otherId,
+      taskRef: info.taskRef,
+      title: info.title,
+      status: info.status,
+      edgeType: e.edgeType,
+      direction,
+      note: e.note ?? null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Build the downstream consumers — the same effective
+ * (cancelled-transparent, closure-depth) walk the bundle builders render
+ * in their Downstream sections, with each row's effective depth so the
+ * cancellation record's drawer can filter to direct (depth 1) dependents.
  *
  * @param taskId - Current task UUID.
  * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
- * @returns List of downstream consumers.
+ * @returns Effective dependent rows, ordered by effective depth.
  */
 function buildDownstream(
   taskId: string,
   edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
-): BundleNeighbor[] {
-  const out: BundleNeighbor[] = [];
-  for (const edge of edges) {
-    if (edge.edgeType !== "depends_on" || edge.targetTaskId !== taskId)
-      continue;
-    if (edge.sourceTaskId === taskId) continue;
-    const info = taskMap.get(edge.sourceTaskId);
+): BundleDownstreamRef[] {
+  const out: BundleDownstreamRef[] = [];
+  for (const n of effectiveNeighbors(
+    taskId,
+    edges,
+    taskMap,
+    "downstream",
+    CLOSURE_DEPTH,
+  )) {
+    const info = taskMap.get(n.id);
     if (!info) continue;
     out.push({
-      id: edge.sourceTaskId,
+      id: n.id,
       taskRef: info.taskRef,
       title: info.title,
       status: info.status,
+      depth: n.depth,
     });
   }
   return out;

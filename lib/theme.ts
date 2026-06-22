@@ -1,4 +1,4 @@
-const COOKIE_NAME = "mymir-theme";
+const COOKIE_NAME = "piyaz-theme";
 /** Cookie max-age in seconds (1 year). */
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 const listeners = new Set<() => void>();

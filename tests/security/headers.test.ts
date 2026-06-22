@@ -63,6 +63,32 @@ test("dev CSP additionally allows ws:/wss: in connect-src for HMR", () => {
   expect(connectSrc).toContain("wss:");
 });
 
+test("production CSP allows the same-origin wss origin when supplied (CF realtime)", () => {
+  const csp = buildCsp({
+    isProd: true,
+    nonce: "x",
+    wsOrigin: "wss://app.example.com",
+  });
+  const connectSrc = csp
+    .split(";")
+    .map((d) => d.trim())
+    .find((d) => d.startsWith("connect-src"))!;
+  expect(connectSrc).toContain("'self'");
+  expect(connectSrc).toContain("wss://app.example.com");
+  // Same-origin only — never the blanket wss: scheme that would let injected
+  // script reach any host.
+  expect(connectSrc).not.toMatch(/\bwss:(?!\/\/)/);
+});
+
+test("production CSP without wsOrigin keeps connect-src locked to 'self' (self-host)", () => {
+  const csp = buildCsp({ isProd: true, nonce: "x" });
+  const connectSrc = csp
+    .split(";")
+    .map((d) => d.trim())
+    .find((d) => d.startsWith("connect-src"))!;
+  expect(connectSrc).toBe("connect-src 'self'");
+});
+
 test("CSP includes frame-ancestors 'none' (clickjacking)", () => {
   const csp = buildCsp({ isProd: true, nonce: "x" });
   expect(csp).toMatch(/frame-ancestors[^;]*'none'/);
@@ -78,18 +104,26 @@ test("dev CSP omits upgrade-insecure-requests (HMR on http://localhost)", () => 
   expect(csp).not.toContain("upgrade-insecure-requests");
 });
 
-test("headerRules(false) returns only the always-on rule with no HSTS", () => {
+test("headerRules(false) has the always-on security rule and no HSTS", () => {
   const rules = headerRules(false);
-  expect(rules).toHaveLength(1);
-  expect(rules[0]!.source).toBe("/:path*");
-  expect(rules[0]!.missing).toBeUndefined();
-  const keys = rules[0]!.headers.map((h) => h.key);
-  expect(keys).not.toContain("Strict-Transport-Security");
+  expect(rules).toHaveLength(4);
+  const securityRule = rules.find((r) => r.source === "/:path*")!;
+  expect(securityRule).toBeTruthy();
+  expect(securityRule.missing).toBeUndefined();
+  const hasHsts = rules.some((r) =>
+    r.headers.some((h) => h.key === "Strict-Transport-Security"),
+  );
+  expect(hasHsts).toBe(false);
 });
 
 test("headerRules(true) adds a host-scoped HSTS rule", () => {
   const rules = headerRules(true);
-  expect(rules).toHaveLength(2);
+  expect(rules).toHaveLength(5);
+  expect(
+    rules.filter((r) =>
+      r.headers.some((h) => h.key === "Strict-Transport-Security"),
+    ),
+  ).toHaveLength(1);
   const hstsRule = rules.find((r) =>
     r.headers.some((h) => h.key === "Strict-Transport-Security"),
   )!;
@@ -124,7 +158,7 @@ test("HSTS host exclusion matches loopback names but not real domains", () => {
   expect(regex.test("127.0.0.1:3000")).toBe(true);
   expect(regex.test("[::1]")).toBe(true);
   expect(regex.test("[::1]:3000")).toBe(true);
-  expect(regex.test("mymir.dev")).toBe(false);
+  expect(regex.test("piyaz.ai")).toBe(false);
   expect(regex.test("evil-localhost.com")).toBe(false);
   expect(regex.test("127.0.0.1.evil.com")).toBe(false);
 });

@@ -42,7 +42,7 @@ test("handleQuery search rejects unknown category with project vocabulary inline
   if (result.ok === false) {
     expect(result.error).toContain('Category "NotACategory"');
     expect(result.error).toContain("MCP, Data, UI");
-    expect(result.error).toContain("mymir_query type='meta'");
+    expect(result.error).toContain("piyaz_query type='meta'");
   }
 });
 

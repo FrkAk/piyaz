@@ -12,12 +12,17 @@ import {
 } from "./broker-auth";
 
 /**
- * Wire message sent to the `MymirBroker` Durable Object over the
+ * Wire message sent to the `PiyazBroker` Durable Object over the
  * `fetch(request)` boundary. The DO holds the single broker-global view of
  * every user's subscriptions and connected WebSockets.
  */
 export type BrokerMessage =
   | { op: "register"; userId: string; key: ResourceKey; ttlMs?: number }
+  | {
+      op: "register-many";
+      userId: string;
+      items: Array<{ key: ResourceKey; ttlMs?: number }>;
+    }
   | { op: "unregister"; userId: string; key: ResourceKey }
   | { op: "clear-task-subs"; userId: string }
   | { op: "detach"; userId: string }
@@ -49,22 +54,26 @@ const MAX_CONNECTIONS_PER_USER = 20;
  * stable name) multiplexes every user's subscription state and WebSocket
  * connections, matching the self-host single-process broker semantics.
  *
- * Subscription state lives in memory and is not persisted: the model is that
- * clients re-register their `project:*` / `task:*` / `project-list:*`
- * subscriptions on each SSE reconnect, identical to the self-host broker
- * losing state on process restart. WebSocket connections survive hibernation
- * via Cloudflare's WebSocket Hibernation API and are restored when the DO
- * rehydrates.
+ * The subscription map is an in-memory hot cache backed by per-user entries
+ * in the DO's SQLite KV storage (`subs:<userId>`). Hibernation clears memory
+ * and reruns the constructor, but the connected WebSockets survive with
+ * their tags and storage is durable; on the first operation after a wake,
+ * {@link ensureHydrated} rebuilds the map from storage for users with live
+ * sockets. This is what keeps a hibernating socket (which, unlike SSE,
+ * never reconnects to re-register) receiving events after an idle cycle.
  */
-export class MymirBroker extends DurableObject<BrokerEnv> {
+export class PiyazBroker extends DurableObject<BrokerEnv> {
   private subs = new Map<string, Map<ResourceKey, number | null>>();
+
+  /** False until {@link ensureHydrated} rebuilds {@link subs} after a wake. */
+  private hydrated = false;
 
   /**
    * Handle a wire request from the Workers broker adapter. Verifies the
    * HMAC envelope, then routes WebSocket upgrades to the hibernation
    * accept path and JSON RPCs to the subscription / dispatch handlers.
    *
-   * The DO is only reachable to Workers that hold the `MYMIR_BROKER`
+   * The DO is only reachable to Workers that hold the `PIYAZ_BROKER`
    * binding, but the binding alone is not authentication: any caller
    * with the binding could spoof `userId` or fabricate dispatches if the
    * envelope check were skipped. The check rejects every unsigned or
@@ -80,9 +89,17 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   async fetch(request: Request): Promise<Response> {
     const authResult = await this.verifyEnvelope(request);
     if (!authResult.ok) {
+      console.warn(
+        JSON.stringify({
+          event: "broker_envelope_rejected",
+          status: authResult.status,
+          reason: authResult.error,
+        }),
+      );
       return new Response(authResult.error, { status: authResult.status });
     }
-    if (request.headers.get("Upgrade") === "websocket") {
+    this.ensureHydrated();
+    if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       return this.handleUpgrade(request);
     }
     return this.handleRpc(authResult.body);
@@ -146,7 +163,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
 
   /**
    * Accept a new WebSocket on behalf of the user named in
-   * `X-Mymir-User-Id`. Enforces the per-user cap before allocating the
+   * `X-Piyaz-User-Id`. Enforces the per-user cap before allocating the
    * socket pair so a saturated user is rejected without consuming resources.
    *
    * @param request - Upgrade request carrying the user id header.
@@ -156,7 +173,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   private handleUpgrade(request: Request): Response {
     const userId = request.headers.get(BROKER_USER_ID_HEADER);
     if (!userId) {
-      return new Response("Missing X-Mymir-User-Id", { status: 400 });
+      return new Response("Missing X-Piyaz-User-Id", { status: 400 });
     }
     if (this.ctx.getWebSockets(userId).length >= MAX_CONNECTIONS_PER_USER) {
       return new Response("Connection limit reached", { status: 429 });
@@ -165,6 +182,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server, [userId]);
+    this.persistUser(userId);
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -193,6 +211,17 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
       case "register":
         this.register(msg.userId, msg.key, msg.ttlMs);
         return new Response(null, { status: 204 });
+      case "register-many":
+        if (!Array.isArray(msg.items)) {
+          return new Response("register-many: items must be an array", {
+            status: 400,
+          });
+        }
+        for (const item of msg.items) {
+          this.addSub(msg.userId, item.key, item.ttlMs);
+        }
+        this.persistUser(msg.userId);
+        return new Response(null, { status: 204 });
       case "unregister":
         this.unregister(msg.userId, msg.key);
         return new Response(null, { status: 204 });
@@ -218,21 +247,46 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   }
 
   /**
-   * Record a subscription for the user. `ttlMs` produces a lazy-expiring
-   * entry (cleaned on next `subscribers` iteration); omit for indefinite.
+   * Add one subscription to the in-memory map without persisting. `ttlMs`
+   * produces a lazy-expiring entry (cleaned on next `subscribers`
+   * iteration); omit for indefinite.
    *
    * @param userId - Caller user id.
    * @param key - Resource key.
    * @param ttlMs - Optional TTL in ms.
    */
-  private register(userId: string, key: ResourceKey, ttlMs?: number): void {
-    const expiresAt = ttlMs ? Date.now() + ttlMs : null;
+  private addSub(userId: string, key: ResourceKey, ttlMs?: number): void {
+    const expiresAt = ttlMs != null ? Date.now() + ttlMs : null;
     let userMap = this.subs.get(userId);
     if (!userMap) {
       userMap = new Map();
       this.subs.set(userId, userMap);
     }
     userMap.set(key, expiresAt);
+  }
+
+  /**
+   * Record a subscription and persist the user's sub set — but only when the
+   * user holds at least one live WebSocket. Mirrors the self-host broker,
+   * where `register` runs only after the SSE connection attaches: a sub for a
+   * disconnected user has no socket to deliver to, and an indefinite
+   * `project:*` key would orphan a `subs:<userId>` storage entry that no
+   * `webSocketClose` ever cleans (that callback only fires for sockets that
+   * existed). `grantOrgAccess` registers eagerly for members who may be
+   * offline; this gate is what keeps those calls from leaking. Dropping an
+   * offline register loses nothing — the user's next `connect` re-derives
+   * `project:*` from the authorize route. The worker-entry `register-many`
+   * path is intentionally ungated: it always runs immediately after the
+   * socket is accepted.
+   *
+   * @param userId - Caller user id.
+   * @param key - Resource key.
+   * @param ttlMs - Optional TTL in ms.
+   */
+  private register(userId: string, key: ResourceKey, ttlMs?: number): void {
+    if (this.ctx.getWebSockets(userId).length === 0) return;
+    this.addSub(userId, key, ttlMs);
+    this.persistUser(userId);
   }
 
   /**
@@ -243,6 +297,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
    */
   private unregister(userId: string, key: ResourceKey): void {
     this.subs.get(userId)?.delete(key);
+    this.persistUser(userId);
   }
 
   /**
@@ -264,6 +319,7 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
       if (key.startsWith("task:")) taskKeys.push(key);
     }
     for (const key of taskKeys) userMap.delete(key);
+    this.persistUser(userId);
   }
 
   /**
@@ -310,8 +366,9 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
   /**
    * Hibernation-API callback fired when a WebSocket closes. Reads the user
    * id from the tags attached at `acceptWebSocket` time and, when no
-   * sockets remain for that user, clears their subscription map — matching
-   * the self-host broker's "drop subs on last detach" semantics.
+   * sockets remain for that user, clears their subscription map and the
+   * persisted storage entry — matching the self-host broker's "drop subs
+   * on last detach" semantics.
    *
    * Lean on the workerd hibernation contract that the closing socket is
    * already absent from `getWebSockets(userId)` by the time the callback
@@ -333,11 +390,13 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
     _reason: string,
     _wasClean: boolean,
   ): void {
+    this.ensureHydrated();
     const tags = this.ctx.getTags(ws);
     const userId = tags[0];
     if (!userId) return;
     if (this.ctx.getWebSockets(userId).length === 0) {
       this.subs.delete(userId);
+      this.ctx.storage?.kv?.delete(`subs:${userId}`);
     }
   }
 
@@ -351,5 +410,51 @@ export class MymirBroker extends DurableObject<BrokerEnv> {
    */
   webSocketError(_ws: WebSocketLike, error: unknown): void {
     console.error("[realtime] websocket error:", error);
+  }
+
+  /**
+   * Rebuild the in-memory subscription map from SQLite KV storage on the
+   * first operation after a wake, restricted to users with live sockets.
+   * Hibernation clears {@link subs} and reruns the constructor, but the
+   * connected WebSockets persist with their tags and the per-user entries
+   * persist in storage; hibernating clients never reconnect, so re-reading
+   * storage is the only way to restore who-is-subscribed without dropping
+   * events. Idempotent: the guard flag makes every call after the first a
+   * no-op within a live instance.
+   */
+  private ensureHydrated(): void {
+    if (this.hydrated) return;
+    this.hydrated = true;
+    const kv = this.ctx.storage?.kv;
+    if (!kv) return;
+    const seen = new Set<string>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const userId = this.ctx.getTags(ws)[0];
+      if (!userId || seen.has(userId)) continue;
+      seen.add(userId);
+      const entries = kv.get(`subs:${userId}`);
+      if (Array.isArray(entries)) {
+        this.subs.set(
+          userId,
+          new Map(entries as Array<[ResourceKey, number | null]>),
+        );
+      }
+    }
+  }
+
+  /**
+   * Persist the user's current subscription entries into the DO's SQLite
+   * KV storage (`subs:<userId>`) so the set survives hibernation. Unlike
+   * per-socket `serializeAttachment` (~2KB ceiling, overflows past ~30
+   * subscriptions), storage is uncapped for this payload size. Storage is
+   * feature-guarded with optional chaining so test fakes without `storage`
+   * skip persistence. An empty set deletes the key instead of writing `[]`.
+   *
+   * @param userId - User whose entries to persist.
+   */
+  private persistUser(userId: string): void {
+    const entries = [...(this.subs.get(userId)?.entries() ?? [])];
+    if (entries.length) this.ctx.storage?.kv?.put(`subs:${userId}`, entries);
+    else this.ctx.storage?.kv?.delete(`subs:${userId}`);
   }
 }

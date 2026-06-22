@@ -1,9 +1,9 @@
--- Neon Auth schema for self-hosted Postgres.
--- Mirrors the tables Neon Auth provisions on hosted Neon projects.
+-- Self-managed piyaz_auth schema for Postgres (Better Auth tables).
+-- The project does not use Neon Auth Managed; this script owns the schema.
 -- Idempotent — safe to re-run on existing databases.
 
-CREATE SCHEMA IF NOT EXISTS neon_auth;
-SET search_path TO neon_auth;
+CREATE SCHEMA IF NOT EXISTS piyaz_auth;
+SET search_path TO piyaz_auth;
 
 CREATE TABLE IF NOT EXISTS "user" (
     "id"             uuid PRIMARY KEY DEFAULT gen_random_uuid(),

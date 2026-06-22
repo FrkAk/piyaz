@@ -6,19 +6,20 @@
 # Roles, grants, schemas, and RLS are provisioned in-process from
 # tests/setup/migrate.ts after the container is healthy. CI uses the
 # equivalent declaration via GitHub Actions `services:` — see ci.yml.
+name: piyaz-test
 services:
   db-test:
-    image: postgres:17.10
+    image: postgres:18
     environment:
-      POSTGRES_USER: mymir
-      POSTGRES_PASSWORD: mymir
-      POSTGRES_DB: mymir_test
+      POSTGRES_USER: piyaz
+      POSTGRES_PASSWORD: piyaz
+      POSTGRES_DB: piyaz_test
     ports:
       - "5433:5432"
     tmpfs:
-      - /var/lib/postgresql/data
+      - /var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mymir -d mymir_test"]
+      test: ["CMD-SHELL", "pg_isready -U piyaz -d piyaz_test"]
       interval: 2s
       timeout: 3s
       retries: 30

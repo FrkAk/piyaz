@@ -1,7 +1,7 @@
 /**
  * Membership-gated project + task lookups.
  *
- * RLS scopes every read here. `app_user` has no grants on `neon_auth.*`;
+ * RLS scopes every read here. `app_user` has no grants on `piyaz_auth.*`;
  * the org metadata join routes through `public.current_user_orgs()`
  * (SECURITY DEFINER). `*Tx` variants take a caller-supplied tx so the
  * access check and the protected work share one `withUserContext` frame.
@@ -111,7 +111,7 @@ export async function findProjectAccessTx(
 }
 
 /**
- * Membership-gated task lookup. RLS gates membership; no neon_auth JOIN.
+ * Membership-gated task lookup. RLS gates membership; no piyaz_auth JOIN.
  *
  * @param userId - Verified user id.
  * @param taskId - UUID of the task.

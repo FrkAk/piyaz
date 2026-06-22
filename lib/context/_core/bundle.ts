@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  cancelledDepRecordsStmt,
   dependencyTasksStmt,
   edgeNotesBySourceStmt,
   edgeNotesByTargetStmt,
@@ -34,9 +35,25 @@ import type {
 } from "@/lib/db/raw/fetch-task-full";
 import { taskForDepthStmt } from "@/lib/db/raw/fetch-task-full";
 import type { TaskFull } from "@/lib/data/views";
+import { isTerminalStatus } from "@/lib/types";
+import { CLOSURE_DEPTH } from "@/lib/context/parts";
 
-/** Effective dependency hops included in the closure. */
-const CLOSURE_DEPTH = 2;
+/**
+ * Thrown by {@link resolveRecordData} when the fetched task row is not
+ * terminal — the retrospective record bundle only exists for done/cancelled
+ * tasks. Guards the gap between the route's access-gate status read and the
+ * resolver's own row fetch (a concurrent reopen between the two would
+ * otherwise render an active task with completion/cancellation framing).
+ */
+export class RecordNotTerminalError extends Error {
+  /**
+   * @param taskId - UUID of the task whose row was not terminal.
+   */
+  constructor(taskId: string) {
+    super(`Task ${taskId} is not done or cancelled; no record bundle exists`);
+    this.name = "RecordNotTerminalError";
+  }
+}
 
 /** Downstream-task summary projection shared by the agent + planning cores. */
 type DownstreamSummary = {
@@ -57,10 +74,10 @@ type Ancestor = { id: string; type: "project"; title: string };
 export type DependencyClosureData = {
   /** Full task row. */
   task: TaskFull;
-  /** Active prerequisites within 2 effective hops. */
-  deps: { id: string }[];
-  /** Active dependents within 2 effective hops. */
-  downstream: { id: string }[];
+  /** Active prerequisites within 2 effective hops, with effective depth. */
+  deps: { id: string; depth: number }[];
+  /** Active dependents within 2 effective hops, with effective depth. */
+  downstream: { id: string; depth: number }[];
   /** Outgoing depends_on edge notes, keyed by prerequisite id. */
   upstreamEdgeNotes: Map<string, string>;
   /** Dependency-task summaries (taskRef, title, status, executionRecord). */
@@ -78,6 +95,32 @@ export type AgentContextData = DependencyClosureData;
 export type PlanningContextData = DependencyClosureData & {
   /** Parent project header, or null when the project is unjoinable. */
   project: ProjectHeader | null;
+  /** Direct cancelled deps with execution records ("Abandoned Approaches"). */
+  abandonedDeps: DependencyTaskInfo[];
+};
+
+/** Exactly what {@link buildReviewContextFrom} reads. */
+export type ReviewContextData = DependencyClosureData & {
+  /** Parent project header, or null when the project is unjoinable. */
+  project: ProjectHeader | null;
+};
+
+/**
+ * Exactly what {@link buildRecordContextFrom} reads. The retrospective
+ * bundle renders no upstream data, so the record resolver never walks the
+ * dependency chain or fetches dep summaries.
+ */
+export type RecordContextData = {
+  /** Task row at `record` depth. */
+  task: TaskFull;
+  /** Parent project header, or null when the project is unjoinable. */
+  project: ProjectHeader | null;
+  /** Active dependents within 2 effective hops, with effective depth. */
+  downstream: { id: string; depth: number }[];
+  /** Downstream-task summaries (taskRef, title, status). */
+  downstreamSummaries: DownstreamSummary[];
+  /** Incoming depends_on edge notes, keyed by dependent id. */
+  downstreamEdgeNotes: Map<string, string>;
 };
 
 /** Exactly what {@link buildWorkingContextFrom} reads. */
@@ -89,14 +132,6 @@ export type WorkingContextData = {
   /** Ancestor chain (always the parent project). */
   ancestors: Ancestor[];
 };
-
-/**
- * The complete data union the three context cores read. Resolving this once
- * lets the route feed all three pure cores from a single statement batch and
- * one closure-secondaries batch. A wider object than any single core needs,
- * so it is structurally assignable to each narrower core parameter.
- */
-export type ContextBundle = PlanningContextData & WorkingContextData;
 
 /** Header row produced by `projectHeaderByTaskStmt`. */
 type HeaderRow = ProjectHeader & { id: string };
@@ -125,8 +160,8 @@ function closureCoreBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
 
 /**
  * {@link closureCoreBatch} plus the parent-project header, for resolvers
- * that render the header (planning, review, bundle). The agent path runs
- * the core batch alone — it never reads the header.
+ * that render the header (planning, review). The agent path runs the core
+ * batch alone — it never reads the header.
  *
  * @param db - Read statement-building handle.
  * @param taskId - UUID of the task.
@@ -136,7 +171,7 @@ function closureCoreBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
 function closureBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
   return [
     ...closureCoreBatch(db, taskId, depth),
-    projectHeaderByTaskStmt(db, taskId),
+    projectHeaderByTaskStmt(db, taskId, true),
   ] as const;
 }
 
@@ -146,17 +181,19 @@ type ClosureCoreResults = ReadResults<ReturnType<typeof closureCoreBatch>>;
 /** Decoded closure core: task row, dependency walks, outgoing notes. */
 type ClosureCore = {
   task: TaskFull;
-  deps: { id: string }[];
-  downstream: { id: string }[];
+  deps: { id: string; depth: number }[];
+  downstream: { id: string; depth: number }[];
   upstreamEdgeNotes: Map<string, string>;
 };
 
 /**
  * Decode the closure-core positions of a batch result tuple: map the task
  * row (throwing the 404-shaped ForbiddenError when RLS hides it), normalize
- * the dependency walks, and fold the outgoing edge notes. Accepts any batch
- * that begins with the {@link closureCoreBatch} statements so wider batches
- * (header, edges) decode without rebuilding tuples.
+ * the dependency walks (coercing each effective depth — the recursive CTE
+ * aggregates it as bigint, which arrives as a string on the wire), and fold
+ * the outgoing edge notes. Accepts any batch that begins with the
+ * {@link closureCoreBatch} statements so wider batches (header, edges)
+ * decode without rebuilding tuples.
  *
  * @param taskId - UUID of the task the batch targeted.
  * @param results - Batch results whose first four positions are the core.
@@ -172,12 +209,13 @@ function decodeClosureCore(
     normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
   );
-  const deps = normalizeExecuteResult<{ id: string }>(depRaw).map((r) => ({
-    id: r.id,
-  }));
-  const downstream = normalizeExecuteResult<{ id: string }>(downRaw).map(
-    (r) => ({ id: r.id }),
-  );
+  const deps = normalizeExecuteResult<{ id: string; depth: number | string }>(
+    depRaw,
+  ).map((r) => ({ id: r.id, depth: Number(r.depth) }));
+  const downstream = normalizeExecuteResult<{
+    id: string;
+    depth: number | string;
+  }>(downRaw).map((r) => ({ id: r.id, depth: Number(r.depth) }));
   return {
     task,
     deps,
@@ -203,16 +241,16 @@ function closureHasSecondaries(
 
 /**
  * Build the closure-secondaries statements: dependency-task summaries,
- * downstream summaries, and incoming edge notes. Single source for
- * {@link resolveClosureSecondaries} and {@link resolveContextBundle} (which
- * appends the connected-task detail to the same batch) so the two
- * consumers cannot drift.
+ * downstream summaries, and incoming edge notes. Single source for every
+ * secondaries consumer (agent, planning, review) so they cannot drift.
  *
  * @param db - Read statement-building handle.
  * @param projectId - UUID of the task's project (from the closure task row).
  * @param taskId - UUID of the task.
  * @param deps - Active prerequisite ids.
  * @param downstream - Active dependent ids.
+ * @param withDownstreamDescriptions - Whether downstream summaries select
+ *   the `description` column. Only the planning core renders it.
  * @returns Tuple of three lazy statements.
  */
 function secondariesBatch(
@@ -221,6 +259,7 @@ function secondariesBatch(
   taskId: string,
   deps: { id: string }[],
   downstream: { id: string }[],
+  withDownstreamDescriptions: boolean,
 ) {
   return [
     dependencyTasksStmt(
@@ -232,6 +271,7 @@ function secondariesBatch(
       db,
       projectId,
       downstream.map((d) => d.id),
+      withDownstreamDescriptions,
     ),
     edgeNotesByTargetStmt(db, taskId),
   ] as const;
@@ -248,6 +288,8 @@ function secondariesBatch(
  * @param taskId - UUID of the task.
  * @param deps - Active prerequisite ids.
  * @param downstream - Active dependent ids.
+ * @param withDownstreamDescriptions - Whether downstream summaries select
+ *   the `description` column.
  * @returns Dep-task summaries, downstream summaries, and incoming notes.
  */
 async function resolveClosureSecondaries(
@@ -256,13 +298,22 @@ async function resolveClosureSecondaries(
   taskId: string,
   deps: { id: string }[],
   downstream: { id: string }[],
+  withDownstreamDescriptions: boolean,
 ): Promise<[DependencyTaskInfo[], DownstreamSummary[], Map<string, string>]> {
   if (!closureHasSecondaries(deps, downstream)) {
     return [[], [], new Map()];
   }
   const [depRows, summaryRows, tgtNotes] = await withUserContextRead(
     userId,
-    (db) => secondariesBatch(db, projectId, taskId, deps, downstream),
+    (db) =>
+      secondariesBatch(
+        db,
+        projectId,
+        taskId,
+        deps,
+        downstream,
+        withDownstreamDescriptions,
+      ),
   );
   return [
     mapDependencyTaskRows(depRows),
@@ -299,13 +350,18 @@ export async function resolveDependencyClosure(
   const results = await withUserContextRead(userId, (db) =>
     closureCoreBatch(db, taskId, depth),
   );
-  return finishClosure(userId, taskId, decodeClosureCore(taskId, results));
+  return finishClosure(
+    userId,
+    taskId,
+    decodeClosureCore(taskId, results),
+    false,
+  );
 }
 
 /**
  * Run the closure batch and secondaries, returning the closure plus the
  * parent-project header row. Internal substrate for the header-rendering
- * closure resolvers (planning, review).
+ * closure resolvers (review).
  *
  * @param userId - Authenticated user id (RLS scope).
  * @param taskId - UUID of the task.
@@ -326,6 +382,7 @@ async function resolveClosureWithHeader(
     userId,
     taskId,
     decodeClosureCore(taskId, results),
+    false,
   );
   return { closure, header: results[4][0] ?? null };
 }
@@ -338,12 +395,15 @@ async function resolveClosureWithHeader(
  * @param userId - Authenticated user id (RLS scope).
  * @param taskId - UUID of the task.
  * @param core - Decoded closure-core rows.
+ * @param withDownstreamDescriptions - Whether downstream summaries select
+ *   the `description` column.
  * @returns The resolved closure.
  */
 async function finishClosure(
   userId: string,
   taskId: string,
   core: ClosureCore,
+  withDownstreamDescriptions: boolean,
 ): Promise<DependencyClosureData> {
   const [depTasks, downstreamSummaries, downstreamEdgeNotes] =
     await resolveClosureSecondaries(
@@ -352,29 +412,54 @@ async function finishClosure(
       taskId,
       core.deps,
       core.downstream,
+      withDownstreamDescriptions,
     );
   return { ...core, depTasks, downstreamEdgeNotes, downstreamSummaries };
 }
 
 /**
- * Resolve the dependency closure plus the parent project header, the
- * planning core's full input. Two read batches.
+ * Resolve the dependency closure plus the parent project header and the
+ * direct cancelled deps with execution records ("Abandoned Approaches"),
+ * the planning core's full input. Two read batches: the closure batch with
+ * header, then a secondaries batch that always runs — the cancelled-dep
+ * statement rides it unconditionally because direct cancelled deps are
+ * transparent to the effective-dep walk and so never appear in the closure.
  *
  * @param userId - Authenticated user id (RLS scope).
  * @param taskId - UUID of the task.
- * @returns The closure plus project header.
+ * @returns The closure plus project header and abandoned deps.
  * @throws ForbiddenError When the caller cannot access the task.
  */
 export async function resolvePlanningData(
   userId: string,
   taskId: string,
 ): Promise<PlanningContextData> {
-  const { closure, header } = await resolveClosureWithHeader(
-    userId,
-    taskId,
-    "planning",
+  assertValidTaskId(taskId);
+  const results = await withUserContextRead(userId, (db) =>
+    closureBatch(db, taskId, "planning"),
   );
-  return { ...closure, project: toProjectHeader(header) };
+  const core = decodeClosureCore(taskId, results);
+  const header = results[4][0] ?? null;
+  const [depRows, summaryRows, tgtNotes, cancelledRows] =
+    await withUserContextRead(userId, (db) => [
+      ...secondariesBatch(
+        db,
+        core.task.projectId,
+        taskId,
+        core.deps,
+        core.downstream,
+        true,
+      ),
+      cancelledDepRecordsStmt(db, core.task.projectId, taskId),
+    ]);
+  return {
+    ...core,
+    depTasks: mapDependencyTaskRows(depRows),
+    downstreamSummaries: mapTaskSummaryRows(summaryRows),
+    downstreamEdgeNotes: mapEdgeNoteRows(tgtNotes),
+    abandonedDeps: mapDependencyTaskRows(cancelledRows),
+    project: toProjectHeader(header),
+  };
 }
 
 /**
@@ -405,7 +490,9 @@ async function resolveTaskEdgesHeader(
     (db) => [
       taskForDepthStmt(db, taskId, depth),
       taskEdgesStmt(db, taskId),
-      projectHeaderByTaskStmt(db, taskId),
+      // Neither the working hierarchy (id/title) nor the summary parent
+      // (title) renders the project description — skip its egress.
+      projectHeaderByTaskStmt(db, taskId, false),
     ],
   );
   const task = requireTaskRow(
@@ -483,7 +570,7 @@ export async function resolveSummaryData(
 export async function resolveReviewData(
   userId: string,
   taskId: string,
-): Promise<PlanningContextData> {
+): Promise<ReviewContextData> {
   const { closure, header } = await resolveClosureWithHeader(
     userId,
     taskId,
@@ -493,65 +580,149 @@ export async function resolveReviewData(
 }
 
 /**
- * Resolve the full {@link ContextBundle} for a task, sharing every lookup
- * across the three cores: the closure batch plus the task's edges in one
- * read batch, then one secondaries batch (dep tasks, downstream summaries,
- * connected-task detail) skipped when the task is isolated. Fetches at
- * `agent` depth, the column superset of the agent, planning, and working
- * cores.
+ * Resolve the record core's input: the `record`-depth task row, the
+ * downstream walk, and the parent project header in one read batch, plus
+ * one batch for downstream summaries and incoming edge notes when
+ * dependents exist. The retrospective bundle renders nothing upstream, so
+ * the dependency-chain walk, dep summaries (and their execution records),
+ * and outgoing edge notes are never fetched on this path.
  *
  * @param userId - Authenticated user id (RLS scope).
  * @param taskId - UUID of the task.
- * @returns The resolved bundle feeding all three context cores.
+ * @returns The record input.
  * @throws ForbiddenError When the caller cannot access the task.
+ * @throws RecordNotTerminalError When the fetched row is not done/cancelled.
  */
-export async function resolveContextBundle(
+export async function resolveRecordData(
   userId: string,
   taskId: string,
-): Promise<ContextBundle> {
+): Promise<RecordContextData> {
   assertValidTaskId(taskId);
-  const results = await withUserContextRead(userId, (db) => [
-    ...closureBatch(db, taskId, "agent"),
-    taskEdgesStmt(db, taskId),
-  ]);
-  const { task, deps, downstream, upstreamEdgeNotes } = decodeClosureCore(
-    taskId,
-    results,
+  const [taskRaw, downRaw, headerRows] = await withUserContextRead(
+    userId,
+    (db) => [
+      taskForDepthStmt(db, taskId, "record"),
+      effectiveDownstreamStmt(db, taskId, CLOSURE_DEPTH),
+      projectHeaderByTaskStmt(db, taskId, true),
+    ],
   );
-  const header = results[4][0] ?? null;
-  const edges = results[5];
-
-  const connectedIds = connectedTaskIds(taskId, edges);
-  const needsSecondaries =
-    closureHasSecondaries(deps, downstream) || connectedIds.length > 0;
-
-  let depTasks: DependencyTaskInfo[] = [];
-  let downstreamSummaries: DownstreamSummary[] = [];
-  let downstreamEdgeNotes = new Map<string, string>();
-  let detailedEdges: DetailedEdge[] = [];
-  if (needsSecondaries) {
-    const [depRows, summaryRows, tgtNotes, connectedRows] =
-      await withUserContextRead(userId, (db) => [
-        ...secondariesBatch(db, task.projectId, taskId, deps, downstream),
-        connectedTaskInfoStmt(db, connectedIds),
-      ]);
-    depTasks = mapDependencyTaskRows(depRows);
-    downstreamSummaries = mapTaskSummaryRows(summaryRows);
-    downstreamEdgeNotes = mapEdgeNoteRows(tgtNotes);
-    detailedEdges = assembleDetailedEdges(taskId, edges, connectedRows);
+  const task = requireTaskRow(
+    normalizeExecuteResult<TaskFullRawRow>(taskRaw),
+    taskId,
+  );
+  if (!isTerminalStatus(task.status as string)) {
+    throw new RecordNotTerminalError(taskId);
   }
-
+  const downstream = normalizeExecuteResult<{
+    id: string;
+    depth: number | string;
+  }>(downRaw).map((r) => ({ id: r.id, depth: Number(r.depth) }));
+  const [downstreamSummaries, downstreamEdgeNotes] =
+    await resolveDownstreamSecondaries(
+      userId,
+      task.projectId,
+      taskId,
+      downstream,
+    );
   return {
     task,
-    deps,
+    project: toProjectHeader(headerRows[0] ?? null),
     downstream,
-    upstreamEdgeNotes,
-    depTasks,
-    downstreamEdgeNotes,
     downstreamSummaries,
-    project: toProjectHeader(header),
-    detailedEdges,
-    ancestors: toAncestors(header),
+    downstreamEdgeNotes,
+  };
+}
+
+/**
+ * Fetch downstream summaries (no descriptions) and incoming edge notes in
+ * one read batch, skipped entirely when the downstream walk is empty.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param projectId - UUID of the task's project.
+ * @param taskId - UUID of the task.
+ * @param downstream - Active dependent ids from the downstream walk.
+ * @returns Downstream summaries and incoming notes.
+ */
+async function resolveDownstreamSecondaries(
+  userId: string,
+  projectId: string,
+  taskId: string,
+  downstream: { id: string }[],
+): Promise<[DownstreamSummary[], Map<string, string>]> {
+  if (downstream.length === 0) return [[], new Map()];
+  const [summaryRows, tgtNotes] = await withUserContextRead(userId, (db) => [
+    taskSummariesStmt(
+      db,
+      projectId,
+      downstream.map((d) => d.id),
+      false,
+    ),
+    edgeNotesByTargetStmt(db, taskId),
+  ]);
+  return [mapTaskSummaryRows(summaryRows), mapEdgeNoteRows(tgtNotes)];
+}
+
+/** Discriminated resolver output for the MCP `agent` depth. */
+export type AgentBundleData =
+  | { kind: "agent"; data: AgentContextData }
+  | { kind: "record"; data: RecordContextData };
+
+/**
+ * Resolve the MCP `agent` depth input in two read batches, dispatching on
+ * the task's status: active tasks get the agent closure, `done` /
+ * `cancelled` tasks get the retrospective record input. Status is read
+ * from the agent-depth closure core (the dominant active path stays
+ * header-free and batch-identical to {@link resolveDependencyClosure});
+ * for terminal tasks the core's task row and downstream walk are reused —
+ * the `agent` projection selects `implementationPlan` as `"active-only"`,
+ * so a terminal row arrives with the plan already `NULL`, exactly like the
+ * `record` projection — while the second batch fetches only what the
+ * record bundle renders (slim downstream summaries, incoming notes,
+ * project header) and always runs because the header is unconditionally
+ * rendered.
+ *
+ * @param userId - Authenticated user id (RLS scope).
+ * @param taskId - UUID of the task.
+ * @returns The agent closure, or the record input for terminal tasks.
+ * @throws ForbiddenError When the caller cannot access the task.
+ */
+export async function resolveAgentBundleData(
+  userId: string,
+  taskId: string,
+): Promise<AgentBundleData> {
+  assertValidTaskId(taskId);
+  const results = await withUserContextRead(userId, (db) =>
+    closureCoreBatch(db, taskId, "agent"),
+  );
+  const core = decodeClosureCore(taskId, results);
+  if (!isTerminalStatus(core.task.status as string)) {
+    return {
+      kind: "agent",
+      data: await finishClosure(userId, taskId, core, false),
+    };
+  }
+  const [summaryRows, tgtNotes, headerRows] = await withUserContextRead(
+    userId,
+    (db) => [
+      taskSummariesStmt(
+        db,
+        core.task.projectId,
+        core.downstream.map((d) => d.id),
+        false,
+      ),
+      edgeNotesByTargetStmt(db, taskId),
+      projectHeaderByTaskStmt(db, taskId, true),
+    ],
+  );
+  return {
+    kind: "record",
+    data: {
+      task: core.task,
+      project: toProjectHeader(headerRows[0] ?? null),
+      downstream: core.downstream,
+      downstreamSummaries: mapTaskSummaryRows(summaryRows),
+      downstreamEdgeNotes: mapEdgeNoteRows(tgtNotes),
+    },
   };
 }
 

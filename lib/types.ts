@@ -17,6 +17,26 @@ export type TaskStatus =
   | "done"
   | "cancelled";
 
+/**
+ * Terminal task statuses — work that will never resume. Shared by the
+ * bundle dispatch (agent depth falls back to the retrospective record
+ * bundle), the context route's record gate, and the per-depth column
+ * projections, so the lifecycle rule lives in one place.
+ */
+export const TERMINAL_STATUSES = ["done", "cancelled"] as const;
+
+/**
+ * Narrow a status string to a terminal status.
+ *
+ * @param status - Schema task status.
+ * @returns Whether the status is `done` or `cancelled`.
+ */
+export function isTerminalStatus(
+  status: string,
+): status is (typeof TERMINAL_STATUSES)[number] {
+  return (TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
 /** Task priority. */
 export type Priority = "urgent" | "core" | "normal" | "backlog";
 

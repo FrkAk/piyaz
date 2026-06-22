@@ -1,9 +1,9 @@
 ---
 name: decompose
 description: >
-  Explicit doorway to the Mymir decompose subagent. Use only when the user types
-  /mymir:decompose directly. For natural-language decompose requests (the user
-  asks to break a project description into tasks), the /mymir skill or the
+  Explicit doorway to the Piyaz decompose subagent. Use only when the user types
+  /piyaz:decompose directly. For natural-language decompose requests (the user
+  asks to break a project description into tasks), the /piyaz skill or the
   assistant dispatches the decompose agent via the Task tool — do not invoke this
   skill for that path.
 ---

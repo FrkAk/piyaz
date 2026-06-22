@@ -21,7 +21,7 @@ import type { RequestScopedDb } from "./connection";
  * Workers artifact. `./connection.ts` re-exports it, so the import surface
  * for tests and app code is unchanged.
  */
-const REQUEST_DB_STORE_KEY = Symbol.for("@mymir/db/requestDbStore");
+const REQUEST_DB_STORE_KEY = Symbol.for("@piyaz/db/requestDbStore");
 const symbolKeyedGlobal = globalThis as Record<symbol, unknown>;
 if (!symbolKeyedGlobal[REQUEST_DB_STORE_KEY]) {
   symbolKeyedGlobal[REQUEST_DB_STORE_KEY] =

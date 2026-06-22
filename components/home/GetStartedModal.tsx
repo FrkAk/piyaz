@@ -24,29 +24,29 @@ const HOSTED_CLI_INSTALLS: readonly CliInstall[] = [
   {
     name: "Claude Code",
     install:
-      "claude plugin marketplace add FrkAk/mymir\nclaude plugin install mymir@mymir",
+      "claude plugin marketplace add FrkAk/piyaz\nclaude plugin install piyaz@piyaz",
     setupNote:
-      "Run /mcp, select mymir, and complete the browser sign-in. The mymir skill auto-invokes when you talk about projects.",
+      "Run /mcp, select piyaz, and complete the browser sign-in. The piyaz skill auto-invokes when you talk about projects.",
   },
   {
     name: "Codex",
-    install: "codex plugin marketplace add FrkAk/mymir",
+    install: "codex plugin marketplace add FrkAk/piyaz",
     setupNote:
-      "Run /plugin, install Mymir, restart Codex, and authenticate when prompted. Invoke the main skill with $mymir.",
+      "Run /plugin, install Piyaz, restart Codex, and authenticate when prompted. Invoke the main skill with $piyaz.",
   },
   {
     name: "Antigravity",
     install:
-      '{\n  "mcpServers": {\n    "mymir": { "serverUrl": "https://app.mymir.dev/api/mcp" }\n  }\n}',
+      '{\n  "mcpServers": {\n    "piyaz": { "serverUrl": "https://app.piyaz.ai/api/mcp" }\n  }\n}',
     setupNote:
       "Add this to ~/.gemini/config/mcp_config.json, then run /mcp and Authenticate. Antigravity handles OAuth automatically.",
   },
   {
     name: "Cursor",
     install:
-      "cursor://anysphere.cursor-deeplink/mcp/install?name=mymir&config=eyJ1cmwiOiJodHRwczovL2FwcC5teW1pci5kZXYvYXBpL21jcCJ9",
+      "cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5waXlhei5haS9hcGkvbWNwIn0=",
     setupNote:
-      "Open the deeplink, then sign in when the first Mymir MCP tool call triggers OAuth.",
+      "Open the deeplink, then sign in when the first Piyaz MCP tool call triggers OAuth.",
   },
 ];
 
@@ -54,34 +54,32 @@ const SELF_HOST_CLI_INSTALLS: readonly CliInstall[] = [
   {
     name: "Claude Code",
     install:
-      "claude plugin marketplace add ./plugins/claude-code\nclaude plugin install mymir@mymir-local",
+      "claude plugin marketplace add ./plugins/claude-code\nclaude plugin install piyaz@piyaz-local",
     setupNote:
-      "Authenticate with /mcp, select mymir-local, and complete the browser sign-in against http://localhost:3000.",
+      "Authenticate with /mcp, select piyaz-local, and complete the browser sign-in against http://localhost:3000.",
   },
   {
     name: "Codex",
     install: "codex plugin marketplace add ./plugins",
     setupNote:
-      "Run /plugin, search for mymir, install, then restart Codex. Select mymir-local for http://localhost:3000/api/mcp.",
+      "Run /plugin, search for piyaz, install, then restart Codex. Select piyaz-local for http://localhost:3000/api/mcp.",
   },
   {
     name: "Antigravity",
-    install: "cp -r ./plugins/antigravity ~/.gemini/config/plugins/mymir",
+    install: "cp -r ./plugins/antigravity ~/.gemini/config/plugins/piyaz",
     setupNote:
-      "Run /mcp, select mymir-local, Authenticate, and complete the browser sign-in against http://localhost:3000.",
+      "Run /mcp, select piyaz-local, Authenticate, and complete the browser sign-in against http://localhost:3000.",
   },
   {
     name: "Cursor",
-    install: 'ln -s "$(pwd)/plugins/cursor" ~/.cursor/plugins/local/mymir',
+    install: 'ln -s "$(pwd)/plugins/cursor" ~/.cursor/plugins/local/piyaz',
     setupNote:
-      "Restart Cursor. The MCP server and skills load automatically; mymir-local points at http://localhost:3000/api/mcp.",
+      "Restart Cursor. The MCP server and skills load automatically; piyaz-local points at http://localhost:3000/api/mcp.",
   },
 ];
 
-const HOSTED_README_SETUP_URL =
-  "https://github.com/FrkAk/mymir#use-the-hosted-version-no-clone";
-const SELF_HOST_README_SETUP_URL =
-  "https://github.com/FrkAk/mymir#self-host-contribute";
+const HOSTED_DOCS_SETUP_URL = "https://docs.piyaz.ai/docs/get-started/install";
+const SELF_HOST_DOCS_SETUP_URL = "https://docs.piyaz.ai/docs/guides/self-host";
 
 const SECTION_LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted";
@@ -92,13 +90,13 @@ const MULTI_TEAM_HINT =
 interface FirstTimeBodyProps {
   /** Target-specific install snippets to render. */
   cliInstalls: readonly CliInstall[];
-  /** Target-specific README setup anchor. */
-  readmeSetupUrl: string;
+  /** Target-specific docs setup URL. */
+  docsSetupUrl: string;
 }
 
 interface ReturningBodyProps {
-  /** Target-specific README setup anchor. */
-  readmeSetupUrl: string;
+  /** Target-specific docs setup URL. */
+  docsSetupUrl: string;
 }
 
 /**
@@ -115,16 +113,16 @@ export function getCliInstalls(
 }
 
 /**
- * Select the setup guide anchor for the active deploy target.
+ * Select the docs setup URL for the active deploy target.
  * @param deployTarget - Build-time deploy target exposed to client bundles.
- * @returns Hosted or self-host README setup URL.
+ * @returns Hosted or self-host docs setup URL.
  */
-export function getReadmeSetupUrl(
+export function getDocsSetupUrl(
   deployTarget = process.env.NEXT_PUBLIC_DEPLOY_TARGET ?? "",
 ): string {
   return deployTarget === HOSTED_DEPLOY_TARGET
-    ? HOSTED_README_SETUP_URL
-    : SELF_HOST_README_SETUP_URL;
+    ? HOSTED_DOCS_SETUP_URL
+    : SELF_HOST_DOCS_SETUP_URL;
 }
 
 /**
@@ -133,12 +131,12 @@ export function getReadmeSetupUrl(
  * @param props - Target-specific install copy.
  * @returns First-time install instructions.
  */
-function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
+function FirstTimeBody({ cliInstalls, docsSetupUrl }: FirstTimeBodyProps) {
   return (
     <>
       <p className="text-sm leading-relaxed text-text-secondary">
-        mymir runs in your coding agent, which has the file context an in-app
-        chat never will. Install or configure Mymir for your tool, then describe
+        piyaz runs in your coding agent, which has the file context an in-app
+        chat never will. Install or configure Piyaz for your tool, then describe
         what you&apos;re building.
       </p>
 
@@ -162,7 +160,7 @@ function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
       <section className="space-y-1.5 rounded-lg border border-accent/20 bg-accent/[0.04] p-4">
         <h3 className={SECTION_LABEL_CLASS}>Then say something like</h3>
         <p className="font-mono text-xs leading-relaxed text-text-primary">
-          ❯ Describe what you are building. The mymir skill picks up from there.
+          ❯ Describe what you are building. The piyaz skill picks up from there.
         </p>
         <p className="text-xs leading-relaxed text-text-muted">
           {MULTI_TEAM_HINT}
@@ -172,12 +170,12 @@ function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
       <p className="text-xs leading-relaxed text-text-muted">
         Full setup details (auth, updates, self-hosting) in the{" "}
         <a
-          href={readmeSetupUrl}
+          href={docsSetupUrl}
           target="_blank"
           rel="noreferrer"
           className="text-accent underline-offset-2 hover:underline"
         >
-          project README
+          documentation
         </a>
         .
       </p>
@@ -191,12 +189,12 @@ function FirstTimeBody({ cliInstalls, readmeSetupUrl }: FirstTimeBodyProps) {
  * @param props - Target-specific setup link.
  * @returns Returning-user "go talk to your agent" hint.
  */
-function ReturningBody({ readmeSetupUrl }: ReturningBodyProps) {
+function ReturningBody({ docsSetupUrl }: ReturningBodyProps) {
   return (
     <>
       <p className="text-sm leading-relaxed text-text-secondary">
-        mymir projects start in your coding agent. Open it and describe what
-        you&apos;re building. The mymir skill creates the project, and
+        piyaz projects start in your coding agent. Open it and describe what
+        you&apos;re building. The piyaz skill creates the project, and
         it&apos;ll show up here once it&apos;s active.
       </p>
 
@@ -214,12 +212,12 @@ function ReturningBody({ readmeSetupUrl }: ReturningBodyProps) {
         Setting up another tool, or starting from a fresh machine? Install
         commands live in the{" "}
         <a
-          href={readmeSetupUrl}
+          href={docsSetupUrl}
           target="_blank"
           rel="noreferrer"
           className="text-accent underline-offset-2 hover:underline"
         >
-          project README
+          documentation
         </a>
         .
       </p>
@@ -240,7 +238,7 @@ export function GetStartedModal({
   hasProjects = false,
 }: GetStartedModalProps) {
   const cliInstalls = getCliInstalls();
-  const readmeSetupUrl = getReadmeSetupUrl();
+  const docsSetupUrl = getDocsSetupUrl();
 
   return (
     <Modal
@@ -251,11 +249,11 @@ export function GetStartedModal({
     >
       <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
         {hasProjects ? (
-          <ReturningBody readmeSetupUrl={readmeSetupUrl} />
+          <ReturningBody docsSetupUrl={docsSetupUrl} />
         ) : (
           <FirstTimeBody
             cliInstalls={cliInstalls}
-            readmeSetupUrl={readmeSetupUrl}
+            docsSetupUrl={docsSetupUrl}
           />
         )}
       </div>

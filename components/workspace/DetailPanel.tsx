@@ -17,6 +17,8 @@ interface DetailPanelProps {
   task: TaskFull;
   /** Project display name (breadcrumb). */
   parentName: string;
+  /** Project description — feeds the bundle preview's project drawer. */
+  parentDescription: string | null;
   /** Edges connected to this task. */
   edges: TaskEdgeRef[];
   /** All slim edges in the project — used by the bundle preview to derive neighbors. */
@@ -71,6 +73,7 @@ export function DetailPanel({
   projectId,
   task,
   parentName,
+  parentDescription,
   edges,
   allEdges,
   allTasks,
@@ -95,6 +98,7 @@ export function DetailPanel({
         projectId={projectId}
         task={task}
         projectName={parentName}
+        projectDescription={parentDescription}
         allEdges={allEdges}
         edges={edges}
         allTasks={allTasks}
