@@ -3,6 +3,7 @@
 // Runtime types generated with workerd@1.20260601.1 2026-05-16 nodejs_compat
 interface __BaseEnv_CloudflareEnv {
 	AUTH_KV: KVNamespace;
+	WAITLIST_KV: KVNamespace;
 	NEXT_INC_CACHE_R2_BUCKET: R2Bucket;
 	NEXT_TAG_CACHE_D1: D1Database;
 	RATE_LIMIT_API: RateLimit;

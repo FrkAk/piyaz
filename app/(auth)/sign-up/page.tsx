@@ -4,6 +4,7 @@ import { AuthBrand } from "@/components/auth/AuthBrand";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignUpForm } from "@/components/auth/SignUpForm";
+import { WaitlistForm } from "@/components/auth/WaitlistForm";
 
 const SIGNUPS_DISABLED = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -37,7 +38,9 @@ export default function SignUpPage() {
               : "Your project graph and decision history live here. Connect agents through MCP from your CLI once you’re in."}
           </p>
 
-          {SIGNUPS_DISABLED ? null : (
+          {SIGNUPS_DISABLED ? (
+            <WaitlistForm />
+          ) : (
             <>
               <SocialButtons />
               <SignUpForm />
