@@ -35,7 +35,16 @@ mock.module("@opennextjs/cloudflare", () => ({
 type RateLimitOutcome = { ok: true } | { ok: false; retryAfter: number };
 let _rateLimitOutcome: RateLimitOutcome = { ok: true };
 
+// Spread the real module and override ONLY checkActionRateLimit. bun's
+// mock.module is process-global and unrestoreable, so a whole-replace here
+// would strip checkActionUserRateLimit / checkActionIpRateLimit from the
+// module registry for every later test file (e.g. change-password-action.test.ts
+// imports the real checkActionUserRateLimit). Preserving the real exports keeps
+// those symbols resolvable across the full-suite run.
+const _actualRateLimit = await import("@/lib/actions/rate-limit-action");
+
 mock.module("@/lib/actions/rate-limit-action", () => ({
+  ..._actualRateLimit,
   checkActionRateLimit: async () => _rateLimitOutcome,
 }));
 
