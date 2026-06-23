@@ -75,10 +75,10 @@ describe("putWaitlistEntry", () => {
     expect(_putCalls.length).toBe(0);
   });
 
-  test("kv put throws: swallowed, still returns stored", async () => {
+  test("kv put throws: logged, returns failed", async () => {
     _throwOnPut = true;
     const result = await putWaitlistEntry("person@example.com");
-    expect(result).toBe("stored");
+    expect(result).toBe("failed");
   });
 });
 
@@ -128,5 +128,12 @@ describe("joinWaitlistAction", () => {
     const result = await joinWaitlistAction({ email: "person@example.com" });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("unknown");
+  });
+
+  test("kv write failure: write_failed, not falsely confirmed", async () => {
+    _throwOnPut = true;
+    const result = await joinWaitlistAction({ email: "person@example.com" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("write_failed");
   });
 });

@@ -4,7 +4,11 @@ import { z } from "zod/v4";
 import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
 import { putWaitlistEntry } from "@/lib/db/_waitlist-kv.workers";
 
-type WaitlistFailureCode = "invalid_email" | "rate_limited" | "unknown";
+type WaitlistFailureCode =
+  | "invalid_email"
+  | "rate_limited"
+  | "write_failed"
+  | "unknown";
 
 export type WaitlistResult =
   | { ok: true }
@@ -33,14 +37,17 @@ const INVALID_EMAIL_MSG = "Enter a valid email address.";
 const RATE_LIMITED_MSG =
   "Too many requests. Please slow down and try again shortly.";
 const UNKNOWN_MSG = "Something went wrong. Please try again.";
+const WRITE_FAILED_MSG =
+  "There was an error while registering your email. Please try again.";
 
 /**
  * Capture an email onto the invite-only waitlist.
  *
  * Rate-limits before parsing so a malformed-input flood still costs a
  * slot. The limiter is IP-keyed (`userId` null, public form) and runs
- * before any KV write. A missing binding (self-host/dev) returns `unknown`
- * rather than throwing.
+ * before any KV write. A missing binding (self-host/dev) returns `unknown`;
+ * a write that throws returns `write_failed` so the user is told the
+ * capture did not land rather than being falsely confirmed.
  *
  * @param input - `{ email }` from the public waitlist form.
  * @returns Discriminated result; `{ ok: true }` once the email is captured.
@@ -62,6 +69,9 @@ export async function joinWaitlistAction(input: {
   const result = await putWaitlistEntry(email);
   if (result === "unavailable") {
     return { ok: false, code: "unknown", message: UNKNOWN_MSG };
+  }
+  if (result === "failed") {
+    return { ok: false, code: "write_failed", message: WRITE_FAILED_MSG };
   }
 
   return { ok: true };

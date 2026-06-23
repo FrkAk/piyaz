@@ -15,8 +15,11 @@ interface WorkerEnv {
   WAITLIST_KV?: KvNamespace;
 }
 
-/** Outcome of a waitlist write: stored, or the binding was unavailable. */
-export type PutWaitlistResult = "stored" | "unavailable";
+/**
+ * Outcome of a waitlist write: stored, the binding was unavailable, or the
+ * write was attempted but threw (`failed`).
+ */
+export type PutWaitlistResult = "stored" | "unavailable" | "failed";
 
 /**
  * Per-isolate dedupe flag for the missing-binding warning. Resets on
@@ -65,13 +68,14 @@ function getWaitlistKv(): KvNamespace | null {
  * The key is the email itself (no prefix) so
  * `wrangler kv key list --binding WAITLIST_KV` yields a clean recipient
  * list; a re-`put` overwrites, giving implicit dedupe. The value is JSON
- * `{ ts, source }`. KV failures are swallowed and logged (best-effort
- * capture); a missing binding returns `"unavailable"` so the action
- * degrades on self-host/dev.
+ * `{ ts, source }`. A write that throws is logged (not rethrown) and
+ * returns `"failed"` so the caller can tell the user the capture did not
+ * land; a missing binding returns `"unavailable"` so the action degrades
+ * on self-host/dev.
  *
  * @param email - Already-normalized (trimmed, lowercased) email address.
- * @returns `"stored"` on a write attempt (including a swallowed failure),
- *   `"unavailable"` when no `WAITLIST_KV` binding is present.
+ * @returns `"stored"` on a successful write, `"failed"` when the write
+ *   threw, `"unavailable"` when no `WAITLIST_KV` binding is present.
  */
 export async function putWaitlistEntry(
   email: string,
@@ -85,6 +89,7 @@ export async function putWaitlistEntry(
     );
   } catch (err) {
     warnKvError(err);
+    return "failed";
   }
   return "stored";
 }
