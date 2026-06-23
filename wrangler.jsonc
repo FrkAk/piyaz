@@ -25,7 +25,11 @@
         { "binding": "WORKER_SELF_REFERENCE", "service": "piyaz-production" }
       ],
       "kv_namespaces": [
-        { "binding": "AUTH_KV", "id": "839e8280f3bf47dd95c0a5c4c244033c" }
+        { "binding": "AUTH_KV", "id": "839e8280f3bf47dd95c0a5c4c244033c" },
+        {
+          "binding": "WAITLIST_KV",
+          "id": "8870ef7cf92f436a95d4c690c57603d5"
+        }
       ],
       "r2_buckets": [
         {

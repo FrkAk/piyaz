@@ -4,6 +4,7 @@ import { AuthBrand } from "@/components/auth/AuthBrand";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignUpForm } from "@/components/auth/SignUpForm";
+import { WaitlistForm } from "@/components/auth/WaitlistForm";
 
 const SIGNUPS_DISABLED = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -26,18 +27,20 @@ export default function SignUpPage() {
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            {SIGNUPS_DISABLED ? "Invite only." : "Create an account."}
+            {SIGNUPS_DISABLED ? "Invite only for now." : "Create an account."}
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"
             style={{ lineHeight: 1.55 }}
           >
             {SIGNUPS_DISABLED
-              ? "Piyaz is in a closed beta. New accounts are opening soon — until then, sign-ups are invite-only."
+              ? "Piyaz is in a closed beta. New accounts are opening soon, so sign-ups are invite-only for now."
               : "Your project graph and decision history live here. Connect agents through MCP from your CLI once you’re in."}
           </p>
 
-          {SIGNUPS_DISABLED ? null : (
+          {SIGNUPS_DISABLED ? (
+            <WaitlistForm />
+          ) : (
             <>
               <SocialButtons />
               <SignUpForm />
