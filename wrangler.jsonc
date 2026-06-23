@@ -26,7 +26,10 @@
       ],
       "kv_namespaces": [
         { "binding": "AUTH_KV", "id": "839e8280f3bf47dd95c0a5c4c244033c" },
-        { "binding": "WAITLIST_KV", "id": "REPLACE_WITH_WAITLIST_KV_NAMESPACE_ID" }
+        {
+          "binding": "WAITLIST_KV",
+          "id": "REPLACE_WITH_WAITLIST_KV_NAMESPACE_ID"
+        }
       ],
       "r2_buckets": [
         {

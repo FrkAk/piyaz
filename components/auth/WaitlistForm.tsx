@@ -50,8 +50,7 @@ export function WaitlistForm() {
         role="status"
         className="mb-7 rounded-md border px-3 py-2.5 text-[12.5px] text-text-secondary"
         style={{
-          background:
-            "color-mix(in srgb, var(--color-accent) 8%, transparent)",
+          background: "color-mix(in srgb, var(--color-accent) 8%, transparent)",
           borderColor:
             "color-mix(in srgb, var(--color-accent) 22%, transparent)",
         }}

@@ -34,7 +34,8 @@ const waitlistSchema = z.object({
 });
 
 const INVALID_EMAIL_MSG = "Enter a valid email address.";
-const RATE_LIMITED_MSG = "Too many requests. Please slow down and try again shortly.";
+const RATE_LIMITED_MSG =
+  "Too many requests. Please slow down and try again shortly.";
 const UNKNOWN_MSG = "Something went wrong. Please try again.";
 
 /**

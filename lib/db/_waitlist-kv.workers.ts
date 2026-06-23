@@ -91,7 +91,10 @@ export async function putWaitlistEntry(
   const kv = getWaitlistKv();
   if (!kv) return "unavailable";
   try {
-    await kv.put(email, JSON.stringify({ ts: Date.now(), source: "signup-page" }));
+    await kv.put(
+      email,
+      JSON.stringify({ ts: Date.now(), source: "signup-page" }),
+    );
   } catch (err) {
     warnKvError(err);
   }
