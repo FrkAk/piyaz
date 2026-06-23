@@ -6,14 +6,11 @@ import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
 
 /**
- * Waitlist email-capture form for the invite-only auth pages (sign-in
- * and sign-up).
+ * Waitlist email-capture form for the invite-only sign-up page.
  *
- * Calls the `joinWaitlistAction` server action, which rate-limits,
- * validates, and writes the email to `WAITLIST_KV`. On success the form is
- * replaced by a confirmation line rather than re-rendering empty; on
- * failure the message renders inline in the same danger-tinted strip as
- * `SignUpForm`. No third-party script (no Turnstile in v1).
+ * Submits to `joinWaitlistAction`, which rate-limits, validates, and
+ * writes to `WAITLIST_KV`. Renders a confirmation line on success and an
+ * inline error on failure.
  *
  * @returns Email input + submit, or the confirmation state once captured.
  */
@@ -24,8 +21,8 @@ export function WaitlistForm() {
   const [submitted, setSubmitted] = useState(false);
 
   /**
-   * Submit the email to the waitlist action. Inline-renders the typed
-   * failure message on `!ok`; flips to the confirmation state on success.
+   * Submit the email to the waitlist action. Renders the failure message
+   * inline on `!ok`; flips to the confirmation state on success.
    *
    * @param event - The form submit event.
    */

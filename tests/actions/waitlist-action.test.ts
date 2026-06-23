@@ -1,17 +1,13 @@
 import { test, expect, describe, beforeEach, mock } from "bun:test";
 
 /**
- * Coverage for the waitlist capture path: the `joinWaitlistAction` server
- * action and its `putWaitlistEntry` KV writer. Both live in one file
- * because bun's `mock.module` is process-global and unrestoreable — keeping
- * every mock of `@opennextjs/cloudflare` and `@/lib/actions/rate-limit-action`
- * in a single file avoids cross-file registry pollution.
+ * Coverage for `joinWaitlistAction` and its `putWaitlistEntry` KV writer.
+ * Both live in one file because bun's `mock.module` is process-global and
+ * unrestoreable, so co-locating the mocks avoids cross-file pollution.
  *
- * `@opennextjs/cloudflare` is faked so the REAL `putWaitlistEntry` runs
- * against an in-memory KV (pattern from
- * `tests/auth/kv-secondary-storage.workers.test.ts`); the rate limiter is
- * faked so the action's limit-before-parse ordering is observable without
- * a request context. No DB, no CF runtime.
+ * `@opennextjs/cloudflare` is faked so the real `putWaitlistEntry` runs
+ * against an in-memory KV; the rate limiter is faked so the
+ * limit-before-parse ordering is observable without a request context.
  */
 
 const _putCalls: Array<{ key: string; value: string }> = [];
@@ -35,12 +31,9 @@ mock.module("@opennextjs/cloudflare", () => ({
 type RateLimitOutcome = { ok: true } | { ok: false; retryAfter: number };
 let _rateLimitOutcome: RateLimitOutcome = { ok: true };
 
-// Spread the real module and override ONLY checkActionRateLimit. bun's
-// mock.module is process-global and unrestoreable, so a whole-replace here
-// would strip checkActionUserRateLimit / checkActionIpRateLimit from the
-// module registry for every later test file (e.g. change-password-action.test.ts
-// imports the real checkActionUserRateLimit). Preserving the real exports keeps
-// those symbols resolvable across the full-suite run.
+// Spread the real module and override only checkActionRateLimit. mock.module
+// is process-global, so a whole-replace would strip the other rate-limit
+// exports from the registry for every later test file in the suite.
 const _actualRateLimit = await import("@/lib/actions/rate-limit-action");
 
 mock.module("@/lib/actions/rate-limit-action", () => ({
@@ -72,7 +65,7 @@ describe("putWaitlistEntry", () => {
       source: string;
     };
     expect(typeof parsed.ts).toBe("number");
-    expect(parsed.source).toBe("auth-waitlist");
+    expect(parsed.source).toBe("signup-page");
   });
 
   test("missing WAITLIST_KV binding: returns unavailable, no write", async () => {

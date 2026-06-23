@@ -27,7 +27,7 @@ export default function SignUpPage() {
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            {SIGNUPS_DISABLED ? "Invite only." : "Create an account."}
+            {SIGNUPS_DISABLED ? "Invite only for now." : "Create an account."}
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"
