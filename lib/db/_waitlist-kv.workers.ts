@@ -93,7 +93,7 @@ export async function putWaitlistEntry(
   try {
     await kv.put(
       email,
-      JSON.stringify({ ts: Date.now(), source: "signup-page" }),
+      JSON.stringify({ ts: Date.now(), source: "auth-waitlist" }),
     );
   } catch (err) {
     warnKvError(err);

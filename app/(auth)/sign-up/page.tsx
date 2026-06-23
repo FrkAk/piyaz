@@ -34,7 +34,7 @@ export default function SignUpPage() {
             style={{ lineHeight: 1.55 }}
           >
             {SIGNUPS_DISABLED
-              ? "Piyaz is in a closed beta. New accounts are opening soon — until then, sign-ups are invite-only."
+              ? "Piyaz is in a closed beta. New accounts are opening soon, so sign-ups are invite-only for now."
               : "Your project graph and decision history live here. Connect agents through MCP from your CLI once you’re in."}
           </p>
 

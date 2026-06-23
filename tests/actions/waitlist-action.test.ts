@@ -72,7 +72,7 @@ describe("putWaitlistEntry", () => {
       source: string;
     };
     expect(typeof parsed.ts).toBe("number");
-    expect(parsed.source).toBe("signup-page");
+    expect(parsed.source).toBe("auth-waitlist");
   });
 
   test("missing WAITLIST_KV binding: returns unavailable, no write", async () => {

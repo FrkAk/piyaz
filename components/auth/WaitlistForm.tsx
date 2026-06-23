@@ -6,7 +6,8 @@ import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
 
 /**
- * Waitlist email-capture form for the invite-only sign-up page.
+ * Waitlist email-capture form for the invite-only auth pages (sign-in
+ * and sign-up).
  *
  * Calls the `joinWaitlistAction` server action, which rate-limits,
  * validates, and writes the email to `WAITLIST_KV`. On success the form is
@@ -55,7 +56,7 @@ export function WaitlistForm() {
             "color-mix(in srgb, var(--color-accent) 22%, transparent)",
         }}
       >
-        You&rsquo;re on the list — we&rsquo;ll email you when accounts open.
+        You&rsquo;re on the list. We&rsquo;ll email you when accounts open.
       </p>
     );
   }
