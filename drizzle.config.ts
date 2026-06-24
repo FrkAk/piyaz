@@ -31,6 +31,13 @@ export default defineConfig({
   schema: ["./lib/db/schema.ts"],
   dialect: "postgresql",
   schemaFilter: ["public"],
+  // Pin the migration journal location so dev, prod, and CI agree. These are
+  // the PostgreSQL defaults; pinning makes the `migrate` mark-applied step and
+  // the drift gate deterministic across environments.
+  migrations: {
+    schema: "drizzle",
+    table: "__drizzle_migrations",
+  },
   dbCredentials: {
     url: pushUrl,
   },

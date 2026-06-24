@@ -12,6 +12,7 @@ CREATE TABLE "projects" (
 	CONSTRAINT "projects_org_identifier_unique" UNIQUE("organization_id","identifier")
 );
 --> statement-breakpoint
+ALTER TABLE "projects" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "task_acceptance_criteria" (
 	"id" uuid PRIMARY KEY NOT NULL,
 	"task_id" uuid NOT NULL,
@@ -23,6 +24,7 @@ CREATE TABLE "task_acceptance_criteria" (
 	CONSTRAINT "task_acceptance_criteria_task_id_text_unique" UNIQUE("task_id","text")
 );
 --> statement-breakpoint
+ALTER TABLE "task_acceptance_criteria" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "task_assignees" (
 	"task_id" uuid NOT NULL,
 	"user_id" uuid NOT NULL,
@@ -30,6 +32,7 @@ CREATE TABLE "task_assignees" (
 	CONSTRAINT "task_assignees_task_id_user_id_pk" PRIMARY KEY("task_id","user_id")
 );
 --> statement-breakpoint
+ALTER TABLE "task_assignees" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "task_decisions" (
 	"id" uuid PRIMARY KEY NOT NULL,
 	"task_id" uuid NOT NULL,
@@ -42,6 +45,7 @@ CREATE TABLE "task_decisions" (
 	CONSTRAINT "task_decisions_task_id_text_unique" UNIQUE("task_id","text")
 );
 --> statement-breakpoint
+ALTER TABLE "task_decisions" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "task_edges" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"source_task_id" uuid NOT NULL,
@@ -52,6 +56,7 @@ CREATE TABLE "task_edges" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+ALTER TABLE "task_edges" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "task_links" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"task_id" uuid NOT NULL,
@@ -64,6 +69,7 @@ CREATE TABLE "task_links" (
 	CONSTRAINT "task_links_task_url_unique" UNIQUE("task_id","url")
 );
 --> statement-breakpoint
+ALTER TABLE "task_links" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "tasks" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"project_id" uuid NOT NULL,
@@ -85,6 +91,7 @@ CREATE TABLE "tasks" (
 	CONSTRAINT "tasks_project_sequence_unique" UNIQUE("project_id","sequence_number")
 );
 --> statement-breakpoint
+ALTER TABLE "tasks" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 CREATE TABLE "team_invite_code" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,
@@ -94,6 +101,8 @@ CREATE TABLE "team_invite_code" (
 	"revoked_at" timestamp with time zone,
 	"max_uses" integer,
 	"use_count" integer DEFAULT 0 NOT NULL,
+	"reserved_until" timestamp with time zone,
+	"reserved_by" uuid,
 	"created_by" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -102,6 +111,7 @@ CREATE TABLE "team_invite_code" (
 	CONSTRAINT "team_invite_code_default_role_check" CHECK ("team_invite_code"."default_role" IN ('member', 'admin'))
 );
 --> statement-breakpoint
+ALTER TABLE "team_invite_code" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "projects" ADD CONSTRAINT "projects_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "piyaz_auth"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "task_acceptance_criteria" ADD CONSTRAINT "task_acceptance_criteria_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "task_assignees" ADD CONSTRAINT "task_assignees_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -113,6 +123,7 @@ ALTER TABLE "task_links" ADD CONSTRAINT "task_links_task_id_tasks_id_fk" FOREIGN
 ALTER TABLE "task_links" ADD CONSTRAINT "task_links_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "piyaz_auth"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tasks" ADD CONSTRAINT "tasks_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "team_invite_code" ADD CONSTRAINT "team_invite_code_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "piyaz_auth"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "team_invite_code" ADD CONSTRAINT "team_invite_code_reserved_by_user_id_fk" FOREIGN KEY ("reserved_by") REFERENCES "piyaz_auth"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "team_invite_code" ADD CONSTRAINT "team_invite_code_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "piyaz_auth"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "projects_organization_id_idx" ON "projects" USING btree ("organization_id");--> statement-breakpoint
 CREATE INDEX "task_acceptance_criteria_task_id_position_idx" ON "task_acceptance_criteria" USING btree ("task_id","position");--> statement-breakpoint
