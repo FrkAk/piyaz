@@ -6,16 +6,16 @@ import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignUpForm } from "@/components/auth/SignUpForm";
 import { WaitlistForm } from "@/components/auth/WaitlistForm";
 
-const SIGNUPS_DISABLED = process.env.DEPLOY_TARGET === "cloudflare";
+const SIGNUPS_DISABLED = process.env.SIGNUPS_DISABLED === "true";
 
 /**
- * Sign-up page. Renders the registration form on self-host and an
- * "invite only" notice on the hosted Cloudflare deploy. Post-create the
+ * Sign-up page. Renders the registration form when signups are open and an
+ * "invite only" notice when `SIGNUPS_DISABLED` is set (prod). Post-create the
  * user lands on `/`; `requireMembership` forwards to `/onboarding/team`
  * because a fresh account has zero memberships.
  *
  * @returns Server-rendered auth shell with form or invite-only notice
- *   depending on `DEPLOY_TARGET`.
+ *   depending on `SIGNUPS_DISABLED`.
  */
 export default function SignUpPage() {
   return (

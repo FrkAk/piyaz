@@ -15,6 +15,11 @@ import { logAuthApiError } from "@/lib/auth/api-error-log";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
+// Per-environment signup gate, read at runtime so the dev and prod workers
+// can diverge (both set DEPLOY_TARGET=cloudflare). Truthy keeps the deploy
+// invite-only; absent/false opens self-service signup.
+const SIGNUPS_DISABLED = process.env.SIGNUPS_DISABLED === "true";
+
 /**
  * Canonical set of OAuth scopes this provider grants. Single source of
  * truth for both what dynamically-registered clients may request
@@ -52,8 +57,8 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     revokeSessionsOnPasswordReset: true,
-    // Invite-only on hosted Cloudflare; self-host stays open.
-    disableSignUp: IS_CLOUDFLARE,
+    // Invite-only when SIGNUPS_DISABLED is set (prod); dev and self-host open.
+    disableSignUp: SIGNUPS_DISABLED,
   },
   // Route OAuth authorization-code (and other single-use verification)
   // consume through the DB-atomic `runWithTransaction` + `consumeOne` path
