@@ -364,7 +364,7 @@ export function createMcpServer(ctx: AuthContext): McpServer {
     {
       name: "piyaz",
       title: "Piyaz",
-      version: "0.1.2",
+      version: "0.1.3",
       websiteUrl: "https://www.piyaz.ai",
       icons: [
         {
