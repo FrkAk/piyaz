@@ -164,11 +164,10 @@ The merge gate runs after a `DONE` result with `outcome=in_review`, governed by 
 
 To merge: `gh pr merge <url> --squash --delete-branch` (squash is the default; follow the repo's configured default method when it differs). On a clean merge, write the task `done` — this is the **one** case the orchestrator writes a status transition, authorized by the run-start merge policy.
 
-The implementer's `executionRecord` is the substantive record of what shipped; the merge must not overwrite it. `executionRecord` is a single text column, so a bare update replaces it. Read the current record first (from the `DONE` result you already hold, or `piyaz_context depth='agent'`), then write that record back verbatim with one merge line appended. A HOTL merge leaves the record untouched; appending rather than replacing keeps `auto-on-approve` identical to HOTL in the durable record. The merge line carries no commit SHA and no squash detail. The PR reference resolves through `task_links`, and `method=squash` lives in the run log.
+The merge is a status flip only; it does not touch the `executionRecord`. The implementer's record already describes what shipped and is the durable record. A HOTL merge leaves it untouched, so `auto-on-approve` leaves it untouched too; that keeps the two paths identical. The PR reference resolves through `task_links`, and `method=squash` lives in the run log.
 
 ```
 piyaz_task action='update' taskId='<id>' status='done'
-  executionRecord='<implementer record, verbatim, then one line: Merged PR #<n> after approve and green CI.>'
 ```
 
 Then propagate fully (the work landed) and write `MERGE task=<ref> pr=<url> method=squash` to the run log. **Drop the merged worktree before the next pick:** locate the `.claude/worktrees/wf_*` entry whose `branch` matches the PR's `headRefName` (`git worktree list --porcelain`) and run `git worktree remove <path>` + `git branch -D <branch>` (no `--force`; if git refuses on a dirty or locked tree, surface it and leave it for *Worktree cleanup at run end*). A failed merge (conflict, protected branch, merge-queue required) is not a task failure: report it, leave the task at `in_review` for HOTL, and continue.
