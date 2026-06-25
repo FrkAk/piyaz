@@ -219,7 +219,7 @@ Pull-based: the backend has no webhooks, and `task_links` is the only PR record.
 1. **Resolve the pair.** Given a taskRef, read `task.links` filtered to `kind='pull_request'`; given a PR URL, resolve the task from the `[<taskRef>]` bracket (verify the link row agrees). Prefer the newest open PR when several exist.
 2. **Reviewer-led intake.** Dispatch `piyaz:review` with `Target task: <taskRef>. PR URL: <url>. Mode: rework-intake.` The intake re-verifies the human feedback against current HEAD and returns a verdict.
 3. **Branch on the intake verdict.**
-   - `request-changes`: launch the workflow with `resumeFrom='fix'`, `prUrl=<url>`, and `fixFindings=<the human items with fresh file:line citations>`. The fix loop uses a **fresh rotation budget of 2** for this rework invocation (the workflow's rotation counter starts at zero per launch). Prefix the implementer dispatch context with rework so the implementer accepts an `in_progress` entry (HOTL may flip `in_review → in_progress` to signal rework).
+   - `request-changes`: launch the workflow with `resumeFrom='fix'`, `prUrl=<url>`, and `fixFindings=<the human items with fresh file:line citations>`. The fix loop uses a **fresh rotation budget of 2** for this rework invocation (the workflow's rotation counter starts at zero per launch). The fix loop dispatches the implementer in fix mode, which accepts an `in_progress` entry (HOTL may flip `in_review → in_progress` to signal rework).
    - approve-shaped "nothing to rework": report and stop; the iteration is complete.
    - `BLOCKED` (PR merged/closed, task `done`/`cancelled`): report and stop.
 4. **Finish like any iteration.** Surface the verdict, run the merge gate, propagate, `TASK_END`. The run log records `RUN_START mode=rework`.

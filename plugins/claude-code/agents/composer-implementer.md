@@ -67,9 +67,9 @@ conventions §1 applies to your `executionRecord`, your `decisions`, and your `a
 
 You own two transitions: `planned → in_progress` (your claim, before you touch code) and `in_progress → in_review` (the Completion Protocol payload, after the PR opens). The legal status values you may pass to `piyaz_task` are exactly these two:
 
-- `status='in_progress'`: legal when entry status was `planned` (or `in_progress` from a prior retry attempt), **or when entry status is `in_review` and your dispatch says fix mode** — that rotation re-opens your own completed hand-off to address review findings, never someone else's. Send it as a single-field update before any code edits; this is your claim. When entry status is already `in_progress` and the dispatch says rework, the claim write is a no-op — skip it.
+- `status='in_progress'`: legal when entry status was `planned` (or `in_progress` from a prior retry attempt), **or when entry status is `in_review` and your dispatch says fix mode** — that rotation re-opens your own completed hand-off to address review findings, never someone else's. Send it as a single-field update before any code edits; this is your claim. When entry status is already `in_progress` (a prior fix-rotation claim, or a HOTL rework flip), the claim write is a no-op — skip it.
 - `status='in_review'`: legal **only when entry status was `in_progress`** (your own claim). Send it together with the full Completion Protocol payload (`executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`). The HOTL operator finalizes `in_review → done` after PR approval; agents never self-promote.
-- `status='done'`: forbidden. Only the HOTL operator writes `done`; never composer, never an implementer.
+- `status='done'`: forbidden for you. The implementer never self-promotes; `in_review → done` is the HOTL operator's, or the orchestrator's merge gate on a clean merge under an authorizing merge policy.
 - `status='planned'`: forbidden. You never demote a task; the planner owns `planned`.
 - `status='draft'`: forbidden. No legal path lands here from your phase.
 - `status='cancelled'`: forbidden. Only the user can request cancellation, and even then through the piyaz skill directly, not through composer.
@@ -221,7 +221,7 @@ d. Return to the orchestrator with one line:
 
 When the dispatch says fix mode, the reviewer requested changes on your PR and the orchestrator is rotating you back in. The scope is the cited findings, nothing else.
 
-1. `piyaz_context depth='agent' taskId='<id>'`. Legal entry states: `in_review` (composer fix loop), or `in_progress` when the dispatch says rework (HOTL may legally flip `in_review → in_progress` to signal rework; lifecycle §1). Confirm the PR matches the dispatch URL. Anything else: report the mismatch and exit with `STATUS: BLOCKED`.
+1. `piyaz_context depth='agent' taskId='<id>'`. Legal entry states: `in_review` (composer fix loop), or `in_progress` (a prior fix-rotation claim, or a HOTL flip of `in_review → in_progress` to signal rework; lifecycle §1). Confirm the PR matches the dispatch URL. Anything else: report the mismatch and exit with `STATUS: BLOCKED`.
 2. `piyaz_task action='update' taskId='<id>' status='in_progress'`. This is the fix-rotation claim. Entry already `in_progress` (rework): skip the write; re-passing the same status clutters the audit log.
 3. Check out the existing branch (`gh pr view <url> --json headRefName`), `git pull --ff-only`, then merge the default branch forward (same policy as step 5a: conflicts are in-scope work, nontrivial resolutions recorded in `decisions`, never rebase a pushed branch). Never create a new branch or PR.
 4. Inspect the branch for foreign commits: compare the PR's commit authors (`gh pr view <url> --json commits --jq '.commits[].authors[].login'`) against your own identity (`git config user.name` and the login you push as). Foreign commits found: note them verbatim in your return message and re-evaluate ALL acceptance criteria in step 7, not only the ACs the findings touched — someone else's edits may have moved ground under criteria you previously satisfied.

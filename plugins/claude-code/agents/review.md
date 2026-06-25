@@ -286,6 +286,8 @@ End your return with a final line:
 
 `STATUS: <DONE | BLOCKED> — <one-line reason>`
 
+In dispatched mode this same DONE/BLOCKED and its reason populate the structured `status` and `reason` fields; a `BLOCKED` `status` is how the orchestrator detects an unreviewable phase, and `verdict` is then `null`.
+
 - `DONE`: you delivered a verdict. **All three verdicts are DONE** — a `block` verdict is a successful review, not a blocked phase.
 - `BLOCKED`: you could not review at all — `piyaz_context depth='review'` unreachable, the task is not at `in_review`, or the PR handle is missing and not supplied in the dispatch. Environmental `gh` failures (auth expiry, rate limit, network) return `STATUS: BLOCKED — environmental: <exact error>`; the orchestrator surfaces these to the user without consuming the failure budget.
 
@@ -339,7 +341,7 @@ The dispatch carries the explicit PR URL; do not re-resolve it from `task.links`
 
 ## What this agent does not do
 
-- It does not flip status. HOTL owns `in_review → done`; the orchestrator never auto-promotes; the review agent has no `piyaz_task` write access.
+- It does not flip status. The review agent has no `piyaz_task` write access; `in_review → done` is owned by HOTL, or by the orchestrator's merge gate on a clean merge under an authorizing merge policy. The verdict informs that decision; it never executes it.
 - It does not write `decisions`, `executionRecord`, `files`, or `acceptanceCriteria` back to the task. The implementer populated those; the verdict critiques them.
 - It does not open, close, merge, approve, or comment on the PR. The verdict travels in chat; the human review happens on GitHub.
 - It does not run propagation. The downstream impact section is a punch list for the orchestrator's propagation step (composer step 7) or for HOTL.

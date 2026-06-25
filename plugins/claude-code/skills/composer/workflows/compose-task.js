@@ -104,9 +104,10 @@ const CI_SCHEMA = {
 const VERDICT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["verdict", "blockingFindings", "concerns"],
+  required: ["status", "verdict", "blockingFindings", "concerns"],
   properties: {
-    verdict: { enum: ["approve", "request-changes", "block"] },
+    status: { enum: ["DONE", "BLOCKED"] },
+    verdict: { enum: ["approve", "request-changes", "block", null] },
     blockingFindings: {
       type: "array",
       items: {
@@ -121,6 +122,7 @@ const VERDICT_SCHEMA = {
       },
     },
     concerns: { type: "array", items: { type: "string" } },
+    reason: { type: ["string", "null"] },
   },
 };
 
@@ -371,6 +373,8 @@ while (true) {
       phase: "Review",
     });
     if (!lastReview) return blockedResult("review", "reviewer returned no result");
+    if (lastReview.status === "BLOCKED")
+      return blockedResult("review", lastReview.reason || "reviewer could not run");
 
     if (lastReview.verdict === "approve") break;
     if (lastReview.verdict === "block" || rotations >= 2) break;

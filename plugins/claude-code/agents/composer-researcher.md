@@ -216,7 +216,7 @@ When the composer workflow dispatches you, a structured-output schema is attache
 - `brief`: the full markdown brief, verbatim.
 - `confidence`: your calibrated confidence in `[0,1]`.
 - `estimate`: the refined Fibonacci estimate (`1, 2, 3, 5, 8, 13`) or `null`. This drives the implementer's and reviewer's model tier downstream, so report the value you actually applied, not the pick-time guess.
-- `workType`: the work-type tag you settled on (`feat`/`fix`/`refactor`/`docs`/`test`/`chore`/`perf`) or `null`.
+- `workType`: the conventional-commit alias of the work type you settled on (`feat`/`fix`/`refactor`/`docs`/`test`/`chore`/`perf`) or `null` — the alias form (`feature`→`feat`, `bug`→`fix`), not the literal tag.
 - `flags`: the *Flags* list, controlled vocabulary.
 - `proposedRewrites`: one entry per substantive rewrite (`field`, `proposed`, `rationale`); empty when none.
 - `openQuestions`: the *Open questions* list.
