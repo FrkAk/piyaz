@@ -85,7 +85,7 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
 3. **Refinements: typically already applied; only fill gaps.** The Phase 1 researcher applies refinements (description, acceptance criteria, tags, category, priority, estimate, decisions) directly to the target before handing off, so the task you read via `piyaz_context depth='planning'` should already reflect those changes. The brief's *Applied refinements* section names what landed.
 
-   You only refine when planning surfaces something the researcher missed. For example: writing the *Section content* section reveals an acceptance criterion that is binary in isolation but unsatisfiable against the codebase shape, or the brief flagged `external-input-required` and the user's answer (passed back through the orchestrator) is a real choice that constrains downstream work. In those cases:
+   You only refine when planning surfaces something the researcher missed. For example: detailing the file-level changes reveals an acceptance criterion that is binary in isolation but unsatisfiable against the codebase shape, or the brief flagged `external-input-required` and the user's answer (passed back through the orchestrator) is a real choice that constrains downstream work. In those cases:
 
    - Apply the refinement via `piyaz_task action='update'` with the same append-only semantics the researcher uses (never `overwriteArrays=true`).
    - Write to `decisions` only when the refinement *is* a CHOICE + WHY (e.g. user picked library X over Y; AC reworded to bound it to a specific behavior). Refinements that are mechanical fixes (typo, tag dimension fill-in, AC binary-rewrite where the intent was already clear) do not get a decision entry; the audit log records the field change.
@@ -158,7 +158,7 @@ When the composer workflow dispatches you, a structured-output schema is attache
 - `status`: the STATUS value above.
 - `sections`: the number of `##` sections in the plan you wrote (or re-validated).
 - `buildSteps`: the number of numbered steps in the plan's *Build sequence*.
-- `openQuestions`: the *Open questions* list, the items the implementer must escalate before guessing.
+- `openQuestions`: the open questions surfaced during planning, for the orchestrator to surface to the user; a question that blocks the plan makes your `status` `NEEDS_DECISION`.
 - `reason`: the one-line STATUS reason; for a `foundation-unsound` block, the `foundation-unsound:` prefix must be present here.
 
 Direct (non-composer) invocations have no schema attached; return the one-sentence confirmation with its trailing STATUS line as usual.
