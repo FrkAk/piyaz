@@ -59,6 +59,22 @@ Ship each table's access control in the same migration as its `CREATE TABLE`:
 
 Grants and policies are explicit per table on purpose. `ALTER DEFAULT PRIVILEGES` is deliberately not used on `public`: it would grant a new table to `app_user` in the window between `CREATE TABLE` and its policy attach, a cross-tenant read window. A missing grant is a loud runtime failure; a missing RLS attach is caught by `tests/db/rls-coverage.test.ts`.
 
+## Deploys and rollback
+
+Two environments, both driven by versioned migrations:
+
+- **Dev** (`piyaz-dev`): every push to `main` that passes CI runs `db:migrate` against the dev Neon DB and redeploys the dev Worker (`.github/workflows/deploy-dev.yml`). No gate — this env always reflects `main`.
+- **Production**: deploys only when a GitHub Release is published (`.github/workflows/deploy.yml`), inside the `production` Environment whose required reviewers approve every prod migration + deploy. The migration runs before the deploy, and the deploy aborts if it fails. Cut releases from a `main` commit that already passed CI.
+
+Migrations are roll-forward only (Drizzle has no down-migrations), so follow expand/contract: additive changes ship with the code that needs them; destructive cleanups (drop column/table) ship in a separate later release, keeping every deploy roll-forward-safe.
+
+**Rollback** is via Neon, not a down-migration:
+
+- Code-only regression: redeploy the previous release tag.
+- Bad migration: Neon instant-restore the prod branch to a timestamp just before the deploy (history window is 6h on the free plan; bump to 7d on a paid plan for a wider window), or restore from a branch snapshot taken immediately before the migrate.
+
+**Secrets** live in GitHub Environments, never in the repo or `.env`. The prod `service_role` URL (`DATABASE_SERVICE_ROLE_URL_PROD`) belongs only to the `production` Environment; the dev URL (`DATABASE_SERVICE_ROLE_URL_DEV`) to the `dev` Environment. Worker runtime secrets are set per environment with `wrangler secret put`.
+
 ## Before submitting a PR
 
 Run all checks locally:
