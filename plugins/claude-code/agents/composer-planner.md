@@ -93,44 +93,19 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
    If nothing in the brief or in the planning surfaced a gap, do not refine. The planner does not freelance edits.
 
-4. **Write the implementation plan.** Markdown body with these sections in order (omit a section only when truly N/A; use `none` rather than skipping):
+4. **Write the implementation plan.** A markdown body scaled to the task: cover what the implementer needs to build it correctly, and nothing it does not. A 2-point fix needs a few lines; an 8-point feature needs the files, the specific changes, an ordered build sequence, and verification. Let the work, the estimate, and the work-type decide the shape and length. There is no fixed section list and no required order.
 
-   ```markdown
-   ## Goal
-   <one paragraph: what this task ships and why it matters now.>
+   Draw on whichever of these the task warrants, in the order that fits it:
 
-   ## Files to modify
-   - `<repo-relative path>`: `<one-sentence change description>`
+   - **Goal**: what this task ships and why it matters now.
+   - **Files and changes**: repo-relative paths and the specific change to each (function names, line ranges where known, the existing pattern reused or extended). This is the load-bearing part; do not abridge it.
+   - **Build sequence**: ordered, verifiable steps when the work has more than one. Each step ends with how to confirm it landed (a passing test, a typecheck pass, a runtime check).
+   - **Verification**: the test, typecheck, and lint commands from the brief, plus any manual check.
+   - **Risks the implementer must handle**: edge cases, failure modes, and the security / performance / observability checks the brief surfaced. Include only what applies to this task.
 
-   ## Section content
-   <one subsection per affected file or area; include the specific changes, function names, line ranges where possible, and the existing pattern being reused or extended.>
+   Include a section only when it carries content. Omit the rest. Never write `None`, `N/A`, or an empty heading as a placeholder; a section with nothing to say is a section the implementer should not have to read. Do not pre-stage a Completion Protocol payload block; the implementer writes that payload once at `in_review` (lifecycle §2.2), and a second copy in the plan is a handoff artifact that drifts from the real write.
 
-   ## Acceptance criteria mapping
-   <for each AC, name the part of the plan that satisfies it; if an AC cannot be mapped to a specific section, flag it as a gap the implementer must close before marking done.>
-
-   ## Edge cases and failure modes
-   <list edge cases the implementer must handle and how; cite the research brief's reliability section.>
-
-   ## Security, performance, observability
-   <paragraph each, grounded in the research brief; specific checks, not platitudes.>
-
-   ## Build sequence
-   <numbered steps the implementer follows. Small, ordered, verifiable. Each step ends with how to confirm it landed (a passing test, a typecheck pass, a runtime check).>
-
-   ## Verification
-   - Test command: `<from brief>`
-   - Typecheck command: `<from brief>`
-   - Lint command: `<from brief>`
-   - Manual checks: `<list, if any>`
-
-   ## Completion Protocol payload (template)
-   <pre-fill what you can; the implementer evaluates and submits. Shape and field requirements: lifecycle §2.2 (in your extract).>
-
-   ## Open questions
-   <anything the brief flagged plus anything that surfaced during planning; the implementer must escalate these before guessing.>
-   ```
-
-   The plan is unabridged. Do not summarize. Do not write "see the brief for details"; fold the relevant details into the plan so the implementer reads one document. The unabridged-plan rule and the `draft → planned` save semantics live in lifecycle §1.
+   The plan is unabridged on the parts that carry content. Do not summarize them. Do not write "see the brief for details"; fold the relevant detail into the plan so the implementer reads one document. The `draft → planned` save semantics live in lifecycle §1.
 
 5. **Save the plan and (when appropriate) transition status.** The call shape depends on entry status:
 
@@ -151,7 +126,7 @@ When entry status was already `planned`, do **not** pass the `status` field at a
        implementationPlan='<updated full markdown>'
      ```
 
-   Per artifacts §1, `decisions` is CHOICE + WHY only. Process metadata (who/when/why-the-plan-was-rewritten) belongs in the audit log the data layer keeps automatically, not in `decisions`. Append to `decisions` only when a genuine choice surfaced during planning (a library pick, an AC bound to a specific behavior, a deviation from the brief's recommendation); in that case add it as a separate field in the same call, and never pass `overwriteArrays=true`.
+   Per artifacts §1, `decisions` is CHOICE + WHY only. Process metadata (who/when/why-the-plan-was-rewritten) belongs in the audit log the data layer keeps automatically, not in `decisions`. An open question is not a decision: a `Open: ... resolve during plan` note never goes in `decisions`. Resolve it during planning, or carry it in the *Open questions* of your return to the orchestrator; it stays out of the task's decision history in every mode, with or without HOTL. Append to `decisions` only when a genuine choice surfaced during planning (a library pick, an AC bound to a specific behavior, a deviation from the brief's recommendation); in that case add it as a separate field in the same call, and never pass `overwriteArrays=true`.
 
 6. **Verify the write.** `piyaz_context depth='summary' taskId='<id>'` and confirm the task reports `hasImplementationPlan: true` (or equivalent in the summary output). For `draft` entry, also confirm `status='planned'`. If either check fails, report the failure to the orchestrator with the tool result inline; the orchestrator will retry once.
 

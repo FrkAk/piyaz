@@ -176,6 +176,15 @@ Immediately before this write, re-read the task: `piyaz_context depth='summary' 
 
 One `piyaz_task action='update'` call carrying the full Completion Protocol payload, append-only. Field shape, content rules, and AC evaluation semantics: lifecycle §2. Pass `prUrl` whenever a PR was opened (the dominant case); the backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR.
 
+Hold the payload to four rules before you write it. They are where composer's output drifts from the standard, so they are not optional:
+
+- **executionRecord leads with what shipped.** Open with the symbols, file paths, endpoints, and data shapes you changed; close on the green-checks clause (tests, typecheck, lint). It is substantive for every task, a 2-point fix included; a one-line record is not acceptable. The shipped substance lives here, not in `decisions`.
+- **executionRecord excludes run metadata.** No orchestration or runtime narration (agent hang times, `TaskStop`, recovery stories), no commit SHAs, no squash notes, no fix-rotation counts. The record reflects what was built, not how the run executed; run mechanics belong to the orchestrator's run log, not the durable task (artifacts §1).
+- **Every `checked: true` AC carries a cited evidence line** (a test name, a diff path, or command output). No citable evidence means `checked: false` with a one-line reason. An honest `checked: false` ships; it does not block the handoff. Never mark an AC met and then defer the real verification to a downstream task or a human pass; a deferred or untestable criterion is `checked: false` with the reason in one line. The reviewer rejects an unverifiable `checked: true` (review.md, AC evaluation), so a blanket-true payload fails review rather than passing it.
+- **`decisions` is CHOICE + WHY only.** An open question is not a decision; a `Open: ...` note never enters `decisions`, and neither does a process note (artifacts §1).
+
+**Pre-handoff self-check.** Confirm two things before the write. (1) Tags satisfy the three-dimension shape (exactly 1 work-type, at least 1 cross-cutting, at most 2 tech) and carry no `area:` prefix (codebase area is `category`, not a tag). You do not own the `tags` field; the researcher sets it. A violation here is an upstream miss you must not ship: return `STATUS: BLOCKED — tags unmet: <what is wrong>` so the orchestrator re-runs research, rather than handing off a malformed task. (2) A non-empty `files` has a matching `prUrl`; this one is yours, so open the PR and capture its URL before you write. If the PR will not open, surface `STATUS: BLOCKED — <reason>`; never write `in_review` with code changes and no `prUrl`.
+
 ```
 piyaz_task action='update' taskId='<id>'
   status='in_review'

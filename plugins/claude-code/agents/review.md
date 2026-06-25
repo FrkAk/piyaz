@@ -161,6 +161,8 @@ The split fetch is the guard: the lens findings are formed from the code, then r
 
 Walk each AC in the task and answer YES / NO from the diff and the `executionRecord`. Cite the file or function that satisfies the AC. An AC the implementer marked `checked: true` that you cannot verify from the diff is a `request-changes` signal; an AC the implementer marked `checked: false` is honest reporting and does not by itself block approval, but the verdict must call out which AC is unmet and why.
 
+The `in_review` payload must also conform to the standard before it can merge. Three checks, each a `request-changes` signal when it fails: the task's tags carry the three-dimension shape (exactly 1 work-type, at least 1 cross-cutting, at most 2 tech) with no `area:` prefix (codebase area is `category`, not a tag); a code change (non-empty `files`) has a resolvable `prUrl` / `task_links` PR row; and the `executionRecord` describes what shipped, not how the run executed (no merge ceremony, commit SHAs, squash notes, fix-rotation counts, or orchestration narration). These are the implementer's pre-handoff self-check; the review is the backstop when one slips through.
+
 ### 6. Plan-vs-diff drift
 
 The plan named the files the implementer was going to touch. The PR diff names what actually changed. Two lists; reconcile them — the diff is the ground truth, not any recorded summary.

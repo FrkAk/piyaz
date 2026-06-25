@@ -162,11 +162,13 @@ The merge gate runs after a `DONE` result with `outcome=in_review`, governed by 
 - **`ask-each`**: ask `the AskUserQuestion tool` whether to merge this PR. On yes, merge as below. On no (or headless), leave it for HOTL.
 - **`auto-on-approve`**: merge without asking.
 
-To merge: `gh pr merge <url> --squash --delete-branch` (squash is the default; follow the repo's configured default method when it differs). On a clean merge, write the task `done` — this is the **one** case the orchestrator writes a status transition, authorized by the run-start merge policy:
+To merge: `gh pr merge <url> --squash --delete-branch` (squash is the default; follow the repo's configured default method when it differs). On a clean merge, write the task `done` — this is the **one** case the orchestrator writes a status transition, authorized by the run-start merge policy.
+
+The implementer's `executionRecord` is the substantive record of what shipped; the merge must not overwrite it. `executionRecord` is a single text column, so a bare update replaces it. Read the current record first (from the `DONE` result you already hold, or `piyaz_context depth='agent'`), then write that record back verbatim with one merge line appended. A HOTL merge leaves the record untouched; appending rather than replacing keeps `auto-on-approve` identical to HOTL in the durable record. The merge line carries no commit SHA and no squash detail. The PR reference resolves through `task_links`, and `method=squash` lives in the run log.
 
 ```
 piyaz_task action='update' taskId='<id>' status='done'
-  executionRecord='<append one line: merged PR #<n> via composer auto-merge after approve + green CI>'
+  executionRecord='<implementer record, verbatim, then one line: Merged PR #<n> after approve and green CI.>'
 ```
 
 Then propagate fully (the work landed) and write `MERGE task=<ref> pr=<url> method=squash` to the run log. **Drop the merged worktree before the next pick:** locate the `.claude/worktrees/wf_*` entry whose `branch` matches the PR's `headRefName` (`git worktree list --porcelain`) and run `git worktree remove <path>` + `git branch -D <branch>` (no `--force`; if git refuses on a dirty or locked tree, surface it and leave it for *Worktree cleanup at run end*). A failed merge (conflict, protected branch, merge-queue required) is not a task failure: report it, leave the task at `in_review` for HOTL, and continue.
@@ -261,7 +263,7 @@ The workflow builds every phase dispatch from the `args` you pass; the agents in
 For every other BLOCKED:
 
 1. Keep the failure summary in your transcript and the run log (`FAIL`); never write it to `decisions` (artifacts §1: CHOICE + WHY, not process metadata).
-2. Leave the task at its current status. Never roll back, never cancel.
+2. Leave the task at its current status. Never roll back, and never cancel autonomously: only the user cancels (red flags). The task is not abandoned silently. Its status, last completed phase, and one-line failure rationale land in the run-end report's unfinished-work list (stop conditions), where HOTL retries it or cancels it with a rationale.
 3. Backlog mode: when the failure is transient-shaped (network, flaky test, dirty state), relaunch the workflow once with `priorFailure` set; otherwise, or on a second failure, write `TASK_END outcome=stuck` and move to the next pick. Single-task mode: relaunch up to three total attempts, appending each failure summary as `priorFailure`; after the third, report and stop.
 
 **Partial success and orphaned PRs** are handled inside the implementer's pre-flight (it resumes the Completion Protocol against an existing branch/PR rather than re-implementing). When a single-task pick is already `in_progress` or `in_review`, launch the workflow with `resumeFrom='implement'` (in_progress) or `resumeFrom='fix'` with the existing `prUrl` (in_review); the implementer's pre-flight does the rest.
@@ -270,14 +272,14 @@ For every other BLOCKED:
 
 Stop and report in plain language (there are no magic stop phrases) when one holds:
 
-1. **Backlog drained**: `ready` and `plannable` are both empty. The stop report enumerates every task left at `in_progress`/`in_review` with its failure summary — nothing strands silently.
+1. **Backlog drained**: `ready` and `plannable` are both empty. The run-end report (below) lists every unfinished task with its rationale, so nothing strands silently.
 2. **Failure budget exhausted**: three failed attempts on the same task (single-task mode).
 3. **User says stop**: exit after the in-flight write finishes.
 4. **Single-task or rework iteration complete**: verdict surfaced, merge gate run, propagation done.
 5. **Rewrite denied** (single-task mode): the user rejected a proposed rewrite at the gate.
 6. **Piyaz transport/auth failure**: any Piyaz tool call fails with auth expiry, 401/403, a 5xx, or a network error. Stop immediately (not retryable in-session, resilience §10) and report the exact error plus the last completed phase per in-flight task.
 
-These six are exhaustive. Every stop appends `RUN_END` with its reason and the grep-derived counters, runs *Worktree cleanup at run end*, then offers to archive the log; the headless default is inform-only on worktrees and archive on the log.
+These six are exhaustive. Every stop produces one run-end report. It appends `RUN_END` with its reason and the grep-derived counters, lists each unfinished task the loop left behind (`in_progress`, `draft`, or `in_review` awaiting HOTL) with its status, last completed phase, and one-line failure rationale, and surfaces the worktrees from *Worktree cleanup at run end* in the same report rather than a second adjacent block. For each unfinished task the report offers HOTL the choice to retry it or cancel it with a rationale; composer never cancels autonomously. Then it offers to archive the log. The headless default is inform-only on worktrees and unfinished tasks, and archive on the log.
 
 ## Worktree cleanup at run end
 
