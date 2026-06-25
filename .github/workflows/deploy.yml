@@ -1,20 +1,21 @@
 name: Deploy
 
+# Production is release-gated, not push-gated: publishing a GitHub Release
+# (cut from an already-CI-passed main commit) runs the prod migration then
+# deploys the Worker, inside the `production` Environment whose required
+# reviewers make a human approve every prod DDL + deploy. The migrate runs
+# BEFORE the deploy and the deploy only runs if migrate succeeds.
 on:
-  workflow_run:
-    workflows: ["Quality Check"]
-    types: [completed]
-    branches: [main]
+  release:
+    types: [published]
 
 jobs:
   deploy:
-    name: Deploy to Cloudflare Workers (production)
+    name: Migrate + deploy to Cloudflare Workers (production)
     runs-on: ubuntu-latest
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.repository == 'FrkAk/piyaz'
+    if: github.repository == 'FrkAk/piyaz'
+    # Serialize prod deploys so two migrations never overlap; __drizzle_migrations
+    # orders them and makes re-runs idempotent.
     concurrency:
       group: deploy-main
       cancel-in-progress: false
@@ -24,10 +25,10 @@ jobs:
       name: production
       url: https://app.piyaz.ai
     steps:
-      - name: Checkout the commit that passed Quality Check
+      - name: Checkout the released tag
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
 
       - name: Setup Bun
@@ -46,6 +47,13 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Migrations run as service_role over the DIRECT (unpooled) Neon host.
+      # If this step fails the job stops and the Worker is NOT deployed.
+      - name: Migrate production database
+        env:
+          DATABASE_SERVICE_ROLE_URL: ${{ secrets.DATABASE_SERVICE_ROLE_URL_PROD }}
+        run: bun run db:migrate
 
       - name: Deploy to Cloudflare Workers (production)
         env:

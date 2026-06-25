@@ -1,0 +1,67 @@
+name: Deploy Dev
+
+# Trunk-based integration env: every push to main that passes Quality Check
+# migrates the standing piyaz-dev Neon DB and redeploys the piyaz-dev Worker.
+# No approval gate — this is the fast-feedback environment that always
+# reflects main. Production is separate and release-gated (see deploy.yml).
+on:
+  workflow_run:
+    workflows: ["Quality Check"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy-dev:
+    name: Migrate + deploy dev (piyaz-dev)
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.repository == 'FrkAk/piyaz'
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    environment:
+      name: dev
+      url: https://dev.app.piyaz.ai
+    steps:
+      - name: Checkout the commit that passed Quality Check
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Cache build artefacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules/.cache
+            .next/cache
+          key: deploy-dev-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            deploy-dev-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Migrations run as service_role over the DIRECT (unpooled) Neon host.
+      - name: Migrate dev database
+        env:
+          DATABASE_SERVICE_ROLE_URL: ${{ secrets.DATABASE_SERVICE_ROLE_URL_DEV }}
+        run: bun run db:migrate
+
+      # Deploy only runs if the migrate step above succeeded.
+      - name: Deploy dev Worker (piyaz-dev)
+        env:
+          DEPLOY_TARGET: cloudflare
+          BETTER_AUTH_URL: https://dev.app.piyaz.ai
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bun run deploy:cf:dev

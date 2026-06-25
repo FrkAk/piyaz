@@ -67,6 +67,19 @@ jobs:
         run: bun run lint
       - name: Typecheck
         run: bun run typecheck
+      - name: Schema drift gate
+        env:
+          # db:generate is offline (diffs schema.ts against the committed
+          # snapshot); this URL only satisfies drizzle.config's presence check.
+          DATABASE_SERVICE_ROLE_URL: postgres://placeholder:placeholder@localhost:5432/placeholder
+        run: |
+          bun run db:generate
+          if [ -n "$(git status --porcelain drizzle)" ]; then
+            echo "::error::lib/db/schema.ts changed without a committed migration. Run 'bun run db:generate' and commit the drizzle/ changes."
+            git --no-pager diff -- drizzle
+            git status --porcelain drizzle
+            exit 1
+          fi
       - name: Test
         env:
           TEST_DATABASE_URL: postgres://piyaz:piyaz@localhost:5432/piyaz_test

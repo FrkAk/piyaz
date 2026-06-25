@@ -181,6 +181,50 @@ function listProductionSecretNames(failures: string[]): Set<string> | null {
   }
 }
 
+/**
+ * Assert the Drizzle migration journal is internally consistent: every entry
+ * in `_journal.json` has its `<tag>.sql` migration and `<idx>_snapshot.json`,
+ * so `drizzle-kit migrate` cannot fail mid-deploy on a file a partial
+ * migration commit left out.
+ *
+ * @param failures - Accumulator appended with any inconsistency found.
+ */
+async function assertMigrationJournalConsistent(
+  failures: string[],
+): Promise<void> {
+  const drizzleDir = path.join(ROOT, "drizzle");
+  let entries: Array<{ idx: number; tag: string }>;
+  try {
+    const journal = JSON.parse(
+      await fs.readFile(path.join(drizzleDir, "meta", "_journal.json"), "utf8"),
+    ) as { entries?: Array<{ idx: number; tag: string }> };
+    entries = journal.entries ?? [];
+  } catch (err) {
+    failures.push(
+      `Cannot read the Drizzle migration journal at drizzle/meta/_journal.json: ` +
+        `${err instanceof Error ? err.message : String(err)}.`,
+    );
+    return;
+  }
+  for (const entry of entries) {
+    const idx = String(entry.idx).padStart(4, "0");
+    try {
+      await fs.access(path.join(drizzleDir, `${entry.tag}.sql`));
+    } catch {
+      failures.push(
+        `Migration journal references a missing SQL file: drizzle/${entry.tag}.sql.`,
+      );
+    }
+    try {
+      await fs.access(path.join(drizzleDir, "meta", `${idx}_snapshot.json`));
+    } catch {
+      failures.push(
+        `Migration journal references a missing snapshot: drizzle/meta/${idx}_snapshot.json.`,
+      );
+    }
+  }
+}
+
 const presentSecrets = listProductionSecretNames(failures);
 if (presentSecrets) {
   for (const name of REQUIRED_SECRETS) {
@@ -193,8 +237,12 @@ if (presentSecrets) {
   }
 }
 
+await assertMigrationJournalConsistent(failures);
+
 if (failures.length > 0) {
   abortWithFailures(failures);
 }
 
-console.log("Deploy guard: wrangler.jsonc bindings + secrets look healthy.");
+console.log(
+  "Deploy guard: wrangler.jsonc bindings + secrets + migration journal look healthy.",
+);
