@@ -279,6 +279,7 @@ const flags = research ? research.flags : a.flags || [];
 
 // --- Plan -------------------------------------------------------------------
 phase("Plan");
+let planQuestions = [];
 if (shouldRun("plan")) {
   const entryStatus = a.plannableOnly ? "draft" : a.mode === "single" ? "unknown" : "draft|planned";
   const prompt =
@@ -295,6 +296,7 @@ if (shouldRun("plan")) {
   if (!plan) return blockedResult("plan", "planner returned no result");
   if (plan.status === "NEEDS_DECISION") return gateResult("plan", plan, brief);
   if (plan.status === "BLOCKED") return blockedResult("plan", plan.reason);
+  planQuestions = plan.openQuestions || [];
 }
 
 if (a.plannableOnly) {
@@ -317,6 +319,9 @@ if (shouldRun("implement")) {
   const prompt =
     `${head} Plan is saved to Piyaz; fetch via piyaz_context depth='agent'. ` +
     "Claim the task, implement per the implementationPlan, open a PR, mark in_review per the Completion Protocol." +
+    (planQuestions.length
+      ? `\nOpen questions from planning — resolve or escalate before guessing:\n- ${planQuestions.join("\n- ")}`
+      : "") +
     (a.priorFailure ? `\nPrior failed attempt:\n${a.priorFailure}` : "");
   const impl = await agent(prompt, {
     agentType: "piyaz:composer-implementer",
@@ -375,6 +380,8 @@ while (true) {
     if (!lastReview) return blockedResult("review", "reviewer returned no result");
     if (lastReview.status === "BLOCKED")
       return blockedResult("review", lastReview.reason || "reviewer could not run");
+    if (lastReview.verdict == null)
+      return blockedResult("review", lastReview.reason || "reviewer returned no verdict");
 
     if (lastReview.verdict === "approve") break;
     if (lastReview.verdict === "block" || rotations >= 2) break;
