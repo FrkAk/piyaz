@@ -21,6 +21,28 @@ describe("collection diffs", () => {
     ]);
   });
 
+  test("criterion text edit (same id) emits criterion_edited", () => {
+    const before = [{ id: "c1", text: "old wording", checked: false }];
+    const after = [{ id: "c1", text: "new wording", checked: false }];
+    const events = diffCriteria(b.projectId, b.taskId, before, after);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "criterion_edited",
+      targetRef: "c1",
+    });
+  });
+
+  test("decision text edit (same id) emits decision_edited", () => {
+    const before = [{ id: "d1", text: "old wording" }];
+    const after = [{ id: "d1", text: "new wording" }];
+    const events = diffDecisions(b.projectId, b.taskId, before, after);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "decision_edited",
+      targetRef: "d1",
+    });
+  });
+
   test("decisions remove", () => {
     const before = [
       { id: "d1", text: "keep" },

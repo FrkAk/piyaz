@@ -43,15 +43,42 @@ async function fetchActivity(
  * @returns Section element, or null while empty.
  */
 export function ActivitySection({ projectId, taskId }: ActivitySectionProps) {
-  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useInfiniteQuery({
-      queryKey: taskKeys.activity(projectId, taskId),
-      queryFn: ({ pageParam }) => fetchActivity(taskId, pageParam),
-      initialPageParam: null as string | null,
-      getNextPageParam: (last) => last.nextCursor,
-    });
+  const {
+    data,
+    isError,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: taskKeys.activity(projectId, taskId),
+    queryFn: ({ pageParam }) => fetchActivity(taskId, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+  });
 
   const events = data?.pages.flatMap((p) => p.events) ?? [];
+
+  // A failed load must not look identical to "no activity" on an audit panel;
+  // surface the failure with a retry instead of silently rendering nothing.
+  if (isError) {
+    return (
+      <section className="mb-7">
+        <SectionHeader label="Activity" />
+        <div className="flex items-center gap-2 py-2 text-[12.5px] text-text-secondary">
+          <span>Couldn’t load activity.</span>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="text-text-faint underline hover:text-text-secondary"
+          >
+            Retry
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   if (events.length === 0) return null;
 
   return (

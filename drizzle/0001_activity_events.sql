@@ -9,7 +9,8 @@ CREATE TABLE "activity_events" (
 	"actor_client_id" text,
 	"summary" text NOT NULL,
 	"target_ref" text,
-	"metadata" jsonb
+	"metadata" jsonb,
+	CONSTRAINT "activity_events_source_check" CHECK ("activity_events"."source" IN ('web', 'mcp', 'system'))
 );
 --> statement-breakpoint
 ALTER TABLE "activity_events" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint

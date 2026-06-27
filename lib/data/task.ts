@@ -2571,8 +2571,10 @@ export async function updateTask(
       );
     }
 
+    let childrenAfter: Awaited<ReturnType<typeof fetchTaskChildren>> | null =
+      null;
     if (childrenBefore) {
-      const childrenAfter = await fetchTaskChildren(tx, taskId);
+      childrenAfter = await fetchTaskChildren(tx, taskId);
       if (formattedCriteria !== undefined) {
         eventInputs.push(
           ...diffCriteria(
@@ -2627,23 +2629,26 @@ export async function updateTask(
 
     if (hasPrUrl) {
       if (typeof prUrl !== "string" || prUrl.length === 0) {
-        await tx
+        const deleted = await tx
           .delete(taskLinks)
           .where(
             and(
               eq(taskLinks.taskId, taskId),
               eq(taskLinks.kind, "pull_request"),
             ),
-          );
-        eventInputs.push({
-          projectId: current.projectId,
-          taskId,
-          type: "link_removed",
-          summary: "removed the pull request link",
-        });
+          )
+          .returning({ id: taskLinks.id });
+        if (deleted.length > 0) {
+          eventInputs.push({
+            projectId: current.projectId,
+            taskId,
+            type: "link_removed",
+            summary: "removed the pull request link",
+          });
+        }
       } else {
         const classified = classifyLink(prUrl);
-        await tx
+        const [inserted] = await tx
           .insert(taskLinks)
           .values({
             taskId,
@@ -2654,14 +2659,17 @@ export async function updateTask(
           })
           .onConflictDoNothing({
             target: [taskLinks.taskId, taskLinks.url],
+          })
+          .returning({ id: taskLinks.id });
+        if (inserted) {
+          eventInputs.push({
+            projectId: current.projectId,
+            taskId,
+            type: "link_added",
+            summary: `linked ${classified.label ?? classified.kind}`,
+            targetRef: classified.url,
           });
-        eventInputs.push({
-          projectId: current.projectId,
-          taskId,
-          type: "link_added",
-          summary: `linked ${classified.label ?? classified.kind}`,
-          targetRef: classified.url,
-        });
+        }
       }
     }
 
@@ -2671,7 +2679,7 @@ export async function updateTask(
     let criteriaResult: AcceptanceCriterion[] | null = null;
     let decisionsResult: Decision[] | null = null;
     if (refetchNeeded) {
-      const children = await fetchTaskChildren(tx, taskId);
+      const children = childrenAfter ?? (await fetchTaskChildren(tx, taskId));
       criteriaResult = (children.acceptance_criteria ?? []).map((c) => ({
         id: c.id,
         text: c.text,
@@ -2848,6 +2856,18 @@ export async function addTaskLink(
       .update(tasks)
       .set({ updatedAt: new Date() })
       .where(eq(tasks.id, taskId));
+
+    if (inserted) {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: task.projectId,
+          taskId,
+          type: "link_added",
+          summary: `linked ${classified.label ?? classified.kind}`,
+          targetRef: classified.url,
+        },
+      ]);
+    }
     return { row, projectId: task.projectId };
   });
 
@@ -2876,6 +2896,9 @@ export async function removeTaskLink(
         linkId: taskLinks.id,
         taskId: taskLinks.taskId,
         projectId: tasks.projectId,
+        url: taskLinks.url,
+        label: taskLinks.label,
+        kind: taskLinks.kind,
       })
       .from(taskLinks)
       .innerJoin(tasks, eq(tasks.id, taskLinks.taskId))
@@ -2889,6 +2912,15 @@ export async function removeTaskLink(
       .set({ updatedAt: new Date() })
       .where(eq(tasks.id, row.taskId));
 
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: row.projectId,
+        taskId: row.taskId,
+        type: "link_removed",
+        summary: `removed link ${row.label ?? row.kind}`,
+        targetRef: row.url,
+      },
+    ]);
     return row;
   });
 
@@ -2972,6 +3004,15 @@ export async function updateTaskLink(
       .set({ updatedAt: new Date() })
       .where(eq(tasks.id, row.link.taskId));
 
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: row.projectId,
+        taskId: row.link.taskId,
+        type: "link_updated",
+        summary: `updated link to ${classified.label ?? classified.kind}`,
+        targetRef: classified.url,
+      },
+    ]);
     return { updated, projectId: row.projectId, taskId: row.link.taskId };
   });
 

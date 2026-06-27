@@ -2,8 +2,13 @@ import { sql, type SQL } from "drizzle-orm";
 import { type ReadConn } from "@/lib/db/raw";
 import type { ActivityEventType, ActivitySource } from "@/lib/types";
 
-/** Opaque keyset cursor decoded to its ordering pair. */
-export type ActivityCursor = { createdAt: Date; id: string };
+/**
+ * Opaque keyset cursor decoded to its ordering pair. `createdAt` is the
+ * microsecond-precision ISO text emitted by `created_at_cursor` (never a JS
+ * `Date`, which floors to milliseconds and would drop same-microsecond rows at
+ * a page boundary).
+ */
+export type ActivityCursor = { createdAt: string; id: string };
 
 /**
  * Raw snake-case row returned by {@link taskActivityStmt}. Read-time display
@@ -16,6 +21,7 @@ export type ActivityRawRow = {
   task_id: string | null;
   type: ActivityEventType;
   created_at: Date | string;
+  created_at_cursor: string;
   actor_user_id: string | null;
   source: ActivitySource;
   actor_client_id: string | null;
@@ -45,13 +51,15 @@ function activityPageSql(
   limit: number,
 ): SQL {
   const keyset = cur
-    ? sql`AND (ae.created_at < ${cur.createdAt.toISOString()}::timestamptz
-        OR (ae.created_at = ${cur.createdAt.toISOString()}::timestamptz
+    ? sql`AND (ae.created_at < ${cur.createdAt}::timestamptz
+        OR (ae.created_at = ${cur.createdAt}::timestamptz
             AND ae.id < ${cur.id}::uuid))`
     : sql``;
   return sql`
     SELECT
       ae.id, ae.project_id, ae.task_id, ae.type, ae.created_at,
+      to_char(ae.created_at AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_cursor,
       ae.actor_user_id, ae.source, ae.actor_client_id,
       ae.summary, ae.target_ref, ae.metadata,
       a.name AS actor_name,

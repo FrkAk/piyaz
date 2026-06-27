@@ -414,6 +414,10 @@ GRANT EXECUTE ON FUNCTION public.activity_actors_visible(uuid) TO app_user;
 
 -- Resolve a single OAuth client display name (not secret). Scalar to avoid
 -- text[] array binding on the read path; callers loop the page's few ids.
+-- Gated like the other actor SDFs: the name is disclosed only when the caller
+-- shares an org with an activity event attributed to that client, so the read
+-- path (which only asks about clients on rows it can already see) is
+-- unaffected while a direct call with a guessed clientId learns nothing.
 CREATE OR REPLACE FUNCTION public.oauth_client_name(p_client_id text)
 RETURNS text
 LANGUAGE sql
@@ -421,7 +425,18 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, piyaz_auth, pg_catalog, pg_temp
 AS $$
-  SELECT c.name FROM piyaz_auth."oauthClient" c WHERE c."clientId" = p_client_id;
+  SELECT c.name
+  FROM piyaz_auth."oauthClient" c
+  WHERE c."clientId" = p_client_id
+    AND EXISTS (
+      SELECT 1
+      FROM public.activity_events ae
+      INNER JOIN public.projects pj ON pj.id = ae.project_id
+      INNER JOIN piyaz_auth."member" caller
+        ON caller."organizationId" = pj.organization_id
+      WHERE ae.actor_client_id = p_client_id
+        AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
+    );
 $$;
 REVOKE EXECUTE ON FUNCTION public.oauth_client_name(text) FROM public;
 GRANT EXECUTE ON FUNCTION public.oauth_client_name(text) TO app_user;

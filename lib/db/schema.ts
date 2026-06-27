@@ -7,10 +7,12 @@ import {
   jsonb,
   boolean,
   index,
+  check,
   unique,
   uniqueIndex,
   primaryKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { organization, user } from "@/lib/db/auth-schema";
 import type {
   ProjectStatus,
@@ -292,6 +294,10 @@ export const activityEvents = pgTable(
       t.createdAt,
     ),
     index("activity_events_actor_user_id_idx").on(t.actorUserId),
+    check(
+      "activity_events_source_check",
+      sql`${t.source} IN ('web', 'mcp', 'system')`,
+    ),
   ],
 ).enableRLS();
 

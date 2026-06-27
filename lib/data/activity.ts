@@ -108,7 +108,17 @@ export function diffCriteria(
         summary: `added criterion "${c.text}"`,
         targetRef: c.id,
       });
-    } else if (prev.checked !== c.checked) {
+      continue;
+    }
+    if (prev.text !== c.text) {
+      events.push({
+        ...base,
+        type: "criterion_edited",
+        summary: `edited criterion "${c.text}"`,
+        targetRef: c.id,
+      });
+    }
+    if (prev.checked !== c.checked) {
       events.push({
         ...base,
         type: c.checked ? "criterion_checked" : "criterion_unchecked",
@@ -147,14 +157,22 @@ export function diffDecisions(
 ): ActivityEventInput[] {
   const events: ActivityEventInput[] = [];
   const base = { projectId, taskId };
-  const beforeIds = new Set(before.map((d) => d.id));
+  const beforeById = new Map(before.map((d) => [d.id, d]));
   const afterIds = new Set(after.map((d) => d.id));
   for (const d of after) {
-    if (!beforeIds.has(d.id)) {
+    const prev = beforeById.get(d.id);
+    if (!prev) {
       events.push({
         ...base,
         type: "decision_added",
         summary: `recorded decision "${d.text}"`,
+        targetRef: d.id,
+      });
+    } else if (prev.text !== d.text) {
+      events.push({
+        ...base,
+        type: "decision_edited",
+        summary: `edited decision "${d.text}"`,
         targetRef: d.id,
       });
     }
@@ -215,20 +233,38 @@ export function diffAssignees(
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
-/** Encode a keyset cursor from the last row of a page. */
-function encodeCursor(createdAt: Date, id: string): string {
-  return Buffer.from(`${createdAt.toISOString()}|${id}`).toString("base64url");
+/** Canonical UUID shape; guards the cursor id before it reaches a `::uuid` cast. */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Encode a keyset cursor from the last row of a page. `createdAt` is the
+ * microsecond-precision ISO text (`created_at_cursor`), stored verbatim so the
+ * seek literal matches the stored timestamp exactly.
+ *
+ * @param createdAt - Microsecond-precision ISO timestamp text.
+ * @param id - Row id (tie-break).
+ * @returns Opaque base64url cursor.
+ */
+function encodeCursor(createdAt: string, id: string): string {
+  return Buffer.from(`${createdAt}|${id}`).toString("base64url");
 }
 
-/** Decode a keyset cursor; returns null on malformed input. */
+/**
+ * Decode a keyset cursor, preserving the timestamp's full precision. Returns
+ * null on malformed input (callers treat that as the first page).
+ *
+ * @param cursor - Opaque base64url cursor from the client.
+ * @returns The decoded keyset position, or null when malformed.
+ */
 function decodeCursor(cursor: string): ActivityCursor | null {
   try {
     const [iso, id] = Buffer.from(cursor, "base64url")
       .toString("utf8")
       .split("|");
-    const createdAt = new Date(iso);
-    if (Number.isNaN(createdAt.getTime()) || !id) return null;
-    return { createdAt, id };
+    if (!iso || !id || Number.isNaN(new Date(iso).getTime())) return null;
+    if (!UUID_RE.test(id)) return null;
+    return { createdAt: iso, id };
   } catch {
     return null;
   }
@@ -295,6 +331,6 @@ export async function listTaskActivity(
   const last = page[page.length - 1];
   return {
     events: page.map(toActivityEvent),
-    nextCursor: hasMore ? encodeCursor(toDate(last.created_at), last.id) : null,
+    nextCursor: hasMore ? encodeCursor(last.created_at_cursor, last.id) : null,
   };
 }

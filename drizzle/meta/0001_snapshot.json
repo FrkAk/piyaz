@@ -1,5 +1,5 @@
 {
-  "id": "bc41bd28-dc40-497c-8dc7-3e4c9635f941",
+  "id": "7c9061e6-6b96-4fbc-a094-5861e9c59957",
   "prevId": "5a61a084-0f46-435e-92e8-1842edce65f6",
   "version": "7",
   "dialect": "postgresql",
@@ -181,7 +181,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "activity_events_source_check": {
+          "name": "activity_events_source_check",
+          "value": "\"activity_events\".\"source\" IN ('web', 'mcp', 'system')"
+        }
+      },
       "isRLSEnabled": true
     },
     "public.projects": {
