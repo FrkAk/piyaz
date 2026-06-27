@@ -5,17 +5,18 @@ import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignUpForm } from "@/components/auth/SignUpForm";
 import { WaitlistForm } from "@/components/auth/WaitlistForm";
+import { signupsDisabled } from "@/lib/config/env";
 
-const SIGNUPS_DISABLED = process.env.SIGNUPS_DISABLED === "true";
+const SIGNUPS_DISABLED = signupsDisabled();
 
 /**
- * Sign-up page. Renders the registration form when signups are open and an
- * "invite only" notice when `SIGNUPS_DISABLED` is set (prod). Post-create the
- * user lands on `/`; `requireMembership` forwards to `/onboarding/team`
- * because a fresh account has zero memberships.
+ * Sign-up page. Renders the registration form when signups are open
+ * (self-host and dev) and an "invite only" notice when they are disabled
+ * (hosted prod). Post-create the user lands on `/`; `requireMembership`
+ * forwards to `/onboarding/team` because a fresh account has zero memberships.
  *
  * @returns Server-rendered auth shell with form or invite-only notice
- *   depending on `SIGNUPS_DISABLED`.
+ *   depending on `signupsDisabled()`.
  */
 export default function SignUpPage() {
   return (

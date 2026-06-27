@@ -12,13 +12,9 @@ import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
+import { signupsDisabled } from "@/lib/config/env";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
-
-// Per-environment signup gate, read at runtime so the dev and prod workers
-// can diverge (both set DEPLOY_TARGET=cloudflare). Truthy keeps the deploy
-// invite-only; absent/false opens self-service signup.
-const SIGNUPS_DISABLED = process.env.SIGNUPS_DISABLED === "true";
 
 /**
  * Canonical set of OAuth scopes this provider grants. Single source of
@@ -57,8 +53,7 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     revokeSessionsOnPasswordReset: true,
-    // Invite-only when SIGNUPS_DISABLED is set (prod); dev and self-host open.
-    disableSignUp: SIGNUPS_DISABLED,
+    disableSignUp: signupsDisabled(),
   },
   // Route OAuth authorization-code (and other single-use verification)
   // consume through the DB-atomic `runWithTransaction` + `consumeOne` path

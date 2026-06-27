@@ -86,8 +86,7 @@
       },
       "vars": {
         "DEPLOY_TARGET": "cloudflare",
-        "BETTER_AUTH_URL": "https://app.piyaz.ai",
-        "SIGNUPS_DISABLED": "true"
+        "BETTER_AUTH_URL": "https://app.piyaz.ai"
       }
     },
     "dev": {
@@ -161,8 +160,7 @@
       },
       "vars": {
         "DEPLOY_TARGET": "cloudflare",
-        "BETTER_AUTH_URL": "https://dev.app.piyaz.ai",
-        "SIGNUPS_DISABLED": "false"
+        "BETTER_AUTH_URL": "https://dev.app.piyaz.ai"
       }
     }
   }
