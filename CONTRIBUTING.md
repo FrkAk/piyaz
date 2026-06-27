@@ -90,27 +90,6 @@ Format: `<type>: <short description>`
 
 Examples: `fix: resolve rate limiter timing on 429`, `feat: add task dependency visualization`
 
-Commit types drive releases: `feat` bumps the minor version, `fix` and `perf` bump the patch, and a `!` or `BREAKING CHANGE` footer marks a breaking change. While the project is pre-1.0 (`0.x`), breaking changes bump the **minor** version, not the major, so a release never jumps to `1.0.0` by accident (`bump-minor-pre-major`); past `1.0.0` they bump the major. Other types (`chore`, `ci`, `docs`, `refactor`, `test`, `style`, `build`) never cut a release on their own.
-
-## Releasing
-
-Releases are automated with [release-please](https://github.com/googleapis/release-please). A release is a `v*` git tag plus a public GitHub Release whose notes are the generated changelog; it ships no package or binary. It is a version marker for the community and self-hosters, and the trigger for the gated production deploy.
-
-The flow:
-
-1. Conventional commits merged to `main` accumulate into a **Release PR** that release-please keeps open. The PR bumps one lockstep version across `package.json`, the four plugin manifests, and the MCP server string, and regenerates `CHANGELOG.md`.
-2. **Merging the Release PR is the release.** It creates the `v<version>` tag and the GitHub Release.
-3. The published Release triggers `deploy.yml`, which migrates and deploys production behind the `production` Environment's required-reviewer approval. Dev (`dev.app.piyaz.ai`) is unaffected; it redeploys on every push to `main`.
-
-Do not hand-edit `CHANGELOG.md` or version fields; release-please owns them.
-
-### One-time setup
-
-The release workflow authenticates as a GitHub App so the Release event can trigger `deploy.yml` (a Release created with the default `GITHUB_TOKEN` cannot trigger other workflows). To enable it:
-
-1. Create a GitHub App with repository permissions **Contents: Read & write** and **Pull requests: Read & write**, and install it on the repository.
-2. Add two repository secrets: `RELEASE_PLEASE_APP_ID` (the App's ID) and `RELEASE_PLEASE_APP_PRIVATE_KEY` (a generated private key).
-
 ## Licensing
 
 By submitting a pull request, you agree that your contribution may be distributed under both the AGPL 3.0 and the commercial license. See [LICENSING.md](LICENSING.md) for details.

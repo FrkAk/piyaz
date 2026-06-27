@@ -1,18 +1,8 @@
 name: Release
 
-# release-please watches conventional commits on main and maintains a single
-# Release PR that bumps the product version and regenerates CHANGELOG.md.
-# Merging that PR is the deliberate one-click release: it tags v<version> and
-# publishes a public GitHub Release whose notes are the generated changelog.
-# A release ships no package or artifact; it is a version marker (for the OSS
-# community and self-hosters) and the trigger for the gated prod deploy.
-#
-# deploy.yml runs on `release: published`, but a Release created with the
-# default GITHUB_TOKEN cannot trigger another workflow. So release-please runs
-# under a GitHub App token: the release event then fires deploy.yml (which
-# still gates prod behind the `production` Environment approval), and CI runs
-# on the Release PR. Dev (dev.app.piyaz.ai) is unaffected; it deploys on every
-# push to main via deploy-dev.yml.
+# Runs under a GitHub App token, not GITHUB_TOKEN: a Release created with the
+# default token cannot trigger deploy.yml's `release: published` run, so prod
+# would never deploy.
 on:
   push:
     branches: [main]

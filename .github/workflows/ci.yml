@@ -6,11 +6,9 @@ on:
   pull_request:
     branches: [main]
 
-# The full suite (DB tests + schema-drift) runs on PRs: that is the merge gate.
-# On push to main only a fast smoke subset runs (audit, format, lint,
-# typecheck, check:plugins) as a safety net for admin-bypassed merges and to
-# gate the dev deploy; the heavy steps already ran on the up-to-date PR. Rapid
-# PR pushes cancel their own superseded runs; main runs are never cancelled.
+# Full suite runs on PRs (the merge gate). Push to main runs only the smoke
+# steps; the heavy DB tests + schema-drift already passed on the up-to-date PR
+# and stay a net for admin-bypassed merges. Superseded PR runs are cancelled.
 concurrency:
   group: quality-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
