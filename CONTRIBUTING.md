@@ -81,12 +81,13 @@ Both must pass. CI will run them automatically on your PR.
 - Create a feature branch from `main`.
 - Keep changes focused. One concern per PR.
 - Use the PR template and fill in all sections.
+- The PR title must follow Conventional Commits (`<type>: <description>`); CI rejects titles that don't.
 - All PRs require a review and must pass CI before merging.
 - Squash merge is the only merge strategy.
 
 ## Commit messages
 
-Format: `<type>: <short description>`
+Commits follow [Conventional Commits](https://www.conventionalcommits.org): `<type>: <short description>`. Allowed types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `perf`, `style`, `build`, `revert`.
 
 Examples: `fix: resolve rate limiter timing on 429`, `feat: add task dependency visualization`
 
