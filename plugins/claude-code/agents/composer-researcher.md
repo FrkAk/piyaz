@@ -120,7 +120,7 @@ Run these in the order given; do not skip. Steps 2–5 can fan out in parallel w
 
    - **`description`**: when the existing description fails the rubric in artifacts §1, rewrite it. Cite the codebase reads that justify the rewrite. If the rewrite preserves scope and intent (sharper wording, concrete file paths, missing context filled in), apply directly. If the rewrite would change what the task IS (different scope, different deliverable), do not apply; emit the proposal in `## Proposed rewrites` per *Substantive rewrites: propose, do not apply* above.
    - **`acceptanceCriteria`**: apply the binary rewrites/additions from step 6 directly (same intent, sharper wording). If your investigation shows the AC composition itself needs to change (different criteria, different coverage scope), do not apply; emit the proposal in `## Proposed rewrites`.
-   - **`tags`**: when the three-dimension taxonomy in artifacts §2 is incomplete, add the missing dimensions. Run `piyaz_query type='meta'` first to reuse existing vocabulary.
+   - **`tags`**: bring every task to the full three-dimension shape before handoff: exactly 1 work-type, at least 1 cross-cutting concern, at most 2 tech. This is a gate, not optional fill-in. A task that reaches the planner with a missing or degenerate dimension is a researcher miss; you own `tags`, so no later phase can fix it. Strip any `area:` prefix: codebase area is `category`'s job, never a tag (artifacts §2). Map an `area:x` tag to the matching category, or drop it. Run `piyaz_query type='meta'` first to reuse existing vocabulary.
    - **`category`**: set to the closest match from `piyaz_query type='meta'`. Never coin a new category, and never use process phases (`requirements`, `planning`, `review`), work types, or priorities as a category — those shapes are forbidden; categories are subsystems/product areas only.
    - **`priority`**: adjust when your investigation surfaces evidence the current value is wrong (e.g., a security boundary the task crosses argues for `core` or `urgent`).
    - **`estimate`**: adjust up or down within the Fibonacci scale (`1, 2, 3, 5, 8, 13`) when scope drift is evident. The field is bounded; never propose a value above `13`. If your scope analysis shows the work exceeds what `13` represents, do not invent a higher estimate; raise `oversize-task` in *Flags* so the orchestrator routes to `piyaz:decompose-task` before planning. Do not write to `decisions` just to record the bump; the field's prior/new value is in the audit log.
@@ -216,7 +216,7 @@ When the composer workflow dispatches you, a structured-output schema is attache
 - `brief`: the full markdown brief, verbatim.
 - `confidence`: your calibrated confidence in `[0,1]`.
 - `estimate`: the refined Fibonacci estimate (`1, 2, 3, 5, 8, 13`) or `null`. This drives the implementer's and reviewer's model tier downstream, so report the value you actually applied, not the pick-time guess.
-- `workType`: the work-type tag you settled on (`feat`/`fix`/`refactor`/`docs`/`test`/`chore`/`perf`) or `null`.
+- `workType`: the conventional-commit alias of the work type you settled on (`feat`/`fix`/`refactor`/`docs`/`test`/`chore`/`perf`) or `null` — the alias form (`feature`→`feat`, `bug`→`fix`), not the literal tag.
 - `flags`: the *Flags* list, controlled vocabulary.
 - `proposedRewrites`: one entry per substantive rewrite (`field`, `proposed`, `rationale`); empty when none.
 - `openQuestions`: the *Open questions* list.
