@@ -90,7 +90,7 @@ Format: `<type>: <short description>`
 
 Examples: `fix: resolve rate limiter timing on 429`, `feat: add task dependency visualization`
 
-Commit types drive releases: `feat` bumps the minor version, `fix` and `perf` bump the patch, and a `!` or `BREAKING CHANGE` footer bumps the major. Other types (`chore`, `ci`, `docs`, `refactor`, `test`, `style`, `build`) never cut a release on their own.
+Commit types drive releases: `feat` bumps the minor version, `fix` and `perf` bump the patch, and a `!` or `BREAKING CHANGE` footer marks a breaking change. While the project is pre-1.0 (`0.x`), breaking changes bump the **minor** version, not the major, so a release never jumps to `1.0.0` by accident (`bump-minor-pre-major`); past `1.0.0` they bump the major. Other types (`chore`, `ci`, `docs`, `refactor`, `test`, `style`, `build`) never cut a release on their own.
 
 ## Releasing
 
