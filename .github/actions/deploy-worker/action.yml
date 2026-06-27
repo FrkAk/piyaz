@@ -1,0 +1,65 @@
+name: Migrate and deploy Worker
+description: >-
+  Migrate the target Neon database as the dedicated migrator role, then build
+  and deploy the Worker. Shared by the dev (deploy-dev.yml) and production
+  (deploy.yml) workflows; the caller job owns the Environment, trigger,
+  concurrency, and checkout ref.
+
+inputs:
+  migration_url:
+    description: migrator-role DIRECT (unpooled) Neon URL for db:migrate.
+    required: true
+  cloudflare_api_token:
+    description: Cloudflare API token for the Worker deploy.
+    required: true
+  cloudflare_account_id:
+    description: Cloudflare account id.
+    required: true
+  better_auth_url:
+    description: Public base URL bound as BETTER_AUTH_URL for the build/deploy.
+    required: true
+  deploy_script:
+    description: package.json script that builds and deploys (deploy:cf | deploy:cf:dev).
+    required: true
+  cache_prefix:
+    description: Prefix for the build-artefact cache key.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+
+    - name: Cache build artefacts
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.bun/install/cache
+          node_modules/.cache
+          .next/cache
+        key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        restore-keys: |
+          ${{ inputs.cache_prefix }}-${{ runner.os }}-
+
+    - name: Install dependencies
+      shell: bash
+      run: bun install --frozen-lockfile
+
+    # Migrations run as the dedicated `migrator` role (owns public + drizzle,
+    # isolated from the app's service_role) over the DIRECT (unpooled) Neon
+    # host. If this step fails the job stops and the Worker is NOT deployed.
+    - name: Migrate database
+      shell: bash
+      env:
+        DATABASE_MIGRATION_URL: ${{ inputs.migration_url }}
+      run: bun run db:migrate
+
+    - name: Build and deploy Worker
+      shell: bash
+      env:
+        DEPLOY_TARGET: cloudflare
+        BETTER_AUTH_URL: ${{ inputs.better_auth_url }}
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare_api_token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
+      run: bun run ${{ inputs.deploy_script }}
