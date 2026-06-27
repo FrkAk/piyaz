@@ -172,6 +172,7 @@ export function diffTaskChanges(
       summary: changes.category
         ? `set category to ${changes.category}`
         : "cleared category",
+      metadata: { from: current.category, to: changes.category },
     });
   }
   if (

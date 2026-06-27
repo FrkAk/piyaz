@@ -252,7 +252,11 @@ export function DetailView({
 
             <ExecutionSection record={task.executionRecord} />
 
-            <ActivitySection projectId={projectId} taskId={task.id} />
+            <ActivitySection
+              projectId={projectId}
+              taskId={task.id}
+              taskMap={taskMap}
+            />
           </div>
         )}
       </div>

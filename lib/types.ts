@@ -118,6 +118,12 @@ export type ActivityEvent = {
   actorAvatar: string | null;
   source: ActivitySource;
   agent: string | null;
+  /**
+   * Whether the harness OAuth client is on the verified allowlist. Gates brand
+   * polish in the UI (`formatOAuthClientName`): an unverified client's raw
+   * registered name is shown verbatim so a spoofed name is never laundered.
+   */
+  agentVerified: boolean;
   summary: string;
   targetRef: string | null;
   metadata: Record<string, unknown> | null;

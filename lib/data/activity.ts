@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/raw/fetch-task-activity";
 import type { ActorDescriptor, AuthContext } from "@/lib/auth/context";
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
+import { isVerifiedOAuthClient } from "@/lib/auth/verified-oauth-clients";
 
 /** The three durable actor columns written onto every event row. */
 export type ActorColumns = {
@@ -294,6 +295,8 @@ function toActivityEvent(r: ActivityRawRow): ActivityEvent {
     actorAvatar: r.actor_image,
     source: r.source,
     agent: r.agent_name,
+    agentVerified:
+      r.actor_client_id != null && isVerifiedOAuthClient(r.actor_client_id),
     summary: r.summary,
     targetRef: r.target_ref,
     metadata: r.metadata,
