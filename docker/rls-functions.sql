@@ -7,12 +7,12 @@
 --
 -- KEEP IN SYNC WITH lib/data/team-invite-code.ts (JS callers).
 --
--- OWNER-MANAGED — NOT applied by db:migrate. These run as their owner
+-- OWNER-MANAGED. NOT applied by db:migrate. These run as their owner
 -- (SECURITY DEFINER) and several read piyaz_auth, so they must be owned by the
 -- database owner (the role with auth-schema access), not a least-privilege
--- migration role. To change one: edit this file, then apply it as the database
--- owner — idempotent (CREATE OR REPLACE). Never hand-edit functions on a live
--- database.
+-- migration role. To change one: edit this file, then re-apply it as the
+-- database owner; it is idempotent (CREATE OR REPLACE). Never hand-edit
+-- functions on a live database.
 -- ---------------------------------------------------------------------------
 
 -- Diagnostic only: returns four non-identifying fields so a guessed code

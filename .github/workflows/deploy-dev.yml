@@ -2,7 +2,7 @@ name: Deploy Dev
 
 # Trunk-based integration env: every push to main that passes Quality Check
 # migrates the standing piyaz-dev Neon DB and redeploys the piyaz-dev Worker.
-# No approval gate — this is the fast-feedback environment that always
+# No approval gate; this is the fast-feedback environment that always
 # reflects main. Production is separate and release-gated (see deploy.yml).
 on:
   workflow_run:
