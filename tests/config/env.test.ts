@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { parseEnvInt } from "@/lib/config/env";
+import { test, expect, afterEach } from "bun:test";
+import { parseEnvInt, signupsDisabled } from "@/lib/config/env";
 
 test("parses a plain non-negative integer", () => {
   expect(parseEnvInt("42", 7)).toBe(42);
@@ -26,4 +26,48 @@ test("falls back on malformed, negative, or non-finite values", () => {
 
 test("truncates fractional values to integers", () => {
   expect(parseEnvInt("1.9", 7)).toBe(1);
+});
+
+const ORIGINAL_TARGET = process.env.NEXT_PUBLIC_DEPLOY_TARGET;
+const ORIGINAL_ENABLED = process.env.NEXT_PUBLIC_SIGNUPS_ENABLED;
+
+/**
+ * Set the two signup-gate env vars (undefined deletes), so each case exercises
+ * a distinct deploy shape.
+ *
+ * @param target - `NEXT_PUBLIC_DEPLOY_TARGET` value, or undefined to unset.
+ * @param enabled - `NEXT_PUBLIC_SIGNUPS_ENABLED` value, or undefined to unset.
+ */
+function setSignupEnv(
+  target: string | undefined,
+  enabled: string | undefined,
+): void {
+  if (target === undefined) delete process.env.NEXT_PUBLIC_DEPLOY_TARGET;
+  else process.env.NEXT_PUBLIC_DEPLOY_TARGET = target;
+  if (enabled === undefined) delete process.env.NEXT_PUBLIC_SIGNUPS_ENABLED;
+  else process.env.NEXT_PUBLIC_SIGNUPS_ENABLED = enabled;
+}
+
+afterEach(() => {
+  setSignupEnv(ORIGINAL_TARGET, ORIGINAL_ENABLED);
+});
+
+test("signup open on self-host (no Cloudflare target)", () => {
+  setSignupEnv(undefined, undefined);
+  expect(signupsDisabled()).toBe(false);
+});
+
+test("signup open on the dev Worker (hosted with explicit opt-in)", () => {
+  setSignupEnv("cloudflare", "true");
+  expect(signupsDisabled()).toBe(false);
+});
+
+test("signup disabled on hosted prod (no opt-in)", () => {
+  setSignupEnv("cloudflare", undefined);
+  expect(signupsDisabled()).toBe(true);
+});
+
+test("signup disabled on a misconfigured hosted build (opt-in not 'true')", () => {
+  setSignupEnv("cloudflare", "false");
+  expect(signupsDisabled()).toBe(true);
 });
