@@ -2,9 +2,8 @@
  * Pre-migrate guard: assert the Drizzle migration journal is internally
  * consistent before `drizzle-kit migrate` runs. The journal must exist, list
  * at least one entry, and every entry must have its `<tag>.sql` migration and
- * `<idx>_snapshot.json`. Runs on every migrate path (dev auto-deploy, prod
- * release, local) so a partial migration commit fails fast here instead of
- * mid-deploy inside drizzle-kit.
+ * `<idx>_snapshot.json`. Runs before every `drizzle-kit migrate` so a partial
+ * migration commit fails fast here instead of part-way through applying DDL.
  *
  * Exits with code 1 on any inconsistency and prints what is missing.
  */

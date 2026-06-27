@@ -22,7 +22,7 @@
    bun install
    ```
 
-4. Start Postgres and push the schema:
+4. Start Postgres and apply the schema:
 
    ```sh
    bun run db:setup
@@ -38,12 +38,12 @@
 
 The `public` schema is owned by Drizzle (`lib/db/schema.ts` generates `drizzle/`). The `piyaz_auth` schema, the three Postgres roles, grants, and RLS policies/functions are hand-written SQL under `docker/`.
 
-Persistent databases (dev and production) use versioned migrations, never `push`:
+A running instance holds real data, so schema changes ship as versioned migrations, never `push`:
 
 - `bun run db:generate` writes a migration from `lib/db/schema.ts` changes.
-- `bun run db:migrate` applies pending migrations as the dedicated `migrator` role over the direct (unpooled) Neon host. `migrator` owns the `public` and `drizzle` schemas and is used only by CI — it is deliberately separate from the app's `service_role`, so a leaked migration credential cannot widen app runtime privileges.
+- `bun run db:migrate` applies pending migrations to your database.
 
-`db:push` is only for throwaway databases (the local Docker container via `db:setup`, and the CI test container). It force-syncs and can drop columns, so it never runs against a persistent database. CI fails a PR when `db:generate` produces an uncommitted migration, so a `schema.ts` change cannot merge without its migration.
+`db:push` is only for throwaway databases (the CI test container). It force-syncs and can drop columns, so it never runs against a database with real data. CI fails a PR when `db:generate` produces an uncommitted migration, so a `schema.ts` change cannot land without its migration.
 
 ### Adding a table
 
@@ -61,23 +61,9 @@ Grants and policies are explicit per table on purpose. `ALTER DEFAULT PRIVILEGES
 
 ### Changing RLS helper functions
 
-The `SECURITY DEFINER` functions in `docker/rls-functions.sql` (e.g. `current_user_org_ids`) are owned by `neondb_owner`, not the `migrator` role, and are **not** applied by `db:migrate` — several read `piyaz_auth`, so they must run as a role with auth-schema access, which `migrator` deliberately lacks. To change one: edit `docker/rls-functions.sql`, then apply that file to the target database as `neondb_owner` (idempotent — `CREATE OR REPLACE`); never hand-edit a live database. Table, column, index, and policy changes still flow through `db:migrate` as `migrator`.
+The `SECURITY DEFINER` functions in `docker/rls-functions.sql` (such as `current_user_org_ids`) are owned by the database owner and are **not** applied by `db:migrate`. Several read `piyaz_auth`, so they must run as a role with auth-schema access, which a least-privilege migration role lacks. To change one: edit `docker/rls-functions.sql`, then re-apply that file to your database as the owner (idempotent via `CREATE OR REPLACE`); never hand-edit a live database. Table, column, index, and policy changes still flow through `db:migrate`.
 
-## Deploys and rollback
-
-Two environments, both driven by versioned migrations:
-
-- **Dev** (`piyaz-dev`): every push to `main` that passes CI runs `db:migrate` against the dev Neon DB and redeploys the dev Worker (`.github/workflows/deploy-dev.yml`). No gate — this env always reflects `main`.
-- **Production**: deploys only when a GitHub Release is published (`.github/workflows/deploy.yml`), inside the `production` Environment whose required reviewers approve every prod migration + deploy. The migration runs before the deploy, and the deploy aborts if it fails. Cut releases from a `main` commit that already passed CI.
-
-Migrations are roll-forward only (Drizzle has no down-migrations), so follow expand/contract: additive changes ship with the code that needs them; destructive cleanups (drop column/table) ship in a separate later release, keeping every deploy roll-forward-safe.
-
-**Rollback** is via Neon, not a down-migration:
-
-- Code-only regression: redeploy the previous release tag.
-- Bad migration: Neon instant-restore the prod branch to a timestamp just before the deploy (history window is 6h on the free plan; bump to 7d on a paid plan for a wider window), or restore from a branch snapshot taken immediately before the migrate.
-
-**Secrets** live in GitHub Environments, never in the repo or `.env`. The migration credential is the `migrator` role's direct URL: `DATABASE_MIGRATION_URL_PROD` belongs only to the `production` Environment, `DATABASE_MIGRATION_URL_DEV` to the `dev` Environment. These are distinct from the Worker's runtime `service_role` URL, which is set per environment with `wrangler secret put`.
+Migrations are roll-forward only (Drizzle has no down-migrations), so follow expand/contract: additive changes ship with the code that needs them; destructive cleanups (drop column/table) ship in a separate later change, keeping every upgrade roll-forward-safe.
 
 ## Before submitting a PR
 

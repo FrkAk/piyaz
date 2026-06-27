@@ -7,12 +7,12 @@
 --
 -- KEEP IN SYNC WITH lib/data/team-invite-code.ts (JS callers).
 --
--- OWNER-MANAGED — NOT applied by db:migrate. Owned by neondb_owner, not the CI
--- `migrator` role: these run as their owner (SECURITY DEFINER) and several read
--- piyaz_auth, so they must be owned by a role with auth-schema access — which
--- `migrator` intentionally lacks (it also can't alter them, a safety bonus). To
--- change one: edit this file, then apply it as neondb_owner — idempotent
--- (CREATE OR REPLACE). Never hand-edit functions on a live database.
+-- OWNER-MANAGED — NOT applied by db:migrate. These run as their owner
+-- (SECURITY DEFINER) and several read piyaz_auth, so they must be owned by the
+-- database owner (the role with auth-schema access), not a least-privilege
+-- migration role. To change one: edit this file, then apply it as the database
+-- owner — idempotent (CREATE OR REPLACE). Never hand-edit functions on a live
+-- database.
 -- ---------------------------------------------------------------------------
 
 -- Diagnostic only: returns four non-identifying fields so a guessed code
