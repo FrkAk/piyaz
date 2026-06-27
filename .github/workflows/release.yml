@@ -1,0 +1,40 @@
+name: Release
+
+# release-please watches conventional commits on main and maintains a single
+# Release PR that bumps the product version and regenerates CHANGELOG.md.
+# Merging that PR is the deliberate one-click release: it tags v<version> and
+# publishes a public GitHub Release whose notes are the generated changelog.
+# A release ships no package or artifact; it is a version marker (for the OSS
+# community and self-hosters) and the trigger for the gated prod deploy.
+#
+# deploy.yml runs on `release: published`, but a Release created with the
+# default GITHUB_TOKEN cannot trigger another workflow. So release-please runs
+# under a GitHub App token: the release event then fires deploy.yml (which
+# still gates prod behind the `production` Environment approval), and CI runs
+# on the Release PR. Dev (dev.app.piyaz.ai) is unaffected; it deploys on every
+# push to main via deploy-dev.yml.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    if: github.repository == 'FrkAk/piyaz'
+    steps:
+      - name: Mint a GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+      - name: Run release-please
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
