@@ -34,35 +34,12 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Cache build artefacts
-        uses: actions/cache@v5
+      - name: Migrate + deploy
+        uses: ./.github/actions/deploy-worker
         with:
-          path: |
-            ~/.bun/install/cache
-            node_modules/.cache
-            .next/cache
-          key: deploy-dev-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            deploy-dev-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # Migrations run as the dedicated `migrator` role (owns public + drizzle,
-      # isolated from the app's service_role) over the DIRECT (unpooled) Neon host.
-      - name: Migrate dev database
-        env:
-          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL_DEV }}
-        run: bun run db:migrate
-
-      # Deploy only runs if the migrate step above succeeded.
-      - name: Deploy dev Worker (piyaz-dev)
-        env:
-          DEPLOY_TARGET: cloudflare
-          BETTER_AUTH_URL: https://dev.app.piyaz.ai
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: bun run deploy:cf:dev
+          migration_url: ${{ secrets.DATABASE_MIGRATION_URL_DEV }}
+          cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          better_auth_url: https://dev.app.piyaz.ai
+          deploy_script: deploy:cf:dev
+          cache_prefix: deploy-dev

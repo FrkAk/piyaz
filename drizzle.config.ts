@@ -15,11 +15,6 @@ if (existsSync(envPath)) {
   }
 }
 
-// drizzle-kit migrate/push runs DDL — needs a role that owns the schema or has
-// BYPASSRLS + CREATE. Persistent DBs (dev/prod CI) pass the dedicated `migrator`
-// role via DATABASE_MIGRATION_URL; local throwaway containers reuse
-// service_role's DATABASE_SERVICE_ROLE_URL. Falls back to DATABASE_URL for
-// pre-RLS single-role setups.
 const pushUrl =
   process.env.DATABASE_MIGRATION_URL ??
   process.env.DATABASE_SERVICE_ROLE_URL ??
@@ -36,9 +31,6 @@ export default defineConfig({
   schema: ["./lib/db/schema.ts"],
   dialect: "postgresql",
   schemaFilter: ["public"],
-  // Pin the migration journal location so dev, prod, and CI agree. These are
-  // the PostgreSQL defaults; pinning makes the `migrate` mark-applied step and
-  // the drift gate deterministic across environments.
   migrations: {
     schema: "drizzle",
     table: "__drizzle_migrations",

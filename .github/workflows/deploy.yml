@@ -25,41 +25,31 @@ jobs:
       name: production
       url: https://app.piyaz.ai
     steps:
+      # The release trigger accepts any tag; require the released commit to be
+      # contained in main so a tag cut off an unmerged/never-CI'd commit cannot
+      # migrate and deploy prod.
+      - name: Assert the released tag is on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(gh api "repos/${{ github.repository }}/compare/main...${{ github.event.release.tag_name }}" --jq '.status')
+          if [ "$status" != "identical" ] && [ "$status" != "behind" ]; then
+            echo "::error::Released tag ${{ github.event.release.tag_name }} is not contained in main (compare status: $status). Refusing to deploy."
+            exit 1
+          fi
+
       - name: Checkout the released tag
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Cache build artefacts
-        uses: actions/cache@v5
+      - name: Migrate + deploy
+        uses: ./.github/actions/deploy-worker
         with:
-          path: |
-            ~/.bun/install/cache
-            node_modules/.cache
-            .next/cache
-          key: deploy-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            deploy-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # Migrations run as the dedicated `migrator` role (owns public + drizzle,
-      # isolated from the app's service_role) over the DIRECT (unpooled) Neon host.
-      # If this step fails the job stops and the Worker is NOT deployed.
-      - name: Migrate production database
-        env:
-          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL_PROD }}
-        run: bun run db:migrate
-
-      - name: Deploy to Cloudflare Workers (production)
-        env:
-          DEPLOY_TARGET: cloudflare
-          BETTER_AUTH_URL: https://app.piyaz.ai
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: bun run deploy:cf
+          migration_url: ${{ secrets.DATABASE_MIGRATION_URL_PROD }}
+          cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          better_auth_url: https://app.piyaz.ai
+          deploy_script: deploy:cf
+          cache_prefix: deploy
