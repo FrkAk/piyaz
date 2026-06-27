@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# The full suite (DB tests + schema-drift) runs on PRs: that is the merge gate.
+# On push to main only a fast smoke subset runs (audit, format, lint,
+# typecheck, check:plugins) as a safety net for admin-bypassed merges and to
+# gate the dev deploy; the heavy steps already ran on the up-to-date PR. Rapid
+# PR pushes cancel their own superseded runs; main runs are never cancelled.
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -68,6 +77,7 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
       - name: Schema drift gate
+        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--')
         env:
           # db:generate is offline (diffs schema.ts against the committed
           # snapshot); this URL only satisfies drizzle.config's presence check.
@@ -81,6 +91,7 @@ jobs:
             exit 1
           fi
       - name: Test
+        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--')
         env:
           TEST_DATABASE_URL: postgres://piyaz:piyaz@localhost:5432/piyaz_test
         run: bun run test
