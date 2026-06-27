@@ -48,11 +48,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Migrations run as service_role over the DIRECT (unpooled) Neon host.
+      # Migrations run as the dedicated `migrator` role (owns public + drizzle,
+      # isolated from the app's service_role) over the DIRECT (unpooled) Neon host.
       # If this step fails the job stops and the Worker is NOT deployed.
       - name: Migrate production database
         env:
-          DATABASE_SERVICE_ROLE_URL: ${{ secrets.DATABASE_SERVICE_ROLE_URL_PROD }}
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL_PROD }}
         run: bun run db:migrate
 
       - name: Deploy to Cloudflare Workers (production)

@@ -41,7 +41,7 @@ The `public` schema is owned by Drizzle (`lib/db/schema.ts` generates `drizzle/`
 Persistent databases (dev and production) use versioned migrations, never `push`:
 
 - `bun run db:generate` writes a migration from `lib/db/schema.ts` changes.
-- `bun run db:migrate` applies pending migrations as `service_role` over the direct (unpooled) Neon host.
+- `bun run db:migrate` applies pending migrations as the dedicated `migrator` role over the direct (unpooled) Neon host. `migrator` owns the `public` and `drizzle` schemas and is used only by CI — it is deliberately separate from the app's `service_role`, so a leaked migration credential cannot widen app runtime privileges.
 
 `db:push` is only for throwaway databases (the local Docker container via `db:setup`, and the CI test container). It force-syncs and can drop columns, so it never runs against a persistent database. CI fails a PR when `db:generate` produces an uncommitted migration, so a `schema.ts` change cannot merge without its migration.
 
@@ -73,7 +73,7 @@ Migrations are roll-forward only (Drizzle has no down-migrations), so follow exp
 - Code-only regression: redeploy the previous release tag.
 - Bad migration: Neon instant-restore the prod branch to a timestamp just before the deploy (history window is 6h on the free plan; bump to 7d on a paid plan for a wider window), or restore from a branch snapshot taken immediately before the migrate.
 
-**Secrets** live in GitHub Environments, never in the repo or `.env`. The prod `service_role` URL (`DATABASE_SERVICE_ROLE_URL_PROD`) belongs only to the `production` Environment; the dev URL (`DATABASE_SERVICE_ROLE_URL_DEV`) to the `dev` Environment. Worker runtime secrets are set per environment with `wrangler secret put`.
+**Secrets** live in GitHub Environments, never in the repo or `.env`. The migration credential is the `migrator` role's direct URL: `DATABASE_MIGRATION_URL_PROD` belongs only to the `production` Environment, `DATABASE_MIGRATION_URL_DEV` to the `dev` Environment. These are distinct from the Worker's runtime `service_role` URL, which is set per environment with `wrangler secret put`.
 
 ## Before submitting a PR
 
