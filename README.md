@@ -96,6 +96,26 @@ bun run start
 
 Install the plugin for your agent as above, but select the **`piyaz-local`** server (it points at `http://localhost:3000/api/mcp`). Advanced self-hosters on a custom domain can set `PIYAZ_URL` to repoint the default `piyaz` server in Claude Code; Codex and Cursor read a hardcoded hosted URL, so edit their `mcp.json` directly if you need a custom domain.
 
+### Upgrading
+
+Your database holds real data, so schema changes apply as versioned migrations, never `db:push` (it force-syncs and can drop columns). To upgrade:
+
+```bash
+git pull
+bun install --production
+bun run db:migrate
+bun run build
+bun run start
+```
+
+If an upgrade also changes the hand-written RLS helpers, re-apply the affected `docker/*.sql` files, for example:
+
+```bash
+docker exec -i piyaz-db-1 psql -U piyaz -d piyaz < docker/rls-functions.sql
+```
+
+> **Upgrading from a pre-migrations install:** instances first set up before versioned migrations existed have an empty migration journal, so `db:migrate` tries to recreate existing tables and fails. Run `bun run db:baseline` once to mark the current schema as the baseline, then run `bun run db:migrate`. Running `db:baseline` on a newer install is a safe no-op.
+
 Contributors install from the local checkout: `claude plugin marketplace add ./plugins/claude-code` (Claude Code), `codex plugin marketplace add ./plugins` (Codex), or copy `plugins/cursor` into `~/.cursor/plugins/local/`. Shared skills live in `plugins/claude-code/` (canonical); after editing them run `bun run sync:plugins` to regenerate every brand's copy (`bun run check:plugins` is CI-enforced).
 
 ---

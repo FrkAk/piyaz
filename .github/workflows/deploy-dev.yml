@@ -1,0 +1,45 @@
+name: Deploy Dev
+
+# Trunk-based integration env: every push to main that passes Quality Check
+# migrates the standing piyaz-dev Neon DB and redeploys the piyaz-dev Worker.
+# No approval gate; this is the fast-feedback environment that always
+# reflects main. Production is separate and release-gated (see deploy.yml).
+on:
+  workflow_run:
+    workflows: ["Quality Check"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy-dev:
+    name: Migrate + deploy dev (piyaz-dev)
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.repository == 'FrkAk/piyaz'
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    environment:
+      name: dev
+      url: https://dev.app.piyaz.ai
+    steps:
+      - name: Checkout the commit that passed Quality Check
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Migrate + deploy
+        uses: ./.github/actions/deploy-worker
+        with:
+          migration_url: ${{ secrets.DATABASE_MIGRATION_URL_DEV }}
+          cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          better_auth_url: https://dev.app.piyaz.ai
+          deploy_script: deploy:cf:dev
+          cache_prefix: deploy-dev

@@ -65,9 +65,7 @@ test("hosted deploy shows hosted setup snippets without local checkout paths", a
   expect(text).not.toContain("./plugins");
   expect(text).not.toContain("localhost");
   expect(text).not.toContain("piyaz-local");
-  expect(getDocsSetupUrl("cloudflare")).toContain(
-    "docs.piyaz.ai/docs/get-started/install",
-  );
+  expect(getDocsSetupUrl("cloudflare")).toContain("docs.piyaz.ai/docs/");
 });
 
 test("self-host deploy keeps local plugin install commands", async () => {

@@ -78,7 +78,7 @@ const SELF_HOST_CLI_INSTALLS: readonly CliInstall[] = [
   },
 ];
 
-const HOSTED_DOCS_SETUP_URL = "https://docs.piyaz.ai/docs/get-started/install";
+const HOSTED_DOCS_SETUP_URL = "https://docs.piyaz.ai/docs/";
 const SELF_HOST_DOCS_SETUP_URL = "https://docs.piyaz.ai/docs/guides/self-host";
 
 const SECTION_LABEL_CLASS =
