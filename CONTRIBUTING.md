@@ -59,6 +59,10 @@ Ship each table's access control in the same migration as its `CREATE TABLE`:
 
 Grants and policies are explicit per table on purpose. `ALTER DEFAULT PRIVILEGES` is deliberately not used on `public`: it would grant a new table to `app_user` in the window between `CREATE TABLE` and its policy attach, a cross-tenant read window. A missing grant is a loud runtime failure; a missing RLS attach is caught by `tests/db/rls-coverage.test.ts`.
 
+### Changing RLS helper functions
+
+The `SECURITY DEFINER` functions in `docker/rls-functions.sql` (e.g. `current_user_org_ids`) are owned by `neondb_owner`, not the `migrator` role, and are **not** applied by `db:migrate` — several read `piyaz_auth`, so they must run as a role with auth-schema access, which `migrator` deliberately lacks. To change one: edit `docker/rls-functions.sql`, then apply that file to the target database as `neondb_owner` (idempotent — `CREATE OR REPLACE`); never hand-edit a live database. Table, column, index, and policy changes still flow through `db:migrate` as `migrator`.
+
 ## Deploys and rollback
 
 Two environments, both driven by versioned migrations:
