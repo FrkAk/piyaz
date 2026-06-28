@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
+import { EditButton } from "@/components/shared/EditButton";
 import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
 import { updateTask } from "@/lib/graph/mutations";
@@ -59,7 +60,18 @@ export function DescriptionSection({
 
   return (
     <section className="mb-7">
-      <SectionHeader label="Description" />
+      <SectionHeader
+        label="Description"
+        trailing={
+          editing ? undefined : (
+            <EditButton
+              onClick={descriptionEdit.onActivate}
+              label="Edit description"
+              className="-my-1.5"
+            />
+          )
+        }
+      />
       {saveError && <p className="mb-2 text-[11px] text-danger">{saveError}</p>}
       {editing ? (
         <AutoGrowTextarea
@@ -87,9 +99,8 @@ export function DescriptionSection({
         />
       ) : (
         <div
-          onDoubleClick={descriptionEdit.onDoubleClick}
-          title="Double-click to edit"
-          className="group/edit relative cursor-text rounded-md border border-transparent px-3 py-2 transition-all hover:border-border hover:bg-surface/40"
+          {...descriptionEdit.triggerProps}
+          className="group/edit relative cursor-text select-text rounded-md border border-transparent px-3 py-2 transition-all hover:border-border hover:bg-surface/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
         >
           {description ? (
             <>

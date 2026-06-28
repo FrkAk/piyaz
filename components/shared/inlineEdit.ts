@@ -1,3 +1,6 @@
+/** User-facing affordance label shared by the hover chip and the trigger tooltip. */
+export const EDIT_HINT_LABEL = "Double-click to edit";
+
 /**
  * Resolve a viewport point to a DOM node + offset across browsers.
  * @param doc - Document to query.
@@ -40,7 +43,10 @@ function absoluteTextOffset(
   node: Node,
   offset: number,
 ): number {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = root.ownerDocument.createTreeWalker(
+    root,
+    NodeFilter.SHOW_TEXT,
+  );
   let total = 0;
   let current = walker.nextNode();
   while (current) {

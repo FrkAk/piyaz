@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { Checkbox } from "@/components/shared/Checkbox";
 import { Markdown } from "@/components/shared/Markdown";
+import { EditButton } from "@/components/shared/EditButton";
 import { useInlineEdit } from "@/hooks/useInlineEdit";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { updateTask } from "@/lib/graph/mutations";
@@ -417,9 +418,8 @@ function CriterionRow({
           />
         ) : (
           <div
-            onDoubleClick={edit.onDoubleClick}
-            title="Double-click to edit"
-            className={`cursor-text rounded-md text-[13px] leading-snug transition-colors ${
+            {...edit.triggerProps}
+            className={`cursor-text select-text rounded-md text-[13px] leading-snug transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 ${
               criterion.checked
                 ? "text-text-muted line-through"
                 : "text-text-secondary"
@@ -429,11 +429,18 @@ function CriterionRow({
           </div>
         )}
       </div>
+      {!editing && (
+        <EditButton
+          onClick={edit.onActivate}
+          label="Edit criterion"
+          className="self-center"
+        />
+      )}
       <button
         type="button"
         onClick={onDelete}
         aria-label="Delete criterion"
-        className="shrink-0 cursor-pointer rounded p-1 text-text-muted opacity-0 transition-all hover:text-danger group-hover/criterion:opacity-100"
+        className="shrink-0 self-center cursor-pointer rounded p-1 text-text-muted opacity-0 transition-all hover:text-danger group-hover/criterion:opacity-100 pointer-coarse:opacity-100"
       >
         <IconTrash size={11} />
       </button>

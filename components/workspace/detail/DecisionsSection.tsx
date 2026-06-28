@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { Avatar } from "@/components/shared/Avatar";
 import { Markdown } from "@/components/shared/Markdown";
+import { EditButton } from "@/components/shared/EditButton";
 import { useInlineEdit } from "@/hooks/useInlineEdit";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { updateTask } from "@/lib/graph/mutations";
@@ -387,11 +388,14 @@ function DecisionCard({
         <span className="rounded border border-accent/20 bg-accent/10 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.08em] text-accent-light">
           {decision.source}
         </span>
+        {!editing && (
+          <EditButton onClick={edit.onActivate} label="Edit decision" />
+        )}
         <button
           type="button"
           onClick={onDelete}
           aria-label="Delete decision"
-          className="shrink-0 cursor-pointer rounded p-1 text-text-muted opacity-0 transition-all hover:text-danger group-hover/decision:opacity-100"
+          className="shrink-0 cursor-pointer rounded p-1 text-text-muted opacity-0 transition-all hover:text-danger group-hover/decision:opacity-100 pointer-coarse:opacity-100"
         >
           <IconTrash size={11} />
         </button>
@@ -422,9 +426,8 @@ function DecisionCard({
         />
       ) : (
         <div
-          onDoubleClick={edit.onDoubleClick}
-          title="Double-click to edit"
-          className="cursor-text"
+          {...edit.triggerProps}
+          className="cursor-text select-text rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
         >
           <Markdown className="text-[12.5px] leading-snug text-text-secondary">
             {decision.text}

@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { updateProjectSettings } from "@/lib/actions/project";
+import { EditButton } from "@/components/shared/EditButton";
 import { useInlineEdit } from "@/hooks/useInlineEdit";
 
 interface TitleSectionProps {
@@ -84,20 +85,15 @@ export function TitleSection({
           className="w-full rounded-lg border border-border-strong bg-base px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent"
         />
       ) : (
-        <button
-          type="button"
-          onDoubleClick={titleEdit.onDoubleClick}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setEditing(true);
-            }
-          }}
-          title="Double-click to edit"
-          className="w-full cursor-text rounded-lg border border-transparent px-3 py-2 text-left text-sm text-text-primary transition-colors hover:border-border hover:bg-surface-hover/40"
+        <div
+          {...titleEdit.triggerProps}
+          className="flex w-full cursor-text items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-left text-sm text-text-primary transition-colors hover:border-border hover:bg-surface-hover/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
         >
-          {value || <span className="text-text-muted">Untitled</span>}
-        </button>
+          <span className="min-w-0 flex-1 select-text">
+            {value || <span className="text-text-muted">Untitled</span>}
+          </span>
+          <EditButton onClick={titleEdit.onActivate} label="Edit title" />
+        </div>
       )}
       {serverError && (
         <p className="font-mono text-[10px] text-danger">{serverError}</p>
