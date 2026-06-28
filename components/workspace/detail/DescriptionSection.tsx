@@ -4,8 +4,8 @@ import { useState, useRef, useCallback } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
-import { placeCaret } from "@/components/shared/inlineEdit";
 import { updateTask } from "@/lib/graph/mutations";
+import { useInlineEdit } from "@/hooks/useInlineEdit";
 import { SectionHeader } from "./SectionHeader";
 
 interface DescriptionSectionProps {
@@ -34,6 +34,7 @@ export function DescriptionSection({
   const [prevDescription, setPrevDescription] = useState(description);
   const [saveError, setSaveError] = useState<string | null>(null);
   const cancelRef = useRef(false);
+  const descriptionEdit = useInlineEdit(() => setEditing(true));
 
   if (description !== prevDescription) {
     setPrevDescription(description);
@@ -63,7 +64,7 @@ export function DescriptionSection({
       {editing ? (
         <AutoGrowTextarea
           value={draft}
-          onFocus={(e) => placeCaret(e.currentTarget, null)}
+          onFocus={descriptionEdit.onEditorFocus}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
             if (cancelRef.current) {
@@ -86,7 +87,7 @@ export function DescriptionSection({
         />
       ) : (
         <div
-          onDoubleClick={() => setEditing(true)}
+          onDoubleClick={descriptionEdit.onDoubleClick}
           title="Double-click to edit"
           className="group/edit relative cursor-text rounded-md border border-transparent px-3 py-2 transition-all hover:border-border hover:bg-surface/40"
         >

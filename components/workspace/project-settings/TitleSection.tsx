@@ -1,11 +1,8 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { updateProjectSettings } from "@/lib/actions/project";
-import {
-  caretOffsetFromPoint,
-  placeCaret,
-} from "@/components/shared/inlineEdit";
+import { useInlineEdit } from "@/hooks/useInlineEdit";
 
 interface TitleSectionProps {
   projectId: string;
@@ -30,7 +27,7 @@ export function TitleSection({
   const [value, setValue] = useState(initialTitle);
   const [syncedInitialTitle, setSyncedInitialTitle] = useState(initialTitle);
   const [serverError, setServerError] = useState<string | null>(null);
-  const pendingCaretRef = useRef<number | null>(null);
+  const titleEdit = useInlineEdit(() => setEditing(true), "point");
 
   if (initialTitle !== syncedInitialTitle && !editing) {
     setSyncedInitialTitle(initialTitle);
@@ -69,10 +66,7 @@ export function TitleSection({
         <input
           type="text"
           value={value}
-          onFocus={(e) => {
-            placeCaret(e.currentTarget, pendingCaretRef.current);
-            pendingCaretRef.current = null;
-          }}
+          onFocus={titleEdit.onEditorFocus}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -92,14 +86,7 @@ export function TitleSection({
       ) : (
         <button
           type="button"
-          onDoubleClick={(e) => {
-            pendingCaretRef.current = caretOffsetFromPoint(
-              e.currentTarget,
-              e.clientX,
-              e.clientY,
-            );
-            setEditing(true);
-          }}
+          onDoubleClick={titleEdit.onDoubleClick}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();

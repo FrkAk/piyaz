@@ -5,7 +5,7 @@ import { updateProjectSettings } from "@/lib/actions/project";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
-import { placeCaret } from "@/components/shared/inlineEdit";
+import { useInlineEdit } from "@/hooks/useInlineEdit";
 
 interface DescriptionSectionProps {
   projectId: string;
@@ -31,6 +31,7 @@ export function DescriptionSection({
   const [syncedInitialDescription, setSyncedInitialDescription] =
     useState(initialDescription);
   const [serverError, setServerError] = useState<string | null>(null);
+  const descriptionEdit = useInlineEdit(() => setEditing(true));
 
   if (initialDescription !== syncedInitialDescription && !editing) {
     setSyncedInitialDescription(initialDescription);
@@ -67,7 +68,7 @@ export function DescriptionSection({
         <AutoGrowTextarea
           value={value}
           rows={3}
-          onFocus={(e) => placeCaret(e.currentTarget, null)}
+          onFocus={descriptionEdit.onEditorFocus}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -82,7 +83,7 @@ export function DescriptionSection({
         />
       ) : (
         <div
-          onDoubleClick={() => setEditing(true)}
+          onDoubleClick={descriptionEdit.onDoubleClick}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {

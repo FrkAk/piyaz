@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { Avatar } from "@/components/shared/Avatar";
 import { Markdown } from "@/components/shared/Markdown";
-import { placeCaret } from "@/components/shared/inlineEdit";
+import { useInlineEdit } from "@/hooks/useInlineEdit";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { updateTask } from "@/lib/graph/mutations";
 import { IconPlus, IconTrash } from "@/components/shared/icons";
@@ -366,6 +366,7 @@ function DecisionCard({
   cancelRef,
 }: DecisionCardProps) {
   const author = SOURCE_AUTHOR[decision.source] ?? SOURCE_AUTHOR.refinement;
+  const edit = useInlineEdit(onStartEdit);
   return (
     <div
       className="group/decision rounded-lg border border-border bg-surface-raised/40 py-3 px-3.5 transition-colors"
@@ -400,7 +401,7 @@ function DecisionCard({
           defaultValue={decision.text}
           autoFocus
           rows={1}
-          onFocus={(e) => placeCaret(e.currentTarget, null)}
+          onFocus={edit.onEditorFocus}
           onBlur={(e) => {
             if (cancelRef.current) {
               cancelRef.current = false;
@@ -421,7 +422,7 @@ function DecisionCard({
         />
       ) : (
         <div
-          onDoubleClick={onStartEdit}
+          onDoubleClick={edit.onDoubleClick}
           title="Double-click to edit"
           className="cursor-text"
         >
