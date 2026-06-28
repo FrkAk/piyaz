@@ -302,13 +302,19 @@ function ActivityActionRow({ event, taskMap }: ActivityActionRowProps) {
             <span className="shrink-0">{change.label}</span>
             <span className="inline-flex shrink-0 items-center gap-1 text-text-muted">
               {change.isStatus && (
-                <StatusGlyph status={change.from} size={11} />
+                <span aria-hidden="true">
+                  <StatusGlyph status={change.from} size={11} />
+                </span>
               )}
               {change.from}
             </span>
             <IconArrowRight size={11} className="shrink-0 text-text-faint" />
             <span className="inline-flex min-w-0 items-center gap-1 font-medium text-text-primary">
-              {change.isStatus && <StatusGlyph status={change.to} size={11} />}
+              {change.isStatus && (
+                <span aria-hidden="true">
+                  <StatusGlyph status={change.to} size={11} />
+                </span>
+              )}
               <span className="truncate">{change.to}</span>
             </span>
           </span>
@@ -358,15 +364,23 @@ function describeEvent(event: ActivityEvent): EventDescription {
   return { icon: iconForType(event.type), text: event.summary, isEdge: false };
 }
 
+/** Pure phrasing for an edge event: relation kind + directional verb phrase. */
+export interface EdgePhrase {
+  /** Relation kind, selecting the glyph in {@link describeEdge}. */
+  kind: "depends" | "relates";
+  /** Directional verb phrase preceding the connected-task chip. */
+  text: string;
+}
+
 /**
- * Reword an edge event. Edge type (`depends_on` / `relates_to`) and direction
- * are read from the stored summary marker (`← source` = incoming), which the
- * edge writer emits in a fixed shape.
+ * Derive an edge event's relation kind and phrasing from the stored summary
+ * marker (`← source` = incoming), which the edge writer emits in a fixed shape.
+ * Pure (no JSX) so the summary-parsing contract is unit-testable.
  *
  * @param event - An `edge_*` event.
- * @returns Glyph, directional phrase, and `isEdge: true`.
+ * @returns The relation kind and directional phrase.
  */
-function describeEdge(event: ActivityEvent): EventDescription {
+export function edgePhrase(event: ActivityEvent): EdgePhrase {
   const incoming = event.summary.includes("← source");
   if (event.summary.includes("relates_to")) {
     const text =
@@ -375,7 +389,7 @@ function describeEdge(event: ActivityEvent): EventDescription {
         : event.type === "edge_removed"
           ? "removed the link to"
           : "updated the link to";
-    return { icon: <IconLink size={12} />, text, isEdge: true };
+    return { kind: "relates", text };
   }
   const text = incoming
     ? event.type === "edge_added"
@@ -388,7 +402,20 @@ function describeEdge(event: ActivityEvent): EventDescription {
       : event.type === "edge_removed"
         ? "removed the dependency on"
         : "updated the dependency on";
-  return { icon: <IconBranch size={12} />, text, isEdge: true };
+  return { kind: "depends", text };
+}
+
+/**
+ * Reword an edge event into its glyph + phrase + `isEdge` flag for rendering.
+ *
+ * @param event - An `edge_*` event.
+ * @returns Glyph, directional phrase, and `isEdge: true`.
+ */
+function describeEdge(event: ActivityEvent): EventDescription {
+  const { kind, text } = edgePhrase(event);
+  const icon =
+    kind === "relates" ? <IconLink size={12} /> : <IconBranch size={12} />;
+  return { icon, text, isEdge: true };
 }
 
 /**
@@ -476,10 +503,15 @@ function fieldChange(event: ActivityEvent): FieldChange | null {
   if (!label || !event.metadata) return null;
   const { from, to } = event.metadata;
   if (from == null || to == null) return null;
+  const fromText = String(from);
+  const toText = String(to);
+  // category is a free-form string with no "" → null coercion upstream; an
+  // empty side is a set-from-empty / clear, so fall back to the plain summary.
+  if (fromText === "" || toText === "") return null;
   return {
     label,
-    from: String(from),
-    to: String(to),
+    from: fromText,
+    to: toText,
     isStatus: event.type === "status_changed",
   };
 }
