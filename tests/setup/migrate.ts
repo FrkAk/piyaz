@@ -37,21 +37,20 @@ async function provisionRoles(sql: ReturnType<typeof postgres>): Promise<void> {
 }
 
 /**
- * Apply `docker/grants.sql` after `drizzle-kit push` so the
- * `GRANT … ON ALL TABLES IN SCHEMA public` statements land on the
- * just-created public tables. Running grants.sql before push is a no-op
- * for public — push then creates tables that app_user/service_role have
- * zero grants on, and the first test process after a fresh container
- * fails with `permission denied for table tasks`.
+ * Apply `docker/grants.sql` (public) and `docker/grants-auth.sql` (piyaz_auth)
+ * after `drizzle-kit push` so the `GRANT … ON ALL TABLES` statements land on
+ * the just-created tables. Running grants before push is a no-op for those
+ * statements — push then creates tables that app_user/service_role have zero
+ * grants on, and the first test process after a fresh container fails with
+ * `permission denied for table tasks`.
  *
  * @param sql - Active postgres client (must be the container superuser).
  */
 async function applyGrants(sql: ReturnType<typeof postgres>): Promise<void> {
-  const grants = readFileSync(
-    join(process.cwd(), "docker", "grants.sql"),
-    "utf8",
-  );
-  await sql.unsafe(grants);
+  for (const file of ["grants.sql", "grants-auth.sql"]) {
+    const grants = readFileSync(join(process.cwd(), "docker", file), "utf8");
+    await sql.unsafe(grants);
+  }
 }
 
 /**

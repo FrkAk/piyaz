@@ -6,6 +6,7 @@ import {
   revokeOAuthSessionAction,
   type OAuthSessionView,
 } from "@/lib/actions/oauth-session";
+import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
 import { formatAbsolute, formatRelative } from "@/lib/ui/relative-time";
 import { InlineConfirm } from "./InlineConfirm";
 
@@ -33,8 +34,11 @@ function truncateSessionId(id: string): string {
 
 /**
  * Single MCP session row inside an agent-brand card. Renders the icon tile,
- * mono session id, last-active + organization meta line, and an inline
- * Revoke confirmation that calls `revokeOAuthSessionAction`.
+ * the raw registered client name, a mono session id + last-active +
+ * organization meta line, and an inline Revoke confirmation that calls
+ * `revokeOAuthSessionAction`. The name is shown verbatim (via
+ * `formatOAuthClientName`, which never launders an unverified name) so a
+ * spoofed client grouped into a family drawer stays visible.
  *
  * @param props - Session row configuration.
  * @returns Animated row matching the prototype's agents tab.
@@ -54,6 +58,10 @@ export function AgentSessionRow({
     }
   };
 
+  const clientLabel = formatOAuthClientName(
+    session.clientName,
+    session.verified,
+  );
   const lastActiveLabel = formatRelative(session.lastActiveAt);
   const tooltip = `Authorized ${formatAbsolute(
     session.authorizedAt,
@@ -75,10 +83,11 @@ export function AgentSessionRow({
       </div>
 
       <div className="min-w-0 flex-1" title={tooltip}>
-        <p className="truncate font-mono text-[12.5px] font-medium text-text-primary">
-          {truncateSessionId(session.id)}
+        <p className="truncate text-[12.5px] font-medium text-text-primary">
+          {clientLabel}
         </p>
         <p className="mt-0.5 truncate text-[11.5px] text-text-muted">
+          <span className="font-mono">{truncateSessionId(session.id)}</span> ·
           last seen {lastActiveLabel}
           {session.organizationName ? ` · ${session.organizationName}` : ""}
         </p>

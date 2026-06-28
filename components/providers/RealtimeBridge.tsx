@@ -58,6 +58,9 @@ function applyRealtimeEvent(qc: QueryClient, raw: string): void {
       qc.invalidateQueries({
         queryKey: taskKeys.contextAll(ev.projectId, ev.taskId),
       });
+      qc.invalidateQueries({
+        queryKey: taskKeys.activity(ev.projectId, ev.taskId),
+      });
       break;
     case "project-list":
       qc.invalidateQueries({ queryKey: projectKeys.list() });

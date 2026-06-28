@@ -1,5 +1,8 @@
 import { test, expect } from "bun:test";
-import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
+import {
+  formatOAuthClientName,
+  resolveOAuthBrand,
+} from "@/lib/ui/oauth-client-name";
 
 test("formats supported OAuth client brand names consistently", () => {
   expect(formatOAuthClientName("Codex", true)).toBe("Codex");
@@ -30,6 +33,30 @@ test("unverified clients are shown verbatim without brand laundering", () => {
   expect(formatOAuthClientName("Codex", false)).toBe("Codex");
   // Only whitespace is tidied.
   expect(formatOAuthClientName("  Evil   Client  ", false)).toBe("Evil Client");
+});
+
+test("resolveOAuthBrand groups harnesses into family buckets", () => {
+  expect(resolveOAuthBrand("Claude Code (plugin:piyaz:piyaz-local)")).toBe(
+    "Claude",
+  );
+  expect(resolveOAuthBrand("Claude")).toBe("Claude");
+  expect(resolveOAuthBrand("claude.ai")).toBe("Claude");
+  expect(resolveOAuthBrand("Codex")).toBe("Codex");
+  expect(resolveOAuthBrand("Cursor")).toBe("Cursor");
+  expect(resolveOAuthBrand("Gemini CLI")).toBe("Antigravity");
+  expect(resolveOAuthBrand("Google Antigravity (plugin:piyaz:piyaz)")).toBe(
+    "Antigravity",
+  );
+  expect(resolveOAuthBrand("Antigravity")).toBe("Antigravity");
+});
+
+test("resolveOAuthBrand returns null for unknown clients", () => {
+  expect(resolveOAuthBrand("Acme Agent (plugin:acme:agent)")).toBeNull();
+  expect(resolveOAuthBrand("Custom Client")).toBeNull();
+});
+
+test("resolveOAuthBrand groups a spoofed brand name into its family drawer", () => {
+  expect(resolveOAuthBrand("Claude Code (plugin:evil)")).toBe("Claude");
 });
 
 test("invisible Unicode is stripped so lookalike names cannot render", () => {

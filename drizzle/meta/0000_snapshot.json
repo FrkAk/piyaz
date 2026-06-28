@@ -1,5 +1,5 @@
 {
-  "id": "84040cdf-1164-4412-91ab-450c786e6882",
+  "id": "5a61a084-0f46-435e-92e8-1842edce65f6",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -122,7 +122,7 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.task_acceptance_criteria": {
       "name": "task_acceptance_criteria",
@@ -225,7 +225,7 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.task_assignees": {
       "name": "task_assignees",
@@ -309,7 +309,7 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.task_decisions": {
       "name": "task_decisions",
@@ -417,7 +417,7 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.task_edges": {
       "name": "task_edges",
@@ -561,7 +561,7 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.task_links": {
       "name": "task_links",
@@ -677,7 +677,7 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.tasks": {
       "name": "tasks",
@@ -840,7 +840,7 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     },
     "public.team_invite_code": {
       "name": "team_invite_code",
@@ -897,6 +897,18 @@
           "notNull": true,
           "default": 0
         },
+        "reserved_until": {
+          "name": "reserved_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reserved_by": {
+          "name": "reserved_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_by": {
           "name": "created_by",
           "type": "uuid",
@@ -950,6 +962,20 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
+        "team_invite_code_reserved_by_user_id_fk": {
+          "name": "team_invite_code_reserved_by_user_id_fk",
+          "tableFrom": "team_invite_code",
+          "tableTo": "user",
+          "schemaTo": "piyaz_auth",
+          "columnsFrom": [
+            "reserved_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
         "team_invite_code_created_by_user_id_fk": {
           "name": "team_invite_code_created_by_user_id_fk",
           "tableFrom": "team_invite_code",
@@ -989,7 +1015,7 @@
           "value": "\"team_invite_code\".\"default_role\" IN ('member', 'admin')"
         }
       },
-      "isRLSEnabled": false
+      "isRLSEnabled": true
     }
   },
   "enums": {},

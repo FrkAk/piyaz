@@ -7,7 +7,6 @@ import {
   renderCatalog,
   renderToolPage,
   stripProseEmoji,
-  transformReference,
 } from "../../scripts/generate-docs";
 import { TOOLS } from "../../lib/mcp/schemas";
 
@@ -62,29 +61,6 @@ describe("renderToolPage", () => {
 
   test("escapes MDX-hostile characters in prose", () => {
     expect(page).not.toMatch(/^[^`]*<[a-zA-Z]/m);
-  });
-});
-
-describe("transformReference", () => {
-  const raw = "# Piyaz Conventions\n\nRead `references/artifacts.md` first.\n";
-  const out = transformReference(raw, "conventions.md");
-
-  test("extracts the title into frontmatter and keeps the h1", () => {
-    expect(out).toContain('title: "Piyaz Conventions"');
-    expect(out).toContain("# Piyaz Conventions");
-  });
-
-  test("adds the canonical banner with the source path", () => {
-    expect(out).toContain("Canonical skill reference");
-    expect(out).toContain(
-      "plugins/claude-code/skills/piyaz/references/conventions.md",
-    );
-  });
-
-  test("rewrites cross-reference links to docs urls", () => {
-    expect(out).toContain(
-      "[`references/artifacts.md`](/docs/reference/artifacts/)",
-    );
   });
 });
 
@@ -256,16 +232,6 @@ describe("renderToolPage values-section label", () => {
       TOOLS.find((t) => t.name === "piyaz_project")!,
     );
     expect(project).toContain("## Actions");
-  });
-});
-
-describe("transformReference MDX escaping", () => {
-  test("escapes angle brackets and braces in prose but not in code", () => {
-    const raw =
-      "# T\n\nUse <Foo> and {bar} in prose.\n\n```\nkeep <Baz> raw\n```\n";
-    const out = transformReference(raw, "conventions.md");
-    expect(out).toContain("Use &lt;Foo> and &#123;bar} in prose.");
-    expect(out).toContain("keep <Baz> raw");
   });
 });
 

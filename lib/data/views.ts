@@ -294,7 +294,7 @@ export type TaskSlim = {
  * this type carries them via join so consumers read
  * `task.acceptanceCriteria` and `task.decisions` directly.
  */
-export type TaskFull = Task & {
+export type TaskFull = Omit<Task, "history"> & {
   taskRef: string;
   assignees: AssigneeRef[];
   acceptanceCriteria: AcceptanceCriterion[];
