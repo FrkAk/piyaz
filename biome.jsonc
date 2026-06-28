@@ -24,7 +24,8 @@
       "!bun.lock",
       "!migrations/**",
       "!drizzle/**",
-      "!plugins/**/workflows/**"
+      "!plugins/**/workflows/**",
+      "!plugins/**/plugin.json"
     ]
   },
   "formatter": {
