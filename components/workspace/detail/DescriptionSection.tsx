@@ -2,7 +2,9 @@
 
 import { useState, useRef, useCallback } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
+import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
+import { placeCaret } from "@/components/shared/inlineEdit";
 import { updateTask } from "@/lib/graph/mutations";
 import { SectionHeader } from "./SectionHeader";
 
@@ -61,6 +63,7 @@ export function DescriptionSection({
       {editing ? (
         <AutoGrowTextarea
           value={draft}
+          onFocus={(e) => placeCaret(e.currentTarget, null)}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
             if (cancelRef.current) {
@@ -83,16 +86,20 @@ export function DescriptionSection({
         />
       ) : (
         <div
-          onClick={() => setEditing(true)}
+          onDoubleClick={() => setEditing(true)}
+          title="Double-click to edit"
           className="group/edit relative cursor-text rounded-md border border-transparent px-3 py-2 transition-all hover:border-border hover:bg-surface/40"
         >
           {description ? (
-            <Markdown className="text-[13.5px] leading-relaxed text-text-secondary">
-              {description}
-            </Markdown>
+            <>
+              <EditHint />
+              <Markdown className="text-[13.5px] leading-relaxed text-text-secondary">
+                {description}
+              </Markdown>
+            </>
           ) : (
             <p className="text-[13.5px] italic text-text-muted">
-              Click to add a description…
+              Double-click to add a description…
             </p>
           )}
         </div>

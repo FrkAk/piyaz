@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { Avatar } from "@/components/shared/Avatar";
 import { Markdown } from "@/components/shared/Markdown";
+import { placeCaret } from "@/components/shared/inlineEdit";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { updateTask } from "@/lib/graph/mutations";
 import { IconPlus, IconTrash } from "@/components/shared/icons";
@@ -399,6 +400,7 @@ function DecisionCard({
           defaultValue={decision.text}
           autoFocus
           rows={1}
+          onFocus={(e) => placeCaret(e.currentTarget, null)}
           onBlur={(e) => {
             if (cancelRef.current) {
               cancelRef.current = false;
@@ -418,7 +420,11 @@ function DecisionCard({
           className="w-full resize-none rounded-md border border-border-strong bg-surface px-2 py-1 text-[13px] text-text-primary outline-none transition-colors focus:border-accent"
         />
       ) : (
-        <div onClick={onStartEdit} className="cursor-text">
+        <div
+          onDoubleClick={onStartEdit}
+          title="Double-click to edit"
+          className="cursor-text"
+        >
           <Markdown className="text-[12.5px] leading-snug text-text-secondary">
             {decision.text}
           </Markdown>

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { Checkbox } from "@/components/shared/Checkbox";
 import { Markdown } from "@/components/shared/Markdown";
+import { placeCaret } from "@/components/shared/inlineEdit";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { updateTask } from "@/lib/graph/mutations";
 import { IconPlus, IconTrash } from "@/components/shared/icons";
@@ -394,6 +395,7 @@ function CriterionRow({
             defaultValue={criterion.text}
             autoFocus
             rows={1}
+            onFocus={(e) => placeCaret(e.currentTarget, null)}
             onBlur={(e) => {
               if (cancelRef.current) {
                 cancelRef.current = false;
@@ -414,7 +416,8 @@ function CriterionRow({
           />
         ) : (
           <div
-            onClick={onStartEdit}
+            onDoubleClick={onStartEdit}
+            title="Double-click to edit"
             className={`cursor-text rounded-md text-[13px] leading-snug transition-colors ${
               criterion.checked
                 ? "text-text-muted line-through"

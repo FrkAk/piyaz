@@ -3,7 +3,9 @@
 import { useCallback, useState } from "react";
 import { updateProjectSettings } from "@/lib/actions/project";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
+import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
+import { placeCaret } from "@/components/shared/inlineEdit";
 
 interface DescriptionSectionProps {
   projectId: string;
@@ -65,6 +67,7 @@ export function DescriptionSection({
         <AutoGrowTextarea
           value={value}
           rows={3}
+          onFocus={(e) => placeCaret(e.currentTarget, null)}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -79,7 +82,7 @@ export function DescriptionSection({
         />
       ) : (
         <div
-          onClick={() => setEditing(true)}
+          onDoubleClick={() => setEditing(true)}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
@@ -88,12 +91,18 @@ export function DescriptionSection({
               setEditing(true);
             }
           }}
-          className="cursor-pointer rounded-lg border border-transparent px-3 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:bg-surface-hover/40"
+          title="Double-click to edit"
+          className="group/edit relative cursor-text rounded-lg border border-transparent px-3 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:bg-surface-hover/40"
         >
           {value ? (
-            <Markdown>{value}</Markdown>
+            <>
+              <EditHint />
+              <Markdown>{value}</Markdown>
+            </>
           ) : (
-            <span className="text-text-muted">Add a description…</span>
+            <span className="text-text-muted">
+              Double-click to add a description…
+            </span>
           )}
         </div>
       )}

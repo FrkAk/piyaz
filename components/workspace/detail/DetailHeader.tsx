@@ -10,6 +10,10 @@ import {
   IconX,
 } from "@/components/shared/icons";
 import { updateTask } from "@/lib/graph/mutations";
+import {
+  caretOffsetFromPoint,
+  placeCaret,
+} from "@/components/shared/inlineEdit";
 import { isModalOpen } from "@/hooks/useModalChrome";
 import type { TaskStatus } from "@/lib/types";
 
@@ -77,6 +81,7 @@ export function DetailHeader({
   const [draft, setDraft] = useState(title);
   const [prevTitle, setPrevTitle] = useState(title);
   const cancelledRef = useRef(false);
+  const pendingCaretRef = useRef<number | null>(null);
 
   if (title !== prevTitle) {
     setPrevTitle(title);
@@ -209,6 +214,10 @@ export function DetailHeader({
               type="text"
               value={draft}
               autoFocus
+              onFocus={(e) => {
+                placeCaret(e.currentTarget, pendingCaretRef.current);
+                pendingCaretRef.current = null;
+              }}
               onChange={(e) => setDraft(e.target.value)}
               onBlur={() => {
                 if (cancelledRef.current) {
@@ -234,7 +243,15 @@ export function DetailHeader({
             />
           ) : (
             <motion.h1
-              onClick={() => setEditing(true)}
+              onDoubleClick={(e) => {
+                pendingCaretRef.current = caretOffsetFromPoint(
+                  e.currentTarget,
+                  e.clientX,
+                  e.clientY,
+                );
+                setEditing(true);
+              }}
+              title="Double-click to edit"
               initial={false}
               className="-mx-1 cursor-text rounded px-1 text-[22px] font-semibold leading-[1.25] text-text-primary transition-colors hover:bg-surface-raised/40"
               style={{ letterSpacing: "-0.005em" }}

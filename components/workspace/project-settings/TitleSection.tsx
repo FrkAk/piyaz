@@ -1,7 +1,11 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { updateProjectSettings } from "@/lib/actions/project";
+import {
+  caretOffsetFromPoint,
+  placeCaret,
+} from "@/components/shared/inlineEdit";
 
 interface TitleSectionProps {
   projectId: string;
@@ -26,6 +30,7 @@ export function TitleSection({
   const [value, setValue] = useState(initialTitle);
   const [syncedInitialTitle, setSyncedInitialTitle] = useState(initialTitle);
   const [serverError, setServerError] = useState<string | null>(null);
+  const pendingCaretRef = useRef<number | null>(null);
 
   if (initialTitle !== syncedInitialTitle && !editing) {
     setSyncedInitialTitle(initialTitle);
@@ -64,6 +69,10 @@ export function TitleSection({
         <input
           type="text"
           value={value}
+          onFocus={(e) => {
+            placeCaret(e.currentTarget, pendingCaretRef.current);
+            pendingCaretRef.current = null;
+          }}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -83,8 +92,22 @@ export function TitleSection({
       ) : (
         <button
           type="button"
-          onClick={() => setEditing(true)}
-          className="w-full cursor-pointer rounded-lg border border-transparent px-3 py-2 text-left text-sm text-text-primary transition-colors hover:border-border hover:bg-surface-hover/40"
+          onDoubleClick={(e) => {
+            pendingCaretRef.current = caretOffsetFromPoint(
+              e.currentTarget,
+              e.clientX,
+              e.clientY,
+            );
+            setEditing(true);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setEditing(true);
+            }
+          }}
+          title="Double-click to edit"
+          className="w-full cursor-text rounded-lg border border-transparent px-3 py-2 text-left text-sm text-text-primary transition-colors hover:border-border hover:bg-surface-hover/40"
         >
           {value || <span className="text-text-muted">Untitled</span>}
         </button>
