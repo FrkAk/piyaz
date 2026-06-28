@@ -1,34 +1,24 @@
 import "server-only";
 
 import { LogSender } from "./log-sender";
-import { getPlatformSender } from "./_sender";
+import { getPlatformSender } from "@/lib/email/_sender";
 import type { EmailSender } from "./types";
 
-let cached: EmailSender | null | undefined;
-
 /**
- * Resolve the active email transport from env and runtime.
+ * The active email transport, or `null` when email is disabled.
  *
  * `EMAIL_TRANSPORT=log` selects the console `LogSender` (local dev and
  * unconfigured self-host). Otherwise the per-runtime platform sender decides:
  * the Cloudflare `send_email` binding on Workers (PYZ-270) or nodemailer SMTP
  * on Node (PYZ-271), each returning `null` when its provider is not configured.
  * A `null` result means email is disabled, which keeps self-host bootable.
- */
-function resolve(): EmailSender | null {
-  if (process.env.EMAIL_TRANSPORT === "log") return new LogSender();
-  return getPlatformSender();
-}
-
-/**
- * The active email transport, or `null` when email is disabled.
  *
- * Memoized for the process lifetime; env is fixed at start, so repeated calls
- * never re-read it.
+ * Resolved per call: the Workers platform sender reads a request-scoped binding,
+ * so the result must not be cached across requests.
  */
 export function getEmailSender(): EmailSender | null {
-  if (cached === undefined) cached = resolve();
-  return cached;
+  if (process.env.EMAIL_TRANSPORT === "log") return new LogSender();
+  return getPlatformSender();
 }
 
 /**
@@ -37,9 +27,4 @@ export function getEmailSender(): EmailSender | null {
  */
 export function isEmailEnabled(): boolean {
   return getEmailSender() !== null;
-}
-
-/** Test-only seam: clear the memoized transport so each branch can be asserted. */
-export function __resetEmailSenderForTest(): void {
-  cached = undefined;
 }
