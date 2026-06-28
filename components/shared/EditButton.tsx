@@ -10,9 +10,9 @@ interface EditButtonProps {
 }
 
 /**
- * Pencil affordance that enters inline-edit mode on touch devices, where
- * double-click is unreliable. Hidden on hover-capable (desktop) devices, which
- * use double-click instead.
+ * Pencil affordance that enters inline-edit mode on coarse-pointer (touch)
+ * devices, where double-click is unreliable. Hidden on fine-pointer (mouse)
+ * devices, which use double-click instead.
  * @param props - Button configuration.
  * @returns A touch-only pencil edit button.
  */

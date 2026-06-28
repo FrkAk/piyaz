@@ -23,10 +23,11 @@ interface InlineEditTriggerProps {
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
 }
 
+/** Handlers returned by `useInlineEdit` for wiring an inline-edit field. */
 interface InlineEditHandlers {
-  /** Spread on the display element: double-click (mouse) or Enter/Space (keyboard) enters edit mode. */
+  /** Spread on the display element: double-click or Enter/Space enters edit mode. Keyboard activation only fires on the element itself, so focusable descendants (markdown links) stay reachable. */
   triggerProps: InlineEditTriggerProps;
-  /** Bind to the touch-only edit button's `onClick`; focuses the editor at the end. */
+  /** Bind to the touch-only edit button's `onClick`; enters edit mode with the caret at the end. */
   onActivate: () => void;
   /** Bind to the editor's `onFocus` to position the caret. */
   onEditorFocus: (
@@ -62,6 +63,7 @@ export function useInlineEdit(
         startEditing();
       },
       onKeyDown: (event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         pendingCaret.current = null;

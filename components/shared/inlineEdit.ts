@@ -6,7 +6,7 @@ export const EDIT_HINT_LABEL = "Double-click to edit";
  * @param doc - Document to query.
  * @param x - Pointer X in viewport coordinates.
  * @param y - Pointer Y in viewport coordinates.
- * @returns The text node and offset under the point, or null.
+ * @returns The node and offset under the point, or null.
  */
 function nodeOffsetFromPoint(
   doc: Document,
@@ -79,7 +79,7 @@ export function caretOffsetFromPoint(
 /**
  * Place the caret of a text control at an offset, or at the end when null.
  * @param el - Input or textarea to position.
- * @param offset - Target offset, clamped to the value length; null selects the end.
+ * @param offset - Target offset, clamped to the value length; null places the caret at the end.
  */
 export function placeCaret(
   el: HTMLInputElement | HTMLTextAreaElement,
