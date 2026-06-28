@@ -22,7 +22,7 @@
    bun install
    ```
 
-4. Start Postgres and push the schema:
+4. Start Postgres and apply the schema:
 
    ```sh
    bun run db:setup
@@ -33,6 +33,32 @@
    ```sh
    bun run dev
    ```
+
+## Database changes
+
+The `public` schema is owned by Drizzle (`lib/db/schema.ts` generates `drizzle/`). The `piyaz_auth` schema, the three Postgres roles, grants, and RLS policies/functions are hand-written SQL under `docker/`.
+
+A running instance holds real data, so schema changes ship as versioned migrations, never `push`:
+
+- `bun run db:generate` writes a migration from `lib/db/schema.ts` changes.
+- `bun run db:migrate` applies pending migrations to your database.
+
+`db:push` is only for throwaway databases (the CI test container). It force-syncs and can drop columns, so it never runs against a database with real data. CI fails a PR when `db:generate` produces an uncommitted migration, so a `schema.ts` change cannot land without its migration.
+
+### Adding a table
+
+1. Add the table to `lib/db/schema.ts` with `.enableRLS()`, then run `bun run db:generate`. The generated migration emits `CREATE TABLE` and `ENABLE ROW LEVEL SECURITY`. Do not hand-edit the generated file.
+2. Add the table's `ALTER TABLE "<table>" FORCE ROW LEVEL SECURITY;` and its tenant-scoping `CREATE POLICY ... TO app_user` to `docker/rls-policies.sql`.
+3. Grants need no per-table edit: `docker/grants.sql` already covers public tables via `GRANT ... ON ALL TABLES IN SCHEMA public`.
+4. Commit `schema.ts`, the generated migration, and the `docker/` change together.
+
+`bun run db:rls` applies the grants and policies after `db:migrate`. They stay out of the generated migration on purpose: `drizzle-kit push` (used by the test container) drops `pgPolicy` `USING`/`WITH CHECK` clauses, so policy DDL is hand-written in `docker/rls-policies.sql`. `ALTER DEFAULT PRIVILEGES` is deliberately not used on `public`: it would grant a new table to `app_user` in the window between `CREATE TABLE` and its policy attach, a cross-tenant read window. A missing grant is a loud runtime failure; a missing RLS attach is caught by `tests/db/rls-coverage.test.ts`.
+
+### Changing RLS helper functions
+
+The `SECURITY DEFINER` functions in `docker/rls-functions.sql` (such as `current_user_org_ids`) are applied by `bun run db:rls`, not by `db:migrate` — several read `piyaz_auth` and are owned by the database owner. To change one: edit `docker/rls-functions.sql`, then run `bun run db:rls` (idempotent via `CREATE OR REPLACE`); never hand-edit a live database. Table, column, and index changes flow through `db:migrate`; grants and policies are applied by `db:rls`.
+
+Migrations are roll-forward only (Drizzle has no down-migrations), so follow expand/contract: additive changes ship with the code that needs them; destructive cleanups (drop column/table) ship in a separate later change, keeping every upgrade roll-forward-safe.
 
 ## Before submitting a PR
 
@@ -50,12 +76,13 @@ Both must pass. CI will run them automatically on your PR.
 - Create a feature branch from `main`.
 - Keep changes focused. One concern per PR.
 - Use the PR template and fill in all sections.
+- The PR title must follow Conventional Commits (`<type>: <description>`); CI rejects titles that don't.
 - All PRs require a review and must pass CI before merging.
 - Squash merge is the only merge strategy.
 
 ## Commit messages
 
-Format: `<type>: <short description>`
+Commits follow [Conventional Commits](https://www.conventionalcommits.org): `<type>: <short description>`. Allowed types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `perf`, `style`, `build`, `revert`.
 
 Examples: `fix: resolve rate limiter timing on 429`, `feat: add task dependency visualization`
 

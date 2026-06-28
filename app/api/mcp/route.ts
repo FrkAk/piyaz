@@ -1,11 +1,10 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { JSONWebKeySet } from "jose";
-import { z } from "zod/v4";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
 import { auth } from "@/lib/auth";
 import { createMcpServer } from "@/lib/mcp/create-server";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
-import { makeAuthContext, type AuthContext } from "@/lib/auth/context";
+import { authContextFromPayload } from "@/lib/auth/mcp-token";
 import { parseEnvInt } from "@/lib/config/env";
 import { readBodyBounded } from "@/lib/api/read-body-bounded";
 
@@ -63,11 +62,6 @@ function jsonRpcError(
 function payloadTooLarge() {
   return jsonRpcError(-32600, "Request body too large.", 413);
 }
-
-/** Shape we require from a verified MCP access token payload. */
-const accessTokenClaimsSchema = z.looseObject({
-  sub: z.uuid(),
-});
 
 /**
  * Resolve the active JSON Web Key Set in-process via the JWT plugin's API
@@ -160,20 +154,6 @@ async function verifyMcpAuth(request: Request) {
     if (classification === "infrastructure") throw err;
     return null;
   }
-}
-
-/**
- * Resolve the MCP auth context from a verified JWT payload. Requires only
- * `sub` (user id); team scope is resolved per call in the data layer via
- * membership JOINs, never via a token-bound active-org claim.
- *
- * @param payload - Decoded JWT payload.
- * @returns AuthContext or null when the subject claim is missing.
- */
-function authContextFromPayload(payload: unknown): AuthContext | null {
-  const parsed = accessTokenClaimsSchema.safeParse(payload);
-  if (!parsed.success) return null;
-  return makeAuthContext(parsed.data.sub);
 }
 
 /**

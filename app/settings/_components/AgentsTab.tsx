@@ -6,7 +6,11 @@ import {
   revokeAllOAuthSessionsAction,
   type OAuthSessionView,
 } from "@/lib/actions/oauth-session";
-import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
+import {
+  OAUTH_BRAND_FAMILIES,
+  resolveOAuthBrand,
+  type OAuthBrandFamily,
+} from "@/lib/ui/oauth-client-name";
 import { AgentSection } from "./AgentSection";
 import { InlineConfirm } from "./InlineConfirm";
 
@@ -15,24 +19,19 @@ interface AgentsTabProps {
   initialSessions: OAuthSessionView[];
 }
 
-/** Canonical brands rendered as fixed sections, in display order. */
-const KNOWN_BRANDS = ["Claude Code", "Codex", "Antigravity", "Cursor"] as const;
-type KnownBrand = (typeof KNOWN_BRANDS)[number];
-const KNOWN_BRAND_SET: ReadonlySet<string> = new Set(KNOWN_BRANDS);
-
 /**
- * Group sessions into the four canonical brand buckets plus a catch-all
- * "Other" bucket for clients that don't match a known brand.
+ * Group sessions into the canonical brand-family buckets plus a catch-all
+ * "Other" bucket for clients that don't match a known family.
  *
  * @param sessions - Raw session list from the server action.
- * @returns Object with `byBrand` (brand → sessions) and `otherSessions`.
+ * @returns Object with `byBrand` (family → sessions) and `otherSessions`.
  */
 function groupSessions(sessions: OAuthSessionView[]): {
-  byBrand: Record<KnownBrand, OAuthSessionView[]>;
+  byBrand: Record<OAuthBrandFamily, OAuthSessionView[]>;
   otherSessions: OAuthSessionView[];
 } {
-  const byBrand: Record<KnownBrand, OAuthSessionView[]> = {
-    "Claude Code": [],
+  const byBrand: Record<OAuthBrandFamily, OAuthSessionView[]> = {
+    Claude: [],
     Codex: [],
     Antigravity: [],
     Cursor: [],
@@ -40,9 +39,9 @@ function groupSessions(sessions: OAuthSessionView[]): {
   const otherSessions: OAuthSessionView[] = [];
 
   for (const session of sessions) {
-    const brand = formatOAuthClientName(session.clientName, session.verified);
-    if (KNOWN_BRAND_SET.has(brand)) {
-      byBrand[brand as KnownBrand].push(session);
+    const brand = resolveOAuthBrand(session.clientName);
+    if (brand) {
+      byBrand[brand].push(session);
     } else {
       otherSessions.push(session);
     }
@@ -52,10 +51,10 @@ function groupSessions(sessions: OAuthSessionView[]): {
 }
 
 /**
- * Agents & devices tab — H1 + subhead + four fixed brand cards (Claude Code,
- * Codex, Antigravity, Cursor) plus a catch-all card when non-canonical clients
- * have authorized sessions. Optimistically removes a row on revoke and
- * surfaces an inline error if the server rejects.
+ * Agents & devices tab — H1 + subhead + four fixed brand cards (Claude, Codex,
+ * Antigravity, Cursor) plus a catch-all card when non-canonical clients have
+ * authorized sessions. Optimistically removes a row on revoke and surfaces an
+ * inline error if the server rejects.
  *
  * @param props - Initial server-rendered session list.
  * @returns Tab body.
@@ -160,7 +159,7 @@ export function AgentsTab({ initialSessions }: AgentsTabProps) {
             />
           </div>
         ) : null}
-        {KNOWN_BRANDS.map((brand) => (
+        {OAUTH_BRAND_FAMILIES.map((brand) => (
           <AgentSection
             key={brand}
             brand={brand}

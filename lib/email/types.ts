@@ -16,7 +16,7 @@
  * carries a machine-readable `code` (transport specific) and a human-readable
  * `message`.
  */
-export type EmailSendResult =
+export type EmailDeliveryResult =
   | { kind: "ok"; messageId?: string }
   | { kind: "error"; code: string; message: string };
 
@@ -27,7 +27,7 @@ export type EmailSendResult =
  * from `from`. `category` is optional open metadata only, never a routing instruction;
  * purpose→address routing lives in the brand resolver, not here.
  */
-export interface EmailMessage {
+export interface OutboundEmail {
   to: string;
   from: string;
   replyTo?: string;
@@ -57,5 +57,5 @@ export interface BrandConfig {
  * templating and addressing live above the transport.
  */
 export interface EmailSender {
-  send(message: EmailMessage): Promise<EmailSendResult>;
+  send(message: OutboundEmail): Promise<EmailDeliveryResult>;
 }

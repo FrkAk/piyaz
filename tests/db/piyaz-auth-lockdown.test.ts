@@ -99,7 +99,7 @@ describe("app_user piyaz_auth lockdown", () => {
   test("app_user has zero rows in information_schema.table_privileges for schema piyaz_auth", async () => {
     // The runtime SELECT-deny probes above prove the surface is
     // unreachable, but a catalog assertion is the static-shape backup —
-    // a future docker/grants.sql edit that accidentally added a grant
+    // a future docker/grants-auth.sql edit that accidentally added a grant
     // would silently widen the blast radius. Pin the contract.
     const su = superuserPool();
     try {
@@ -205,7 +205,7 @@ describe("auth_role public.* lockdown", () => {
 describe("service_role piyaz_auth grants pin the call-site contract", () => {
   // The data-layer call sites in lib/data/oauth-session.ts and
   // lib/data/account.ts rely on a documented, MINIMAL set of grants. If
-  // grants.sql ever loses one of these, the affected UI surface dies
+  // grants-auth.sql ever loses one of these, the affected UI surface dies
   // with "permission denied" at runtime (e.g. the settings agent tab and
   // session revocation). Pin the required privileges so a future grant
   // edit can't silently widen or narrow the contract.

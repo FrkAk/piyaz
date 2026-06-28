@@ -85,7 +85,7 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
 3. **Refinements: typically already applied; only fill gaps.** The Phase 1 researcher applies refinements (description, acceptance criteria, tags, category, priority, estimate, decisions) directly to the target before handing off, so the task you read via `piyaz_context depth='planning'` should already reflect those changes. The brief's *Applied refinements* section names what landed.
 
-   You only refine when planning surfaces something the researcher missed. For example: writing the *Section content* section reveals an acceptance criterion that is binary in isolation but unsatisfiable against the codebase shape, or the brief flagged `external-input-required` and the user's answer (passed back through the orchestrator) is a real choice that constrains downstream work. In those cases:
+   You only refine when planning surfaces something the researcher missed. For example: detailing the file-level changes reveals an acceptance criterion that is binary in isolation but unsatisfiable against the codebase shape, or the brief flagged `external-input-required` and the user's answer (passed back through the orchestrator) is a real choice that constrains downstream work. In those cases:
 
    - Apply the refinement via `piyaz_task action='update'` with the same append-only semantics the researcher uses (never `overwriteArrays=true`).
    - Write to `decisions` only when the refinement *is* a CHOICE + WHY (e.g. user picked library X over Y; AC reworded to bound it to a specific behavior). Refinements that are mechanical fixes (typo, tag dimension fill-in, AC binary-rewrite where the intent was already clear) do not get a decision entry; the audit log records the field change.
@@ -93,44 +93,20 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
    If nothing in the brief or in the planning surfaced a gap, do not refine. The planner does not freelance edits.
 
-4. **Write the implementation plan.** Markdown body with these sections in order (omit a section only when truly N/A; use `none` rather than skipping):
+4. **Write the implementation plan.** A markdown body scaled to the task: cover what the implementer needs to build it correctly, and nothing it does not. Use the best available model and the project's planning agent skills or harness to produce it. Let the work, the estimate, and the work-type decide the shape and length. There is no fixed section list and no required order.
 
-   ```markdown
-   ## Goal
-   <one paragraph: what this task ships and why it matters now.>
+   Draw on whichever of these the task warrants, in the order that fits it:
 
-   ## Files to modify
-   - `<repo-relative path>`: `<one-sentence change description>`
+   - **Goal**: what this task ships and why it matters now.
+   - **Files and changes**: repo-relative paths and the specific change to each (function names, line ranges where known, the existing pattern reused or extended). This is the load-bearing part; do not abridge it.
+   - **Build sequence**: ordered, verifiable steps when the work has more than one. Each step ends with how to confirm it landed (a passing test, a typecheck pass, a runtime check).
+   - **Verification**: the test, typecheck, and lint commands from the brief, plus any manual check.
 
-   ## Section content
-   <one subsection per affected file or area; include the specific changes, function names, line ranges where possible, and the existing pattern being reused or extended.>
+   The plan must show how it satisfies the acceptance criteria: map each AC to the part of the plan that meets it, and flag any AC the plan cannot map to a concrete step as a gap the implementer closes before handoff. It must also address the edge cases and failure modes, and the security, performance, and observability concerns the task touches, naming the specific check for each rather than a platitude.
 
-   ## Acceptance criteria mapping
-   <for each AC, name the part of the plan that satisfies it; if an AC cannot be mapped to a specific section, flag it as a gap the implementer must close before marking done.>
+   Include a section only when it carries content. Omit the rest. Never write `None`, `N/A`, or an empty heading as a placeholder; a section with nothing to say is a section the implementer should not have to read. Do not pre-stage a Completion Protocol payload block; the implementer writes that payload once at `in_review` (lifecycle §2.2), and a second copy in the plan is a handoff artifact that drifts from the real write.
 
-   ## Edge cases and failure modes
-   <list edge cases the implementer must handle and how; cite the research brief's reliability section.>
-
-   ## Security, performance, observability
-   <paragraph each, grounded in the research brief; specific checks, not platitudes.>
-
-   ## Build sequence
-   <numbered steps the implementer follows. Small, ordered, verifiable. Each step ends with how to confirm it landed (a passing test, a typecheck pass, a runtime check).>
-
-   ## Verification
-   - Test command: `<from brief>`
-   - Typecheck command: `<from brief>`
-   - Lint command: `<from brief>`
-   - Manual checks: `<list, if any>`
-
-   ## Completion Protocol payload (template)
-   <pre-fill what you can; the implementer evaluates and submits. Shape and field requirements: lifecycle §2.2 (in your extract).>
-
-   ## Open questions
-   <anything the brief flagged plus anything that surfaced during planning; the implementer must escalate these before guessing.>
-   ```
-
-   The plan is unabridged. Do not summarize. Do not write "see the brief for details"; fold the relevant details into the plan so the implementer reads one document. The unabridged-plan rule and the `draft → planned` save semantics live in lifecycle §1.
+   The plan is unabridged on the parts that carry content. Do not summarize them. Do not write "see the brief for details"; fold the relevant detail into the plan so the implementer reads one document. The `draft → planned` save semantics live in lifecycle §1.
 
 5. **Save the plan and (when appropriate) transition status.** The call shape depends on entry status:
 
@@ -151,7 +127,7 @@ When entry status was already `planned`, do **not** pass the `status` field at a
        implementationPlan='<updated full markdown>'
      ```
 
-   Per artifacts §1, `decisions` is CHOICE + WHY only. Process metadata (who/when/why-the-plan-was-rewritten) belongs in the audit log the data layer keeps automatically, not in `decisions`. Append to `decisions` only when a genuine choice surfaced during planning (a library pick, an AC bound to a specific behavior, a deviation from the brief's recommendation); in that case add it as a separate field in the same call, and never pass `overwriteArrays=true`.
+   Per artifacts §1, `decisions` is CHOICE + WHY only. Process metadata (who/when/why-the-plan-was-rewritten) belongs in the audit log the data layer keeps automatically, not in `decisions`. An open question is not a decision: a `Open: ... resolve during plan` note never goes in `decisions`. Resolve it during planning, or carry it in the *Open questions* of your return to the orchestrator; it stays out of the task's decision history in every mode, with or without HOTL. Append to `decisions` only when a genuine choice surfaced during planning (a library pick, an AC bound to a specific behavior, a deviation from the brief's recommendation); in that case add it as a separate field in the same call, and never pass `overwriteArrays=true`.
 
 6. **Verify the write.** `piyaz_context depth='summary' taskId='<id>'` and confirm the task reports `hasImplementationPlan: true` (or equivalent in the summary output). For `draft` entry, also confirm `status='planned'`. If either check fails, report the failure to the orchestrator with the tool result inline; the orchestrator will retry once.
 
@@ -182,7 +158,7 @@ When the composer workflow dispatches you, a structured-output schema is attache
 - `status`: the STATUS value above.
 - `sections`: the number of `##` sections in the plan you wrote (or re-validated).
 - `buildSteps`: the number of numbered steps in the plan's *Build sequence*.
-- `openQuestions`: the *Open questions* list, the items the implementer must escalate before guessing.
+- `openQuestions`: the open questions surfaced during planning, for the orchestrator to surface to the user; a question that blocks the plan makes your `status` `NEEDS_DECISION`.
 - `reason`: the one-line STATUS reason; for a `foundation-unsound` block, the `foundation-unsound:` prefix must be present here.
 
 Direct (non-composer) invocations have no schema attached; return the one-sentence confirmation with its trailing STATUS line as usual.

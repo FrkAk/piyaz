@@ -12,6 +12,7 @@ import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
+import { signupsDisabled } from "@/lib/config/env";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -52,8 +53,7 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     revokeSessionsOnPasswordReset: true,
-    // Invite-only on hosted Cloudflare; self-host stays open.
-    disableSignUp: IS_CLOUDFLARE,
+    disableSignUp: signupsDisabled(),
   },
   // Route OAuth authorization-code (and other single-use verification)
   // consume through the DB-atomic `runWithTransaction` + `consumeOne` path

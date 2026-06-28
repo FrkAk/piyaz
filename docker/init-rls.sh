@@ -46,8 +46,10 @@ END \$\$;
 ALTER ROLE app_user NOBYPASSRLS NOSUPERUSER;
 ALTER ROLE auth_role NOBYPASSRLS NOSUPERUSER;
 
--- Canonical grants are in docker/grants.sql (shared with the testcontainer).
+-- Canonical grants are in docker/grants.sql (public) and docker/grants-auth.sql
+-- (piyaz_auth), shared with the testcontainer.
 \i /opt/postgres-init/grants.sql
+\i /opt/postgres-init/grants-auth.sql
 
 -- DB name varies per context, so DB-level grants stay inline.
 GRANT CREATE ON DATABASE "${POSTGRES_DB}" TO service_role;
