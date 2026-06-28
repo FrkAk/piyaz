@@ -407,6 +407,7 @@ export async function createEdge(
         type: "edge_added",
         summary: `added ${data.edgeType} → target`,
         targetRef: data.targetTaskId,
+        metadata: { direction: "outgoing", relation: data.edgeType },
       },
       {
         projectId: sourceTask.projectId,
@@ -414,6 +415,7 @@ export async function createEdge(
         type: "edge_added",
         summary: `added ${data.edgeType} ← source`,
         targetRef: data.sourceTaskId,
+        metadata: { direction: "incoming", relation: data.edgeType },
       },
     ]);
 
@@ -550,6 +552,7 @@ export async function updateEdge(
           type: "edge_updated",
           summary: `updated the ${row.edgeType} edge → target`,
           targetRef: existing.targetTaskId,
+          metadata: { direction: "outgoing", relation: row.edgeType },
         },
         {
           projectId,
@@ -557,6 +560,7 @@ export async function updateEdge(
           type: "edge_updated",
           summary: `updated the ${row.edgeType} edge ← source`,
           targetRef: existing.sourceTaskId,
+          metadata: { direction: "incoming", relation: row.edgeType },
         },
       ]);
 
@@ -592,6 +596,7 @@ export async function removeEdge(ctx: AuthContext, edgeId: string) {
         type: "edge_removed",
         summary: `removed the ${edge.edgeType} edge → target`,
         targetRef: edge.targetTaskId,
+        metadata: { direction: "outgoing", relation: edge.edgeType },
       },
       {
         projectId,
@@ -599,6 +604,7 @@ export async function removeEdge(ctx: AuthContext, edgeId: string) {
         type: "edge_removed",
         summary: `removed the ${edge.edgeType} edge ← source`,
         targetRef: edge.sourceTaskId,
+        metadata: { direction: "incoming", relation: edge.edgeType },
       },
     ]);
 

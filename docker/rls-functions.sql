@@ -414,18 +414,24 @@ GRANT EXECUTE ON FUNCTION public.activity_actors_visible(uuid) TO app_user;
 
 -- Resolve a single OAuth client display name (not secret). Scalar to avoid
 -- text[] array binding on the read path; callers loop the page's few ids.
--- Gated like the other actor SDFs: the name is disclosed only when the caller
--- shares an org with an activity event attributed to that client, so the read
--- path (which only asks about clients on rows it can already see) is
--- unaffected while a direct call with a guessed clientId learns nothing.
+-- Gated like the other actor SDFs: the name is disclosed only to a caller that
+-- shares an org with an activity event attributed to that client. On the read
+-- path this only ever asks about clients already on visible rows. The gate is
+-- an org-scoping check, not a hard anti-enumeration barrier — an app_user that
+-- can insert its own events (e.g. via SQLi) could attribute a row to a guessed
+-- clientId and read its name; the disclosed value is a registered display name
+-- (low sensitivity), never a secret.
 CREATE OR REPLACE FUNCTION public.oauth_client_name(p_client_id text)
 RETURNS text
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public, piyaz_auth, pg_catalog, pg_temp
 AS $$
-  SELECT c.name
+DECLARE
+  v_name text;
+BEGIN
+  SELECT c.name INTO v_name
   FROM piyaz_auth."oauthClient" c
   WHERE c."clientId" = p_client_id
     AND EXISTS (
@@ -437,6 +443,8 @@ AS $$
       WHERE ae.actor_client_id = p_client_id
         AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
     );
+  RETURN v_name;
+END;
 $$;
 REVOKE EXECUTE ON FUNCTION public.oauth_client_name(text) FROM public;
 GRANT EXECUTE ON FUNCTION public.oauth_client_name(text) TO app_user;

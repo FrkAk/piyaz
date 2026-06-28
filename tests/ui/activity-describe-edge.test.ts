@@ -2,19 +2,113 @@ import { describe, expect, test } from "bun:test";
 import { edgePhrase } from "@/components/workspace/detail/ActivitySection";
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
 
-/** Minimal event — edgePhrase reads only `type` + `summary`. */
-function evt(type: ActivityEventType, summary: string): ActivityEvent {
+/** Event carrying the `metadata` the edge writer stores (the live contract). */
+function evt(
+  type: ActivityEventType,
+  direction: "outgoing" | "incoming",
+  relation: "depends_on" | "relates_to",
+): ActivityEvent {
+  return {
+    type,
+    metadata: { direction, relation },
+  } as unknown as ActivityEvent;
+}
+
+/** Legacy/backfilled event with no edge metadata — only a stored summary. */
+function legacyEvt(type: ActivityEventType, summary: string): ActivityEvent {
   return { type, summary } as ActivityEvent;
 }
 
-// Pins the consumer contract against the summary shapes the edge writer emits
-// (lib/data/edge.ts). edgePhrase infers relation kind + direction by parsing the
-// stored summary; if either side's wording drifts, these assertions catch it.
-describe("edgePhrase", () => {
+// edgePhrase reads metadata.{direction,relation}. These cases mirror exactly
+// what lib/data/edge.ts writes (asserted in tests/data/activity-edge.test.ts),
+// so the writer and consumer are pinned to the same contract.
+describe("edgePhrase from metadata", () => {
+  const cases: Array<
+    [
+      ActivityEventType,
+      "outgoing" | "incoming",
+      "depends_on" | "relates_to",
+      "depends" | "relates",
+      string,
+    ]
+  > = [
+    // depends_on — outgoing (dependent) vs incoming (prerequisite)
+    [
+      "edge_added",
+      "outgoing",
+      "depends_on",
+      "depends",
+      "added a dependency on",
+    ],
+    [
+      "edge_added",
+      "incoming",
+      "depends_on",
+      "depends",
+      "became a dependency of",
+    ],
+    [
+      "edge_removed",
+      "outgoing",
+      "depends_on",
+      "depends",
+      "removed the dependency on",
+    ],
+    [
+      "edge_removed",
+      "incoming",
+      "depends_on",
+      "depends",
+      "is no longer a dependency of",
+    ],
+    [
+      "edge_updated",
+      "outgoing",
+      "depends_on",
+      "depends",
+      "updated the dependency on",
+    ],
+    [
+      "edge_updated",
+      "incoming",
+      "depends_on",
+      "depends",
+      "updated the dependency for",
+    ],
+    // relates_to — symmetric wording across direction
+    ["edge_added", "outgoing", "relates_to", "relates", "linked to"],
+    ["edge_added", "incoming", "relates_to", "relates", "linked to"],
+    [
+      "edge_removed",
+      "outgoing",
+      "relates_to",
+      "relates",
+      "removed the link to",
+    ],
+    [
+      "edge_updated",
+      "incoming",
+      "relates_to",
+      "relates",
+      "updated the link to",
+    ],
+  ];
+
+  for (const [type, direction, relation, kind, text] of cases) {
+    test(`${type} ${direction} ${relation} → ${kind} "${text}"`, () => {
+      const result = edgePhrase(evt(type, direction, relation));
+      expect(result.kind).toBe(kind);
+      expect(result.text).toBe(text);
+    });
+  }
+});
+
+// Backfilled rows carry no edge metadata; edgePhrase must still classify them
+// by parsing the stored summary markers (`← source`, `relates_to`).
+describe("edgePhrase legacy summary fallback", () => {
   const cases: Array<
     [ActivityEventType, string, "depends" | "relates", string]
   > = [
-    // depends_on — outgoing (→ target) vs incoming (← source)
     [
       "edge_added",
       "added depends_on → target",
@@ -27,50 +121,12 @@ describe("edgePhrase", () => {
       "depends",
       "became a dependency of",
     ],
-    [
-      "edge_removed",
-      "removed the depends_on edge → target",
-      "depends",
-      "removed the dependency on",
-    ],
-    [
-      "edge_removed",
-      "removed the depends_on edge ← source",
-      "depends",
-      "is no longer a dependency of",
-    ],
-    [
-      "edge_updated",
-      "updated the depends_on edge → target",
-      "depends",
-      "updated the dependency on",
-    ],
-    [
-      "edge_updated",
-      "updated the depends_on edge ← source",
-      "depends",
-      "updated the dependency for",
-    ],
-    // relates_to — symmetric wording across direction
     ["edge_added", "added relates_to → target", "relates", "linked to"],
-    ["edge_added", "added relates_to ← source", "relates", "linked to"],
-    [
-      "edge_removed",
-      "removed the relates_to edge → target",
-      "relates",
-      "removed the link to",
-    ],
-    [
-      "edge_updated",
-      "updated the relates_to edge ← source",
-      "relates",
-      "updated the link to",
-    ],
   ];
 
   for (const [type, summary, kind, text] of cases) {
-    test(`${type} "${summary}" → ${kind} "${text}"`, () => {
-      const result = edgePhrase(evt(type, summary));
+    test(`legacy ${type} "${summary}" → ${kind} "${text}"`, () => {
+      const result = edgePhrase(legacyEvt(type, summary));
       expect(result.kind).toBe(kind);
       expect(result.text).toBe(text);
     });

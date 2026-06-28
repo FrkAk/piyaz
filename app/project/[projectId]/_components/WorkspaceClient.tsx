@@ -132,6 +132,9 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
       qc.invalidateQueries({
         queryKey: taskKeys.detail(projectId, selectedTaskId),
       });
+      qc.invalidateQueries({
+        queryKey: taskKeys.activity(projectId, selectedTaskId),
+      });
     }
   }, [qc, projectId, selectedTaskId]);
 

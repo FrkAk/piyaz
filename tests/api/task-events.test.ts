@@ -1,34 +1,95 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
-import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
-import { listTaskActivity } from "@/lib/data/activity";
+import { seedUserOrgProject } from "@/tests/setup/seed";
+import { broker } from "@/lib/realtime/broker";
+import { GET } from "@/app/api/task/[taskId]/events/route";
 import { makeAuthContext } from "@/lib/auth/context";
+import { createTask, updateTask } from "@/lib/data/task";
+import type { ActivityEvent } from "@/lib/types";
+
+const setSession = (
+  globalThis as unknown as {
+    __setTestSession: (s: { user: { id: string } } | null) => void;
+  }
+).__setTestSession;
 
 afterEach(async () => {
+  broker._resetForTests();
   await truncateAll();
 });
 
-// Endpoint wiring is thin; assert the data function it delegates to returns a
-// shaped page (the route adds only auth + JSON serialization).
-describe("task activity endpoint contract", () => {
-  test("listTaskActivity returns events + nextCursor shape", async () => {
-    const fx = await seedUserOrgProject("ep-1");
-    const sr = serviceRoleConnect();
-    let taskId: string;
-    try {
-      const [t] = await sr<{ id: string }[]>`
-        INSERT INTO tasks (project_id, title, sequence_number)
-        VALUES (${fx.projectId}, 'T', 1) RETURNING id`;
-      taskId = t.id;
-      await sr`
-        INSERT INTO activity_events (project_id, task_id, type, source, summary)
-        VALUES (${fx.projectId}, ${taskId}, 'title_changed', 'web', 'x')`;
-    } finally {
-      await sr.end({ timeout: 5 });
-    }
-    const page = await listTaskActivity(makeAuthContext(fx.userId), taskId, {});
-    expect(page).toHaveProperty("events");
-    expect(page).toHaveProperty("nextCursor");
-    expect(page.events[0]?.summary).toBe("x");
+/** Create a task and a second event (status change) so a page has two rows. */
+async function seedTaskWithEvents(prefix: string) {
+  const fx = await seedUserOrgProject(prefix);
+  const ctx = makeAuthContext(fx.userId);
+  const task = await createTask(ctx, { projectId: fx.projectId, title: "T" });
+  await updateTask(ctx, task.id, { status: "in_progress" });
+  return { fx, taskId: task.id };
+}
+
+const call = (taskId: string, query = "") =>
+  GET(new Request(`http://test/api/task/${taskId}/events${query}`), {
+    params: Promise.resolve({ taskId }),
+  });
+
+describe("GET /api/task/[taskId]/events", () => {
+  test("returns the owner's events newest-first with a 200", async () => {
+    const { fx, taskId } = await seedTaskWithEvents("ev-owner");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await call(taskId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      events: ActivityEvent[];
+      nextCursor: string | null;
+    };
+    expect(body.events.map((e) => e.type)).toEqual([
+      "status_changed",
+      "task_created",
+    ]);
+    expect(body.nextCursor).toBeNull();
+  });
+
+  test("honors ?limit and returns a cursor for the next page", async () => {
+    const { fx, taskId } = await seedTaskWithEvents("ev-limit");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await call(taskId, "?limit=1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      events: ActivityEvent[];
+      nextCursor: string | null;
+    };
+    expect(body.events).toHaveLength(1);
+    expect(body.nextCursor).not.toBeNull();
+  });
+
+  test("treats a malformed ?cursor as the first page (no 500)", async () => {
+    const { fx, taskId } = await seedTaskWithEvents("ev-cursor");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await call(taskId, "?cursor=not-a-cursor");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { events: ActivityEvent[] };
+    expect(body.events).toHaveLength(2);
+  });
+
+  test("returns 404 for a cross-team caller (no event leak in body)", async () => {
+    const { taskId } = await seedTaskWithEvents("ev-owner-x");
+    const stranger = await seedUserOrgProject("ev-stranger-x");
+    setSession({ user: { id: stranger.userId } });
+
+    const res = await call(taskId);
+    expect(res.status).toBe(404);
+    const text = await res.text();
+    expect(text).not.toContain("status_changed");
+  });
+
+  test("returns 401 without a session", async () => {
+    const { taskId } = await seedTaskWithEvents("ev-noauth");
+    setSession(null);
+
+    const res = await call(taskId);
+    expect(res.status).toBe(401);
   });
 });

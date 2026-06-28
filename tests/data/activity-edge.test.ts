@@ -36,10 +36,27 @@ describe("edge activity", () => {
 
     const sr2 = serviceRoleConnect();
     try {
-      const rows = await sr2`
-        SELECT task_id FROM activity_events WHERE type = 'edge_added' ORDER BY task_id`;
+      const rows = await sr2<
+        {
+          task_id: string;
+          metadata: { direction: string; relation: string } | null;
+        }[]
+      >`
+        SELECT task_id, metadata FROM activity_events
+        WHERE type = 'edge_added'`;
       expect(rows.length).toBe(2);
-      expect(new Set(rows.map((r) => r.task_id))).toEqual(new Set([aId, bId]));
+      const byTask = new Map(rows.map((r) => [r.task_id, r.metadata]));
+      // The source endpoint is the dependent (outgoing); the target endpoint
+      // is the prerequisite (incoming). edgePhrase reads exactly this metadata
+      // (not the summary), so pin the writer's output here.
+      expect(byTask.get(aId)).toEqual({
+        direction: "outgoing",
+        relation: "depends_on",
+      });
+      expect(byTask.get(bId)).toEqual({
+        direction: "incoming",
+        relation: "depends_on",
+      });
     } finally {
       await sr2.end({ timeout: 5 });
     }

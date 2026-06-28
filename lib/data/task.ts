@@ -196,11 +196,12 @@ export function diffTaskChanges(
     });
   }
   if (changes.order !== undefined && changes.order !== current.order) {
+    // `order` is an internal sort position, never rendered as a transition,
+    // so no `metadata` is stored (would be dead egress on every reorder).
     events.push({
       ...base,
       type: "moved",
       summary: "reordered the task",
-      metadata: { from: current.order, to: changes.order },
     });
   }
   if (changes.tags !== undefined) {

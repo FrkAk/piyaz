@@ -23,6 +23,7 @@ import {
 } from "@/components/shared/icons";
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
 import { taskKeys } from "@/lib/query/keys";
+import { formatRelative } from "@/components/workspace/structure/relativeTime";
 import { SectionHeader } from "./SectionHeader";
 
 interface ActivitySectionProps {
@@ -81,6 +82,7 @@ export function ActivitySection({
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
+    isFetchNextPageError,
   } = useInfiniteQuery({
     queryKey: taskKeys.activity(projectId, taskId),
     queryFn: ({ pageParam }) => fetchActivity(taskId, pageParam),
@@ -89,6 +91,10 @@ export function ActivitySection({
   });
 
   const events = data?.pages.flatMap((p) => p.events) ?? [];
+  // Alias to a plain boolean: branching on the destructured union flag itself
+  // narrows the sibling bindings (e.g. `fetchNextPage`) to `never`, since no
+  // result variant types this flag as `true`.
+  const nextPageFailed: boolean = isFetchNextPageError;
 
   // A failed load must not look identical to "no activity" on an audit panel;
   // surface the failure with a retry instead of silently rendering nothing.
@@ -127,16 +133,31 @@ export function ActivitySection({
           />
         ))}
       </ul>
-      {hasNextPage && (
-        <button
-          type="button"
-          onClick={() => fetchNextPage()}
-          disabled={isFetchingNextPage}
-          className="mt-2 pl-[32px] text-[11px] text-text-faint hover:text-text-secondary"
-        >
-          {isFetchingNextPage ? "Loading…" : "Show more"}
-        </button>
-      )}
+      {hasNextPage &&
+        // A failed next-page load leaves `isError` false (the first page
+        // succeeded), so surface that distinct failure with its own retry
+        // rather than re-showing "Show more" as if nothing happened.
+        (nextPageFailed ? (
+          <div className="mt-2 flex items-center gap-2 pl-[32px] text-[11px] text-text-secondary">
+            <span>Couldn’t load more.</span>
+            <button
+              type="button"
+              onClick={() => fetchNextPage()}
+              className="text-text-faint underline hover:text-text-secondary"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="mt-2 pl-[32px] text-[11px] text-text-faint hover:text-text-secondary"
+          >
+            {isFetchingNextPage ? "Loading…" : "Show more"}
+          </button>
+        ))}
     </section>
   );
 }
@@ -373,16 +394,27 @@ export interface EdgePhrase {
 }
 
 /**
- * Derive an edge event's relation kind and phrasing from the stored summary
- * marker (`← source` = incoming), which the edge writer emits in a fixed shape.
- * Pure (no JSX) so the summary-parsing contract is unit-testable.
+ * Derive an edge event's relation kind and phrasing. The edge writer stores
+ * `metadata.{direction,relation}`; this reads them directly. Backfilled /
+ * legacy rows carry no edge metadata, so it falls back to parsing the stored
+ * summary markers (`← source` = incoming). Pure (no JSX) so the contract is
+ * unit-testable.
  *
  * @param event - An `edge_*` event.
  * @returns The relation kind and directional phrase.
  */
 export function edgePhrase(event: ActivityEvent): EdgePhrase {
-  const incoming = event.summary.includes("← source");
-  if (event.summary.includes("relates_to")) {
+  const meta = event.metadata as
+    | { direction?: string; relation?: string }
+    | null
+    | undefined;
+  const incoming = meta?.direction
+    ? meta.direction === "incoming"
+    : event.summary.includes("← source");
+  const isRelates = meta?.relation
+    ? meta.relation === "relates_to"
+    : event.summary.includes("relates_to");
+  if (isRelates) {
     const text =
       event.type === "edge_added"
         ? "linked to"
@@ -530,29 +562,6 @@ function displayActor(name: string, isAgent: boolean): string {
   const first = name.split(/\s+/)[0];
   if (!first || first === "agent") return "Agent";
   return `${first}'s Agent`;
-}
-
-/**
- * Compact relative-time formatter.
- * @param iso - ISO date string.
- * @returns Short relative label, or `—` if unparseable.
- */
-function formatRelative(iso: string): string {
-  const ts = Date.parse(iso);
-  if (Number.isNaN(ts)) return "—";
-  const diff = Date.now() - ts;
-  const min = Math.floor(diff / 60_000);
-  if (min < 1) return "now";
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  if (day < 7) return `${day}d`;
-  const week = Math.floor(day / 7);
-  if (week < 4) return `${week}w`;
-  const mo = Math.floor(day / 30);
-  if (mo < 12) return `${mo}mo`;
-  return `${Math.floor(day / 365)}y`;
 }
 
 export default ActivitySection;

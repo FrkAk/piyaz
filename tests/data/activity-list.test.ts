@@ -62,8 +62,9 @@ describe("listTaskActivity", () => {
 
     const page = await listTaskActivity(makeAuthContext(fx.userId), taskId, {});
     expect(page.events[0].actorUserId).toBe(fx.userId);
-    expect(typeof page.events[0].actorName).toBe("string");
-    expect(page.events[0].actorName).not.toBeNull();
+    // Assert the exact seeded name (not just non-null) so a wrong-column /
+    // wrong-row SDF join can't pass by returning some other string.
+    expect(page.events[0].actorName).toBe("User list-hydrate");
   });
 
   test("a non-member cannot read another project's events", async () => {

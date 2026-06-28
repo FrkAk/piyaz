@@ -53,6 +53,7 @@ export type ActivityEventInput = {
  * @param tx - Active RLS-scoped transaction handle.
  * @param actor - The request's resolved actor descriptor.
  * @param events - Events to insert (constant-size rows).
+ * @returns Resolves once the rows are written (nothing for an empty list).
  */
 export async function insertActivityEvents(
   tx: Tx,
@@ -239,6 +240,13 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Exact shape `encodeCursor` emits (`created_at_cursor`): microsecond ISO with
+ * a literal `Z`. Guards the timestamp before it reaches a `::timestamptz` cast
+ * so a crafted cursor maps to the first page instead of throwing a 500.
+ */
+const CURSOR_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+/**
  * Encode a keyset cursor from the last row of a page. `createdAt` is the
  * microsecond-precision ISO text (`created_at_cursor`), stored verbatim so the
  * seek literal matches the stored timestamp exactly.
@@ -263,7 +271,9 @@ function decodeCursor(cursor: string): ActivityCursor | null {
     const [iso, id] = Buffer.from(cursor, "base64url")
       .toString("utf8")
       .split("|");
-    if (!iso || !id || Number.isNaN(new Date(iso).getTime())) return null;
+    if (!iso || !id) return null;
+    if (!CURSOR_TS_RE.test(iso) || Number.isNaN(new Date(iso).getTime()))
+      return null;
     if (!UUID_RE.test(id)) return null;
     return { createdAt: iso, id };
   } catch {
@@ -271,7 +281,12 @@ function decodeCursor(cursor: string): ActivityCursor | null {
   }
 }
 
-/** Coerce a driver timestamp (Date or ISO string) to a Date. */
+/**
+ * Coerce a driver timestamp (Date or ISO string) to a Date.
+ *
+ * @param value - Driver-returned timestamp, already a `Date` or an ISO string.
+ * @returns The value as a `Date`.
+ */
 function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
