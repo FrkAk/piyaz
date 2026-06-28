@@ -35,3 +35,19 @@ GRANT SELECT ON piyaz_auth."oauthClient" TO service_role;
 -- New piyaz_auth tables need explicit grants in their migration.
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA piyaz_auth TO auth_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA piyaz_auth TO auth_role;
+
+-- migrator: cross-schema FK support. Public tables carry FKs to
+-- piyaz_auth.user / .organization; creating those constraints during migrate
+-- needs USAGE on the schema + REFERENCES on the target tables. REFERENCES
+-- grants FK creation only — NOT SELECT — so the migration role still cannot
+-- read auth rows. New piyaz_auth tables referenced by a public FK need their
+-- REFERENCES added here. Guarded: the migrator role exists only on hosted
+-- deploys; self-host and the testcontainer have no such role.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'migrator') THEN
+    EXECUTE 'GRANT USAGE ON SCHEMA piyaz_auth TO migrator';
+    EXECUTE 'GRANT REFERENCES ON piyaz_auth."user" TO migrator';
+    EXECUTE 'GRANT REFERENCES ON piyaz_auth.organization TO migrator';
+  END IF;
+END $$;
