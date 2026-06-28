@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from "react";
 import { updateProjectSettings } from "@/lib/actions/project";
+import { EditButton } from "@/components/shared/EditButton";
+import { useInlineEdit } from "@/hooks/useInlineEdit";
 
 interface TitleSectionProps {
   projectId: string;
@@ -26,6 +28,7 @@ export function TitleSection({
   const [value, setValue] = useState(initialTitle);
   const [syncedInitialTitle, setSyncedInitialTitle] = useState(initialTitle);
   const [serverError, setServerError] = useState<string | null>(null);
+  const titleEdit = useInlineEdit(() => setEditing(true), "point");
 
   if (initialTitle !== syncedInitialTitle && !editing) {
     setSyncedInitialTitle(initialTitle);
@@ -64,6 +67,7 @@ export function TitleSection({
         <input
           type="text"
           value={value}
+          onFocus={titleEdit.onEditorFocus}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -81,13 +85,15 @@ export function TitleSection({
           className="w-full rounded-lg border border-border-strong bg-base px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent"
         />
       ) : (
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="w-full cursor-pointer rounded-lg border border-transparent px-3 py-2 text-left text-sm text-text-primary transition-colors hover:border-border hover:bg-surface-hover/40"
+        <div
+          {...titleEdit.triggerProps}
+          className="flex w-full cursor-text items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-left text-sm text-text-primary transition-colors hover:border-border hover:bg-surface-hover/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
         >
-          {value || <span className="text-text-muted">Untitled</span>}
-        </button>
+          <span className="min-w-0 flex-1 select-text">
+            {value || <span className="text-text-muted">Untitled</span>}
+          </span>
+          <EditButton onClick={titleEdit.onActivate} label="Edit title" />
+        </div>
       )}
       {serverError && (
         <p className="font-mono text-[10px] text-danger">{serverError}</p>
