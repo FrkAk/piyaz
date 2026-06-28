@@ -89,7 +89,8 @@ const OAUTH_CLIENT_BRANDS: readonly {
 export function resolveOAuthBrand(clientName: string): OAuthBrandFamily | null {
   const baseName = stripClientMetadata(sanitizeClientName(clientName));
   return (
-    OAUTH_CLIENT_BRANDS.find(({ match }) => match.test(baseName))?.family ?? null
+    OAUTH_CLIENT_BRANDS.find(({ match }) => match.test(baseName))?.family ??
+    null
   );
 }
 
