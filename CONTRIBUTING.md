@@ -47,21 +47,16 @@ A running instance holds real data, so schema changes ship as versioned migratio
 
 ### Adding a table
 
-Ship each table's access control in the same migration as its `CREATE TABLE`:
+1. Add the table to `lib/db/schema.ts` with `.enableRLS()`, then run `bun run db:generate`. The generated migration emits `CREATE TABLE` and `ENABLE ROW LEVEL SECURITY`. Do not hand-edit the generated file.
+2. Add the table's `ALTER TABLE "<table>" FORCE ROW LEVEL SECURITY;` and its tenant-scoping `CREATE POLICY ... TO app_user` to `docker/rls-policies.sql`.
+3. Grants need no per-table edit: `docker/grants.sql` already covers public tables via `GRANT ... ON ALL TABLES IN SCHEMA public`.
+4. Commit `schema.ts`, the generated migration, and the `docker/` change together.
 
-1. Add the table to `lib/db/schema.ts` with `.enableRLS()`, then run `bun run db:generate`. The generated file already emits `ENABLE ROW LEVEL SECURITY`.
-2. Hand-append to that generated migration file:
-   - `GRANT SELECT, INSERT, UPDATE, DELETE ON "<table>" TO app_user, service_role;` (and `GRANT USAGE, SELECT ON "<seq>" TO app_user, service_role;` for any serial column).
-   - `ALTER TABLE "<table>" FORCE ROW LEVEL SECURITY;`
-   - the tenant-scoping `CREATE POLICY ... TO app_user`.
-3. Mirror the same `FORCE` + policy into `docker/rls-policies.sql` so the push-based test and local containers get them too (`docker/grants.sql` already covers grants via `GRANT ... ON ALL TABLES`).
-4. Commit `schema.ts`, the migration, and the `docker/` change together.
-
-Grants and policies are explicit per table on purpose. `ALTER DEFAULT PRIVILEGES` is deliberately not used on `public`: it would grant a new table to `app_user` in the window between `CREATE TABLE` and its policy attach, a cross-tenant read window. A missing grant is a loud runtime failure; a missing RLS attach is caught by `tests/db/rls-coverage.test.ts`.
+`bun run db:rls` applies the grants and policies after `db:migrate`. They stay out of the generated migration on purpose: `drizzle-kit push` (used by the test container) drops `pgPolicy` `USING`/`WITH CHECK` clauses, so policy DDL is hand-written in `docker/rls-policies.sql`. `ALTER DEFAULT PRIVILEGES` is deliberately not used on `public`: it would grant a new table to `app_user` in the window between `CREATE TABLE` and its policy attach, a cross-tenant read window. A missing grant is a loud runtime failure; a missing RLS attach is caught by `tests/db/rls-coverage.test.ts`.
 
 ### Changing RLS helper functions
 
-The `SECURITY DEFINER` functions in `docker/rls-functions.sql` (such as `current_user_org_ids`) are owned by the database owner and are **not** applied by `db:migrate`. Several read `piyaz_auth`, so they must run as a role with auth-schema access, which a least-privilege migration role lacks. To change one: edit `docker/rls-functions.sql`, then re-apply that file to your database as the owner (idempotent via `CREATE OR REPLACE`); never hand-edit a live database. Table, column, index, and policy changes still flow through `db:migrate`.
+The `SECURITY DEFINER` functions in `docker/rls-functions.sql` (such as `current_user_org_ids`) are applied by `bun run db:rls`, not by `db:migrate` — several read `piyaz_auth` and are owned by the database owner. To change one: edit `docker/rls-functions.sql`, then run `bun run db:rls` (idempotent via `CREATE OR REPLACE`); never hand-edit a live database. Table, column, and index changes flow through `db:migrate`; grants and policies are applied by `db:rls`.
 
 Migrations are roll-forward only (Drizzle has no down-migrations), so follow expand/contract: additive changes ship with the code that needs them; destructive cleanups (drop column/table) ship in a separate later change, keeping every upgrade roll-forward-safe.
 
