@@ -60,6 +60,24 @@ runs:
         DATABASE_MIGRATION_URL: ${{ inputs.migration_url }}
       run: bun run db:migrate
 
+    # Re-apply the public-schema RLS (grants + policies) as the migration role,
+    # which owns `public`. piyaz_auth grants + SECURITY DEFINER helpers need the
+    # owner role and are applied out-of-band, never in CI.
+    - name: Apply public RLS
+      shell: bash
+      env:
+        DATABASE_MIGRATION_URL: ${{ inputs.migration_url }}
+      run: bun run db:rls:ci
+
+    # Fail the deploy (read-only catalog check) if the live database is missing
+    # any expected policy, FORCE flag, or owner-managed function — e.g. a
+    # forgotten owner apply for a new SECURITY DEFINER helper.
+    - name: Verify RLS
+      shell: bash
+      env:
+        DATABASE_MIGRATION_URL: ${{ inputs.migration_url }}
+      run: bun run db:rls:verify
+
     - name: Build and deploy Worker
       shell: bash
       env:

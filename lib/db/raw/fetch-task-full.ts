@@ -22,7 +22,6 @@ export type TaskFullRawRow = {
   priority: string | null;
   estimate: number | null;
   files: string[];
-  history: unknown[];
   created_at: string | Date;
   updated_at: string | Date;
   project_identifier: string;
@@ -242,9 +241,9 @@ function depthAggregate(keep: boolean, agg: SQL, alias: string): SQL {
 
 /**
  * Build the depth-projected task-row SQL shared by the interactive and
- * batch read paths. Columns no depth reads (`category`, `history`) and
- * columns this depth omits are returned as type-stable `NULL` literals so
- * the {@link TaskFullRawRow} shape is identical across depths.
+ * batch read paths. Columns no depth reads (`category`) and columns this
+ * depth omits are returned as type-stable `NULL` literals so the
+ * {@link TaskFullRawRow} shape is identical across depths.
  *
  * @param taskId - UUID of the task.
  * @param depth - Context depth selecting the column projection.
@@ -268,7 +267,6 @@ function taskForDepthSql(taskId: string, depth: TaskFetchDepth): SQL {
         t.priority,
         t.estimate,
         ${depthColumn(p.files, sql`t.files`, "files", "jsonb")},
-        '[]'::jsonb AS history,
         t.created_at,
         t.updated_at,
         p.identifier AS project_identifier,
@@ -313,7 +311,22 @@ export function taskForDepthStmt(
 function taskFullSql(taskId: string): SQL {
   return sql`
       SELECT
-        t.*,
+        t.id,
+        t.project_id,
+        t.title,
+        t.sequence_number,
+        t.description,
+        t.status,
+        t."order",
+        t.category,
+        t.implementation_plan,
+        t.execution_record,
+        t.tags,
+        t.priority,
+        t.estimate,
+        t.files,
+        t.created_at,
+        t.updated_at,
         p.identifier AS project_identifier,
         (SELECT json_agg(json_build_object('userId', a.user_id, 'name', a.name, 'email', a.email) ORDER BY a.name)
          FROM public.task_assignees_visible(t.id) a) AS assignees,

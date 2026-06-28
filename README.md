@@ -104,15 +104,12 @@ Your database holds real data, so schema changes apply as versioned migrations, 
 git pull
 bun install --production
 bun run db:migrate
+bun run db:rls
 bun run build
 bun run start
 ```
 
-If an upgrade also changes the hand-written RLS helpers, re-apply the affected `docker/*.sql` files, for example:
-
-```bash
-docker exec -i piyaz-db-1 psql -U piyaz -d piyaz < docker/rls-functions.sql
-```
+`db:rls` re-applies the canonical grants, SECURITY DEFINER functions, and RLS policies from `docker/*.sql`. It is idempotent (safe to run when nothing changed) and required whenever a release adds an RLS-protected table: the migration creates the table and enables RLS, but its grant and policy live in the hand-written `docker/*.sql` files that `db:migrate` does not apply.
 
 > **Upgrading from a pre-migrations install:** instances first set up before versioned migrations existed have an empty migration journal, so `db:migrate` tries to recreate existing tables and fails. Run `bun run db:baseline` once to mark the current schema as the baseline, then run `bun run db:migrate`. Running `db:baseline` on a newer install is a safe no-op.
 

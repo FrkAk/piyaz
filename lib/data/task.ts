@@ -30,6 +30,7 @@ import {
   taskDecisions,
   taskLinks,
   type NewTask,
+  type Task,
   type Project,
   type TaskLink,
 } from "@/lib/db/schema";
@@ -42,7 +43,6 @@ import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
 import type {
   AcceptanceCriterion,
   Decision,
-  HistoryEntry,
   TaskStatus,
   Priority,
   Estimate,
@@ -59,6 +59,13 @@ import {
 } from "@/lib/graph/effective-deps";
 import { projectDependsOnEdgesStmt } from "@/lib/data/edge";
 import { projectAccessGateStmt } from "@/lib/data/access";
+import {
+  insertActivityEvents,
+  diffCriteria,
+  diffDecisions,
+  diffAssignees,
+  type ActivityEventInput,
+} from "@/lib/data/activity";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
@@ -94,60 +101,142 @@ import { emitTaskEvent } from "@/lib/realtime/events";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
 
 /**
- * Build a timestamped history entry.
- * @param entry - Partial entry without id/date.
- * @returns Complete history entry with generated id and current date.
+ * Compute one discrete activity event per changed task field. Scalars compare
+ * by value; tags diff per element. Unchanged fields produce nothing.
+ *
+ * @param projectId - Owning project id.
+ * @param taskId - Task being updated.
+ * @param current - The row before the update.
+ * @param changes - The partial column changes being applied.
+ * @returns Discrete events to insert for this update.
  */
-function makeHistoryEntry(
-  entry: Omit<HistoryEntry, "id" | "date">,
-): HistoryEntry {
-  return {
-    ...entry,
-    id: crypto.randomUUID(),
-    date: new Date().toISOString(),
-  };
-}
+export function diffTaskChanges(
+  projectId: string,
+  taskId: string,
+  current: Task,
+  changes: Partial<Task>,
+): ActivityEventInput[] {
+  const events: ActivityEventInput[] = [];
+  const base = { projectId, taskId };
 
-/**
- * Append the same history entry to multiple tasks in a single UPDATE.
- * Used by edge mutations to log "edge created/updated/deleted" on both
- * endpoints with one wire round-trip instead of two serial UPDATEs
- * inside the transaction.
- *
- * Runs under RLS: callers must supply either an active transaction handle
- * (`opts.tx`, when the append participates in a larger same-transaction
- * mutation) or a `userId` to drive a fresh `withUserContext` frame. The
- * discriminated union prevents a bare call from silently default-denying
- * under `app_user`. Caller is responsible for asserting access to every
- * task in `taskIds`. Duplicates and empty arrays are handled gracefully
- * (no-op for empty input).
- *
- * @param taskIds - UUIDs of the tasks to append to. Duplicates dedup'd.
- * @param entry - The history entry to append to every supplied task.
- * @param opts - Either `{ tx }` (run inside the supplied transaction) or
- *   `{ userId }` (open a fresh `withUserContext` frame).
- */
-export async function appendTaskHistoryMany(
-  taskIds: string[],
-  entry: HistoryEntry,
-  opts: { tx: Tx } | { userId: string },
-): Promise<void> {
-  const dedup = [...new Set(taskIds)];
-  if (dedup.length === 0) return;
-  const run = async (handle: Tx) => {
-    await handle
-      .update(tasks)
-      .set({
-        history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
-        updatedAt: new Date(),
-      })
-      .where(inArray(tasks.id, dedup));
-  };
-  if ("tx" in opts) {
-    await run(opts.tx);
-    return;
+  if (changes.title !== undefined && changes.title !== current.title) {
+    events.push({
+      ...base,
+      type: "title_changed",
+      summary: `renamed to "${changes.title}"`,
+    });
   }
-  await withUserContext(opts.userId, run);
+  if (
+    changes.description !== undefined &&
+    changes.description !== current.description
+  ) {
+    events.push({
+      ...base,
+      type: "description_changed",
+      summary: "updated the description",
+    });
+  }
+  if (changes.status !== undefined && changes.status !== current.status) {
+    events.push({
+      ...base,
+      type: "status_changed",
+      summary: `moved to ${changes.status}`,
+      metadata: { from: current.status, to: changes.status },
+    });
+  }
+  if (changes.priority !== undefined && changes.priority !== current.priority) {
+    events.push({
+      ...base,
+      type: "priority_changed",
+      summary: changes.priority
+        ? `set priority to ${changes.priority}`
+        : "cleared priority",
+      metadata: { from: current.priority, to: changes.priority },
+    });
+  }
+  if (changes.estimate !== undefined && changes.estimate !== current.estimate) {
+    events.push({
+      ...base,
+      type: "estimate_changed",
+      summary:
+        changes.estimate != null
+          ? `set estimate to ${changes.estimate}`
+          : "cleared estimate",
+      metadata: { from: current.estimate, to: changes.estimate },
+    });
+  }
+  if (changes.category !== undefined && changes.category !== current.category) {
+    events.push({
+      ...base,
+      type: "category_changed",
+      summary: changes.category
+        ? `set category to ${changes.category}`
+        : "cleared category",
+      metadata: { from: current.category, to: changes.category },
+    });
+  }
+  if (
+    changes.implementationPlan !== undefined &&
+    changes.implementationPlan !== current.implementationPlan
+  ) {
+    events.push({
+      ...base,
+      type: "plan_set",
+      summary: "updated the implementation plan",
+    });
+  }
+  if (
+    changes.executionRecord !== undefined &&
+    changes.executionRecord !== current.executionRecord
+  ) {
+    events.push({
+      ...base,
+      type: "record_set",
+      summary: "updated the execution record",
+    });
+  }
+  if (changes.order !== undefined && changes.order !== current.order) {
+    // `order` is an internal sort position, never rendered as a transition,
+    // so no `metadata` is stored (would be dead egress on every reorder).
+    events.push({
+      ...base,
+      type: "moved",
+      summary: "reordered the task",
+    });
+  }
+  if (changes.tags !== undefined) {
+    const before = new Set(current.tags);
+    const after = new Set(changes.tags);
+    for (const tag of changes.tags) {
+      if (!before.has(tag))
+        events.push({
+          ...base,
+          type: "tag_added",
+          summary: `added tag ${tag}`,
+          targetRef: tag,
+        });
+    }
+    for (const tag of current.tags) {
+      if (!after.has(tag))
+        events.push({
+          ...base,
+          type: "tag_removed",
+          summary: `removed tag ${tag}`,
+          targetRef: tag,
+        });
+    }
+  }
+  if (
+    changes.files !== undefined &&
+    JSON.stringify(changes.files) !== JSON.stringify(current.files)
+  ) {
+    events.push({
+      ...base,
+      type: "files_changed",
+      summary: "updated linked files",
+    });
+  }
+  return events;
 }
 
 /**
@@ -541,7 +630,6 @@ function mapTaskFullRow(r: TaskFullRawRow): TaskFull {
     priority: r.priority as Priority | null,
     estimate: r.estimate as Estimate | null,
     files: r.files ?? [],
-    history: (r.history ?? []) as HistoryEntry[],
     createdAt:
       r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
     updatedAt:
@@ -2151,14 +2239,6 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
         ...taskFields,
         order,
         sequenceNumber,
-        history: [
-          makeHistoryEntry({
-            type: "created",
-            label: "Task created",
-            description: `Task "${taskFields.title}" created.`,
-            actor: "ai",
-          }),
-        ],
       })
       .returning();
 
@@ -2189,6 +2269,15 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
           target: [taskLinks.taskId, taskLinks.url],
         });
     }
+
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: task.projectId,
+        taskId: task.id,
+        type: "task_created",
+        summary: `created task "${task.title}"`,
+      },
+    ]);
 
     return {
       id: task.id,
@@ -2411,49 +2500,51 @@ export async function updateTask(
       changes.files = [...merged];
     }
 
-    const isStatusChange =
-      "status" in changes && current.status !== changes.status;
-    const fieldList = [
-      ...Object.keys(changes),
-      ...(assigneeIds !== undefined ? ["assigneeIds"] : []),
-      ...(formattedCriteria !== undefined ? ["acceptanceCriteria"] : []),
-      ...(formattedDecisions !== undefined ? ["decisions"] : []),
-      ...(hasPrUrl ? ["prUrl"] : []),
-    ];
-    const entry = makeHistoryEntry({
-      type: isStatusChange ? "status_change" : "refined",
-      label: isStatusChange
-        ? `Status: ${current.status} → ${changes.status}`
-        : "Task updated",
-      description: `Updated task fields: ${fieldList.join(", ")}.`,
-      actor: "ai",
-    });
-
     let row = current;
     if (Object.keys(changes).length > 0) {
       const [updatedRow] = await tx
         .update(tasks)
         .set({
           ...changes,
-          history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
           updatedAt: new Date(),
         })
         .where(eq(tasks.id, taskId))
         .returning();
       row = updatedRow;
     } else {
-      // No `tasks` row column changed; still append the history entry and
-      // bump updated_at so the cache validator advances on this turn.
+      // No `tasks` row column changed; still bump updated_at so the cache
+      // validator advances on this turn.
       const [updatedRow] = await tx
         .update(tasks)
         .set({
-          history: sql`${tasks.history} || ${JSON.stringify([entry])}::jsonb`,
           updatedAt: new Date(),
         })
         .where(eq(tasks.id, taskId))
         .returning();
       row = updatedRow;
     }
+
+    // Discrete activity: scalar/tag diff now, collection diffs after the
+    // child-table writes below. Snapshot child + assignee state pre-write.
+    const eventInputs: ActivityEventInput[] = diffTaskChanges(
+      current.projectId,
+      taskId,
+      current,
+      changes as Partial<Task>,
+    );
+    const childrenBefore =
+      formattedCriteria !== undefined || formattedDecisions !== undefined
+        ? await fetchTaskChildren(tx, taskId)
+        : null;
+    const assigneesBefore =
+      assigneeIds !== undefined
+        ? (
+            await tx
+              .select({ userId: taskAssignees.userId })
+              .from(taskAssignees)
+              .where(eq(taskAssignees.taskId, taskId))
+          ).map((a) => a.userId)
+        : null;
 
     if (formattedCriteria !== undefined) {
       await applyCriteriaWrite(
@@ -2482,19 +2573,84 @@ export async function updateTask(
       );
     }
 
+    let childrenAfter: Awaited<ReturnType<typeof fetchTaskChildren>> | null =
+      null;
+    if (childrenBefore) {
+      childrenAfter = await fetchTaskChildren(tx, taskId);
+      if (formattedCriteria !== undefined) {
+        eventInputs.push(
+          ...diffCriteria(
+            current.projectId,
+            taskId,
+            (childrenBefore.acceptance_criteria ?? []).map((c) => ({
+              id: c.id,
+              text: c.text,
+              checked: c.checked,
+            })),
+            (childrenAfter.acceptance_criteria ?? []).map((c) => ({
+              id: c.id,
+              text: c.text,
+              checked: c.checked,
+            })),
+          ),
+        );
+      }
+      if (formattedDecisions !== undefined) {
+        eventInputs.push(
+          ...diffDecisions(
+            current.projectId,
+            taskId,
+            (childrenBefore.decisions ?? []).map((d) => ({
+              id: d.id,
+              text: d.text,
+            })),
+            (childrenAfter.decisions ?? []).map((d) => ({
+              id: d.id,
+              text: d.text,
+            })),
+          ),
+        );
+      }
+    }
+    if (assigneesBefore && assigneeIds !== undefined) {
+      const assigneesAfter = (
+        await tx
+          .select({ userId: taskAssignees.userId })
+          .from(taskAssignees)
+          .where(eq(taskAssignees.taskId, taskId))
+      ).map((a) => a.userId);
+      eventInputs.push(
+        ...diffAssignees(
+          current.projectId,
+          taskId,
+          assigneesBefore,
+          assigneesAfter,
+        ),
+      );
+    }
+
     if (hasPrUrl) {
       if (typeof prUrl !== "string" || prUrl.length === 0) {
-        await tx
+        const deleted = await tx
           .delete(taskLinks)
           .where(
             and(
               eq(taskLinks.taskId, taskId),
               eq(taskLinks.kind, "pull_request"),
             ),
-          );
+          )
+          .returning({ id: taskLinks.id });
+        if (deleted.length > 0) {
+          eventInputs.push({
+            projectId: current.projectId,
+            taskId,
+            type: "link_removed",
+            summary: "removed the pull request link",
+          });
+        }
       } else {
         const classified = classifyLink(prUrl);
-        await tx
+        const [inserted] = await tx
           .insert(taskLinks)
           .values({
             taskId,
@@ -2505,13 +2661,27 @@ export async function updateTask(
           })
           .onConflictDoNothing({
             target: [taskLinks.taskId, taskLinks.url],
+          })
+          .returning({ id: taskLinks.id });
+        if (inserted) {
+          eventInputs.push({
+            projectId: current.projectId,
+            taskId,
+            type: "link_added",
+            summary: `linked ${classified.label ?? classified.kind}`,
+            targetRef: classified.url,
           });
+        }
       }
+    }
+
+    if (eventInputs.length > 0) {
+      await insertActivityEvents(tx, ctx.actor, eventInputs);
     }
     let criteriaResult: AcceptanceCriterion[] | null = null;
     let decisionsResult: Decision[] | null = null;
     if (refetchNeeded) {
-      const children = await fetchTaskChildren(tx, taskId);
+      const children = childrenAfter ?? (await fetchTaskChildren(tx, taskId));
       criteriaResult = (children.acceptance_criteria ?? []).map((c) => ({
         id: c.id,
         text: c.text,
@@ -2688,6 +2858,18 @@ export async function addTaskLink(
       .update(tasks)
       .set({ updatedAt: new Date() })
       .where(eq(tasks.id, taskId));
+
+    if (inserted) {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: task.projectId,
+          taskId,
+          type: "link_added",
+          summary: `linked ${classified.label ?? classified.kind}`,
+          targetRef: classified.url,
+        },
+      ]);
+    }
     return { row, projectId: task.projectId };
   });
 
@@ -2716,6 +2898,9 @@ export async function removeTaskLink(
         linkId: taskLinks.id,
         taskId: taskLinks.taskId,
         projectId: tasks.projectId,
+        url: taskLinks.url,
+        label: taskLinks.label,
+        kind: taskLinks.kind,
       })
       .from(taskLinks)
       .innerJoin(tasks, eq(tasks.id, taskLinks.taskId))
@@ -2729,6 +2914,15 @@ export async function removeTaskLink(
       .set({ updatedAt: new Date() })
       .where(eq(tasks.id, row.taskId));
 
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: row.projectId,
+        taskId: row.taskId,
+        type: "link_removed",
+        summary: `removed link ${row.label ?? row.kind}`,
+        targetRef: row.url,
+      },
+    ]);
     return row;
   });
 
@@ -2812,6 +3006,15 @@ export async function updateTaskLink(
       .set({ updatedAt: new Date() })
       .where(eq(tasks.id, row.link.taskId));
 
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: row.projectId,
+        taskId: row.link.taskId,
+        type: "link_updated",
+        summary: `updated link to ${classified.label ?? classified.kind}`,
+        targetRef: classified.url,
+      },
+    ]);
     return { updated, projectId: row.projectId, taskId: row.link.taskId };
   });
 

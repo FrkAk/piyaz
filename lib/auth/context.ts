@@ -17,8 +17,15 @@ declare const authContextBrand: unique symbol;
  * `organizationId` arg (MCP create); both paths re-verify membership on
  * every request.
  */
+/** Durable identity keys behind a request; display is resolved at read time. */
+export type ActorDescriptor =
+  | { source: "web"; userId: string }
+  | { source: "mcp"; userId: string; clientId: string | null }
+  | { source: "system"; userId: string };
+
 export type AuthContext = {
   readonly userId: string;
+  readonly actor: ActorDescriptor;
   readonly [authContextBrand]: true;
 };
 
@@ -27,10 +34,16 @@ export type AuthContext = {
  * code paths that have validated the principal (session, JWT). Application
  * code should depend on `AuthContext` values handed in, not construct them.
  * @param userId - Verified user id (e.g. `session.user.id`, JWT `sub`).
+ * @param actor - Resolved actor descriptor; defaults to a `system` actor
+ *   bound to `userId` for callers (tests, internal jobs) that do not carry
+ *   surface identity.
  * @returns Branded auth context.
  */
-export function makeAuthContext(userId: string): AuthContext {
-  return { userId } as unknown as AuthContext;
+export function makeAuthContext(
+  userId: string,
+  actor: ActorDescriptor = { source: "system", userId },
+): AuthContext {
+  return { userId, actor } as unknown as AuthContext;
 }
 
 /**
@@ -44,5 +57,8 @@ export function makeAuthContext(userId: string): AuthContext {
  */
 export async function getAuthContext(): Promise<AuthContext> {
   const session = await requireSession();
-  return makeAuthContext(session.user.id);
+  return makeAuthContext(session.user.id, {
+    source: "web",
+    userId: session.user.id,
+  });
 }

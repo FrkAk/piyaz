@@ -13,7 +13,7 @@ afterEach(async () => {
 
 describe("getPasswordUpdatedAt", () => {
   // Regression: the helper must read through authDb (auth_role).
-  // docker/grants.sql deliberately excludes piyaz_auth.account (password
+  // docker/grants-auth.sql deliberately excludes piyaz_auth.account (password
   // hashes) from service_role's grants, so a serviceRoleDb read throws
   // "permission denied for table account" at runtime. These tests run
   // against the real role split and fail on any client downgrade.

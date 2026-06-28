@@ -60,7 +60,9 @@ async function buildNextConfig(): Promise<NextConfig> {
   }
 
   return {
-    ...(isCloudflare ? {} : { output: "standalone" }),
+    ...(isCloudflare
+      ? {}
+      : { output: "standalone", outputFileTracingRoot: PROJECT_ROOT }),
     poweredByHeader: false,
     /**
      * Surface deploy-time flags to the bundle. `NEXT_PUBLIC_*` is inlined by

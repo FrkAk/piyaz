@@ -17,7 +17,7 @@ import { projects, tasks, taskAssignees } from "@/lib/db/schema";
  * doubles as "password last changed" for the settings UI.
  *
  * Reads through `authDb` (auth_role): `piyaz_auth.account` holds password
- * hashes, so `docker/grants.sql` deliberately excludes it from
+ * hashes, so `docker/grants-auth.sql` deliberately excludes it from
  * `service_role`'s table grants. Only the auth layer's role may touch it.
  *
  * @param userId - Verified user id from the session.
