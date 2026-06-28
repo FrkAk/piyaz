@@ -1,10 +1,10 @@
 import { test, expect, spyOn, afterEach } from "bun:test";
 import { LogSender } from "@/lib/email/log-sender";
-import type { EmailMessage } from "@/lib/email/types";
+import type { OutboundEmail } from "@/lib/email/types";
 
 const sender = new LogSender();
 
-const message = (overrides: Partial<EmailMessage> = {}): EmailMessage => ({
+const message = (overrides: Partial<OutboundEmail> = {}): OutboundEmail => ({
   to: "user@example.com",
   from: "noreply@piyaz.ai",
   subject: "Confirm your email",
@@ -14,7 +14,7 @@ const message = (overrides: Partial<EmailMessage> = {}): EmailMessage => ({
 });
 
 /** Capture the single string `LogSender` passes to console.info. */
-async function render(msg: EmailMessage): Promise<string> {
+async function render(msg: OutboundEmail): Promise<string> {
   const spy = spyOn(console, "info").mockImplementation(() => {});
   await sender.send(msg);
   return spy.mock.calls[0][0] as string;

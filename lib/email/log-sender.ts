@@ -1,4 +1,4 @@
-import type { EmailMessage, EmailSendResult, EmailSender } from "./types";
+import type { OutboundEmail, EmailDeliveryResult, EmailSender } from "./types";
 
 const LOG_PREFIX = "[email:log]";
 
@@ -8,7 +8,7 @@ const LOG_PREFIX = "[email:log]";
  * imports and no side effects.
  */
 export class LogSender implements EmailSender {
-  async send(message: EmailMessage): Promise<EmailSendResult> {
+  async send(message: OutboundEmail): Promise<EmailDeliveryResult> {
     const urls = (message.text.match(/https?:\/\/\S+/g) ?? []).map((u) =>
       u.replace(/[.,;:!?)\]>'"]+$/, ""),
     );
