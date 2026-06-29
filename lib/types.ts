@@ -149,9 +149,4 @@ export type FeedMode = "none" | "all" | "categories" | "tags" | "tasks";
 export type NoteTaskLinkKind = "mention" | "reference" | "spec_of";
 
 /** Lifecycle state of a note's semantic embedding (PYZ-288 pipeline). */
-export type EmbeddingStatus =
-  | "none"
-  | "pending"
-  | "ready"
-  | "failed"
-  | "stale";
+export type EmbeddingStatus = "none" | "pending" | "ready" | "failed" | "stale";

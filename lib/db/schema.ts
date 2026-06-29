@@ -419,10 +419,7 @@ export const noteTaskLinks = pgTable(
     taskId: uuid("task_id")
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
-    kind: text("kind")
-      .$type<NoteTaskLinkKind>()
-      .notNull()
-      .default("mention"),
+    kind: text("kind").$type<NoteTaskLinkKind>().notNull().default("mention"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

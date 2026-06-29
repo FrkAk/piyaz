@@ -125,7 +125,9 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
       WHERE tablename = 'notes'
         AND indexname IN ('notes_search_idx', 'notes_tags_idx', 'notes_feed_idx')
     `;
-    const byName = Object.fromEntries(rows.map((r) => [r.indexname, r.indexdef]));
+    const byName = Object.fromEntries(
+      rows.map((r) => [r.indexname, r.indexdef]),
+    );
     expect(byName.notes_search_idx).toMatch(/USING gin/i);
     expect(byName.notes_tags_idx).toMatch(/USING gin/i);
     expect(byName.notes_feed_idx).toMatch(/feed_mode <> 'none'/);
@@ -304,7 +306,9 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
       VALUES (${fx.projectId}, 'A', 'a', 'private', ${fx.userId}) RETURNING id
     `;
     const c = serviceRoleConnect();
-    const rows = await c<{ id: string }[]>`SELECT id FROM notes WHERE id = ${note.id}`;
+    const rows = await c<
+      { id: string }[]
+    >`SELECT id FROM notes WHERE id = ${note.id}`;
     expect(rows.length).toBe(1);
   });
 });
