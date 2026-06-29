@@ -113,8 +113,6 @@ bun run start
 
 > **Upgrading from a pre-migrations install:** instances first set up before versioned migrations existed have an empty migration journal, so `db:migrate` tries to recreate existing tables and fails. Run `bun run db:baseline` once to mark the current schema as the baseline, then run `bun run db:migrate`. Running `db:baseline` on a newer install is a safe no-op.
 
-> **Upgrading to v0.3.0:** the `0002` migration drops the legacy `history` JSONB columns from `tasks` and `projects`, which the activity-log backfill reads. You must be on v0.2.0 and run `scripts/backfill-activity-events.sql` (as `service_role`, which bypasses RLS) **before** pulling v0.3.0 and running `bun run db:migrate`. The backfill script ships only in v0.2.0 and is removed in v0.3.0, so running it after the upgrade is not possible. Instances already on v0.2.0 that ran the backfill need no extra step.
-
 Contributors install from the local checkout: `claude plugin marketplace add ./plugins/claude-code` (Claude Code), `codex plugin marketplace add ./plugins` (Codex), or copy `plugins/cursor` into `~/.cursor/plugins/local/`. Shared skills live in `plugins/claude-code/` (canonical); after editing them run `bun run sync:plugins` to regenerate every brand's copy (`bun run check:plugins` is CI-enforced).
 
 ---
