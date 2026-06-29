@@ -862,7 +862,7 @@ export async function listProjectIndex(
  * Lean project list for the MCP `piyaz_project action='list'` tool. Selects
  * only the columns the agent skill consumes (id, organizationId, title,
  * identifier, status) plus the team chip and rolled-up task counts, and
- * skips the heavy `description`, `history`, `categories`, and timestamp
+ * skips the heavy `description`, `categories`, and timestamp
  * columns at the SQL projection so wire bytes are saved off the Postgres
  * round-trip — not just trimmed in JS. Agents fetch description and tag
  * vocabulary on demand via `piyaz_query type='meta'`.
@@ -1157,7 +1157,7 @@ export type ProjectUpdate = Partial<
 >;
 
 /** Fields callers must not change via `updateProject` — managed internally
- * (history, timestamps, id), tenant-scoped (organizationId), or gated by a
+ * (timestamps, id), tenant-scoped (organizationId), or gated by a
  * separate API (identifier → renameProjectIdentifier). Stripped at runtime
  * from the input object before the spread to defeat mass-assignment via
  * untyped or `as any` callers. */
@@ -1165,7 +1165,6 @@ const PROTECTED_PROJECT_FIELDS = [
   "id",
   "organizationId",
   "identifier",
-  "history",
   "createdAt",
   "updatedAt",
 ] as const;

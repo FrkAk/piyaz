@@ -337,7 +337,7 @@ export async function listDependsOnEdges(sourceTaskIds: string[], conn: Conn) {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an edge between two tasks and append history to both.
+ * Create an edge between two tasks and emit `activity_events` for both.
  * Validates against self-edges, duplicates, and circular depends_on.
  * @param ctx - Resolved auth context.
  * @param data - Edge fields to insert.
@@ -579,7 +579,7 @@ export async function updateEdge(
 }
 
 /**
- * Remove an edge by ID and append history to both tasks.
+ * Remove an edge by ID and emit `activity_events` for both tasks.
  * @param ctx - Resolved auth context.
  * @param edgeId - UUID of the edge to delete.
  */

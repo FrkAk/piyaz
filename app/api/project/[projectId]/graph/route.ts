@@ -19,7 +19,7 @@ import { error } from "@/lib/api/response";
  * header echoed.
  *
  * Heavy task fields (`description`, `implementationPlan`, `decisions`,
- * `acceptanceCriteria`, `executionRecord`, `files`, `history`) are
+ * `acceptanceCriteria`, `executionRecord`, `files`) are
  * deliberately omitted — fetch them per-task via `GET /api/task/[id]`.
  *
  * @param req - Incoming request.
