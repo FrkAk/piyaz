@@ -146,6 +146,80 @@ CREATE POLICY "team_invite_code_delete_admin_only" ON "team_invite_code"
   USING (public.current_user_org_role(organization_id) IN ('admin', 'owner'));
 
 
+-- notes — 2-hop via projects' RLS, plus per-note visibility. deleted_at
+-- filtering is a query concern, not RLS. The per-row predicate columns
+-- (visibility, created_by) are leakproof plain comparisons and live in the
+-- notes_tree_list_idx INCLUDE set, so the planner keeps the RLS check
+-- index-only on the hot tree-list path.
+DROP POLICY IF EXISTS "notes_member_access" ON "notes";
+CREATE POLICY "notes_member_access" ON "notes" AS PERMISSIVE FOR ALL TO app_user
+  USING (
+    project_id IN (SELECT id FROM public.projects)
+    AND (visibility = 'team' OR created_by = public.current_app_user_id())
+  )
+  WITH CHECK (
+    project_id IN (SELECT id FROM public.projects)
+    AND (visibility = 'team' OR created_by = public.current_app_user_id())
+  );
+
+-- note_task_links — 3-hop via notes' RLS. Cross-project belt is the DEFINER
+-- trigger reject_note_task_links_cross_project (rls-functions.sql).
+DROP POLICY IF EXISTS "note_task_links_member_access" ON "note_task_links";
+CREATE POLICY "note_task_links_member_access" ON "note_task_links" AS PERMISSIVE FOR ALL TO app_user
+  USING (note_id IN (SELECT id FROM public.notes))
+  WITH CHECK (note_id IN (SELECT id FROM public.notes));
+
+-- note_revisions — 3-hop via notes' RLS (append-only body history).
+DROP POLICY IF EXISTS "note_revisions_member_access" ON "note_revisions";
+CREATE POLICY "note_revisions_member_access" ON "note_revisions" AS PERMISSIVE FOR ALL TO app_user
+  USING (note_id IN (SELECT id FROM public.notes))
+  WITH CHECK (note_id IN (SELECT id FROM public.notes));
+
+-- note_links — both endpoints must be visible (mirror task_edges).
+DROP POLICY IF EXISTS "note_links_member_access" ON "note_links";
+CREATE POLICY "note_links_member_access" ON "note_links" AS PERMISSIVE FOR ALL TO app_user
+  USING (
+    source_note_id IN (SELECT id FROM public.notes)
+    AND target_note_id IN (SELECT id FROM public.notes)
+  )
+  WITH CHECK (
+    source_note_id IN (SELECT id FROM public.notes)
+    AND target_note_id IN (SELECT id FROM public.notes)
+  );
+
+-- RESTRICTIVE write floor on note_links (mirror task_edges_*_member_only).
+-- AND's with the OR of permissives so a future stray permissive cannot
+-- OR-relax both-endpoints-visible. Per-command to leave SELECT on permissive.
+DROP POLICY IF EXISTS "note_links_insert_member_only" ON "note_links";
+DROP POLICY IF EXISTS "note_links_update_member_only" ON "note_links";
+DROP POLICY IF EXISTS "note_links_delete_member_only" ON "note_links";
+
+CREATE POLICY "note_links_insert_member_only" ON "note_links"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (
+    source_note_id IN (SELECT id FROM public.notes)
+    AND target_note_id IN (SELECT id FROM public.notes)
+  );
+
+CREATE POLICY "note_links_update_member_only" ON "note_links"
+  AS RESTRICTIVE FOR UPDATE TO app_user
+  USING (
+    source_note_id IN (SELECT id FROM public.notes)
+    AND target_note_id IN (SELECT id FROM public.notes)
+  )
+  WITH CHECK (
+    source_note_id IN (SELECT id FROM public.notes)
+    AND target_note_id IN (SELECT id FROM public.notes)
+  );
+
+CREATE POLICY "note_links_delete_member_only" ON "note_links"
+  AS RESTRICTIVE FOR DELETE TO app_user
+  USING (
+    source_note_id IN (SELECT id FROM public.notes)
+    AND target_note_id IN (SELECT id FROM public.notes)
+  );
+
+
 -- ENABLE explicitly: testcontainer/self-host get this from `drizzle-kit
 -- push` reading `.enableRLS()`, but `drizzle-kit migrate` does not emit
 -- ENABLE, and FORCE without ENABLE is a no-op.
@@ -158,6 +232,10 @@ ALTER TABLE "task_decisions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "task_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "team_invite_code" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "activity_events" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "notes" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "note_task_links" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "note_links" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "note_revisions" ENABLE ROW LEVEL SECURITY;
 
 -- FORCE subjects the table owner to RLS. BYPASSRLS roles and real
 -- superusers still sidestep.
@@ -170,3 +248,7 @@ ALTER TABLE "task_decisions" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "task_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "team_invite_code" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "activity_events" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "notes" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "note_task_links" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "note_links" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "note_revisions" FORCE ROW LEVEL SECURITY;

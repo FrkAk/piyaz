@@ -260,6 +260,25 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.current_user_has_any_membership() FROM public;
 GRANT EXECUTE ON FUNCTION public.current_user_has_any_membership() TO app_user;
 
+-- Resolve the caller's user id from the `app.user_id` GUC set by
+-- `withUserContext` (lib/db/rls.ts). Plain SECURITY INVOKER — it only reads a
+-- session setting and touches no privileged schema, unlike the piyaz_auth-reading
+-- current_user_* helpers above, so it needs no DEFINER escalation. Used by the
+-- notes_member_access policy's per-note visibility predicate (created_by = caller).
+CREATE OR REPLACE FUNCTION public.current_app_user_id()
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN NULLIF(current_setting('app.user_id', TRUE), '')::uuid;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.current_app_user_id() FROM public;
+GRANT EXECUTE ON FUNCTION public.current_app_user_id() TO app_user, service_role;
+
 -- Returns NULL on both "doesn't exist" and "exists but cross-team", so
 -- callers cannot distinguish them (anti-enumeration).
 CREATE OR REPLACE FUNCTION public.current_user_visible_member(p_member_id uuid)
@@ -665,6 +684,97 @@ CREATE TRIGGER task_edges_same_project_immutable
   BEFORE INSERT OR UPDATE OF source_task_id, target_task_id ON public.task_edges
   FOR EACH ROW
   EXECUTE FUNCTION public.reject_task_edges_cross_project();
+
+-- ---------------------------------------------------------------------------
+-- Notes hardening — mirror the tasks/task_edges defense-in-depth suite.
+-- notes.project_id immutability + cross-project rejection on both link tables.
+-- ---------------------------------------------------------------------------
+
+-- notes.project_id immutable (mirror reject_tasks_project_id_change).
+CREATE OR REPLACE FUNCTION public.reject_notes_project_id_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN
+    RAISE EXCEPTION
+      'notes.project_id is immutable — cross-team note moves are forbidden'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS notes_project_id_immutable ON public.notes;
+CREATE TRIGGER notes_project_id_immutable
+  BEFORE UPDATE OF project_id ON public.notes
+  FOR EACH ROW
+  EXECUTE FUNCTION public.reject_notes_project_id_change();
+
+-- note_links endpoints must share a project (mirror reject_task_edges_cross_project).
+-- SECURITY DEFINER so the per-row notes lookups see both endpoints unconditionally;
+-- the firing INSERT/UPDATE is still gated by note_links RLS, so DEFINER here only
+-- validates uniformly, it cannot wire foreign links. Uniform error collapses the
+-- 4-state oracle (both invisible / one visible / different projects / same) into one.
+CREATE OR REPLACE FUNCTION public.reject_note_links_cross_project()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_src uuid;
+  v_tgt uuid;
+BEGIN
+  SELECT project_id INTO v_src FROM public.notes WHERE id = NEW.source_note_id;
+  SELECT project_id INTO v_tgt FROM public.notes WHERE id = NEW.target_note_id;
+  IF v_src IS NULL OR v_tgt IS NULL OR v_src IS DISTINCT FROM v_tgt THEN
+    RAISE EXCEPTION 'note_links: invalid endpoint pair'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.reject_note_links_cross_project() FROM public;
+GRANT EXECUTE ON FUNCTION public.reject_note_links_cross_project() TO app_user;
+
+DROP TRIGGER IF EXISTS note_links_same_project_immutable ON public.note_links;
+CREATE TRIGGER note_links_same_project_immutable
+  BEFORE INSERT OR UPDATE OF source_note_id, target_note_id ON public.note_links
+  FOR EACH ROW
+  EXECUTE FUNCTION public.reject_note_links_cross_project();
+
+-- note_task_links pins note.project_id == task.project_id. SECURITY DEFINER for
+-- the same reason as above; the firing DML is gated by note_task_links RLS.
+CREATE OR REPLACE FUNCTION public.reject_note_task_links_cross_project()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_note uuid;
+  v_task uuid;
+BEGIN
+  SELECT project_id INTO v_note FROM public.notes WHERE id = NEW.note_id;
+  SELECT project_id INTO v_task FROM public.tasks WHERE id = NEW.task_id;
+  IF v_note IS NULL OR v_task IS NULL OR v_note IS DISTINCT FROM v_task THEN
+    RAISE EXCEPTION 'note_task_links: invalid note/task pair'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.reject_note_task_links_cross_project() FROM public;
+GRANT EXECUTE ON FUNCTION public.reject_note_task_links_cross_project() TO app_user;
+
+DROP TRIGGER IF EXISTS note_task_links_same_project_immutable ON public.note_task_links;
+CREATE TRIGGER note_task_links_same_project_immutable
+  BEFORE INSERT OR UPDATE OF note_id, task_id ON public.note_task_links
+  FOR EACH ROW
+  EXECUTE FUNCTION public.reject_note_task_links_cross_project();
 
 -- service_role only. Used by the org-delete hook after the org row is
 -- queued for deletion — caller-scoped variants race the cascade.

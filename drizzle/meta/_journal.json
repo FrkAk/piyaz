@@ -15,6 +15,13 @@
       "when": 1782592692959,
       "tag": "0001_activity_events",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782763050920,
+      "tag": "0002_equal_gambit",
+      "breakpoints": true
     }
   ]
 }

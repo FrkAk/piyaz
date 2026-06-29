@@ -11,6 +11,7 @@ import {
   unique,
   uniqueIndex,
   primaryKey,
+  customType,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { organization, user } from "@/lib/db/auth-schema";
@@ -24,7 +25,22 @@ import type {
   Estimate,
   ActivityEventType,
   ActivitySource,
+  NoteType,
+  Visibility,
+  FeedMode,
+  NoteTaskLinkKind,
+  EmbeddingStatus,
 } from "@/lib/types";
+
+/**
+ * Postgres `tsvector` column type. Drizzle ships no builtin; this maps the
+ * generated full-text search column (`notes.search_tsv`) to a string in TS.
+ */
+const tsvector = customType<{ data: string }>({
+  dataType() {
+    return "tsvector";
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Projects
@@ -303,6 +319,188 @@ export const activityEvents = pgTable(
 
 export type ActivityEventRow = typeof activityEvents.$inferSelect;
 export type NewActivityEvent = typeof activityEvents.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
+
+export const notes = pgTable(
+  "notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    type: text("type").$type<NoteType>().notNull().default("reference"),
+    folder: text("folder").notNull().default(""),
+    title: text("title").notNull(),
+    slug: text("slug").notNull(),
+    summary: text("summary").notNull().default(""),
+    body: text("body").notNull().default(""),
+    visibility: text("visibility")
+      .$type<Visibility>()
+      .notNull()
+      .default("private"),
+    agentWritable: boolean("agent_writable").notNull().default(false),
+    locked: boolean("locked").notNull().default(false),
+    feedMode: text("feed_mode").$type<FeedMode>().notNull().default("none"),
+    feedCategories: jsonb("feed_categories")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    feedTags: jsonb("feed_tags").$type<string[]>().notNull().default([]),
+    feedTaskIds: jsonb("feed_task_ids").$type<string[]>().notNull().default([]),
+    tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    category: text("category"),
+    version: integer("version").notNull().default(1),
+    embeddingStatus: text("embedding_status")
+      .$type<EmbeddingStatus>()
+      .notNull()
+      .default("none"),
+    pendingShareRequest: boolean("pending_share_request")
+      .notNull()
+      .default(false),
+    shareRequestedBy: uuid("share_requested_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdBy: uuid("created_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    updatedBy: uuid("updated_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    searchTsv: tsvector("search_tsv").generatedAlwaysAs(
+      sql`setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', coalesce(body, '')), 'B')`,
+    ),
+  },
+  (t) => [
+    index("notes_project_id_idx").on(t.projectId),
+    uniqueIndex("notes_project_slug_unique")
+      .on(t.projectId, t.slug)
+      .where(sql`deleted_at IS NULL`),
+    index("notes_project_title_idx")
+      .on(t.projectId, t.title)
+      .where(sql`deleted_at IS NULL`),
+    index("notes_search_idx").using("gin", t.searchTsv),
+    index("notes_tags_idx").using("gin", t.tags),
+    index("notes_feed_idx")
+      .on(t.projectId, t.feedMode)
+      .where(sql`feed_mode <> 'none'`),
+    index("notes_embedding_status_idx")
+      .on(t.embeddingStatus)
+      .where(sql`embedding_status IN ('pending','stale')`),
+    index("notes_project_updated_idx")
+      .on(t.projectId, t.updatedAt)
+      .where(sql`deleted_at IS NULL`),
+  ],
+).enableRLS();
+
+export type Note = typeof notes.$inferSelect;
+export type NewNote = typeof notes.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Note ↔ Task Links (junction: notes reference tasks)
+// ---------------------------------------------------------------------------
+
+export const noteTaskLinks = pgTable(
+  "note_task_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    noteId: uuid("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    kind: text("kind")
+      .$type<NoteTaskLinkKind>()
+      .notNull()
+      .default("mention"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("note_task_links_note_id_idx").on(t.noteId),
+    index("note_task_links_task_id_idx").on(t.taskId),
+    unique("note_task_links_note_task_kind_unique").on(
+      t.noteId,
+      t.taskId,
+      t.kind,
+    ),
+  ],
+).enableRLS();
+
+export type NoteTaskLink = typeof noteTaskLinks.$inferSelect;
+export type NewNoteTaskLink = typeof noteTaskLinks.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Note ↔ Note Links ([[wiki]]-style cross-references between notes)
+// ---------------------------------------------------------------------------
+
+export const noteLinks = pgTable(
+  "note_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceNoteId: uuid("source_note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    targetNoteId: uuid("target_note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("note_links_source_idx").on(t.sourceNoteId),
+    index("note_links_target_idx").on(t.targetNoteId),
+    unique("note_links_source_target_unique").on(
+      t.sourceNoteId,
+      t.targetNoteId,
+    ),
+  ],
+).enableRLS();
+
+export type NoteLink = typeof noteLinks.$inferSelect;
+export type NewNoteLink = typeof noteLinks.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Note Revisions (append-only body/title history for rollback + audit)
+// ---------------------------------------------------------------------------
+
+export const noteRevisions = pgTable(
+  "note_revisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    noteId: uuid("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    createdBy: uuid("created_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("note_revisions_note_version_unique").on(t.noteId, t.version),
+    index("note_revisions_note_id_idx").on(t.noteId, t.version),
+  ],
+).enableRLS();
+
+export type NoteRevision = typeof noteRevisions.$inferSelect;
+export type NewNoteRevision = typeof noteRevisions.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Team Invite Codes (separate file, re-exported here for drizzle-kit)
