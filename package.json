@@ -44,7 +44,7 @@
     "db:test:down": "docker compose -f docker-compose.test.yml down -v"
   },
   "dependencies": {
-    "@better-auth/oauth-provider": "1.6.14",
+    "@better-auth/oauth-provider": "1.6.22",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@fontsource-variable/inter": "^5.2.8",
     "@modelcontextprotocol/sdk": "1.29.0",
@@ -57,7 +57,7 @@
     "@types/d3-force": "^3.0.10",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "better-auth": "1.6.14",
+    "better-auth": "1.6.22",
     "d3-force": "^3.0.0",
     "d3-quadtree": "^3.0.1",
     "drizzle-orm": "0.45.2",
@@ -76,7 +76,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.16",
+    "@biomejs/biome": "2.5.1",
     "@cloudflare/workers-types": "^4.20260624.1",
     "@opennextjs/cloudflare": "^1.19.11",
     "@types/node": "^24.13.2",
