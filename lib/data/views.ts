@@ -87,8 +87,8 @@ export const STATUS_BUCKET: Record<TaskStatus, keyof ProjectTaskStats> = {
 /**
  * Project entry returned by `listProjectsSlim`. Carries only the columns the
  * home grid and sidebar render (id, organizationId, title, identifier,
- * description, status, updatedAt); history, categories, and createdAt are
- * omitted to keep the wire payload slim.
+ * description, status, updatedAt); categories and createdAt are omitted to
+ * keep the wire payload slim.
  */
 export type ProjectListEntry = Pick<
   Project,
@@ -118,8 +118,8 @@ export type ProjectIndexEntry = Pick<
 
 /**
  * Slim project entry returned by `listProjectsForMcp` — the agent-facing
- * shape for `piyaz_project action='list'`. Strips description, history,
- * categories, and timestamps to keep the payload tight; agents fetch the
+ * shape for `piyaz_project action='list'`. Strips description, categories,
+ * and timestamps to keep the payload tight; agents fetch the
  * description and tag vocabulary on demand via `piyaz_query type='meta'`.
  */
 export type ProjectListEntryMcp = Pick<
@@ -294,7 +294,7 @@ export type TaskSlim = {
  * this type carries them via join so consumers read
  * `task.acceptanceCriteria` and `task.decisions` directly.
  */
-export type TaskFull = Omit<Task, "history"> & {
+export type TaskFull = Task & {
   taskRef: string;
   assignees: AssigneeRef[];
   acceptanceCriteria: AcceptanceCriterion[];

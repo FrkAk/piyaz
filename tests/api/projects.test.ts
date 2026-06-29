@@ -35,7 +35,7 @@ test("GET /api/projects — 200 with paged body and ETag for an authenticated ca
   expect(body.nextCursor).toBeNull();
 });
 
-test("GET /api/projects — list entry has no history, categories, or createdAt keys", async () => {
+test("GET /api/projects — list entry has no categories or createdAt keys", async () => {
   const f = await seedUserOrgProject("projlist-keys");
   setSession({ user: { id: f.userId } });
 
@@ -46,7 +46,6 @@ test("GET /api/projects — list entry has no history, categories, or createdAt 
   };
   const entry = body.rows.find((p) => p.id === f.projectId);
   expect(entry).toBeDefined();
-  expect(Object.keys(entry!)).not.toContain("history");
   expect(Object.keys(entry!)).not.toContain("categories");
   expect(Object.keys(entry!)).not.toContain("createdAt");
 });

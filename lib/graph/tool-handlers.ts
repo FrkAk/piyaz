@@ -258,8 +258,9 @@ function statusJumpHints(priorStatus: string, nextStatus: string): string[] {
 
 /**
  * Build hints when `overwriteArrays=true` shrinks an array field. The
- * server has no undo for the overwritten content; the only recovery is
- * reading the prior values from the task's `history` entries. Per
+ * server has no undo for the overwritten content; the `activity_events`
+ * audit log records which fields changed, not the prior values, so the
+ * overwritten entries cannot be recovered. Per
  * `references/resilience.md` §9, `overwriteArrays` is agent-discipline:
  * this hint surfaces silent destructive ops the agent might not have
  * realized happened.
@@ -293,7 +294,7 @@ function overwriteShrinkHints(
       hints.push(
         `overwriteArrays=true replaced ${name} (${before.length} → ${next.length}, ${
           before.length - next.length
-        } lost). The lost entries cannot be recovered — the task history is an audit log of which fields changed, not a snapshot of prior values. Confirm with the user before continuing.`,
+        } lost). The lost entries cannot be recovered — the activity_events audit log records which fields changed, not a snapshot of prior values. Confirm with the user before continuing.`,
       );
     }
   };
