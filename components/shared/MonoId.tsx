@@ -152,6 +152,7 @@ export function MonoId({
   const view: "copied" | "hint" | "id" =
     status === "copied" ? "copied" : showMountHint ? "hint" : "id";
   const label = view === "copied" ? "Copied" : view === "hint" ? "Copy" : id;
+  const sizerLabel = id.length >= "Copied".length ? id : "Copied";
   const color =
     view === "copied" || view === "hint"
       ? "var(--color-accent-light)"
@@ -172,7 +173,7 @@ export function MonoId({
     >
       {/* Invisible sizer keeps the button width stable across label swaps. */}
       <span aria-hidden="true" className="invisible">
-        {id}
+        {sizerLabel}
       </span>
 
       <AnimatePresence initial={false} mode="popLayout">

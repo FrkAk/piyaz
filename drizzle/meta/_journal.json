@@ -5,8 +5,15 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1778799052353,
-      "tag": "0000_goofy_the_enforcers",
+      "when": 1782339353886,
+      "tag": "0000_baseline",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782592692959,
+      "tag": "0001_activity_events",
       "breakpoints": true
     }
   ]

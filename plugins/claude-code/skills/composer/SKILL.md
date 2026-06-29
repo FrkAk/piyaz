@@ -83,7 +83,7 @@ Once per session, before the first iteration:
 1. **Resolve the project.** `piyaz_project action='list'` → `action='select' projectId='...'`. Single-task mode: also `piyaz_query type='search' query='<taskRef>'` to resolve the task UUID and current status.
 2. **Read meta.** `piyaz_query type='meta'`. Keep the categories and tag vocabulary for the workflow's research args; drop the status counts.
 3. **Stale-claim sweep.** Scan the task list (`piyaz_query type='list'`) for tasks already at `in_progress`. Surface possible stale claims from dead sessions in the first pick rationale.
-4. **Set the merge policy.** Ask once with `the AskUserQuestion tool`: `never` (default; HOTL owns the merge), `ask-each` (confirm per PR), or `auto-on-approve` (merge automatically on an `approve` verdict with green CI). Record the choice; it holds for the whole run. When `AskUserQuestion` is unavailable (headless), default to `never`.
+4. **Set the merge policy.** Ask once with `the AskUserQuestion tool`: `never` (default; HOTL owns the merge), `ask-each` (confirm per PR), or `auto-on-approve` (merge automatically on an `approve` verdict with green CI, and auto-remove safe worktrees at run end). Record the choice; it holds for the whole run. When `AskUserQuestion` is unavailable (headless), default to `never`.
 5. **Init the run log.** `mkdir -p .piyaz` and guard the gitignore (`grep -qxF '.piyaz/' .gitignore 2>/dev/null || printf '\n.piyaz/\n' >> .gitignore`). If `.piyaz/composer-<projectIdentifier>.md` exists and ends with `RUN_END`, archive it to `.piyaz/archive/composer-<projectIdentifier>-<date>.md` and start fresh; if it exists *without* a `RUN_END`, that is a resume signal — see *Recovering after compaction* first. When the unfinished log's `RUN_START mode=` differs from this invocation, append `RUN_END reason=superseded-by-<mode>`, archive, and start fresh. Then append `RUN_START mode=<...> mergePolicy=<...> project=<identifier>`.
 
 Then start iterating. There is nothing to install and nothing to confirm beyond the merge policy.
@@ -162,14 +162,15 @@ The merge gate runs after a `DONE` result with `outcome=in_review`, governed by 
 - **`ask-each`**: ask `the AskUserQuestion tool` whether to merge this PR. On yes, merge as below. On no (or headless), leave it for HOTL.
 - **`auto-on-approve`**: merge without asking.
 
-To merge: `gh pr merge <url> --squash --delete-branch` (squash is the default; follow the repo's configured default method when it differs). On a clean merge, write the task `done` — this is the **one** case the orchestrator writes a status transition, authorized by the run-start merge policy:
+To merge: `gh pr merge <url> --squash --delete-branch` (squash is the default; follow the repo's configured default method when it differs). On a clean merge, write the task `done` — this is the **one** case the orchestrator writes a status transition, authorized by the run-start merge policy.
+
+The merge is a status flip only; it does not touch the `executionRecord`. The implementer's record already describes what shipped and is the durable record. A HOTL merge leaves it untouched, so `auto-on-approve` leaves it untouched too; that keeps the two paths identical. The PR reference resolves through `task_links`, and `method=squash` lives in the run log.
 
 ```
 piyaz_task action='update' taskId='<id>' status='done'
-  executionRecord='<append one line: merged PR #<n> via composer auto-merge after approve + green CI>'
 ```
 
-Then propagate fully (the work landed) and write `MERGE task=<ref> pr=<url> method=squash` to the run log. A failed merge (conflict, protected branch, merge-queue required) is not a task failure: report it, leave the task at `in_review` for HOTL, and continue.
+Then propagate fully (the work landed) and write `MERGE task=<ref> pr=<url> method=squash` to the run log. **Drop the merged worktree before the next pick:** locate the `.claude/worktrees/wf_*` entry whose `branch` matches the PR's `headRefName` (`git worktree list --porcelain`) and run `git worktree remove <path>` + `git branch -D <branch>` (no `--force`; if git refuses on a dirty or locked tree, surface it and leave it for *Worktree cleanup at run end*). A failed merge (conflict, protected branch, merge-queue required) is not a task failure: report it, leave the task at `in_review` for HOTL, and continue.
 
 ## Model selection
 
@@ -218,7 +219,7 @@ Pull-based: the backend has no webhooks, and `task_links` is the only PR record.
 1. **Resolve the pair.** Given a taskRef, read `task.links` filtered to `kind='pull_request'`; given a PR URL, resolve the task from the `[<taskRef>]` bracket (verify the link row agrees). Prefer the newest open PR when several exist.
 2. **Reviewer-led intake.** Dispatch `piyaz:review` with `Target task: <taskRef>. PR URL: <url>. Mode: rework-intake.` The intake re-verifies the human feedback against current HEAD and returns a verdict.
 3. **Branch on the intake verdict.**
-   - `request-changes`: launch the workflow with `resumeFrom='fix'`, `prUrl=<url>`, and `fixFindings=<the human items with fresh file:line citations>`. The fix loop uses a **fresh rotation budget of 2** for this rework invocation (the workflow's rotation counter starts at zero per launch). Prefix the implementer dispatch context with rework so the implementer accepts an `in_progress` entry (HOTL may flip `in_review → in_progress` to signal rework).
+   - `request-changes`: launch the workflow with `resumeFrom='fix'`, `prUrl=<url>`, and `fixFindings=<the human items with fresh file:line citations>`. The fix loop uses a **fresh rotation budget of 2** for this rework invocation (the workflow's rotation counter starts at zero per launch). The fix loop dispatches the implementer in fix mode, which accepts an `in_progress` entry (HOTL may flip `in_review → in_progress` to signal rework).
    - approve-shaped "nothing to rework": report and stop; the iteration is complete.
    - `BLOCKED` (PR merged/closed, task `done`/`cancelled`): report and stop.
 4. **Finish like any iteration.** Surface the verdict, run the merge gate, propagate, `TASK_END`. The run log records `RUN_START mode=rework`.
@@ -261,7 +262,7 @@ The workflow builds every phase dispatch from the `args` you pass; the agents in
 For every other BLOCKED:
 
 1. Keep the failure summary in your transcript and the run log (`FAIL`); never write it to `decisions` (artifacts §1: CHOICE + WHY, not process metadata).
-2. Leave the task at its current status. Never roll back, never cancel.
+2. Leave the task at its current status. Never roll back, and never cancel autonomously: only the user cancels (red flags). The task is not abandoned silently. Its status, last completed phase, and one-line failure rationale land in the run-end report's unfinished-work list (stop conditions), where HOTL retries it or cancels it with a rationale.
 3. Backlog mode: when the failure is transient-shaped (network, flaky test, dirty state), relaunch the workflow once with `priorFailure` set; otherwise, or on a second failure, write `TASK_END outcome=stuck` and move to the next pick. Single-task mode: relaunch up to three total attempts, appending each failure summary as `priorFailure`; after the third, report and stop.
 
 **Partial success and orphaned PRs** are handled inside the implementer's pre-flight (it resumes the Completion Protocol against an existing branch/PR rather than re-implementing). When a single-task pick is already `in_progress` or `in_review`, launch the workflow with `resumeFrom='implement'` (in_progress) or `resumeFrom='fix'` with the existing `prUrl` (in_review); the implementer's pre-flight does the rest.
@@ -270,14 +271,29 @@ For every other BLOCKED:
 
 Stop and report in plain language (there are no magic stop phrases) when one holds:
 
-1. **Backlog drained**: `ready` and `plannable` are both empty. The stop report enumerates every task left at `in_progress`/`in_review` with its failure summary — nothing strands silently.
+1. **Backlog drained**: `ready` and `plannable` are both empty. The run-end report (below) lists every unfinished task with its rationale, so nothing strands silently.
 2. **Failure budget exhausted**: three failed attempts on the same task (single-task mode).
 3. **User says stop**: exit after the in-flight write finishes.
 4. **Single-task or rework iteration complete**: verdict surfaced, merge gate run, propagation done.
 5. **Rewrite denied** (single-task mode): the user rejected a proposed rewrite at the gate.
 6. **Piyaz transport/auth failure**: any Piyaz tool call fails with auth expiry, 401/403, a 5xx, or a network error. Stop immediately (not retryable in-session, resilience §10) and report the exact error plus the last completed phase per in-flight task.
 
-These six are exhaustive. Every stop appends `RUN_END` with its reason and the grep-derived counters, then offers to archive the log; the headless default is archive.
+These six are exhaustive. Every stop produces one run-end report. It appends `RUN_END` with its reason and the grep-derived counters, lists each unfinished task the loop left behind (`in_progress`, `draft`, or `in_review` awaiting HOTL) with its status, last completed phase, and one-line failure rationale, and surfaces the worktrees from *Worktree cleanup at run end* in the same report rather than a second adjacent block. For each unfinished task the report offers HOTL the choice to retry it or cancel it with a rationale; composer never cancels autonomously. Then it offers to archive the log. The headless default is inform-only on worktrees and unfinished tasks, and archive on the log.
+
+## Worktree cleanup at run end
+
+The workflow dispatches the implementer and every fix rotation with `isolation:'worktree'` (`compose-task.js`), so each task leaves a git worktree under `.claude/worktrees/wf_<runId>-<n>` plus its local branch. The harness auto-removes a worktree only when it is unchanged; the implementer always commits, so a worktree outlives its task. The merge gate removes each merged task's worktree eagerly (`gh pr merge --delete-branch` drops only the *remote* branch — the local removal is composer's), so what reaches run end is the unmerged remainder: PR-backed worktrees awaiting HOTL, orphans, and — under `never` — every worktree. Composer never silently mutates the filesystem (HOTL owns destructive local actions), so at every stop — after `RUN_END`, before the archive offer — it surfaces what it left behind and cleans up per the run's merge policy.
+
+1. **Enumerate.** `git worktree list --porcelain`; keep only paths under `.claude/worktrees/wf_*`. The `wf_<runId>` prefix is the discriminator that proves the workflow created the worktree — never the primary checkout or a user-made one. Capture each path and its `branch refs/heads/<name>`.
+2. **Classify against open PRs.** `gh pr list --state open --json number,headRefName,url`. A worktree whose branch equals an open PR's `headRefName` is **PR-backed** (may be at `in_review` awaiting HOTL); every other is **safe** (its branch backs no open PR — merged, or an orphan `worktree-wf_*` branch). If `gh` is unavailable or errors, treat every worktree as PR-backed and inform only.
+3. **Report.** Per bucket, list each worktree path, its branch, and the PR (PR-backed); say so explicitly when none remain. Always print the exact commands:
+   - worktree: `git worktree remove <path>` (no `--force`; surface git's refusal on a dirty or locked tree and leave it).
+   - dangling local branch: `git branch -D <branch>` — `-D` not `-d` is intentional; orphan `worktree-wf_*` branches never merge upstream, so `-d` refuses them. For a PR-backed branch this drops only the *local* ref; the PR, its remote branch, and `git fetch` recovery survive.
+   - stale entries whose directory is already gone: `git worktree prune`.
+4. **Clean up (per merge policy).**
+   - **`auto-on-approve`**: auto-remove the safe bucket — the `git worktree remove` + `git branch -D` pair per worktree, then one `git worktree prune` — no prompt; the run-start delegation that authorized auto-merge covers it. PR-backed worktrees are surfaced (step 3), never auto-removed.
+   - **`never` / `ask-each`**: ask once with the AskUserQuestion tool — remove safe / remove all incl. PR-backed (explicit opt-in) / leave all. Remove only the pick, PR-backed only under the include option.
+   - **Headless** (AskUserQuestion unavailable): inform only; remove nothing.
 
 ## Recovering after compaction
 

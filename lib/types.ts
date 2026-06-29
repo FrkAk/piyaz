@@ -70,6 +70,65 @@ export type HistoryEntry = {
   actor: "user" | "ai";
 };
 
+/** Discrete, append-only activity event kinds for the audit log. */
+export type ActivityEventType =
+  | "task_created"
+  | "title_changed"
+  | "description_changed"
+  | "status_changed"
+  | "priority_changed"
+  | "estimate_changed"
+  | "category_changed"
+  | "moved"
+  | "tag_added"
+  | "tag_removed"
+  | "plan_set"
+  | "record_set"
+  | "files_changed"
+  | "assignee_added"
+  | "assignee_removed"
+  | "criterion_added"
+  | "criterion_removed"
+  | "criterion_edited"
+  | "criterion_checked"
+  | "criterion_unchecked"
+  | "decision_added"
+  | "decision_removed"
+  | "decision_edited"
+  | "link_added"
+  | "link_removed"
+  | "link_updated"
+  | "edge_added"
+  | "edge_removed"
+  | "edge_updated"
+  | "project_created";
+
+/** Origin of an activity event. */
+export type ActivitySource = "web" | "mcp" | "system";
+
+/** Read-model row for the activity panel and audit feeds. */
+export type ActivityEvent = {
+  id: string;
+  projectId: string;
+  taskId: string | null;
+  type: ActivityEventType;
+  createdAt: string;
+  actorUserId: string | null;
+  actorName: string | null;
+  actorAvatar: string | null;
+  source: ActivitySource;
+  agent: string | null;
+  /**
+   * Whether the harness OAuth client is on the verified allowlist. Gates brand
+   * polish in the UI (`formatOAuthClientName`): an unverified client's raw
+   * registered name is shown verbatim so a spoofed name is never laundered.
+   */
+  agentVerified: boolean;
+  summary: string;
+  targetRef: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
 /** A verifiable acceptance criterion for a task. */
 export type AcceptanceCriterion = {
   id: string;

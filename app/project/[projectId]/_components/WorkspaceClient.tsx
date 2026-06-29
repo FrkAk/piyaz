@@ -132,6 +132,9 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
       qc.invalidateQueries({
         queryKey: taskKeys.detail(projectId, selectedTaskId),
       });
+      qc.invalidateQueries({
+        queryKey: taskKeys.activity(projectId, selectedTaskId),
+      });
     }
   }, [qc, projectId, selectedTaskId]);
 
@@ -448,7 +451,6 @@ function useSelectedTaskBody(
         priority: slim.priority ?? null,
         estimate: slim.estimate ?? null,
         files: [],
-        history: [],
         createdAt: new Date(),
         updatedAt: slim.updatedAt,
         taskRef: slim.taskRef,

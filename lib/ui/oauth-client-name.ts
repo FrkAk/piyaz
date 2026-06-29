@@ -22,17 +22,6 @@ function sanitizeClientName(clientName: string): string {
   return clientName.replace(/\s+/g, " ").replace(INVISIBLE_CHARS, "").trim();
 }
 
-const CLIENT_BRAND_LABELS: readonly {
-  readonly match: RegExp;
-  readonly label: string;
-}[] = [
-  { match: /^claude code\b/i, label: "Claude Code" },
-  { match: /^codex\b/i, label: "Codex" },
-  { match: /^cursor\b/i, label: "Cursor" },
-  { match: /^(?:google )?antigravity\b/i, label: "Antigravity" },
-  { match: /^gemini(?: cli)?\b/i, label: "Gemini" },
-];
-
 /**
  * Remove client registration metadata from an OAuth client name.
  *
@@ -41,6 +30,68 @@ const CLIENT_BRAND_LABELS: readonly {
  */
 function stripClientMetadata(clientName: string): string {
   return clientName.trim().replace(CLIENT_METADATA_SUFFIX, "").trim();
+}
+
+/**
+ * Canonical brand families in Agents & devices drawer order. Single source of
+ * truth for both the {@link OAuthBrandFamily} union and the order the drawers
+ * render in, so the grouped buckets and the rendered sections cannot drift.
+ */
+export const OAUTH_BRAND_FAMILIES = [
+  "Claude",
+  "Codex",
+  "Antigravity",
+  "Cursor",
+] as const;
+
+/** Canonical brand family — the Agents & devices drawer a client groups into. */
+export type OAuthBrandFamily = (typeof OAUTH_BRAND_FAMILIES)[number];
+
+/**
+ * Single source of truth for first-party OAuth client recognition. Each row
+ * maps a registered-name pattern to the audit-page drawer it groups into
+ * (`family`) and, for clients that are a distinct product, the canonical label
+ * shown on the consent screen for verified clients (`label`). Rows are matched
+ * top-down and the first hit wins, so more specific patterns (e.g. "Claude
+ * Code") must precede broader ones (e.g. "Claude") — reordering changes which
+ * row matches.
+ */
+const OAUTH_CLIENT_BRANDS: readonly {
+  readonly match: RegExp;
+  readonly family: OAuthBrandFamily;
+  readonly label?: string;
+}[] = [
+  { match: /^claude code\b/i, family: "Claude", label: "Claude Code" },
+  { match: /^claude\b/i, family: "Claude" },
+  { match: /^codex\b/i, family: "Codex", label: "Codex" },
+  { match: /^cursor\b/i, family: "Cursor", label: "Cursor" },
+  { match: /^gemini(?: cli)?\b/i, family: "Antigravity", label: "Gemini" },
+  {
+    match: /^(?:google )?antigravity\b/i,
+    family: "Antigravity",
+    label: "Antigravity",
+  },
+];
+
+/**
+ * Resolve the family drawer for the Agents & devices audit page.
+ *
+ * Unlike {@link formatOAuthClientName} (consent display, gated on `verified`),
+ * grouping always normalizes — strips the `(plugin:…)`/`(mcp:…)` suffix and
+ * matches by family — because the audit list groups already-authorized
+ * sessions and renders each client's raw name on the row, so the grouping is a
+ * convenience, not a trust assertion. A spoofed name therefore lands in the
+ * matching drawer too; the visible raw name keeps it auditable.
+ *
+ * @param clientName - Raw OAuth client name from Better Auth.
+ * @returns Canonical family label, or null when no family matches.
+ */
+export function resolveOAuthBrand(clientName: string): OAuthBrandFamily | null {
+  const baseName = stripClientMetadata(sanitizeClientName(clientName));
+  return (
+    OAUTH_CLIENT_BRANDS.find(({ match }) => match.test(baseName))?.family ??
+    null
+  );
 }
 
 /**
@@ -70,6 +121,6 @@ export function formatOAuthClientName(
   const cleaned = sanitizeClientName(clientName);
   if (!verified) return cleaned;
   const baseName = stripClientMetadata(cleaned);
-  const brand = CLIENT_BRAND_LABELS.find(({ match }) => match.test(baseName));
+  const brand = OAUTH_CLIENT_BRANDS.find(({ match }) => match.test(baseName));
   return brand?.label ?? baseName;
 }

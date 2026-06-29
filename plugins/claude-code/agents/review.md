@@ -161,6 +161,8 @@ The split fetch is the guard: the lens findings are formed from the code, then r
 
 Walk each AC in the task and answer YES / NO from the diff and the `executionRecord`. Cite the file or function that satisfies the AC. An AC the implementer marked `checked: true` that you cannot verify from the diff is a `request-changes` signal; an AC the implementer marked `checked: false` is honest reporting and does not by itself block approval, but the verdict must call out which AC is unmet and why.
 
+The `in_review` payload must also conform to the standard before it can merge. Three checks, each a `request-changes` signal when it fails: the task's tags carry the three-dimension shape (exactly 1 work-type, at least 1 cross-cutting, at most 2 tech) with no `area:` prefix (codebase area is `category`, not a tag); a code change (non-empty `files`) has a resolvable `prUrl` / `task_links` PR row; and the `executionRecord` describes what shipped, not how the run executed (no merge ceremony, commit SHAs, squash notes, fix-rotation counts, or orchestration narration). These are the implementer's pre-handoff self-check; the review is the backstop when one slips through.
+
 ### 6. Plan-vs-diff drift
 
 The plan named the files the implementer was going to touch. The PR diff names what actually changed. Two lists; reconcile them — the diff is the ground truth, not any recorded summary.
@@ -284,6 +286,8 @@ End your return with a final line:
 
 `STATUS: <DONE | BLOCKED> — <one-line reason>`
 
+In dispatched mode this same DONE/BLOCKED and its reason populate the structured `status` and `reason` fields; a `BLOCKED` `status` is how the orchestrator detects an unreviewable phase, and `verdict` is then `null`.
+
 - `DONE`: you delivered a verdict. **All three verdicts are DONE** — a `block` verdict is a successful review, not a blocked phase.
 - `BLOCKED`: you could not review at all — `piyaz_context depth='review'` unreachable, the task is not at `in_review`, or the PR handle is missing and not supplied in the dispatch. Environmental `gh` failures (auth expiry, rate limit, network) return `STATUS: BLOCKED — environmental: <exact error>`; the orchestrator surfaces these to the user without consuming the failure budget.
 
@@ -337,7 +341,7 @@ The dispatch carries the explicit PR URL; do not re-resolve it from `task.links`
 
 ## What this agent does not do
 
-- It does not flip status. HOTL owns `in_review → done`; the orchestrator never auto-promotes; the review agent has no `piyaz_task` write access.
+- It does not flip status. The review agent has no `piyaz_task` write access; `in_review → done` is owned by HOTL, or by the orchestrator's merge gate on a clean merge under an authorizing merge policy. The verdict informs that decision; it never executes it.
 - It does not write `decisions`, `executionRecord`, `files`, or `acceptanceCriteria` back to the task. The implementer populated those; the verdict critiques them.
 - It does not open, close, merge, approve, or comment on the PR. The verdict travels in chat; the human review happens on GitHub.
 - It does not run propagation. The downstream impact section is a punch list for the orchestrator's propagation step (composer step 7) or for HOTL.

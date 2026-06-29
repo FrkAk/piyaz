@@ -464,10 +464,10 @@ function LinkCard({
       >
         {display}
       </a>
-      <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint opacity-0 transition-opacity group-hover/link:opacity-100">
+      <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-text-faint opacity-0 transition-opacity group-hover/link:opacity-100 pointer-coarse:opacity-100">
         {link.kind.replace(/_/g, " ")}
       </span>
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/link:opacity-100">
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/link:opacity-100 pointer-coarse:opacity-100">
         <button
           type="button"
           onClick={onStartEdit}

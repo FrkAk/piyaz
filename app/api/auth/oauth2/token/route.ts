@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { logTokenGrant } from "@/lib/auth/log-token-grant";
+import { ensureNoStore } from "@/lib/security/headers";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const origin = new URL(baseUrl).origin;
@@ -23,13 +24,19 @@ const grantsNeedingResource = new Set(["authorization_code", "refresh_token"]);
  * The grant outcome (grant type, whether a refresh token was issued, and
  * the error reason on failure) is logged for diagnosability; token values
  * are never logged.
+ *
+ * Both return paths are hardened with `ensureNoStore`. Better Auth sets
+ * `no-store` on a successful token response but leaves its error responses
+ * header-less, so the wrapper guarantees `no-store` on every outcome and keeps
+ * the directive project-owned against a future Better Auth change.
+ *
  * @param request - Incoming POST to `/api/auth/oauth2/token`.
- * @returns Better Auth token response.
+ * @returns Better Auth token response, pinned to `Cache-Control: no-store`.
  */
 export async function POST(request: Request): Promise<Response> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/x-www-form-urlencoded")) {
-    return auth.handler(request);
+    return ensureNoStore(await auth.handler(request));
   }
 
   const body = new URLSearchParams(await request.text());
@@ -49,5 +56,7 @@ export async function POST(request: Request): Promise<Response> {
   });
 
   const response = await auth.handler(forwarded);
-  return logTokenGrant(response, grantType, body.get("scope") ?? "");
+  return ensureNoStore(
+    await logTokenGrant(response, grantType, body.get("scope") ?? ""),
+  );
 }

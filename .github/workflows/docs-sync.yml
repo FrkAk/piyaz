@@ -23,7 +23,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout piyaz
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -34,7 +34,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Checkout piyaz-docs
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: FrkAk/piyaz-docs
           token: ${{ secrets.DOCS_REPO_TOKEN }}
@@ -45,7 +45,7 @@ jobs:
         run: bun scripts/generate-docs.ts --out docs-repo/content/docs
 
       - name: Open PR if changed
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           path: docs-repo
           token: ${{ secrets.DOCS_REPO_TOKEN }}

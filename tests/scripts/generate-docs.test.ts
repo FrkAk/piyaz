@@ -6,7 +6,7 @@ import {
   parseActions,
   renderCatalog,
   renderToolPage,
-  transformReference,
+  stripProseEmoji,
 } from "../../scripts/generate-docs";
 import { TOOLS } from "../../lib/mcp/schemas";
 
@@ -64,29 +64,6 @@ describe("renderToolPage", () => {
   });
 });
 
-describe("transformReference", () => {
-  const raw = "# Piyaz Conventions\n\nRead `references/artifacts.md` first.\n";
-  const out = transformReference(raw, "conventions.md");
-
-  test("extracts the title into frontmatter and keeps the h1", () => {
-    expect(out).toContain('title: "Piyaz Conventions"');
-    expect(out).toContain("# Piyaz Conventions");
-  });
-
-  test("adds the canonical banner with the source path", () => {
-    expect(out).toContain("Canonical skill reference");
-    expect(out).toContain(
-      "plugins/claude-code/skills/piyaz/references/conventions.md",
-    );
-  });
-
-  test("rewrites cross-reference links to docs urls", () => {
-    expect(out).toContain(
-      "[`references/artifacts.md`](/docs/reference/artifacts/)",
-    );
-  });
-});
-
 describe("renderCatalog", () => {
   test("renders commands and agents from the real plugin", async () => {
     const out = await renderCatalog(
@@ -136,6 +113,35 @@ describe("normalizeProseDashes", () => {
   });
 });
 
+describe("stripProseEmoji", () => {
+  test("removes a pictographic and collapses the gap it leaves", () => {
+    expect(stripProseEmoji("includes a ⚠ Blocked section")).toBe(
+      "includes a Blocked section",
+    );
+  });
+
+  test("drops a trailing variation selector with the emoji", () => {
+    expect(stripProseEmoji("done ✅️ here")).toBe("done here");
+  });
+
+  test("preserves emoji inside an inline code span", () => {
+    expect(stripProseEmoji("use `⚠ flag` literally")).toBe(
+      "use `⚠ flag` literally",
+    );
+  });
+
+  test("preserves emoji inside a fenced code block", () => {
+    const input = "before\n```\n⚠ keep\n```\nafter ⚠ gone";
+    expect(stripProseEmoji(input)).toBe("before\n```\n⚠ keep\n```\nafter gone");
+  });
+
+  test("leaves emoji-free prose unchanged", () => {
+    expect(stripProseEmoji("draft → planned → done")).toBe(
+      "draft → planned → done",
+    );
+  });
+});
+
 describe("escapeProse", () => {
   test("escapes JSX-hostile characters in prose", () => {
     expect(escapeProse("Array<T> and {x}")).toBe("Array&lt;T> and &#123;x}");
@@ -145,6 +151,10 @@ describe("escapeProse", () => {
     expect(escapeProse("see `Array<T>` and `{x}`")).toBe(
       "see `Array<T>` and `{x}`",
     );
+  });
+
+  test("strips emoji from prose while leaving code spans intact", () => {
+    expect(escapeProse("a ⚠ b and `⚠ c`")).toBe("a b and `⚠ c`");
   });
 });
 
@@ -222,16 +232,6 @@ describe("renderToolPage values-section label", () => {
       TOOLS.find((t) => t.name === "piyaz_project")!,
     );
     expect(project).toContain("## Actions");
-  });
-});
-
-describe("transformReference MDX escaping", () => {
-  test("escapes angle brackets and braces in prose but not in code", () => {
-    const raw =
-      "# T\n\nUse <Foo> and {bar} in prose.\n\n```\nkeep <Baz> raw\n```\n";
-    const out = transformReference(raw, "conventions.md");
-    expect(out).toContain("Use &lt;Foo> and &#123;bar} in prose.");
-    expect(out).toContain("keep <Baz> raw");
   });
 });
 

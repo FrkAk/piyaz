@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { ensureCacheControl, ensureNoStore } from "@/lib/security/headers";
 
 /**
  * Allowlist of Better Auth HTTP paths (post-`/api/auth` basePath form,
@@ -48,22 +49,69 @@ const ALLOWED_PATHS: ReadonlySet<string> = new Set([
 
 const BASE_PATH = "/api/auth";
 
-function isAllowed(pathname: string): boolean {
+/**
+ * Allowlisted paths whose responses are public and carry no session or user
+ * data — the signing keys and the OAuth discovery metadata. These stay
+ * cacheable; every other allowlisted path is session-bearing and pinned to
+ * `no-store`. Better Auth already tags the discovery docs with its own public
+ * hint, so `JWKS_CACHE_CONTROL` only ever applies to `/jwks`, which Better
+ * Auth leaves header-less.
+ */
+const PUBLIC_CACHEABLE_PATHS: ReadonlySet<string> = new Set([
+  "/jwks",
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/openid-configuration",
+]);
+
+/**
+ * Public Cache-Control for the JWKS keyset. The keys are public and gain
+ * nothing from `no-store`, so the endpoint stays cacheable — the same posture
+ * Better Auth gives the sibling discovery metadata. The short max-age keeps
+ * HTTP-layer caches (browser, proxy) propagating key rotation quickly; it does
+ * not bind jose's `createRemoteJWKSet`, which ignores HTTP Cache-Control and
+ * refreshes on its own timers / on an unknown `kid`. Better Auth keeps retired
+ * keys valid for a 30-day grace period.
+ */
+const JWKS_CACHE_CONTROL =
+  "public, max-age=15, stale-while-revalidate=15, stale-if-error=86400";
+
+/**
+ * Normalize a request pathname to its post-basePath, trailing-slash-stripped
+ * form, or `null` when the path is outside `/api/auth`.
+ *
+ * @param pathname - Request pathname.
+ * @returns Normalized Better Auth path (e.g. `/jwks`), or `null` if not under
+ *   the basePath.
+ */
+function normalizeAuthPath(pathname: string): string | null {
   if (pathname !== BASE_PATH && !pathname.startsWith(`${BASE_PATH}/`)) {
-    return false;
+    return null;
   }
   const stripped =
     pathname === BASE_PATH ? "/" : pathname.slice(BASE_PATH.length);
-  const normalized = stripped.replace(/\/+$/, "") || "/";
-  return ALLOWED_PATHS.has(normalized);
+  return stripped.replace(/\/+$/, "") || "/";
 }
 
+/**
+ * Route allowlisted Better Auth requests through `auth.handler` and harden
+ * response caching: public discovery surfaces (`/jwks`, well-known metadata)
+ * stay cacheable while every session-bearing surface is pinned to `no-store`.
+ * Disallowed paths 404 before reaching `auth.handler`.
+ *
+ * @param request - Incoming GET or POST to `/api/auth/*`.
+ * @returns Better Auth's response with a project-owned Cache-Control, or 404.
+ */
 async function handler(request: Request): Promise<Response> {
   const { pathname } = new URL(request.url);
-  if (!isAllowed(pathname)) {
+  const path = normalizeAuthPath(pathname);
+  if (path === null || !ALLOWED_PATHS.has(path)) {
     return new Response("Not Found", { status: 404 });
   }
-  return auth.handler(request);
+  const response = await auth.handler(request);
+  if (PUBLIC_CACHEABLE_PATHS.has(path)) {
+    return ensureCacheControl(response, JWKS_CACHE_CONTROL);
+  }
+  return ensureNoStore(response);
 }
 
 export const GET = handler;

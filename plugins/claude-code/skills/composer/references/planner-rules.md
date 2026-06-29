@@ -66,7 +66,7 @@ draft → planned → in_progress → in_review → done
 
 For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
-(The planner pre-fills the plan's Completion Protocol template section against these field requirements; the implementer executes the full protocol from its own extract.)
+(The implementer writes this payload once at `in_review` from its own extract; the planner does not pre-stage it in the plan.)
 
 ---
 

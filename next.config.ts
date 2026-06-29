@@ -60,16 +60,21 @@ async function buildNextConfig(): Promise<NextConfig> {
   }
 
   return {
-    ...(isCloudflare ? {} : { output: "standalone" }),
+    ...(isCloudflare
+      ? {}
+      : { output: "standalone", outputFileTracingRoot: PROJECT_ROOT }),
     poweredByHeader: false,
     /**
-     * Surface the deploy target to client bundles so feature gates (e.g.
-     * the realtime bridge) can branch on it. `NEXT_PUBLIC_*` is inlined by
-     * Next at build time: self-host builds get an empty string, Cloudflare
-     * builds get `"cloudflare"` via the `build:cf` / `deploy:cf` scripts.
+     * Surface deploy-time flags to the bundle. `NEXT_PUBLIC_*` is inlined by
+     * Next at build, so both the server gate and the static sign-up page read
+     * the same baked value. `NEXT_PUBLIC_DEPLOY_TARGET`: self-host builds get
+     * an empty string, Cloudflare builds get `"cloudflare"`.
+     * `NEXT_PUBLIC_SIGNUPS_ENABLED`: `"true"` opts a hosted deploy into open
+     * signup (set by `deploy:cf:dev`); hosted deploys are invite-only without it.
      */
     env: {
       NEXT_PUBLIC_DEPLOY_TARGET: process.env.DEPLOY_TARGET ?? "",
+      NEXT_PUBLIC_SIGNUPS_ENABLED: process.env.SIGNUPS_ENABLED ?? "",
     },
     experimental: {
       serverActions: {

@@ -2,9 +2,8 @@
  * docs:gen. Emits generated documentation into the piyaz-docs content tree.
  *
  * Outputs:
- *   mcp/tools/<tool>.mdx + meta.json   from lib/mcp/schemas.ts
- *   reference/<name>.mdx               synced piyaz skill references
- *   reference/skills-and-agents.mdx    catalog from plugin frontmatter
+ *   reference/tools/<tool>.mdx + meta.json   from lib/mcp/schemas.ts
+ *   reference/skills-and-agents.mdx          catalog from plugin frontmatter
  *
  * Run: bun scripts/generate-docs.ts [--out <content-dir>]
  * Default out dir: ../piyaz-docs/content/docs relative to the piyaz repo.
@@ -98,6 +97,21 @@ export function normalizeProseDashes(text: string): string {
 }
 
 /**
+ * Strip emoji and other pictographic characters from prose, leaving code intact.
+ * Uses the same `\p{Extended_Pictographic}` property the content linter bans so
+ * docs generated from product strings satisfy the no-emoji content style rule.
+ * Consumes one adjacent space on each side so a removed pictographic does not
+ * leave a double space, while indentation elsewhere on the line is untouched.
+ * @param text - Markdown or prose, possibly containing code.
+ * @returns Text with prose pictographics removed and code untouched.
+ */
+export function stripProseEmoji(text: string): string {
+  return mapProse(text, (seg) =>
+    seg.replace(/ ?\p{Extended_Pictographic}\uFE0F? ?/gu, " "),
+  );
+}
+
+/**
  * Escape characters MDX would parse as JSX in prose positions.
  * Fenced code blocks and inline code spans are left verbatim: their text is
  * literal in MDX, so escaping `<` or `{` there would render the entity
@@ -106,7 +120,7 @@ export function normalizeProseDashes(text: string): string {
  * @returns Prose safe to embed in an MDX document body.
  */
 export function escapeProse(text: string): string {
-  return mapProse(normalizeProseDashes(text), (seg) =>
+  return mapProse(stripProseEmoji(normalizeProseDashes(text)), (seg) =>
     seg.replaceAll("<", "&lt;").replaceAll("{", "&#123;"),
   );
 }
@@ -238,78 +252,6 @@ ${paramRows.join("\n")}
 `;
 }
 
-/** Synced skill reference files and their docs metadata. */
-export const SKILL_REFERENCES = [
-  {
-    file: "conventions.md",
-    slug: "conventions",
-    description: "Always-on quality rules for every Piyaz skill and agent.",
-  },
-  {
-    file: "artifacts.md",
-    slug: "artifacts",
-    description: "Quality bar for tasks, edges, tags, and categories.",
-  },
-  {
-    file: "lifecycle.md",
-    slug: "lifecycle",
-    description:
-      "Status lifecycle, Completion Protocol, and propagation rules.",
-  },
-  {
-    file: "resilience.md",
-    slug: "resilience",
-    description:
-      "Long-session discipline: persistence, resume mode, compaction.",
-  },
-] as const;
-
-/**
- * Transform a skill reference markdown file into a docs MDX page.
- * Content is synced verbatim; only frontmatter, a provenance banner, and
- * cross-reference links are added.
- * @param raw - Source file content.
- * @param file - Source file name (e.g. "conventions.md").
- * @returns Complete MDX document text.
- */
-export function transformReference(raw: string, file: string): string {
-  const ref = SKILL_REFERENCES.find((r) => r.file === file);
-  if (!ref) throw new Error(`unknown reference file: ${file}`);
-  const lines = raw.split("\n");
-  const titleIndex = lines.findIndex((l) => l.startsWith("# "));
-  if (titleIndex === -1) throw new Error(`no h1 in ${file}`);
-  const title = normalizeProseDashes(lines[titleIndex].slice(2).trim());
-  const body = lines
-    .slice(titleIndex + 1)
-    .join("\n")
-    .trim();
-  const linked = body.replace(
-    /`references\/(conventions|artifacts|lifecycle|resilience)\.md`/g,
-    "[`references/$1.md`](/docs/reference/$1/)",
-  );
-  const safeBody = escapeProse(linked);
-  return `---
-title: ${yamlQuote(title)}
-description: ${yamlQuote(ref.description)}
----
-
-import { Callout } from 'fumadocs-ui/components/callout';
-
-${GENERATED_NOTE}
-
-<Callout type="info">
-  Canonical skill reference, synced from
-  plugins/claude-code/skills/piyaz/references/${file} in the piyaz repo with
-  prose dashes normalized for the docs style guide. The Piyaz skills and
-  agents follow this reference.
-</Callout>
-
-# ${title}
-
-${safeBody}
-`;
-}
-
 /** A skill or agent entry parsed from plugin frontmatter. */
 interface PluginEntry {
   name: string;
@@ -403,7 +345,7 @@ function parseArgs(): { out: string } {
  */
 async function main(): Promise<void> {
   const { out } = parseArgs();
-  const toolsDir = join(out, "mcp", "tools");
+  const toolsDir = join(out, "reference", "tools");
   const referenceDir = join(out, "reference");
   await mkdir(toolsDir, { recursive: true });
   await mkdir(referenceDir, { recursive: true });
@@ -418,35 +360,14 @@ async function main(): Promise<void> {
     `${JSON.stringify({ title: "Tools", pages: toolSlugs }, null, 2)}\n`,
   );
 
-  const refRoot = resolve(
-    import.meta.dir,
-    "../plugins/claude-code/skills/piyaz/references",
-  );
-  for (const ref of SKILL_REFERENCES) {
-    const raw = await readFile(join(refRoot, ref.file), "utf8");
-    await writeFile(
-      join(referenceDir, `${ref.slug}.mdx`),
-      transformReference(raw, ref.file),
-    );
-  }
-
   const pluginRoot = resolve(import.meta.dir, "../plugins/claude-code");
   await writeFile(
     join(referenceDir, "skills-and-agents.mdx"),
     await renderCatalog(pluginRoot),
   );
 
-  const referenceSlugs = [
-    ...SKILL_REFERENCES.map((ref) => ref.slug),
-    "skills-and-agents",
-  ];
-  await writeFile(
-    join(referenceDir, "meta.json"),
-    `${JSON.stringify({ title: "Reference", pages: referenceSlugs }, null, 2)}\n`,
-  );
-
   console.log(
-    `docs:gen wrote ${TOOLS.length} tool pages, ${SKILL_REFERENCES.length} references, 1 catalog to ${out}`,
+    `docs:gen wrote ${TOOLS.length} tool pages and 1 catalog to ${out}`,
   );
 }
 
