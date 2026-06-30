@@ -79,8 +79,8 @@ type DepthProjection = {
 };
 
 /**
- * The exact column set each depth's formatter reads. `category`, `history`,
- * and `files` are omitted at every depth (no formatter reads them — bundles
+ * The exact column set each depth's formatter reads. `category` and `files`
+ * are omitted at every depth (no formatter reads them — bundles
  * point at the PR diff instead of recorded file lists). `implementationPlan`
  * is true for `summary` because `buildSummaryContext` reads its presence
  * (`hasImplementationPlan`) even though it never renders the plan text;

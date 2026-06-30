@@ -51,25 +51,6 @@ export type Decision = {
   source: "brainstorm" | "refinement" | "planning" | "execution";
 };
 
-/** A timestamped event in a node's history. */
-export type HistoryEntry = {
-  id: string;
-  type:
-    | "created"
-    | "refined"
-    | "decision"
-    | "edge_added"
-    | "edge_removed"
-    | "edge_updated"
-    | "status_change"
-    | "planned"
-    | "moved";
-  date: string;
-  label: string;
-  description: string;
-  actor: "user" | "ai";
-};
-
 /** Discrete, append-only activity event kinds for the audit log. */
 export type ActivityEventType =
   | "task_created"

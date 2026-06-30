@@ -11,7 +11,7 @@ import { withUserContext } from "@/lib/db/rls";
  * `app_user` (the production role) without an `app.user_id` GUC frame, the
  * read returned `[]` silently, which made `priorAssigneeIds = []` and
  * caused the diff vs new `assigneeIds` to flag every assignee as "added" —
- * producing wrong history entries and broken completion-protocol hints.
+ * producing wrong activity_events and broken completion-protocol hints.
  *
  * Test 1 pins the production fix: when the call sits inside a
  * `withUserContext` frame the assignees come back.

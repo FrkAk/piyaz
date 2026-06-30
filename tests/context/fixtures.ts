@@ -7,7 +7,7 @@ export type RichContextFixture = { taskId: string; userId: string };
  * Seed a fully-populated central task plus one done upstream dependency (with
  * an execution record) and one downstream dependent. The central task carries
  * every droppable column the depth-aware fetch gates: implementation_plan,
- * execution_record, files, history, category, tags, priority, estimate, an
+ * execution_record, files, category, tags, priority, estimate, an
  * acceptance criterion, a decision, a pull_request link, and an assignee. The
  * golden snapshots built on this fixture are the byte-identity contract for
  * the per-depth column projection.
@@ -25,13 +25,12 @@ export async function seedRichContextTask(
       INSERT INTO tasks
         ("project_id", "title", "sequence_number", "description", "status",
          "implementation_plan", "execution_record", "files", "tags", "priority",
-         "estimate", "category", "history")
+         "estimate", "category")
       VALUES
         (${fx.projectId}, 'Central task', 2, 'Central description', 'in_review',
          'Step one then step two', 'Built the thing',
          '["lib/a.ts", "lib/b.ts"]'::jsonb, '["alpha", "beta"]'::jsonb,
-         'high', 3, 'feature',
-         '[{"id": "h1", "date": "2026-05-16T00:00:00.000Z", "action": "created"}]'::jsonb)
+         'high', 3, 'feature')
       RETURNING id`;
     const [prereq] = await sr<{ id: string }[]>`
       INSERT INTO tasks
