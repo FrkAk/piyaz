@@ -131,21 +131,21 @@ async function findMissing(
   // compression API), applied by apply-public-rls.ts after migrate. Assert it
   // here against the deploy DB so a missing or failed storage apply fails the
   // deploy instead of silently shipping pglz.
-  const liveCompression = await sql<
-    { attname: string; attcompression: string }[]
-  >`
-    SELECT attname, attcompression
-    FROM pg_attribute
-    WHERE attrelid = to_regclass('public.notes')
-      AND attname IN ('body', 'search_tsv')
-      AND NOT attisdropped
-  `;
-  const compressionByColumn = new Map(
-    liveCompression.map((r) => [r.attname, r.attcompression]),
-  );
-  for (const column of ["body", "search_tsv"]) {
-    if (compressionByColumn.get(column) !== "l") {
-      missing.push(`lz4 compression on notes.${column}`);
+  const lz4Columns = [
+    { table: "notes", column: "body" },
+    { table: "notes", column: "search_tsv" },
+    { table: "note_revisions", column: "body" },
+  ];
+  for (const { table, column } of lz4Columns) {
+    const [col] = await sql<{ attcompression: string }[]>`
+      SELECT attcompression
+      FROM pg_attribute
+      WHERE attrelid = to_regclass(${`public.${table}`})
+        AND attname = ${column}
+        AND NOT attisdropped
+    `;
+    if (col?.attcompression !== "l") {
+      missing.push(`lz4 compression on ${table}.${column}`);
     }
   }
 

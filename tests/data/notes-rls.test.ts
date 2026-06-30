@@ -602,6 +602,84 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     expect(row.lexemes).toBeGreaterThan(0);
   });
 
+  test("notes INSERT cannot forge created_by — a member cannot author a team note as another user", async () => {
+    const fx = await seedUserOrgProject("notes-insert-forge");
+    const userB = await seedSecondMember(
+      fx.organizationId,
+      "notes-insert-forge-b",
+    );
+
+    // Member B inserts a team note attributed to A. The permissive WITH CHECK
+    // OR-s past created_by on visibility='team', so only the notes_insert_author_only
+    // RESTRICTIVE floor rejects it (42501).
+    const forged = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        INSERT INTO notes (project_id, title, slug, visibility, created_by)
+        VALUES (${fx.projectId}, 'Forged', 'forged', 'team', ${fx.userId})
+      `,
+    );
+    expect(forged.code).toBe("42501");
+
+    // No forged row landed.
+    const su = superuserPool();
+    const [{ n }] = await su<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM notes WHERE slug = 'forged'
+    `;
+    expect(n).toBe(0);
+
+    // B may author a note as themselves (the floor pins created_by = caller).
+    const c = appUserConnect();
+    const rows = await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${userB}, true)`;
+      return tx<{ id: string }[]>`
+        INSERT INTO notes (project_id, title, slug, visibility, created_by)
+        VALUES (${fx.projectId}, 'Mine', 'mine', 'team', ${userB})
+        RETURNING id
+      `;
+    });
+    expect(rows.length).toBe(1);
+  });
+
+  test("note_revisions length CHECKs reject an oversize body/title with a clean 23514", async () => {
+    const fx = await seedUserOrgProject("notes-rev-len");
+    const su = superuserPool();
+    const [note] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${fx.projectId}, 'N', 'n', 'team', ${fx.userId}) RETURNING id
+    `;
+    // body > 200000 chars (a revision cannot exceed the 200k notes.body cap).
+    await expectQueryRejects(
+      su`
+        INSERT INTO note_revisions (note_id, version, title, body, created_by)
+        VALUES (${note.id}, 1, 'N', ${"x".repeat(200001)}, ${fx.userId})
+      `,
+      /note_revisions_body_len_check/,
+    );
+    // title > 2000 bytes (matches notes.title cap).
+    await expectQueryRejects(
+      su`
+        INSERT INTO note_revisions (note_id, version, title, body, created_by)
+        VALUES (${note.id}, 2, ${"t".repeat(2001)}, 'b', ${fx.userId})
+      `,
+      /note_revisions_title_len_check/,
+    );
+  });
+
+  test("note_revisions.body carries lz4 compression (docker/storage.sql applied)", async () => {
+    const sql = superuserPool();
+    const [col] = await sql<{ attcompression: string }[]>`
+      SELECT attcompression
+      FROM pg_attribute
+      WHERE attrelid = 'public.note_revisions'::regclass
+        AND attname = 'body'
+        AND NOT attisdropped
+    `;
+    // 'l' = lz4; 'p'/'' = the pglz default that storage.sql overrides.
+    expect(col.attcompression).toBe("l");
+  });
+
   test("notes.created_by: a member cannot NULL out (erase) authorship, but the author-delete FK cascade still nulls it", async () => {
     const fx = await seedUserOrgProject("notes-cb-null");
     const author = await seedSecondMember(fx.organizationId, "notes-cb-author");

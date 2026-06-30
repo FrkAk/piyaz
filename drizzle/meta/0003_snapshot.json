@@ -1,5 +1,5 @@
 {
-  "id": "f1e0b63e-b086-4aa1-b2ac-ceb09592e276",
+  "id": "f9e4568b-90da-468a-b3de-3cfeefe5dc2b",
   "prevId": "7bac33f5-9ee3-409e-8209-1f52b1384718",
   "version": "7",
   "dialect": "postgresql",
@@ -376,7 +376,16 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "note_revisions_body_len_check": {
+          "name": "note_revisions_body_len_check",
+          "value": "char_length(\"note_revisions\".\"body\") <= 200000"
+        },
+        "note_revisions_title_len_check": {
+          "name": "note_revisions_title_len_check",
+          "value": "octet_length(\"note_revisions\".\"title\") <= 2000"
+        }
+      },
       "isRLSEnabled": true
     },
     "public.note_task_links": {

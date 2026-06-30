@@ -9,3 +9,9 @@
 -- ratio, cutting CPU and egress on the large note columns.
 ALTER TABLE "notes" ALTER COLUMN "body" SET COMPRESSION lz4;
 ALTER TABLE "notes" ALTER COLUMN "search_tsv" SET COMPRESSION lz4;
+
+-- note_revisions stores a full body snapshot per edit — the largest-growing text
+-- store in the schema over a note's lifetime. lz4 on body cuts detoast CPU and
+-- egress on every rollback/audit read, same rationale as notes.body. title is left
+-- on the default to match notes.title (small, not worth compressing).
+ALTER TABLE "note_revisions" ALTER COLUMN "body" SET COMPRESSION lz4;

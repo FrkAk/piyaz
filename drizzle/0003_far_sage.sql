@@ -16,7 +16,9 @@ CREATE TABLE "note_revisions" (
 	"body" text NOT NULL,
 	"created_by" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "note_revisions_note_version_unique" UNIQUE("note_id","version")
+	CONSTRAINT "note_revisions_note_version_unique" UNIQUE("note_id","version"),
+	CONSTRAINT "note_revisions_body_len_check" CHECK (char_length("note_revisions"."body") <= 200000),
+	CONSTRAINT "note_revisions_title_len_check" CHECK (octet_length("note_revisions"."title") <= 2000)
 );
 --> statement-breakpoint
 ALTER TABLE "note_revisions" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint

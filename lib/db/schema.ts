@@ -517,7 +517,21 @@ export const noteRevisions = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [unique("note_revisions_note_version_unique").on(t.noteId, t.version)],
+  (t) => [
+    unique("note_revisions_note_version_unique").on(t.noteId, t.version),
+    // A revision is a snapshot of a note's body/title, which notes caps at 200k
+    // chars / 2000 bytes (notes_body_len_check / notes_title_len_check); a
+    // snapshot cannot legitimately exceed its source. Bounds the append-only
+    // trail so a member cannot write a multi-hundred-MB revision under RLS.
+    check(
+      "note_revisions_body_len_check",
+      sql`char_length(${t.body}) <= 200000`,
+    ),
+    check(
+      "note_revisions_title_len_check",
+      sql`octet_length(${t.title}) <= 2000`,
+    ),
+  ],
 ).enableRLS();
 
 export type NoteRevision = typeof noteRevisions.$inferSelect;

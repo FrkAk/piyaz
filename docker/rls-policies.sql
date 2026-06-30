@@ -149,9 +149,12 @@ CREATE POLICY "team_invite_code_delete_admin_only" ON "team_invite_code"
 -- notes — 2-hop via projects' RLS, plus per-note visibility. deleted_at
 -- filtering is a query concern, not RLS. The per-row predicate columns
 -- (visibility, created_by) are leakproof plain comparisons, so they are safe
--- to evaluate on every scanned row. created_by is held immutable by the
--- notes_created_by_immutable trigger (rls-functions.sql) so a member cannot
--- privatize-and-steal a team note.
+-- to evaluate on every scanned row. Authorship is pinned end to end: the
+-- notes_insert_author_only floor below fixes created_by to the caller on INSERT
+-- (this permissive WITH CHECK OR-s past created_by on a visibility='team' insert),
+-- and the notes_created_by_immutable trigger (rls-functions.sql) freezes it on
+-- UPDATE, so a member can neither forge a team note's author nor
+-- privatize-and-steal one.
 DROP POLICY IF EXISTS "notes_member_access" ON "notes";
 CREATE POLICY "notes_member_access" ON "notes" AS PERMISSIVE FOR ALL TO app_user
   USING (
@@ -162,6 +165,19 @@ CREATE POLICY "notes_member_access" ON "notes" AS PERMISSIVE FOR ALL TO app_user
     project_id IN (SELECT id FROM public.projects)
     AND (visibility = 'team' OR created_by = public.current_app_user_id())
   );
+
+-- RESTRICTIVE INSERT floor pinning authorship to the caller. The permissive
+-- notes_member_access WITH CHECK OR-s on visibility='team', so it never evaluates
+-- created_by on a team-note INSERT — without this floor a member could insert a
+-- team note attributed to any other user. RESTRICTIVE AND's with the permissive,
+-- forcing every inserted note to be self-authored (mirrors the note_revisions
+-- created_by pin and the note_links insert floor). Strict equality (no NULL): a
+-- fresh note always has an author, and a NULL-author private note is invisible to
+-- everyone. INSERT-only; the UPDATE path is covered by notes_created_by_immutable.
+DROP POLICY IF EXISTS "notes_insert_author_only" ON "notes";
+CREATE POLICY "notes_insert_author_only" ON "notes"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (created_by = public.current_app_user_id());
 
 -- note_task_links — both endpoints checked in RLS (mirror task_edges): the
 -- note via notes' RLS and the task via tasks' RLS. The same-project belt is
