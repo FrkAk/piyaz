@@ -8,6 +8,11 @@ const LOG_PREFIX = "[email:log]";
  * imports and no side effects.
  */
 export class LogSender implements EmailSender {
+  /**
+   * Render the message to the server console instead of delivering it.
+   * @param message - The transactional email to render.
+   * @returns An `ok` result whose `messageId` carries the `log-` prefix.
+   */
   async send(message: OutboundEmail): Promise<EmailDeliveryResult> {
     const urls = (message.text.match(/https?:\/\/\S+/g) ?? []).map((u) =>
       u.replace(/[.,;:!?)\]>'"]+$/, ""),
