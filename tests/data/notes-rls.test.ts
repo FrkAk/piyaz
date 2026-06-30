@@ -480,7 +480,10 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
 
   test("note_revisions INSERT cannot forge created_by — only caller or NULL is accepted", async () => {
     const fx = await seedUserOrgProject("notes-rev-forge");
-    const userB = await seedSecondMember(fx.organizationId, "notes-rev-forge-b");
+    const userB = await seedSecondMember(
+      fx.organizationId,
+      "notes-rev-forge-b",
+    );
     const su = superuserPool();
     const [note] = await su<{ id: string }[]>`
       INSERT INTO notes (project_id, title, slug, visibility, created_by)
