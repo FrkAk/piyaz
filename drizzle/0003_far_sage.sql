@@ -58,11 +58,14 @@ CREATE TABLE "notes" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"deleted_at" timestamp with time zone,
-	"search_tsv" "tsvector" GENERATED ALWAYS AS (setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', coalesce(body, '')), 'B')) STORED,
+	"search_tsv" "tsvector" GENERATED ALWAYS AS (setweight(to_tsvector('english', left(coalesce(title, ''), 2000)), 'A') || setweight(to_tsvector('english', left(coalesce(body, ''), 200000)), 'B')) STORED,
 	CONSTRAINT "notes_visibility_check" CHECK ("notes"."visibility" IN ('private', 'team')),
 	CONSTRAINT "notes_type_check" CHECK ("notes"."type" IN ('reference', 'guidance', 'knowledge')),
 	CONSTRAINT "notes_feed_mode_check" CHECK ("notes"."feed_mode" IN ('none', 'all', 'categories', 'tags', 'tasks')),
-	CONSTRAINT "notes_embedding_status_check" CHECK ("notes"."embedding_status" IN ('none', 'pending', 'ready', 'failed', 'stale'))
+	CONSTRAINT "notes_embedding_status_check" CHECK ("notes"."embedding_status" IN ('none', 'pending', 'ready', 'failed', 'stale')),
+	CONSTRAINT "notes_title_len_check" CHECK (octet_length("notes"."title") <= 2000),
+	CONSTRAINT "notes_slug_len_check" CHECK (octet_length("notes"."slug") <= 2000),
+	CONSTRAINT "notes_body_len_check" CHECK (char_length("notes"."body") <= 200000)
 );
 --> statement-breakpoint
 ALTER TABLE "notes" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint

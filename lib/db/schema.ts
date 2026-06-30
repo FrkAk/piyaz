@@ -374,7 +374,7 @@ export const notes = pgTable(
       .defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     searchTsv: tsvector("search_tsv").generatedAlwaysAs(
-      sql`setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', coalesce(body, '')), 'B')`,
+      sql`setweight(to_tsvector('english', left(coalesce(title, ''), 2000)), 'A') || setweight(to_tsvector('english', left(coalesce(body, ''), 200000)), 'B')`,
     ),
   },
   (t) => [
@@ -412,6 +412,17 @@ export const notes = pgTable(
       "notes_embedding_status_check",
       sql`${t.embeddingStatus} IN ('none', 'pending', 'ready', 'failed', 'stale')`,
     ),
+    // title and slug sit in btree indexes (notes_project_title_idx,
+    // notes_project_slug_unique); a value past the ~2704-byte btree tuple limit
+    // aborts the write with an opaque "index row size exceeds maximum". Cap the
+    // byte length well under it so an oversize title/slug fails as a clean 23514.
+    check("notes_title_len_check", sql`octet_length(${t.title}) <= 2000`),
+    check("notes_slug_len_check", sql`octet_length(${t.slug}) <= 2000`),
+    // body feeds the STORED search_tsv; an unbounded body can push the generated
+    // tsvector past Postgres's 1 MB ceiling and make the row unsaveable. The
+    // generated expression already left()-bounds its input so the tsvector never
+    // overflows; this CHECK pins body to the call-surface contract (200k chars).
+    check("notes_body_len_check", sql`char_length(${t.body}) <= 200000`),
   ],
 ).enableRLS();
 

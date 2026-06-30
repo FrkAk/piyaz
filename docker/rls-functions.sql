@@ -716,9 +716,15 @@ CREATE TRIGGER notes_project_id_immutable
 -- notes.created_by immutable once set. visibility and created_by are the
 -- notes_member_access predicate inputs; without this, a member can flip a
 -- team note to (visibility='private', created_by=self) — WITH CHECK passes on
--- the self-owned private row — stealing it and hiding it from the team. The
--- `IS NOT NULL` guard still allows the `ON DELETE SET NULL` FK to null the
--- column when the author's user row is deleted (the intended terminal state).
+-- the self-owned private row — stealing it and hiding it from the team.
+--
+-- The only legitimate created_by change is the `ON DELETE SET NULL` FK nulling
+-- it when the author's user row is deleted. That cascade runs in the table
+-- owner's context (current_user = the owner role, never app_user), so the
+-- `current_user = 'app_user'` clause lets the cascade through while rejecting a
+-- member who tries to NULL out (erase) another member's authorship by hand. A
+-- bare `NEW.created_by IS NOT NULL` guard would let any member run
+-- `UPDATE notes SET created_by = NULL` and wipe a team note's author.
 CREATE OR REPLACE FUNCTION public.reject_notes_created_by_change()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -727,7 +733,7 @@ SET search_path = pg_catalog, pg_temp
 AS $$
 BEGIN
   IF NEW.created_by IS DISTINCT FROM OLD.created_by
-     AND NEW.created_by IS NOT NULL THEN
+     AND (NEW.created_by IS NOT NULL OR current_user = 'app_user') THEN
     RAISE EXCEPTION
       'notes.created_by is immutable — note ownership cannot be reassigned'
       USING ERRCODE = '42501';

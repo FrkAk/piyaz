@@ -555,4 +555,82 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     expect(byColumn.body).toBe("l");
     expect(byColumn.search_tsv).toBe("l");
   });
+
+  test("length CHECKs reject oversize title/slug/body with a clean 23514, not an opaque btree/tsvector error", async () => {
+    const fx = await seedUserOrgProject("notes-len");
+    const su = superuserPool();
+    // title > 2000 bytes would otherwise abort with "index row size exceeds
+    // btree maximum 2704" on notes_project_title_idx.
+    await expectQueryRejects(
+      su`
+        INSERT INTO notes (project_id, title, slug, created_by)
+        VALUES (${fx.projectId}, ${"t".repeat(2001)}, 'len-a', ${fx.userId})
+      `,
+      /notes_title_len_check/,
+    );
+    // slug > 2000 bytes would otherwise abort on notes_project_slug_unique.
+    await expectQueryRejects(
+      su`
+        INSERT INTO notes (project_id, title, slug, created_by)
+        VALUES (${fx.projectId}, 'ok', ${"s".repeat(2001)}, ${fx.userId})
+      `,
+      /notes_slug_len_check/,
+    );
+    // body > 200000 chars would otherwise overflow the generated search_tsv
+    // ("string is too long for tsvector") — here it fails as a clean CHECK.
+    await expectQueryRejects(
+      su`
+        INSERT INTO notes (project_id, title, slug, body, created_by)
+        VALUES (${fx.projectId}, 'ok', 'len-b', ${"x".repeat(200001)}, ${fx.userId})
+      `,
+      /notes_body_len_check/,
+    );
+  });
+
+  test("a max-size body of all-distinct tokens still saves; the left()-bounded search_tsv never overflows", async () => {
+    const fx = await seedUserOrgProject("notes-tsv-cap");
+    const su = superuserPool();
+    // Worst case for tsvector size: ~200000 chars of all-distinct lexemes
+    // (the left(body, 200000) bound keeps the generated tsvector well under 1MB).
+    const [row] = await su<{ lexemes: number }[]>`
+      INSERT INTO notes (project_id, title, slug, body, created_by)
+      SELECT ${fx.projectId}, 'big', 'big-note',
+             left(string_agg('lx' || g::text, ' '), 200000), ${fx.userId}
+      FROM generate_series(1, 200000) g
+      RETURNING length(search_tsv) AS lexemes
+    `;
+    expect(row.lexemes).toBeGreaterThan(0);
+  });
+
+  test("notes.created_by: a member cannot NULL out (erase) authorship, but the author-delete FK cascade still nulls it", async () => {
+    const fx = await seedUserOrgProject("notes-cb-null");
+    const author = await seedSecondMember(fx.organizationId, "notes-cb-author");
+    const userB = await seedSecondMember(fx.organizationId, "notes-cb-b");
+    const su = superuserPool();
+    const [team] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${fx.projectId}, 'Team', 'team', 'team', ${author})
+      RETURNING id
+    `;
+
+    // Member B nulls created_by to erase the author → blocked (42501).
+    const captured = await captureAppUserError(
+      userB,
+      (tx) => tx`UPDATE notes SET created_by = NULL WHERE id = ${team.id}`,
+    );
+    expect(captured.code).toBe("42501");
+    expect(captured.message).toMatch(/created_by is immutable/);
+    const [before] = await su<{ created_by: string }[]>`
+      SELECT created_by FROM notes WHERE id = ${team.id}
+    `;
+    expect(before.created_by).toBe(author);
+
+    // Deleting the author's user row runs the ON DELETE SET NULL cascade in the
+    // table-owner context (not app_user), so the guard lets it through.
+    await su`DELETE FROM piyaz_auth."user" WHERE id = ${author}`;
+    const [after] = await su<{ created_by: string | null }[]>`
+      SELECT created_by FROM notes WHERE id = ${team.id}
+    `;
+    expect(after.created_by).toBeNull();
+  });
 });

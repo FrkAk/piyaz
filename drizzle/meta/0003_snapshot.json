@@ -1,5 +1,5 @@
 {
-  "id": "9abe6949-07c0-4a3e-ab5a-62bb9cf0395c",
+  "id": "f1e0b63e-b086-4aa1-b2ac-ceb09592e276",
   "prevId": "7bac33f5-9ee3-409e-8209-1f52b1384718",
   "version": "7",
   "dialect": "postgresql",
@@ -667,7 +667,7 @@
           "primaryKey": false,
           "notNull": false,
           "generated": {
-            "as": "setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', coalesce(body, '')), 'B')",
+            "as": "setweight(to_tsvector('english', left(coalesce(title, ''), 2000)), 'A') || setweight(to_tsvector('english', left(coalesce(body, ''), 200000)), 'B')",
             "type": "stored"
           }
         }
@@ -899,6 +899,18 @@
         "notes_embedding_status_check": {
           "name": "notes_embedding_status_check",
           "value": "\"notes\".\"embedding_status\" IN ('none', 'pending', 'ready', 'failed', 'stale')"
+        },
+        "notes_title_len_check": {
+          "name": "notes_title_len_check",
+          "value": "octet_length(\"notes\".\"title\") <= 2000"
+        },
+        "notes_slug_len_check": {
+          "name": "notes_slug_len_check",
+          "value": "octet_length(\"notes\".\"slug\") <= 2000"
+        },
+        "notes_body_len_check": {
+          "name": "notes_body_len_check",
+          "value": "char_length(\"notes\".\"body\") <= 200000"
         }
       },
       "isRLSEnabled": true
