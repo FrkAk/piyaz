@@ -832,7 +832,7 @@ export function assigneeUserIdsExpr() {
 /**
  * Fetch the slim task view for listing surfaces. Issues a slim projection
  * with an `assigneeCountSubquery` LEFT JOIN; does not pull criteria,
- * decisions, history, files, or links — listing surfaces never render
+ * decisions, files, or links — listing surfaces never render
  * those fields and the bandwidth saving is meaningful on the workspace
  * canvas and search-result paths.
  *
@@ -2305,7 +2305,6 @@ const PROTECTED_TASK_FIELDS = [
   "id",
   "projectId",
   "sequenceNumber",
-  "history",
   "createdAt",
   "updatedAt",
 ] as const;
@@ -2375,9 +2374,9 @@ export type UpdateTaskResult = typeof tasks.$inferSelect & {
 };
 
 /**
- * Update a task and append a history entry. Protected fields (id, projectId,
- * sequenceNumber, history, createdAt, updatedAt) are stripped before the
- * write so a malformed input cannot reassign a task across projects or
+ * Update a task and emit `activity_events` for the changes. Protected fields
+ * (id, projectId, sequenceNumber, createdAt, updatedAt) are stripped before
+ * the write so a malformed input cannot reassign a task across projects or
  * forge timestamps.
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task to update.
@@ -2404,7 +2403,7 @@ export async function updateTask(
   // unknown column. Empty array in append mode is a definitional no-op
   // (matches decisions/files merge semantics: empty incoming ↦
   // unchanged), so normalize to `undefined` and skip both the junction
-  // write and the history-description entry below.
+  // write and the activity-event emission below.
   const rawAssigneeIds =
     "assigneeIds" in changes ? (changes.assigneeIds as string[]) : undefined;
   delete changes.assigneeIds;
@@ -2481,8 +2480,8 @@ export async function updateTask(
     // mode collapses to `assigneeIds === undefined`. If that was the
     // only field on the call AND nothing else needs writing (no
     // assignee write, no prUrl write, no criteria/decisions write), the
-    // call is a pure no-op: skip the tasks-row bump, the empty history
-    // entry, and the downstream realtime emit.
+    // call is a pure no-op: skip the tasks-row bump, the empty
+    // activity-event emission, and the downstream realtime emit.
     if (
       Object.keys(changes).length === 0 &&
       assigneeIds === undefined &&

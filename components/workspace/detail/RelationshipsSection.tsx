@@ -529,7 +529,7 @@ function RelationshipRow({
           type="button"
           onClick={onDelete}
           aria-label="Remove relationship"
-          className="shrink-0 cursor-pointer rounded p-0.5 text-text-muted opacity-0 transition-all hover:text-danger group-hover/edge:opacity-100"
+          className="shrink-0 cursor-pointer rounded p-0.5 text-text-muted opacity-0 transition-all hover:text-danger group-hover/edge:opacity-100 pointer-coarse:opacity-100"
         >
           <IconX size={11} />
         </button>
