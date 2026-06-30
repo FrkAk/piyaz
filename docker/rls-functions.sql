@@ -749,14 +749,18 @@ CREATE TRIGGER notes_created_by_immutable
   EXECUTE FUNCTION public.reject_notes_created_by_change();
 
 -- note_links endpoints must share a project (mirror reject_task_edges_cross_project).
--- SECURITY DEFINER so the per-row notes lookups see both endpoints unconditionally;
--- the firing INSERT/UPDATE is still gated by note_links RLS, so DEFINER here only
--- validates uniformly, it cannot wire foreign links. Uniform error collapses the
--- 4-state oracle (both invisible / one visible / different projects / same) into one.
+-- SECURITY INVOKER, unlike reject_task_edges_cross_project: notes have a
+-- visibility split tasks don't, so a DEFINER lookup that bypasses notes' RLS
+-- would see a same-project PRIVATE note owned by someone else, let the row
+-- through here, and only then have it rejected by note_links' RLS WITH CHECK
+-- — leaking that private note's existence via the SQLSTATE difference (this
+-- trigger's 23514 vs RLS's 42501). Running the lookup as the caller makes an
+-- invisible note read back as NULL, identically to a nonexistent one, so
+-- both cases collapse into this trigger's own 23514 and RLS is never reached.
 CREATE OR REPLACE FUNCTION public.reject_note_links_cross_project()
 RETURNS trigger
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, pg_catalog, pg_temp
 AS $$
 DECLARE
@@ -781,12 +785,16 @@ CREATE TRIGGER note_links_same_project_immutable
   FOR EACH ROW
   EXECUTE FUNCTION public.reject_note_links_cross_project();
 
--- note_task_links pins note.project_id == task.project_id. SECURITY DEFINER for
--- the same reason as above; the firing DML is gated by note_task_links RLS.
+-- note_task_links pins note.project_id == task.project_id. SECURITY INVOKER
+-- for the same reason as reject_note_links_cross_project: a DEFINER lookup
+-- would bypass notes' RLS and let a same-project private note pass here,
+-- leaking its existence when note_task_links' RLS rejects it afterward with
+-- a different SQLSTATE. As the caller, an invisible note reads back NULL
+-- just like a nonexistent one, so this trigger's own 23514 covers both.
 CREATE OR REPLACE FUNCTION public.reject_note_task_links_cross_project()
 RETURNS trigger
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public, pg_catalog, pg_temp
 AS $$
 DECLARE

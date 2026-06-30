@@ -320,6 +320,69 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     );
   });
 
+  test("note_links trigger rejects a same-project but invisible (private, other-author) note as 23514, not RLS's 42501", async () => {
+    const fx = await seedUserOrgProject("notes-nl-oracle");
+    const userB = await seedSecondMember(
+      fx.organizationId,
+      "notes-nl-oracle-b",
+    );
+    const su = superuserPool();
+    // Private note authored by A: same project as B, but invisible to B.
+    const [priv] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${fx.projectId}, 'Private', 'priv', 'private', ${fx.userId}) RETURNING id
+    `;
+    const [own] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${fx.projectId}, 'Own', 'own', 'team', ${userB}) RETURNING id
+    `;
+
+    // Before the SECURITY INVOKER fix this raised 42501 (RLS), distinguishing
+    // "private note exists in my project" from "no such note" via SQLSTATE.
+    // The trigger now runs as the caller, so an invisible note reads back
+    // NULL exactly like a nonexistent one and always raises this 23514.
+    const captured = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        INSERT INTO note_links (source_note_id, target_note_id)
+        VALUES (${priv.id}, ${own.id})
+      `,
+    );
+    expect(captured.code).toBe("23514");
+    expect(captured.message).toMatch(/note_links: invalid endpoint pair/);
+  });
+
+  test("note_task_links trigger rejects a same-project but invisible (private, other-author) note as 23514, not RLS's 42501", async () => {
+    const fx = await seedUserOrgProject("notes-ntl-oracle");
+    const userB = await seedSecondMember(
+      fx.organizationId,
+      "notes-ntl-oracle-b",
+    );
+    const su = superuserPool();
+    const [priv] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${fx.projectId}, 'Private', 'priv', 'private', ${fx.userId}) RETURNING id
+    `;
+    const [task] = await su<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number)
+      VALUES (${fx.projectId}, 'B-task', 1) RETURNING id
+    `;
+
+    const captured = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        INSERT INTO note_task_links (note_id, task_id)
+        VALUES (${priv.id}, ${task.id})
+      `,
+    );
+    expect(captured.code).toBe("23514");
+    expect(captured.message).toMatch(
+      /note_task_links: invalid note\/task pair/,
+    );
+  });
+
   test("note_links: app_user inserts a same-project pair (RLS + trigger allow the write)", async () => {
     const fx = await seedUserOrgProject("notes-nl-ok");
     const su = superuserPool();
