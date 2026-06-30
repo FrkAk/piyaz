@@ -179,11 +179,49 @@ CREATE POLICY "note_task_links_member_access" ON "note_task_links" AS PERMISSIVE
     AND task_id IN (SELECT id FROM public.tasks)
   );
 
--- note_revisions — 3-hop via notes' RLS (append-only body history).
+-- RESTRICTIVE write floor on note_task_links (mirror note_links / task_edges).
+-- AND's with the OR of permissives so a future stray permissive cannot
+-- OR-relax both-endpoints-visible. Per-command to leave SELECT on permissive.
+DROP POLICY IF EXISTS "note_task_links_insert_member_only" ON "note_task_links";
+DROP POLICY IF EXISTS "note_task_links_update_member_only" ON "note_task_links";
+DROP POLICY IF EXISTS "note_task_links_delete_member_only" ON "note_task_links";
+
+CREATE POLICY "note_task_links_insert_member_only" ON "note_task_links"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (
+    note_id IN (SELECT id FROM public.notes)
+    AND task_id IN (SELECT id FROM public.tasks)
+  );
+
+CREATE POLICY "note_task_links_update_member_only" ON "note_task_links"
+  AS RESTRICTIVE FOR UPDATE TO app_user
+  USING (
+    note_id IN (SELECT id FROM public.notes)
+    AND task_id IN (SELECT id FROM public.tasks)
+  )
+  WITH CHECK (
+    note_id IN (SELECT id FROM public.notes)
+    AND task_id IN (SELECT id FROM public.tasks)
+  );
+
+CREATE POLICY "note_task_links_delete_member_only" ON "note_task_links"
+  AS RESTRICTIVE FOR DELETE TO app_user
+  USING (
+    note_id IN (SELECT id FROM public.notes)
+    AND task_id IN (SELECT id FROM public.tasks)
+  );
+
+-- note_revisions — 3-hop via notes' RLS (append-only body history). WITH CHECK
+-- also pins created_by to the caller (or NULL) so a member cannot forge a
+-- snapshot attributed to another user; UPDATE is revoked in grants.sql, so this
+-- INSERT floor is the only guard on the audit trail's authorship.
 DROP POLICY IF EXISTS "note_revisions_member_access" ON "note_revisions";
 CREATE POLICY "note_revisions_member_access" ON "note_revisions" AS PERMISSIVE FOR ALL TO app_user
   USING (note_id IN (SELECT id FROM public.notes))
-  WITH CHECK (note_id IN (SELECT id FROM public.notes));
+  WITH CHECK (
+    note_id IN (SELECT id FROM public.notes)
+    AND (created_by IS NULL OR created_by = public.current_app_user_id())
+  );
 
 -- note_links — both endpoints must be visible (mirror task_edges).
 DROP POLICY IF EXISTS "note_links_member_access" ON "note_links";

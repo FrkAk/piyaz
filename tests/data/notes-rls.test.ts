@@ -428,10 +428,12 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
 
     // Two live notes with the same slug still collide.
     await expectQueryRejects(
-      su`
-        INSERT INTO notes (project_id, title, slug, created_by)
-        VALUES (${fx.projectId}, 'Third', 'shared-slug', ${fx.userId})
-      ` as unknown as PromiseLike<unknown>,
+      (async () => {
+        await su`
+          INSERT INTO notes (project_id, title, slug, created_by)
+          VALUES (${fx.projectId}, 'Third', 'shared-slug', ${fx.userId})
+        `;
+      })(),
       /duplicate key value|notes_project_slug_unique/i,
     );
   });
@@ -474,5 +476,63 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     );
     expect(captured.code).toBe("42501");
     expect(captured.message).toMatch(/permission denied/i);
+  });
+
+  test("note_revisions INSERT cannot forge created_by — only caller or NULL is accepted", async () => {
+    const fx = await seedUserOrgProject("notes-rev-forge");
+    const userB = await seedSecondMember(fx.organizationId, "notes-rev-forge-b");
+    const su = superuserPool();
+    const [note] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${fx.projectId}, 'Team', 'team', 'team', ${fx.userId}) RETURNING id
+    `;
+
+    // Member B forges a snapshot attributed to A → WITH CHECK rejects (42501).
+    const forged = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        INSERT INTO note_revisions (note_id, version, title, body, created_by)
+        VALUES (${note.id}, 1, 'N', 'b', ${fx.userId})
+      `,
+    );
+    expect(forged.code).toBe("42501");
+
+    // B may attribute a snapshot to themselves, or leave it unattributed (NULL).
+    const c = appUserConnect();
+    const rows = await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${userB}, true)`;
+      return tx<{ id: string }[]>`
+        INSERT INTO note_revisions (note_id, version, title, body, created_by)
+        VALUES (${note.id}, 2, 'N', 'b', ${userB}),
+               (${note.id}, 3, 'N', 'b', NULL)
+        RETURNING id
+      `;
+    });
+    expect(rows.length).toBe(2);
+  });
+
+  test("note_task_links: app_user inserts a same-project pair (RLS + restrictive floor allow it)", async () => {
+    const fx = await seedUserOrgProject("notes-ntl-floor-ok");
+    const su = superuserPool();
+    const [note] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${fx.projectId}, 'N', 'n', 'team', ${fx.userId}) RETURNING id
+    `;
+    const [task] = await su<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number)
+      VALUES (${fx.projectId}, 'T', 1) RETURNING id
+    `;
+
+    const c = appUserConnect();
+    const rows = await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${fx.userId}, true)`;
+      return tx<{ id: string }[]>`
+        INSERT INTO note_task_links (note_id, task_id)
+        VALUES (${note.id}, ${task.id})
+        RETURNING id
+      `;
+    });
+    expect(rows.length).toBe(1);
   });
 });
