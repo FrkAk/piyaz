@@ -85,7 +85,4 @@ CREATE INDEX "notes_search_idx" ON "notes" USING gin ("search_tsv");--> statemen
 CREATE INDEX "notes_tags_idx" ON "notes" USING gin ("tags");--> statement-breakpoint
 CREATE INDEX "notes_feed_idx" ON "notes" USING btree ("project_id","feed_mode") WHERE feed_mode <> 'none';--> statement-breakpoint
 CREATE INDEX "notes_embedding_status_idx" ON "notes" USING btree ("embedding_status") WHERE embedding_status IN ('pending','stale');--> statement-breakpoint
-CREATE INDEX "notes_project_updated_idx" ON "notes" USING btree ("project_id","updated_at") WHERE deleted_at IS NULL;--> statement-breakpoint
--- Hand-added egress tuning (drizzle has no compression API; re-add on any baseline regen).
-ALTER TABLE "notes" ALTER COLUMN "body" SET COMPRESSION lz4;--> statement-breakpoint
-ALTER TABLE "notes" ALTER COLUMN "search_tsv" SET COMPRESSION lz4;
+CREATE INDEX "notes_project_updated_idx" ON "notes" USING btree ("project_id","updated_at") WHERE deleted_at IS NULL;

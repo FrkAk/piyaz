@@ -127,10 +127,10 @@ async function findMissing(
     }
   }
 
-  // lz4 TOAST compression is hand-added to the notes migration (drizzle has no
-  // compression API), so the push-based test DB never exercises it. Assert it
-  // here against the migrate-based deploy DB so a baseline regen that drops it
-  // fails the deploy instead of silently shipping pglz.
+  // lz4 TOAST compression lives in docker/storage.sql (drizzle has no
+  // compression API), applied by apply-public-rls.ts after migrate. Assert it
+  // here against the deploy DB so a missing or failed storage apply fails the
+  // deploy instead of silently shipping pglz.
   const liveCompression = await sql<
     { attname: string; attcompression: string }[]
   >`

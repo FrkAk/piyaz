@@ -54,6 +54,22 @@ async function applyGrants(sql: ReturnType<typeof postgres>): Promise<void> {
 }
 
 /**
+ * Apply `docker/storage.sql` (physical lz4 column compression) after
+ * `drizzle-kit push`. The `SET COMPRESSION` DDL Drizzle's schema model cannot
+ * express lives outside the generated schema, so the push-based test DB applies
+ * it here to mirror the migrate-based deploy path. Idempotent.
+ *
+ * @param sql - Active postgres client (must be the container superuser).
+ */
+async function applyStorage(sql: ReturnType<typeof postgres>): Promise<void> {
+  const content = readFileSync(
+    join(process.cwd(), "docker", "storage.sql"),
+    "utf8",
+  );
+  await sql.unsafe(content);
+}
+
+/**
  * Apply the hand-written RLS policy DDL from `docker/rls-policies.sql`.
  * Run after `drizzle-kit push` because each policy references public
  * tables that push creates first. The file is idempotent
@@ -161,6 +177,7 @@ export async function applyMigrations(url: string): Promise<void> {
     await applyGrants(sqlPolicies);
     await applyRlsFunctions(sqlPolicies);
     await applyRlsPolicies(sqlPolicies);
+    await applyStorage(sqlPolicies);
   } finally {
     await sqlPolicies.end({ timeout: 5 });
   }

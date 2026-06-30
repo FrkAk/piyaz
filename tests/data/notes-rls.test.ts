@@ -538,4 +538,21 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     });
     expect(rows.length).toBe(1);
   });
+
+  test("notes.body and search_tsv carry lz4 compression (docker/storage.sql applied)", async () => {
+    const sql = superuserPool();
+    const rows = await sql<{ attname: string; attcompression: string }[]>`
+      SELECT attname, attcompression
+      FROM pg_attribute
+      WHERE attrelid = 'public.notes'::regclass
+        AND attname IN ('body', 'search_tsv')
+        AND NOT attisdropped
+    `;
+    const byColumn = Object.fromEntries(
+      rows.map((r) => [r.attname, r.attcompression]),
+    );
+    // 'l' = lz4; 'p'/'' = the pglz default that storage.sql overrides.
+    expect(byColumn.body).toBe("l");
+    expect(byColumn.search_tsv).toBe("l");
+  });
 });
