@@ -19,7 +19,6 @@ import type {
   TaskStatus,
   EdgeType,
   Decision,
-  HistoryEntry,
   Priority,
   Estimate,
   ActivityEventType,
@@ -45,7 +44,6 @@ export const projects = pgTable(
       .notNull()
       .default("brainstorming"),
     categories: jsonb("categories").$type<string[]>().notNull().default([]),
-    history: jsonb("history").$type<HistoryEntry[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -85,7 +83,6 @@ export const tasks = pgTable(
     priority: text("priority").$type<Priority>(),
     estimate: integer("estimate").$type<Estimate>(),
     files: jsonb("files").$type<string[]>().notNull().default([]),
-    history: jsonb("history").$type<HistoryEntry[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

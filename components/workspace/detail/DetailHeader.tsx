@@ -10,6 +10,8 @@ import {
   IconX,
 } from "@/components/shared/icons";
 import { updateTask } from "@/lib/graph/mutations";
+import { EditButton } from "@/components/shared/EditButton";
+import { useInlineEdit } from "@/hooks/useInlineEdit";
 import { isModalOpen } from "@/hooks/useModalChrome";
 import type { TaskStatus } from "@/lib/types";
 
@@ -77,6 +79,7 @@ export function DetailHeader({
   const [draft, setDraft] = useState(title);
   const [prevTitle, setPrevTitle] = useState(title);
   const cancelledRef = useRef(false);
+  const titleEdit = useInlineEdit(() => setEditing(true), "point");
 
   if (title !== prevTitle) {
     setPrevTitle(title);
@@ -128,8 +131,8 @@ export function DetailHeader({
       <div className="mx-auto max-w-[720px] px-4 pt-5 sm:px-6 lg:px-8">
         <div className="flex items-center gap-2.5">
           <MonoId id={taskRef} hintOnMount />
-          <span className="text-text-faint">·</span>
-          <span className="truncate text-[12px] text-text-muted">
+          <span className="shrink-0 text-text-faint">·</span>
+          <span className="min-w-0 truncate text-[12px] text-text-muted">
             {projectName}
           </span>
 
@@ -209,6 +212,7 @@ export function DetailHeader({
               type="text"
               value={draft}
               autoFocus
+              onFocus={titleEdit.onEditorFocus}
               onChange={(e) => setDraft(e.target.value)}
               onBlur={() => {
                 if (cancelledRef.current) {
@@ -233,14 +237,21 @@ export function DetailHeader({
               style={{ letterSpacing: "-0.005em" }}
             />
           ) : (
-            <motion.h1
-              onClick={() => setEditing(true)}
-              initial={false}
-              className="-mx-1 cursor-text rounded px-1 text-[22px] font-semibold leading-[1.25] text-text-primary transition-colors hover:bg-surface-raised/40"
-              style={{ letterSpacing: "-0.005em" }}
-            >
-              {title}
-            </motion.h1>
+            <div className="flex items-start gap-1.5">
+              <motion.h1
+                {...titleEdit.triggerProps}
+                initial={false}
+                className="-mx-1 min-w-0 cursor-text select-text rounded px-1 text-[22px] font-semibold leading-[1.25] text-text-primary transition-colors hover:bg-surface-raised/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50"
+                style={{ letterSpacing: "-0.005em" }}
+              >
+                {title}
+              </motion.h1>
+              <EditButton
+                onClick={titleEdit.onActivate}
+                label="Edit title"
+                className="-mt-0.5"
+              />
+            </div>
           )}
         </div>
       </div>

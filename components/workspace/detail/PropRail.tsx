@@ -47,7 +47,7 @@ import type {
  * Subset of task fields safe to patch onto both the `TaskFull` and
  * `TaskGraphSlim` caches. Restricted to fields that exist on the slim
  * shape so a spread `{ ...t, ...patch }` produces a valid slim entry —
- * fields not in this list (description, decisions, history) live only on
+ * fields not in this list (description, decisions) live only on
  * TaskFull and would have to be patched there separately.
  */
 type TaskPatch = Partial<{
