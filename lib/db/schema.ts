@@ -399,6 +399,22 @@ export const notes = pgTable(
     index("notes_project_updated_idx")
       .on(t.projectId, t.updatedAt)
       .where(sql`deleted_at IS NULL`),
+    check(
+      "notes_visibility_check",
+      sql`${t.visibility} IN ('private', 'team')`,
+    ),
+    check(
+      "notes_type_check",
+      sql`${t.type} IN ('reference', 'guidance', 'knowledge')`,
+    ),
+    check(
+      "notes_feed_mode_check",
+      sql`${t.feedMode} IN ('none', 'all', 'categories', 'tags', 'tasks')`,
+    ),
+    check(
+      "notes_embedding_status_check",
+      sql`${t.embeddingStatus} IN ('none', 'pending', 'ready', 'failed', 'stale')`,
+    ),
   ],
 ).enableRLS();
 
@@ -425,12 +441,15 @@ export const noteTaskLinks = pgTable(
       .defaultNow(),
   },
   (t) => [
-    index("note_task_links_note_id_idx").on(t.noteId),
     index("note_task_links_task_id_idx").on(t.taskId),
     unique("note_task_links_note_task_kind_unique").on(
       t.noteId,
       t.taskId,
       t.kind,
+    ),
+    check(
+      "note_task_links_kind_check",
+      sql`${t.kind} IN ('mention', 'reference', 'spec_of')`,
     ),
   ],
 ).enableRLS();
@@ -457,12 +476,12 @@ export const noteLinks = pgTable(
       .defaultNow(),
   },
   (t) => [
-    index("note_links_source_idx").on(t.sourceNoteId),
     index("note_links_target_idx").on(t.targetNoteId),
     unique("note_links_source_target_unique").on(
       t.sourceNoteId,
       t.targetNoteId,
     ),
+    check("note_links_no_self", sql`${t.sourceNoteId} <> ${t.targetNoteId}`),
   ],
 ).enableRLS();
 
@@ -490,10 +509,7 @@ export const noteRevisions = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [
-    unique("note_revisions_note_version_unique").on(t.noteId, t.version),
-    index("note_revisions_note_id_idx").on(t.noteId, t.version),
-  ],
+  (t) => [unique("note_revisions_note_version_unique").on(t.noteId, t.version)],
 ).enableRLS();
 
 export type NoteRevision = typeof noteRevisions.$inferSelect;

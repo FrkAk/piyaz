@@ -26,3 +26,8 @@ GRANT USAGE ON SCHEMA public TO app_user, service_role;
 GRANT CREATE ON SCHEMA public TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user, service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user, service_role;
+
+-- note_revisions is an append-only audit/rollback trail: app_user may INSERT
+-- and DELETE but never UPDATE a snapshot. Runs after the schema-wide GRANT
+-- above so it narrows it; re-applied with it.
+REVOKE UPDATE ON public.note_revisions FROM app_user;

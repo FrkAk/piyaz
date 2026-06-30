@@ -713,6 +713,35 @@ CREATE TRIGGER notes_project_id_immutable
   FOR EACH ROW
   EXECUTE FUNCTION public.reject_notes_project_id_change();
 
+-- notes.created_by immutable once set. visibility and created_by are the
+-- notes_member_access predicate inputs; without this, a member can flip a
+-- team note to (visibility='private', created_by=self) — WITH CHECK passes on
+-- the self-owned private row — stealing it and hiding it from the team. The
+-- `IS NOT NULL` guard still allows the `ON DELETE SET NULL` FK to null the
+-- column when the author's user row is deleted (the intended terminal state).
+CREATE OR REPLACE FUNCTION public.reject_notes_created_by_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NEW.created_by IS DISTINCT FROM OLD.created_by
+     AND NEW.created_by IS NOT NULL THEN
+    RAISE EXCEPTION
+      'notes.created_by is immutable — note ownership cannot be reassigned'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS notes_created_by_immutable ON public.notes;
+CREATE TRIGGER notes_created_by_immutable
+  BEFORE UPDATE OF created_by ON public.notes
+  FOR EACH ROW
+  EXECUTE FUNCTION public.reject_notes_created_by_change();
+
 -- note_links endpoints must share a project (mirror reject_task_edges_cross_project).
 -- SECURITY DEFINER so the per-row notes lookups see both endpoints unconditionally;
 -- the firing INSERT/UPDATE is still gated by note_links RLS, so DEFINER here only

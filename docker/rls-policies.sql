@@ -148,9 +148,10 @@ CREATE POLICY "team_invite_code_delete_admin_only" ON "team_invite_code"
 
 -- notes — 2-hop via projects' RLS, plus per-note visibility. deleted_at
 -- filtering is a query concern, not RLS. The per-row predicate columns
--- (visibility, created_by) are leakproof plain comparisons and live in the
--- notes_tree_list_idx INCLUDE set, so the planner keeps the RLS check
--- index-only on the hot tree-list path.
+-- (visibility, created_by) are leakproof plain comparisons, so they are safe
+-- to evaluate on every scanned row. created_by is held immutable by the
+-- notes_created_by_immutable trigger (rls-functions.sql) so a member cannot
+-- privatize-and-steal a team note.
 DROP POLICY IF EXISTS "notes_member_access" ON "notes";
 CREATE POLICY "notes_member_access" ON "notes" AS PERMISSIVE FOR ALL TO app_user
   USING (
@@ -162,12 +163,21 @@ CREATE POLICY "notes_member_access" ON "notes" AS PERMISSIVE FOR ALL TO app_user
     AND (visibility = 'team' OR created_by = public.current_app_user_id())
   );
 
--- note_task_links — 3-hop via notes' RLS. Cross-project belt is the DEFINER
--- trigger reject_note_task_links_cross_project (rls-functions.sql).
+-- note_task_links — both endpoints checked in RLS (mirror task_edges): the
+-- note via notes' RLS and the task via tasks' RLS. The same-project belt is
+-- the DEFINER trigger reject_note_task_links_cross_project (rls-functions.sql);
+-- the task-side predicate here is a second floor for the trigger-loss case and
+-- never rejects a legitimate row (the trigger pins note.project_id == task's).
 DROP POLICY IF EXISTS "note_task_links_member_access" ON "note_task_links";
 CREATE POLICY "note_task_links_member_access" ON "note_task_links" AS PERMISSIVE FOR ALL TO app_user
-  USING (note_id IN (SELECT id FROM public.notes))
-  WITH CHECK (note_id IN (SELECT id FROM public.notes));
+  USING (
+    note_id IN (SELECT id FROM public.notes)
+    AND task_id IN (SELECT id FROM public.tasks)
+  )
+  WITH CHECK (
+    note_id IN (SELECT id FROM public.notes)
+    AND task_id IN (SELECT id FROM public.tasks)
+  );
 
 -- note_revisions — 3-hop via notes' RLS (append-only body history).
 DROP POLICY IF EXISTS "note_revisions_member_access" ON "note_revisions";
