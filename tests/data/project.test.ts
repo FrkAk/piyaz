@@ -450,7 +450,7 @@ test("listProjectIndex is RLS-scoped to the caller's memberships", async () => {
   expect(ids.has(theirs.projectId)).toBe(false);
 });
 
-test("listProjectsForMcp returns the slim agent shape without description, history, categories, or timestamps", async () => {
+test("listProjectsForMcp returns the slim agent shape without description, categories, or timestamps", async () => {
   const f = await seedUserOrgProject("mcp-shape");
   const ctx = makeAuthContext(f.userId);
 
@@ -548,24 +548,13 @@ test("listProjectsForMcp skips teams with zero projects", async () => {
   ).toBeUndefined();
 });
 
-test("findProjectAccess access row omits history and createdAt", async () => {
+test("findProjectAccess access row omits createdAt", async () => {
   const f = await seedUserOrgProject("access-projection");
-  const sqlc = superuserPool();
-  try {
-    await sqlc`
-      UPDATE projects
-      SET history = ${'[{"kind":"status_change","from":"brainstorming","to":"active","at":"2025-01-01T00:00:00Z"}]'}::jsonb
-      WHERE id = ${f.projectId}
-    `;
-  } finally {
-    await sqlc.end({ timeout: 5 });
-  }
 
   const access = await findProjectAccess(f.userId, f.projectId);
 
   expect(access).not.toBeNull();
   const keys = Object.keys(access!.project);
-  expect(keys).not.toContain("history");
   expect(keys).not.toContain("createdAt");
   expect(keys.sort()).toEqual([
     "categories",

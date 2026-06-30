@@ -67,10 +67,14 @@ export function ProjectBreadcrumb({
       onClick={onOpenSettings}
       aria-label={`${projectName} — open project settings`}
       title="Project settings"
-      className="group/proj flex cursor-pointer items-center gap-2 rounded-md border border-border-strong/40 bg-surface/40 px-2.5 py-1 transition-all hover:border-accent/40 hover:bg-surface-hover"
+      className="group/proj flex min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-md border border-border-strong/40 bg-surface/40 px-2.5 py-1 transition-all hover:border-accent/40 hover:bg-surface-hover"
     >
-      {team && <TeamChip team={team} size="xs" />}
-      <span className="text-sm text-text-secondary group-hover/proj:text-text-primary transition-colors">
+      {team && (
+        <span className="hidden shrink-0 sm:inline-flex">
+          <TeamChip team={team} size="xs" />
+        </span>
+      )}
+      <span className="min-w-0 truncate text-sm text-text-secondary group-hover/proj:text-text-primary transition-colors">
         {projectName}
       </span>
       {projectStatus && PROJECT_STATUS_DISPLAY[projectStatus] && (

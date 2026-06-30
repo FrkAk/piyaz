@@ -31,9 +31,34 @@ afterEach(() => {
   spyOn(console, "info").mockRestore();
 });
 
+test("renders the header lines and verbatim text body", async () => {
+  const output = await render(message({ text: "body line" }));
+  expect(output).toContain("  to:       user@example.com\n");
+  expect(output).toContain("  from:     noreply@piyaz.ai\n");
+  expect(output).toContain("  subject:  Confirm your email\n");
+  expect(output).toContain("  text:\nbody line");
+});
+
+test("renders the replyTo fallback marker when replyTo is unset", async () => {
+  const output = await render(message());
+  expect(output).toContain("  replyTo:  (none)\n");
+});
+
+test("renders the replyTo address when replyTo is set", async () => {
+  const output = await render(message({ replyTo: "support@piyaz.ai" }));
+  expect(output).toContain("  replyTo:  support@piyaz.ai\n");
+});
+
 test("trims trailing sentence punctuation from logged URLs", async () => {
   const output = await render(
     message({ text: "Confirm: https://app.piyaz.ai/verify?token=abc." }),
+  );
+  expect(urlLines(output)).toEqual(["https://app.piyaz.ai/verify?token=abc"]);
+});
+
+test("trims a run of trailing punctuation from logged URLs", async () => {
+  const output = await render(
+    message({ text: "See https://app.piyaz.ai/verify?token=abc)." }),
   );
   expect(urlLines(output)).toEqual(["https://app.piyaz.ai/verify?token=abc"]);
 });

@@ -3,7 +3,10 @@
 import { useCallback, useState } from "react";
 import { updateProjectSettings } from "@/lib/actions/project";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
+import { EditButton } from "@/components/shared/EditButton";
+import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
+import { useInlineEdit } from "@/hooks/useInlineEdit";
 
 interface DescriptionSectionProps {
   projectId: string;
@@ -29,6 +32,7 @@ export function DescriptionSection({
   const [syncedInitialDescription, setSyncedInitialDescription] =
     useState(initialDescription);
   const [serverError, setServerError] = useState<string | null>(null);
+  const descriptionEdit = useInlineEdit(() => setEditing(true));
 
   if (initialDescription !== syncedInitialDescription && !editing) {
     setSyncedInitialDescription(initialDescription);
@@ -60,11 +64,21 @@ export function DescriptionSection({
 
   return (
     <section className="space-y-1.5">
-      <label className={SECTION_LABEL_CLASS}>Description</label>
+      <div className="flex items-center justify-between gap-2">
+        <label className={SECTION_LABEL_CLASS}>Description</label>
+        {!editing && (
+          <EditButton
+            onClick={descriptionEdit.onActivate}
+            label="Edit description"
+            className="-my-1.5"
+          />
+        )}
+      </div>
       {editing ? (
         <AutoGrowTextarea
           value={value}
           rows={3}
+          onFocus={descriptionEdit.onEditorFocus}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -79,21 +93,18 @@ export function DescriptionSection({
         />
       ) : (
         <div
-          onClick={() => setEditing(true)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setEditing(true);
-            }
-          }}
-          className="cursor-pointer rounded-lg border border-transparent px-3 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:bg-surface-hover/40"
+          {...descriptionEdit.triggerProps}
+          className="group/edit relative cursor-text select-text rounded-lg border border-transparent px-3 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:bg-surface-hover/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
         >
           {value ? (
-            <Markdown>{value}</Markdown>
+            <>
+              <EditHint />
+              <Markdown>{value}</Markdown>
+            </>
           ) : (
-            <span className="text-text-muted">Add a description…</span>
+            <span className="text-text-muted">
+              Double-click to add a description…
+            </span>
           )}
         </div>
       )}
