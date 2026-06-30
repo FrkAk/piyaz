@@ -126,6 +126,29 @@ async function findMissing(
       missing.push(`function public.${fn}`);
     }
   }
+
+  // lz4 TOAST compression is hand-added to the notes migration (drizzle has no
+  // compression API), so the push-based test DB never exercises it. Assert it
+  // here against the migrate-based deploy DB so a baseline regen that drops it
+  // fails the deploy instead of silently shipping pglz.
+  const liveCompression = await sql<
+    { attname: string; attcompression: string }[]
+  >`
+    SELECT attname, attcompression
+    FROM pg_attribute
+    WHERE attrelid = to_regclass('public.notes')
+      AND attname IN ('body', 'search_tsv')
+      AND NOT attisdropped
+  `;
+  const compressionByColumn = new Map(
+    liveCompression.map((r) => [r.attname, r.attcompression]),
+  );
+  for (const column of ["body", "search_tsv"]) {
+    if (compressionByColumn.get(column) !== "l") {
+      missing.push(`lz4 compression on notes.${column}`);
+    }
+  }
+
   return missing;
 }
 
