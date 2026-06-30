@@ -12,6 +12,7 @@ const TARGET_FILES = [
   ["lib/db/rls-read", `lib/db/rls-read.${DRIVER_TARGET}`],
   ["lib/db/_auth-kv-storage", `lib/db/_auth-kv-storage.${DRIVER_TARGET}`],
   ["lib/realtime/_broker", `lib/realtime/_broker.${DRIVER_TARGET}`],
+  ["lib/email/_sender", `lib/email/_sender.${DRIVER_TARGET}`],
 ] as const;
 
 /**
@@ -27,8 +28,8 @@ const REPLACEMENT_REGEX = new RegExp(
 
 /**
  * Rewrite a driver / broker indirection import to its per-target sibling.
- * Anchored on the `lib/db/` and `lib/realtime/` parents so test fixtures or
- * transitive deps sharing a basename are never touched. Runs at
+ * Anchored on the `lib/db/`, `lib/realtime/`, and `lib/email/` parents so test
+ * fixtures or transitive deps sharing a basename are never touched. Runs at
  * module-resolution time so the unused target never enters the bundle.
  *
  * @param resource - Module-resolution data mutated in place by webpack.
