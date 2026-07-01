@@ -687,7 +687,16 @@ CREATE TRIGGER task_edges_same_project_immutable
 
 -- ---------------------------------------------------------------------------
 -- Notes hardening — mirror the tasks/task_edges defense-in-depth suite.
--- notes.project_id immutability + cross-project rejection on both link tables.
+-- notes.project_id immutability, attribution pinning, and cross-project
+-- rejection on both link tables.
+--
+-- The notes triggers are AFTER, not BEFORE (unlike the tasks mirrors): any
+-- BEFORE UPDATE row trigger on notes — even a column-scoped one that never
+-- fires — makes the executor recompute the STORED search_tsv (to_tsvector
+-- over up to 200k chars of body) on every UPDATE, including metadata-only
+-- ones; with AFTER row triggers the recompute is skipped when title/body are
+-- untouched. A RAISE from an AFTER row trigger still aborts the statement
+-- with the same SQLSTATE, so the rejection semantics are unchanged.
 -- ---------------------------------------------------------------------------
 
 -- notes.project_id immutable (mirror reject_tasks_project_id_change).
@@ -709,7 +718,7 @@ $$;
 
 DROP TRIGGER IF EXISTS notes_project_id_immutable ON public.notes;
 CREATE TRIGGER notes_project_id_immutable
-  BEFORE UPDATE OF project_id ON public.notes
+  AFTER UPDATE OF project_id ON public.notes
   FOR EACH ROW
   EXECUTE FUNCTION public.reject_notes_project_id_change();
 
@@ -744,9 +753,53 @@ $$;
 
 DROP TRIGGER IF EXISTS notes_created_by_immutable ON public.notes;
 CREATE TRIGGER notes_created_by_immutable
-  BEFORE UPDATE OF created_by ON public.notes
+  AFTER UPDATE OF created_by ON public.notes
   FOR EACH ROW
   EXECUTE FUNCTION public.reject_notes_created_by_change();
+
+-- notes.updated_by / share_requested_by pinned to the caller. Both are
+-- editorial attribution that legitimately changes on edits and share
+-- requests, so they are not frozen like created_by; instead any new value an
+-- app_user writes must be the caller themselves. NULLing updated_by is
+-- reserved to the owner-context ON DELETE SET NULL cascade (same rationale
+-- as reject_notes_created_by_change); clearing share_requested_by to NULL is
+-- a legitimate app action (a share request being resolved), so it stays
+-- open. The whole check is gated on current_user = 'app_user': the FK
+-- cascade and service_role run in trusted contexts, and the gate keeps
+-- current_app_user_id() (EXECUTE granted to app_user/service_role only) from
+-- being called in an owner context that may lack the grant.
+CREATE OR REPLACE FUNCTION public.reject_notes_attribution_forgery()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF current_user = 'app_user' THEN
+    IF NEW.updated_by IS DISTINCT FROM OLD.updated_by
+       AND (NEW.updated_by IS NULL
+            OR NEW.updated_by IS DISTINCT FROM public.current_app_user_id()) THEN
+      RAISE EXCEPTION
+        'notes.updated_by may only be set to the caller'
+        USING ERRCODE = '42501';
+    END IF;
+    IF NEW.share_requested_by IS DISTINCT FROM OLD.share_requested_by
+       AND NEW.share_requested_by IS NOT NULL
+       AND NEW.share_requested_by IS DISTINCT FROM public.current_app_user_id() THEN
+      RAISE EXCEPTION
+        'notes.share_requested_by may only be set to the caller'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS notes_attribution_pinned ON public.notes;
+CREATE TRIGGER notes_attribution_pinned
+  AFTER UPDATE OF updated_by, share_requested_by ON public.notes
+  FOR EACH ROW
+  EXECUTE FUNCTION public.reject_notes_attribution_forgery();
 
 -- note_links endpoints must share a project (mirror reject_task_edges_cross_project).
 -- SECURITY INVOKER, unlike reject_task_edges_cross_project: notes have a

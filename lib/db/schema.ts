@@ -373,6 +373,9 @@ export const notes = pgTable(
       .notNull()
       .defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // Consumed only server-side by notes_search_idx and large (up to hundreds
+    // of KB for a max-size body): reads must project explicit columns that
+    // exclude it — a bare select() ships it over the wire on every row.
     searchTsv: tsvector("search_tsv").generatedAlwaysAs(
       sql`setweight(to_tsvector('english', left(coalesce(title, ''), 2000)), 'A') || setweight(to_tsvector('english', left(coalesce(body, ''), 200000)), 'B')`,
     ),

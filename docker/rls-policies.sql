@@ -149,35 +149,49 @@ CREATE POLICY "team_invite_code_delete_admin_only" ON "team_invite_code"
 -- notes — 2-hop via projects' RLS, plus per-note visibility. deleted_at
 -- filtering is a query concern, not RLS. The per-row predicate columns
 -- (visibility, created_by) are leakproof plain comparisons, so they are safe
--- to evaluate on every scanned row. Authorship is pinned end to end: the
--- notes_insert_author_only floor below fixes created_by to the caller on INSERT
--- (this permissive WITH CHECK OR-s past created_by on a visibility='team' insert),
--- and the notes_created_by_immutable trigger (rls-functions.sql) freezes it on
--- UPDATE, so a member can neither forge a team note's author nor
--- privatize-and-steal one.
+-- to evaluate on every scanned row; the caller lookup is wrapped in
+-- (SELECT ...) so it evaluates once per statement as an InitPlan — same
+-- discipline as the current_user_org_ids() sublink (header) — instead of
+-- paying a plpgsql call per scanned private row. Attribution is pinned end to
+-- end: the notes_insert_author_only floor below fixes created_by (and
+-- updated_by/share_requested_by) to the caller on INSERT (this permissive
+-- WITH CHECK OR-s past created_by on a visibility='team' insert), and the
+-- notes_created_by_immutable / notes_attribution_pinned triggers
+-- (rls-functions.sql) guard them on UPDATE, so a member can neither forge a
+-- team note's attribution nor privatize-and-steal one.
 DROP POLICY IF EXISTS "notes_member_access" ON "notes";
 CREATE POLICY "notes_member_access" ON "notes" AS PERMISSIVE FOR ALL TO app_user
   USING (
     project_id IN (SELECT id FROM public.projects)
-    AND (visibility = 'team' OR created_by = public.current_app_user_id())
+    AND (visibility = 'team'
+         OR created_by = (SELECT public.current_app_user_id()))
   )
   WITH CHECK (
     project_id IN (SELECT id FROM public.projects)
-    AND (visibility = 'team' OR created_by = public.current_app_user_id())
+    AND (visibility = 'team'
+         OR created_by = (SELECT public.current_app_user_id()))
   );
 
--- RESTRICTIVE INSERT floor pinning authorship to the caller. The permissive
+-- RESTRICTIVE INSERT floor pinning attribution to the caller. The permissive
 -- notes_member_access WITH CHECK OR-s on visibility='team', so it never evaluates
 -- created_by on a team-note INSERT — without this floor a member could insert a
 -- team note attributed to any other user. RESTRICTIVE AND's with the permissive,
 -- forcing every inserted note to be self-authored (mirrors the note_revisions
--- created_by pin and the note_links insert floor). Strict equality (no NULL): a
--- fresh note always has an author, and a NULL-author private note is invisible to
--- everyone. INSERT-only; the UPDATE path is covered by notes_created_by_immutable.
+-- created_by pin and the note_links insert floor). Strict equality on created_by
+-- (no NULL): a fresh note always has an author, and a NULL-author private note is
+-- invisible to everyone. updated_by/share_requested_by start NULL or as the
+-- caller, never another user. INSERT-only; the UPDATE path is covered by the
+-- notes_created_by_immutable and notes_attribution_pinned triggers.
 DROP POLICY IF EXISTS "notes_insert_author_only" ON "notes";
 CREATE POLICY "notes_insert_author_only" ON "notes"
   AS RESTRICTIVE FOR INSERT TO app_user
-  WITH CHECK (created_by = public.current_app_user_id());
+  WITH CHECK (
+    created_by = (SELECT public.current_app_user_id())
+    AND (updated_by IS NULL
+         OR updated_by = (SELECT public.current_app_user_id()))
+    AND (share_requested_by IS NULL
+         OR share_requested_by = (SELECT public.current_app_user_id()))
+  );
 
 -- note_task_links — both endpoints checked in RLS (mirror task_edges): the
 -- note via notes' RLS and the task via tasks' RLS. The same-project belt is
@@ -229,14 +243,26 @@ CREATE POLICY "note_task_links_delete_member_only" ON "note_task_links"
 
 -- note_revisions — 3-hop via notes' RLS (append-only body history). WITH CHECK
 -- also pins created_by to the caller (or NULL) so a member cannot forge a
--- snapshot attributed to another user; UPDATE is revoked in grants.sql, so this
--- INSERT floor is the only guard on the audit trail's authorship.
+-- snapshot attributed to another user; UPDATE is revoked in grants.sql.
 DROP POLICY IF EXISTS "note_revisions_member_access" ON "note_revisions";
 CREATE POLICY "note_revisions_member_access" ON "note_revisions" AS PERMISSIVE FOR ALL TO app_user
   USING (note_id IN (SELECT id FROM public.notes))
   WITH CHECK (
     note_id IN (SELECT id FROM public.notes)
-    AND (created_by IS NULL OR created_by = public.current_app_user_id())
+    AND (created_by IS NULL
+         OR created_by = (SELECT public.current_app_user_id()))
+  );
+
+-- RESTRICTIVE INSERT floor re-pinning snapshot authorship (mirror
+-- notes_insert_author_only / task_edges_*_member_only): a future stray
+-- permissive cannot OR-relax the created_by pin above. NULL stays allowed —
+-- an unattributed snapshot is a documented design choice.
+DROP POLICY IF EXISTS "note_revisions_insert_author_only" ON "note_revisions";
+CREATE POLICY "note_revisions_insert_author_only" ON "note_revisions"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (
+    created_by IS NULL
+    OR created_by = (SELECT public.current_app_user_id())
   );
 
 -- note_links — both endpoints must be visible (mirror task_edges).

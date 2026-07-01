@@ -60,10 +60,7 @@ async function seedSecondMember(
     VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
     RETURNING id
   `;
-  await sql`
-    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
-    VALUES (${organizationId}, ${u.id}, 'member', now())
-  `;
+  await addMembership(organizationId, u.id);
   return u.id;
 }
 
@@ -98,9 +95,10 @@ async function addMembership(
  *         (both link directions); deleting a task cascades its note_task_links.
  *   Hardening — cross-project link inserts raise 23514 (trigger, asserted by
  *         SQLSTATE, not RLS's 42501); a member cannot privatize-and-steal a
- *         team note (created_by immutable, 42501); note_revisions is
- *         UPDATE-revoked from app_user; the partial slug unique lets a new note
- *         reuse a trashed note's slug.
+ *         team note (created_by immutable, 42501); updated_by and
+ *         share_requested_by may only point at the caller (attribution pin,
+ *         42501); note_revisions is UPDATE-revoked from app_user; the partial
+ *         slug unique lets a new note reuse a trashed note's slug.
  */
 describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
   test("AC2: private note is author-only; team note is visible to every member", async () => {
@@ -773,5 +771,104 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
       SELECT created_by FROM notes WHERE id = ${team.id}
     `;
     expect(after.created_by).toBeNull();
+  });
+
+  test("notes.updated_by: a member may claim their own edit but cannot forge or erase another user's", async () => {
+    const fx = await seedUserOrgProject("notes-ub-pin");
+    const userB = await seedSecondMember(fx.organizationId, "notes-ub-pin-b");
+    const su = superuserPool();
+    const [team] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by, updated_by)
+      VALUES (${fx.projectId}, 'Team', 'team', 'team', ${fx.userId}, ${fx.userId})
+      RETURNING id
+    `;
+
+    // B edits as themselves — the pin permits the caller.
+    const c = appUserConnect();
+    await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${userB}, true)`;
+      await tx`
+        UPDATE notes SET body = 'edited', updated_by = ${userB}
+        WHERE id = ${team.id}
+      `;
+    });
+
+    // B re-attributes the last edit to A — blocked (42501).
+    const forged = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`UPDATE notes SET updated_by = ${fx.userId} WHERE id = ${team.id}`,
+    );
+    expect(forged.code).toBe("42501");
+    expect(forged.message).toMatch(/updated_by/);
+
+    // B erases the last-editor attribution — blocked (42501).
+    const erased = await captureAppUserError(
+      userB,
+      (tx) => tx`UPDATE notes SET updated_by = NULL WHERE id = ${team.id}`,
+    );
+    expect(erased.code).toBe("42501");
+  });
+
+  test("notes.share_requested_by: a member may set it to themselves or clear it, never to another user", async () => {
+    const fx = await seedUserOrgProject("notes-srb-pin");
+    const userB = await seedSecondMember(fx.organizationId, "notes-srb-pin-b");
+    const su = superuserPool();
+    const [team] = await su<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${fx.projectId}, 'Team', 'team', 'team', ${fx.userId})
+      RETURNING id
+    `;
+
+    // B requests a share as themselves, then clears it — both allowed.
+    const c = appUserConnect();
+    await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${userB}, true)`;
+      await tx`
+        UPDATE notes SET share_requested_by = ${userB} WHERE id = ${team.id}
+      `;
+      await tx`
+        UPDATE notes SET share_requested_by = NULL WHERE id = ${team.id}
+      `;
+    });
+
+    // B pins a share request on A — blocked (42501).
+    const forged = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        UPDATE notes SET share_requested_by = ${fx.userId} WHERE id = ${team.id}
+      `,
+    );
+    expect(forged.code).toBe("42501");
+    expect(forged.message).toMatch(/share_requested_by/);
+  });
+
+  test("notes INSERT cannot forge updated_by/share_requested_by — the restrictive floor pins them to the caller", async () => {
+    const fx = await seedUserOrgProject("notes-attr-forge");
+    const userB = await seedSecondMember(
+      fx.organizationId,
+      "notes-attr-forge-b",
+    );
+
+    const forgedEditor = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        INSERT INTO notes (project_id, title, slug, visibility, created_by, updated_by)
+        VALUES (${fx.projectId}, 'F', 'forge-ub', 'team', ${userB}, ${fx.userId})
+      `,
+    );
+    expect(forgedEditor.code).toBe("42501");
+
+    const forgedRequester = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        INSERT INTO notes (project_id, title, slug, visibility, created_by, share_requested_by)
+        VALUES (${fx.projectId}, 'F', 'forge-srb', 'team', ${userB}, ${fx.userId})
+      `,
+    );
+    expect(forgedRequester.code).toBe("42501");
   });
 });
