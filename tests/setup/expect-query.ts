@@ -1,4 +1,6 @@
 import { expect } from "bun:test";
+import type postgres from "postgres";
+import { appUserConnect } from "./seed";
 
 /**
  * Drop-in replacement for `expect(query).rejects.toThrow(regex)` when
@@ -34,4 +36,34 @@ export async function expectQueryRejects(
         `but the query resolved successfully.`,
     );
   }
+}
+
+/**
+ * Run `work` as `app_user` with `app.user_id` set to `userId`, and capture the
+ * rejection's `{ message, code }`. The SQLSTATE (`code`) is what distinguishes
+ * a trigger rejection (23514) from an RLS WITH CHECK rejection (42501), so
+ * tests assert the code, not just a message substring. Drains the postgres-js
+ * thenable via a direct try/await like `expectQueryRejects` above (Bun's
+ * `expect.rejects` hangs on it).
+ *
+ * @param userId - Value for the `app.user_id` GUC.
+ * @param work - Statements to run inside the RLS-scoped transaction.
+ * @returns The caught error's message and SQLSTATE code.
+ * @throws Error when `work` resolves instead of rejecting.
+ */
+export async function captureAppUserError(
+  userId: string,
+  work: (tx: postgres.TransactionSql) => Promise<unknown>,
+): Promise<{ message: string; code: string | undefined }> {
+  const c = appUserConnect();
+  try {
+    await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${userId}, true)`;
+      await work(tx);
+    });
+  } catch (err) {
+    const e = err as { message: string; code?: string };
+    return { message: e.message, code: e.code };
+  }
+  throw new Error("expected the statement to reject, but it succeeded");
 }
