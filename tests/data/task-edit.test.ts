@@ -10,6 +10,7 @@ import {
 import {
   applyTaskEdit,
   CollectionItemNotFoundError,
+  DuplicateLinkUrlError,
   InvalidEditOpError,
   StaleWriteError,
   StrReplaceMultipleMatchError,
@@ -543,4 +544,112 @@ test("op coherence rejects invalid ops before any DB work", async () => {
     { op: "set", field: "status" },
   ]).catch((e: unknown) => e);
   expect(setErr).toBeInstanceOf(InvalidEditOpError);
+});
+
+test("criteria re-add with omitted checked keeps a checked item checked", async () => {
+  const f = await seedUserOrgProject("crit-readd-omit");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    acceptanceCriteria: ["A", "B"],
+  });
+  const before = await getTaskFull(ctx, task.id);
+  const aId = before.acceptanceCriteria[0].id;
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "check", collection: "acceptanceCriteria", id: aId },
+  ]);
+  await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "acceptanceCriteria", text: "A" },
+  ]);
+
+  const full = await getTaskFull(ctx, task.id);
+  expect(full.acceptanceCriteria.map((c) => c.text)).toEqual(["A", "B"]);
+  const a = full.acceptanceCriteria.find((c) => c.text === "A");
+  expect(a?.id).toBe(aId);
+  expect(a?.checked).toBe(true);
+
+  const rows = await activityRows(task.id);
+  expect(rows.filter((r) => r.type === "criterion_added").length).toBe(0);
+  expect(rows.filter((r) => r.type === "criterion_unchecked").length).toBe(0);
+});
+
+test("criteria re-add with explicit checked:false unchecks a checked item", async () => {
+  const f = await seedUserOrgProject("crit-readd-uncheck");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    acceptanceCriteria: ["A"],
+  });
+  const before = await getTaskFull(ctx, task.id);
+  const aId = before.acceptanceCriteria[0].id;
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "check", collection: "acceptanceCriteria", id: aId },
+  ]);
+  await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "acceptanceCriteria", text: "A", checked: false },
+  ]);
+
+  const full = await getTaskFull(ctx, task.id);
+  const a = full.acceptanceCriteria.find((c) => c.text === "A");
+  expect(a?.id).toBe(aId);
+  expect(a?.checked).toBe(false);
+
+  const rows = await activityRows(task.id);
+  expect(rows.filter((r) => r.type === "criterion_unchecked").length).toBe(1);
+  expect(rows.filter((r) => r.type === "criterion_added").length).toBe(0);
+});
+
+test("decision re-add preserves source and date and emits no new event", async () => {
+  const f = await seedUserOrgProject("decision-readd");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "decisions", text: "D1" },
+  ]);
+  const before = await getTaskFull(ctx, task.id);
+  expect(before.decisions.length).toBe(1);
+  const d = before.decisions[0];
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "decisions", text: "D1" },
+  ]);
+  const after = await getTaskFull(ctx, task.id);
+  expect(after.decisions.length).toBe(1);
+  expect(after.decisions[0].id).toBe(d.id);
+  expect(after.decisions[0].source).toBe(d.source);
+  expect(after.decisions[0].date).toBe(d.date);
+
+  const rows = await activityRows(task.id);
+  expect(rows.filter((r) => r.type === "decision_added").length).toBe(1);
+});
+
+test("link update to another link's url raises DuplicateLinkUrlError", async () => {
+  const f = await seedUserOrgProject("link-dup");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "links", url: "https://github.com/o/r/pull/1" },
+    { op: "add", collection: "links", url: "https://github.com/o/r/pull/2" },
+  ]);
+  const full = await getTaskFull(ctx, task.id);
+  const second = full.links.find(
+    (l) => l.url === "https://github.com/o/r/pull/2",
+  );
+  if (!second) throw new Error("expected the second link");
+
+  const err = await applyTaskEdit(ctx, task.id, [
+    {
+      op: "update",
+      collection: "links",
+      id: second.id,
+      url: "https://github.com/o/r/pull/1",
+    },
+  ]).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(DuplicateLinkUrlError);
 });

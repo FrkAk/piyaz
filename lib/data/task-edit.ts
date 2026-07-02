@@ -111,6 +111,17 @@ export class InvalidEditOpError extends Error {
   }
 }
 
+/** Thrown when a link `update` would collide with another link's URL. */
+export class DuplicateLinkUrlError extends Error {
+  /**
+   * @param url - The colliding URL already present on the task.
+   */
+  constructor(public readonly url: string) {
+    super(`Task already has a link with url '${url}'`);
+    this.name = "DuplicateLinkUrlError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public op + result shapes
 // ---------------------------------------------------------------------------
@@ -219,7 +230,7 @@ type PreparedText =
   | { t: "set"; field: TextField; value: string | null };
 /** A by-id acceptance-criteria op. */
 type PreparedCriteria =
-  | { t: "add"; text: string; checked: boolean }
+  | { t: "add"; text: string; checked?: boolean }
   | { t: "update"; id: string; text?: string; checked?: boolean }
   | { t: "remove"; id: string }
   | { t: "check"; id: string; checked: boolean };
@@ -542,7 +553,7 @@ function prepareCriteriaMutation(
       bad("add acceptanceCriteria requires text");
     if (op.checked !== undefined && typeof op.checked !== "boolean")
       bad("acceptanceCriteria checked must be a boolean");
-    return { t: "add", text: op.text, checked: op.checked ?? false };
+    return { t: "add", text: op.text, checked: op.checked };
   }
   if (op.op === "remove") {
     if (typeof op.id !== "string") bad("remove acceptanceCriteria requires id");
@@ -720,28 +731,33 @@ async function applyCriteria(
 ): Promise<CollectionOutcome> {
   const base = { projectId, taskId };
   if (op.t === "add") {
-    const [row] = await tx
+    const existing = await selectCriterionByText(tx, taskId, op.text);
+    if (existing) return dedupeCriteriaAdd(tx, base, op, existing);
+    const [inserted] = await tx
       .insert(taskAcceptanceCriteria)
       .values({
         id: crypto.randomUUID(),
         taskId,
         text: op.text,
-        checked: op.checked,
+        checked: op.checked ?? false,
         position: sql<number>`(SELECT COALESCE(MAX("position"), -1) FROM "task_acceptance_criteria" WHERE "task_id" = ${taskId}::uuid) + 1`,
       })
-      .onConflictDoUpdate({
+      .onConflictDoNothing({
         target: [taskAcceptanceCriteria.taskId, taskAcceptanceCriteria.text],
-        set: { checked: sql`EXCLUDED.checked`, updatedAt: sql`NOW()` },
       })
       .returning({ id: taskAcceptanceCriteria.id });
+    if (!inserted) {
+      const raced = await selectCriterionByText(tx, taskId, op.text);
+      if (raced) return dedupeCriteriaAdd(tx, base, op, raced);
+    }
     return {
       event: {
         ...base,
         type: "criterion_added",
         summary: `added criterion "${op.text}"`,
-        targetRef: row.id,
+        targetRef: inserted.id,
       },
-      applied: `add acceptanceCriteria ${row.id}`,
+      applied: `add acceptanceCriteria ${inserted.id}`,
       refetch: true,
     };
   }
@@ -812,6 +828,71 @@ async function applyCriteria(
 }
 
 /**
+ * Select a criterion by its `(taskId, text)` for dedup on `add`.
+ *
+ * @param tx - Active RLS-scoped transaction.
+ * @param taskId - Owning task id.
+ * @param text - Criterion text to match.
+ * @returns The matched row's id and `checked`, or undefined.
+ */
+async function selectCriterionByText(
+  tx: Tx,
+  taskId: string,
+  text: string,
+): Promise<{ id: string; checked: boolean } | undefined> {
+  const [row] = await tx
+    .select({
+      id: taskAcceptanceCriteria.id,
+      checked: taskAcceptanceCriteria.checked,
+    })
+    .from(taskAcceptanceCriteria)
+    .where(
+      and(
+        eq(taskAcceptanceCriteria.taskId, taskId),
+        eq(taskAcceptanceCriteria.text, text),
+      ),
+    )
+    .limit(1);
+  return row;
+}
+
+/**
+ * Resolve an acceptance-criteria `add` that matched an existing row. Flips
+ * `checked` only when the op supplies a value differing from the existing one;
+ * an omitted or equal `checked` changes nothing. Never emits `criterion_added`.
+ *
+ * @param tx - Active RLS-scoped transaction.
+ * @param base - Shared `{projectId, taskId}` event fields.
+ * @param op - The prepared `add` op.
+ * @param existing - The matched row's id and current `checked`.
+ * @returns The dedup outcome: a check/uncheck event when flipped, else null.
+ */
+async function dedupeCriteriaAdd(
+  tx: Tx,
+  base: { projectId: string; taskId: string },
+  op: { text: string; checked?: boolean },
+  existing: { id: string; checked: boolean },
+): Promise<CollectionOutcome> {
+  const applied = `add acceptanceCriteria ${existing.id} (deduped)`;
+  if (op.checked === undefined || op.checked === existing.checked)
+    return { event: null, applied, refetch: true };
+  await tx
+    .update(taskAcceptanceCriteria)
+    .set({ checked: op.checked, updatedAt: new Date() })
+    .where(eq(taskAcceptanceCriteria.id, existing.id));
+  return {
+    event: {
+      ...base,
+      type: op.checked ? "criterion_checked" : "criterion_unchecked",
+      summary: op.checked ? "checked a criterion" : "unchecked a criterion",
+      targetRef: existing.id,
+    },
+    applied,
+    refetch: true,
+  };
+}
+
+/**
  * Apply a decision mutation against the child table.
  *
  * @param tx - Active RLS-scoped transaction.
@@ -829,8 +910,15 @@ async function applyDecision(
 ): Promise<CollectionOutcome> {
   const base = { projectId, taskId };
   if (op.t === "add") {
+    const existing = await selectDecisionByText(tx, taskId, op.text);
+    if (existing)
+      return {
+        event: null,
+        applied: `add decisions ${existing.id} (deduped)`,
+        refetch: true,
+      };
     const [decision] = normalizeDecisions([op.text]);
-    const [row] = await tx
+    const [inserted] = await tx
       .insert(taskDecisions)
       .values({
         id: decision.id,
@@ -840,23 +928,27 @@ async function applyDecision(
         decisionDate: decision.date,
         position: sql<number>`(SELECT COALESCE(MAX("position"), -1) FROM "task_decisions" WHERE "task_id" = ${taskId}::uuid) + 1`,
       })
-      .onConflictDoUpdate({
+      .onConflictDoNothing({
         target: [taskDecisions.taskId, taskDecisions.text],
-        set: {
-          source: sql`EXCLUDED.source`,
-          decisionDate: sql`EXCLUDED.decision_date`,
-          updatedAt: sql`NOW()`,
-        },
       })
       .returning({ id: taskDecisions.id });
+    if (!inserted) {
+      const raced = await selectDecisionByText(tx, taskId, op.text);
+      if (raced)
+        return {
+          event: null,
+          applied: `add decisions ${raced.id} (deduped)`,
+          refetch: true,
+        };
+    }
     return {
       event: {
         ...base,
         type: "decision_added",
         summary: `recorded decision "${op.text}"`,
-        targetRef: row.id,
+        targetRef: inserted.id,
       },
-      applied: `add decisions ${row.id}`,
+      applied: `add decisions ${inserted.id}`,
       refetch: true,
     };
   }
@@ -906,6 +998,27 @@ async function applyDecision(
 }
 
 /**
+ * Select a decision by its `(taskId, text)` for dedup on `add`.
+ *
+ * @param tx - Active RLS-scoped transaction.
+ * @param taskId - Owning task id.
+ * @param text - Decision text to match.
+ * @returns The matched row's id, or undefined.
+ */
+async function selectDecisionByText(
+  tx: Tx,
+  taskId: string,
+  text: string,
+): Promise<{ id: string } | undefined> {
+  const [row] = await tx
+    .select({ id: taskDecisions.id })
+    .from(taskDecisions)
+    .where(and(eq(taskDecisions.taskId, taskId), eq(taskDecisions.text, text)))
+    .limit(1);
+  return row;
+}
+
+/**
  * Apply a link mutation scoped to the edited task, reusing `classifyLink`'s
  * kind/label derivation. Link ops on another task's link id surface as a
  * {@link CollectionItemNotFoundError} so the edit stays scoped to `taskId`.
@@ -917,7 +1030,7 @@ async function applyDecision(
  * @param createdBy - Caller id for the `created_by` column on inserts.
  * @returns The activity event (null on a deduped add) and applied label.
  * @throws CollectionItemNotFoundError when a by-id target is not on the task.
- * @throws ForbiddenError when an update collides with another link's URL.
+ * @throws DuplicateLinkUrlError when an update collides with another link's URL.
  */
 async function applyLink(
   tx: Tx,
@@ -1009,7 +1122,7 @@ async function applyLink(
       .from(taskLinks)
       .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, c.url)))
       .limit(1);
-    if (conflict) throw new ForbiddenError("Duplicate url", "task", taskId);
+    if (conflict) throw new DuplicateLinkUrlError(c.url);
   }
   await tx
     .update(taskLinks)
@@ -1305,6 +1418,7 @@ async function applyPrUrl(
  * @throws StaleWriteError when `ifUpdatedAt` does not match.
  * @throws StrReplaceNoMatchError / StrReplaceMultipleMatchError on bad replaces.
  * @throws CollectionItemNotFoundError when a by-id target is missing.
+ * @throws DuplicateLinkUrlError when a link update collides with another URL.
  * @throws ForbiddenError when access, a URL, or an assignee is rejected.
  */
 export async function applyTaskEdit(

@@ -80,6 +80,7 @@ import {
   StrReplaceMultipleMatchError,
   CollectionItemNotFoundError,
   InvalidEditOpError,
+  DuplicateLinkUrlError,
 } from "@/lib/data/task-edit";
 import {
   formatSummary,
@@ -718,6 +719,11 @@ function translateError(e: unknown): ToolResult {
   }
   if (e instanceof InvalidEditOpError) {
     return fail(e.reason);
+  }
+  if (e instanceof DuplicateLinkUrlError) {
+    return fail(
+      `The task already has a link with url '${e.url}'. Update or remove that existing link instead, or use a different url.`,
+    );
   }
   if (e instanceof ForbiddenError) {
     const id = e.resourceId ?? "";
