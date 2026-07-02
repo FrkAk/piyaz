@@ -1,8 +1,9 @@
 /**
- * Verify the live database satisfies the public RLS contract and that the
- * owner-managed SECURITY DEFINER functions are present. Read-only: runs as the
- * migration role (system catalogs are world-readable). Exits non-zero with an
- * actionable message so a forgotten owner apply or policy drift blocks the
+ * Verify the live database satisfies the public RLS contract: policies,
+ * FORCE RLS, the owner-managed functions AND triggers, lz4 compression, and
+ * the append-only REVOKE narrowing. Read-only: runs as the migration role
+ * (system catalogs are world-readable). Exits non-zero with an actionable
+ * message so a forgotten owner apply, grant drift, or policy drift blocks the
  * deploy instead of shipping broken RLS.
  */
 import { readFileSync } from "node:fs";
@@ -14,7 +15,17 @@ interface ExpectedContract {
   policies: Array<{ table: string; policy: string }>;
   forcedTables: string[];
   functions: string[];
+  triggers: Array<{ table: string; trigger: string }>;
 }
+
+/**
+ * Privileges grants.sql revokes after its schema-wide GRANT. The REVOKE lives
+ * in a table-existence-guarded DO block that self-skips at container-init, so
+ * grant drift (e.g. a manual schema-wide re-GRANT) must be caught here.
+ */
+const REVOKED_PRIVILEGES = [
+  { role: "app_user", table: "public.note_revisions", privilege: "UPDATE" },
+] as const;
 
 /**
  * Read the migration connection string from the environment.
@@ -66,10 +77,21 @@ function expectedContract(): ExpectedContract {
     ),
   ].map((m) => m[1]);
 
+  // Matches trigger DDL both bare and inside the table-existence-guarded
+  // EXECUTE '...' blocks (the notes-family triggers self-skip when
+  // db:rls:owner runs before the migration; this assertion is what makes
+  // that skip loud on the deploy DB).
+  const triggers = [
+    ...functionsSql.matchAll(
+      /CREATE\s+TRIGGER\s+(\w+)[\s\S]*?\bON\s+public\.(\w+)/gi,
+    ),
+  ].map((m) => ({ trigger: m[1], table: m[2] }));
+
   return {
     policies,
     forcedTables: [...new Set(forcedTables)],
     functions: [...new Set(functions)],
+    triggers,
   };
 }
 
@@ -110,6 +132,17 @@ async function findMissing(
   `;
   const liveFunctionSet = new Set(liveFunctions.map((r) => r.proname));
 
+  const liveTriggers = await sql<{ tgname: string; relname: string }[]>`
+    SELECT t.tgname, c.relname
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid = t.tgrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND NOT t.tgisinternal
+  `;
+  const liveTriggerSet = new Set(
+    liveTriggers.map((r) => `${r.relname}.${r.tgname}`),
+  );
+
   const missing: string[] = [];
   for (const { table, policy } of expected.policies) {
     if (!livePolicySet.has(policyKey(table, policy))) {
@@ -124,6 +157,23 @@ async function findMissing(
   for (const fn of expected.functions) {
     if (!liveFunctionSet.has(fn)) {
       missing.push(`function public.${fn}`);
+    }
+  }
+  for (const { table, trigger } of expected.triggers) {
+    if (!liveTriggerSet.has(`${table}.${trigger}`)) {
+      missing.push(`trigger "${trigger}" on ${table}`);
+    }
+  }
+
+  for (const { role, table, privilege } of REVOKED_PRIVILEGES) {
+    const [row] = await sql<{ granted: boolean | null }[]>`
+      SELECT CASE
+        WHEN to_regclass(${table}) IS NULL THEN NULL
+        ELSE has_table_privilege(${role}, ${table}, ${privilege})
+      END AS granted
+    `;
+    if (row?.granted !== false) {
+      missing.push(`REVOKE ${privilege} ON ${table} FROM ${role}`);
     }
   }
 
@@ -172,7 +222,8 @@ async function verifyRls(url: string): Promise<void> {
     throw new Error(
       `RLS contract not satisfied on the target database:\n${list}\n` +
         "Apply the owner-managed SQL as the database owner (db:rls:owner) " +
-        "and re-run the deploy.",
+        "for missing functions/triggers, re-run the public apply (db:rls:ci) " +
+        "for grants/policies/compression, then re-run the deploy.",
     );
   }
 }

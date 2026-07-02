@@ -13,7 +13,7 @@ import {
   primaryKey,
   customType,
 } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { organization, user } from "@/lib/db/auth-schema";
 import type {
   ProjectStatus,
@@ -36,10 +36,60 @@ import type {
  * generated full-text search column (`notes.search_tsv`) to a string in TS.
  */
 const tsvector = customType<{ data: string }>({
+  /**
+   * SQL type name emitted for the column.
+   *
+   * @returns The literal `tsvector` type name.
+   */
   dataType() {
     return "tsvector";
   },
 });
+
+/**
+ * Byte cap for `notes.title`, `notes.slug`, and `note_revisions.title`.
+ * Titles and slugs sit in btree indexes (notes_project_title_idx,
+ * notes_project_slug_unique); a value past the ~2704-byte btree tuple limit
+ * aborts the write with an opaque "index row size exceeds maximum", so the
+ * cap keeps oversize values failing as a clean 23514 instead.
+ */
+export const NOTE_TITLE_MAX_BYTES = 2000;
+
+/**
+ * Char cap for `notes.body` and `note_revisions.body` — the call-surface
+ * contract for the largest storable note. A revision snapshots its source
+ * note, so both tables share the cap.
+ */
+export const NOTE_BODY_MAX_CHARS = 200_000;
+
+/**
+ * Chars of `body` indexed into the generated `search_tsv`.
+ *
+ * A tsvector must stay under 1,048,575 bytes of lexeme + position data
+ * (PG "Text Search Limits"), and a char-count CHECK cannot bound that
+ * directly: the worst case — space-separated distinct two-part hyphenated
+ * compounds of single 4-byte chars ("𠀀-𠀁") — yields three lexemes per token
+ * (whole + both parts), ~30 tsvector bytes per 4 body chars (7.5 bytes/char,
+ * measured on postgres:18, where 163k such chars overflow an unbounded
+ * column). 131072 body chars × 7.5 + 2000 title chars × 7.5 ≈ 998 KB, under
+ * the cap with margin. Bodies keep the full NOTE_BODY_MAX_CHARS; search
+ * ignores chars past this bound.
+ */
+export const NOTE_SEARCH_INDEXED_CHARS = 131_072;
+
+/**
+ * Inline an integer constant into SQL DDL text.
+ *
+ * drizzle-kit serializes CHECK and generated-column expressions into the
+ * migration snapshot; a plain `${n}` interpolation becomes a `$1` placeholder
+ * there, so DDL constants must be embedded as raw literal text.
+ *
+ * @param n - Integer to embed.
+ * @returns Raw SQL chunk containing the literal.
+ */
+function sqlInt(n: number): SQL {
+  return sql.raw(String(n));
+}
 
 // ---------------------------------------------------------------------------
 // Projects
@@ -354,9 +404,10 @@ export const notes = pgTable(
       .$type<EmbeddingStatus>()
       .notNull()
       .default("none"),
-    pendingShareRequest: boolean("pending_share_request")
-      .notNull()
-      .default(false),
+    // A pending share request IS this column being set — there is no separate
+    // boolean to keep in sync. Clearing it resolves the request, and the FK's
+    // ON DELETE SET NULL auto-cancels a request whose requester was deleted
+    // (an unattributable pending request must never stay approvable).
     shareRequestedBy: uuid("share_requested_by").references(() => user.id, {
       onDelete: "set null",
     }),
@@ -376,8 +427,10 @@ export const notes = pgTable(
     // Consumed only server-side by notes_search_idx and large (up to hundreds
     // of KB for a max-size body): reads must project explicit columns that
     // exclude it — a bare select() ships it over the wire on every row.
+    // left() bounds the indexed input so the STORED tsvector stays under
+    // Postgres's 1 MB cap; NOTE_SEARCH_INDEXED_CHARS carries the math.
     searchTsv: tsvector("search_tsv").generatedAlwaysAs(
-      sql`setweight(to_tsvector('english', left(coalesce(title, ''), 2000)), 'A') || setweight(to_tsvector('english', left(coalesce(body, ''), 200000)), 'B')`,
+      sql`setweight(to_tsvector('english', left(coalesce(title, ''), ${sqlInt(NOTE_TITLE_MAX_BYTES)})), 'A') || setweight(to_tsvector('english', left(coalesce(body, ''), ${sqlInt(NOTE_SEARCH_INDEXED_CHARS)})), 'B')`,
     ),
   },
   (t) => [
@@ -415,17 +468,21 @@ export const notes = pgTable(
       "notes_embedding_status_check",
       sql`${t.embeddingStatus} IN ('none', 'pending', 'ready', 'failed', 'stale')`,
     ),
-    // title and slug sit in btree indexes (notes_project_title_idx,
-    // notes_project_slug_unique); a value past the ~2704-byte btree tuple limit
-    // aborts the write with an opaque "index row size exceeds maximum". Cap the
-    // byte length well under it so an oversize title/slug fails as a clean 23514.
-    check("notes_title_len_check", sql`octet_length(${t.title}) <= 2000`),
-    check("notes_slug_len_check", sql`octet_length(${t.slug}) <= 2000`),
-    // body feeds the STORED search_tsv; an unbounded body can push the generated
-    // tsvector past Postgres's 1 MB ceiling and make the row unsaveable. The
-    // generated expression already left()-bounds its input so the tsvector never
-    // overflows; this CHECK pins body to the call-surface contract (200k chars).
-    check("notes_body_len_check", sql`char_length(${t.body}) <= 200000`),
+    check(
+      "notes_title_len_check",
+      sql`octet_length(${t.title}) <= ${sqlInt(NOTE_TITLE_MAX_BYTES)}`,
+    ),
+    check(
+      "notes_slug_len_check",
+      sql`octet_length(${t.slug}) <= ${sqlInt(NOTE_TITLE_MAX_BYTES)}`,
+    ),
+    // The generated search_tsv left()-bounds its own input (see
+    // NOTE_SEARCH_INDEXED_CHARS), so this CHECK is the call-surface contract
+    // for body size, not the tsvector overflow guard.
+    check(
+      "notes_body_len_check",
+      sql`char_length(${t.body}) <= ${sqlInt(NOTE_BODY_MAX_CHARS)}`,
+    ),
   ],
 ).enableRLS();
 
@@ -522,17 +579,16 @@ export const noteRevisions = pgTable(
   },
   (t) => [
     unique("note_revisions_note_version_unique").on(t.noteId, t.version),
-    // A revision is a snapshot of a note's body/title, which notes caps at 200k
-    // chars / 2000 bytes (notes_body_len_check / notes_title_len_check); a
-    // snapshot cannot legitimately exceed its source. Bounds the append-only
+    // A revision snapshots a note's body/title, so it shares the source caps
+    // (NOTE_BODY_MAX_CHARS / NOTE_TITLE_MAX_BYTES). Bounds the append-only
     // trail so a member cannot write a multi-hundred-MB revision under RLS.
     check(
       "note_revisions_body_len_check",
-      sql`char_length(${t.body}) <= 200000`,
+      sql`char_length(${t.body}) <= ${sqlInt(NOTE_BODY_MAX_CHARS)}`,
     ),
     check(
       "note_revisions_title_len_check",
-      sql`octet_length(${t.title}) <= 2000`,
+      sql`octet_length(${t.title}) <= ${sqlInt(NOTE_TITLE_MAX_BYTES)}`,
     ),
   ],
 ).enableRLS();

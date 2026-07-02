@@ -48,15 +48,54 @@ function readDockerSql(file: string): string {
 }
 
 /**
+ * Assert every `public.*()` function the policy DDL references exists before
+ * opening the apply transaction. The functions live in the owner-managed
+ * rls-functions.sql (db:rls:owner, applied out-of-band — the CI migrator has
+ * no piyaz_auth access), so a missing one must fail with the runbook instead
+ * of a bare 42883 mid-transaction.
+ *
+ * @param sql - Active postgres client.
+ * @throws Error naming the missing functions and the owner-apply runbook.
+ */
+async function assertPolicyFunctionsExist(
+  sql: ReturnType<typeof postgres>,
+): Promise<void> {
+  const referenced = [
+    ...new Set(
+      [...readDockerSql("rls-policies.sql").matchAll(/public\.(\w+)\s*\(/g)].map(
+        (m) => m[1],
+      ),
+    ),
+  ];
+  const live = await sql<{ proname: string }[]>`
+    SELECT p.proname
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+  `;
+  const liveSet = new Set(live.map((r) => r.proname));
+  const missing = referenced.filter((fn) => !liveSet.has(fn));
+  if (missing.length > 0) {
+    throw new Error(
+      "rls-policies.sql references functions missing on the target database: " +
+        `${missing.map((fn) => `public.${fn}`).join(", ")}.\n` +
+        "Run the owner apply first (db:rls:owner — owner-managed, out-of-band; " +
+        "the CI migrator role cannot install them), then re-run this step.",
+    );
+  }
+}
+
+/**
  * Apply the public-schema grants, policies, and storage tuning in a single
  * transaction.
  *
  * @param url - Migrator connection string.
- * @throws Error when the transaction fails.
+ * @throws Error when the preflight or the transaction fails.
  */
 async function applyPublicSchema(url: string): Promise<void> {
   const sql = postgres(url, { max: 1, onnotice: () => undefined });
   try {
+    await assertPolicyFunctionsExist(sql);
     await sql.begin(async (tx) => {
       for (const file of PUBLIC_SCHEMA_FILES) {
         await tx.unsafe(readDockerSql(file));

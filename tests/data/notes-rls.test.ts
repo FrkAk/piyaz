@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type postgres from "postgres";
 import { truncateAll } from "@/tests/setup/schema";
 import {
   appUserConnect,
@@ -7,41 +6,14 @@ import {
   serviceRoleConnect,
 } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
-import { expectQueryRejects } from "@/tests/setup/expect-query";
-
-type Tx = postgres.TransactionSql;
+import {
+  captureAppUserError,
+  expectQueryRejects,
+} from "@/tests/setup/expect-query";
 
 afterEach(async () => {
   await truncateAll();
 });
-
-/**
- * Run `work` as `app_user` with `app.user_id` set to `userId`, and capture the
- * rejection's `{ message, code }`. The SQLSTATE (`code`) is what distinguishes
- * a trigger rejection (23514) from an RLS WITH CHECK rejection (42501), so
- * tests assert the code, not just a message substring.
- *
- * @param userId - Value for the `app.user_id` GUC.
- * @param work - Statements to run inside the RLS-scoped transaction.
- * @returns The caught error's message and SQLSTATE code.
- * @throws Error when `work` resolves instead of rejecting.
- */
-async function captureAppUserError(
-  userId: string,
-  work: (tx: Tx) => Promise<unknown>,
-): Promise<{ message: string; code: string | undefined }> {
-  const c = appUserConnect();
-  try {
-    await c.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${userId}, true)`;
-      await work(tx);
-    });
-  } catch (err) {
-    const e = err as { message: string; code?: string };
-    return { message: e.message, code: e.code };
-  }
-  throw new Error("expected the statement to reject, but it succeeded");
-}
 
 /**
  * Insert a new user and add them to an existing org as a plain member.
@@ -335,10 +307,10 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
       VALUES (${fx.projectId}, 'Own', 'own', 'team', ${userB}) RETURNING id
     `;
 
-    // Before the SECURITY INVOKER fix this raised 42501 (RLS), distinguishing
-    // "private note exists in my project" from "no such note" via SQLSTATE.
-    // The trigger now runs as the caller, so an invisible note reads back
-    // NULL exactly like a nonexistent one and always raises this 23514.
+    // The trigger runs SECURITY INVOKER: an invisible note reads back NULL
+    // exactly like a nonexistent one, so both raise the trigger's own 23514.
+    // A DEFINER lookup would pass the row through to RLS and leak "private
+    // note exists here" vs "no such note" via the 23514/42501 split.
     const captured = await captureAppUserError(
       userB,
       (tx) =>
@@ -637,8 +609,8 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
       `,
       /notes_slug_len_check/,
     );
-    // body > 200000 chars would otherwise overflow the generated search_tsv
-    // ("string is too long for tsvector") — here it fails as a clean CHECK.
+    // body > 200000 chars breaches the call-surface contract; the CHECK fails
+    // it as a clean 23514 (the tsvector bound is left()'s job, tested below).
     await expectQueryRejects(
       su`
         INSERT INTO notes (project_id, title, slug, body, created_by)
@@ -648,18 +620,39 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     );
   });
 
-  test("a max-size body of all-distinct tokens still saves; the left()-bounded search_tsv never overflows", async () => {
+  test("a max-size adversarial body still saves; the left()-bounded search_tsv never overflows", async () => {
     const fx = await seedUserOrgProject("notes-tsv-cap");
     const su = superuserPool();
-    // Worst case for tsvector size: ~200000 chars of all-distinct lexemes
-    // (the left(body, 200000) bound keeps the generated tsvector well under 1MB).
-    const [row] = await su<{ lexemes: number }[]>`
+    // Worst case for tsvector bytes per body char: space-separated DISTINCT
+    // two-part hyphenated compounds of multibyte chars — each token yields
+    // three lexemes (whole + both parts), ~7.5 tsvector bytes per char.
+    // Unbounded, this exact content overflows the 1 MB tsvector cap at ~163k
+    // chars ("string is too long for tsvector"); the
+    // left(body, NOTE_SEARCH_INDEXED_CHARS) bound keeps a full 200k-char body
+    // saveable.
+    const [row] = await su<{ lexemes: number; body_chars: number }[]>`
+      WITH chars AS (
+        SELECT chr(c) AS ch, row_number() OVER () AS rn
+        FROM (
+          SELECT generate_series(x'4E00'::int, x'9FBF'::int) AS c
+          UNION ALL SELECT generate_series(x'3400'::int, x'4DBF'::int)
+          UNION ALL SELECT generate_series(x'20000'::int, x'2A6DF'::int)
+          UNION ALL SELECT generate_series(x'AC00'::int, x'D7A3'::int)
+        ) s
+      ),
+      pairs AS (
+        SELECT a.ch || '-' || b.ch AS tok
+        FROM (SELECT ch, rn FROM chars WHERE rn % 2 = 1) a
+        JOIN (SELECT ch, rn FROM chars WHERE rn % 2 = 0) b ON b.rn = a.rn + 1
+      ),
+      big AS (
+        SELECT rpad(string_agg(tok, ' '), 200000, ' zz') AS body FROM pairs
+      )
       INSERT INTO notes (project_id, title, slug, body, created_by)
-      SELECT ${fx.projectId}, 'big', 'big-note',
-             left(string_agg('lx' || g::text, ' '), 200000), ${fx.userId}
-      FROM generate_series(1, 200000) g
-      RETURNING length(search_tsv) AS lexemes
+      SELECT ${fx.projectId}, 'big', 'big-note', body, ${fx.userId} FROM big
+      RETURNING length(search_tsv) AS lexemes, char_length(body) AS body_chars
     `;
+    expect(row.body_chars).toBe(200000);
     expect(row.lexemes).toBeGreaterThan(0);
   });
 

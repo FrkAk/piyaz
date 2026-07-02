@@ -697,6 +697,14 @@ CREATE TRIGGER task_edges_same_project_immutable
 -- ones; with AFTER row triggers the recompute is skipped when title/body are
 -- untouched. A RAISE from an AFTER row trigger still aborts the statement
 -- with the same SQLSTATE, so the rejection semantics are unchanged.
+--
+-- Trigger DDL is guarded on table existence (mirror grants.sql): this file is
+-- owner-applied out-of-band (the CI migrator has no piyaz_auth access), so
+-- db:rls:owner must be runnable BEFORE the migration that creates the notes
+-- tables — that pre-apply installs current_app_user_id() so the deploy's
+-- db:rls:ci policy apply succeeds first try. The skip is not silent:
+-- verify-rls.ts asserts every trigger in this file exists on the deploy DB
+-- and blocks the deploy with the db:rls:owner runbook when one is missing.
 -- ---------------------------------------------------------------------------
 
 -- notes.project_id immutable (mirror reject_tasks_project_id_change).
@@ -716,11 +724,16 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS notes_project_id_immutable ON public.notes;
-CREATE TRIGGER notes_project_id_immutable
-  AFTER UPDATE OF project_id ON public.notes
-  FOR EACH ROW
-  EXECUTE FUNCTION public.reject_notes_project_id_change();
+DO $$
+BEGIN
+  IF to_regclass('public.notes') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS notes_project_id_immutable ON public.notes';
+    EXECUTE 'CREATE TRIGGER notes_project_id_immutable
+      AFTER UPDATE OF project_id ON public.notes
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_notes_project_id_change()';
+  END IF;
+END $$;
 
 -- notes.created_by immutable once set. visibility and created_by are the
 -- notes_member_access predicate inputs; without this, a member can flip a
@@ -751,11 +764,16 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS notes_created_by_immutable ON public.notes;
-CREATE TRIGGER notes_created_by_immutable
-  AFTER UPDATE OF created_by ON public.notes
-  FOR EACH ROW
-  EXECUTE FUNCTION public.reject_notes_created_by_change();
+DO $$
+BEGIN
+  IF to_regclass('public.notes') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS notes_created_by_immutable ON public.notes';
+    EXECUTE 'CREATE TRIGGER notes_created_by_immutable
+      AFTER UPDATE OF created_by ON public.notes
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_notes_created_by_change()';
+  END IF;
+END $$;
 
 -- notes.updated_by / share_requested_by pinned to the caller. Both are
 -- editorial attribution that legitimately changes on edits and share
@@ -795,11 +813,16 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS notes_attribution_pinned ON public.notes;
-CREATE TRIGGER notes_attribution_pinned
-  AFTER UPDATE OF updated_by, share_requested_by ON public.notes
-  FOR EACH ROW
-  EXECUTE FUNCTION public.reject_notes_attribution_forgery();
+DO $$
+BEGIN
+  IF to_regclass('public.notes') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS notes_attribution_pinned ON public.notes';
+    EXECUTE 'CREATE TRIGGER notes_attribution_pinned
+      AFTER UPDATE OF updated_by, share_requested_by ON public.notes
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_notes_attribution_forgery()';
+  END IF;
+END $$;
 
 -- note_links endpoints must share a project (mirror reject_task_edges_cross_project).
 -- SECURITY INVOKER, unlike reject_task_edges_cross_project: notes have a
@@ -832,11 +855,16 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.reject_note_links_cross_project() FROM public;
 GRANT EXECUTE ON FUNCTION public.reject_note_links_cross_project() TO app_user;
 
-DROP TRIGGER IF EXISTS note_links_same_project_immutable ON public.note_links;
-CREATE TRIGGER note_links_same_project_immutable
-  BEFORE INSERT OR UPDATE OF source_note_id, target_note_id ON public.note_links
-  FOR EACH ROW
-  EXECUTE FUNCTION public.reject_note_links_cross_project();
+DO $$
+BEGIN
+  IF to_regclass('public.note_links') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS note_links_same_project_immutable ON public.note_links';
+    EXECUTE 'CREATE TRIGGER note_links_same_project_immutable
+      BEFORE INSERT OR UPDATE OF source_note_id, target_note_id ON public.note_links
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_note_links_cross_project()';
+  END IF;
+END $$;
 
 -- note_task_links pins note.project_id == task.project_id. SECURITY INVOKER
 -- for the same reason as reject_note_links_cross_project: a DEFINER lookup
@@ -866,11 +894,16 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.reject_note_task_links_cross_project() FROM public;
 GRANT EXECUTE ON FUNCTION public.reject_note_task_links_cross_project() TO app_user;
 
-DROP TRIGGER IF EXISTS note_task_links_same_project_immutable ON public.note_task_links;
-CREATE TRIGGER note_task_links_same_project_immutable
-  BEFORE INSERT OR UPDATE OF note_id, task_id ON public.note_task_links
-  FOR EACH ROW
-  EXECUTE FUNCTION public.reject_note_task_links_cross_project();
+DO $$
+BEGIN
+  IF to_regclass('public.note_task_links') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS note_task_links_same_project_immutable ON public.note_task_links';
+    EXECUTE 'CREATE TRIGGER note_task_links_same_project_immutable
+      BEFORE INSERT OR UPDATE OF note_id, task_id ON public.note_task_links
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_note_task_links_cross_project()';
+  END IF;
+END $$;
 
 -- service_role only. Used by the org-delete hook after the org row is
 -- queued for deletion — caller-scoped variants race the cascade.

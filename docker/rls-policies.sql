@@ -195,18 +195,27 @@ CREATE POLICY "notes_insert_author_only" ON "notes"
 
 -- note_task_links — both endpoints checked in RLS (mirror task_edges): the
 -- note via notes' RLS and the task via tasks' RLS. The same-project belt is
--- the DEFINER trigger reject_note_task_links_cross_project (rls-functions.sql);
--- the task-side predicate here is a second floor for the trigger-loss case and
--- never rejects a legitimate row (the trigger pins note.project_id == task's).
+-- the SECURITY INVOKER trigger reject_note_task_links_cross_project
+-- (rls-functions.sql); the task-side predicate here is a second floor for the
+-- trigger-loss case and never rejects a legitimate row (the trigger pins
+-- note.project_id == task's).
+--
+-- Endpoint checks on the notes-family link/revision tables are correlated
+-- EXISTS, not `IN (SELECT id FROM ...)`: every policy clause carrying an
+-- IN-sublist plans its own hashed SubPlan over the caller's ENTIRE visible-
+-- notes set (each row re-paying notes' RLS), so a single-row write evaluates
+-- that set up to six times (permissive + restrictive × USING + WITH CHECK).
+-- A correlated EXISTS is one notes_pkey probe per check with identical
+-- RLS-filtered semantics (same pattern as the activity_events task probe).
 DROP POLICY IF EXISTS "note_task_links_member_access" ON "note_task_links";
 CREATE POLICY "note_task_links_member_access" ON "note_task_links" AS PERMISSIVE FOR ALL TO app_user
   USING (
-    note_id IN (SELECT id FROM public.notes)
-    AND task_id IN (SELECT id FROM public.tasks)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
   )
   WITH CHECK (
-    note_id IN (SELECT id FROM public.notes)
-    AND task_id IN (SELECT id FROM public.tasks)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
   );
 
 -- RESTRICTIVE write floor on note_task_links (mirror note_links / task_edges).
@@ -219,36 +228,37 @@ DROP POLICY IF EXISTS "note_task_links_delete_member_only" ON "note_task_links";
 CREATE POLICY "note_task_links_insert_member_only" ON "note_task_links"
   AS RESTRICTIVE FOR INSERT TO app_user
   WITH CHECK (
-    note_id IN (SELECT id FROM public.notes)
-    AND task_id IN (SELECT id FROM public.tasks)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
   );
 
 CREATE POLICY "note_task_links_update_member_only" ON "note_task_links"
   AS RESTRICTIVE FOR UPDATE TO app_user
   USING (
-    note_id IN (SELECT id FROM public.notes)
-    AND task_id IN (SELECT id FROM public.tasks)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
   )
   WITH CHECK (
-    note_id IN (SELECT id FROM public.notes)
-    AND task_id IN (SELECT id FROM public.tasks)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
   );
 
 CREATE POLICY "note_task_links_delete_member_only" ON "note_task_links"
   AS RESTRICTIVE FOR DELETE TO app_user
   USING (
-    note_id IN (SELECT id FROM public.notes)
-    AND task_id IN (SELECT id FROM public.tasks)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
   );
 
 -- note_revisions — 3-hop via notes' RLS (append-only body history). WITH CHECK
 -- also pins created_by to the caller (or NULL) so a member cannot forge a
 -- snapshot attributed to another user; UPDATE is revoked in grants.sql.
+-- Correlated EXISTS per the note_task_links rationale above.
 DROP POLICY IF EXISTS "note_revisions_member_access" ON "note_revisions";
 CREATE POLICY "note_revisions_member_access" ON "note_revisions" AS PERMISSIVE FOR ALL TO app_user
-  USING (note_id IN (SELECT id FROM public.notes))
+  USING (EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_revisions.note_id))
   WITH CHECK (
-    note_id IN (SELECT id FROM public.notes)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_revisions.note_id)
     AND (created_by IS NULL
          OR created_by = (SELECT public.current_app_user_id()))
   );
@@ -266,15 +276,16 @@ CREATE POLICY "note_revisions_insert_author_only" ON "note_revisions"
   );
 
 -- note_links — both endpoints must be visible (mirror task_edges).
+-- Correlated EXISTS per the note_task_links rationale above.
 DROP POLICY IF EXISTS "note_links_member_access" ON "note_links";
 CREATE POLICY "note_links_member_access" ON "note_links" AS PERMISSIVE FOR ALL TO app_user
   USING (
-    source_note_id IN (SELECT id FROM public.notes)
-    AND target_note_id IN (SELECT id FROM public.notes)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
   )
   WITH CHECK (
-    source_note_id IN (SELECT id FROM public.notes)
-    AND target_note_id IN (SELECT id FROM public.notes)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
   );
 
 -- RESTRICTIVE write floor on note_links (mirror task_edges_*_member_only).
@@ -287,26 +298,26 @@ DROP POLICY IF EXISTS "note_links_delete_member_only" ON "note_links";
 CREATE POLICY "note_links_insert_member_only" ON "note_links"
   AS RESTRICTIVE FOR INSERT TO app_user
   WITH CHECK (
-    source_note_id IN (SELECT id FROM public.notes)
-    AND target_note_id IN (SELECT id FROM public.notes)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
   );
 
 CREATE POLICY "note_links_update_member_only" ON "note_links"
   AS RESTRICTIVE FOR UPDATE TO app_user
   USING (
-    source_note_id IN (SELECT id FROM public.notes)
-    AND target_note_id IN (SELECT id FROM public.notes)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
   )
   WITH CHECK (
-    source_note_id IN (SELECT id FROM public.notes)
-    AND target_note_id IN (SELECT id FROM public.notes)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
   );
 
 CREATE POLICY "note_links_delete_member_only" ON "note_links"
   AS RESTRICTIVE FOR DELETE TO app_user
   USING (
-    source_note_id IN (SELECT id FROM public.notes)
-    AND target_note_id IN (SELECT id FROM public.notes)
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
   );
 
 

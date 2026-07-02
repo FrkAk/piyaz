@@ -1,5 +1,5 @@
 {
-  "id": "f9e4568b-90da-468a-b3de-3cfeefe5dc2b",
+  "id": "9eae2b6d-e2e9-4502-ab83-24ced21b42ae",
   "prevId": "7bac33f5-9ee3-409e-8209-1f52b1384718",
   "version": "7",
   "dialect": "postgresql",
@@ -625,13 +625,6 @@
           "notNull": true,
           "default": "'none'"
         },
-        "pending_share_request": {
-          "name": "pending_share_request",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "share_requested_by": {
           "name": "share_requested_by",
           "type": "uuid",
@@ -676,7 +669,7 @@
           "primaryKey": false,
           "notNull": false,
           "generated": {
-            "as": "setweight(to_tsvector('english', left(coalesce(title, ''), 2000)), 'A') || setweight(to_tsvector('english', left(coalesce(body, ''), 200000)), 'B')",
+            "as": "setweight(to_tsvector('english', left(coalesce(title, ''), 2000)), 'A') || setweight(to_tsvector('english', left(coalesce(body, ''), 131072)), 'B')",
             "type": "stored"
           }
         }
