@@ -62,9 +62,9 @@ async function assertPolicyFunctionsExist(
 ): Promise<void> {
   const referenced = [
     ...new Set(
-      [...readDockerSql("rls-policies.sql").matchAll(/public\.(\w+)\s*\(/g)].map(
-        (m) => m[1],
-      ),
+      [
+        ...readDockerSql("rls-policies.sql").matchAll(/public\.(\w+)\s*\(/g),
+      ].map((m) => m[1]),
     ),
   ];
   const live = await sql<{ proname: string }[]>`
