@@ -84,3 +84,70 @@ export class TaskLimitError extends Error {
     this.name = "TaskLimitError";
   }
 }
+
+/**
+ * Thrown by `createEdge` when source and target are the same task. A typed
+ * class — not a plain `Error` — so the MCP error translator can surface it
+ * as an actionable tool error instead of the opaque `Internal error`.
+ */
+export class SelfEdgeError extends Error {
+  constructor() {
+    super("Cannot create self-edge: source and target are the same task.");
+    this.name = "SelfEdgeError";
+  }
+}
+
+/**
+ * Thrown by `createEdge` when the two endpoints belong to different
+ * projects. Edges are intra-project only (enforced in-app and by the
+ * `task_edges_same_project_immutable` trigger).
+ */
+export class CrossProjectEdgeError extends Error {
+  constructor() {
+    super("Cannot create edge between tasks in different projects.");
+    this.name = "CrossProjectEdgeError";
+  }
+}
+
+/**
+ * Thrown by `createEdge`/`updateEdge` when an identical edge already exists.
+ * Carries the endpoints and type so the translator can steer the agent to
+ * treat the conflict as success and verify.
+ */
+export class DuplicateEdgeError extends Error {
+  /**
+   * @param sourceTaskId - Source endpoint of the conflicting edge.
+   * @param targetTaskId - Target endpoint of the conflicting edge.
+   * @param edgeType - Relationship type of the conflicting edge.
+   * @param message - Existing wording, preserved for callers asserting it.
+   */
+  constructor(
+    public readonly sourceTaskId: string,
+    public readonly targetTaskId: string,
+    public readonly edgeType: string,
+    message = "Duplicate edge: an identical edge already exists.",
+  ) {
+    super(message);
+    this.name = "DuplicateEdgeError";
+  }
+}
+
+/**
+ * Thrown by `createEdge`/`updateEdge` when a `depends_on` edge would close a
+ * cycle. Carries the dependency chain that would close the cycle when it is
+ * cheaply available (empty otherwise) so the translator can name it.
+ */
+export class EdgeCycleError extends Error {
+  /**
+   * @param chainTaskIds - Task ids in the closing dependency chain; empty
+   *   when the chain is not cheaply available.
+   * @param message - Existing wording, preserved for callers asserting it.
+   */
+  constructor(
+    public readonly chainTaskIds: string[] = [],
+    message = "Circular dependency: adding this edge would create a cycle.",
+  ) {
+    super(message);
+    this.name = "EdgeCycleError";
+  }
+}

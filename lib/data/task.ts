@@ -1114,7 +1114,7 @@ export type SearchResult = {
 };
 
 /** Match a full taskRef like "MYMR-83" (case-insensitive). */
-const TASK_REF_PATTERN = /^([A-Z0-9]+)-(\d+)$/i;
+export const TASK_REF_PATTERN = /^([A-Z0-9]+)-(\d+)$/i;
 
 /** Filter options for {@link searchTasks} and {@link searchTasksRead}. */
 export type SearchTasksOpts = {

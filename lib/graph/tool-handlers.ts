@@ -64,7 +64,16 @@ import {
   MultiTeamAmbiguityError,
   NoTeamMembershipError,
   TaskLimitError,
+  SelfEdgeError,
+  CrossProjectEdgeError,
+  DuplicateEdgeError,
+  EdgeCycleError,
 } from "@/lib/graph/errors";
+import {
+  RefAmbiguityError,
+  MalformedRefError,
+  RefNotFoundError,
+} from "@/lib/data/resolve-ref";
 import {
   formatSummary,
   formatSearchResults,
@@ -630,6 +639,53 @@ function translateError(e: unknown): ToolResult {
   if (e instanceof TaskLimitError) {
     return fail(
       `${e.message}. Do not retry; clean up cancelled or obsolete tasks in project '${e.projectId}', or ask the operator to raise MAX_TASKS_PER_PROJECT.`,
+    );
+  }
+  if (e instanceof SelfEdgeError || e instanceof CrossProjectEdgeError) {
+    return fail(e.message);
+  }
+  if (e instanceof DuplicateEdgeError) {
+    return fail(
+      `${e.message} Treat as success; verify with piyaz_query type='edges'.`,
+    );
+  }
+  if (e instanceof EdgeCycleError) {
+    const chain =
+      e.chainTaskIds.length > 0
+        ? ` Dependency chain: ${e.chainTaskIds.join(" → ")}.`
+        : "";
+    return fail(`${e.message}${chain}`);
+  }
+  if (e instanceof MalformedRefError) {
+    return fail(
+      `'${e.input}' is not a valid reference. Pass a taskRef like 'PYZ-42' or a task UUID (from piyaz_query type='search').`,
+    );
+  }
+  if (e instanceof RefAmbiguityError) {
+    const list = e.candidates
+      .map(
+        (c) =>
+          `${c.projectTitle} (${c.teamName}, projectId=${c.projectId}${
+            c.taskId ? `, taskId=${c.taskId}` : ""
+          })`,
+      )
+      .join("; ");
+    return fail(
+      `Ref '${e.ref}' matches ${e.candidates.length} teams: ${list}. Retry with the UUID to disambiguate.`,
+    );
+  }
+  if (e instanceof RefNotFoundError) {
+    if (e.projectIdentifier) {
+      const upTo =
+        e.maxSequenceNumber !== undefined
+          ? ` Project ${e.projectIdentifier} has tasks up to ${e.projectIdentifier}-${e.maxSequenceNumber}.`
+          : ` Project ${e.projectIdentifier} has no tasks yet.`;
+      return fail(
+        `Ref '${e.ref}' not found.${upTo} Run piyaz_query type='search' to find the right task.`,
+      );
+    }
+    return fail(
+      `Ref '${e.ref}' not found in any team you belong to. Run piyaz_query type='search' to find the right task or project.`,
     );
   }
   if (e instanceof ForbiddenError) {

@@ -19,6 +19,12 @@ import {
 } from "@/lib/auth/authorization";
 import { taskAccessGateStmt } from "@/lib/data/access";
 import { emitEdgeMutation } from "@/lib/realtime/events";
+import {
+  CrossProjectEdgeError,
+  DuplicateEdgeError,
+  EdgeCycleError,
+  SelfEdgeError,
+} from "@/lib/graph/errors";
 
 // ---------------------------------------------------------------------------
 // Edge queries
@@ -349,9 +355,7 @@ export async function createEdge(
   data: Omit<NewTaskEdge, "id">,
 ) {
   if (data.sourceTaskId === data.targetTaskId) {
-    throw new Error(
-      "Cannot create self-edge: source and target are the same task.",
-    );
+    throw new SelfEdgeError();
   }
 
   if (typeof data.note === "string" && data.note.trim()) {
@@ -365,9 +369,7 @@ export async function createEdge(
     ]);
 
     if (sourceTask.projectId !== targetTask.projectId) {
-      throw new Error(
-        "Cannot create edge between tasks in different projects.",
-      );
+      throw new CrossProjectEdgeError();
     }
 
     const [existing] = await tx
@@ -381,7 +383,11 @@ export async function createEdge(
         ),
       );
     if (existing) {
-      throw new Error("Duplicate edge: an identical edge already exists.");
+      throw new DuplicateEdgeError(
+        data.sourceTaskId,
+        data.targetTaskId,
+        data.edgeType,
+      );
     }
 
     if (data.edgeType === "depends_on") {
@@ -392,9 +398,7 @@ export async function createEdge(
         10,
       );
       if (chain.some((node) => node.id === data.sourceTaskId)) {
-        throw new Error(
-          "Circular dependency: adding this edge would create a cycle.",
-        );
+        throw new EdgeCycleError(chain.map((node) => node.id));
       }
     }
 
@@ -519,7 +523,10 @@ export async function updateEdge(
             ),
           );
         if (dup) {
-          throw new Error(
+          throw new DuplicateEdgeError(
+            existing.sourceTaskId,
+            existing.targetTaskId,
+            updates.edgeType,
             "Duplicate edge: an edge with this type already exists between these tasks.",
           );
         }
@@ -533,7 +540,8 @@ export async function updateEdge(
           10,
         );
         if (chain.some((node) => node.id === existing.sourceTaskId)) {
-          throw new Error(
+          throw new EdgeCycleError(
+            chain.map((node) => node.id),
             "Circular dependency: changing this edge type would create a cycle.",
           );
         }
