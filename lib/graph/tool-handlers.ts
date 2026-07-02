@@ -82,6 +82,7 @@ import {
   InvalidEditOpError,
   DuplicateLinkUrlError,
 } from "@/lib/data/task-edit";
+import { DuplicateTaskTitleError } from "@/lib/data/task-batch";
 import {
   formatSummary,
   formatSearchResults,
@@ -647,6 +648,11 @@ function translateError(e: unknown): ToolResult {
   if (e instanceof TaskLimitError) {
     return fail(
       `${e.message}. Do not retry; clean up cancelled or obsolete tasks in project '${e.projectId}', or ask the operator to raise MAX_TASKS_PER_PROJECT.`,
+    );
+  }
+  if (e instanceof DuplicateTaskTitleError) {
+    return fail(
+      `Batch rejected with no writes: title(s) already exist: ${e.titles.join(", ")}. Retry with onDuplicate='skip' to reuse the existing tasks for an idempotent re-run.`,
     );
   }
   if (e instanceof SelfEdgeError || e instanceof CrossProjectEdgeError) {

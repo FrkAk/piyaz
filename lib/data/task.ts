@@ -51,6 +51,7 @@ import {
   asIdentifier,
   composeTaskRef,
   enrichWithTaskRef,
+  type TaskRef,
 } from "@/lib/graph/identifier";
 import {
   buildEffectiveDepGraph,
@@ -71,7 +72,7 @@ import { normalizeTags } from "@/lib/graph/tag-similarity";
 import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { parseEnvInt } from "@/lib/config/env";
-import type { AuthContext } from "@/lib/auth/context";
+import type { ActorDescriptor, AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccessTx,
   assertProjectGateRows,
@@ -2155,7 +2156,36 @@ export async function setTaskAssignees(
  * @param data - Task fields. sequenceNumber assigned internally.
  * @returns Task summary with composed taskRef.
  */
-export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
+/** A caller-computed sequence/order/identifier allocation for one task row. */
+export type TaskAllocation = {
+  sequenceNumber: number;
+  order: number;
+  identifier: string;
+};
+
+/** Summary of a created task; `taskRef` is composed from the allocation. */
+export type CreatedTaskSummary = {
+  id: string;
+  title: string;
+  projectId: string;
+  order: number;
+  sequenceNumber: number;
+  taskRef: TaskRef;
+};
+
+/**
+ * Normalize and format a create-task payload before any transaction opens:
+ * mint criteria/decision ids, markdown-format text bodies (and each criterion
+ * / decision body), and pre-validate `prUrl`. Shared by `createTask` and the
+ * batch path so the work runs exactly once per item.
+ *
+ * @param data - Raw create-task input.
+ * @returns The input with normalized/formatted criteria, decisions, and text.
+ * @throws ForbiddenError when `prUrl` is a malformed link.
+ */
+export async function prepareCreateTaskInput(
+  data: CreateTaskInput,
+): Promise<CreateTaskInput> {
   const normalizedCriteria = Array.isArray(data.acceptanceCriteria)
     ? normalizeCriteria(data.acceptanceCriteria)
     : undefined;
@@ -2163,38 +2193,16 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
     ? normalizeDecisions(data.decisions)
     : undefined;
 
-  // formatTaskMarkdownFields walks acceptanceCriteria/decisions when present,
-  // so feed it the normalized arrays before the split so the text-format pass
-  // still runs on every criterion / decision body.
   const formatInput: Record<string, unknown> = { ...data };
   if (normalizedCriteria) formatInput.acceptanceCriteria = normalizedCriteria;
   if (normalizedDecisions) formatInput.decisions = normalizedDecisions;
-  const formatted = await formatTaskMarkdownFields(formatInput);
+  const formatted = (await formatTaskMarkdownFields(
+    formatInput,
+  )) as CreateTaskInput;
 
-  const formattedCriteria = Array.isArray(formatted.acceptanceCriteria)
-    ? (formatted.acceptanceCriteria as AcceptanceCriterion[])
-    : undefined;
-  const formattedDecisions = Array.isArray(formatted.decisions)
-    ? (formatted.decisions as Decision[])
-    : undefined;
-
-  // acceptanceCriteria, decisions, assigneeIds, and prUrl are not columns on
-  // `tasks`; strip before the typed insert so the row spread does not poison
-  // the values clause. Junction / child-table writes happen later inside the
-  // same transaction.
-  const {
-    assigneeIds,
-    prUrl,
-    acceptanceCriteria: _ac,
-    decisions: _dec,
-    ...taskFields
-  } = formatted as CreateTaskInput;
-  void _ac;
-  void _dec;
-
-  if (typeof prUrl === "string") {
+  if (typeof formatted.prUrl === "string") {
     try {
-      classifyLink(prUrl);
+      classifyLink(formatted.prUrl);
     } catch (e) {
       if (e instanceof MalformedLinkError) {
         throw new ForbiddenError("Invalid prUrl", "task", data.projectId);
@@ -2202,16 +2210,130 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
       throw e;
     }
   }
+  return formatted;
+}
+
+/**
+ * Insert one task row plus its child records inside an existing RLS-scoped
+ * transaction, using a caller-computed allocation. The composable seam shared
+ * by `createTask` (single) and `createTasksBatch`. `data` MUST already be
+ * normalized/formatted via {@link prepareCreateTaskInput}; the allocation's
+ * sequence number and order override any values on `data`.
+ *
+ * @param tx - Active RLS-scoped transaction handle.
+ * @param actor - Resolved actor descriptor for activity attribution and the
+ *   `created_by` column on any prUrl link.
+ * @param data - Prepared create-task input (criteria/decisions normalized,
+ *   text formatted, prUrl pre-validated).
+ * @param alloc - Allocated sequence number, order, and project identifier.
+ * @param opts - When `deferActivity` is true, the `task_created` event is
+ *   returned unwritten so the caller can batch the insert; otherwise it is
+ *   written here.
+ * @returns The created-task summary and the constructed `task_created` events.
+ */
+export async function createTaskTx(
+  tx: Tx,
+  actor: ActorDescriptor,
+  data: CreateTaskInput,
+  alloc: TaskAllocation,
+  opts?: { deferActivity?: boolean },
+): Promise<{ task: CreatedTaskSummary; events: ActivityEventInput[] }> {
+  const formattedCriteria = Array.isArray(data.acceptanceCriteria)
+    ? (data.acceptanceCriteria as AcceptanceCriterion[])
+    : undefined;
+  const formattedDecisions = Array.isArray(data.decisions)
+    ? (data.decisions as Decision[])
+    : undefined;
+
+  // acceptanceCriteria, decisions, assigneeIds, and prUrl are not columns on
+  // `tasks`; strip before the typed insert so the row spread does not poison
+  // the values clause. Child-table writes happen below in the same transaction.
+  const {
+    assigneeIds,
+    prUrl,
+    acceptanceCriteria: _ac,
+    decisions: _dec,
+    ...taskFields
+  } = data;
+  void _ac;
+  void _dec;
+
+  const [task] = await tx
+    .insert(tasks)
+    .values({
+      ...taskFields,
+      order: alloc.order,
+      sequenceNumber: alloc.sequenceNumber,
+    })
+    .returning();
+
+  if (assigneeIds && assigneeIds.length > 0) {
+    await assertAssigneesInTeam(tx, taskFields.projectId, assigneeIds);
+    await setTaskAssignees(tx, task.id, assigneeIds, "replace");
+  }
+  if (formattedCriteria && formattedCriteria.length > 0) {
+    await applyCriteriaWrite(tx, task.id, formattedCriteria, "replace");
+  }
+  if (formattedDecisions && formattedDecisions.length > 0) {
+    await applyDecisionsWrite(tx, task.id, formattedDecisions, "replace");
+  }
+  if (typeof prUrl === "string" && prUrl.length > 0) {
+    const classified = classifyLink(prUrl);
+    await tx
+      .insert(taskLinks)
+      .values({
+        taskId: task.id,
+        kind: classified.kind,
+        url: classified.url,
+        label: classified.label,
+        createdBy: actor.userId,
+      })
+      .onConflictDoNothing({ target: [taskLinks.taskId, taskLinks.url] });
+  }
+
+  const events: ActivityEventInput[] = [
+    {
+      projectId: task.projectId,
+      taskId: task.id,
+      type: "task_created",
+      summary: `created task "${task.title}"`,
+    },
+  ];
+  if (!opts?.deferActivity) {
+    await insertActivityEvents(tx, actor, events);
+  }
+
+  return {
+    task: {
+      id: task.id,
+      title: task.title,
+      projectId: task.projectId,
+      order: task.order,
+      sequenceNumber: task.sequenceNumber,
+      taskRef: composeTaskRef(
+        asIdentifier(alloc.identifier),
+        task.sequenceNumber,
+      ),
+    },
+    events,
+  };
+}
+
+export async function createTask(
+  ctx: AuthContext,
+  data: CreateTaskInput,
+): Promise<CreatedTaskSummary> {
+  const prepared = await prepareCreateTaskInput(data);
 
   const result = await withUserContext(ctx.userId, async (tx) => {
-    await assertProjectAccessTx(tx, taskFields.projectId);
-    await acquireProjectLock(tx, taskFields.projectId);
+    await assertProjectAccessTx(tx, prepared.projectId);
+    await acquireProjectLock(tx, prepared.projectId);
 
     const [proj] = await tx
       .select({ identifier: projects.identifier })
       .from(projects)
-      .where(eq(projects.id, taskFields.projectId));
-    if (!proj) throw new ProjectNotFoundError(taskFields.projectId);
+      .where(eq(projects.id, prepared.projectId));
+    if (!proj) throw new ProjectNotFoundError(prepared.projectId);
 
     const [maxRow] = await tx
       .select({
@@ -2220,76 +2342,25 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
         taskCount: sql<number>`COUNT(*)`,
       })
       .from(tasks)
-      .where(eq(tasks.projectId, taskFields.projectId));
+      .where(eq(tasks.projectId, prepared.projectId));
 
     const maxTasks = parseEnvInt(process.env.MAX_TASKS_PER_PROJECT, 50_000);
     if (Number(maxRow?.taskCount ?? 0) >= maxTasks) {
-      throw new TaskLimitError(taskFields.projectId, maxTasks);
+      throw new TaskLimitError(prepared.projectId, maxTasks);
     }
 
     const sequenceNumber = (maxRow?.maxSeq ?? 0) + 1;
     const order =
-      taskFields.order === undefined || taskFields.order === 0
+      prepared.order === undefined || prepared.order === 0
         ? (maxRow?.maxOrder ?? -1) + 1
-        : taskFields.order;
+        : prepared.order;
 
-    const [task] = await tx
-      .insert(tasks)
-      .values({
-        ...taskFields,
-        order,
-        sequenceNumber,
-      })
-      .returning();
-
-    if (assigneeIds && assigneeIds.length > 0) {
-      await assertAssigneesInTeam(tx, taskFields.projectId, assigneeIds);
-      await setTaskAssignees(tx, task.id, assigneeIds, "replace");
-    }
-
-    if (formattedCriteria && formattedCriteria.length > 0) {
-      await applyCriteriaWrite(tx, task.id, formattedCriteria, "replace");
-    }
-    if (formattedDecisions && formattedDecisions.length > 0) {
-      await applyDecisionsWrite(tx, task.id, formattedDecisions, "replace");
-    }
-
-    if (typeof prUrl === "string" && prUrl.length > 0) {
-      const classified = classifyLink(prUrl);
-      await tx
-        .insert(taskLinks)
-        .values({
-          taskId: task.id,
-          kind: classified.kind,
-          url: classified.url,
-          label: classified.label,
-          createdBy: ctx.userId,
-        })
-        .onConflictDoNothing({
-          target: [taskLinks.taskId, taskLinks.url],
-        });
-    }
-
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: task.projectId,
-        taskId: task.id,
-        type: "task_created",
-        summary: `created task "${task.title}"`,
-      },
-    ]);
-
-    return {
-      id: task.id,
-      title: task.title,
-      projectId: task.projectId,
-      order: task.order,
-      sequenceNumber: task.sequenceNumber,
-      taskRef: composeTaskRef(
-        asIdentifier(proj.identifier),
-        task.sequenceNumber,
-      ),
-    };
+    const { task } = await createTaskTx(tx, ctx.actor, prepared, {
+      sequenceNumber,
+      order,
+      identifier: proj.identifier,
+    });
+    return task;
   });
 
   emitTaskEvent(result.projectId, result.id);
