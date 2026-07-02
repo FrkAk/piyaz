@@ -75,6 +75,13 @@ import {
   RefNotFoundError,
 } from "@/lib/data/resolve-ref";
 import {
+  StaleWriteError,
+  StrReplaceNoMatchError,
+  StrReplaceMultipleMatchError,
+  CollectionItemNotFoundError,
+  InvalidEditOpError,
+} from "@/lib/data/task-edit";
+import {
   formatSummary,
   formatSearchResults,
   formatTaskList,
@@ -687,6 +694,30 @@ function translateError(e: unknown): ToolResult {
     return fail(
       `Ref '${e.ref}' not found in any team you belong to. Run piyaz_query type='search' to find the right task or project.`,
     );
+  }
+  if (e instanceof StaleWriteError) {
+    return fail(
+      `Task changed since you last read it (updatedAt ${e.currentUpdatedAt.toISOString()}). Re-fetch the task, then retry with the fresh ifUpdatedAt.`,
+    );
+  }
+  if (e instanceof StrReplaceNoMatchError) {
+    return fail(
+      `oldStr matched 0 places in ${e.field}. Re-read the field and copy the exact text including whitespace.`,
+    );
+  }
+  if (e instanceof StrReplaceMultipleMatchError) {
+    return fail(
+      `oldStr matched ${e.count} places in ${e.field}. Include more surrounding context to make it unique.`,
+    );
+  }
+  if (e instanceof CollectionItemNotFoundError) {
+    const items = e.currentItems.map((i) => `${i.id}: ${i.text}`).join(", ");
+    return fail(
+      `No ${e.collection} item with id '${e.id}'. Current items: ${items}.`,
+    );
+  }
+  if (e instanceof InvalidEditOpError) {
+    return fail(e.reason);
   }
   if (e instanceof ForbiddenError) {
     const id = e.resourceId ?? "";

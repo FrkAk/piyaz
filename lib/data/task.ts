@@ -269,7 +269,7 @@ function normalizeCriteria(input: unknown[]): AcceptanceCriterion[] {
  * @param input - Caller-supplied decisions array.
  * @returns Canonical decisions array.
  */
-function normalizeDecisions(input: unknown[]): Decision[] {
+export function normalizeDecisions(input: unknown[]): Decision[] {
   return input.map((d) => {
     if (typeof d === "string") {
       return {
@@ -2080,7 +2080,7 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
  *   supplied id is not a team member. Per-id details are deliberately
  *   withheld so the error cannot be used as a membership oracle.
  */
-async function assertAssigneesInTeam(
+export async function assertAssigneesInTeam(
   tx: Tx,
   projectId: string,
   userIds: string[],
@@ -2119,7 +2119,7 @@ async function assertAssigneesInTeam(
  * @param incoming - Caller-supplied user ids.
  * @param mode - `append` (default) or `replace`.
  */
-async function setTaskAssignees(
+export async function setTaskAssignees(
   tx: Tx,
   taskId: string,
   incoming: string[],
