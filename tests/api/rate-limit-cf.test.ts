@@ -1,5 +1,10 @@
 import { test, expect, beforeEach } from "bun:test";
-import { getBackend, setBackend, matchRule } from "@/lib/api/rate-limit";
+import {
+  getBackend,
+  setBackend,
+  matchRule,
+  MCP_HEAVY_LIMIT,
+} from "@/lib/api/rate-limit";
 import { MemoryRateLimitBackend } from "@/lib/api/rate-limit-memory";
 import {
   CloudflareRateLimitBackend,
@@ -40,6 +45,8 @@ beforeEach(() => {
   setBackend("api", new MemoryRateLimitBackend(60_000));
   setBackend("auth", new MemoryRateLimitBackend(60_000));
   setBackend("actions", new MemoryRateLimitBackend(60_000));
+  setBackend("mcp", new MemoryRateLimitBackend(60_000));
+  setBackend("mcpHeavy", new MemoryRateLimitBackend(60_000));
 });
 
 test("getBackend() defaults to the api kind and returns the memory backend", () => {
@@ -66,6 +73,37 @@ test("auth rules precede the catch-all api rule in RATE_LIMIT_RULES", () => {
   expect(matchRule("/api/auth/sign-up/email")?.bindingKey).toBe("auth");
   expect(matchRule("/api/project/some-uuid")?.bindingKey ?? "api").toBe("api");
   expect(matchRule("/api/auth/get-session")?.bindingKey ?? "api").toBe("api");
+});
+
+test("/api/mcp rides its own binding, keyed on the bearer token", () => {
+  const rule = matchRule("/api/mcp");
+  expect(rule?.bindingKey).toBe("mcp");
+  expect(rule?.keyStrategy).toBe("apikey");
+  expect(rule?.max).toBe(100);
+  expect(rule?.window).toBe(60);
+});
+
+test("mcp and mcpHeavy backend slots stay independent", () => {
+  const mcpBackend = new CloudflareRateLimitBackend(fakeBinding(true));
+  const heavyBackend = new CloudflareRateLimitBackend(fakeBinding(false));
+  setBackend("mcp", mcpBackend);
+  setBackend("mcpHeavy", heavyBackend);
+  expect(getBackend("mcp")).toBe(mcpBackend);
+  expect(getBackend("mcpHeavy")).toBe(heavyBackend);
+  expect(getBackend("mcp")).not.toBe(getBackend("api"));
+});
+
+test("heavy tier blocks the 21st call within the window on the memory backend", async () => {
+  const backend = getBackend("mcpHeavy");
+  const { max, window } = MCP_HEAVY_LIMIT;
+  for (let i = 0; i < max; i++) {
+    const r = await backend.check("caller-1", max, window);
+    expect(r.allowed).toBe(true);
+  }
+  const blocked = await backend.check("caller-1", max, window);
+  expect(blocked.allowed).toBe(false);
+  const other = await backend.check("caller-2", max, window);
+  expect(other.allowed).toBe(true);
 });
 
 test("open DCR registration is throttled by the strict auth binding", () => {
