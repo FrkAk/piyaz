@@ -33,6 +33,9 @@ import type {
   AcceptanceCriterion,
   ActivityEventType,
   Decision,
+  Estimate,
+  Priority,
+  TaskStatus,
 } from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
 
@@ -210,9 +213,14 @@ const TASK_STATUSES = [
   "in_review",
   "done",
   "cancelled",
-] as const;
-const PRIORITIES = ["urgent", "core", "normal", "backlog"] as const;
-const ESTIMATES = [1, 2, 3, 5, 8, 13] as const;
+] as const satisfies readonly TaskStatus[];
+const PRIORITIES = [
+  "urgent",
+  "core",
+  "normal",
+  "backlog",
+] as const satisfies readonly Priority[];
+const ESTIMATES = [1, 2, 3, 5, 8, 13] as const satisfies readonly Estimate[];
 
 /** Defensive cap on ops per call. */
 const MAX_OPS = 20;
@@ -749,6 +757,9 @@ async function applyCriteria(
     if (!inserted) {
       const raced = await selectCriterionByText(tx, taskId, op.text);
       if (raced) return dedupeCriteriaAdd(tx, base, op, raced);
+      throw new Error(
+        "add acceptanceCriteria raced with a concurrent delete; transaction rolled back",
+      );
     }
     return {
       event: {
@@ -940,6 +951,9 @@ async function applyDecision(
           applied: `add decisions ${raced.id} (deduped)`,
           refetch: true,
         };
+      throw new Error(
+        "add decisions raced with a concurrent delete; transaction rolled back",
+      );
     }
     return {
       event: {
