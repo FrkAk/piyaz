@@ -30,7 +30,7 @@ import {
 } from "@/lib/graph/errors";
 import { formatMarkdown } from "@/lib/markdown/format";
 import { parseEnvInt } from "@/lib/config/env";
-import { emitTaskEvent } from "@/lib/realtime/events";
+import { emitEdgeMutation, emitTaskEvent } from "@/lib/realtime/events";
 import type { AuthContext } from "@/lib/auth/context";
 
 // ---------------------------------------------------------------------------
@@ -84,6 +84,9 @@ export class BatchInputError extends Error {
 const MIN_BATCH_ITEMS = 1;
 const MAX_BATCH_ITEMS = 25;
 
+/** Upper bound on edges per batch call. */
+const MAX_BATCH_EDGES = 100;
+
 /** Canonical UUID shape; gates raw edge endpoints before a `::uuid` cast. */
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -93,8 +96,9 @@ const UUID_RE =
 // ---------------------------------------------------------------------------
 
 /**
- * Validate the batch payload before any DB work: item count, unique `key`s,
- * non-empty edge notes, raw self-edges, and endpoint shape (known key or UUID).
+ * Validate the batch payload before any DB work: item count, edge count,
+ * unique `key`s, non-empty edge notes, raw self-edges, and endpoint shape
+ * (known key or UUID).
  *
  * @param items - Batch task inputs.
  * @param edges - Batch edge inputs.
@@ -109,6 +113,11 @@ function validateBatch(
   if (items.length < MIN_BATCH_ITEMS || items.length > MAX_BATCH_ITEMS) {
     throw new BatchInputError(
       `items must be ${MIN_BATCH_ITEMS}..${MAX_BATCH_ITEMS} (got ${items.length})`,
+    );
+  }
+  if (edges.length > MAX_BATCH_EDGES) {
+    throw new BatchInputError(
+      `edges must be at most ${MAX_BATCH_EDGES} (got ${edges.length})`,
     );
   }
   const keyList = items
@@ -369,10 +378,24 @@ export async function createTasksBatch(
       ? createdByIndex.get(toCreate[toCreate.length - 1])!.id
       : null;
 
-    return { created, deduped, edges: edgeResult.count, lastCreated };
+    return {
+      created,
+      deduped,
+      edges: edgeResult.count,
+      firstEdge: edgeResult.firstEdge,
+      lastCreated,
+    };
   });
 
-  if (result.lastCreated) emitTaskEvent(projectId, result.lastCreated);
+  if (result.lastCreated) {
+    emitTaskEvent(projectId, result.lastCreated);
+  } else if (result.firstEdge) {
+    emitEdgeMutation(
+      projectId,
+      result.firstEdge.sourceId,
+      result.firstEdge.targetId,
+    );
+  }
   return {
     created: result.created,
     deduped: result.deduped,
@@ -399,7 +422,8 @@ type ResolvedEdge = {
  * @param edges - Batch edges with notes already formatted.
  * @param keySet - Declared item keys (endpoints not in the set are UUIDs).
  * @param keyToId - Item key → resolved task id.
- * @returns The inserted edge count and the `edge_added` events to persist.
+ * @returns The inserted edge count, the first inserted edge's endpoints (for
+ *   the caller's post-commit realtime emit), and the `edge_added` events.
  * @throws SelfEdgeError when a resolved edge connects a task to itself.
  * @throws DuplicateEdgeError on a duplicate edge within the batch.
  * @throws CrossProjectEdgeError when a UUID endpoint is in another project.
@@ -412,7 +436,11 @@ async function applyBatchEdges(
   edges: BatchEdgeInput[],
   keySet: Set<string>,
   keyToId: Map<string, string>,
-): Promise<{ count: number; events: ActivityEventInput[] }> {
+): Promise<{
+  count: number;
+  firstEdge: { sourceId: string; targetId: string } | null;
+  events: ActivityEventInput[];
+}> {
   const uuidEndpoints = new Set<string>();
   for (const e of edges) {
     for (const endpoint of [e.source, e.target]) {
@@ -445,7 +473,7 @@ async function applyBatchEdges(
     seen.add(dedupeKey);
     resolved.push({ sourceId, targetId, type: e.type, note: e.note });
   }
-  if (resolved.length === 0) return { count: 0, events: [] };
+  if (resolved.length === 0) return { count: 0, firstEdge: null, events: [] };
 
   const existingRows = await tx
     .select({
@@ -529,5 +557,8 @@ async function applyBatchEdges(
     );
   }
 
-  return { count: toInsert.length, events: edgeEvents };
+  const firstEdge = toInsert.length
+    ? { sourceId: toInsert[0].sourceId, targetId: toInsert[0].targetId }
+    : null;
+  return { count: toInsert.length, firstEdge, events: edgeEvents };
 }

@@ -5,6 +5,7 @@ import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask } from "@/lib/data/task";
 import {
+  BatchInputError,
   createTasksBatch,
   DuplicateTaskTitleError,
 } from "@/lib/data/task-batch";
@@ -33,9 +34,8 @@ async function catchErr(p: Promise<unknown>): Promise<unknown> {
 }
 
 /**
- * Count rows in a table for a project, bypassing RLS.
+ * Count task rows for a project, bypassing RLS.
  *
- * @param table - Table name (`tasks` or `task_edges` via a join is not needed).
  * @param projectId - Owning project id.
  * @returns Row count.
  */
@@ -252,7 +252,25 @@ describe("createTasksBatch", () => {
         [{ source: "c", target: "d", type: "relates_to", note: "   " }],
       ),
     );
-    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(BatchInputError);
+  });
+
+  test("edge count over the cap is rejected before any write", async () => {
+    const f = await seedUserOrgProject("b12");
+    const ctx = makeAuthContext(f.userId);
+    const uuid = "00000000-0000-4000-8000-000000000000";
+    const edges = Array.from({ length: 101 }, () => ({
+      source: "a",
+      target: uuid,
+      type: "relates_to" as const,
+      note: "n",
+    }));
+
+    const err = await catchErr(
+      createTasksBatch(ctx, f.projectId, [{ key: "a", title: "A" }], edges),
+    );
+    expect(err).toBeInstanceOf(BatchInputError);
+    expect(await countTasks(f.projectId)).toBe(0);
   });
 
   test("batch cycle and cycle through an existing edge throw EdgeCycleError", async () => {
