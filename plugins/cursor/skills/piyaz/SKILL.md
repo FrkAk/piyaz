@@ -101,7 +101,7 @@ One call applies 1-20 ordered operations to one task, atomically (one failure ro
 | Action | Cost | Use when |
 |---|---|---|
 | `create` | mutation | wire `depends_on` (source needs target's output) or `relates_to` (informational link). `source`/`target` take refs. Edge note required and must brief the source-task developer. Artifacts §3. |
-| `update` | mutation | change edge type or note; keyed by `source`+`target`+`type` (or `edgeId`). |
+| `update` | mutation | rewrite the note, keyed by `source`+`target`+`type` (`type` is the lookup key there). To change a type: `remove` then `create` with a fresh note, or pass `edgeId` (from the create response) plus the new `type`. |
 | `remove` | mutation | drop a stale edge surfaced by propagation; same keys. |
 
 On "duplicate edge": the edge already exists — treat as success.

@@ -49,7 +49,7 @@ Cover, depending on task type:
 - **Solution sketch:** if you have one, include it. "Use Drizzle, mirror the patterns in `lib/data/task.ts`" is more useful than "Define the database tables".
 - **No speculation:** do not pad with implementation guesses when the approach is uncertain. The implementation plan is for that.
 
-Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are rejected.
+Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are never acceptable: the server flags them in `_hints`; rewrite before moving on.
 
 **For onboarding** (writing descriptions for tasks that already shipped): write the description as if the task were being created BEFORE the work, knowing what you now know about the codebase. The reader must be able to re-derive the work from the description. Do not write "added the auth middleware". Write "Build the JWT auth middleware in `lib/auth/middleware.ts`. Validate Bearer tokens against the user table, set `req.user`, reject on expiry. Required by every protected route."
 
@@ -140,7 +140,7 @@ BAD:
 - "Numbers match"
 ```
 
-Single-AC tasks are rejected. Tasks with vague ACs ("works correctly", "is complete", "performs well") are rejected.
+Single-AC tasks are flagged by the server in `_hints`; rewrite them. Tasks with vague ACs ("works correctly", "is complete", "performs well") must be rewritten before planning.
 
 ### `executionRecord` (only on `in_review`, `done`, and `cancelled`)
 
@@ -300,6 +300,7 @@ You are choosing the architectural layers / product areas / subsystems of a sing
 ### Hard rules
 
 - 4 to 8 categories per project.
+- The list is server-enforced: `piyaz_create`, `piyaz_edit`, and project-scoped `piyaz_search` reject a category outside the project's vocabulary and name the valid set inline. Read it via `piyaz_get project view='meta'`; extend it deliberately via `piyaz_workspace action='update' categories=[...]`, never by coining mid-task.
 - Architectural layer / product area / subsystem only. Not process phases (`requirements`, `planning`, `review`). Not work types (`bugs`, `features` are tags, not categories). Not priorities.
 - **Test: would this be a tag in some other project shape?** If yes, it's cross-cutting, not a category. Quality attributes (`security`, `perf`, `a11y`, `reliability`, `observability`, `dx`, `compliance`, `safety`) and multi-category feature clusters (`onboarding-flow`, `agent-loop`, `flight-control`, `inference-pipeline`, `dashboard-refresh`) belong in the tag dimension. Categories are subsystems the project shapes itself around: directories, build targets, layers a developer thinks about separately. §2 and §4 are mirrors. A name passes one test, not both.
 - Nouns. `data` not `data-modeling`. `ui` not `ui-work`.

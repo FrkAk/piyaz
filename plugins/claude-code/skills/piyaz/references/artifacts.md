@@ -300,6 +300,7 @@ You are choosing the architectural layers / product areas / subsystems of a sing
 ### Hard rules
 
 - 4 to 8 categories per project.
+- The list is server-enforced: `piyaz_create`, `piyaz_edit`, and project-scoped `piyaz_search` reject a category outside the project's vocabulary and name the valid set inline. Read it via `piyaz_get project view='meta'`; extend it deliberately via `piyaz_workspace action='update' categories=[...]`, never by coining mid-task.
 - Architectural layer / product area / subsystem only. Not process phases (`requirements`, `planning`, `review`). Not work types (`bugs`, `features` are tags, not categories). Not priorities.
 - **Test: would this be a tag in some other project shape?** If yes, it's cross-cutting, not a category. Quality attributes (`security`, `perf`, `a11y`, `reliability`, `observability`, `dx`, `compliance`, `safety`) and multi-category feature clusters (`onboarding-flow`, `agent-loop`, `flight-control`, `inference-pipeline`, `dashboard-refresh`) belong in the tag dimension. Categories are subsystems the project shapes itself around: directories, build targets, layers a developer thinks about separately. §2 and §4 are mirrors. A name passes one test, not both.
 - Nouns. `data` not `data-modeling`. `ui` not `ui-work`.
