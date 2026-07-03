@@ -193,6 +193,35 @@ export function taskEdgesStmt(read: ReadConn, taskId: string) {
 }
 
 /**
+ * Every edge touching any task in an id set, as a lazy batch statement. One
+ * `ANY`-over-source OR `ANY`-over-target scan covers the whole frontier in a
+ * single round-trip — the batch twin of {@link taskEdgesStmt} for the 2-hop
+ * neighbors walk. `ANY` over a typed uuid array keeps it valid for an empty set.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskIds - Frontier task ids (matched on either endpoint).
+ * @returns Lazy select yielding full edge rows.
+ */
+export function taskEdgesForManyStmt(
+  read: ReadConn,
+  taskIds: readonly string[],
+) {
+  return read
+    .select({
+      id: taskEdges.id,
+      sourceTaskId: taskEdges.sourceTaskId,
+      targetTaskId: taskEdges.targetTaskId,
+      edgeType: taskEdges.edgeType,
+      note: taskEdges.note,
+    })
+    .from(taskEdges)
+    .where(
+      sql`${taskEdges.sourceTaskId} = ANY(${uuidArray(taskIds)})
+        OR ${taskEdges.targetTaskId} = ANY(${uuidArray(taskIds)})`,
+    );
+}
+
+/**
  * Connected-task detail rows for an id list, as a lazy batch statement.
  * `ANY` over a typed uuid array keeps the statement valid for an empty
  * id list.

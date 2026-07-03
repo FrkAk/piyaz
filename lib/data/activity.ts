@@ -8,6 +8,7 @@ import {
   type ActivityCursor,
   type ActivityRawRow,
 } from "@/lib/db/raw/fetch-task-activity";
+import { projectActivityStmt } from "@/lib/db/raw/fetch-project-activity";
 import type { ActorDescriptor, AuthContext } from "@/lib/auth/context";
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
 import { isVerifiedOAuthClient } from "@/lib/auth/verified-oauth-clients";
@@ -292,6 +293,20 @@ function toDate(value: Date | string): Date {
 }
 
 /**
+ * Normalize a caller-supplied `since` bound to a safe ISO literal. Guards the
+ * value before it reaches a `::timestamptz` cast: a malformed timestamp maps to
+ * null (no filter) instead of throwing a 500.
+ *
+ * @param since - Caller-supplied ISO timestamp, or undefined.
+ * @returns A canonical ISO string, or null when absent or malformed.
+ */
+function normalizeSince(since: string | undefined): string | null {
+  if (!since) return null;
+  const d = new Date(since);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/**
  * Map a raw page row to the API read model. Identity is already hydrated by
  * the SDF join (null when the actor cannot be resolved).
  *
@@ -326,19 +341,59 @@ function toActivityEvent(r: ActivityRawRow): ActivityEvent {
  *
  * @param ctx - Caller auth context.
  * @param taskId - Task whose events to read.
- * @param opts - `limit` (clamped to {@link MAX_LIMIT}) and an opaque `cursor`.
+ * @param opts - `limit` (clamped to {@link MAX_LIMIT}), an opaque `cursor`, and
+ *   an optional `since` lower bound (events with `created_at > since`).
  * @returns A page of events plus the next cursor (null when exhausted).
  */
 export async function listTaskActivity(
   ctx: AuthContext,
   taskId: string,
-  opts: { cursor?: string; limit?: number },
+  opts: { cursor?: string; limit?: number; since?: string },
 ): Promise<{ events: ActivityEvent[]; nextCursor: string | null }> {
   const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
   const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
 
   const [raw] = await withUserContextRead(ctx.userId, (read) => [
-    taskActivityStmt(read, taskId, cur, limit + 1),
+    taskActivityStmt(read, taskId, cur, limit + 1, since),
+  ]);
+  const rows = normalizeExecuteResult<ActivityRawRow>(raw);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  if (page.length === 0) return { events: [], nextCursor: null };
+
+  const last = page[page.length - 1];
+  return {
+    events: page.map(toActivityEvent),
+    nextCursor: hasMore ? encodeCursor(last.created_at_cursor, last.id) : null,
+  };
+}
+
+/**
+ * List a project's activity newest-first, keyset-paginated. One RLS-scoped
+ * read anchored on `project_id`, resolving read-time identity in the same
+ * statement via the `activity_actors_for_project_visible` / `oauth_client_name`
+ * SECURITY DEFINER functions — no `service_role`. A non-member transparently
+ * sees an empty page because the `activity_events` RLS policy hides the rows.
+ *
+ * @param ctx - Caller auth context.
+ * @param projectId - Project whose events to read.
+ * @param opts - `limit` (clamped to {@link MAX_LIMIT}), an opaque `cursor`, and
+ *   an optional `since` lower bound (events with `created_at > since`).
+ * @returns A page of events plus the next cursor (null when exhausted).
+ */
+export async function listProjectActivity(
+  ctx: AuthContext,
+  projectId: string,
+  opts: { cursor?: string; limit?: number; since?: string },
+): Promise<{ events: ActivityEvent[]; nextCursor: string | null }> {
+  const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
+
+  const [raw] = await withUserContextRead(ctx.userId, (read) => [
+    projectActivityStmt(read, projectId, cur, limit + 1, since),
   ]);
   const rows = normalizeExecuteResult<ActivityRawRow>(raw);
 

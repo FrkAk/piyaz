@@ -133,6 +133,21 @@ export class DuplicateEdgeError extends Error {
 }
 
 /**
+ * Thrown by `searchTasksForMcp` when the caller supplies no search criterion
+ * (no query, status, priority, assignee, category, or tags). A dedicated type
+ * so the MCP error translator can steer the agent to add a filter instead of
+ * rendering an anti-enumeration "not found".
+ */
+export class SearchCriteriaRequiredError extends Error {
+  constructor() {
+    super(
+      "At least one search criterion is required: query, status, priority, assignee, category, or tags.",
+    );
+    this.name = "SearchCriteriaRequiredError";
+  }
+}
+
+/**
  * Thrown by `createEdge`/`updateEdge` when a `depends_on` edge would close a
  * cycle. Carries the dependency chain that would close the cycle when it is
  * cheaply available (empty otherwise) so the translator can name it.

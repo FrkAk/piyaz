@@ -11,6 +11,7 @@ import {
   ne,
   or,
   sql,
+  type SQL,
 } from "drizzle-orm";
 import {
   executeRaw,
@@ -51,6 +52,7 @@ import {
   asIdentifier,
   composeTaskRef,
   enrichWithTaskRef,
+  type Identifier,
   type TaskRef,
 } from "@/lib/graph/identifier";
 import {
@@ -69,7 +71,11 @@ import {
 } from "@/lib/data/activity";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
-import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
+import {
+  ProjectNotFoundError,
+  SearchCriteriaRequiredError,
+  TaskLimitError,
+} from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { parseEnvInt } from "@/lib/config/env";
 import type { ActorDescriptor, AuthContext } from "@/lib/auth/context";
@@ -84,7 +90,9 @@ import {
   isUuid,
 } from "@/lib/auth/authorization";
 import {
+  decodeCursor,
   decodeOrderCursor,
+  encodeCursor,
   encodeOrderCursor,
   type Cursor,
 } from "@/lib/data/cursor";
@@ -1611,6 +1619,402 @@ export async function searchTasksAcrossProjects(
       organizationId: row.organizationId,
     }));
   });
+}
+
+// ---------------------------------------------------------------------------
+// MCP search (cross-project + project-scoped, keyset on updated_at)
+// ---------------------------------------------------------------------------
+
+/** Filter and pagination options for {@link searchTasksForMcp}. */
+export type McpSearchOpts = {
+  /** Free-text match on taskRef, title, or tags. */
+  query?: string;
+  /** Project UUID; present selects project-scoped mode (adds derived `state`). */
+  projectId?: string;
+  /** Lifecycle statuses to include (OR-within). */
+  status?: string[];
+  /** Priorities to include (OR-within). */
+  priority?: string[];
+  /** Assignee user UUID, or the literal `me` (mapped to the caller). */
+  assignee?: string;
+  /** Exact project-category filter. */
+  category?: string;
+  /** Exact tags; every tag must be present on the task (AND-within). */
+  tags?: string[];
+  /** Page size, clamped to 1..50 (default 20). */
+  limit?: number;
+  /** Opaque `(updated_at, id)` cursor from a previous page. */
+  cursor?: Cursor | string | null;
+};
+
+/**
+ * A search result row. `state` is present only in project-scoped mode, where
+ * the effective dependency graph is available; cross-project rows omit it.
+ */
+export type McpSearchItem = {
+  id: string;
+  taskRef: string;
+  title: string;
+  status: string;
+  priority: Priority | null;
+  estimate: Estimate | null;
+  category: string | null;
+  tags: string[];
+  updatedAt: Date;
+  state?: TaskState;
+};
+
+/** A page of {@link McpSearchItem}s with a cursor for the next slice. */
+export type McpSearchPage = {
+  items: McpSearchItem[];
+  nextCursor: Cursor | null;
+};
+
+/** Row columns shared by both search modes, before taskRef composition. */
+type McpSearchRow = {
+  id: string;
+  title: string;
+  status: string;
+  priority: Priority | null;
+  estimate: Estimate | null;
+  category: string | null;
+  tags: string[];
+  sequenceNumber: number;
+  updatedAt: Date;
+};
+
+const MCP_SEARCH_DEFAULT_LIMIT = 20;
+const MCP_SEARCH_MAX_LIMIT = 50;
+
+/**
+ * Whether the caller supplied at least one search criterion.
+ *
+ * @param opts - Caller-supplied search options.
+ * @returns True when any of query/status/priority/assignee/category/tags is set.
+ */
+function hasAnySearchCriterion(opts: McpSearchOpts): boolean {
+  return Boolean(
+    opts.query?.trim() ||
+      opts.status?.length ||
+      opts.priority?.length ||
+      opts.assignee ||
+      opts.category?.trim() ||
+      opts.tags?.length,
+  );
+}
+
+/**
+ * Build the mode-independent filter clauses (status, priority, assignee,
+ * category, tags). The `me` assignee literal maps to the caller's id. Exact
+ * tags AND-narrow: every tag must be present on the task.
+ *
+ * @param opts - Caller-supplied search options.
+ * @param userId - Caller's id, for the `me` assignee mapping.
+ * @returns Drizzle `where` clauses to AND into the query.
+ */
+function mcpScalarFilterClauses(opts: McpSearchOpts, userId: string): SQL[] {
+  const clauses: SQL[] = [];
+  if (opts.status?.length) {
+    clauses.push(inArray(tasks.status, opts.status as TaskStatus[]));
+  }
+  if (opts.priority?.length) {
+    clauses.push(inArray(tasks.priority, opts.priority as Priority[]));
+  }
+  if (opts.assignee) {
+    const assigneeId = opts.assignee === "me" ? userId : opts.assignee;
+    clauses.push(
+      sql`EXISTS (SELECT 1 FROM "task_assignees" "ta_f" WHERE "ta_f"."task_id" = "tasks"."id" AND "ta_f"."user_id" = ${assigneeId})`,
+    );
+  }
+  const category = opts.category?.trim();
+  if (category) clauses.push(eq(tasks.category, category));
+  for (const tag of normalizeTags(opts.tags)) {
+    clauses.push(
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t = ${tag})`,
+    );
+  }
+  return clauses;
+}
+
+/**
+ * Cross-project `query` clauses: the ref short-circuit and tokenized OR match
+ * from {@link searchTasksAcrossProjects}, over the org-bounded `tasks JOIN
+ * projects` set. Empty when `trimmed` is empty.
+ *
+ * @param trimmed - Trimmed query string.
+ * @returns Drizzle `where` clauses to AND into the query.
+ */
+function crossProjectQueryClauses(trimmed: string): SQL[] {
+  if (trimmed.length === 0) return [];
+  const refMatch = trimmed.match(TASK_REF_PATTERN);
+  if (refMatch) {
+    return [
+      eq(projects.identifier, refMatch[1].toUpperCase()),
+      eq(tasks.sequenceNumber, Number(refMatch[2])),
+    ];
+  }
+  const clauses: SQL[] = [];
+  for (const token of trimmed.split(/[\s-]+/).filter((t) => t.length > 0)) {
+    const pattern = `%${token}%`;
+    const orClauses = [
+      ilike(tasks.title, pattern),
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`,
+      ilike(projects.title, pattern),
+      ilike(projects.identifier, pattern),
+    ];
+    if (/^\d+$/.test(token)) {
+      orClauses.push(eq(tasks.sequenceNumber, Number(token)));
+    }
+    const tokenClause = or(...orClauses);
+    if (tokenClause) clauses.push(tokenClause);
+  }
+  return clauses;
+}
+
+/**
+ * Project-scoped `query` clause: the ref short-circuit and title/tag substring
+ * match from {@link searchTasksPaged}, over a single known project.
+ *
+ * @param trimmed - Trimmed query string.
+ * @param projectIdentifier - The scoped project's identifier prefix.
+ * @returns A single `where` clause, or null when `trimmed` is empty.
+ */
+function projectScopedQueryClause(
+  trimmed: string,
+  projectIdentifier: string,
+): SQL | null {
+  if (trimmed.length === 0) return null;
+  const refMatch = trimmed.match(TASK_REF_PATTERN);
+  if (refMatch && refMatch[1].toUpperCase() === projectIdentifier) {
+    return eq(tasks.sequenceNumber, Number(refMatch[2]));
+  }
+  const pattern = `%${trimmed}%`;
+  const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
+  return or(ilike(tasks.title, pattern), tagSubstring) ?? null;
+}
+
+/**
+ * Compose a search row into an {@link McpSearchItem}. Attaches `state` only
+ * when the caller resolved one (project-scoped mode).
+ *
+ * @param row - The selected task row.
+ * @param identifier - The row's project identifier for taskRef composition.
+ * @param state - Derived workflow state, or undefined in cross-project mode.
+ * @returns The composed search item.
+ */
+function toMcpSearchItem(
+  row: McpSearchRow,
+  identifier: Identifier,
+  state?: TaskState,
+): McpSearchItem {
+  const item: McpSearchItem = {
+    id: row.id,
+    taskRef: composeTaskRef(identifier, row.sequenceNumber),
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    estimate: row.estimate,
+    category: row.category,
+    tags: row.tags,
+    updatedAt: row.updatedAt,
+  };
+  if (state) item.state = state;
+  return item;
+}
+
+/**
+ * The `(updated_at, id)` keyset seek clause for the search page. Compares on a
+ * millisecond-truncated `updated_at` so a `Date`-precision cursor matches the
+ * microsecond-precision column at a page boundary (same idiom as
+ * `listProjectsSlim`).
+ *
+ * @param cursor - Decoded cursor position, or null for the first page.
+ * @param updatedAtMs - The millisecond-truncated `updated_at` expression.
+ * @returns The seek clause (`TRUE` on the first page).
+ */
+function mcpSearchCursorClause(
+  cursor: { updatedAt: Date; id: string } | null,
+  updatedAtMs: SQL,
+): SQL {
+  if (!cursor) return sql`TRUE`;
+  const afterIso = cursor.updatedAt.toISOString();
+  return sql`(${updatedAtMs} < ${afterIso}::timestamptz
+      OR (${updatedAtMs} = ${afterIso}::timestamptz AND ${tasks.id} < ${cursor.id}))`;
+}
+
+/**
+ * Cross-project search (default mode). Org-bounded via `current_user_orgs()`
+ * for defense-in-depth over RLS, keyset-paginated on `(updated_at DESC, id
+ * DESC)`. Rows omit `state` (no per-project effective graph resolved here).
+ *
+ * @param ctx - Resolved auth context.
+ * @param opts - Search options (already criterion-checked by the caller).
+ * @returns A page of items plus the next cursor.
+ */
+async function searchMcpCrossProject(
+  ctx: AuthContext,
+  opts: McpSearchOpts,
+): Promise<McpSearchPage> {
+  const limit = Math.min(
+    Math.max(opts.limit ?? MCP_SEARCH_DEFAULT_LIMIT, 1),
+    MCP_SEARCH_MAX_LIMIT,
+  );
+  const after = decodeCursor(opts.cursor);
+  const updatedAtMs = sql`date_trunc('milliseconds', ${tasks.updatedAt})`;
+
+  return withUserContext(ctx.userId, async (tx) => {
+    const orgRows = await executeRaw<{ org_id: string }>(
+      tx,
+      sql`SELECT org_id FROM public.current_user_orgs()`,
+    );
+    const orgIds = orgRows.map((r) => r.org_id);
+    if (orgIds.length === 0) return { items: [], nextCursor: null };
+
+    const clauses: SQL[] = [
+      inArray(projects.organizationId, orgIds),
+      ...crossProjectQueryClauses(opts.query?.trim() ?? ""),
+      ...mcpScalarFilterClauses(opts, ctx.userId),
+    ];
+
+    const rows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        category: tasks.category,
+        tags: tasks.tags,
+        sequenceNumber: tasks.sequenceNumber,
+        updatedAt: tasks.updatedAt,
+        projectIdentifier: projects.identifier,
+      })
+      .from(tasks)
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(and(...clauses, mcpSearchCursorClause(after, updatedAtMs)))
+      .orderBy(desc(updatedAtMs), desc(tasks.id))
+      .limit(limit + 1);
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const items = page.map((row) =>
+      toMcpSearchItem(row, asIdentifier(row.projectIdentifier)),
+    );
+    const last = page[page.length - 1];
+    const nextCursor =
+      hasMore && last
+        ? encodeCursor({ updatedAt: new Date(last.updatedAt), id: last.id })
+        : null;
+    return { items, nextCursor };
+  });
+}
+
+/**
+ * Project-scoped search. Same filter set as {@link searchMcpCrossProject} over
+ * one authorized project, keyset-paginated on `(updated_at DESC, id DESC)`.
+ * Rows carry derived `state` via {@link deriveTaskStatesSlim}.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project to scope to.
+ * @param opts - Search options (already criterion-checked by the caller).
+ * @returns A page of items (with `state`) plus the next cursor.
+ * @throws ForbiddenError on missing or cross-team project.
+ */
+async function searchMcpProjectScoped(
+  ctx: AuthContext,
+  projectId: string,
+  opts: McpSearchOpts,
+): Promise<McpSearchPage> {
+  const limit = Math.min(
+    Math.max(opts.limit ?? MCP_SEARCH_DEFAULT_LIMIT, 1),
+    MCP_SEARCH_MAX_LIMIT,
+  );
+  const after = decodeCursor(opts.cursor);
+  const updatedAtMs = sql`date_trunc('milliseconds', ${tasks.updatedAt})`;
+
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
+
+    const queryClause = projectScopedQueryClause(
+      opts.query?.trim() ?? "",
+      project.identifier,
+    );
+    const clauses: SQL[] = [
+      eq(tasks.projectId, projectId),
+      ...(queryClause ? [queryClause] : []),
+      ...mcpScalarFilterClauses(opts, ctx.userId),
+    ];
+
+    const rows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        category: tasks.category,
+        tags: tasks.tags,
+        sequenceNumber: tasks.sequenceNumber,
+        updatedAt: tasks.updatedAt,
+        hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+        hasCriteria: hasCriteriaExpr(),
+      })
+      .from(tasks)
+      .where(and(...clauses, mcpSearchCursorClause(after, updatedAtMs)))
+      .orderBy(desc(updatedAtMs), desc(tasks.id))
+      .limit(limit + 1);
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    if (page.length === 0) return { items: [], nextCursor: null };
+
+    const stateMap = await deriveTaskStatesSlim(
+      projectId,
+      page.map((t) => ({
+        id: t.id,
+        status: t.status,
+        hasDescription: t.hasDescription,
+        hasCriteria: t.hasCriteria,
+      })),
+      tx,
+    );
+
+    const items = page.map((row) =>
+      toMcpSearchItem(row, identifier, stateMap.get(row.id) ?? "draft"),
+    );
+    const last = page[page.length - 1];
+    const nextCursor =
+      hasMore && last
+        ? encodeCursor({ updatedAt: new Date(last.updatedAt), id: last.id })
+        : null;
+    return { items, nextCursor };
+  });
+}
+
+/**
+ * Filtered task search for the MCP surface. Cross-project by default (org-
+ * bounded), or project-scoped when `opts.projectId` is set (adds derived
+ * `state`). Supports query, status, priority, assignee (`me` → caller),
+ * category, and exact-tag filters, keyset-paginated on `(updated_at DESC, id
+ * DESC)`.
+ *
+ * @param ctx - Resolved auth context.
+ * @param opts - Filter and pagination options.
+ * @returns A page of items plus the next cursor (null on the last page).
+ * @throws SearchCriteriaRequiredError when no criterion is supplied.
+ * @throws ForbiddenError on a missing or cross-team `projectId`.
+ */
+export async function searchTasksForMcp(
+  ctx: AuthContext,
+  opts: McpSearchOpts,
+): Promise<McpSearchPage> {
+  if (!hasAnySearchCriterion(opts)) {
+    throw new SearchCriteriaRequiredError();
+  }
+  return opts.projectId
+    ? searchMcpProjectScoped(ctx, opts.projectId, opts)
+    : searchMcpCrossProject(ctx, opts);
 }
 
 /**
