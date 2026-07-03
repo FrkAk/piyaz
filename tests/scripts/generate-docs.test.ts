@@ -11,14 +11,16 @@ import {
 import { TOOLS } from "../../lib/mcp/schemas";
 
 describe("TOOLS", () => {
-  test("exposes all six tools", () => {
+  test("exposes all eight tools", () => {
     expect(TOOLS.map((t) => t.name)).toEqual([
-      "piyaz_project",
-      "piyaz_task",
-      "piyaz_edge",
-      "piyaz_query",
-      "piyaz_context",
-      "piyaz_analyze",
+      "piyaz_workspace",
+      "piyaz_search",
+      "piyaz_get",
+      "piyaz_create",
+      "piyaz_edit",
+      "piyaz_link",
+      "piyaz_map",
+      "piyaz_activity",
     ]);
   });
 });
@@ -39,20 +41,20 @@ describe("renderToolPage", () => {
   const page = renderToolPage(TOOLS[0]);
 
   test("emits frontmatter, marker, and sections", () => {
-    expect(page).toStartWith('---\ntitle: "piyaz_project"\n');
+    expect(page).toStartWith('---\ntitle: "piyaz_workspace"\n');
     expect(page).toContain("Do not edit by hand");
     expect(page).toContain("## Actions");
     expect(page).toContain("## Parameters");
   });
 
   test("lists every action and the action parameter first", () => {
-    for (const action of ["list", "teams", "create", "select", "update"]) {
+    for (const action of ["whoami", "teams", "projects", "create", "update"]) {
       expect(page).toContain(`| \`${action}\` |`);
     }
     const actionRow = page.indexOf("| `action` |");
-    const projectIdRow = page.indexOf("| `projectId` |");
+    const projectRow = page.indexOf("| `project` |");
     expect(actionRow).toBeGreaterThan(-1);
-    expect(actionRow).toBeLessThan(projectIdRow);
+    expect(actionRow).toBeLessThan(projectRow);
   });
 
   test("is deterministic", () => {
@@ -180,72 +182,82 @@ describe("renderToolPage covers every tool", () => {
 });
 
 describe("renderToolPage Required column", () => {
-  test("default-valued fields are not marked Required", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
-    const previewRow = task
-      .split("\n")
-      .find((l) => l.startsWith("| `preview` |"));
-    expect(previewRow).toBeDefined();
-    expect(previewRow).toContain("| No |");
+  test("optional fields are not marked Required", () => {
+    const get = renderToolPage(TOOLS.find((t) => t.name === "piyaz_get")!);
+    const lensRow = get.split("\n").find((l) => l.startsWith("| `lens` |"));
+    expect(lensRow).toBeDefined();
+    expect(lensRow).toContain("| No |");
   });
 
   test("the discriminator field itself stays Required", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
-    const actionRow = task
-      .split("\n")
-      .find((l) => l.startsWith("| `action` |"));
+    const ws = renderToolPage(TOOLS.find((t) => t.name === "piyaz_workspace")!);
+    const actionRow = ws.split("\n").find((l) => l.startsWith("| `action` |"));
     expect(actionRow).toContain("| Yes |");
   });
 });
 
-describe("renderToolPage union-array types", () => {
-  test("renders an array of a union as its members, not unknown[]", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
-    const acRow = task
-      .split("\n")
-      .find((l) => l.startsWith("| `acceptanceCriteria` |"));
-    expect(acRow).toContain("(string \\| object)[]");
-    expect(acRow).not.toContain("unknown[]");
+describe("renderToolPage union types", () => {
+  test("renders a literal-union field as its members, not unknown", () => {
+    const map = renderToolPage(TOOLS.find((t) => t.name === "piyaz_map")!);
+    const hopsRow = map.split("\n").find((l) => l.startsWith("| `hops` |"));
+    expect(hopsRow).toBeDefined();
+    expect(hopsRow).not.toContain("unknown");
   });
 
-  test("renders a url field as string (url), not bare string", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
-    const prUrlRow = task.split("\n").find((l) => l.startsWith("| `prUrl` |"));
-    expect(prUrlRow).toContain("string (url) \\| null");
+  test("renders object-array fields with their item shape, not unknown[]", () => {
+    const create = renderToolPage(
+      TOOLS.find((t) => t.name === "piyaz_create")!,
+    );
+    const tasksRow = create
+      .split("\n")
+      .find((l) => l.startsWith("| `tasks` |"));
+    expect(tasksRow).toBeDefined();
+    expect(tasksRow).not.toContain("unknown[]");
   });
 });
 
 describe("renderToolPage values-section label", () => {
   test("labels the section by the discriminator, not always 'Actions'", () => {
-    const ctx = renderToolPage(TOOLS.find((t) => t.name === "piyaz_context")!);
-    expect(ctx).toContain("## Depths");
-    expect(ctx).toContain("| Depth | Purpose |");
-    expect(ctx).not.toContain("## Actions");
+    const get = renderToolPage(TOOLS.find((t) => t.name === "piyaz_get")!);
+    expect(get).toContain("## Lenses");
+    expect(get).toContain("| Lens | Purpose |");
+    expect(get).not.toContain("## Actions");
 
-    const analyze = renderToolPage(
-      TOOLS.find((t) => t.name === "piyaz_analyze")!,
-    );
-    expect(analyze).toContain("## Types");
-    expect(analyze).not.toContain("## Actions");
+    const map = renderToolPage(TOOLS.find((t) => t.name === "piyaz_map")!);
+    expect(map).toContain("## Views");
+    expect(map).not.toContain("## Actions");
 
-    const project = renderToolPage(
-      TOOLS.find((t) => t.name === "piyaz_project")!,
-    );
-    expect(project).toContain("## Actions");
+    const ws = renderToolPage(TOOLS.find((t) => t.name === "piyaz_workspace")!);
+    expect(ws).toContain("## Actions");
+  });
+});
+
+describe("renderToolPage without a discriminator", () => {
+  test("renders no values table for null-discriminator tools", () => {
+    for (const name of [
+      "piyaz_search",
+      "piyaz_create",
+      "piyaz_edit",
+      "piyaz_activity",
+    ]) {
+      const page = renderToolPage(TOOLS.find((t) => t.name === name)!);
+      expect(page).toContain("## Parameters");
+      expect(page).not.toContain("| Purpose |");
+    }
   });
 });
 
 describe("renderToolPage discriminator selection", () => {
   test("uses the declared discriminator, not an incidental enum field", () => {
-    const task = renderToolPage(TOOLS.find((t) => t.name === "piyaz_task")!);
-    const actionsSection = task.slice(
-      task.indexOf("## Actions"),
-      task.indexOf("## Parameters"),
+    const link = renderToolPage(TOOLS.find((t) => t.name === "piyaz_link")!);
+    const actionsSection = link.slice(
+      link.indexOf("## Actions"),
+      link.indexOf("## Parameters"),
     );
-    for (const action of ["create", "update", "delete"]) {
+    for (const action of ["create", "update", "remove"]) {
       expect(actionsSection).toContain(`| \`${action}\` |`);
     }
-    expect(actionsSection).not.toContain("| `draft` |");
+    expect(actionsSection).not.toContain("| `depends_on` |");
   });
 });
 

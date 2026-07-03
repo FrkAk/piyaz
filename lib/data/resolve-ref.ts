@@ -1,9 +1,15 @@
 import "server-only";
 
-import { sql, type SQL } from "drizzle-orm";
-import { projects, tasks } from "@/lib/db/schema";
-import { executeRaw } from "@/lib/db/raw";
-import { withUserContext } from "@/lib/db/rls";
+import { normalizeExecuteResult } from "@/lib/db/raw";
+import {
+  projectRefLookupStmt,
+  taskRefLookupStmt,
+  taskRefNearMissStmt,
+  type NearMissRow,
+  type ProjectRefRow,
+  type TaskRefRow,
+} from "@/lib/db/raw/resolve-ref-lookup";
+import { withUserContextRead } from "@/lib/db/rls";
 import { isUuid } from "@/lib/auth/authorization";
 import {
   asIdentifier,
@@ -97,29 +103,6 @@ export class RefNotFoundError extends Error {
   }
 }
 
-/** Row shape returned by the task-ref lookup query. */
-type TaskRefRow = {
-  task_id: string;
-  project_id: string;
-  identifier: string;
-  sequence_number: number;
-  project_title: string;
-  organization_id: string;
-  team_name: string;
-};
-
-/** Row shape returned by the project-ref lookup query. */
-type ProjectRefRow = {
-  project_id: string;
-  identifier: string;
-  organization_id: string;
-  project_title: string;
-  team_name: string;
-};
-
-/** A parsed task-ref group: one project prefix and the sequence numbers under it. */
-type TaskRefGroup = { prefix: string; seqs: number[] };
-
 /**
  * Match the taskRef shape and uppercase the prefix. Does not validate the
  * sequence number range; see {@link seqInRange}.
@@ -148,82 +131,6 @@ function seqInRange(seqText: string): number | null {
   if (!Number.isSafeInteger(seq) || seq < 1 || seq > INT4_MAX) return null;
   return seq;
 }
-
-/**
- * Build the org-bounded task-ref lookup SQL. Joins `tasks` and `projects`
- * to `current_user_orgs()` so the read is bounded by the caller's team
- * memberships (defense-in-depth over RLS) and yields the team name for
- * candidate rendering.
- *
- * @param groups - Non-empty prefix groups to match, OR-joined.
- * @returns Parameterized read statement SQL.
- */
-function taskRefLookupSql(groups: TaskRefGroup[]): SQL {
-  const clauses = groups.map(
-    (g) =>
-      sql`(${projects.identifier} = ${g.prefix} AND ${tasks.sequenceNumber} IN (${sql.join(
-        g.seqs.map((s) => sql`${s}`),
-        sql`, `,
-      )}))`,
-  );
-  return sql`
-    SELECT
-      ${tasks.id} AS task_id,
-      ${tasks.projectId} AS project_id,
-      ${projects.identifier} AS identifier,
-      ${tasks.sequenceNumber} AS sequence_number,
-      ${projects.title} AS project_title,
-      ${projects.organizationId} AS organization_id,
-      cuo.name AS team_name
-    FROM ${tasks}
-    JOIN ${projects} ON ${projects.id} = ${tasks.projectId}
-    JOIN public.current_user_orgs() AS cuo ON cuo.org_id = ${projects.organizationId}
-    WHERE ${sql.join(clauses, sql` OR `)}
-  `;
-}
-
-/**
- * Build the near-miss probe SQL: does the prefix resolve to a project the
- * caller can see, and what is its highest task sequence number.
- *
- * @param prefix - Uppercase project identifier.
- * @returns Parameterized read statement SQL.
- */
-function nearMissSql(prefix: string): SQL {
-  return sql`
-    SELECT
-      ${projects.identifier} AS identifier,
-      MAX(${tasks.sequenceNumber}) AS max_sequence_number
-    FROM ${projects}
-    JOIN public.current_user_orgs() AS cuo ON cuo.org_id = ${projects.organizationId}
-    LEFT JOIN ${tasks} ON ${tasks.projectId} = ${projects.id}
-    WHERE ${projects.identifier} = ${prefix}
-    GROUP BY ${projects.identifier}
-  `;
-}
-
-/**
- * Build the org-bounded project-ref lookup SQL.
- *
- * @param identifier - Uppercase project identifier.
- * @returns Parameterized read statement SQL.
- */
-function projectRefLookupSql(identifier: string): SQL {
-  return sql`
-    SELECT
-      ${projects.id} AS project_id,
-      ${projects.identifier} AS identifier,
-      ${projects.organizationId} AS organization_id,
-      ${projects.title} AS project_title,
-      cuo.name AS team_name
-    FROM ${projects}
-    JOIN public.current_user_orgs() AS cuo ON cuo.org_id = ${projects.organizationId}
-    WHERE ${projects.identifier} = ${identifier}
-  `;
-}
-
-/** Row shape returned by the near-miss probe query. */
-type NearMissRow = { identifier: string; max_sequence_number: number | null };
 
 /**
  * Project a task-ref row to a resolved result.
@@ -293,33 +200,32 @@ export async function resolveTaskRef(
 
   const seq = seqInRange(match.seqText);
 
-  return withUserContext(ctx.userId, async (tx) => {
-    const candidates =
-      seq === null
-        ? []
-        : await executeRaw<TaskRefRow>(
-            tx,
-            taskRefLookupSql([{ prefix: match.prefix, seqs: [seq] }]),
-          );
+  const [candidatesRaw, nearMissRaw] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      taskRefLookupStmt(
+        read,
+        seq === null ? [] : [{ prefix: match.prefix, seqs: [seq] }],
+      ),
+      taskRefNearMissStmt(read, match.prefix),
+    ],
+  );
+  const candidates = normalizeExecuteResult<TaskRefRow>(candidatesRaw);
 
-    if (candidates.length === 1) return toResolvedTask(candidates[0]);
-    if (candidates.length > 1) {
-      throw new RefAmbiguityError(refOrId, candidates.map(toTaskCandidate));
-    }
+  if (candidates.length === 1) return toResolvedTask(candidates[0]);
+  if (candidates.length > 1) {
+    throw new RefAmbiguityError(refOrId, candidates.map(toTaskCandidate));
+  }
 
-    const [nearMiss] = await executeRaw<NearMissRow>(
-      tx,
-      nearMissSql(match.prefix),
+  const [nearMiss] = normalizeExecuteResult<NearMissRow>(nearMissRaw);
+  if (nearMiss) {
+    throw new RefNotFoundError(
+      refOrId,
+      nearMiss.identifier,
+      nearMiss.max_sequence_number ?? undefined,
     );
-    if (nearMiss) {
-      throw new RefNotFoundError(
-        refOrId,
-        nearMiss.identifier,
-        nearMiss.max_sequence_number ?? undefined,
-      );
-    }
-    throw new RefNotFoundError(refOrId);
-  });
+  }
+  throw new RefNotFoundError(refOrId);
 }
 
 /**
@@ -362,14 +268,13 @@ export async function resolveTaskRefs(
 
   if (groups.size === 0) return result;
 
-  const rows = await withUserContext(ctx.userId, (tx) =>
-    executeRaw<TaskRefRow>(
-      tx,
-      taskRefLookupSql(
-        [...groups].map(([prefix, seqs]) => ({ prefix, seqs: [...seqs] })),
-      ),
+  const [rowsRaw] = await withUserContextRead(ctx.userId, (read) => [
+    taskRefLookupStmt(
+      read,
+      [...groups].map(([prefix, seqs]) => ({ prefix, seqs: [...seqs] })),
     ),
-  );
+  ]);
+  const rows = normalizeExecuteResult<TaskRefRow>(rowsRaw);
 
   const byKey = new Map<string, TaskRefRow[]>();
   for (const row of rows) {
@@ -414,9 +319,10 @@ export async function resolveProjectRef(
   const parsed = parseIdentifier(identifierOrId.toUpperCase());
   if (!parsed.ok) throw new MalformedRefError(identifierOrId);
 
-  const rows = await withUserContext(ctx.userId, (tx) =>
-    executeRaw<ProjectRefRow>(tx, projectRefLookupSql(parsed.value)),
-  );
+  const [rowsRaw] = await withUserContextRead(ctx.userId, (read) => [
+    projectRefLookupStmt(read, parsed.value),
+  ]);
+  const rows = normalizeExecuteResult<ProjectRefRow>(rowsRaw);
   if (rows.length === 1) {
     const row = rows[0];
     return {

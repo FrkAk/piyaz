@@ -1,9 +1,16 @@
 /**
- * MCP tool input schemas, descriptions, and metadata for the 6 Piyaz tools.
+ * MCP tool input schemas, descriptions, and metadata for the 8 Piyaz tools.
  *
  * Standalone module with no data-layer imports so it can be consumed by
  * both the MCP server (lib/mcp/create-server.ts) and the docs generator
  * (scripts/generate-docs.ts).
+ *
+ * Identifier convention: every task parameter accepts a taskRef like
+ * `PYZ-42` or a task UUID; every project parameter accepts a project
+ * identifier like `PYZ` or a project UUID. The params are plain strings
+ * (never Zod unions — upfront schema loaders handle `anyOf` inconsistently)
+ * and the server resolves them, returning corrective errors with candidate
+ * lists on ambiguity and near-miss suggestions on a miss.
  */
 import { z } from "zod/v4";
 import { identifierSchema } from "@/lib/graph/identifier";
@@ -33,7 +40,59 @@ export const LIMITS = {
   arrayItems: 1_000,
   files: 5_000,
   tags: 500,
+  ref: 64,
+  batchTasks: 25,
+  batchEdges: 100,
+  editOps: 20,
+  url: 4_000,
+  isoTimestamp: 64,
+  cursor: 512,
 } as const;
+
+/** A task handle: taskRef (`PYZ-42`) or task UUID. */
+const taskRefParam = z.string().max(LIMITS.ref);
+
+/** A project handle: project identifier (`PYZ`) or project UUID. */
+const projectRefParam = z.string().max(LIMITS.ref);
+
+/** Task fields addressable by `piyaz_get fields=[...]`. Mirrors
+ * `TASK_FIELD_NAMES` in `lib/db/raw/fetch-task-full.ts`. */
+export const TASK_FIELD_ENUM = [
+  "title",
+  "description",
+  "status",
+  "category",
+  "priority",
+  "estimate",
+  "tags",
+  "files",
+  "implementationPlan",
+  "executionRecord",
+  "acceptanceCriteria",
+  "decisions",
+  "links",
+  "assignees",
+] as const;
+
+const TASK_STATUS_ENUM = [
+  "draft",
+  "planned",
+  "in_progress",
+  "in_review",
+  "done",
+  "cancelled",
+] as const;
+
+const PRIORITY_ENUM = ["urgent", "core", "normal", "backlog"] as const;
+
+const estimateSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(5),
+  z.literal(8),
+  z.literal(13),
+]);
 
 // ---------------------------------------------------------------------------
 // Shared descriptions (MCP tools are ground truth)
@@ -48,57 +107,69 @@ export const LIMITS = {
 
 /** Tool descriptions shared between the MCP server and the docs generator. */
 export const DESCRIPTIONS = {
-  piyaz_project:
-    "List, create, and update projects, plus enumerate team memberships. Spans every team the caller belongs to; no server-side session state, so pass projectId explicitly on every downstream call. " +
-    "list=projects (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via piyaz_query type='meta'. " +
-    "teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. " +
-    "select=confirm working project; pass returned projectId on every subsequent call. " +
-    "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline; auto-resolves single-team). " +
-    "update=title, description, status, categories, or identifier. Renaming identifier cascades every taskRef and breaks external references (PR titles, docs, commits).",
-  piyaz_task:
-    "Create, update, or delete tasks. Lifecycle: draft → planned → in_progress → in_review → done. The implementer subagent's terminal write is `in_review` (PR opened, tests green); the HOTL gate flips to `done` after PR approval. cancelled is terminal abandoned work with transparent dep semantics (dependents stay blocked through the cancelled task's own unsatisfied prereqs; populate executionRecord with rationale). " +
-    "create requires title (verb+noun, imperative), description (2-4 sentences; single-sentence rejected), 2-4 binary acceptanceCriteria, three tag dimensions (work-type, cross-cutting, tech), one project category. priority, estimate, and assigneeIds are first-class fields, not tags: priority (urgent / core / normal / backlog), estimate (Fibonacci story points 1/2/3/5/8/13), assigneeIds (array of team-member user UUIDs). After create: search precedents/coordinators by verb+noun+surface, wire piyaz_edge, verify with piyaz_query type='edges'. Bare tasks orphan from critical_path, downstream, depth='agent'. " +
-    "update: pass only changed fields. Array fields (acceptanceCriteria, decisions, files, assigneeIds) APPEND by default; overwriteArrays=true REPLACES them. Destructive, NO undo (changes are recorded in the activity_events audit log); confirm with user first. " +
-    "delete: preview=true (default) shows impact; preview=false executes. Prefer status='cancelled' for abandoned scope so the rationale is preserved. " +
-    "Done means: executionRecord (3-5 sentences, what was built), decisions (CHOICE+WHY), files (every path), acceptanceCriteria evaluated. Open a PR if files non-empty; run piyaz_analyze type='downstream' to propagate.",
-  piyaz_edge:
-    "Create, update, or remove dependency edges between tasks. depends_on=source needs target's output (target must be done first). relates_to=informational link, neither blocks the other. Litmus test: removing the target makes the source impossible → depends_on; just makes it harder → relates_to. " +
-    "create: edge note REQUIRED and substantive; notes propagate to downstream agent context, and placeholders ('needed', 'depends') are rejected. Write it as a brief to the developer about to start the source task. " +
-    "update: change edgeType or note by edgeId. " +
-    "remove: by edgeId OR by sourceTaskId+targetTaskId+edgeType. " +
-    "Server rejects self-edges, duplicates, and cycles. On 'duplicate edge' (concurrent-write race): treat as success and verify with piyaz_query type='edges'.",
-  piyaz_query:
-    "Search and browse project data. Pick the slim tool first; reserve overview for unfamiliar projects. " +
-    "search=tasks by taskRef, title, or tag substring (case-insensitive, up to 20). Pass tags=[...] for exact tag match (OR-within); combine with `query` to AND-narrow. Pass category='...' for exact project-category match (closed vocabulary; unknown values rejected with the valid list inline); combines with query/tags via AND. Single-result responses include a state hint pointing to the right next call. " +
-    "list=every task in the project (slim, ordered by position). " +
-    "edges=relationships on one task (connected title, status, direction, note). " +
-    "meta=slim project metadata: header, description, status, categories, tag vocabulary (with usage counts), progress + status counts. No task list, no edges. Use this to look up categories before setting one, or the tag vocabulary before coining new tags. " +
-    "overview=full project structure: every task, every edge, full tag vocab, progress. VERY HEAVY. Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session. For just categories or tag vocab, use meta.",
-  piyaz_context:
-    "Retrieve task context at varying depth. ALWAYS fetch context before reasoning about a task; pick the lightest depth that answers the question. " +
-    "summary=task header + description + counts (criteria, decisions, plan flag, edge counts) + full 1-hop edges WITH notes. The lightest depth that still carries edge notes; folds in what `piyaz_query type='edges'` would give. " +
-    "working=detailed (criteria, decisions, 1-hop edges) for refinement and review. " +
-    "agent=multi-hop dependency chains with upstream execution records (~4-8K tokens); fetch BEFORE coding. " +
-    "planning=spec-focused (project description, prereqs, acceptance criteria, downstream specs); fetch BEFORE writing the implementation plan.",
-  piyaz_analyze:
-    "Analyze the project dependency graph. All variants slim; lead with these for status, prioritization, 'what's next', 'what's stuck'. " +
-    "critical_path=longest dep chain (project bottleneck, minimum duration). Lead with this on continue / resume / 'guide me forward'; the most important type for prioritization. " +
-    "ready=planned tasks with all effective deps done (only `status='planned'` reaches this state; drafts with satisfied deps surface as `plannable`, not `ready`). Pick from `ready ∩ critical_path` for the highest-impact unblocked work. " +
-    "plannable=draft tasks with description + criteria, ready for planning. Fall back here when nothing is ready to code. " +
-    "blocked=tasks waiting on unfinished deps with blocker details. " +
-    "downstream=transitive dependents of one task; impact analysis before status change, refinement, or cancellation.",
+  piyaz_workspace:
+    "Session-start tool: identify the caller and manage projects across every team they belong to. There is no 'active' team or server-side session; responses emit project identifiers (e.g. 'PYZ') that every other tool accepts directly. " +
+    "whoami=caller identity (user id, name, team count); run once at session start. " +
+    "teams=every membership (id, name, slug, role, projectCount) including empty teams. " +
+    "projects=all projects with identifier, status, team chip, task counts, progress; skips empty teams, so pair with teams for the full set. " +
+    "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline). " +
+    "update=title, description, status, categories, or identifier. Renaming the identifier cascades every taskRef and breaks external references (PR titles, docs, commits). " +
+    "Next: piyaz_search to find work, piyaz_map view='ready' to find unblocked tasks.",
+  piyaz_search:
+    "Universal task finder. Cross-project across every team by default; pass project='PYZ' to scope. At least one criterion required: query (matches taskRef, title, tags), status[], priority[], assignee ('me' or a user UUID), category, or tags[] (AND-within). " +
+    "Results are newest-updated first with a cursor when more pages exist; project-scoped results carry the derived state (ready/blocked/plannable). " +
+    "Every result line leads with the taskRef — chain it straight into piyaz_get, piyaz_edit, or piyaz_link. Narrow with filters instead of paging when a page overflows.",
+  piyaz_get:
+    "Read one task or one project. Pass exactly one of task ('PYZ-42' or UUID) or project ('PYZ' or UUID). ALWAYS fetch before reasoning about a task; pick the lightest shape that answers the question. " +
+    "Task lenses: summary=header+description+counts+1-hop edges with notes (lightest with edges). working=criteria with ids, decisions with ids, links with ids, 1-hop edges — the edit-address read. agent=multi-hop deps + upstream execution records + related tasks (~4-8K tokens); fetch BEFORE coding; terminal tasks return the retrospective record instead. planning=project description, prereqs, work-so-far, downstream specs, abandoned approaches; fetch BEFORE writing a plan. review=implementationPlan beside executionRecord + PR link + review-lens prompts (for in_review tasks). record=retrospective for done/cancelled tasks. " +
+    "fields=[...]: raw single-field read (lens ignored); the cheapest way to fetch one field's exact text before a piyaz_edit str_replace, or collection ids before by-id ops; response includes updatedAt for ifUpdatedAt preconditions. " +
+    "Project: view='meta' (categories, tag vocabulary, progress — check before setting category or coining tags) or view='overview' (every task + edge; HEAVY, at most once per session; truncated groups name the piyaz_search filter to narrow with).",
+  piyaz_create:
+    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('PYZ' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description (2-4 sentences; single-sentence rejected). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
+    "Idempotent: exact-title matches against existing tasks are skipped and returned as 'deduped' (reusable as edge endpoints), so a restarted decompose run never duplicates a task set; onDuplicate='error' rejects the whole batch instead. Edges that already exist are silently skipped. " +
+    "Include acceptanceCriteria (2-4 binary), tags (three dimensions), category (from piyaz_get project view='meta'), priority, estimate up front — hints flag what's missing. " +
+    "Next: verify wiring with piyaz_map view='neighbors' task='<ref>'.",
+  piyaz_edit:
+    "Edit one task with an ordered list of operations, applied atomically (all or nothing). task accepts 'PYZ-42' or a UUID. " +
+    "Text fields (description, implementationPlan, executionRecord): op='str_replace' (oldStr must match exactly once; the error names the occurrence count), op='append' (adds a paragraph), op='set' (full replace — prefer str_replace/append for surgical edits). " +
+    "Collections (acceptanceCriteria, decisions, links, assignees): op='add' (text/url; assignees take value='me' or a user UUID), op='update'/'remove'/'check'/'uncheck' by the item id from piyaz_get lens='working' or fields=[...]. Removed items are unrecoverable. " +
+    "Scalars (status, priority, estimate, category, title, tags, files, prUrl): op='set' with value. Status transitions return lifecycle hints — read and act on them. " +
+    "ifUpdatedAt (from a prior read) makes the whole call a compare-and-swap for contended tasks. " +
+    "op='delete_task' must be the only op: preview defaults to true (impact summary); preview=false executes. Prefer set status='cancelled' for abandoned scope — delete only pure noise.",
+  piyaz_link:
+    "Create, update, or remove dependency edges. source/target accept 'PYZ-42' or UUIDs. depends_on=source needs target's output (target must finish first). relates_to=informational, neither blocks. Litmus: removing the target makes the source impossible → depends_on; merely harder → relates_to. " +
+    "create=new edge; note REQUIRED and substantive (placeholders 'needed'/'depends'/'related' rejected) — write it as a brief to the developer starting the source task. " +
+    "update=change note or type, keyed by source+target+type (or edgeId). remove=same keys. " +
+    "Server rejects self-edges, duplicates, and cycles (the error names the chain). On 'duplicate edge': treat as success. Verify with piyaz_map view='neighbors'.",
+  piyaz_map:
+    "Navigate the dependency graph. Lead with these for 'what's next', 'what's stuck', impact analysis. " +
+    "ready=planned tasks with all deps done (drafts surface under plannable, not ready); pick from ready ∩ critical_path for highest-impact work. " +
+    "blocked=waiting tasks with blocker details. plannable=drafts with description+criteria, ready for planning. " +
+    "critical_path=longest dependency chain (the project bottleneck); lead with this on resume / 'guide me forward'. " +
+    "downstream=transitive dependents of one task; run before status changes, refinement, or cancellation. " +
+    "neighbors=1-2 hops around one task, both edge types, both directions, with notes — the context-network walk; every line is ref-chainable into piyaz_get. " +
+    "ready/blocked/plannable/critical_path need project; downstream/neighbors need task.",
+  piyaz_activity:
+    "What changed, newest first, keyset-paginated. Pass exactly one of project ('PYZ' or UUID) or task ('PYZ-42' or UUID). " +
+    "since (ISO timestamp) answers 'what changed since I left' — the resume-after-compaction primitive: piyaz_activity project='PYZ' since='<last known instant>'. " +
+    "Events carry actor, type, summary, and target ref. Follow up on a specific task with piyaz_get.",
 } as const;
 
-export const projectInputSchema = z.object({
+// ---------------------------------------------------------------------------
+// Input schemas
+// ---------------------------------------------------------------------------
+
+export const workspaceInputSchema = z.object({
   action: z
-    .enum(["list", "teams", "create", "select", "update"])
+    .enum(["whoami", "teams", "projects", "create", "update"])
     .describe(
-      "list=projects across every team you belong to (id, title, identifier, status, team chip, task counts, progress); skips empty teams; description and tag vocab fetched on demand via piyaz_query type='meta'. teams=every membership (id, name, slug, role, projectCount); call before create or when list misses a team. create=new project (requires organizationId in multi-team accounts). select=confirm working project (returns projectId). update=modify fields.",
+      "whoami=caller identity: user id, display name, team count; run at session start. teams=every membership (id, name, slug, role, projectCount), including empty teams. projects=projects across every team (identifier, title, status, team chip, task counts, progress); skips empty teams. create=new project (organizationId REQUIRED for multi-team accounts). update=modify title, description, status, categories, or identifier.",
     ),
-  projectId: z
-    .uuid()
+  project: projectRefParam
     .optional()
-    .describe("Project UUID. Required for select and update."),
+    .describe(
+      "Project identifier ('PYZ') or project UUID. Required for update.",
+    ),
   title: z
     .string()
     .max(LIMITS.title)
@@ -135,255 +206,479 @@ export const projectInputSchema = z.object({
     .uuid()
     .optional()
     .describe(
-      "Target team UUID for create. REQUIRED when you're a member of more than one team; the create is rejected with the team list inline otherwise. Auto-resolved when you belong to exactly one team. Membership is verified server-side; non-member targets return 'forbidden'.",
+      "Target team UUID for create. REQUIRED when you're a member of more than one team; the create is rejected with the team list inline otherwise. Auto-resolved when you belong to exactly one team. Membership is verified server-side; non-member targets return 'not found'.",
     ),
 });
 
-export const taskInputSchema = z.object({
-  action: z
-    .enum(["create", "update", "delete"])
-    .describe(
-      "create=new task. update=modify fields (pass only what changed). delete=remove (preview by default).",
-    ),
-  taskId: z
-    .uuid()
-    .optional()
-    .describe(
-      "Task UUID (not the 'MYM-N' taskRef; refs are display-only). Required for update/delete.",
-    ),
-  projectId: z
-    .uuid()
-    .optional()
-    .describe(
-      "Project UUID. Required for create. Project's team scope is inherited.",
-    ),
-  title: z
+export const searchInputSchema = z.object({
+  query: z
     .string()
-    .max(LIMITS.title)
+    .max(LIMITS.query)
     .optional()
     .describe(
-      "Verb+noun, imperative. Required for create (e.g. 'Implement JWT auth', not 'Auth'). Artifacts §1.",
+      "Free-text match on taskRef, title, or tag substring (case-insensitive). Optional when any filter is set.",
     ),
-  description: z
-    .string()
-    .max(LIMITS.description)
+  project: projectRefParam
     .optional()
     .describe(
-      "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence rejected): what + who it serves + where it fits in the architecture. Required for create. Artifacts §1.",
+      "Project identifier ('PYZ') or UUID to scope the search. DEFAULT: cross-project across every team you belong to. Project-scoped results include the derived state (ready/blocked/plannable/...).",
     ),
   status: z
-    .enum(["draft", "planned", "in_progress", "in_review", "done", "cancelled"])
+    .array(z.enum(TASK_STATUS_ENUM))
+    .max(TASK_STATUS_ENUM.length)
     .optional()
-    .describe(
-      "Lifecycle: draft → planned → in_progress → in_review → done. The implementer subagent's terminal write is `in_review` (PR opened, tests green); the HOTL gate flips to `done` after PR approval. cancelled = terminal abandoned work; populate executionRecord with rationale. Cancelled deps are transparent: dependents stay blocked through the cancelled task's own unsatisfied deps. Excluded from progress and critical path.",
-    ),
-  acceptanceCriteria: z
-    .array(
-      z.union([
-        z.string().max(LIMITS.criterionText),
-        z.object({
-          id: z.string().max(LIMITS.tag).optional(),
-          text: z.string().max(LIMITS.criterionText),
-          checked: z.boolean().optional(),
-        }),
-      ]),
+    .describe("Lifecycle statuses to include (OR-within)."),
+  priority: z
+    .array(z.enum(PRIORITY_ENUM))
+    .max(PRIORITY_ENUM.length)
+    .optional()
+    .describe("Priorities to include (OR-within)."),
+  assignee: z
+    .string()
+    .max(LIMITS.ref)
+    .regex(
+      /^(me|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
+      "assignee must be the literal 'me' or a user UUID",
     )
-    .max(LIMITS.arrayItems)
+    .optional()
+    .describe("Filter to tasks assigned to 'me' (the caller) or a user UUID."),
+  category: z
+    .string()
+    .max(LIMITS.category)
     .optional()
     .describe(
-      "2-4 binary items (reviewer answers YES/NO; single-AC and vague ACs like 'works correctly' rejected). Pass strings for new criteria, or {text, checked} objects to evaluate existing rows. Artifacts §1.",
-    ),
-  decisions: z
-    .array(z.string().max(LIMITS.decision))
-    .max(LIMITS.arrayItems)
-    .optional()
-    .describe(
-      "Technical choices and constraints. One-liner per decision (CHOICE + WHY).",
+      "Exact project-category match. See the project's vocabulary via piyaz_get project view='meta'.",
     ),
   tags: z
     .array(z.string().max(LIMITS.tag))
     .max(LIMITS.tags)
     .optional()
     .describe(
-      "Kebab-case. Every task carries three tag dimensions: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern (open: quality attribute or feature cluster), at most 2 tech tags (most important stack pieces touched). Priority is the `priority` field, not a tag. Do NOT tag codebase area (use category) or status. Run piyaz_query type='meta' before coining new tags.",
+      "Exact tags; every listed tag must be present (AND-within). Pick from the vocabulary in piyaz_get project view='meta'.",
+    ),
+  limit: z
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe("Page size, 1-50 (default 20)."),
+  cursor: z
+    .string()
+    .max(LIMITS.cursor)
+    .optional()
+    .describe(
+      "Opaque cursor from a previous page's nextCursor. Prefer narrowing filters over deep paging.",
+    ),
+});
+
+export const getInputSchema = z.object({
+  task: taskRefParam
+    .optional()
+    .describe(
+      "taskRef ('PYZ-42') or task UUID. Pass exactly one of task or project.",
+    ),
+  project: projectRefParam
+    .optional()
+    .describe(
+      "Project identifier ('PYZ') or project UUID. Pass exactly one of task or project.",
+    ),
+  lens: z
+    .enum(["summary", "working", "agent", "planning", "review", "record"])
+    .optional()
+    .describe(
+      "Task reads only; default 'working'. summary=header + description + counts + 1-hop edges with notes (lightest with edges). working=criteria/decisions/links WITH their ids (the edit-address read) + 1-hop edges. agent=multi-hop deps + upstream execution records + related (non-blocking) tasks; fetch BEFORE coding; done/cancelled tasks return the retrospective record instead. planning=project description, prereqs, work-so-far, downstream specs, abandoned approaches; fetch BEFORE writing the implementation plan. review=implementationPlan alongside executionRecord, PR link, AC evaluation, review-lens prompts; for in_review tasks. record=retrospective bundle (outcome, decisions, PR link) for done/cancelled tasks.",
+    ),
+  view: z
+    .enum(["meta", "overview"])
+    .optional()
+    .describe(
+      "Project reads only; default 'meta'. meta=header, description, status, categories, tag vocabulary with counts, progress; the cheap lookup before setting a category or coining tags. overview=every task grouped by status plus every edge; HEAVY, at most once per session; over-limit groups are truncated with the narrowing piyaz_search filter named inline.",
+    ),
+  fields: z
+    .array(z.enum(TASK_FIELD_ENUM))
+    .min(1)
+    .max(TASK_FIELD_ENUM.length)
+    .optional()
+    .describe(
+      "Task reads only. Raw field read: returns exactly these fields' current values (lens ignored) plus updatedAt for ifUpdatedAt preconditions. Collection fields include item ids for piyaz_edit by-id ops. The cheapest read before a surgical edit — fetch ['implementationPlan'] to copy exact text for str_replace.",
+    ),
+  detail: z
+    .enum(["concise", "detailed"])
+    .optional()
+    .describe(
+      "Project overview only. concise (default) drops the tag vocabulary and per-task tags; detailed includes them.",
+    ),
+  limit: z
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      "Project overview only: per-status task-group cap (default 30). Truncated groups name the piyaz_search filter to fetch the rest.",
+    ),
+});
+
+/** One task in a `piyaz_create` batch. */
+const createTaskItemSchema = z.object({
+  key: z
+    .string()
+    .max(LIMITS.ref)
+    .optional()
+    .describe(
+      "Local handle naming this task for edges within the same call (e.g. key='auth' then edges:[{source:'auth', ...}]).",
+    ),
+  title: z
+    .string()
+    .max(LIMITS.title)
+    .describe("Verb+noun, imperative (e.g. 'Implement JWT auth', not 'Auth')."),
+  description: z
+    .string()
+    .max(LIMITS.description)
+    .describe(
+      "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence rejected): what + who it serves + where it fits.",
+    ),
+  status: z
+    .enum(TASK_STATUS_ENUM)
+    .optional()
+    .describe(
+      "Defaults to 'draft'. Lifecycle: draft → planned → in_progress → in_review → done.",
+    ),
+  acceptanceCriteria: z
+    .array(z.string().max(LIMITS.criterionText))
+    .max(LIMITS.arrayItems)
+    .optional()
+    .describe("2-4 binary done-conditions (reviewer answers YES/NO)."),
+  decisions: z
+    .array(z.string().max(LIMITS.decision))
+    .max(LIMITS.arrayItems)
+    .optional()
+    .describe("Technical choices, one line each: CHOICE + WHY."),
+  tags: z
+    .array(z.string().max(LIMITS.tag))
+    .max(LIMITS.tags)
+    .optional()
+    .describe(
+      "Kebab-case, three dimensions: exactly 1 work-type (bug/feature/refactor/docs/test/chore/perf), ≥1 cross-cutting concern, ≤2 tech tags. Check the vocabulary first: piyaz_get project view='meta'.",
     ),
   category: z
     .string()
     .max(LIMITS.category)
     .optional()
     .describe(
-      "Architectural layer / subsystem this task belongs to (exactly one). Reuse a project category; do not silently coin mid-task. The project's 4-8 categories are set on creation or via decompose/onboarding gates. Run piyaz_query type='meta' to see them. Artifacts §4.",
+      "Exactly one project category (closed vocabulary; see piyaz_get project view='meta'). Do not coin new ones mid-task.",
     ),
   priority: z
-    .enum(["urgent", "core", "normal", "backlog"])
+    .enum(PRIORITY_ENUM)
     .optional()
     .describe(
-      "Priority of the task. urgent: cannot ship without; core: central to the release; normal: routine; backlog: deprioritized.",
+      "urgent: cannot ship without; core: central to the release; normal: routine; backlog: deprioritized.",
     ),
-  estimate: z
-    .union([
-      z.literal(1),
-      z.literal(2),
-      z.literal(3),
-      z.literal(5),
-      z.literal(8),
-      z.literal(13),
-    ])
+  estimate: estimateSchema
     .optional()
     .describe(
-      "Fibonacci story-point estimate. 1 = trivial, 2/3 = routine, 5 = nontrivial, 8/13 = risky or multi-day. If a task feels >13, split it (artifacts §5).",
+      "Fibonacci story points (1/2/3/5/8/13). If a task feels >13, split it.",
     ),
   assigneeIds: z
-    .array(z.uuid())
+    .array(z.string().max(LIMITS.ref))
     .max(LIMITS.arrayItems)
     .optional()
     .describe(
-      "User UUIDs to assign to this task. Each must be a member of the project's owning team; non-members are rejected. The single-worker `in_progress` invariant still applies; assignees declare ownership / intent, not concurrent claim. APPENDS by default on update; `overwriteArrays=true` REPLACES the full set.",
+      "'me' or team-member user UUIDs. Non-members are rejected. Declares ownership, not concurrent claim.",
     ),
   files: z
     .array(z.string().max(LIMITS.filePath))
     .max(LIMITS.files)
     .optional()
     .describe(
-      "Repo-relative paths created or modified (no leading slash, no absolute). Pass `files=[]` when nothing was touched (unscaffolded repo, research/spec-review/decision-only); never invent paths.",
+      "Repo-relative paths created or modified. Never invent paths; [] for work that touched no files.",
     ),
   implementationPlan: z
     .string()
     .max(LIMITS.plan)
     .optional()
     .describe(
-      "Implementation plan (markdown, unabridged; do not summarize). Pass with `status='planned'` to transition draft → planned; without the status change the task stays incomplete (lifecycle §1).",
+      "Implementation plan (markdown, unabridged). Pair with status='planned'.",
     ),
   executionRecord: z
     .string()
     .max(LIMITS.executionRecord)
     .optional()
     .describe(
-      "3-5 sentences on HOW it was built (function names, file paths, endpoints; distinct from description=scope). For cancelled: rationale + what was tried instead. Draft tasks must not carry this. Iron Law: cite real code, omit what you cannot. Markdown. Artifacts §1.",
+      "3-5 sentences on HOW it was built (file paths, function names). Only for tasks created already shipped or cancelled (rationale).",
     ),
   prUrl: z
     .url()
-    .nullable()
+    .max(LIMITS.url)
     .optional()
     .describe(
-      "PR URL for this task's code change. Sugar field that upserts a `task_links` row with kind derived from the URL classifier (`pull_request` for github.com/.../pull/N, gitlab.com/.../merge_requests/N). Pass alongside `status='in_review'` in the Completion Protocol payload; the composer-implementer subagent writes this in the same call as executionRecord/decisions/files/acceptanceCriteria. Pass `null` to remove an existing PR link. Other link kinds (issues, commits, docs) are user-managed via the UI; only PRs are agent-write today.",
-    ),
-  preview: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe(
-      "Delete only: true=show impact (default), false=actually delete.",
-    ),
-  overwriteArrays: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe(
-      "Update only. true=replace decisions/acceptanceCriteria/files; default false=append. Destructive, NO undo; confirm with user first.",
+      "PR URL; upserts a task_links row with kind derived from the URL.",
     ),
 });
 
-export const edgeInputSchema = z.object({
+/** One edge in a `piyaz_create` batch. */
+const createEdgeItemSchema = z.object({
+  source: z
+    .string()
+    .max(LIMITS.ref)
+    .describe("A `key` from this call, a taskRef ('PYZ-42'), or a task UUID."),
+  target: z
+    .string()
+    .max(LIMITS.ref)
+    .describe("A `key` from this call, a taskRef ('PYZ-42'), or a task UUID."),
+  type: z
+    .enum(["depends_on", "relates_to"])
+    .describe(
+      "depends_on = source needs target done first. relates_to = informational, neither blocks.",
+    ),
+  note: z
+    .string()
+    .max(LIMITS.edgeNote)
+    .describe(
+      "Why this relationship exists, as a brief to the developer starting the source task. REQUIRED; placeholders ('needed', 'depends', 'related') rejected.",
+    ),
+});
+
+export const createInputSchema = z.object({
+  project: projectRefParam.describe(
+    "Project identifier ('PYZ') or project UUID. Required.",
+  ),
+  tasks: z
+    .array(createTaskItemSchema)
+    .min(1)
+    .max(LIMITS.batchTasks)
+    .describe("1-25 tasks to create in one atomic call."),
+  edges: z
+    .array(createEdgeItemSchema)
+    .max(LIMITS.batchEdges)
+    .optional()
+    .describe(
+      "Edges wiring the new tasks to each other (by key) and/or to existing tasks (by taskRef or UUID). Existing identical edges are silently skipped.",
+    ),
+  onDuplicate: z
+    .enum(["skip", "error"])
+    .optional()
+    .describe(
+      "skip (default): items whose exact title already exists in the project create nothing and return as 'deduped' (idempotent re-run). error: reject the whole batch before any write.",
+    ),
+});
+
+/** One operation in a `piyaz_edit` call. Flat shape (no unions) for client
+ * compatibility; the server validates coherence and returns per-op
+ * corrective errors. */
+const editOpSchema = z.object({
+  op: z
+    .enum([
+      "str_replace",
+      "append",
+      "set",
+      "add",
+      "update",
+      "remove",
+      "check",
+      "uncheck",
+      "delete_task",
+    ])
+    .describe(
+      "str_replace/append target a text field. set targets a text field or scalar field with value. add/update/remove/check/uncheck target a collection (by item id except add). delete_task must be the only op in the call.",
+    ),
+  field: z
+    .enum([
+      "description",
+      "implementationPlan",
+      "executionRecord",
+      "status",
+      "priority",
+      "estimate",
+      "category",
+      "title",
+      "tags",
+      "files",
+      "prUrl",
+    ])
+    .optional()
+    .describe(
+      "Target for text ops (description/implementationPlan/executionRecord) and scalar set (status/priority/estimate/category/title/tags/files/prUrl).",
+    ),
+  collection: z
+    .enum(["acceptanceCriteria", "decisions", "links", "assignees"])
+    .optional()
+    .describe("Target collection for add/update/remove/check/uncheck."),
+  oldStr: z
+    .string()
+    .max(LIMITS.plan)
+    .optional()
+    .describe(
+      "str_replace only: exact existing text, must match exactly once. Copy it from piyaz_get fields=[...] including whitespace; on a multiple-match error include more surrounding context.",
+    ),
+  newStr: z
+    .string()
+    .max(LIMITS.plan)
+    .optional()
+    .describe("str_replace only: replacement text."),
+  text: z
+    .string()
+    .max(LIMITS.plan)
+    .optional()
+    .describe(
+      "append: paragraph to add. set on a text field: the full new text. add/update on acceptanceCriteria/decisions: the item text.",
+    ),
+  value: z
+    .union([z.string(), z.number(), z.array(z.string()), z.null()])
+    .optional()
+    .describe(
+      "set on a scalar field: the new value (tags/files take arrays; prUrl takes a URL or null to remove). add/update on assignees: 'me' or a user UUID.",
+    ),
+  id: z
+    .string()
+    .max(LIMITS.ref)
+    .optional()
+    .describe(
+      "Item id for update/remove/check/uncheck. Read ids via piyaz_get lens='working' or fields=['acceptanceCriteria', ...].",
+    ),
+  checked: z
+    .boolean()
+    .optional()
+    .describe("add/update on acceptanceCriteria: the checked state."),
+  url: z
+    .string()
+    .max(LIMITS.url)
+    .optional()
+    .describe("add/update on links: the link URL."),
+  kind: z
+    .string()
+    .max(LIMITS.tag)
+    .optional()
+    .describe("add/update on links: link kind (defaults from URL classifier)."),
+  label: z
+    .string()
+    .max(LIMITS.title)
+    .optional()
+    .describe("add/update on links: display label."),
+  preview: z
+    .boolean()
+    .optional()
+    .describe(
+      "delete_task only. true (default)=impact summary; false=execute. Prefer set status='cancelled' for abandoned scope; delete only noise (accidental, duplicate, contentless).",
+    ),
+});
+
+export const editInputSchema = z.object({
+  task: taskRefParam.describe("taskRef ('PYZ-42') or task UUID. Required."),
+  ifUpdatedAt: z
+    .string()
+    .max(LIMITS.isoTimestamp)
+    .optional()
+    .describe(
+      "Optimistic-concurrency precondition: the task's updatedAt from your last read (piyaz_get emits it). If the task changed since, the call fails with the current updatedAt — re-read, then retry. Use for contended tasks.",
+    ),
+  operations: z
+    .array(editOpSchema)
+    .min(1)
+    .max(LIMITS.editOps)
+    .describe(
+      "1-20 operations applied in order, atomically: one failure rolls back all. delete_task must be the only op.",
+    ),
+});
+
+export const linkInputSchema = z.object({
   action: z
     .enum(["create", "update", "remove"])
     .describe(
-      "create=new edge. update=modify type or note. remove=delete by edgeId or by source+target+type.",
+      "create=new edge (source, target, type, note required). update=change the note (or type) of an edge keyed by source+target+type or edgeId. remove=delete by source+target+type or edgeId.",
     ),
-  edgeId: z
-    .uuid()
+  source: taskRefParam
     .optional()
     .describe(
-      "Edge UUID. Required for update. For remove: use this OR sourceTaskId+targetTaskId+edgeType.",
+      "Source taskRef ('PYZ-42') or UUID. Required for create; keys update/remove together with target+type.",
     ),
-  sourceTaskId: z
-    .uuid()
+  target: taskRefParam
     .optional()
     .describe(
-      "Source task UUID. Required for create. Alternative key for remove.",
+      "Target taskRef ('PYZ-42') or UUID. Required for create; keys update/remove together with source+type.",
     ),
-  targetTaskId: z
-    .uuid()
-    .optional()
-    .describe(
-      "Target task UUID. Required for create. Alternative key for remove.",
-    ),
-  edgeType: z
+  type: z
     .enum(["depends_on", "relates_to"])
     .optional()
     .describe(
-      "depends_on = source needs target done first. relates_to = informational link, neither blocks the other. Required for create.",
+      "depends_on = source needs target done first. relates_to = informational, neither blocks. Required for create.",
     ),
   note: z
     .string()
     .max(LIMITS.edgeNote)
     .optional()
     .describe(
-      "Why this relationship exists. Propagates to agent context for downstream tasks, so write it as a brief to the developer about to start the source task: what specifically does this task get from the target? REQUIRED on create; placeholders ('needed', 'depends', 'related') are rejected.",
+      "Why this relationship exists; propagates into downstream agent context. REQUIRED on create; placeholders ('needed', 'depends', 'related') rejected. Write what the source task gets from the target: a decision, code, a contract, a fixture.",
+    ),
+  edgeId: z
+    .uuid()
+    .optional()
+    .describe(
+      "Edge UUID, when known. Alternative key for update/remove; source+target+type works without it.",
     ),
 });
 
-export const queryInputSchema = z.object({
-  type: z
-    .enum(["search", "list", "edges", "meta", "overview"])
+export const mapInputSchema = z.object({
+  view: z
+    .enum([
+      "ready",
+      "blocked",
+      "plannable",
+      "critical_path",
+      "downstream",
+      "neighbors",
+    ])
     .describe(
-      "search=find tasks by taskRef, title, or tag (case-insensitive, up to 20). list=all tasks ordered by position. edges=relationships on a task. meta=slim project metadata (header, categories, tag vocab with counts, progress); use to look up categories or tag vocab without overview. overview=full project structure with progress + tag vocab + every task + every edge.",
+      "ready=planned tasks with all effective deps done (drafts surface under plannable). blocked=waiting tasks with blocker details. plannable=drafts with description+criteria, ready for planning. critical_path=longest dependency chain (the bottleneck; lead with this on resume). downstream=transitive dependents of one task (impact analysis before changes). neighbors=1-2 hops around one task, both edge types and directions, with notes.",
     ),
-  query: z
+  project: projectRefParam
+    .optional()
+    .describe(
+      "Project identifier ('PYZ') or UUID. Required for ready/blocked/plannable/critical_path.",
+    ),
+  task: taskRefParam
+    .optional()
+    .describe("taskRef ('PYZ-42') or UUID. Required for downstream/neighbors."),
+  hops: z
+    .union([z.literal(1), z.literal(2)])
+    .optional()
+    .describe("neighbors only: walk depth (default 1)."),
+  limit: z
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Row cap (default 50). Truncation names the narrowing filter."),
+});
+
+export const activityInputSchema = z.object({
+  project: projectRefParam
+    .optional()
+    .describe(
+      "Project identifier ('PYZ') or UUID. Pass exactly one of project or task.",
+    ),
+  task: taskRefParam
+    .optional()
+    .describe(
+      "taskRef ('PYZ-42') or UUID. Pass exactly one of project or task.",
+    ),
+  since: z
     .string()
-    .max(LIMITS.query)
+    .max(LIMITS.isoTimestamp)
     .optional()
     .describe(
-      "Search string for type='search'. Matches taskRef, title substring, or tag substring. Optional when `tags` is provided.",
+      "ISO timestamp lower bound (exclusive): only events after this instant. The resume primitive — pass the last moment you were caught up.",
     ),
-  tags: z
-    .array(z.string().max(LIMITS.tag))
-    .max(LIMITS.tags)
+  limit: z
+    .int()
+    .min(1)
+    .max(50)
     .optional()
-    .describe(
-      "Filter to tasks containing ANY of these exact tags (OR-within). Combine with `query` to narrow further. Pick from the tag vocabulary in `type='meta'`.",
-    ),
-  category: z
+    .describe("Page size, 1-50 (default 20)."),
+  cursor: z
     .string()
-    .max(LIMITS.category)
+    .max(LIMITS.cursor)
     .optional()
-    .describe(
-      "Filter to tasks in exactly this category (AND with `query`/`tags`). Must be one of the project's categories (closed vocabulary); unknown values are rejected. Run piyaz_query type='meta' for the current list.",
-    ),
-  taskId: z.uuid().optional().describe("Task UUID for type='edges'."),
-  projectId: z
-    .uuid()
-    .optional()
-    .describe("Project UUID. Required for search/list/meta/overview."),
-});
-
-export const contextInputSchema = z.object({
-  taskId: z.uuid().describe("Task UUID."),
-  depth: z
-    .enum(["summary", "working", "agent", "planning", "review"])
-    .default("working")
-    .describe(
-      "summary=task header + description + counts + 1-hop edges with notes (folds in `piyaz_query type='edges'`). working=criteria, decisions, 1-hop edges (both depends_on and relates_to, both directions, with notes) — does NOT render executionRecord, files, or implementationPlan. agent=multi-hop deps + upstream execution records (each with its PR link) + downstream; includes a ⚠ Blocked section when direct prerequisites are unfinished; for done/cancelled tasks returns the retrospective record bundle (project, what the task was, outcome, decisions, PR link) instead of the implementation shape (use BEFORE coding, and to read a finished task's record). No bundle renders recorded file lists — the linked PR diff is the source of truth for what changed. planning=project description, prereqs, ACs, downstream specs, links, and abandoned approaches (cancelled-dep execution records with their closed-PR links) (use BEFORE writing the implementation plan). review=in_review review bundle: implementationPlan alongside executionRecord, PR link surfaced, AC evaluation, downstream impact, review-lens prompts (security / perf / reliability / observability / codebase standards); review the actual changes from the PR diff. The review subagent reads this depth.",
-    ),
-  projectId: z
-    .uuid()
-    .optional()
-    .describe("Project UUID. Required for 'working' depth."),
-});
-
-export const analyzeInputSchema = z.object({
-  type: z
-    .enum(["ready", "blocked", "downstream", "critical_path", "plannable"])
-    .describe(
-      "ready=planned tasks with all deps done (drafts with deps satisfied surface as plannable, not ready). blocked=waiting tasks with blocker details. downstream=transitive dependents (impact analysis before changes). critical_path=longest dep chain (project bottleneck). plannable=draft tasks with description+criteria, ready for planning.",
-    ),
-  taskId: z.uuid().optional().describe("Task UUID. Required for 'downstream'."),
-  projectId: z
-    .uuid()
-    .optional()
-    .describe(
-      "Project UUID. Required for ready/blocked/critical_path/plannable.",
-    ),
+    .describe("Opaque cursor from a previous page's nextCursor."),
 });
 
 /** One tool's docs-relevant surface. */
@@ -392,52 +687,67 @@ export interface ToolDefinition {
   title: string;
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
-  /** Name of the enum field that selects the tool's action/variant. */
-  discriminator: string;
+  /** Name of the enum field that selects the tool's action/variant, or null
+   * when the tool has a single shape (no Actions table in the docs). */
+  discriminator: string | null;
 }
 
-/** All 6 tools in registration order. Titles match the MCP annotations. */
+/** All 8 tools in registration order. Titles match the MCP annotations. */
 export const TOOLS: readonly ToolDefinition[] = [
   {
-    name: "piyaz_project",
-    title: "Manage Project",
-    description: DESCRIPTIONS.piyaz_project,
-    inputSchema: projectInputSchema,
+    name: "piyaz_workspace",
+    title: "Workspace",
+    description: DESCRIPTIONS.piyaz_workspace,
+    inputSchema: workspaceInputSchema,
     discriminator: "action",
   },
   {
-    name: "piyaz_task",
-    title: "Manage Task",
-    description: DESCRIPTIONS.piyaz_task,
-    inputSchema: taskInputSchema,
-    discriminator: "action",
+    name: "piyaz_search",
+    title: "Search Tasks",
+    description: DESCRIPTIONS.piyaz_search,
+    inputSchema: searchInputSchema,
+    discriminator: null,
   },
   {
-    name: "piyaz_edge",
+    name: "piyaz_get",
+    title: "Get Task or Project",
+    description: DESCRIPTIONS.piyaz_get,
+    inputSchema: getInputSchema,
+    discriminator: "lens",
+  },
+  {
+    name: "piyaz_create",
+    title: "Create Tasks",
+    description: DESCRIPTIONS.piyaz_create,
+    inputSchema: createInputSchema,
+    discriminator: null,
+  },
+  {
+    name: "piyaz_edit",
+    title: "Edit Task",
+    description: DESCRIPTIONS.piyaz_edit,
+    inputSchema: editInputSchema,
+    discriminator: null,
+  },
+  {
+    name: "piyaz_link",
     title: "Manage Edge",
-    description: DESCRIPTIONS.piyaz_edge,
-    inputSchema: edgeInputSchema,
+    description: DESCRIPTIONS.piyaz_link,
+    inputSchema: linkInputSchema,
     discriminator: "action",
   },
   {
-    name: "piyaz_query",
-    title: "Query Tasks",
-    description: DESCRIPTIONS.piyaz_query,
-    inputSchema: queryInputSchema,
-    discriminator: "type",
+    name: "piyaz_map",
+    title: "Map Graph",
+    description: DESCRIPTIONS.piyaz_map,
+    inputSchema: mapInputSchema,
+    discriminator: "view",
   },
   {
-    name: "piyaz_context",
-    title: "Get Task Context",
-    description: DESCRIPTIONS.piyaz_context,
-    inputSchema: contextInputSchema,
-    discriminator: "depth",
-  },
-  {
-    name: "piyaz_analyze",
-    title: "Analyze Graph",
-    description: DESCRIPTIONS.piyaz_analyze,
-    inputSchema: analyzeInputSchema,
-    discriminator: "type",
+    name: "piyaz_activity",
+    title: "Activity Feed",
+    description: DESCRIPTIONS.piyaz_activity,
+    inputSchema: activityInputSchema,
+    discriminator: null,
   },
 ] as const;

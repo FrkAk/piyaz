@@ -37,7 +37,10 @@ import {
 } from "@/lib/db/schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
 import {
+  taskFieldsStmt,
   taskFullStmt,
+  type TaskFieldName,
+  type TaskFieldsRawRow,
   type TaskFullRawRow,
 } from "@/lib/db/raw/fetch-task-full";
 import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
@@ -569,6 +572,33 @@ export async function getTaskFull(
     normalizeExecuteResult<TaskFullRawRow>(fullRaw),
     taskId,
   );
+}
+
+/**
+ * Read exactly the requested task fields in one RLS-scoped round trip. The
+ * MCP `piyaz_get fields=[...]` path: only the requested columns are
+ * egressed; identity columns and `updated_at` always ride along for ref
+ * composition and `ifUpdatedAt` preconditions. RLS hides rows the caller
+ * cannot access, so an empty result is 404-shaped like {@link getTaskFull}.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @param fields - Field names to project.
+ * @returns The raw field-projected row.
+ * @throws ForbiddenError when no row is visible to the caller.
+ */
+export async function getTaskFields(
+  ctx: AuthContext,
+  taskId: string,
+  fields: readonly TaskFieldName[],
+): Promise<TaskFieldsRawRow> {
+  assertValidTaskId(taskId);
+  const [raw] = await withUserContextRead(ctx.userId, (read) => [
+    taskFieldsStmt(read, taskId, fields),
+  ]);
+  const [row] = normalizeExecuteResult<TaskFieldsRawRow>(raw);
+  if (!row) throw new ForbiddenError("Forbidden", "task", taskId);
+  return row;
 }
 
 /**
@@ -2822,7 +2852,7 @@ export type TaskUpdate = {
 /**
  * Update result enriches the raw `Task` row with the post-write criteria
  * and decisions so callers that consult them (completion-protocol hint
- * checks in `lib/graph/tool-handlers.ts`) see the same shape they saw on
+ * checks in `lib/graph/tools/edit.ts`) see the same shape they saw on
  * the JSONB-storage path.
  *
  * Partial contract: `acceptanceCriteria` and `decisions` are the
