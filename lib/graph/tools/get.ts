@@ -205,7 +205,10 @@ export async function handleGet(
       limit: p.limit,
       detail: p.detail,
     });
-    return ok(rendered.text);
+    return ok(
+      rendered.text,
+      rendered.truncated ? { truncated: true } : undefined,
+    );
   } catch (e) {
     return translateError(e);
   }

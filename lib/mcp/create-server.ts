@@ -87,6 +87,8 @@ function wrapTool<P>(
   return async (params: P) => {
     const started = Date.now();
     let response: McpResponse;
+    let truncated: boolean | undefined;
+    let errName: string | undefined;
     try {
       if (opts.heavy?.(params)) {
         const check = await getBackend("mcpHeavy").check(
@@ -101,10 +103,13 @@ function wrapTool<P>(
           return response;
         }
       }
-      response = toMcp(await handler(params, ctx));
+      const result = await handler(params, ctx);
+      if (result.ok) truncated = result.meta?.truncated;
+      response = toMcp(result);
       return response;
     } catch (e) {
       console.error(`[mcp:${name}] error:`, e);
+      errName = e instanceof Error ? e.name : "unknown";
       const verbose = process.env.NODE_ENV === "development";
       response = err(
         verbose && e instanceof Error ? e.message : "Internal error",
@@ -125,6 +130,8 @@ function wrapTool<P>(
           ok: !("isError" in response!),
           ms: Date.now() - started,
           bytesOut,
+          ...(truncated !== undefined && { truncated }),
+          ...(errName !== undefined && { err: errName }),
         }),
       );
     }

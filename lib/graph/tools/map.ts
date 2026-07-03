@@ -51,22 +51,26 @@ const MAP_DEFAULT_LIMIT = 50;
 /**
  * Cap a view's rows at the caller's limit and render the remainder as a
  * guidance line, so no map view can dump an unbounded task or edge list.
+ * Truncation is flagged on the result meta for the per-call log line.
  *
  * @param rows - Full row list from the traversal.
  * @param limit - Caller-supplied cap (defaults to {@link MAP_DEFAULT_LIMIT}).
  * @param format - Formatter for the kept rows.
  * @param guidance - How to fetch the remainder.
- * @returns The formatted view, with a truncation line when rows were dropped.
+ * @returns Success ToolResult with the formatted view.
  */
 function budgeted<T>(
   rows: T[],
   limit: number | undefined,
   format: (kept: T[]) => string,
   guidance: string,
-): string {
+): ToolResult {
   const cap = limit ?? MAP_DEFAULT_LIMIT;
-  if (rows.length <= cap) return format(rows);
-  return `${format(rows.slice(0, cap))}\n… +${rows.length - cap} more — ${guidance}`;
+  if (rows.length <= cap) return ok(format(rows));
+  return ok(
+    `${format(rows.slice(0, cap))}\n… +${rows.length - cap} more — ${guidance}`,
+    { truncated: true },
+  );
 }
 
 /**
@@ -87,24 +91,20 @@ export async function handleMap(
         );
       const taskId = await requireTaskId(ctx, p.task);
       if (p.view === "downstream") {
-        return ok(
-          budgeted(
-            await getDownstream(ctx, taskId),
-            p.limit,
-            formatDownstream,
-            "raise limit, or inspect a specific dependent with piyaz_get",
-          ),
+        return budgeted(
+          await getDownstream(ctx, taskId),
+          p.limit,
+          formatDownstream,
+          "raise limit, or inspect a specific dependent with piyaz_get",
         );
       }
       const neighbors = await getNeighbors(ctx, taskId, p.hops ?? 1);
       const origin = p.task;
-      return ok(
-        budgeted(
-          neighbors,
-          p.limit,
-          (kept) => formatNeighbors(kept, origin),
-          "raise limit, or walk hops=1 first",
-        ),
+      return budgeted(
+        neighbors,
+        p.limit,
+        (kept) => formatNeighbors(kept, origin),
+        "raise limit, or walk hops=1 first",
       );
     }
 
@@ -116,40 +116,32 @@ export async function handleMap(
     const narrow = `narrow with piyaz_search project='${p.project}' status=[...] or raise limit`;
     switch (p.view) {
       case "ready":
-        return ok(
-          budgeted(
-            await getReadyTasks(ctx, projectId),
-            p.limit,
-            formatReadyTasks,
-            narrow,
-          ),
+        return budgeted(
+          await getReadyTasks(ctx, projectId),
+          p.limit,
+          formatReadyTasks,
+          narrow,
         );
       case "blocked":
-        return ok(
-          budgeted(
-            await getBlockedTasks(ctx, projectId),
-            p.limit,
-            formatBlockedTasks,
-            narrow,
-          ),
+        return budgeted(
+          await getBlockedTasks(ctx, projectId),
+          p.limit,
+          formatBlockedTasks,
+          narrow,
         );
       case "plannable":
-        return ok(
-          budgeted(
-            await getPlannableTasks(ctx, projectId),
-            p.limit,
-            formatPlannableTasks,
-            narrow,
-          ),
+        return budgeted(
+          await getPlannableTasks(ctx, projectId),
+          p.limit,
+          formatPlannableTasks,
+          narrow,
         );
       case "critical_path":
-        return ok(
-          budgeted(
-            await getCriticalPath(ctx, projectId),
-            p.limit,
-            formatCriticalPath,
-            narrow,
-          ),
+        return budgeted(
+          await getCriticalPath(ctx, projectId),
+          p.limit,
+          formatCriticalPath,
+          narrow,
         );
     }
   } catch (e) {

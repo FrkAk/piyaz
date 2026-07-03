@@ -52,14 +52,24 @@ import { unwrapDriverError } from "@/lib/db/errors";
 // Result type
 // ---------------------------------------------------------------------------
 
+/** Observability metadata a handler attaches to a successful result. */
+export type ToolResultMeta = {
+  /** True when the response was budget-truncated (logged per call). */
+  truncated?: boolean;
+};
+
 /** Discriminated result from a tool handler. */
 export type ToolResult =
-  | { ok: true; data: unknown }
+  | { ok: true; data: unknown; meta?: ToolResultMeta }
   | { ok: false; error: string };
 
-/** @returns Success result wrapping data. */
-export function ok(data: unknown): ToolResult {
-  return { ok: true, data };
+/**
+ * @param data - Result payload.
+ * @param meta - Optional observability metadata for the per-call log line.
+ * @returns Success result wrapping data.
+ */
+export function ok(data: unknown, meta?: ToolResultMeta): ToolResult {
+  return meta ? { ok: true, data, meta } : { ok: true, data };
 }
 
 /** @returns Failure result with actionable message. */

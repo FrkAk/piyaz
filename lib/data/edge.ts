@@ -411,6 +411,29 @@ export async function listDependsOnEdges(sourceTaskIds: string[], conn: Conn) {
  * @returns The created edge.
  * @throws Error if validation fails.
  */
+/**
+ * Every `depends_on` edge inside a project, in one join. The batch cycle
+ * check's input without materializing the project's task-id list into an
+ * IN clause; edges are intra-project, so joining the source endpoint
+ * suffices.
+ *
+ * @param conn - Connection or transaction handle.
+ * @param projectId - Owning project id.
+ * @returns Source/target pairs of every depends_on edge in the project.
+ */
+export async function listProjectDependsOnEdges(conn: Conn, projectId: string) {
+  return conn
+    .select({
+      sourceTaskId: taskEdges.sourceTaskId,
+      targetTaskId: taskEdges.targetTaskId,
+    })
+    .from(taskEdges)
+    .innerJoin(tasks, eq(tasks.id, taskEdges.sourceTaskId))
+    .where(
+      and(eq(tasks.projectId, projectId), eq(taskEdges.edgeType, "depends_on")),
+    );
+}
+
 /** Cap on intermediate nodes rendered in a cycle-rejection loop. */
 const CYCLE_RENDER_MAX_INTERMEDIATES = 6;
 

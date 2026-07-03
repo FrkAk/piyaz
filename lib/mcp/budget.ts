@@ -32,24 +32,3 @@ export function budgetLines(
   kept.push(`… +${lines.length - limit} more — ${guidance}`);
   return { lines: kept, truncated: true };
 }
-
-/**
- * Cap a text section at `maxChars`, appending guidance when cut. Cuts at the
- * last newline before the limit so no line is left half-rendered.
- *
- * @param text - Section text.
- * @param maxChars - Maximum characters to keep.
- * @param guidance - How to fetch the full content.
- * @returns The possibly-truncated text.
- */
-export function truncateSection(
-  text: string,
-  maxChars: number,
-  guidance: string,
-): string {
-  if (text.length <= maxChars) return text;
-  const slice = text.slice(0, maxChars);
-  const lastBreak = slice.lastIndexOf("\n");
-  const kept = lastBreak > 0 ? slice.slice(0, lastBreak) : slice;
-  return `${kept}\n… truncated — ${guidance}`;
-}

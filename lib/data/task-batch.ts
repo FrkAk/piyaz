@@ -19,7 +19,10 @@ import {
   type CreateTaskInput,
   type CreatedTaskSummary,
 } from "@/lib/data/task";
-import { composeTaskRefsForIds, listDependsOnEdges } from "@/lib/data/edge";
+import {
+  composeTaskRefsForIds,
+  listProjectDependsOnEdges,
+} from "@/lib/data/edge";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import {
   CrossProjectEdgeError,
@@ -517,14 +520,7 @@ async function applyBatchEdges(
 
   const newDependsOn = toInsert.filter((e) => e.type === "depends_on");
   if (newDependsOn.length > 0) {
-    const idRows = await tx
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(eq(tasks.projectId, projectId));
-    const existingDeps = await listDependsOnEdges(
-      idRows.map((r) => r.id),
-      tx,
-    );
+    const existingDeps = await listProjectDependsOnEdges(tx, projectId);
     const adj = new Map<string, string[]>();
     const link = (s: string, t: string): void => {
       const list = adj.get(s) ?? [];

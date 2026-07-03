@@ -181,6 +181,7 @@ test("get overview truncates status groups at the limit with search guidance", a
   const text = okText(result);
   expect(text).toContain("+2 more");
   expect(text).toContain("piyaz_search project='PRJTGETOV'");
+  expect(result.ok && result.meta?.truncated).toBe(true);
 });
 
 test("map neighbors walks by ref and renders notes", async () => {
@@ -237,6 +238,7 @@ test("map views truncate at the limit with narrowing guidance", async () => {
   const text = okText(result);
   expect(text).toContain("+2 more");
   expect(text).toContain("piyaz_search project='PRJTMAPLIM'");
+  expect(result.ok && result.meta?.truncated).toBe(true);
 });
 
 test("activity requires exactly one of project or task", async () => {
