@@ -113,14 +113,19 @@ export async function handleWorkspace(
         if (p.status !== undefined) changes.status = p.status;
         if (p.categories !== undefined) changes.categories = p.categories;
 
+        const parsed =
+          p.identifier !== undefined ? parseIdentifier(p.identifier) : null;
+        if (parsed && !parsed.ok) return fail(parsed.error);
+
         let project: Project | undefined;
-        if (p.identifier !== undefined) {
-          const parsed = parseIdentifier(p.identifier);
-          if (!parsed.ok) return fail(parsed.error);
-          project = await renameProjectIdentifier(ctx, projectId, parsed.value);
-        }
         if (Object.keys(changes).length > 0) {
           project = await updateProject(ctx, projectId, changes);
+        }
+        // The rename runs last: the two writes are separate transactions,
+        // and a failure between them must not leave the taskRef-cascading
+        // rename committed while the field update never happened.
+        if (parsed?.ok) {
+          project = await renameProjectIdentifier(ctx, projectId, parsed.value);
         }
 
         const updateHints: string[] = [];

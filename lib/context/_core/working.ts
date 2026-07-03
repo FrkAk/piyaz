@@ -235,17 +235,24 @@ function formatCriteriaSection(node: Record<string, unknown>): string {
 }
 
 /**
- * Format decisions section.
+ * Format decisions section. Each line carries the item's backticked id —
+ * the working lens is the edit-address read, so decisions must be
+ * addressable by `piyaz_edit` by-id ops just like acceptance criteria.
  * @param node - Raw node data.
  * @returns Formatted decisions section or empty string.
  */
 function formatDecisionsSection(node: Record<string, unknown>): string {
   const decisions =
-    (node.decisions as { text: string; source: string; date: string }[]) ?? [];
+    (node.decisions as {
+      id: string;
+      text: string;
+      source: string;
+      date: string;
+    }[]) ?? [];
   if (decisions.length === 0) return "";
   const lines = ["## Decisions"];
   for (const d of decisions) {
-    lines.push(`- [${d.source}] ${d.text} (${d.date})`);
+    lines.push(`- [${d.source}] \`${d.id}\` ${d.text} (${d.date})`);
   }
   return lines.join("\n");
 }

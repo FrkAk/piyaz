@@ -31,7 +31,7 @@ project: "Project working-ctx-golden" > task: "Central task"
 - [ ] \`<uuid>\` It works
 
 ## Decisions
-- [explicit] Use approach X (2026-05-16)
+- [explicit] \`<uuid>\` Use approach X (2026-05-16)
 
 ## Connected Tasks
 - depends_on → \`PRJ-1\` "Prereq task" (done) — needs prereq output
