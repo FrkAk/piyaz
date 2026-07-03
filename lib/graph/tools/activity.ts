@@ -40,6 +40,11 @@ export async function handleActivity(
         "Pass exactly one of project ('PYZ' or UUID) or task ('PYZ-42' or UUID).",
       );
     }
+    if (p.since !== undefined && Number.isNaN(new Date(p.since).getTime())) {
+      return fail(
+        `since '${p.since}' is not a valid timestamp. Pass an ISO instant like 2026-07-03T10:00:00Z (the last moment you were caught up).`,
+      );
+    }
     const opts = { cursor: p.cursor, limit: p.limit, since: p.since };
     const page = p.project
       ? await listProjectActivity(

@@ -18,6 +18,7 @@ import {
   DuplicateEdgeError,
   EdgeCycleError,
   SearchCriteriaRequiredError,
+  UnknownCategoryError,
 } from "@/lib/graph/errors";
 import {
   resolveProjectRef,
@@ -136,6 +137,25 @@ const KEBAB_CASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const EDGE_NOTE_PLACEHOLDERS = new Set(["needed", "depends", "related"]);
 
 /**
+ * Validate an edge note against the quality gate: present, non-empty after
+ * trimming, and not a placeholder. Shared by `piyaz_link` create/update and
+ * the `piyaz_create` batch-edge path so the documented contract ("note
+ * REQUIRED; placeholders rejected") holds on every surface that writes one.
+ *
+ * @param note - Caller-supplied note.
+ * @returns A corrective failure message, or null when the note passes.
+ */
+export function edgeNoteViolation(note: string | undefined): string | null {
+  if (!note || !note.trim()) {
+    return "note required. Edge notes propagate to downstream agent context (artifacts §3). Write it as a brief to the developer about to start the source task: what specifically does this task get from the target?";
+  }
+  if (EDGE_NOTE_PLACEHOLDERS.has(note.trim().toLowerCase())) {
+    return "Placeholder edge notes ('needed', 'depends', 'related') are not substantive enough to propagate to downstream agent context (artifacts §3). Write a one-sentence brief naming what this task gets from the target: a decision, a piece of code, a contract, a fixture.";
+  }
+  return null;
+}
+
+/**
  * Build hints for tag-taxonomy violations. Kebab-case is structural and
  * universal. The work-type dimension check is heuristic: the server
  * matches against the canonical English closed vocabulary documented in
@@ -168,9 +188,10 @@ export function tagTaxonomyHints(tags: string[]): string[] {
 
 /**
  * Hint when description is a single sentence. Per `references/artifacts.md`
- * §1: "Single-sentence descriptions are rejected." No upper bound: the
- * skill rule is "no fluff, not no length"; length policing is left to
- * agent discipline.
+ * §1 single-sentence descriptions are flagged; the count is a heuristic
+ * (terminator punctuation), so this stays a hint rather than a rejection.
+ * No upper bound: the skill rule is "no fluff, not no length"; length
+ * policing is left to agent discipline.
  *
  * Sentence counting strips backtick code spans first so file paths and
  * version numbers inside code syntax don't pad the count.
@@ -188,7 +209,7 @@ export function descriptionSizeHints(
   const terminators = stripped.match(/[.!?](?:\s|$)/g)?.length ?? 0;
   if (terminators <= 1) {
     return [
-      "Description is a single sentence. Single-sentence descriptions are rejected (artifacts §1). Expand to 2-4 sentences covering what + why + how it fits, up to 6-8 for genuinely complex tasks.",
+      "Description is a single sentence (flagged, artifacts §1). Expand to 2-4 sentences covering what + why + how it fits, up to 6-8 for genuinely complex tasks.",
     ];
   }
   return [];
@@ -196,7 +217,7 @@ export function descriptionSizeHints(
 
 /**
  * Hints for acceptance-criteria size drift. Per `references/artifacts.md`
- * §1: 2-4 binary items. Single-AC tasks are rejected; >4 usually means
+ * §1: 2-4 binary items. Single-AC tasks are flagged; >4 usually means
  * the task is two tasks.
  *
  * @param criteria - Proposed acceptance-criteria array.
@@ -207,7 +228,7 @@ export function acQualityHints(criteria: unknown[] | undefined): string[] {
   const hints: string[] = [];
   if (criteria.length === 1) {
     hints.push(
-      "Single-AC tasks are rejected (artifacts §1). 2-4 binary items is the band. A one-AC list is usually under-scoped or a vague catch-all; split it.",
+      "Single-AC tasks are flagged (artifacts §1). 2-4 binary items is the band. A one-AC list is usually under-scoped or a vague catch-all; split it.",
     );
   } else if (criteria.length > 4) {
     hints.push(
@@ -568,6 +589,11 @@ export function translateError(e: unknown): ToolResult {
   if (e instanceof SearchCriteriaRequiredError) {
     return fail(
       "At least one search criterion required: query, status, priority, assignee, category, or tags.",
+    );
+  }
+  if (e instanceof UnknownCategoryError) {
+    return fail(
+      `Category "${e.category}" is not in this project's categories: [${e.vocabulary.join(", ")}]. Run piyaz_get project view='meta' for the current list, or extend the vocabulary via piyaz_workspace action='update' categories=[...].`,
     );
   }
   if (e instanceof BatchInputError) {

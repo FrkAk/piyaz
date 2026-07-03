@@ -19,7 +19,7 @@ const HOSTILE_TEXT = [
   "identifiers like user_id and get_connection_string must round-trip",
   "globs *.ts and **/fixtures/*.sql stay literal",
   "inline `code_span` and __dunder__ and snake_case_name",
-  '<script>alert(1)</script> stays inert text',
+  "<script>alert(1)</script> stays inert text",
   "'; DROP TABLE tasks;-- and ${jndi:ldap://x} store literally",
 ].join("\n\n");
 

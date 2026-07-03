@@ -22,6 +22,7 @@ import {
   acQualityHints,
   descriptionSizeHints,
   draftFieldHints,
+  edgeNoteViolation,
   requireProjectId,
   tagTaxonomyHints,
   tagVariantHints,
@@ -173,6 +174,18 @@ export async function handleCreate(
       return fail(
         `Item key '${conflictingKey}' is taskRef-shaped and would be ambiguous as an edge endpoint. Use a plain word key (e.g. 'auth').`,
       );
+    }
+    for (const [i, e] of (p.edges ?? []).entries()) {
+      const violation = edgeNoteViolation(e.note);
+      if (violation) return fail(`edges[${i}]: ${violation}`);
+    }
+    for (const [i, t] of p.tasks.entries()) {
+      const badAssignee = t.assigneeIds?.find((a) => a !== "me" && !isUuid(a));
+      if (badAssignee !== undefined) {
+        return fail(
+          `tasks[${i}]: assigneeIds entry '${badAssignee}' must be 'me' or a team-member user UUID. No writes happened.`,
+        );
+      }
     }
     const edges = await resolveEdgeRefs(ctx, p.edges ?? [], keys);
 

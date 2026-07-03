@@ -19,6 +19,7 @@ import {
 } from "@/lib/data/task-edit";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
+import { UnknownCategoryError } from "@/lib/graph/errors";
 
 afterEach(async () => {
   await truncateAll();
@@ -686,4 +687,163 @@ test("link update to another link's url raises DuplicateLinkUrlError", async () 
     },
   ]).catch((e: unknown) => e);
   expect(err).toBeInstanceOf(DuplicateLinkUrlError);
+});
+
+test("by-id ops reject a non-UUID id before any query", async () => {
+  const f = await seedUserOrgProject("uuid-guard");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  const ops = [
+    { op: "remove", collection: "acceptanceCriteria", id: "bogus-id" },
+    { op: "check", collection: "acceptanceCriteria", id: "bogus-id" },
+    { op: "update", collection: "decisions", id: "bogus-id", text: "x" },
+    { op: "remove", collection: "links", id: "bogus-id" },
+  ] as const;
+  for (const op of ops) {
+    const err = await applyTaskEdit(ctx, task.id, [
+      op as unknown as Parameters<typeof applyTaskEdit>[2][number],
+    ]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InvalidEditOpError);
+    expect((err as Error).message).toContain("not an item UUID");
+  }
+});
+
+test("assignee ops reject a value that is neither 'me' nor a UUID", async () => {
+  const f = await seedUserOrgProject("assignee-shape");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  const err = await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "assignees", value: "not-a-uuid" },
+  ]).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(InvalidEditOpError);
+  expect((err as Error).message).toContain("'me' or a user UUID");
+});
+
+test("set title and set description reject empty text", async () => {
+  const f = await seedUserOrgProject("empty-set");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  await expect(
+    applyTaskEdit(ctx, task.id, [{ op: "set", field: "title", value: "  " }]),
+  ).rejects.toBeInstanceOf(InvalidEditOpError);
+  await expect(
+    applyTaskEdit(ctx, task.id, [
+      { op: "set", field: "description", text: "  " },
+    ]),
+  ).rejects.toBeInstanceOf(InvalidEditOpError);
+});
+
+test("malformed ifUpdatedAt is a validation error, not a stale write", async () => {
+  const f = await seedUserOrgProject("bad-cas");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  const err = await applyTaskEdit(
+    ctx,
+    task.id,
+    [{ op: "set", field: "priority", value: "core" }],
+    "not-a-timestamp",
+  ).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(InvalidEditOpError);
+  expect((err as Error).message).toContain("not a valid timestamp");
+});
+
+test("set category outside the project vocabulary is rejected with the vocabulary", async () => {
+  const f = await seedUserOrgProject("cat-vocab");
+  const ctx = makeAuthContext(f.userId);
+  const sql = superuserPool();
+  await sql`
+    UPDATE projects SET categories = ${JSON.stringify(["backend", "mcp"])}::jsonb
+    WHERE id = ${f.projectId}`;
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  const err = await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "category", value: "zzz_invalid" },
+  ]).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(UnknownCategoryError);
+  expect((err as UnknownCategoryError).vocabulary).toEqual(["backend", "mcp"]);
+
+  const res = asEdit(
+    await applyTaskEdit(ctx, task.id, [
+      { op: "set", field: "category", value: "mcp" },
+    ]),
+  );
+  expect(res.category).toBe("mcp");
+});
+
+test("set category passes freely when the vocabulary is empty", async () => {
+  const f = await seedUserOrgProject("cat-empty");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  const res = asEdit(
+    await applyTaskEdit(ctx, task.id, [
+      { op: "set", field: "category", value: "anything" },
+    ]),
+  );
+  expect(res.category).toBe("anything");
+});
+
+test("link add honors label and kind overrides and rejects unknown kinds", async () => {
+  const f = await seedUserOrgProject("link-meta");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  await applyTaskEdit(ctx, task.id, [
+    {
+      op: "add",
+      collection: "links",
+      url: "https://example.com/spec",
+      kind: "doc",
+      label: "Design doc",
+    },
+  ]);
+  const full = await getTaskFull(ctx, task.id);
+  const link = full.links.find((l) => l.url.includes("example.com"));
+  expect(link?.kind).toBe("doc");
+  expect(link?.label).toBe("Design doc");
+
+  const err = await applyTaskEdit(ctx, task.id, [
+    {
+      op: "add",
+      collection: "links",
+      url: "https://example.com/other",
+      kind: "bogus",
+    },
+  ]).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(InvalidEditOpError);
+  expect((err as Error).message).toContain(
+    "pull_request, issue, commit, doc, link",
+  );
 });

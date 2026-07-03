@@ -27,6 +27,7 @@ import {
   EdgeCycleError,
   SelfEdgeError,
   TaskLimitError,
+  UnknownCategoryError,
 } from "@/lib/graph/errors";
 import { formatMarkdown } from "@/lib/markdown/format";
 import { parseEnvInt } from "@/lib/config/env";
@@ -262,6 +263,18 @@ export async function createTasksBatch(
   const result = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
     const identifier = access.project.identifier;
+    const vocabulary = access.project.categories;
+    if (vocabulary.length > 0) {
+      const invalid = preparedItems.find(
+        (p) => p.data.category != null && !vocabulary.includes(p.data.category),
+      );
+      if (invalid) {
+        throw new UnknownCategoryError(
+          invalid.data.category as string,
+          vocabulary,
+        );
+      }
+    }
     await acquireProjectLock(tx, projectId);
 
     const [maxRow] = await tx

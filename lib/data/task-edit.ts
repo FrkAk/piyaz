@@ -3,6 +3,7 @@ import "server-only";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import {
+  projects,
   tasks,
   taskAcceptanceCriteria,
   taskDecisions,
@@ -11,9 +12,14 @@ import {
   type Task,
 } from "@/lib/db/schema";
 import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
-import { assertTaskAccessTx, ForbiddenError } from "@/lib/auth/authorization";
+import {
+  assertTaskAccessTx,
+  ForbiddenError,
+  isUuid,
+} from "@/lib/auth/authorization";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
-import type { ClassifiedLink } from "@/lib/links/classify";
+import type { ClassifiedLink, LinkKind } from "@/lib/links/classify";
+import { UnknownCategoryError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import {
@@ -221,6 +227,13 @@ const PRIORITIES = [
   "backlog",
 ] as const satisfies readonly Priority[];
 const ESTIMATES = [1, 2, 3, 5, 8, 13] as const satisfies readonly Estimate[];
+const LINK_KINDS = [
+  "pull_request",
+  "issue",
+  "commit",
+  "doc",
+  "link",
+] as const satisfies readonly LinkKind[];
 
 /** Defensive cap on ops per call. */
 const MAX_OPS = 20;
@@ -312,6 +325,28 @@ function isRowField(field: string): field is RowScalarField {
  */
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
+/**
+ * Validate a by-id op target: present and UUID-shaped, so a malformed id
+ * never reaches a Postgres `::uuid` cast as a raw driver error.
+ *
+ * @param id - Candidate item id.
+ * @param requires - Message when the id is absent.
+ * @param bad - Throws {@link InvalidEditOpError} with the op index.
+ * @returns The validated id.
+ */
+function requireItemUuid(
+  id: unknown,
+  requires: string,
+  bad: (reason: string) => never,
+): string {
+  if (typeof id !== "string") bad(requires);
+  if (!isUuid(id))
+    bad(
+      `id '${id}' is not an item UUID. Read item ids via piyaz_get lens='working' or fields=[...].`,
+    );
+  return id;
 }
 
 /**
@@ -443,6 +478,10 @@ function prepareSetOp(
     if (field === "description") {
       if (typeof value !== "string")
         bad("set description requires string text");
+      if (!value.trim())
+        bad(
+          "set description requires non-empty text; every task needs a description. To rework it, str_replace against the current text instead",
+        );
       return { kind: "text", op: { t: "set", field, value } };
     }
     if (value !== null && typeof value !== "string")
@@ -496,7 +535,8 @@ function validateRowValue(
         bad("set category requires a string or null value");
       return;
     case "title":
-      if (typeof value !== "string") bad("set title requires a string value");
+      if (typeof value !== "string" || !value.trim())
+        bad("set title requires non-empty text (verb+noun, imperative)");
       return;
     case "tags":
       if (!isStringArray(value)) bad("set tags requires an array of strings");
@@ -528,10 +568,10 @@ function prepareCollectionOp(
   if (op.op === "check" || op.op === "uncheck") {
     if (collection !== "acceptanceCriteria")
       bad(`op='${op.op}' is only valid on acceptanceCriteria`);
-    if (typeof op.id !== "string") bad(`op='${op.op}' requires id`);
+    const id = requireItemUuid(op.id, `op='${op.op}' requires id`, bad);
     return {
       kind: "criteria",
-      op: { t: "check", id: op.id, checked: op.op === "check" },
+      op: { t: "check", id, checked: op.op === "check" },
     };
   }
   switch (collection) {
@@ -567,18 +607,26 @@ function prepareCriteriaMutation(
     return { t: "add", text: op.text, checked: op.checked };
   }
   if (op.op === "remove") {
-    if (typeof op.id !== "string") bad("remove acceptanceCriteria requires id");
-    return { t: "remove", id: op.id };
+    const id = requireItemUuid(
+      op.id,
+      "remove acceptanceCriteria requires id",
+      bad,
+    );
+    return { t: "remove", id };
   }
   if (op.op === "update") {
-    if (typeof op.id !== "string") bad("update acceptanceCriteria requires id");
+    const id = requireItemUuid(
+      op.id,
+      "update acceptanceCriteria requires id",
+      bad,
+    );
     if (op.text === undefined && op.checked === undefined)
       bad("update acceptanceCriteria requires text or checked");
     if (op.text !== undefined && typeof op.text !== "string")
       bad("acceptanceCriteria text must be a string");
     if (op.checked !== undefined && typeof op.checked !== "boolean")
       bad("acceptanceCriteria checked must be a boolean");
-    return { t: "update", id: op.id, text: op.text, checked: op.checked };
+    return { t: "update", id, text: op.text, checked: op.checked };
   }
   return bad(`op='${op.op}' is not valid on acceptanceCriteria`);
 }
@@ -599,19 +647,21 @@ function prepareDecisionMutation(
     return { t: "add", text: op.text };
   }
   if (op.op === "remove") {
-    if (typeof op.id !== "string") bad("remove decisions requires id");
-    return { t: "remove", id: op.id };
+    const id = requireItemUuid(op.id, "remove decisions requires id", bad);
+    return { t: "remove", id };
   }
   if (op.op === "update") {
-    if (typeof op.id !== "string") bad("update decisions requires id");
+    const id = requireItemUuid(op.id, "update decisions requires id", bad);
     if (typeof op.text !== "string") bad("update decisions requires text");
-    return { t: "update", id: op.id, text: op.text };
+    return { t: "update", id, text: op.text };
   }
   return bad(`op='${op.op}' is not valid on decisions`);
 }
 
 /**
- * Prepare a link `add`/`update`/`remove`, classifying supplied URLs.
+ * Prepare a link `add`/`update`/`remove`, classifying supplied URLs. A
+ * caller-supplied `kind` (validated against {@link LINK_KINDS}) or non-empty
+ * `label` overrides the classifier's derivation.
  *
  * @param op - Raw op.
  * @param taskId - Task the edit targets.
@@ -623,22 +673,32 @@ function prepareLinkMutation(
   taskId: string,
   bad: (reason: string) => never,
 ): PreparedLink {
+  const overridden = (url: string): ClassifiedLink => {
+    const classified = classifyOrForbid(url, taskId, "url");
+    if (
+      op.kind !== undefined &&
+      !(LINK_KINDS as readonly string[]).includes(op.kind)
+    )
+      bad(`links kind '${op.kind}' must be one of ${LINK_KINDS.join(", ")}`);
+    const label = op.label?.trim();
+    return {
+      ...classified,
+      ...(op.kind !== undefined && { kind: op.kind as LinkKind }),
+      ...(label && { label }),
+    };
+  };
   if (op.op === "add") {
     if (typeof op.url !== "string") bad("add links requires url");
-    return { t: "add", classified: classifyOrForbid(op.url, taskId, "url") };
+    return { t: "add", classified: overridden(op.url) };
   }
   if (op.op === "remove") {
-    if (typeof op.id !== "string") bad("remove links requires id");
-    return { t: "remove", id: op.id };
+    const id = requireItemUuid(op.id, "remove links requires id", bad);
+    return { t: "remove", id };
   }
   if (op.op === "update") {
-    if (typeof op.id !== "string") bad("update links requires id");
+    const id = requireItemUuid(op.id, "update links requires id", bad);
     if (typeof op.url !== "string") bad("update links requires url");
-    return {
-      t: "update",
-      id: op.id,
-      classified: classifyOrForbid(op.url, taskId, "url"),
-    };
+    return { t: "update", id, classified: overridden(op.url) };
   }
   return bad(`op='${op.op}' is not valid on links`);
 }
@@ -661,6 +721,8 @@ function prepareAssigneeMutation(
   const raw = typeof op.value === "string" ? op.value : op.id;
   if (typeof raw !== "string")
     bad(`${op.op} assignees requires value ('me' or a user UUID)`);
+  if (raw !== "me" && !isUuid(raw))
+    bad(`assignees value '${raw}' must be 'me' or a user UUID`);
   const resolved = raw === "me" ? userId : raw;
   return op.op === "add"
     ? { t: "add", userId: resolved }
@@ -1448,6 +1510,16 @@ export async function applyTaskEdit(
 ): Promise<ApplyTaskEditResult> {
   const prepared = prepareOps(ops, taskId, ctx.userId);
 
+  let ifUpdatedAtMs: number | undefined;
+  if (ifUpdatedAt !== undefined) {
+    ifUpdatedAtMs = new Date(ifUpdatedAt).getTime();
+    if (Number.isNaN(ifUpdatedAtMs))
+      throw new InvalidEditOpError(
+        0,
+        `ifUpdatedAt '${ifUpdatedAt}' is not a valid timestamp. Pass the updatedAt emitted by your last piyaz_get read`,
+      );
+  }
+
   const first = prepared[0];
   if (prepared.length === 1 && first.kind === "delete") {
     if (first.preview) {
@@ -1463,13 +1535,15 @@ export async function applyTaskEdit(
     const [current] = await tx.select().from(tasks).where(eq(tasks.id, taskId));
     if (!current) throw new ForbiddenError("Forbidden", "task", taskId);
 
-    if (ifUpdatedAt !== undefined) {
-      const provided = new Date(ifUpdatedAt).getTime();
-      if (provided !== new Date(current.updatedAt).getTime())
-        throw new StaleWriteError(current.updatedAt);
+    if (
+      ifUpdatedAtMs !== undefined &&
+      ifUpdatedAtMs !== new Date(current.updatedAt).getTime()
+    ) {
+      throw new StaleWriteError(current.updatedAt);
     }
 
     const projectId = current.projectId;
+    await assertCategoryInVocabulary(tx, projectId, prepared);
     const acc: EditAccumulator = {
       textState: {
         description: current.description,
@@ -1541,6 +1615,35 @@ export async function applyTaskEdit(
     decisions: result.decisionsResult,
     applied: result.applied,
   });
+}
+
+/**
+ * Validate any `set category` op against the project's closed vocabulary.
+ * A project with an empty vocabulary accepts anything (categories are
+ * optional); setting `null` always passes.
+ *
+ * @param tx - Active RLS-scoped transaction.
+ * @param projectId - Owning project id.
+ * @param prepared - The call's prepared ops.
+ * @throws UnknownCategoryError when a category is outside the vocabulary.
+ */
+async function assertCategoryInVocabulary(
+  tx: Tx,
+  projectId: string,
+  prepared: PreparedOp[],
+): Promise<void> {
+  const categoryOp = prepared.find(
+    (p) => p.kind === "row" && p.field === "category" && p.value !== null,
+  );
+  if (!categoryOp || categoryOp.kind !== "row") return;
+  const [proj] = await tx
+    .select({ categories: projects.categories })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  const vocabulary = proj?.categories ?? [];
+  if (vocabulary.length === 0) return;
+  if (!vocabulary.includes(categoryOp.value as string))
+    throw new UnknownCategoryError(categoryOp.value as string, vocabulary);
 }
 
 /**

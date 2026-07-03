@@ -133,6 +133,26 @@ export class DuplicateEdgeError extends Error {
 }
 
 /**
+ * Thrown when a task write or a project-scoped search names a category
+ * outside the project's closed vocabulary. Carries the vocabulary so the
+ * MCP error translator can render the valid set inline. Never thrown for
+ * projects with an empty vocabulary (categories are optional).
+ */
+export class UnknownCategoryError extends Error {
+  /**
+   * @param category - The rejected category value.
+   * @param vocabulary - The project's current category list.
+   */
+  constructor(
+    public readonly category: string,
+    public readonly vocabulary: string[],
+  ) {
+    super(`Category "${category}" is not in the project's vocabulary`);
+    this.name = "UnknownCategoryError";
+  }
+}
+
+/**
  * Thrown by `searchTasksForMcp` when the caller supplies no search criterion
  * (no query, status, priority, assignee, category, or tags). A dedicated type
  * so the MCP error translator can steer the agent to add a filter instead of

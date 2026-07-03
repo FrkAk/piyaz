@@ -275,3 +275,15 @@ test("foreign-org project ref is 404-shaped across read tools", async () => {
   expect(byRef.ok).toBe(false);
   if (!byRef.ok) expect(byRef.error).toContain("not found");
 });
+
+test("activity rejects a malformed since with corrective copy", async () => {
+  const fx = await seedUserOrgProject("TSINCE");
+  const result = await handleActivity(
+    { project: "PRJTSINCE", since: "last tuesday" },
+    makeAuthContext(fx.userId),
+  );
+  expect(result.ok).toBe(false);
+  expect((result as { ok: false; error: string }).error).toContain(
+    "not a valid timestamp",
+  );
+});

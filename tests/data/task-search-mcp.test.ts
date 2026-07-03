@@ -3,7 +3,10 @@ import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import { searchTasksForMcp } from "@/lib/data/task";
-import { SearchCriteriaRequiredError } from "@/lib/graph/errors";
+import {
+  SearchCriteriaRequiredError,
+  UnknownCategoryError,
+} from "@/lib/graph/errors";
 import { ForbiddenError } from "@/lib/auth/authorization";
 
 afterEach(async () => {
@@ -257,5 +260,59 @@ describe("searchTasksForMcp: isolation", () => {
     await expect(
       searchTasksForMcp(ctxA, { projectId: b.projectId, tags: ["x"] }),
     ).rejects.toBeInstanceOf(ForbiddenError);
+  });
+});
+
+describe("searchTasksForMcp: category vocabulary", () => {
+  test("project-scoped search rejects a category outside the vocabulary", async () => {
+    const f = await seedUserOrgProject("mcp-cat-bad");
+    const sr = serviceRoleConnect();
+    try {
+      await sr`
+        UPDATE projects SET categories = ${JSON.stringify(["MCP", "Web"])}::jsonb
+        WHERE id = ${f.projectId}`;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const err = await searchTasksForMcp(makeAuthContext(f.userId), {
+      projectId: f.projectId,
+      category: "NotACategory",
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnknownCategoryError);
+    expect((err as UnknownCategoryError).vocabulary).toEqual(["MCP", "Web"]);
+  });
+
+  test("project-scoped search accepts a known category and returns matches", async () => {
+    const f = await seedUserOrgProject("mcp-cat-ok");
+    const sr = serviceRoleConnect();
+    let taskId = "";
+    try {
+      await sr`
+        UPDATE projects SET categories = ${JSON.stringify(["MCP", "Web"])}::jsonb
+        WHERE id = ${f.projectId}`;
+      taskId = await insertTask(sr, {
+        projectId: f.projectId,
+        title: "Categorized",
+        sequenceNumber: 1,
+        category: "MCP",
+      });
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const res = await searchTasksForMcp(makeAuthContext(f.userId), {
+      projectId: f.projectId,
+      category: "MCP",
+    });
+    expect(res.items.map((i) => i.id)).toEqual([taskId]);
+  });
+
+  test("cross-project search leaves category unvalidated (no scope)", async () => {
+    const f = await seedUserOrgProject("mcp-cat-cross");
+    const res = await searchTasksForMcp(makeAuthContext(f.userId), {
+      category: "NotACategory",
+    });
+    expect(res.items).toEqual([]);
   });
 });

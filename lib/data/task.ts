@@ -78,6 +78,7 @@ import {
   ProjectNotFoundError,
   SearchCriteriaRequiredError,
   TaskLimitError,
+  UnknownCategoryError,
 } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { parseEnvInt } from "@/lib/config/env";
@@ -1965,6 +1966,15 @@ async function searchMcpProjectScoped(
   return withUserContext(ctx.userId, async (tx) => {
     const { project } = await assertProjectAccessTx(tx, projectId);
     const identifier = asIdentifier(project.identifier);
+
+    const category = opts.category?.trim();
+    if (
+      category &&
+      project.categories.length > 0 &&
+      !project.categories.includes(category)
+    ) {
+      throw new UnknownCategoryError(category, project.categories);
+    }
 
     const queryClause = projectScopedQueryClause(
       opts.query?.trim() ?? "",

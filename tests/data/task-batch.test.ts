@@ -9,7 +9,11 @@ import {
   createTasksBatch,
   DuplicateTaskTitleError,
 } from "@/lib/data/task-batch";
-import { TaskLimitError, EdgeCycleError } from "@/lib/graph/errors";
+import {
+  TaskLimitError,
+  EdgeCycleError,
+  UnknownCategoryError,
+} from "@/lib/graph/errors";
 import { CrossProjectEdgeError, DuplicateEdgeError } from "@/lib/graph/errors";
 import { ForbiddenError } from "@/lib/auth/authorization";
 
@@ -404,4 +408,27 @@ describe("createTasksBatch", () => {
     expect(t.sequenceNumber).toBe(1);
     expect(String(t.taskRef)).toBe("PRJb11-1");
   });
+});
+
+test("batch rejects a category outside the project vocabulary before any write", async () => {
+  const f = await seedUserOrgProject("batch-cat");
+  const ctx = makeAuthContext(f.userId);
+  const sql = superuserPool();
+  await sql`
+    UPDATE projects SET categories = ${JSON.stringify(["backend", "mcp"])}::jsonb
+    WHERE id = ${f.projectId}`;
+
+  const err = await createTasksBatch(ctx, f.projectId, [
+    { title: "A", description: "First task in the batch. Does A." },
+    {
+      title: "B",
+      description: "Second task in the batch. Does B.",
+      category: "zzz_invalid",
+    },
+  ]).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(UnknownCategoryError);
+
+  const rows = await sql<{ count: string }[]>`
+    SELECT COUNT(*) AS count FROM tasks WHERE project_id = ${f.projectId}`;
+  expect(Number(rows[0].count)).toBe(0);
 });

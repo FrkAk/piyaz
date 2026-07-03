@@ -16,7 +16,7 @@ import type { AuthContext } from "@/lib/auth/context";
 import {
   ok,
   fail,
-  EDGE_NOTE_PLACEHOLDERS,
+  edgeNoteViolation,
   translateError,
   type ToolResult,
 } from "@/lib/graph/tools/shared";
@@ -94,14 +94,8 @@ export async function handleLink(
           return fail(
             "type required for create. depends_on=source needs target's output (target must be done first); relates_to=informational link, neither blocks. Litmus: removing the target makes source impossible → depends_on; just makes it harder → relates_to. Artifacts §3.",
           );
-        if (!p.note || !p.note.trim())
-          return fail(
-            "note required for create. Edge notes propagate to downstream agent context; placeholders ('needed', 'depends', 'related') are forbidden (artifacts §3). Write it as a brief to the developer about to start the source task: what specifically does this task get from the target?",
-          );
-        if (EDGE_NOTE_PLACEHOLDERS.has(p.note.trim().toLowerCase()))
-          return fail(
-            "Placeholder edge notes ('needed', 'depends', 'related') are not substantive enough to propagate to downstream agent context (artifacts §3). Write a one-sentence brief naming what this task gets from the target: a decision, a piece of code, a contract, a fixture.",
-          );
+        const violation = edgeNoteViolation(p.note);
+        if (violation) return fail(violation);
         const { sourceId, targetId } = await resolveEndpoints(
           ctx,
           p.source,
@@ -116,18 +110,23 @@ export async function handleLink(
         return ok(edge);
       }
       case "update": {
-        if (p.type === undefined && p.note === undefined)
+        if (p.note !== undefined) {
+          const violation = edgeNoteViolation(p.note);
+          if (violation) return fail(violation);
+        }
+        if (p.edgeId === undefined && p.note === undefined)
+          return fail(
+            "Key-addressed update (source+target+type) changes the note only; type there is the lookup key. Pass note='<new brief>'. To change an edge's type: remove the edge and create it with the new type and a fresh note, or pass edgeId (from the create response) plus type.",
+          );
+        if (
+          p.edgeId !== undefined &&
+          p.type === undefined &&
+          p.note === undefined
+        )
           return fail(
             "update requires at least one of: type, note. To remove the edge, use action='remove'.",
           );
-        const edgeId = await resolveEdgeKey(ctx, p);
-        if (typeof edgeId !== "string") return edgeId;
-        return ok(
-          await updateEdge(ctx, edgeId, {
-            edgeType: p.type as EdgeType | undefined,
-            note: p.note,
-          }),
-        );
+        return handleEdgeUpdate(ctx, p);
       }
       case "remove": {
         const edgeId = await resolveEdgeKey(ctx, p);
@@ -139,6 +138,28 @@ export async function handleLink(
   } catch (e) {
     return translateError(e);
   }
+}
+
+/**
+ * Apply the update action's two addressing modes. An explicit `edgeId` may
+ * change type and/or note; the source+target+type key only addresses the
+ * edge, so the update is note-only there (type changes go through
+ * remove + create, or edgeId).
+ *
+ * @param ctx - Resolved auth context.
+ * @param p - Link params with action='update'.
+ * @returns Tool result with the updated edge.
+ */
+async function handleEdgeUpdate(
+  ctx: AuthContext,
+  p: LinkParams,
+): Promise<ToolResult> {
+  const edgeId = await resolveEdgeKey(ctx, p);
+  if (typeof edgeId !== "string") return edgeId;
+  const changes = p.edgeId
+    ? { edgeType: p.type as EdgeType | undefined, note: p.note }
+    : { note: p.note };
+  return ok(await updateEdge(ctx, edgeId, changes));
 }
 
 /**

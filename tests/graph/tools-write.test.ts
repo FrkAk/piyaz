@@ -360,3 +360,150 @@ test("workspace create surfaces clean conflict on duplicate identifier", async (
     expect(result.error).not.toMatch(/insert into|select .* from/i);
   }
 });
+
+test("create rejects placeholder edge notes before any write", async () => {
+  const fx = await seedUserOrgProject("TEDGENOTE");
+  const ctx = makeAuthContext(fx.userId);
+
+  const result = await handleCreate(
+    {
+      project: "PRJTEDGENOTE",
+      tasks: [
+        { key: "a", title: "A", description: "Does A. Feeds B." },
+        { key: "b", title: "B", description: "Does B. Needs A." },
+      ],
+      edges: [
+        { source: "b", target: "a", type: "depends_on", note: "depends" },
+      ],
+    },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+  const error = (result as { ok: false; error: string }).error;
+  expect(error).toContain("edges[0]");
+  expect(error).toContain("Placeholder edge notes");
+});
+
+test("create rejects a non-UUID assigneeIds entry with corrective copy", async () => {
+  const fx = await seedUserOrgProject("TASSIGNEE");
+  const ctx = makeAuthContext(fx.userId);
+
+  const result = await handleCreate(
+    {
+      project: "PRJTASSIGNEE",
+      tasks: [
+        {
+          title: "A",
+          description: "Does A. Owned by someone.",
+          assigneeIds: ["not-a-uuid"],
+        },
+      ],
+    },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+  expect((result as { ok: false; error: string }).error).toContain(
+    "'me' or a team-member user UUID",
+  );
+});
+
+test("link update rejects placeholder and empty notes", async () => {
+  const fx = await seedUserOrgProject("TLINKNOTE");
+  const ctx = makeAuthContext(fx.userId);
+  const a = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "A",
+    description: "Does A.",
+  });
+  const b = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "B",
+    description: "Does B.",
+  });
+  await handleLink(
+    {
+      action: "create",
+      source: a.id,
+      target: b.id,
+      type: "depends_on",
+      note: "A consumes B's parser contract",
+    },
+    ctx,
+  );
+
+  for (const note of ["needed", "  "]) {
+    const result = await handleLink(
+      {
+        action: "update",
+        source: a.id,
+        target: b.id,
+        type: "depends_on",
+        note,
+      },
+      ctx,
+    );
+    expect(result.ok).toBe(false);
+  }
+});
+
+test("key-addressed link update with type only steers to remove+create", async () => {
+  const fx = await seedUserOrgProject("TLINKTYPE");
+  const ctx = makeAuthContext(fx.userId);
+  const a = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "A",
+    description: "Does A.",
+  });
+  const b = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "B",
+    description: "Does B.",
+  });
+  await handleLink(
+    {
+      action: "create",
+      source: a.id,
+      target: b.id,
+      type: "depends_on",
+      note: "A consumes B's parser contract",
+    },
+    ctx,
+  );
+
+  const result = await handleLink(
+    { action: "update", source: a.id, target: b.id, type: "relates_to" },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+  expect((result as { ok: false; error: string }).error).toContain("note only");
+});
+
+test("edit with an unknown category names the vocabulary inline", async () => {
+  const fx = await seedUserOrgProject("TCATCOPY");
+  const ctx = makeAuthContext(fx.userId);
+  const sr = serviceRoleConnect();
+  try {
+    await sr`
+      UPDATE projects SET categories = ${JSON.stringify(["backend", "mcp"])}::jsonb
+      WHERE id = ${fx.projectId}`;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+  const task = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "T",
+    description: "Categorizable task. Exists for the vocab test.",
+  });
+
+  const result = await handleEdit(
+    {
+      task: task.id,
+      operations: [{ op: "set", field: "category", value: "zzz" }],
+    },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+  const error = (result as { ok: false; error: string }).error;
+  expect(error).toContain("backend, mcp");
+  expect(error).toContain("view='meta'");
+});

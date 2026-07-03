@@ -49,7 +49,7 @@ Cover, depending on task type:
 - **Solution sketch:** if you have one, include it. "Use Drizzle, mirror the patterns in `lib/data/task.ts`" is more useful than "Define the database tables".
 - **No speculation:** do not pad with implementation guesses when the approach is uncertain. The implementation plan is for that.
 
-Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are rejected.
+Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are never acceptable: the server flags them in `_hints`; rewrite before moving on.
 
 **For onboarding** (writing descriptions for tasks that already shipped): write the description as if the task were being created BEFORE the work, knowing what you now know about the codebase. The reader must be able to re-derive the work from the description. Do not write "added the auth middleware". Write "Build the JWT auth middleware in `lib/auth/middleware.ts`. Validate Bearer tokens against the user table, set `req.user`, reject on expiry. Required by every protected route."
 
@@ -140,7 +140,7 @@ BAD:
 - "Numbers match"
 ```
 
-Single-AC tasks are rejected. Tasks with vague ACs ("works correctly", "is complete", "performs well") are rejected.
+Single-AC tasks are flagged by the server in `_hints`; rewrite them. Tasks with vague ACs ("works correctly", "is complete", "performs well") must be rewritten before planning.
 
 ### `executionRecord` (only on `in_review`, `done`, and `cancelled`)
 

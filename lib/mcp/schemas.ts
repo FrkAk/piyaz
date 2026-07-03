@@ -55,6 +55,10 @@ const taskRefParam = z.string().max(LIMITS.ref);
 /** A project handle: project identifier (`PYZ`) or project UUID. */
 const projectRefParam = z.string().max(LIMITS.ref);
 
+/** The literal `me` or a user UUID; shared by assignee-bearing params. */
+const ME_OR_UUID_RE =
+  /^(me|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
+
 /** Task fields addressable by `piyaz_get fields=[...]`. Mirrors
  * `TASK_FIELD_NAMES` in `lib/db/raw/fetch-task-full.ts`. */
 export const TASK_FIELD_ENUM = [
@@ -125,7 +129,7 @@ export const DESCRIPTIONS = {
     "fields=[...]: raw single-field read (lens ignored); the cheapest way to fetch one field's exact text before a piyaz_edit str_replace, or collection ids before by-id ops; response includes updatedAt for ifUpdatedAt preconditions. " +
     "Project: view='meta' (categories, tag vocabulary, progress — check before setting category or coining tags) or view='overview' (every task + edge; HEAVY, at most once per session; truncated groups name the piyaz_search filter to narrow with).",
   piyaz_create:
-    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('PYZ' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description (2-4 sentences; single-sentence rejected). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
+    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('PYZ' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description (2-4 sentences; single-sentence flagged). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
     "Idempotent: exact-title matches against existing tasks are skipped and returned as 'deduped' (reusable as edge endpoints), so a restarted decompose run never duplicates a task set; onDuplicate='error' rejects the whole batch instead. Edges that already exist are silently skipped. " +
     "Include acceptanceCriteria (2-4 binary), tags (three dimensions), category (from piyaz_get project view='meta'), priority, estimate up front — hints flag what's missing. " +
     "Next: verify wiring with piyaz_map view='neighbors' task='<ref>'.",
@@ -139,7 +143,7 @@ export const DESCRIPTIONS = {
   piyaz_link:
     "Create, update, or remove dependency edges. source/target accept 'PYZ-42' or UUIDs. depends_on=source needs target's output (target must finish first). relates_to=informational, neither blocks. Litmus: removing the target makes the source impossible → depends_on; merely harder → relates_to. " +
     "create=new edge; note REQUIRED and substantive (placeholders 'needed'/'depends'/'related' rejected) — write it as a brief to the developer starting the source task. " +
-    "update=change note or type, keyed by source+target+type (or edgeId). remove=same keys. " +
+    "update=rewrite the note, keyed by source+target+type (type is the lookup key there; pass edgeId to also change type). To re-type without an edgeId: remove, then create with a fresh note. remove=same keys. " +
     "Server rejects self-edges, duplicates, and cycles (the error names the chain). On 'duplicate edge': treat as success. Verify with piyaz_map view='neighbors'.",
   piyaz_map:
     "Navigate the dependency graph. Lead with these for 'what's next', 'what's stuck', impact analysis. " +
@@ -236,10 +240,7 @@ export const searchInputSchema = z.object({
   assignee: z
     .string()
     .max(LIMITS.ref)
-    .regex(
-      /^(me|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
-      "assignee must be the literal 'me' or a user UUID",
-    )
+    .regex(ME_OR_UUID_RE, "assignee must be the literal 'me' or a user UUID")
     .optional()
     .describe("Filter to tasks assigned to 'me' (the caller) or a user UUID."),
   category: z
@@ -329,13 +330,15 @@ const createTaskItemSchema = z.object({
     ),
   title: z
     .string()
+    .min(1)
     .max(LIMITS.title)
     .describe("Verb+noun, imperative (e.g. 'Implement JWT auth', not 'Auth')."),
   description: z
     .string()
+    .min(1)
     .max(LIMITS.description)
     .describe(
-      "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence rejected): what + who it serves + where it fits.",
+      "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence flagged): what + who it serves + where it fits.",
     ),
   status: z
     .enum(TASK_STATUS_ENUM)
@@ -379,7 +382,12 @@ const createTaskItemSchema = z.object({
       "Fibonacci story points (1/2/3/5/8/13). If a task feels >13, split it.",
     ),
   assigneeIds: z
-    .array(z.string().max(LIMITS.ref))
+    .array(
+      z
+        .string()
+        .max(LIMITS.ref)
+        .regex(ME_OR_UUID_RE, "each entry must be 'me' or a user UUID"),
+    )
     .max(LIMITS.arrayItems)
     .optional()
     .describe(
@@ -548,7 +556,9 @@ const editOpSchema = z.object({
     .string()
     .max(LIMITS.tag)
     .optional()
-    .describe("add/update on links: link kind (defaults from URL classifier)."),
+    .describe(
+      "add/update on links: override the link kind (pull_request, issue, commit, doc, link); defaults from the URL classifier.",
+    ),
   label: z
     .string()
     .max(LIMITS.title)
@@ -584,7 +594,7 @@ export const linkInputSchema = z.object({
   action: z
     .enum(["create", "update", "remove"])
     .describe(
-      "create=new edge (source, target, type, note required). update=change the note (or type) of an edge keyed by source+target+type or edgeId. remove=delete by source+target+type or edgeId.",
+      "create=new edge (source, target, type, note required). update=rewrite the note of an edge keyed by source+target+type; with edgeId you may also change type. remove=delete by source+target+type or edgeId.",
     ),
   source: taskRefParam
     .optional()
