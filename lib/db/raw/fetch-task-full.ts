@@ -63,6 +63,7 @@ export type TaskFetchDepth =
  */
 type DepthProjection = {
   tags: boolean;
+  category: boolean;
   /**
    * `true` always selects the plan; `"active-only"` selects it only for
    * non-terminal rows (`NULL` for done/cancelled) so a single fetch serves
@@ -79,18 +80,21 @@ type DepthProjection = {
 };
 
 /**
- * The exact column set each depth's formatter reads. `category` and `files`
- * are omitted at every depth (no formatter reads them — bundles
- * point at the PR diff instead of recorded file lists). `implementationPlan`
- * is true for `summary` because `buildSummaryContext` reads its presence
- * (`hasImplementationPlan`) even though it never renders the plan text;
- * `agent` selects it `"active-only"` because terminal tasks dispatch to the
- * record bundle, which never reads the plan — the conditional keeps the
- * dominant active path one fetch while sparing terminal rows the egress of
- * the (often largest) column. `record` serves the retrospective bundle for
- * done/cancelled tasks: it keeps executionRecord, links, decisions, and
- * criteria, and drops `implementationPlan` and assignees because the record
- * bundle never renders them.
+ * The exact column set each depth's formatter reads. `files` is omitted at
+ * every depth (no formatter reads it — bundles point at the PR diff instead
+ * of recorded file lists). `category` is selected at every depth: each
+ * bundle header renders it. `implementationPlan` is true for `summary`
+ * because `buildSummaryContext` reads its presence (`hasImplementationPlan`)
+ * even though it never renders the plan text; `agent` selects it
+ * `"active-only"` because terminal tasks dispatch to the record bundle,
+ * which never reads the plan — the conditional keeps the dominant active
+ * path one fetch while sparing terminal rows the egress of the (often
+ * largest) column. `planning` and `agent` select `executionRecord` so
+ * work-in-progress renders as "work so far" before `in_review`. `record`
+ * serves the retrospective bundle for done/cancelled tasks: it keeps
+ * executionRecord, links, decisions, and criteria, and drops
+ * `implementationPlan` because the record bundle never renders it. `agent`
+ * selects assignees so the implementer sees ownership.
  *
  * Each depth is fetched independently by its own resolver (there is no
  * shared superset fetch). Exported so the projection test can pin the
@@ -99,6 +103,7 @@ type DepthProjection = {
 export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   summary: {
     tags: false,
+    category: true,
     implementationPlan: true,
     executionRecord: false,
     files: false,
@@ -109,6 +114,7 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   },
   working: {
     tags: true,
+    category: true,
     implementationPlan: false,
     executionRecord: false,
     files: false,
@@ -119,8 +125,9 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   },
   planning: {
     tags: true,
+    category: true,
     implementationPlan: true,
-    executionRecord: false,
+    executionRecord: true,
     files: false,
     assignees: false,
     acceptanceCriteria: true,
@@ -129,16 +136,18 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   },
   agent: {
     tags: true,
+    category: true,
     implementationPlan: "active-only",
     executionRecord: true,
     files: false,
-    assignees: false,
+    assignees: true,
     acceptanceCriteria: true,
     decisions: true,
     links: true,
   },
   review: {
     tags: true,
+    category: true,
     implementationPlan: true,
     executionRecord: true,
     files: false,
@@ -149,6 +158,7 @@ export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   },
   record: {
     tags: true,
+    category: true,
     implementationPlan: false,
     executionRecord: true,
     files: false,
@@ -193,7 +203,7 @@ function depthColumn(
   keep: boolean,
   column: SQL,
   alias: string,
-  nullCast: "text" | "jsonb",
+  nullCast: "text" | "jsonb" | "integer",
 ): SQL {
   const aliasId = sql.identifier(alias);
   return keep
@@ -241,9 +251,9 @@ function depthAggregate(keep: boolean, agg: SQL, alias: string): SQL {
 
 /**
  * Build the depth-projected task-row SQL shared by the interactive and
- * batch read paths. Columns no depth reads (`category`) and columns this
- * depth omits are returned as type-stable `NULL` literals so the
- * {@link TaskFullRawRow} shape is identical across depths.
+ * batch read paths. Columns this depth omits are returned as type-stable
+ * `NULL` literals so the {@link TaskFullRawRow} shape is identical across
+ * depths.
  *
  * @param taskId - UUID of the task.
  * @param depth - Context depth selecting the column projection.
@@ -260,7 +270,7 @@ function taskForDepthSql(taskId: string, depth: TaskFetchDepth): SQL {
         t.description,
         t.status,
         t."order",
-        NULL::text AS category,
+        ${depthColumn(p.category, sql`t.category`, "category", "text")},
         ${planColumn(p.implementationPlan)},
         ${depthColumn(p.executionRecord, sql`t.execution_record`, "execution_record", "text")},
         ${depthColumn(p.tags, sql`t.tags`, "tags", "jsonb")},
@@ -356,4 +366,94 @@ function taskFullSql(taskId: string): SQL {
  */
 export function taskFullStmt(read: ReadConn, taskId: string) {
   return read.execute(taskFullSql(taskId));
+}
+
+/** Every task field addressable by the raw single-field read path. */
+export const TASK_FIELD_NAMES = [
+  "title",
+  "description",
+  "status",
+  "category",
+  "priority",
+  "estimate",
+  "tags",
+  "files",
+  "implementationPlan",
+  "executionRecord",
+  "acceptanceCriteria",
+  "decisions",
+  "links",
+  "assignees",
+] as const;
+
+/** One addressable task field name. */
+export type TaskFieldName = (typeof TASK_FIELD_NAMES)[number];
+
+/**
+ * Raw row returned by {@link taskFieldsStmt}. Identity columns (id, ref
+ * parts, `updated_at` for optimistic-concurrency reads) are always selected;
+ * every other column is `NULL` unless its field was requested.
+ */
+export type TaskFieldsRawRow = Pick<
+  TaskFullRawRow,
+  "id" | "project_id" | "sequence_number" | "project_identifier" | "updated_at"
+> &
+  Partial<
+    Omit<
+      TaskFullRawRow,
+      | "id"
+      | "project_id"
+      | "sequence_number"
+      | "project_identifier"
+      | "updated_at"
+      | "order"
+      | "created_at"
+    >
+  >;
+
+/**
+ * Field-projected task row for the MCP `fields=[...]` read path: exactly the
+ * requested columns are egressed (others return as typed `NULL` literals),
+ * so a single-field read pays for one column. Identity columns and
+ * `updated_at` always ride along for ref composition and `ifUpdatedAt`
+ * preconditions. Same UNCHECKED contract as {@link taskForDepthStmt}: batch
+ * a `taskAccessGateStmt` alongside and evaluate the gate first.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task.
+ * @param fields - Requested field names; unknown names never reach here
+ *   (the schema layer validates against {@link TASK_FIELD_NAMES}).
+ * @returns Lazy raw statement yielding zero or one rows.
+ */
+export function taskFieldsStmt(
+  read: ReadConn,
+  taskId: string,
+  fields: readonly TaskFieldName[],
+) {
+  const has = (f: TaskFieldName): boolean => fields.includes(f);
+  return read.execute(sql`
+      SELECT
+        t.id,
+        t.project_id,
+        t.sequence_number,
+        t.updated_at,
+        p.identifier AS project_identifier,
+        ${depthColumn(has("title"), sql`t.title`, "title", "text")},
+        ${depthColumn(has("description"), sql`t.description`, "description", "text")},
+        ${depthColumn(has("status"), sql`t.status`, "status", "text")},
+        ${depthColumn(has("category"), sql`t.category`, "category", "text")},
+        ${depthColumn(has("priority"), sql`t.priority`, "priority", "text")},
+        ${depthColumn(has("estimate"), sql`t.estimate`, "estimate", "integer")},
+        ${depthColumn(has("tags"), sql`t.tags`, "tags", "jsonb")},
+        ${depthColumn(has("files"), sql`t.files`, "files", "jsonb")},
+        ${depthColumn(has("implementationPlan"), sql`t.implementation_plan`, "implementation_plan", "text")},
+        ${depthColumn(has("executionRecord"), sql`t.execution_record`, "execution_record", "text")},
+        ${depthAggregate(has("acceptanceCriteria"), CRITERIA_AGG, "acceptance_criteria")},
+        ${depthAggregate(has("decisions"), DECISIONS_AGG, "decisions")},
+        ${depthAggregate(has("links"), LINKS_AGG, "links")},
+        ${depthAggregate(has("assignees"), ASSIGNEES_AGG, "assignees")}
+      FROM tasks t
+      JOIN projects p ON p.id = t.project_id
+      WHERE t.id = ${taskId}
+    `);
 }

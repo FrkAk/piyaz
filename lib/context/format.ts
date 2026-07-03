@@ -149,6 +149,24 @@ export function formatTaskRefLine(
 }
 
 /**
+ * Format one `relates_to` edge as a ref-first bullet with a direction arrow
+ * and the edge note. Shared by the agent and planning "Related" sections.
+ *
+ * @param edge - Detailed edge with connected-task info and note.
+ * @returns Formatted markdown bullet line.
+ */
+export function formatRelatedEdgeLine(edge: {
+  direction: "outgoing" | "incoming";
+  note: string;
+  connectedTask: { taskRef: string; title: string; status: string };
+}): string {
+  const arrow = edge.direction === "outgoing" ? "→" : "←";
+  let line = `- ${arrow} \`${edge.connectedTask.taskRef}\` **${edge.connectedTask.title}** [${edge.connectedTask.status}]`;
+  if (edge.note) line += ` — ${edge.note}`;
+  return line;
+}
+
+/**
  * Compress a string to a max length, appending ellipsis if truncated.
  * @param text - Input text.
  * @param max - Maximum character length.

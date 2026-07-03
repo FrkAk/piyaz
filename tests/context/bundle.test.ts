@@ -217,9 +217,17 @@ test("resolveWorkingData assembles detailed edges and ancestors", async () => {
   const data = await resolveWorkingData(fx.userId, fx.taskId);
 
   expect(data.task.id).toBe(fx.taskId);
-  expect(data.detailedEdges).toHaveLength(2);
-  const directions = data.detailedEdges.map((e) => e.direction).sort();
-  expect(directions).toEqual(["incoming", "outgoing"]);
+  expect(data.detailedEdges).toHaveLength(3);
+  const dependsOn = data.detailedEdges.filter(
+    (e) => e.edgeType === "depends_on",
+  );
+  expect(dependsOn.map((e) => e.direction).sort()).toEqual([
+    "incoming",
+    "outgoing",
+  ]);
+  const related = data.detailedEdges.filter((e) => e.edgeType === "relates_to");
+  expect(related).toHaveLength(1);
+  expect(related[0].connectedTask.title).toBe("Related task");
   expect(data.ancestors).toEqual([
     expect.objectContaining({ type: "project", title: "Project working-data" }),
   ]);

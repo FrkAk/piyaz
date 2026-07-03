@@ -103,6 +103,7 @@ export function formatSummary(ctx: SummaryContext): string {
     `${ctx.acceptanceCriteriaCount} criteria`,
     `${ctx.decisionsCount} decisions`,
   );
+  if (ctx.node.category) stats.push(`category: ${ctx.node.category}`);
   if (ctx.node.priority) stats.push(`priority: ${ctx.node.priority}`);
   if (ctx.node.estimate) stats.push(`${ctx.node.estimate}pts`);
   if (ctx.assigneeCount > 0) stats.push(`${ctx.assigneeCount} assigned`);

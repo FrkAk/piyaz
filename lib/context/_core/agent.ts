@@ -5,6 +5,7 @@ import {
   formatCriteria,
   formatDecisions,
   formatLinkLine,
+  formatRelatedEdgeLine,
   formatTaskRefLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
@@ -87,11 +88,17 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
   const headerLines: string[] = [
     `# ${taskRef ? `\`${taskRef}\` ` : ""}${task.title}`,
   ];
+  if (task.category) headerLines.push(`Category: \`${task.category}\``);
   if (tags.length > 0) {
     headerLines.push(`Tags: ${tags.map((t) => `\`${t}\``).join(", ")}`);
   }
   if (priority) headerLines.push(`Priority: \`${priority}\``);
   if (estimate) headerLines.push(`Estimate: ${estimate} pts`);
+  if (task.assignees.length > 0) {
+    headerLines.push(
+      `Assignees: ${task.assignees.map((a) => a.name).join(", ")}`,
+    );
+  }
   if (prLink) headerLines.push(`PR: ${prLink.url}`);
   headerLines.push("");
   headerLines.push(task.description);
@@ -165,11 +172,15 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
     });
   }
 
-  if (task.executionRecord && status === "in_review") {
+  if (task.executionRecord) {
+    const heading =
+      status === "in_review"
+        ? "Execution Record"
+        : "Execution Record (work so far)";
     parts.push({
       id: "execution",
-      heading: "Execution Record",
-      markdown: section("Execution Record") + "\n" + task.executionRecord,
+      heading,
+      markdown: section(heading) + "\n" + task.executionRecord,
     });
   }
 
@@ -195,6 +206,17 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
           downLines.join("\n"),
       });
     }
+  }
+
+  if (data.related.length > 0) {
+    parts.push({
+      id: "related",
+      heading: "Related (non-blocking)",
+      markdown:
+        section("Related (non-blocking)") +
+        "\n" +
+        data.related.map(formatRelatedEdgeLine).join("\n"),
+    });
   }
 
   if (task.decisions.length > 0) {

@@ -14,6 +14,7 @@ exports[`buildWorkingContext under app_user golden: fully-populated task renders
 Central description
 
 ## Meta
+- Category: \`feature\`
 - Priority: \`high\`
 - Estimate: 3 pts
 - Assignees: User working-ctx-golden
@@ -35,6 +36,7 @@ project: "Project working-ctx-golden" > task: "Central task"
 ## Connected Tasks
 - depends_on → \`PRJ-1\` "Prereq task" (done) — needs prereq output
 - depends_on ← \`PRJ-3\` "Downstream task" (draft) — consumes central
+- relates_to → \`PRJ-4\` "Related task" (draft) — shares the parser
 
 ## Links
 - [pull_request] PR 1 (https://example.test/pr/1)"

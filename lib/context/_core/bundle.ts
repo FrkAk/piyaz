@@ -20,6 +20,7 @@ import {
   assembleDetailedEdges,
   connectedTaskIds,
   connectedTaskInfoStmt,
+  relatedEdgesStmt,
   taskEdgesStmt,
   type DetailedEdge,
 } from "@/lib/data/edge";
@@ -86,6 +87,8 @@ export type DependencyClosureData = {
   downstreamEdgeNotes: Map<string, string>;
   /** Downstream-task summaries (taskRef, title, status, description). */
   downstreamSummaries: DownstreamSummary[];
+  /** 1-hop `relates_to` edges with connected-task detail (non-blocking). */
+  related: DetailedEdge[];
 };
 
 /** Exactly what {@link buildAgentContextFrom} reads. */
@@ -140,14 +143,14 @@ type HeaderRow = ProjectHeader & { id: string };
  * Build the closure-core batch shared by every closure resolver: the
  * depth-projected task row (whose empty result is the 404 signal — RLS
  * hides rows the caller cannot access), both effective-dependency walks,
- * and the outgoing edge notes. Every statement is keyed on `taskId` alone
- * (project scope derives in SQL), so the whole set rides ONE read batch
- * before the task row has been seen.
+ * the outgoing edge notes, and the 1-hop `relates_to` edges. Every
+ * statement is keyed on `taskId` alone (project scope derives in SQL), so
+ * the whole set rides ONE read batch before the task row has been seen.
  *
  * @param db - Read statement-building handle.
  * @param taskId - UUID of the task.
  * @param depth - Column projection for the task-row fetch.
- * @returns Tuple of four lazy statements.
+ * @returns Tuple of five lazy statements.
  */
 function closureCoreBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
   return [
@@ -155,6 +158,7 @@ function closureCoreBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
     effectiveDepChainStmt(db, taskId, CLOSURE_DEPTH),
     effectiveDownstreamStmt(db, taskId, CLOSURE_DEPTH),
     edgeNotesBySourceStmt(db, taskId),
+    relatedEdgesStmt(db, taskId),
   ] as const;
 }
 
@@ -166,7 +170,7 @@ function closureCoreBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
  * @param db - Read statement-building handle.
  * @param taskId - UUID of the task.
  * @param depth - Column projection for the task-row fetch.
- * @returns Tuple of five lazy statements; header rows are position 4.
+ * @returns Tuple of six lazy statements; header rows are position 5.
  */
 function closureBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
   return [
@@ -178,12 +182,16 @@ function closureBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
 /** Positional results of a {@link closureCoreBatch} run. */
 type ClosureCoreResults = ReadResults<ReturnType<typeof closureCoreBatch>>;
 
+/** Raw `relates_to` edge rows from the closure-core batch. */
+type RelatedEdgeRows = ClosureCoreResults[4];
+
 /** Decoded closure core: task row, dependency walks, outgoing notes. */
 type ClosureCore = {
   task: TaskFull;
   deps: { id: string; depth: number }[];
   downstream: { id: string; depth: number }[];
   upstreamEdgeNotes: Map<string, string>;
+  relatedEdges: RelatedEdgeRows;
 };
 
 /**
@@ -196,15 +204,15 @@ type ClosureCore = {
  * decode without rebuilding tuples.
  *
  * @param taskId - UUID of the task the batch targeted.
- * @param results - Batch results whose first four positions are the core.
- * @returns Task, walks, and outgoing notes.
+ * @param results - Batch results whose first five positions are the core.
+ * @returns Task, walks, outgoing notes, and raw `relates_to` edges.
  * @throws ForbiddenError when the task row is not visible to the caller.
  */
 function decodeClosureCore(
   taskId: string,
   results: readonly [...ClosureCoreResults, ...unknown[]],
 ): ClosureCore {
-  const [taskRaw, depRaw, downRaw, srcNotes] = results;
+  const [taskRaw, depRaw, downRaw, srcNotes, relatedEdges] = results;
   const task = requireTaskRow(
     normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
@@ -221,37 +229,43 @@ function decodeClosureCore(
     deps,
     downstream,
     upstreamEdgeNotes: mapEdgeNoteRows(srcNotes),
+    relatedEdges,
   };
 }
 
 /**
  * The single skip rule for the closure-secondaries batch: secondaries are
- * only worth a round-trip when either dependency walk returned ids.
+ * only worth a round-trip when a dependency walk returned ids or a
+ * `relates_to` edge needs its connected task hydrated.
  *
  * @param deps - Active prerequisite ids from the closure walk.
  * @param downstream - Active dependent ids from the closure walk.
+ * @param relatedEdges - Raw `relates_to` edge rows from the core batch.
  * @returns True when a secondaries batch has rows to fetch.
  */
 function closureHasSecondaries(
   deps: { id: string }[],
   downstream: { id: string }[],
+  relatedEdges: readonly unknown[],
 ): boolean {
-  return deps.length > 0 || downstream.length > 0;
+  return deps.length > 0 || downstream.length > 0 || relatedEdges.length > 0;
 }
 
 /**
  * Build the closure-secondaries statements: dependency-task summaries,
- * downstream summaries, and incoming edge notes. Single source for every
- * secondaries consumer (agent, planning, review) so they cannot drift.
+ * downstream summaries, incoming edge notes, and connected-task detail for
+ * the `relates_to` edges. Single source for every secondaries consumer
+ * (agent, planning, review) so they cannot drift.
  *
  * @param db - Read statement-building handle.
  * @param projectId - UUID of the task's project (from the closure task row).
  * @param taskId - UUID of the task.
  * @param deps - Active prerequisite ids.
  * @param downstream - Active dependent ids.
+ * @param relatedEdges - Raw `relates_to` edge rows from the core batch.
  * @param withDownstreamDescriptions - Whether downstream summaries select
  *   the `description` column. Only the planning core renders it.
- * @returns Tuple of three lazy statements.
+ * @returns Tuple of four lazy statements.
  */
 function secondariesBatch(
   db: ReadConn,
@@ -259,6 +273,7 @@ function secondariesBatch(
   taskId: string,
   deps: { id: string }[],
   downstream: { id: string }[],
+  relatedEdges: RelatedEdgeRows,
   withDownstreamDescriptions: boolean,
 ) {
   return [
@@ -274,23 +289,26 @@ function secondariesBatch(
       withDownstreamDescriptions,
     ),
     edgeNotesByTargetStmt(db, taskId),
+    connectedTaskInfoStmt(db, connectedTaskIds(taskId, relatedEdges)),
   ] as const;
 }
 
 /**
  * Fetch the closure secondaries (dependency-task summaries, downstream
- * summaries, and incoming edge notes) in one read batch, skipped entirely
- * when the closure is empty — the incoming notes are only ever consumed
- * alongside a non-empty downstream walk.
+ * summaries, incoming edge notes, and related-task detail) in one read
+ * batch, skipped entirely when the closure and the `relates_to` set are
+ * both empty.
  *
  * @param userId - Authenticated user id.
  * @param projectId - UUID of the task's project (from the closure task row).
  * @param taskId - UUID of the task.
  * @param deps - Active prerequisite ids.
  * @param downstream - Active dependent ids.
+ * @param relatedEdges - Raw `relates_to` edge rows from the core batch.
  * @param withDownstreamDescriptions - Whether downstream summaries select
  *   the `description` column.
- * @returns Dep-task summaries, downstream summaries, and incoming notes.
+ * @returns Dep-task summaries, downstream summaries, incoming notes, and
+ *   assembled `relates_to` detailed edges.
  */
 async function resolveClosureSecondaries(
   userId: string,
@@ -298,27 +316,36 @@ async function resolveClosureSecondaries(
   taskId: string,
   deps: { id: string }[],
   downstream: { id: string }[],
+  relatedEdges: RelatedEdgeRows,
   withDownstreamDescriptions: boolean,
-): Promise<[DependencyTaskInfo[], DownstreamSummary[], Map<string, string>]> {
-  if (!closureHasSecondaries(deps, downstream)) {
-    return [[], [], new Map()];
+): Promise<
+  [
+    DependencyTaskInfo[],
+    DownstreamSummary[],
+    Map<string, string>,
+    DetailedEdge[],
+  ]
+> {
+  if (!closureHasSecondaries(deps, downstream, relatedEdges)) {
+    return [[], [], new Map(), []];
   }
-  const [depRows, summaryRows, tgtNotes] = await withUserContextRead(
-    userId,
-    (db) =>
+  const [depRows, summaryRows, tgtNotes, relatedInfoRows] =
+    await withUserContextRead(userId, (db) =>
       secondariesBatch(
         db,
         projectId,
         taskId,
         deps,
         downstream,
+        relatedEdges,
         withDownstreamDescriptions,
       ),
-  );
+    );
   return [
     mapDependencyTaskRows(depRows),
     mapTaskSummaryRows(summaryRows),
     mapEdgeNoteRows(tgtNotes),
+    assembleDetailedEdges(taskId, relatedEdges, relatedInfoRows),
   ];
 }
 
@@ -384,7 +411,7 @@ async function resolveClosureWithHeader(
     decodeClosureCore(taskId, results),
     false,
   );
-  return { closure, header: results[4][0] ?? null };
+  return { closure, header: results[5][0] ?? null };
 }
 
 /**
@@ -405,16 +432,24 @@ async function finishClosure(
   core: ClosureCore,
   withDownstreamDescriptions: boolean,
 ): Promise<DependencyClosureData> {
-  const [depTasks, downstreamSummaries, downstreamEdgeNotes] =
+  const { relatedEdges, ...coreData } = core;
+  const [depTasks, downstreamSummaries, downstreamEdgeNotes, related] =
     await resolveClosureSecondaries(
       userId,
       core.task.projectId,
       taskId,
       core.deps,
       core.downstream,
+      relatedEdges,
       withDownstreamDescriptions,
     );
-  return { ...core, depTasks, downstreamEdgeNotes, downstreamSummaries };
+  return {
+    ...coreData,
+    depTasks,
+    downstreamEdgeNotes,
+    downstreamSummaries,
+    related,
+  };
 }
 
 /**
@@ -439,8 +474,9 @@ export async function resolvePlanningData(
     closureBatch(db, taskId, "planning"),
   );
   const core = decodeClosureCore(taskId, results);
-  const header = results[4][0] ?? null;
-  const [depRows, summaryRows, tgtNotes, cancelledRows] =
+  const { relatedEdges, ...coreData } = core;
+  const header = results[5][0] ?? null;
+  const [depRows, summaryRows, tgtNotes, relatedInfoRows, cancelledRows] =
     await withUserContextRead(userId, (db) => [
       ...secondariesBatch(
         db,
@@ -448,15 +484,17 @@ export async function resolvePlanningData(
         taskId,
         core.deps,
         core.downstream,
+        relatedEdges,
         true,
       ),
       cancelledDepRecordsStmt(db, core.task.projectId, taskId),
     ]);
   return {
-    ...core,
+    ...coreData,
     depTasks: mapDependencyTaskRows(depRows),
     downstreamSummaries: mapTaskSummaryRows(summaryRows),
     downstreamEdgeNotes: mapEdgeNoteRows(tgtNotes),
+    related: assembleDetailedEdges(taskId, relatedEdges, relatedInfoRows),
     abandonedDeps: mapDependencyTaskRows(cancelledRows),
     project: toProjectHeader(header),
   };

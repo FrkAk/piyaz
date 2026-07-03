@@ -62,6 +62,7 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
   const headerLines: string[] = [
     `# ${taskRef ? `\`${taskRef}\` ` : ""}${task.title}`,
   ];
+  if (task.category) headerLines.push(`Category: \`${task.category}\``);
   if (tags.length > 0) {
     headerLines.push(`Tags: ${tags.map((t) => `\`${t}\``).join(", ")}`);
   }

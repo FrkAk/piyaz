@@ -5,6 +5,7 @@ import {
   formatCriteria,
   formatDecisions,
   formatLinkLine,
+  formatRelatedEdgeLine,
   formatTaskRefLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
@@ -54,6 +55,7 @@ export function buildPlanningContextParts(
   const headerLines: string[] = [
     `# ${taskRef ? `\`${taskRef}\` ` : ""}${task.title}`,
   ];
+  if (task.category) headerLines.push(`Category: \`${task.category}\``);
   if (tags.length > 0) {
     headerLines.push(`Tags: ${tags.map((t) => `\`${t}\``).join(", ")}`);
   }
@@ -103,6 +105,14 @@ export function buildPlanningContextParts(
         section("Existing Implementation Plan") +
         "\n" +
         task.implementationPlan,
+    });
+  }
+
+  if (task.executionRecord) {
+    parts.push({
+      id: "work-so-far",
+      heading: "Work So Far",
+      markdown: section("Work So Far") + "\n" + task.executionRecord,
     });
   }
 
@@ -201,6 +211,17 @@ export function buildPlanningContextParts(
           downLines.join("\n"),
       });
     }
+  }
+
+  if (data.related.length > 0) {
+    parts.push({
+      id: "related",
+      heading: "Related (non-blocking)",
+      markdown:
+        section("Related (non-blocking)") +
+        "\n" +
+        data.related.map(formatRelatedEdgeLine).join("\n"),
+    });
   }
 
   return parts;

@@ -44,6 +44,11 @@ const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
     color: "var(--color-accent-light)",
   },
   plan: { id: "plan", label: "plan", color: "var(--color-accent)" },
+  "work-so-far": {
+    id: "work-so-far",
+    label: "work so far",
+    color: "var(--color-done)",
+  },
   prerequisites: {
     id: "prerequisites",
     label: "prerequisites",
@@ -79,6 +84,11 @@ const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
   dependents: {
     id: "dependents",
     label: "dependents",
+    color: "var(--color-relates)",
+  },
+  related: {
+    id: "related",
+    label: "related",
     color: "var(--color-relates)",
   },
   execution: {
@@ -210,6 +220,17 @@ function dependentRefs(props: BundlePreviewProps): BundleDownstreamRef[] {
 }
 
 /**
+ * 1-hop `relates_to` edges — mirrors the closure builders' Related
+ * (non-blocking) section.
+ *
+ * @param props - Bundle props.
+ * @returns Related edge rows.
+ */
+function relatedEdgeRefs(props: BundlePreviewProps): BundleConnectedEdge[] {
+  return props.connected.filter((e) => e.edgeType === "relates_to");
+}
+
+/**
  * Whether a section has any data to show. Sections the builder emits
  * unconditionally with fallback text bypass this check via
  * {@link ALWAYS_RENDERED_BY_BUNDLE}; everything else is render-if-nonempty.
@@ -249,7 +270,10 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
       return props.downstream.length > 0;
     case "dependents":
       return dependentRefs(props).length > 0;
+    case "related":
+      return relatedEdgeRefs(props).length > 0;
     case "execution":
+    case "work-so-far":
       return (props.executionRecord ?? "").trim().length > 0;
     case "blocked":
       return props.blockedBy.length > 0;
@@ -311,11 +335,14 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
       return Math.max(refLen(props.downstream), 1);
     case "dependents":
       return Math.max(refLen(dependentRefs(props)), 1);
+    case "related":
+      return Math.max(refLen(relatedEdgeRefs(props)), 1);
     case "blocked":
       return Math.max(refLen(props.blockedBy), 1);
     case "lens":
       return REVIEW_LENS_PROMPTS.length;
     case "execution":
+    case "work-so-far":
       return Math.max(len(props.executionRecord ?? ""), 1);
   }
 }
@@ -659,6 +686,20 @@ function sectionSummary(
     const n = dependentRefs(props).length;
     return n === 1 ? "1 remaining dependent" : `${n} remaining dependents`;
   }
+  if (id === "related") {
+    const related = relatedEdgeRefs(props);
+    if (related.length === 0) return "no related tasks";
+    const refs = related
+      .slice(0, 2)
+      .map((p) => p.taskRef)
+      .join(" · ");
+    return related.length > 2 ? `${refs} · +${related.length - 2} more` : refs;
+  }
+  if (id === "work-so-far") {
+    return (props.executionRecord ?? "").trim().length > 0
+      ? "execution record so far"
+      : "no work recorded yet";
+  }
   if (id === "blocked") {
     const n = props.blockedBy.length;
     return `${n} unfinished prerequisite${n === 1 ? "" : "s"}`;
@@ -776,6 +817,22 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
         items={dependentRefs(props)}
         emptyHint="No remaining direct dependents."
         onSelectTask={onSelectTask}
+      />
+    );
+  }
+  if (id === "related") {
+    return (
+      <ConnectedList
+        items={relatedEdgeRefs(props)}
+        onSelectTask={onSelectTask}
+      />
+    );
+  }
+  if (id === "work-so-far") {
+    return (
+      <MarkdownBody
+        text={props.executionRecord ?? ""}
+        emptyHint="No work recorded yet."
       />
     );
   }

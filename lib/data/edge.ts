@@ -193,6 +193,38 @@ export function taskEdgesStmt(read: ReadConn, taskId: string) {
 }
 
 /**
+ * The `relates_to` edges touching a task, as a lazy batch statement. The
+ * closure resolvers batch this alongside the `depends_on` walks so agent and
+ * planning bundles can render non-blocking relations; pair with
+ * {@link connectedTaskInfoStmt} and assemble via
+ * {@link assembleDetailedEdges}.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task (matched on either endpoint).
+ * @returns Lazy select yielding edge rows.
+ */
+export function relatedEdgesStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({
+      id: taskEdges.id,
+      sourceTaskId: taskEdges.sourceTaskId,
+      targetTaskId: taskEdges.targetTaskId,
+      edgeType: taskEdges.edgeType,
+      note: taskEdges.note,
+    })
+    .from(taskEdges)
+    .where(
+      and(
+        eq(taskEdges.edgeType, "relates_to"),
+        or(
+          eq(taskEdges.sourceTaskId, taskId),
+          eq(taskEdges.targetTaskId, taskId),
+        ),
+      ),
+    );
+}
+
+/**
  * Every edge touching any task in an id set, as a lazy batch statement. One
  * `ANY`-over-source OR `ANY`-over-target scan covers the whole frontier in a
  * single round-trip — the batch twin of {@link taskEdgesStmt} for the 2-hop

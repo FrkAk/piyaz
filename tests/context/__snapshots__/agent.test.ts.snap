@@ -10,9 +10,11 @@ exports[`buildAgentContext under app_user golden: fully-populated task renders b
 > and the implementation plan for the task you are working.
 
 # \`PRJ-2\` Central task
+Category: \`feature\`
 Tags: \`alpha\`, \`beta\`
 Priority: \`high\`
 Estimate: 3 pts
+Assignees: User agent-ctx-golden
 PR: https://example.test/pr/1
 
 Central description
@@ -47,6 +49,11 @@ Built the thing
 ## Downstream (what depends on this task's output)
 
 - \`PRJ-3\` **Downstream task** [draft] — consumes central
+
+
+## Related (non-blocking)
+
+- → \`PRJ-4\` **Related task** [draft] — shares the parser
 
 
 ## Constraints

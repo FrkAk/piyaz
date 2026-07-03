@@ -171,9 +171,9 @@ export async function formatWorkingContext(
 }
 
 /**
- * Format the meta section: priority, estimate, assignees. Each line is
- * suppressed when the corresponding field is unset, so a task with no
- * meta drops the section entirely.
+ * Format the meta section: category, priority, estimate, assignees. Each
+ * line is suppressed when the corresponding field is unset, so a task with
+ * no meta drops the section entirely.
  *
  * @param node - Raw task row.
  * @param assignees - Resolved assignee projection.
@@ -185,8 +185,10 @@ function formatMetaSection(
   links: TaskLinkRef[],
 ): string {
   const lines: string[] = [];
+  const category = (node.category as string | null) ?? null;
   const priority = (node.priority as string | null) ?? null;
   const estimate = (node.estimate as number | null) ?? null;
+  if (category) lines.push(`- Category: \`${category}\``);
   if (priority) lines.push(`- Priority: \`${priority}\``);
   if (estimate) lines.push(`- Estimate: ${estimate} pts`);
   if (assignees.length > 0) {

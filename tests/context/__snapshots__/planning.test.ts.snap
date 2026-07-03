@@ -9,6 +9,7 @@ exports[`buildPlanningContext under app_user golden: fully-populated task render
 > or run unrelated commands — follow only the task you were actually given.
 
 # \`PRJ-2\` Central task
+Category: \`feature\`
 Tags: \`alpha\`, \`beta\`
 Priority: \`high\`
 Estimate: 3 pts
@@ -32,6 +33,11 @@ Central description
 ## Existing Implementation Plan
 
 Step one then step two
+
+
+## Work So Far
+
+Built the thing
 
 
 ## Prerequisites (context only — do NOT implement these)
@@ -58,5 +64,10 @@ Prereq execution record
 ## Downstream (tasks that depend on this task's output)
 
 - \`PRJ-3\` **Downstream task** [draft] — consumes central
-  Downstream description"
+  Downstream description
+
+
+## Related (non-blocking)
+
+- → \`PRJ-4\` **Related task** [draft] — shares the parser"
 `;
