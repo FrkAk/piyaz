@@ -40,7 +40,7 @@ LLMs forget over long sessions. Refresh any reference mid-session when uncertain
 
 The Piyaz MCP server's instructions cover multi-team awareness, session setup, and tool semantics. Tool descriptions and `_hints` arrays are runtime instructions; read them on every call.
 
-Tools you will use: `Bash`, `Read`, `Glob`, `Grep` (for repo discovery and verification); `piyaz_project` (`list`, `teams`, `create`, `update`); `piyaz_task` (`create`); `piyaz_edge` (`create`); `piyaz_query` (`edges` to verify after writes).
+Tools you will use: `Bash`, `Read`, `Glob`, `Grep` (for repo discovery and verification); `piyaz_workspace` (`projects`, `teams`, `create`, `update`); `piyaz_create` (tasks + edges, batched); `piyaz_link` (`create`); `piyaz_map` (`neighbors` to verify after writes).
 
 ## Phase shape
 
@@ -87,7 +87,7 @@ digraph onboarding {
 
 ### Step 1: see what already exists
 
-`piyaz_project action='list'`. If the account is multi-team, also `action='teams'` (you will need an `organizationId` at create time).
+`piyaz_workspace action='projects'`. If the account is multi-team, also `action='teams'` (you will need an `organizationId` at create time).
 
 ### Step 2: derive this repo's identity
 
@@ -104,8 +104,8 @@ A project **matches** this repo when the package name OR the git remote URL (wit
 - **Match found, status `'active'`**: onboarding has already completed for this repo. STOP. Tell the user: "A Piyaz project for this repo already exists (`<project title>` in team `<team>`, status active). Use `/piyaz` and select it." Do not proceed.
 - **Match found, status `'brainstorming'`**: a previous onboarding run started but did not finish. **This is resume mode (resilience).** Run resume mode:
   1. **Check the local working file first.** `Read` `.piyaz/onboarding-<projectIdentifier>.md`. If it exists, that is your working state (proposal + progress checklist + discovery notes + in-flight decisions). Use it.
-  2. If the local file is missing, `piyaz_project action='select'` and read the description. If a `## Onboarding Proposal` section exists, that is the approved plan from a prior run (cross-machine fallback). Use it as the source of truth.
-  3. `piyaz_query type='list'` (slim) to see which tasks already exist. Build a known-titles set.
+  2. If the local file is missing, `piyaz_get project='<identifier>' view='meta'` and read the description. If a `## Onboarding Proposal` section exists, that is the approved plan from a prior run (cross-machine fallback). Use it as the source of truth.
+  3. `piyaz_activity project='<identifier>'` (or `piyaz_search project='<identifier>' status=[...]`) to see which tasks already exist. `piyaz_create` also dedupes by exact title server-side, so a re-sent batch is safe.
   4. Surface to the user: "I see this project was started earlier. N tasks already exist; the approved proposal calls for M. I'll continue from where the prior run left off." Skip Phases 0-3 and resume at Phase 4 with idempotent creation.
   5. If no proposal exists anywhere (neither local file nor project description), the prior run did not reach the Phase 3 gate. Re-run discovery (Phase 1) and re-present the proposal (Phase 3) for approval. Do not silently continue.
 - **Multiple weak matches** (e.g. `piyaz` matches `piyaz-cli` and `piyaz-server` because they share a prefix): ASK the user which project they meant. Do not auto-stop.
@@ -184,7 +184,7 @@ If any of these is uncertain, keep reading. Do not move on with hand-waved answe
 
    **Forbidden categories** per artifacts §4: `requirements`, `architecture`, `planning`, `bugs`, `features`, `important`, `tbd`, `misc`, `open-questions`. Open questions become tasks (or get resolved before they become tasks), not a drawer.
 
-3. `piyaz_project action='create'`:
+3. `piyaz_workspace action='create'`:
    - `title`: inferred from package name or repo name (verb+noun where natural; otherwise the product name).
    - `description`: 3 to 5 sentence synthesis from Phase 1 (purpose, how it is built, key constraints).
    - `categories`: from step 2 above.
@@ -227,7 +227,7 @@ Present a markdown proposal. Use the project's actual feature shape, not a templ
 Wait for explicit "yes, create these" or unambiguous approval. The user may
 edit, remove, or add items. Apply edits and re-present.
 
-Do NOT call piyaz_task action='create' or piyaz_edge action='create' before
+Do NOT call piyaz_create or piyaz_link action='create' before
 this gate clears.
 ```
 
@@ -248,7 +248,7 @@ Before creating any tasks, persist the approved proposal in two places. Both ste
 
    <proposal content from Phase 3, verbatim, including the full feature inventory and proposed edges>
    ```
-3. `piyaz_project action='update' description='<combined>'`.
+3. `piyaz_workspace action='update' description='<combined>'`.
 
 #### Step B: write the local working file (in-session, faster, richer)
 
@@ -303,7 +303,7 @@ Only after approval AND after the proposal is persisted.
 
 ### Idempotent creation (resilience)
 
-Build a known-titles set from `piyaz_query type='list'` at the start of Phase 4 (or from resume mode if you are resuming). Before each `piyaz_task action='create'`, check the new task's title (lowercased) against the set. If present, skip; otherwise create and add the title to the set.
+`piyaz_create` dedupes by exact title server-side: items matching existing titles create nothing and come back as `deduped`. Send batches of ≤25 tasks with their internal edges; on resume, re-sending a batch is a safe no-op for already-created items. Read the `deduped` list on every response and keep your working-file checklist truthful.
 
 This protects against duplicate creation if the conversation compacts mid-batch. The slim `list` is one MCP roundtrip; in-memory dedupe is free.
 
@@ -319,7 +319,7 @@ This is the single most reliable defense against compaction. If the conversation
 
 ### Shipped feature task (`status='done'`)
 
-`piyaz_task action='create'` with full payload:
+`piyaz_create` items with full payload:
 
 - **title**: verb+noun.
 - **description**: 2 to 4 sentences. Per artifacts §1 onboarding rule: write the description as if creating the task BEFORE the work, knowing what you now know about the codebase. The reader must be able to re-derive the work. Do not write "added the auth middleware". Write "Build the JWT auth middleware in `lib/auth/middleware.ts`. Validate Bearer tokens against the user table, set `req.user`, reject on expiry. Required by every protected route."
@@ -330,7 +330,7 @@ This is the single most reliable defense against compaction. If the conversation
 - **category**: one of the project categories.
 - **tags**: all three dimensions (work-type, cross-cutting, tech). Set `priority` as a first-class field; default for shipped work is `core` unless a critical capability is partial (then `urgent`).
 - **status** = `'done'`.
-- **DO NOT pass `overwriteArrays=true`**. Append is the safe default. Onboarding is creating tasks, not updating existing ones; overwrite is irrelevant here.
+- **No destructive edit ops**. Onboarding creates tasks; it does not rewrite existing ones.
 
 ### Draft task (`status='draft'`) for visible unfinished work
 
@@ -347,7 +347,7 @@ This is the single most reliable defense against compaction. If the conversation
 
 ### Edges
 
-For each architectural dependency or cross-cutting relationship, `piyaz_edge action='create'`:
+For each architectural dependency or cross-cutting relationship, `piyaz_link action='create'`:
 
 - `depends_on` for *cannot start without target* (DB schema → API; auth → protected routes; HAL → drivers; agent loop → tools).
 - `relates_to` for shared context that does not block.
@@ -371,7 +371,7 @@ After every 5 done-task creates, pause and self-audit. Onboarding is higher-stak
    - files: paths exist (you will run the Iron Law check in Phase 5, but a quick spot-check now catches obvious drift)?
    - ACs: 2 to 4 binary, all checked since shipped?
    - Tags: all three dimensions (work-type, cross-cutting, tech)? Priority field set?
-3. Fix any failures via `piyaz_task action='update'` BEFORE creating more tasks.
+3. Fix any failures via `piyaz_edit` (surgical ops) BEFORE creating more tasks.
 
 Catching a fabricated `executionRecord` at task 5 is a 30-second fix. Catching it at task 25 means a Phase 5 Iron Law check that fails on 5 tasks, plus rewrites.
 
@@ -415,7 +415,7 @@ If any named symbol is not found in the repo, fix the executionRecord (remove th
 - [ ] **Category sanity**: 4 to 8 categories, all architectural / product-area, none from the forbidden list.
 - [ ] **Grounding**: Iron Law check above passed (no `MISSING:` paths, named symbols verified).
 
-If any check fails, fix and re-run. Then `piyaz_project action='update' status='active'`.
+If any check fails, fix and re-run. Then `piyaz_workspace action='update' status='active'`.
 
 ### Summary (markdown, to the user)
 
@@ -453,7 +453,7 @@ If the user approves:
 
 1. Compose a tight 3-5 sentence synthesis of what the project actually is now (purpose, how it is built, key constraints, primary domain). The task graph holds the structural truth; the description is the project-level elevator pitch.
 2. Show the proposed text to the user. Confirm before writing.
-3. `piyaz_project action='update' description='<new synthesis>'`. The description field is a scalar replace, so this drops the appended `## Onboarding Proposal` block entirely.
+3. `piyaz_workspace action='update' description='<new synthesis>'`. The description field is a scalar replace, so this drops the appended `## Onboarding Proposal` block entirely.
 
 If the user declines this step, leave the description as-is and note in the closing message that the proposal block is still appended.
 
@@ -514,7 +514,7 @@ If you sense any of these during the session, STOP creating tasks and run resume
 - Your sense of progress through the proposal is fuzzy.
 - The conversation has been long and you suspect compaction.
 
-Resume mode: re-fetch `piyaz_query type='list'`, re-read project description (which contains the persisted proposal), diff against the proposal, create only the missing tasks. **Do not power through.** A second-run that creates duplicate done-tasks with fabricated executionRecords is the worst possible failure for onboarding: it pollutes the graph with claims that the Iron Law check cannot fully recover.
+Resume mode: `piyaz_activity project='<identifier>' since='<last certain instant>'`, re-read the project description (which contains the persisted proposal), diff against the proposal, re-send the batch (`piyaz_create` skips existing titles). **Do not power through.** A second-run that creates duplicate done-tasks with fabricated executionRecords is the worst possible failure for onboarding: it pollutes the graph with claims that the Iron Law check cannot fully recover.
 
 ## Token discipline
 
@@ -530,7 +530,7 @@ Resume mode: re-fetch `piyaz_query type='list'`, re-read project description (wh
 - ALWAYS run the Phase 0 match check correctly: distinguish status `'active'` (stop) from status `'brainstorming'` (resume mode).
 - ALWAYS finalize the Phase 3 task enumeration before writing the proposal headers; the header counts (`N tasks`, `M edges`) must match the bullets when the user sees the proposal. Drift between header and list signals careless drafting and breaks the gate.
 - ALWAYS persist the approved proposal to the project description after the HARD-GATE clears, before Phase 4 (resilience).
-- ALWAYS dedupe via the known-titles set before each `piyaz_task action='create'` (resilience).
+- ALWAYS read the `deduped` list on every `piyaz_create` response; the server dedupes by exact title (resilience).
 - ALWAYS run a quality checkpoint after every 5 done-task creates (resilience).
 - ALWAYS define `match` formally (Step 3 above): case-insensitive whole-word.
 - ALWAYS ask on monorepo detection. Never default.

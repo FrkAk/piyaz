@@ -56,7 +56,7 @@ draft → planned → in_progress → in_review → done
 ### `planned`
 
 - **What it means.** Implementation plan is written. All `depends_on` blockers are themselves `done`. Ready for someone to claim and code.
-- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
+- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_edit task='<ref>' operations=[{op:'set', field:'status', value:'in_progress'}]`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
 
 ---
 

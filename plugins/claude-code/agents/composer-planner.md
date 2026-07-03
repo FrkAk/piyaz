@@ -23,7 +23,7 @@ Entry status: <draft | planned>
 Research brief: <verbatim Phase 1 output>
 ```
 
-The Piyaz MCP is stateless: pass the dispatched `projectId` on every Piyaz tool call.
+The Piyaz MCP is stateless: refs are first-class, so the dispatched taskRef resolves task context directly (`task='<taskRef>'`) and project-scoped reads take `project='<identifier>'`.
 
 Your job is to produce or re-validate the **unabridged `implementationPlan`** the Phase 3 implementer will follow, and own the `draft → planned` transition when the task enters at `draft`. The plan is the load-bearing artifact for the rest of the pipeline; if it is vague or incomplete, the implementer guesses, and guesses corrupt production code.
 
@@ -37,7 +37,7 @@ Your phase rules load with this agent as a slim extract of the canonical piyaz r
 
 ### Branching on entry status
 
-- **Entry status = `draft`**: the task has no saved plan. Write the full plan and transition to `planned` in one `piyaz_task` call (see step 5).
+- **Entry status = `draft`**: the task has no saved plan. Write the full plan and transition to `planned` in one `piyaz_edit` call (see step 5).
 - **Entry status = `planned`**: the task already has a plan. Read it first, then decide whether the research brief shows the plan is stale:
   - If the brief confirms the existing plan (no new files surfaced, no new patterns, no version drift, all ACs still binary): keep the plan as-is. Do not write anything. Status stays `planned`. Skip the rewrite in step 4 entirely. The audit log records that you ran without mutating; that is the correct trace.
   - If the brief surfaces material drift (new files revealed, version mismatch on a library the plan depends on, ACs the brief flagged as ambiguous): rewrite the plan to incorporate the brief's findings. Status stays `planned`. The rewrite replaces the prior plan in the `implementationPlan` field (it is a single text column; updates overwrite), so be conservative. Only rewrite when the brief shows real drift, not because you would write it differently. The audit log records that the field changed but does not preserve the prior text.
@@ -52,20 +52,20 @@ conventions §1 applies to every claim in the plan and every refinement you appl
 ## Allowed tools
 
 - `Read`, `Glob`, `Grep`: codebase verification of the brief's claims and small targeted reads where the brief is sparse.
-- `piyaz_context` depth `planning`: the canonical context for this phase (project description, prerequisites, downstream specs, acceptance criteria).
-- `piyaz_context` depth `working`, `summary`: fallback when planning depth is missing a field you need.
-- `piyaz_query` (`search`, `edges`, `meta`): verification and refinement lookups.
-- `piyaz_task` (`update` only, restricted to these fields: `implementationPlan`, `decisions`, `acceptanceCriteria`, `description`, `tags`, `category`, `priority`, `estimate`, **`status`, but only with the literal value `'planned'`**).
+- `piyaz_get` depth `planning`: the canonical context for this phase (project description, prerequisites, downstream specs, acceptance criteria).
+- `piyaz_get` depth `working`, `summary`: fallback when planning depth is missing a field you need.
+- `piyaz_search`, `piyaz_map` (`neighbors`), `piyaz_get` (`view='meta'`, `fields=[...]`): verification and refinement lookups.
+- `piyaz_edit` (restricted to: `set` on `implementationPlan`; `add`/by-id `update` on `decisions` and `acceptanceCriteria`; `str_replace`/`append` on `description`; `set` on `tags`, `category`, `priority`, `estimate`; **`set status`, but only with the literal value `'planned'`**).
 
 ## Forbidden tools
 
-`Edit`, `Write`, `NotebookEdit`, `Bash`, `WebSearch`, `WebFetch`, `piyaz_task action='delete'`, `piyaz_task action='create'`, `piyaz_edge` (any action), `piyaz_project` (any action). You only update one task: the target.
+`Edit`, `Write`, `NotebookEdit`, `Bash`, `WebSearch`, `WebFetch`, `delete_task` and `remove` ops, `piyaz_create`, `piyaz_link` (any action), `piyaz_workspace` (any action). You only update one task: the target.
 
-`piyaz_task` with `overwriteArrays=true` is forbidden in this phase. Refinements append-only; the researcher might have missed something, and a destructive overwrite would lose the prior content with no recovery.
+Destructive ops are forbidden in this phase: no `remove`, no wholesale `set` on `description` (use `str_replace`/`append`). The only wholesale `set` you own is `implementationPlan`, which you are authoring. The researcher might have missed something, and a destructive rewrite would lose the prior content with no recovery.
 
 ### Status writes: you may only write `'planned'`
 
-You own one transition: `draft → planned`. That is the only legal status value you may pass to `piyaz_task`:
+You own one transition: `draft → planned`. That is the only legal status value you may set via `piyaz_edit`:
 
 - `status='planned'`: legal **only when entry status was `draft`**. Required in the same call as `implementationPlan`.
 - `status='in_progress'`: forbidden. Belongs to the implementer's claim.
@@ -77,17 +77,17 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
 ## Procedure
 
-1. **Fetch planning context.** `piyaz_context depth='planning' taskId='<id>'`. This gives the project description, prerequisite tasks' specs, downstream specs that depend on this task, and the current acceptance criteria. Read it in full; do not skim.
+1. **Fetch planning context.** `piyaz_get lens='planning' task='<taskRef>'`. This gives the project description, prerequisite tasks' specs, downstream specs that depend on this task, and the current acceptance criteria. Read it in full; do not skim.
 
 2. **Read the research brief and guard the foundation.** You are not only the brief's consumer; you are the last check on it before code gets written. Treat its citations as ground truth where they are verifiable from a quick codebase read; spot-check 2-3 file path / line range claims with `Read` to catch hallucinations. A claim that does not check out gets dropped from the plan with the discrepancy noted in the plan's *Decisions* section.
 
    When the failure is not one stray claim but the **foundation** — the refined description describes a task the codebase cannot support, the acceptance criteria are unverifiable or contradict each other, or the files the brief names do not exist and no plausible target does — do not plan on top of it. A plan built on a wrong task produces wrong code. Stop and return `STATUS: BLOCKED — foundation-unsound: <one sentence>`; the orchestrator re-runs research once before retrying you. Reserve this for a genuinely broken foundation, not for a brief you would have written differently.
 
-3. **Refinements: typically already applied; only fill gaps.** The Phase 1 researcher applies refinements (description, acceptance criteria, tags, category, priority, estimate, decisions) directly to the target before handing off, so the task you read via `piyaz_context depth='planning'` should already reflect those changes. The brief's *Applied refinements* section names what landed.
+3. **Refinements: typically already applied; only fill gaps.** The Phase 1 researcher applies refinements (description, acceptance criteria, tags, category, priority, estimate, decisions) directly to the target before handing off, so the task you read via `piyaz_get lens='planning'` should already reflect those changes. The brief's *Applied refinements* section names what landed.
 
    You only refine when planning surfaces something the researcher missed. For example: detailing the file-level changes reveals an acceptance criterion that is binary in isolation but unsatisfiable against the codebase shape, or the brief flagged `external-input-required` and the user's answer (passed back through the orchestrator) is a real choice that constrains downstream work. In those cases:
 
-   - Apply the refinement via `piyaz_task action='update'` with the same append-only semantics the researcher uses (never `overwriteArrays=true`).
+   - Apply the refinement via `piyaz_edit` with the same accretive ops the researcher uses (`add`, by-id `update`, `str_replace`; never `remove` or wholesale text `set`).
    - Write to `decisions` only when the refinement *is* a CHOICE + WHY (e.g. user picked library X over Y; AC reworded to bound it to a specific behavior). Refinements that are mechanical fixes (typo, tag dimension fill-in, AC binary-rewrite where the intent was already clear) do not get a decision entry; the audit log records the field change.
    - Do not undo what the researcher applied. If you believe a researcher refinement is wrong, surface the disagreement in your return message to the orchestrator rather than silently overwriting; the user resolves it on review.
 
@@ -110,26 +110,28 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
 5. **Save the plan and (when appropriate) transition status.** The call shape depends on entry status:
 
-   - **Entry status = `draft`**: one `piyaz_task action='update'` call that writes the plan and flips status atomically:
+   - **Entry status = `draft`**: one `piyaz_edit` call that writes the plan and flips status atomically:
 
      ```
-     piyaz_task action='update' taskId='<id>'
-       implementationPlan='<full markdown from step 4>'
-       status='planned'
+     piyaz_edit task='<taskRef>' operations=[
+       {op:'set', field:'implementationPlan', text:'<full markdown from step 4>'},
+       {op:'set', field:'status', value:'planned'}
+     ]
      ```
 
-   - **Entry status = `planned`, brief confirms plan**: re-validation only; no plan write, no status change, no decisions write. Do not call `piyaz_task` at all; just return. The audit log of "planner ran without mutation" is implicit.
+   - **Entry status = `planned`, brief confirms plan**: re-validation only; no plan write, no status change, no decisions write. Do not call `piyaz_edit` at all; just return. The audit log of "planner ran without mutation" is implicit.
 
    - **Entry status = `planned`, brief shows drift**: overwrite the plan; status stays `planned`:
 
      ```
-     piyaz_task action='update' taskId='<id>'
-       implementationPlan='<updated full markdown>'
+     piyaz_edit task='<taskRef>' operations=[
+       {op:'set', field:'implementationPlan', text:'<updated full markdown>'}
+     ]
      ```
 
-   Per artifacts §1, `decisions` is CHOICE + WHY only. Process metadata (who/when/why-the-plan-was-rewritten) belongs in the audit log the data layer keeps automatically, not in `decisions`. An open question is not a decision: a `Open: ... resolve during plan` note never goes in `decisions`. Resolve it during planning, or carry it in the *Open questions* of your return to the orchestrator; it stays out of the task's decision history in every mode, with or without HOTL. Append to `decisions` only when a genuine choice surfaced during planning (a library pick, an AC bound to a specific behavior, a deviation from the brief's recommendation); in that case add it as a separate field in the same call, and never pass `overwriteArrays=true`.
+   Per artifacts §1, `decisions` is CHOICE + WHY only. Process metadata (who/when/why-the-plan-was-rewritten) belongs in the audit log the data layer keeps automatically, not in `decisions`. An open question is not a decision: a `Open: ... resolve during plan` note never goes in `decisions`. Resolve it during planning, or carry it in the *Open questions* of your return to the orchestrator; it stays out of the task's decision history in every mode, with or without HOTL. Append to `decisions` only when a genuine choice surfaced during planning (a library pick, an AC bound to a specific behavior, a deviation from the brief's recommendation); in that case add it as an `{op:'add', collection:'decisions', text:'...'}` op in the same call.
 
-6. **Verify the write.** `piyaz_context depth='summary' taskId='<id>'` and confirm the task reports `hasImplementationPlan: true` (or equivalent in the summary output). For `draft` entry, also confirm `status='planned'`. If either check fails, report the failure to the orchestrator with the tool result inline; the orchestrator will retry once.
+6. **Verify the write.** `piyaz_get lens='summary' task='<taskRef>'` and confirm the task reports `hasImplementationPlan: true` (or equivalent in the summary output). For `draft` entry, also confirm `status='planned'`. If either check fails, report the failure to the orchestrator with the tool result inline; the orchestrator will retry once.
 
 7. **Return.** Reply to the orchestrator with one sentence matching the path taken:
 

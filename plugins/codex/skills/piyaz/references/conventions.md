@@ -20,7 +20,7 @@ Three reference files hold the topical rules. Read them at the moment of use, no
 |---|---|---|
 | `references/artifacts.md` | About to write or refine any task, edge, or related artifact. | Title, description, AC, executionRecord, decisions, files (§1). Tag dimensions (§2). Edge types (§3). Categories with project-type guidance and forbidden list (§4). Granularity (§5). Markdown formatting and tone (§6). |
 | `references/lifecycle.md` | Before any status transition, before marking done or cancelled, after any status change. | Status lifecycle, what each state means (§1). Completion Protocol with PR-opening (§2). Propagation Iron Law (§3). |
-| `references/resilience.md` | At session start (resume mode) and after any compaction signal. | Why long sessions fail (§1). Persist plan to project description (§2). Local working file at `.piyaz/` (§3). Resume mode (§4). Idempotent creation (§5). Quality checkpoints (§6). Compaction signals (§7). Server vs agent-enforced rules (§9). Transport / auth errors (§10). Headless runs (§11). |
+| `references/resilience.md` | At session start (resume mode) and after any compaction signal. | Why long sessions fail (§1). Persist plan to project description (§2). Local working file at `.piyaz/` (§3). Resume mode with `piyaz_activity` (§4). Idempotent batch creation (§5). Quality checkpoints (§6). Compaction signals (§7). Server vs agent-enforced rules (§9). Transport / auth errors (§10). Headless runs (§11). |
 
 References renumber from §1 within their own file. When this document or an agent says "artifacts §4", it means section 4 of `references/artifacts.md` (categories), not section 4 of this file.
 
@@ -61,10 +61,11 @@ These are not optional commentary. They are server-side rules and state you cann
 
 Examples of hints you must obey:
 
-- Missing required fields on `done`: hint says `executionRecord is required`. Re-call with the field.
+- Missing required fields on `done`: hint says `executionRecord is required`. Re-call with the missing op.
 - Tool description says "REQUIRED in multi-team accounts". The server rejects ambiguous calls.
-- Hint says "no ready tasks; try `piyaz_analyze type='plannable'`". Switch to plannable. Do not invent ready work.
+- Hint says "no ready tasks; try `piyaz_map view='plannable'`". Switch to plannable. Do not invent ready work.
 - Hint says "edges to cancelled task remain in place". Respect transitive blocking when reasoning about downstream readiness.
+- An error names the fix inline: ambiguous refs return the candidate list, a near-miss names the highest existing ref, a failed `str_replace` names the occurrence count, a stale write names the fresh `updatedAt`. Re-read the error and act before falling back to asking the user.
 
 **Order rule when multiple hints fire.** When two or more `_hints` come back in the same response (e.g. "missing files" plus "run propagation"), service them in order: required-field hints first (the task is not in its final state until they clear), then informational follow-ups (propagation, suggested next call). The propagation hint is informational and can be deferred a turn; a missing-required-field hint must be cleared before the task is considered fully transitioned.
 
@@ -91,7 +92,7 @@ A junior engineer who agrees with everything is worse than no engineer at all. T
 
 ## 4. taskRef format
 
-Tool responses include a `taskRef` like `WHL-214`: uppercase project prefix, dash, integer. Use the ref in user-facing output. **Always pass the UUID `taskId` to tool calls. Never the ref.**
+Tool responses include a `taskRef` like `WHL-214`: uppercase project prefix, dash, integer. **Refs are first-class everywhere: use them in user-facing output AND in tool calls** (`task='WHL-214'`, `project='WHL'`). UUIDs also work and are the fallback when a ref is ambiguous across teams (the error lists the candidates with their UUIDs). Chain the refs that responses emit; never invent one — a miss returns the highest existing ref for the prefix.
 
 ---
 

@@ -26,7 +26,7 @@ draft → planned → in_progress → in_review → done
 | Status | Required fields | Forbidden fields | Trigger to leave |
 |---|---|---|---|
 | `draft` | `description`, `acceptanceCriteria` | `executionRecord`, `implementationPlan` | implementation plan saved → `planned` |
-| `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `action='update' status='in_progress'` → `in_progress` |
+| `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `piyaz_edit` (`set status='in_progress'`) → `in_progress` |
 | `in_progress` | + active worker (one only) | — | work complete + record + ACs + Completion Protocol §2 run → `in_review` |
 | `in_review` | + `executionRecord`, `decisions`, `files`, every AC evaluated, `prUrl` (optional sugar, set when a PR was opened; backend upserts a `task_links` row with `kind='pull_request'`) | — | HOTL operator inspects PR and flips → `done` (or back to `in_progress` for rework) |
 | `done` | (inherited from `in_review`) | — | terminal |
@@ -41,7 +41,7 @@ draft → planned → in_progress → in_review → done
 ### `planned`
 
 - **What it means.** Implementation plan is written. All `depends_on` blockers are themselves `done`. Ready for someone to claim and code.
-- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
+- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_edit task='<ref>' operations=[{op:'set', field:'status', value:'in_progress'}]`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
 
 ### `in_progress`
 
@@ -94,11 +94,11 @@ Completion Protocol:
 
 ### 2.2. Populate the required fields
 
-`executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
+One `piyaz_edit` call carries the whole payload as ordered ops: `set executionRecord`, one `add` per decision, `set files`, `check`/`uncheck` each acceptance criterion by its id, `set prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR), and the `set status` transition. The call is atomic; the MCP server returns `_hints` if anything is missing. Re-call with the additions before continuing.
 
-For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, `set files` with `value=[]` explicitly. Omitting the op leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
-Evaluating existing acceptance criteria passes `{text, checked}` objects; this updates the rows in place. `overwriteArrays=true` is never part of the Completion Protocol; if you find yourself reaching for it here, stop and re-read the red flags in SKILL.md.
+Criterion ids come from `piyaz_get lens='working'` or `fields=['acceptanceCriteria']`; evaluate each against the actual work. Wholesale `set` on text fields is never part of the Completion Protocol; the record accretes via `set executionRecord` (first write) or `append` (adding to prior work). If you find yourself rewriting fields you did not author, stop and re-read the red flags in SKILL.md.
 
 ### 2.3. Open a PR if the work changed code
 
@@ -176,14 +176,14 @@ The graph is Piyaz's value. Skip once and it lies: ready tasks that aren't ready
 
 After any status change or significant refinement:
 
-1. `piyaz_query type='edges'` on the changed task. Current relationships.
-2. `piyaz_analyze type='downstream'`. Who depends on this task.
+1. `piyaz_map view='neighbors' task='<ref>'`. Current relationships, both types, with notes.
+2. `piyaz_map view='downstream' task='<ref>'`. Who depends on this task.
 3. For each downstream task, evaluate:
    - Do edge notes need updating to reflect new decisions?
    - Are there NEW relationships revealed by this change?
    - Are there STALE relationships that no longer hold?
    - Do downstream descriptions need updating based on the decisions made?
-4. Create, update, or remove edges as needed.
+4. Create, update, or remove edges as needed via `piyaz_link` (keyed by source+target+type).
 
 **For cancellations specifically:**
 

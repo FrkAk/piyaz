@@ -317,7 +317,7 @@ let acTotal = null;
 let concerns = [];
 if (shouldRun("implement")) {
   const prompt =
-    `${head} Plan is saved to Piyaz; fetch via piyaz_context depth='agent'. ` +
+    `${head} Plan is saved to Piyaz; fetch via piyaz_get lens='agent'. ` +
     "Claim the task, implement per the implementationPlan, open a PR, mark in_review per the Completion Protocol." +
     (planQuestions.length
       ? `\nOpen questions from planning — resolve or escalate before guessing:\n- ${planQuestions.join("\n- ")}`
