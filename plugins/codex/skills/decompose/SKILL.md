@@ -61,11 +61,11 @@ Do not proceed. A vague brief begets vague tasks.
 ## Session setup
 
 1. `piyaz_workspace action='projects'`. Note the project identifier and pass it on every subsequent call (no server-side session state).
-   - **Project-confirmation gate.** If `list` returns multiple projects whose titles or descriptions overlap what the user is asking to decompose, ASK before selecting. Do not silently pick the closest match. Surface the candidates and the user's stated intent: "I see `<A>` and `<B>` that could match. Which one are we decomposing?" Decomposing the wrong project pollutes its graph and is hard to undo cleanly.
+   - **Project-confirmation gate.** If `projects` returns multiple candidates whose titles or descriptions overlap what the user is asking to decompose, ASK before proceeding. Do not silently pick the closest match. Surface the candidates and the user's stated intent: "I see `<A>` and `<B>` that could match. Which one are we decomposing?" Decomposing the wrong project pollutes its graph and is hard to undo cleanly.
 2. `piyaz_get project='<identifier>' view='overview'` once. Returns existing tags, categories, any tasks already present. **Heavy call; do not repeat in the session.** For subsequent task browsing use `piyaz_search` with tag or status filters.
 3. **Resume mode** per resilience (mid-session resilience):
    - **Check the local working file first.** `Read` `.piyaz/decompose-<projectIdentifier>.md`. If it exists, that is your working state (plan + progress checklist + in-flight notes). Use it.
-   - If the local file is missing, read the project description from the `select` response. If a `## Decomposition Plan` section exists, that is the authoritative plan (cross-machine fallback). Use it as the source of truth, not your conversation memory.
+   - If the local file is missing, read the project description via `piyaz_get project='<identifier>' view='meta'`. If a `## Decomposition Plan` section exists, that is the authoritative plan (cross-machine fallback). Use it as the source of truth, not your conversation memory.
    - `piyaz_activity project='<identifier>'` (or `piyaz_search project='<identifier>' status=[...]`) shows what already exists; `piyaz_create` dedupes by exact title regardless.
    - **If existing tasks > 0 AND a plan exists** (local file or project description): you are resuming a prior run. Surface this to the user: "I see N tasks already exist. The approved plan calls for M. I'll create only the missing M-N tasks." Do NOT recreate existing tasks.
    - **If existing tasks > 0 AND no plan exists anywhere**: ask the user how to proceed. Manually-created tasks may exist that no plan accounts for. Do not silently overwrite or duplicate.
@@ -206,7 +206,7 @@ Before creating any tasks, persist the approved plan in two places. Both steps a
 
 ### Step A: append to the project description (cross-machine durable)
 
-1. Read the current `description` from your `select` response (already in your context).
+1. Read the current `description` via `piyaz_get project='<identifier>' view='meta'` (or reuse it if already in your context).
 2. Build the new value:
    ```
    <existing description>

@@ -208,7 +208,7 @@ For features with > 10 tasks, follow resilience §2 and §3 in scaled form:
 
 ### Step A: append a feature block to the project description
 
-1. Read the current `description` from the `select` response.
+1. Read the current `description` via `piyaz_get project='<identifier>' view='meta'` (or reuse it if already in your context).
 2. Build the new value:
    ```
    <existing description>

@@ -1161,7 +1161,7 @@ export type SearchTasksOpts = {
   query?: string;
   /** Optional exact tag filter (OR-within). */
   tags?: string[];
-  /** Optional exact project-category filter (AND-narrows). Caller validates. */
+  /** Optional exact project-category filter (AND-narrows); unknown values match nothing. */
   category?: string;
 };
 

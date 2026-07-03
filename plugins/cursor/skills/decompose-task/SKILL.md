@@ -212,7 +212,7 @@ Capture each child's UUID and `taskRef` from the create response; you need them 
 
 For each parent-touching edge from the approved plan:
 
-1. **Delete the obsolete edge**: `piyaz_link action='delete' edgeId='<id>'`. The edge ID came from the Phase 1 `type='edges'` call.
+1. **Remove the obsolete edge**: `piyaz_link action='remove' source='<ref>' target='<ref>' type='<type>'` (or by `edgeId` when known). The endpoints came from the Phase 1 `piyaz_map view='neighbors'` call.
 2. **Create the replacement edge(s)**: `piyaz_link action='create' source='<id>' target='<id>' type='<type>' note='<rewrite>'`. Per the plan's rewriting map.
 
 Rules:

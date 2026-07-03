@@ -237,7 +237,7 @@ Before creating any tasks, persist the approved proposal in two places. Both ste
 
 #### Step A: append to the project description (cross-machine durable)
 
-1. Read the current `description` from the `select` response (already in your context).
+1. Read the current `description` via `piyaz_get project='<identifier>' view='meta'` (or reuse it if already in your context).
 2. Build the new value:
    ```
    <existing description>

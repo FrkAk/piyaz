@@ -132,7 +132,7 @@ export const DESCRIPTIONS = {
   piyaz_edit:
     "Edit one task with an ordered list of operations, applied atomically (all or nothing). task accepts 'PYZ-42' or a UUID. " +
     "Text fields (description, implementationPlan, executionRecord): op='str_replace' (oldStr must match exactly once; the error names the occurrence count), op='append' (adds a paragraph), op='set' (full replace — prefer str_replace/append for surgical edits). " +
-    "Collections (acceptanceCriteria, decisions, links, assignees): op='add' (text/url; assignees take value='me' or a user UUID), op='update'/'remove'/'check'/'uncheck' by the item id from piyaz_get lens='working' or fields=[...]. Removed items are unrecoverable. " +
+    "Collections (acceptanceCriteria, decisions, links, assignees): op='add' (text/url; assignees take value='me' or a user UUID), op='update'/'remove'/'check'/'uncheck' by the item id from piyaz_get lens='working' or fields=[...] (assignees support add/remove only). Removed items are unrecoverable. " +
     "Scalars (status, priority, estimate, category, title, tags, files, prUrl): op='set' with value. Status transitions return lifecycle hints — read and act on them. " +
     "ifUpdatedAt (from a prior read) makes the whole call a compare-and-swap for contended tasks. " +
     "op='delete_task' must be the only op: preview defaults to true (impact summary); preview=false executes. Prefer set status='cancelled' for abandoned scope — delete only pure noise.",
@@ -526,7 +526,7 @@ const editOpSchema = z.object({
     .union([z.string(), z.number(), z.array(z.string()), z.null()])
     .optional()
     .describe(
-      "set on a scalar field: the new value (tags/files take arrays; prUrl takes a URL or null to remove). add/update on assignees: 'me' or a user UUID.",
+      "set on a scalar field: the new value (tags/files take arrays; prUrl takes a URL or null to remove). add/remove on assignees: 'me' or a user UUID.",
     ),
   id: z
     .string()

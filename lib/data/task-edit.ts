@@ -436,18 +436,21 @@ function prepareSetOp(
   field: NonNullable<EditOp["field"]>,
   bad: (reason: string) => never,
 ): PreparedOp {
-  if (!("value" in op)) bad(`set field '${field}' requires value`);
-  const value = op.value;
   if (isTextField(field)) {
+    const value = op.text !== undefined ? op.text : op.value;
+    if (value === undefined)
+      bad(`set field '${field}' requires text (or value)`);
     if (field === "description") {
       if (typeof value !== "string")
-        bad("set description requires a string value");
+        bad("set description requires string text");
       return { kind: "text", op: { t: "set", field, value } };
     }
     if (value !== null && typeof value !== "string")
-      bad(`set ${field} requires a string or null value`);
+      bad(`set ${field} requires string or null text`);
     return { kind: "text", op: { t: "set", field, value } };
   }
+  if (!("value" in op)) bad(`set field '${field}' requires value`);
+  const value = op.value;
   if (field === "prUrl") {
     if (value === null || value === "")
       return { kind: "prUrl", classified: null };
@@ -655,8 +658,10 @@ function prepareAssigneeMutation(
 ): PreparedAssignee {
   if (op.op !== "add" && op.op !== "remove")
     return bad(`op='${op.op}' is not valid on assignees`);
-  if (typeof op.id !== "string") bad(`${op.op} assignees requires id`);
-  const resolved = op.id === "me" ? userId : op.id;
+  const raw = typeof op.value === "string" ? op.value : op.id;
+  if (typeof raw !== "string")
+    bad(`${op.op} assignees requires value ('me' or a user UUID)`);
+  const resolved = raw === "me" ? userId : raw;
   return op.op === "add"
     ? { t: "add", userId: resolved }
     : { t: "remove", userId: resolved };

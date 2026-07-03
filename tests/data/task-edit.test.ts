@@ -346,6 +346,40 @@ test("decisions add, update, and remove mirror criteria", async () => {
   expect(full.decisions).toEqual([]);
 });
 
+test("set on a text field accepts the documented text param", async () => {
+  const f = await seedUserOrgProject("set-text-param");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "original",
+  });
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "implementationPlan", text: "Plan via text param" },
+  ]);
+  const full = await getTaskFull(ctx, task.id);
+  expect(full.implementationPlan).toContain("Plan via text param");
+});
+
+test("assignees add/remove accept the documented value param", async () => {
+  const f = await seedUserOrgProject("assignee-value");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "assignees", value: "me" },
+  ]);
+  let full = await getTaskFull(ctx, task.id);
+  expect(full.assignees.map((a) => a.userId)).toEqual([f.userId]);
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "remove", collection: "assignees", value: f.userId },
+  ]);
+  full = await getTaskFull(ctx, task.id);
+  expect(full.assignees).toEqual([]);
+});
+
 test("assignees add 'me' resolves to the caller and remove clears it", async () => {
   const f = await seedUserOrgProject("assignee-me");
   const ctx = makeAuthContext(f.userId);

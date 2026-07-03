@@ -53,7 +53,7 @@ You were invoked because the user wants something more than a status check: a st
    - You were invoked **immediately after decompose in the same conversation** and the freshly-decomposed graph is already in context. Skip the fetch and document the deviation in your transcript.
 
    Otherwise: big picture, current tag vocabulary, current categories, recent activity. **Heavy call; cache the output and do not refetch in this session.**
-3. `piyaz_map view='ready'`, `type='blocked'`, `type='critical_path'`, `type='plannable'`. Slim, all four. Get the lay of the land before saying anything.
+3. `piyaz_map view='ready'`, `view='blocked'`, `view='critical_path'`, `view='plannable'`. Slim, all four. Get the lay of the land before saying anything.
 
 Now you have the picture. Do not rush. The user expects depth.
 
@@ -63,7 +63,7 @@ The skill (`/piyaz`) covers these inline; you cover them with deeper analysis an
 
 ### A. Pick next task (opinionated)
 
-`piyaz_map view='ready'` and `type='critical_path'`. Recommend the task at `ready ∩ critical_path` with the strongest impact. **Justify the choice.** Why this one, not the other ready tasks? What trade-offs should the user know? What is the risk of starting elsewhere?
+`piyaz_map view='ready'` and `view='critical_path'`. Recommend the task at `ready ∩ critical_path` with the strongest impact. **Justify the choice.** Why this one, not the other ready tasks? What trade-offs should the user know? What is the risk of starting elsewhere?
 
 When the user picks: claim with `piyaz_edit` (`set status='in_progress'`), hand off `piyaz_get lens='agent'`.
 
@@ -77,7 +77,7 @@ Ready tasks are inherently parallelizable. No blocking deps between them.
 2. **Verify file-level independence.** Two ready tasks both editing `lib/auth/middleware.ts` are not actually independent even if the dep graph thinks so. They will create merge conflicts. Look for file overlap before dispatching. Serialize the overlapping ones, or split the shared change into a third task that lands first.
 3. Rank by critical-path proximity.
 4. For each: `piyaz_edit task='<ref>' operations=[{op:'set', field:'status', value:'in_progress'}]` plus `piyaz_get task='<ref>' lens='agent'`.
-5. **Brief each sub-agent that they are dispatched.** They mark done directly with full payload, no asking. They open a PR per Completion Protocol §10 step 3 if the work changed code. They return a one-sentence summary.
+5. **Brief each sub-agent that they are dispatched.** They mark `in_review` directly with the full payload, no asking (the HOTL operator owns `in_review → done`). They open a PR per Completion Protocol (lifecycle §2.3) if the work changed code. They return a one-sentence summary.
 6. Review their executionRecords after parallel work returns. Run § F on each completed task.
 7. If fewer ready than agents: assign remaining to **§ C: Plan a draft task** in parallel.
 
@@ -95,7 +95,7 @@ Ready tasks are inherently parallelizable. No blocking deps between them.
 When a coding agent or the user reports a task finished:
 
 1. If not already `in_progress`, set it via `piyaz_edit` (preserves lifecycle history).
-2. **Confirm before marking done.** Completion Protocol (lifecycle §2): if you were dispatched (parent agent visible in transcript), mark done directly; otherwise ask.
+2. **Confirm before the terminal write.** Completion Protocol (lifecycle §2): if you were dispatched (parent agent visible in transcript), mark `in_review` directly; otherwise ask. Only an explicit user order flips a task to `done`.
 3. Collect details:
    - User described what they did: extract executionRecord, decisions, files from conversation.
    - User said "done" with no detail: ask what shipped, what was decided, what files were touched.
@@ -145,7 +145,7 @@ This is what makes Piyaz intelligent. Skipping it makes Piyaz useless.
 
 The user wants a CTO sitting down with the project. Spend tokens here. The strategic review is your signature workflow; bring opinion to every section.
 
-1. **Health pass.** Use cached overview + analyze data from session setup:
+1. **Health pass.** Use the cached overview + map views from session setup:
    - Progress percentage. Ratio of done : in_progress : planned : draft.
    - Blocked count and depth: what is stuck, why.
    - Critical path length: minimum project duration.
@@ -169,10 +169,10 @@ The user wants a CTO sitting down with the project. Spend tokens here. The strat
 
 ### H. Orphan audit
 
-Tasks with zero edges are invisible to `piyaz_map view='ready'` and `type='blocked'`. They appear in `plannable` but never gain context from neighbors. Run periodically (default: as part of every strategic review).
+Tasks with zero edges are invisible to `piyaz_map view='ready'` and `view='blocked'`. They appear in `plannable` but never gain context from neighbors. Run periodically (default: as part of every strategic review).
 
 1. `piyaz_map view='plannable'` for the candidate pool.
-2. For each candidate that does NOT show up in any `piyaz_map view='blocked'` reasoning AND is not on the `critical_path`, run `piyaz_map view='neighbors' taskId=<id>`.
+2. For each candidate that does NOT show up in any `piyaz_map view='blocked'` reasoning AND is not on the `critical_path`, run `piyaz_map view='neighbors' task='<ref>'`.
 3. Tasks with zero edges are orphans. For each, decide:
    - **Wire to a related task** (the most common outcome). The orphan is usually a spec or use-case task that was created without its impl/spec link. Add a `relates_to` edge with a substantive note.
    - **Fold into another task** if the scope overlaps an existing one.
@@ -223,7 +223,7 @@ Orphans accumulate. Catching them early keeps the dependency graph honest.
 ## Token discipline
 
 - One `overview` fetch at session start. Cache it. Do not refetch unless something significant has changed.
-- Pick the right `piyaz_get` depth: `working` for refinement, `agent` for handoff, `planning` for plan-writing, `summary` for quick health.
+- Pick the right `piyaz_get` lens: `working` for refinement, `agent` for handoff, `planning` for plan-writing, `summary` for quick health.
 - For status questions, lead with `piyaz_map` (slim) and `piyaz_search` (slim). Do not call `overview` for routine questions.
 - Do not dump the full task list at the user. Recommend the top-1 with a one-sentence justification.
 - Batch related calls in a single response (parallel tool use) when there is no dependency.
@@ -234,7 +234,7 @@ Orphans accumulate. Catching them early keeps the dependency graph honest.
 - ALWAYS run § F after status changes (Iron Law per lifecycle §3).
 - ALWAYS verify dispatched-vs-direct mode before marking done.
 - ALWAYS read tool `_hints` and act on them.
-- ALWAYS open a PR when marking a code-changing task done (Completion Protocol §10 step 3).
+- ALWAYS open a PR when a code-changing task reaches `in_review` (Completion Protocol, lifecycle §2.3).
 - NEVER skip executionRecord, decisions, or files when marking done.
 - NEVER fabricate an executionRecord. Onboard the work properly or hand back to the user.
 - NEVER recommend without checking critical_path.
