@@ -219,6 +219,26 @@ test("map project views resolve the identifier", async () => {
   expect(text).toContain("Ready one");
 });
 
+test("map views truncate at the limit with narrowing guidance", async () => {
+  const fx = await seedUserOrgProject("TMAPLIM");
+  const ctx = makeAuthContext(fx.userId);
+  for (let i = 1; i <= 4; i++) {
+    await createTask(ctx, {
+      projectId: fx.projectId,
+      title: `Ready ${i}`,
+      status: "planned",
+    });
+  }
+
+  const result = await handleMap(
+    { view: "ready", project: "PRJTMAPLIM", limit: 2 },
+    ctx,
+  );
+  const text = okText(result);
+  expect(text).toContain("+2 more");
+  expect(text).toContain("piyaz_search project='PRJTMAPLIM'");
+});
+
 test("activity requires exactly one of project or task", async () => {
   const fx = await seedUserOrgProject("TACTXOR");
   const result = await handleActivity({}, makeAuthContext(fx.userId));
