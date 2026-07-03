@@ -19,7 +19,7 @@ import {
 } from "@/lib/auth/authorization";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
 import type { ClassifiedLink, LinkKind } from "@/lib/links/classify";
-import { UnknownCategoryError } from "@/lib/graph/errors";
+import { InvalidLinkUrlError, UnknownCategoryError } from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import {
@@ -350,25 +350,20 @@ function requireItemUuid(
 }
 
 /**
- * Classify a link URL, mapping a malformed URL to a task-scoped ForbiddenError.
- * Mirrors the classification guard used by `addTaskLink`/`updateTask`.
+ * Classify a link URL, mapping a malformed URL to a typed validation error
+ * the MCP translator renders as corrective copy (never "task not found").
  *
  * @param url - Candidate URL.
- * @param taskId - Task the edit targets (for the error's resourceId).
  * @param label - Field label used in the error message (`url` or `prUrl`).
  * @returns The classified link.
- * @throws ForbiddenError when the URL is malformed.
+ * @throws InvalidLinkUrlError when the URL is malformed.
  */
-function classifyOrForbid(
-  url: string,
-  taskId: string,
-  label: "url" | "prUrl",
-): ClassifiedLink {
+function classifyOrReject(url: string, label: "url" | "prUrl"): ClassifiedLink {
   try {
     return classifyLink(url);
   } catch (e) {
     if (e instanceof MalformedLinkError) {
-      throw new ForbiddenError(`Invalid ${label}`, "task", taskId);
+      throw new InvalidLinkUrlError(label, url);
     }
     throw e;
   }
@@ -389,7 +384,7 @@ function classifyOrForbid(
  * @param userId - Caller id, used to resolve assignee `me`.
  * @returns The prepared op.
  * @throws InvalidEditOpError when the op is structurally incoherent.
- * @throws ForbiddenError when a link/prUrl URL is malformed.
+ * @throws InvalidLinkUrlError when a link/prUrl URL is malformed.
  */
 function prepareOp(
   op: EditOp,
@@ -497,7 +492,7 @@ function prepareSetOp(
       bad("set prUrl requires a string or null value");
     return {
       kind: "prUrl",
-      classified: classifyOrForbid(value, taskId, "prUrl"),
+      classified: classifyOrReject(value, "prUrl"),
     };
   }
   if (!isRowField(field)) bad(`set field '${field}' is not settable`);
@@ -674,7 +669,7 @@ function prepareLinkMutation(
   bad: (reason: string) => never,
 ): PreparedLink {
   const overridden = (url: string): ClassifiedLink => {
-    const classified = classifyOrForbid(url, taskId, "url");
+    const classified = classifyOrReject(url, "url");
     if (
       op.kind !== undefined &&
       !(LINK_KINDS as readonly string[]).includes(op.kind)
@@ -738,7 +733,7 @@ function prepareAssigneeMutation(
  * @param userId - Caller id.
  * @returns The prepared ops in order.
  * @throws InvalidEditOpError on any coherence violation.
- * @throws ForbiddenError when a link/prUrl URL is malformed.
+ * @throws InvalidLinkUrlError when a link/prUrl URL is malformed.
  */
 function prepareOps(
   ops: EditOp[],
@@ -1500,7 +1495,8 @@ async function applyPrUrl(
  * @throws StrReplaceNoMatchError / StrReplaceMultipleMatchError on bad replaces.
  * @throws CollectionItemNotFoundError when a by-id target is missing.
  * @throws DuplicateLinkUrlError when a link update collides with another URL.
- * @throws ForbiddenError when access, a URL, or an assignee is rejected.
+ * @throws ForbiddenError when access or an assignee is rejected.
+ * @throws InvalidLinkUrlError when a link/prUrl URL is malformed.
  */
 export async function applyTaskEdit(
   ctx: AuthContext,

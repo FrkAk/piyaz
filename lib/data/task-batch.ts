@@ -19,7 +19,7 @@ import {
   type CreateTaskInput,
   type CreatedTaskSummary,
 } from "@/lib/data/task";
-import { listDependsOnEdges } from "@/lib/data/edge";
+import { composeTaskRefsForIds, listDependsOnEdges } from "@/lib/data/edge";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import {
   CrossProjectEdgeError,
@@ -534,7 +534,13 @@ async function applyBatchEdges(
     for (const e of existingDeps) link(e.sourceTaskId, e.targetTaskId);
     for (const e of newDependsOn) link(e.sourceId, e.targetId);
     const cycle = detectCycle(adj);
-    if (cycle) throw new EdgeCycleError(cycle);
+    if (cycle) {
+      const refs = await composeTaskRefsForIds(tx, cycle);
+      throw new EdgeCycleError(cycle, [
+        ...cycle.map((id) => refs.get(id) ?? id),
+        refs.get(cycle[0]) ?? cycle[0],
+      ]);
+    }
   }
 
   if (toInsert.length > 0) {

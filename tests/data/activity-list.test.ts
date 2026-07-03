@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
+import { ForbiddenError } from "@/lib/auth/authorization";
 import { listProjectActivity, listTaskActivity } from "@/lib/data/activity";
 
 afterEach(async () => {
@@ -85,8 +86,9 @@ describe("listTaskActivity", () => {
     }
 
     const ctx = makeAuthContext(stranger.userId);
-    const page = await listTaskActivity(ctx, taskId, { limit: 10 });
-    expect(page.events).toEqual([]);
+    await expect(
+      listTaskActivity(ctx, taskId, { limit: 10 }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
   });
 
   test("since returns only events newer than the bound", async () => {
@@ -188,7 +190,7 @@ describe("listProjectActivity", () => {
     expect(page.events.map((e) => e.summary)).toEqual(["e3", "e2"]);
   });
 
-  test("a non-member sees an empty project feed", async () => {
+  test("a non-member gets a 404-shaped error, not an empty feed", async () => {
     const owner = await seedUserOrgProject("proj-list-owner");
     const stranger = await seedUserOrgProject("proj-list-stranger");
     const sr = serviceRoleConnect();
@@ -200,7 +202,8 @@ describe("listProjectActivity", () => {
       await sr.end({ timeout: 5 });
     }
     const ctx = makeAuthContext(stranger.userId);
-    const page = await listProjectActivity(ctx, owner.projectId, { limit: 10 });
-    expect(page.events).toEqual([]);
+    await expect(
+      listProjectActivity(ctx, owner.projectId, { limit: 10 }),
+    ).rejects.toBeInstanceOf(ForbiddenError);
   });
 });

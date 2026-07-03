@@ -169,3 +169,31 @@ describe("createEdge typed errors", () => {
     expect(cycle.chainTaskIds).toContain(c);
   });
 });
+
+test("cycle error carries the loop as taskRefs, closed at the source", async () => {
+  const fx = await seedUserOrgProject("1");
+  const a = await insertTask(fx.projectId, 1);
+  const b = await insertTask(fx.projectId, 2);
+  const c = await insertTask(fx.projectId, 3);
+  await superuserPool()`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+           VALUES (${a}, ${b}, 'depends_on')`;
+  await superuserPool()`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+           VALUES (${b}, ${c}, 'depends_on')`;
+  const ctx = makeAuthContext(fx.userId);
+
+  const err = await catchErr(
+    createEdge(ctx, {
+      sourceTaskId: c,
+      targetTaskId: a,
+      edgeType: "depends_on",
+      note: "",
+    }),
+  );
+
+  expect(err).toBeInstanceOf(EdgeCycleError);
+  const cycle = err as EdgeCycleError;
+  expect(cycle.chainRefs[0]).toBe("PRJ1-3");
+  expect(cycle.chainRefs[cycle.chainRefs.length - 1]).toBe("PRJ1-3");
+  expect(cycle.chainRefs[1]).toBe("PRJ1-1");
+  expect(cycle.chainRefs.every((r) => /^PRJ1-\d+$/.test(r))).toBe(true);
+});

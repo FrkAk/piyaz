@@ -29,9 +29,10 @@ export type ProjectRefRow = {
   team_name: string;
 };
 
-/** Row shape returned by the near-miss probe query. */
+/** Row shape returned by the near-miss probe query, one per visible project. */
 export type NearMissRow = {
   identifier: string;
+  team_name: string;
   max_sequence_number: number | null;
 };
 
@@ -90,23 +91,25 @@ export function taskRefLookupStmt(read: ReadConn, groups: TaskRefGroup[]) {
 
 /**
  * The near-miss probe as a lazy batch statement: does the prefix resolve to
- * a project the caller can see, and what is its highest task sequence
- * number.
+ * a project the caller can see, and what is each such project's highest
+ * task sequence number. Grouped per project (not per identifier) so two
+ * teams sharing an identifier yield one row each instead of a blended MAX.
  *
  * @param read - Read statement-building handle.
  * @param prefix - Uppercase project identifier.
- * @returns Lazy raw statement yielding zero or one {@link NearMissRow}.
+ * @returns Lazy raw statement yielding zero or more {@link NearMissRow}s.
  */
 export function taskRefNearMissStmt(read: ReadConn, prefix: string) {
   return read.execute(sql`
     SELECT
       ${projects.identifier} AS identifier,
+      cuo.name AS team_name,
       MAX(${tasks.sequenceNumber}) AS max_sequence_number
     FROM ${projects}
     JOIN public.current_user_orgs() AS cuo ON cuo.org_id = ${projects.organizationId}
     LEFT JOIN ${tasks} ON ${tasks.projectId} = ${projects.id}
     WHERE ${projects.identifier} = ${prefix}
-    GROUP BY ${projects.identifier}
+    GROUP BY ${projects.id}, ${projects.identifier}, cuo.name
   `);
 }
 

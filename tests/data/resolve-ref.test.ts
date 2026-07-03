@@ -276,3 +276,24 @@ describe("resolveProjectRef", () => {
     expect(err).toBeInstanceOf(MalformedRefError);
   });
 });
+
+test("near-miss across two same-identifier teams names each team's max ref", async () => {
+  const fx = await seedUserOrgProject("1");
+  const a = await seedOrgWithProject("nm-a", "DUP", fx.userId);
+  const b = await seedOrgWithProject("nm-b", "DUP", fx.userId);
+  await insertTask(a.projectId, 1);
+  await insertTask(a.projectId, 2);
+  await insertTask(b.projectId, 1);
+  const ctx = makeAuthContext(fx.userId);
+
+  const err = await catchErr(resolveTaskRef(ctx, "DUP-99"));
+
+  expect(err).toBeInstanceOf(RefNotFoundError);
+  const notFound = err as RefNotFoundError;
+  expect(notFound.nearMisses).toHaveLength(2);
+  const byTeam = new Map(
+    notFound.nearMisses.map((p) => [p.teamName, p.maxSequenceNumber]),
+  );
+  expect(byTeam.get(a.teamName)).toBe(2);
+  expect(byTeam.get(b.teamName)).toBe(1);
+});

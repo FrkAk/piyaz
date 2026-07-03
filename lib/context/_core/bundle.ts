@@ -79,6 +79,10 @@ export type DependencyClosureData = {
   deps: { id: string; depth: number }[];
   /** Active dependents within 2 effective hops, with effective depth. */
   downstream: { id: string; depth: number }[];
+  /** True when active prerequisites exist beyond the closure depth. */
+  depsTruncated: boolean;
+  /** True when active dependents exist beyond the closure depth. */
+  downstreamTruncated: boolean;
   /** Outgoing depends_on edge notes, keyed by prerequisite id. */
   upstreamEdgeNotes: Map<string, string>;
   /** Dependency-task summaries (taskRef, title, status, executionRecord). */
@@ -155,8 +159,8 @@ type HeaderRow = ProjectHeader & { id: string };
 function closureCoreBatch(db: ReadConn, taskId: string, depth: TaskFetchDepth) {
   return [
     taskForDepthStmt(db, taskId, depth),
-    effectiveDepChainStmt(db, taskId, CLOSURE_DEPTH),
-    effectiveDownstreamStmt(db, taskId, CLOSURE_DEPTH),
+    effectiveDepChainStmt(db, taskId, CLOSURE_DEPTH + 1),
+    effectiveDownstreamStmt(db, taskId, CLOSURE_DEPTH + 1),
     edgeNotesBySourceStmt(db, taskId),
     relatedEdgesStmt(db, taskId),
   ] as const;
@@ -190,6 +194,10 @@ type ClosureCore = {
   task: TaskFull;
   deps: { id: string; depth: number }[];
   downstream: { id: string; depth: number }[];
+  /** True when active prerequisites exist beyond {@link CLOSURE_DEPTH}. */
+  depsTruncated: boolean;
+  /** True when active dependents exist beyond {@link CLOSURE_DEPTH}. */
+  downstreamTruncated: boolean;
   upstreamEdgeNotes: Map<string, string>;
   relatedEdges: RelatedEdgeRows;
 };
@@ -199,13 +207,17 @@ type ClosureCore = {
  * row (throwing the 404-shaped ForbiddenError when RLS hides it), normalize
  * the dependency walks (coercing each effective depth — the recursive CTE
  * aggregates it as bigint, which arrives as a string on the wire), and fold
- * the outgoing edge notes. Accepts any batch that begins with the
- * {@link closureCoreBatch} statements so wider batches (header, edges)
- * decode without rebuilding tuples.
+ * the outgoing edge notes. The walks are fetched one hop past
+ * {@link CLOSURE_DEPTH}; the sentinel rows are dropped here and only flag
+ * that the closure is depth-capped, so the bundles can point at the full
+ * `piyaz_map` walk instead of truncating silently. Accepts any batch that
+ * begins with the {@link closureCoreBatch} statements so wider batches
+ * (header, edges) decode without rebuilding tuples.
  *
  * @param taskId - UUID of the task the batch targeted.
  * @param results - Batch results whose first five positions are the core.
- * @returns Task, walks, outgoing notes, and raw `relates_to` edges.
+ * @returns Task, walks, truncation flags, outgoing notes, and raw
+ *   `relates_to` edges.
  * @throws ForbiddenError when the task row is not visible to the caller.
  */
 function decodeClosureCore(
@@ -217,17 +229,22 @@ function decodeClosureCore(
     normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
   );
-  const deps = normalizeExecuteResult<{ id: string; depth: number | string }>(
-    depRaw,
-  ).map((r) => ({ id: r.id, depth: Number(r.depth) }));
-  const downstream = normalizeExecuteResult<{
+  const depsAll = normalizeExecuteResult<{
+    id: string;
+    depth: number | string;
+  }>(depRaw).map((r) => ({ id: r.id, depth: Number(r.depth) }));
+  const downstreamAll = normalizeExecuteResult<{
     id: string;
     depth: number | string;
   }>(downRaw).map((r) => ({ id: r.id, depth: Number(r.depth) }));
+  const deps = depsAll.filter((r) => r.depth <= CLOSURE_DEPTH);
+  const downstream = downstreamAll.filter((r) => r.depth <= CLOSURE_DEPTH);
   return {
     task,
     deps,
     downstream,
+    depsTruncated: deps.length < depsAll.length,
+    downstreamTruncated: downstream.length < downstreamAll.length,
     upstreamEdgeNotes: mapEdgeNoteRows(srcNotes),
     relatedEdges,
   };

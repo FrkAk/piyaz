@@ -507,3 +507,25 @@ test("edit with an unknown category names the vocabulary inline", async () => {
   expect(error).toContain("backend, mcp");
   expect(error).toContain("view='meta'");
 });
+
+test("a malformed url is an invalid-url error, never task-not-found", async () => {
+  const fx = await seedUserOrgProject("TBADURL");
+  const ctx = makeAuthContext(fx.userId);
+  const task = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "T",
+    description: "Exists and stays findable. The URL is the problem.",
+  });
+
+  const result = await handleEdit(
+    {
+      task: task.id,
+      operations: [{ op: "add", collection: "links", url: "not a url" }],
+    },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+  const error = (result as { ok: false; error: string }).error;
+  expect(error).toContain("Invalid url");
+  expect(error).not.toContain("not found");
+});

@@ -134,6 +134,12 @@ export function buildPlanningContextParts(
       }
     }
 
+    if (data.depsTruncated) {
+      prereqLines.push(
+        "… prerequisite chain continues beyond depth 2 — walk further with piyaz_map view='neighbors' hops=2.",
+      );
+    }
+
     if (prereqLines.length > 0) {
       parts.push({
         id: "prerequisites",
@@ -199,6 +205,12 @@ export function buildPlanningContextParts(
       let line = formatTaskRefLine(info, data.downstreamEdgeNotes.get(d.id));
       if (info.description) line += `\n  ${info.description}`;
       downLines.push(line);
+    }
+
+    if (data.downstreamTruncated) {
+      downLines.push(
+        `… deeper dependents exist beyond depth 2 — run piyaz_map view='downstream'${taskRef ? ` task='${taskRef}'` : ""} for the full transitive set.`,
+      );
     }
 
     if (downLines.length > 0) {

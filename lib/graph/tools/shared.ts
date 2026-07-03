@@ -17,6 +17,7 @@ import {
   CrossProjectEdgeError,
   DuplicateEdgeError,
   EdgeCycleError,
+  InvalidLinkUrlError,
   SearchCriteriaRequiredError,
   UnknownCategoryError,
 } from "@/lib/graph/errors";
@@ -615,10 +616,9 @@ export function translateError(e: unknown): ToolResult {
     );
   }
   if (e instanceof EdgeCycleError) {
+    const nodes = e.chainRefs.length > 0 ? e.chainRefs : e.chainTaskIds;
     const chain =
-      e.chainTaskIds.length > 0
-        ? ` Dependency chain: ${e.chainTaskIds.join(" → ")}.`
-        : "";
+      nodes.length > 0 ? ` Dependency loop: ${nodes.join(" → ")}.` : "";
     return fail(`${e.message}${chain}`);
   }
   if (e instanceof MalformedRefError) {
@@ -640,6 +640,21 @@ export function translateError(e: unknown): ToolResult {
     );
   }
   if (e instanceof RefNotFoundError) {
+    if (e.nearMisses.length > 1) {
+      const perTeam = e.nearMisses
+        .map(
+          (p) =>
+            `${p.teamName}: ${
+              p.maxSequenceNumber !== null
+                ? `tasks up to ${p.identifier}-${p.maxSequenceNumber}`
+                : "no tasks yet"
+            }`,
+        )
+        .join("; ");
+      return fail(
+        `Ref '${e.ref}' not found. ${e.nearMisses.length} of your teams have a project '${e.projectIdentifier}' (${perTeam}). Run piyaz_search to find the right task.`,
+      );
+    }
     if (e.projectIdentifier) {
       const upTo =
         e.maxSequenceNumber !== undefined
@@ -687,7 +702,15 @@ export function translateError(e: unknown): ToolResult {
       `The task already has a link with url '${e.url}'. Update or remove that existing link instead, or use a different url.`,
     );
   }
+  if (e instanceof InvalidLinkUrlError) {
+    return fail(
+      `Invalid ${e.field} '${e.value}': pass a full http(s) URL (e.g. https://github.com/org/repo/pull/42). The task itself is fine — fix the URL and retry.`,
+    );
+  }
   if (e instanceof ForbiddenError) {
+    if (e.message.startsWith("Invalid ")) {
+      return fail(`${e.message}. Pass a full http(s) URL, then retry.`);
+    }
     const id = e.resourceId ?? "";
     switch (e.resource) {
       case "project":

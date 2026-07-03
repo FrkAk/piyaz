@@ -133,6 +133,26 @@ export class DuplicateEdgeError extends Error {
 }
 
 /**
+ * Thrown when a link/prUrl value cannot be parsed as a URL. A dedicated
+ * type — not `ForbiddenError` — because the MCP error translator renders
+ * `ForbiddenError` as an anti-enumeration "not found", which would send an
+ * agent hunting for a task that exists when the URL is the problem.
+ */
+export class InvalidLinkUrlError extends Error {
+  /**
+   * @param field - The parameter carrying the URL (`url` or `prUrl`).
+   * @param value - The rejected value.
+   */
+  constructor(
+    public readonly field: "url" | "prUrl",
+    public readonly value: string,
+  ) {
+    super(`Invalid ${field}: '${value}' is not a parseable URL`);
+    this.name = "InvalidLinkUrlError";
+  }
+}
+
+/**
  * Thrown when a task write or a project-scoped search names a category
  * outside the project's closed vocabulary. Carries the vocabulary so the
  * MCP error translator can render the valid set inline. Never thrown for
@@ -176,10 +196,14 @@ export class EdgeCycleError extends Error {
   /**
    * @param chainTaskIds - Task ids in the closing dependency chain; empty
    *   when the chain is not cheaply available.
+   * @param chainRefs - The loop as taskRefs, starting and ending at the
+   *   attempted edge's source so the closure is visible; the translator
+   *   prefers these over the raw ids.
    * @param message - Existing wording, preserved for callers asserting it.
    */
   constructor(
     public readonly chainTaskIds: string[] = [],
+    public readonly chainRefs: string[] = [],
     message = "Circular dependency: adding this edge would create a cycle.",
   ) {
     super(message);

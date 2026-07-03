@@ -1,8 +1,10 @@
 import "server-only";
 
-import { activityEvents } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { activityEvents, projects, tasks } from "@/lib/db/schema";
 import { withUserContextRead, type Tx } from "@/lib/db/rls";
 import { normalizeExecuteResult } from "@/lib/db/raw";
+import { ForbiddenError } from "@/lib/auth/authorization";
 import {
   taskActivityStmt,
   type ActivityCursor,
@@ -334,16 +336,18 @@ function toActivityEvent(r: ActivityRawRow): ActivityEvent {
 }
 
 /**
- * List a task's activity newest-first, keyset-paginated. One RLS-scoped read:
- * the page and its read-time identity are resolved in a single statement that
- * joins the `activity_actors_visible` / `oauth_client_name` SECURITY DEFINER
- * functions — no `service_role`. A non-member transparently sees an empty page.
+ * List a task's activity newest-first, keyset-paginated. One RLS-scoped read
+ * batch: the page (with read-time identity via the `activity_actors_visible`
+ * / `oauth_client_name` SECURITY DEFINER functions — no `service_role`) plus
+ * a task-existence probe, so a stale or foreign task id is 404-shaped
+ * instead of masquerading as "no activity".
  *
  * @param ctx - Caller auth context.
  * @param taskId - Task whose events to read.
  * @param opts - `limit` (clamped to {@link MAX_LIMIT}), an opaque `cursor`, and
  *   an optional `since` lower bound (events with `created_at > since`).
  * @returns A page of events plus the next cursor (null when exhausted).
+ * @throws ForbiddenError when the task is not visible to the caller.
  */
 export async function listTaskActivity(
   ctx: AuthContext,
@@ -354,9 +358,11 @@ export async function listTaskActivity(
   const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
   const since = normalizeSince(opts.since);
 
-  const [raw] = await withUserContextRead(ctx.userId, (read) => [
+  const [raw, probe] = await withUserContextRead(ctx.userId, (read) => [
     taskActivityStmt(read, taskId, cur, limit + 1, since),
+    read.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)),
   ]);
+  if (probe.length === 0) throw new ForbiddenError("Forbidden", "task", taskId);
   const rows = normalizeExecuteResult<ActivityRawRow>(raw);
 
   const hasMore = rows.length > limit;
@@ -372,16 +378,18 @@ export async function listTaskActivity(
 
 /**
  * List a project's activity newest-first, keyset-paginated. One RLS-scoped
- * read anchored on `project_id`, resolving read-time identity in the same
- * statement via the `activity_actors_for_project_visible` / `oauth_client_name`
- * SECURITY DEFINER functions — no `service_role`. A non-member transparently
- * sees an empty page because the `activity_events` RLS policy hides the rows.
+ * read batch anchored on `project_id`: the page (read-time identity via the
+ * `activity_actors_for_project_visible` / `oauth_client_name` SECURITY
+ * DEFINER functions — no `service_role`) plus a project-existence probe, so
+ * a stale or foreign project id is 404-shaped instead of masquerading as
+ * "no activity".
  *
  * @param ctx - Caller auth context.
  * @param projectId - Project whose events to read.
  * @param opts - `limit` (clamped to {@link MAX_LIMIT}), an opaque `cursor`, and
  *   an optional `since` lower bound (events with `created_at > since`).
  * @returns A page of events plus the next cursor (null when exhausted).
+ * @throws ForbiddenError when the project is not visible to the caller.
  */
 export async function listProjectActivity(
   ctx: AuthContext,
@@ -392,9 +400,15 @@ export async function listProjectActivity(
   const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
   const since = normalizeSince(opts.since);
 
-  const [raw] = await withUserContextRead(ctx.userId, (read) => [
+  const [raw, probe] = await withUserContextRead(ctx.userId, (read) => [
     projectActivityStmt(read, projectId, cur, limit + 1, since),
+    read
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, projectId)),
   ]);
+  if (probe.length === 0)
+    throw new ForbiddenError("Forbidden", "project", projectId);
   const rows = normalizeExecuteResult<ActivityRawRow>(raw);
 
   const hasMore = rows.length > limit;

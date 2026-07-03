@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { uuidArray, type Conn, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges, type NewTaskEdge } from "@/lib/db/schema";
@@ -411,6 +411,69 @@ export async function listDependsOnEdges(sourceTaskIds: string[], conn: Conn) {
  * @returns The created edge.
  * @throws Error if validation fails.
  */
+/** Cap on intermediate nodes rendered in a cycle-rejection loop. */
+const CYCLE_RENDER_MAX_INTERMEDIATES = 6;
+
+/**
+ * Compose taskRefs for an id list, for cycle-rejection error copy. One
+ * `tasks JOIN projects` read on the error path only; ids that resolve to
+ * no visible row are simply absent from the map (callers fall back to the
+ * raw id).
+ *
+ * @param tx - Active RLS-scoped transaction handle.
+ * @param taskIds - Task ids to resolve.
+ * @returns Map from task id to composed taskRef.
+ */
+export async function composeTaskRefsForIds(
+  tx: Tx,
+  taskIds: readonly string[],
+): Promise<Map<string, string>> {
+  if (taskIds.length === 0) return new Map();
+  const rows = await tx
+    .select({
+      id: tasks.id,
+      identifier: projects.identifier,
+      sequenceNumber: tasks.sequenceNumber,
+    })
+    .from(tasks)
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .where(inArray(tasks.id, [...taskIds]));
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      String(composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber)),
+    ]),
+  );
+}
+
+/**
+ * Build the ref-rendered loop for a cycle rejection: source → target →
+ * (target's dependency chain up to the source) → source. Intermediates are
+ * capped so a wide chain cannot flood the error.
+ *
+ * @param tx - Active RLS-scoped transaction handle.
+ * @param sourceTaskId - Source of the attempted edge.
+ * @param targetTaskId - Target of the attempted edge.
+ * @param chain - Depth-ordered dependency chain of the target.
+ * @returns The loop as taskRefs (raw ids where a ref cannot be composed).
+ */
+async function composeCycleLoopRefs(
+  tx: Tx,
+  sourceTaskId: string,
+  targetTaskId: string,
+  chain: { id: string }[],
+): Promise<string[]> {
+  const srcIdx = chain.findIndex((n) => n.id === sourceTaskId);
+  const intermediates = chain
+    .slice(0, srcIdx)
+    .map((n) => n.id)
+    .filter((id) => id !== targetTaskId)
+    .slice(0, CYCLE_RENDER_MAX_INTERMEDIATES);
+  const loopIds = [sourceTaskId, targetTaskId, ...intermediates, sourceTaskId];
+  const refs = await composeTaskRefsForIds(tx, [...new Set(loopIds)]);
+  return loopIds.map((id) => refs.get(id) ?? id);
+}
+
 export async function createEdge(
   ctx: AuthContext,
   data: Omit<NewTaskEdge, "id">,
@@ -459,7 +522,15 @@ export async function createEdge(
         10,
       );
       if (chain.some((node) => node.id === data.sourceTaskId)) {
-        throw new EdgeCycleError(chain.map((node) => node.id));
+        throw new EdgeCycleError(
+          chain.map((node) => node.id),
+          await composeCycleLoopRefs(
+            tx,
+            data.sourceTaskId,
+            data.targetTaskId,
+            chain,
+          ),
+        );
       }
     }
 
@@ -603,6 +674,12 @@ export async function updateEdge(
         if (chain.some((node) => node.id === existing.sourceTaskId)) {
           throw new EdgeCycleError(
             chain.map((node) => node.id),
+            await composeCycleLoopRefs(
+              tx,
+              existing.sourceTaskId,
+              existing.targetTaskId,
+              chain,
+            ),
             "Circular dependency: changing this edge type would create a cycle.",
           );
         }

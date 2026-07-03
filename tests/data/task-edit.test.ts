@@ -19,7 +19,7 @@ import {
 } from "@/lib/data/task-edit";
 import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
-import { UnknownCategoryError } from "@/lib/graph/errors";
+import { InvalidLinkUrlError, UnknownCategoryError } from "@/lib/graph/errors";
 
 afterEach(async () => {
   await truncateAll();
@@ -846,4 +846,24 @@ test("link add honors label and kind overrides and rejects unknown kinds", async
   expect((err as Error).message).toContain(
     "pull_request, issue, commit, doc, link",
   );
+});
+
+test("malformed link and prUrl values raise InvalidLinkUrlError", async () => {
+  const f = await seedUserOrgProject("bad-url");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  const linkErr = await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "links", url: "not a url" },
+  ]).catch((e: unknown) => e);
+  expect(linkErr).toBeInstanceOf(InvalidLinkUrlError);
+
+  const prErr = await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "prUrl", value: "not a url" },
+  ]).catch((e: unknown) => e);
+  expect(prErr).toBeInstanceOf(InvalidLinkUrlError);
 });

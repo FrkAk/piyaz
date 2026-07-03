@@ -80,6 +80,16 @@ export class MalformedRefError extends Error {
   }
 }
 
+/** One visible project matching a near-missed ref's prefix. */
+export type NearMissProject = {
+  /** Project identifier (the ref's prefix). */
+  identifier: string;
+  /** Owning team name, disambiguating same-identifier projects. */
+  teamName: string;
+  /** Highest task sequence number, or null for a project with no tasks. */
+  maxSequenceNumber: number | null;
+};
+
 /**
  * Thrown when a ref does not resolve. 404-shaped; carries near-miss info
  * only when the project prefix IS visible to the caller, so a caller cannot
@@ -92,11 +102,14 @@ export class RefNotFoundError extends Error {
    * @param projectIdentifier - Set when the prefix resolved to a visible project.
    * @param maxSequenceNumber - Set when the visible project has tasks; the
    *   highest sequence number, for near-miss copy.
+   * @param nearMisses - One row per visible project with the prefix; more
+   *   than one when the caller's teams share an identifier.
    */
   constructor(
     public readonly ref: string,
     public readonly projectIdentifier?: string,
     public readonly maxSequenceNumber?: number,
+    public readonly nearMisses: NearMissProject[] = [],
   ) {
     super(`Ref '${ref}' not found`);
     this.name = "RefNotFoundError";
@@ -217,12 +230,18 @@ export async function resolveTaskRef(
     throw new RefAmbiguityError(refOrId, candidates.map(toTaskCandidate));
   }
 
-  const [nearMiss] = normalizeExecuteResult<NearMissRow>(nearMissRaw);
-  if (nearMiss) {
+  const nearMissRows = normalizeExecuteResult<NearMissRow>(nearMissRaw);
+  if (nearMissRows.length > 0) {
+    const [first] = nearMissRows;
     throw new RefNotFoundError(
       refOrId,
-      nearMiss.identifier,
-      nearMiss.max_sequence_number ?? undefined,
+      first.identifier,
+      first.max_sequence_number ?? undefined,
+      nearMissRows.map((r) => ({
+        identifier: r.identifier,
+        teamName: r.team_name,
+        maxSequenceNumber: r.max_sequence_number,
+      })),
     );
   }
   throw new RefNotFoundError(refOrId);
