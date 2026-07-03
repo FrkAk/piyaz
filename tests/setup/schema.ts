@@ -5,6 +5,10 @@ import { superuserPool } from "./global";
 // task_decisions / task_links). Postgres only emits the
 // "truncate cascades to table X" NOTICE when X isn't in the statement.
 const TRUNCATE_TABLES = [
+  "note_revisions",
+  "note_links",
+  "note_task_links",
+  "notes",
   "task_assignees",
   "task_acceptance_criteria",
   "task_decisions",
