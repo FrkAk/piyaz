@@ -867,3 +867,133 @@ test("malformed link and prUrl values raise InvalidLinkUrlError", async () => {
   ]).catch((e: unknown) => e);
   expect(prErr).toBeInstanceOf(InvalidLinkUrlError);
 });
+
+test("concurrent edits with the same ifUpdatedAt serialize to one winner", async () => {
+  const f = await seedUserOrgProject("cas-race");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+  const r0 = asEdit(
+    await applyTaskEdit(ctx, task.id, [
+      { op: "set", field: "priority", value: "normal" },
+    ]),
+  );
+  const stamp = r0.updatedAt.toISOString();
+
+  const results = await Promise.allSettled([
+    applyTaskEdit(
+      ctx,
+      task.id,
+      [{ op: "set", field: "priority", value: "urgent" }],
+      stamp,
+    ),
+    applyTaskEdit(
+      ctx,
+      task.id,
+      [{ op: "set", field: "priority", value: "backlog" }],
+      stamp,
+    ),
+  ]);
+
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  const rejected = results.filter(
+    (r): r is PromiseRejectedResult => r.status === "rejected",
+  );
+  expect(rejected).toHaveLength(1);
+  expect(rejected[0].reason).toBeInstanceOf(StaleWriteError);
+});
+
+test("ifUpdatedAt is rejected on delete_task", async () => {
+  const f = await seedUserOrgProject("del-cas");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  const err = await applyTaskEdit(
+    ctx,
+    task.id,
+    [{ op: "delete_task" }],
+    new Date().toISOString(),
+  ).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(InvalidEditOpError);
+  expect((err as Error).message).toContain("delete_task");
+});
+
+test("every category op in a multi-op call is validated", async () => {
+  const f = await seedUserOrgProject("cat-multi");
+  const ctx = makeAuthContext(f.userId);
+  const sql = superuserPool();
+  await sql`
+    UPDATE projects SET categories = ${JSON.stringify(["backend", "mcp"])}::jsonb
+    WHERE id = ${f.projectId}`;
+  const task = await createTask(ctx, {
+    projectId: f.projectId,
+    title: "T",
+    description: "base",
+  });
+
+  const err = await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "category", value: "backend" },
+    { op: "set", field: "category", value: "zzz_invalid" },
+  ]).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(UnknownCategoryError);
+});
+
+test("link update patches only the supplied fields", async () => {
+  const f = await seedUserOrgProject("link-patch");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await applyTaskEdit(ctx, task.id, [
+    {
+      op: "add",
+      collection: "links",
+      url: "https://example.com/spec",
+      kind: "doc",
+      label: "Design doc",
+    },
+  ]);
+  let full = await getTaskFull(ctx, task.id);
+  const linkId = full.links[0].id;
+
+  await applyTaskEdit(ctx, task.id, [
+    {
+      op: "update",
+      collection: "links",
+      id: linkId,
+      url: "https://example.com/spec-v2",
+    },
+  ]);
+  full = await getTaskFull(ctx, task.id);
+  expect(full.links[0].url).toBe("https://example.com/spec-v2");
+  expect(full.links[0].kind).toBe("doc");
+  expect(full.links[0].label).toBe("Design doc");
+
+  const err = await applyTaskEdit(ctx, task.id, [
+    { op: "update", collection: "links", id: linkId },
+  ]).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(InvalidEditOpError);
+  expect((err as Error).message).toContain("at least one of");
+});
+
+test("criteria and decision text is trimmed and must be non-empty", async () => {
+  const f = await seedUserOrgProject("trim");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  const res = asEdit(
+    await applyTaskEdit(ctx, task.id, [
+      { op: "add", collection: "acceptanceCriteria", text: "  padded  " },
+      { op: "add", collection: "decisions", text: "  chose X  " },
+    ]),
+  );
+  expect(res.acceptanceCriteria?.[0].text).toBe("padded");
+  expect(res.decisions?.[0].text).toBe("chose X");
+
+  const err = await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "decisions", text: "   " },
+  ]).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(InvalidEditOpError);
+});

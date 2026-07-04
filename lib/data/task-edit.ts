@@ -260,10 +260,14 @@ type PreparedDecision =
   | { t: "add"; text: string }
   | { t: "update"; id: string; text: string }
   | { t: "remove"; id: string };
-/** A by-id link op with the URL pre-classified. */
+/** A by-id link op; `add` pre-classifies the URL, `update` patches supplied fields. */
 type PreparedLink =
   | { t: "add"; classified: ClassifiedLink }
-  | { t: "update"; id: string; classified: ClassifiedLink }
+  | {
+      t: "update";
+      id: string;
+      patch: { url?: string; kind?: LinkKind; label?: string };
+    }
   | { t: "remove"; id: string };
 /** A by-id assignee op with `me` already resolved to the caller. */
 type PreparedAssignee =
@@ -595,11 +599,11 @@ function prepareCriteriaMutation(
   bad: (reason: string) => never,
 ): PreparedCriteria {
   if (op.op === "add") {
-    if (typeof op.text !== "string")
-      bad("add acceptanceCriteria requires text");
+    if (typeof op.text !== "string" || op.text.trim() === "")
+      bad("add acceptanceCriteria requires non-empty text");
     if (op.checked !== undefined && typeof op.checked !== "boolean")
       bad("acceptanceCriteria checked must be a boolean");
-    return { t: "add", text: op.text, checked: op.checked };
+    return { t: "add", text: op.text.trim(), checked: op.checked };
   }
   if (op.op === "remove") {
     const id = requireItemUuid(
@@ -617,11 +621,14 @@ function prepareCriteriaMutation(
     );
     if (op.text === undefined && op.checked === undefined)
       bad("update acceptanceCriteria requires text or checked");
-    if (op.text !== undefined && typeof op.text !== "string")
-      bad("acceptanceCriteria text must be a string");
+    if (
+      op.text !== undefined &&
+      (typeof op.text !== "string" || op.text.trim() === "")
+    )
+      bad("acceptanceCriteria text must be a non-empty string");
     if (op.checked !== undefined && typeof op.checked !== "boolean")
       bad("acceptanceCriteria checked must be a boolean");
-    return { t: "update", id, text: op.text, checked: op.checked };
+    return { t: "update", id, text: op.text?.trim(), checked: op.checked };
   }
   return bad(`op='${op.op}' is not valid on acceptanceCriteria`);
 }
@@ -638,8 +645,9 @@ function prepareDecisionMutation(
   bad: (reason: string) => never,
 ): PreparedDecision {
   if (op.op === "add") {
-    if (typeof op.text !== "string") bad("add decisions requires text");
-    return { t: "add", text: op.text };
+    if (typeof op.text !== "string" || op.text.trim() === "")
+      bad("add decisions requires non-empty text");
+    return { t: "add", text: op.text.trim() };
   }
   if (op.op === "remove") {
     const id = requireItemUuid(op.id, "remove decisions requires id", bad);
@@ -647,16 +655,18 @@ function prepareDecisionMutation(
   }
   if (op.op === "update") {
     const id = requireItemUuid(op.id, "update decisions requires id", bad);
-    if (typeof op.text !== "string") bad("update decisions requires text");
-    return { t: "update", id, text: op.text };
+    if (typeof op.text !== "string" || op.text.trim() === "")
+      bad("update decisions requires non-empty text");
+    return { t: "update", id, text: op.text.trim() };
   }
   return bad(`op='${op.op}' is not valid on decisions`);
 }
 
 /**
- * Prepare a link `add`/`update`/`remove`, classifying supplied URLs. A
+ * Prepare a link `add`/`update`/`remove`. `add` classifies the URL; a
  * caller-supplied `kind` (validated against {@link LINK_KINDS}) or non-empty
- * `label` overrides the classifier's derivation.
+ * `label` overrides the classifier's derivation. `update` is a partial patch:
+ * only the supplied fields change, unsupplied fields keep their stored values.
  *
  * @param op - Raw op.
  * @param taskId - Task the edit targets.
@@ -692,8 +702,27 @@ function prepareLinkMutation(
   }
   if (op.op === "update") {
     const id = requireItemUuid(op.id, "update links requires id", bad);
-    if (typeof op.url !== "string") bad("update links requires url");
-    return { t: "update", id, classified: overridden(op.url) };
+    if (op.url === undefined && op.kind === undefined && op.label === undefined)
+      bad("update links requires at least one of url, kind, label");
+    if (op.url !== undefined && typeof op.url !== "string")
+      bad("links url must be a string");
+    if (
+      op.kind !== undefined &&
+      !(LINK_KINDS as readonly string[]).includes(op.kind)
+    )
+      bad(`links kind '${op.kind}' must be one of ${LINK_KINDS.join(", ")}`);
+    const url =
+      op.url !== undefined ? classifyOrReject(op.url, "url").url : undefined;
+    const label = op.label?.trim();
+    return {
+      t: "update",
+      id,
+      patch: {
+        ...(url !== undefined && { url }),
+        ...(op.kind !== undefined && { kind: op.kind as LinkKind }),
+        ...(label && { label }),
+      },
+    };
   }
   return bad(`op='${op.op}' is not valid on links`);
 }
@@ -1180,9 +1209,13 @@ async function applyLink(
       refetch: false,
     };
   }
-  const c = op.classified;
+  const { patch } = op;
   const [row] = await tx
-    .select({ url: taskLinks.url })
+    .select({
+      url: taskLinks.url,
+      kind: taskLinks.kind,
+      label: taskLinks.label,
+    })
     .from(taskLinks)
     .where(and(eq(taskLinks.id, op.id), eq(taskLinks.taskId, taskId)))
     .limit(1);
@@ -1192,24 +1225,26 @@ async function applyLink(
       op.id,
       await fetchLinkItems(tx, taskId),
     );
-  if (c.url !== row.url) {
+  if (patch.url !== undefined && patch.url !== row.url) {
     const [conflict] = await tx
       .select({ id: taskLinks.id })
       .from(taskLinks)
-      .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, c.url)))
+      .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, patch.url)))
       .limit(1);
-    if (conflict) throw new DuplicateLinkUrlError(c.url);
+    if (conflict) throw new DuplicateLinkUrlError(patch.url);
   }
-  await tx
-    .update(taskLinks)
-    .set({ kind: c.kind, url: c.url, label: c.label })
-    .where(eq(taskLinks.id, op.id));
+  const next = {
+    kind: patch.kind ?? row.kind,
+    url: patch.url ?? row.url,
+    label: patch.label ?? row.label,
+  };
+  await tx.update(taskLinks).set(next).where(eq(taskLinks.id, op.id));
   return {
     event: {
       ...base,
       type: "link_updated",
-      summary: `updated link to ${c.label ?? c.kind}`,
-      targetRef: c.url,
+      summary: `updated link to ${next.label ?? next.kind}`,
+      targetRef: next.url,
     },
     applied: `update links ${op.id}`,
     refetch: false,
@@ -1480,8 +1515,10 @@ async function applyPrUrl(
  * Apply an operation-based edit to a task atomically. Validates every op first,
  * routes `delete_task` before opening a transaction, then applies text, scalar,
  * and by-id collection ops in order inside one transaction — a failing op rolls
- * back every earlier op. Text/scalar changes emit the same activity events as
- * `updateTask`; each collection op emits its own event.
+ * back every earlier op. The task row is read `FOR UPDATE`, so concurrent edits
+ * to the same task serialize and a stale `ifUpdatedAt` fails deterministically
+ * instead of last-write-wins. Text/scalar changes emit the same activity events
+ * as `updateTask`; each collection op emits its own event.
  *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task to edit.
@@ -1518,6 +1555,11 @@ export async function applyTaskEdit(
 
   const first = prepared[0];
   if (prepared.length === 1 && first.kind === "delete") {
+    if (ifUpdatedAtMs !== undefined)
+      throw new InvalidEditOpError(
+        0,
+        "ifUpdatedAt is not supported with delete_task. Run the preview (default), confirm the impact, then re-run with preview=false",
+      );
     if (first.preview) {
       const preview = await deleteTaskPreview(ctx, taskId);
       return { ...preview, applied: ["delete_task (preview)"] };
@@ -1528,7 +1570,11 @@ export async function applyTaskEdit(
 
   const result = await withUserContext(ctx.userId, async (tx) => {
     await assertTaskAccessTx(tx, taskId);
-    const [current] = await tx.select().from(tasks).where(eq(tasks.id, taskId));
+    const [current] = await tx
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .for("update");
     if (!current) throw new ForbiddenError("Forbidden", "task", taskId);
 
     if (
@@ -1614,7 +1660,7 @@ export async function applyTaskEdit(
 }
 
 /**
- * Validate any `set category` op against the project's closed vocabulary.
+ * Validate every `set category` op against the project's closed vocabulary.
  * A project with an empty vocabulary accepts anything (categories are
  * optional); setting `null` always passes.
  *
@@ -1628,18 +1674,21 @@ async function assertCategoryInVocabulary(
   projectId: string,
   prepared: PreparedOp[],
 ): Promise<void> {
-  const categoryOp = prepared.find(
-    (p) => p.kind === "row" && p.field === "category" && p.value !== null,
+  const categoryOps = prepared.filter(
+    (p): p is Extract<PreparedOp, { kind: "row" }> =>
+      p.kind === "row" && p.field === "category" && p.value !== null,
   );
-  if (!categoryOp || categoryOp.kind !== "row") return;
+  if (categoryOps.length === 0) return;
   const [proj] = await tx
     .select({ categories: projects.categories })
     .from(projects)
     .where(eq(projects.id, projectId));
   const vocabulary = proj?.categories ?? [];
   if (vocabulary.length === 0) return;
-  if (!vocabulary.includes(categoryOp.value as string))
-    throw new UnknownCategoryError(categoryOp.value as string, vocabulary);
+  for (const op of categoryOps) {
+    if (!vocabulary.includes(op.value as string))
+      throw new UnknownCategoryError(op.value as string, vocabulary);
+  }
 }
 
 /**
