@@ -1,18 +1,25 @@
 /**
- * Re-apply the public-schema RLS contract (grants + policies) after
- * `drizzle-kit migrate`. Runs as the migration role, which owns `public` and is
- * therefore authorized to GRANT, CREATE POLICY, and FORCE ROW LEVEL SECURITY
- * there with no escalation. The piyaz_auth grants and SECURITY DEFINER helpers
- * are owner-only and applied separately (scripts/apply-owner-rls.ts).
+ * Re-apply the public-schema contract (grants, RLS policies, and physical
+ * storage tuning) after `drizzle-kit migrate`. Runs as the migration role,
+ * which owns `public` and is therefore authorized to GRANT, CREATE POLICY,
+ * FORCE ROW LEVEL SECURITY, and ALTER … SET COMPRESSION there with no
+ * escalation. The piyaz_auth grants and SECURITY DEFINER helpers are owner-only
+ * and applied separately (scripts/apply-owner-rls.ts).
  *
- * Both files apply inside one transaction so the DROP POLICY/CREATE POLICY
- * re-apply in rls-policies.sql has no deny-all window.
+ * storage.sql carries the lz4 column compression that Drizzle's schema model
+ * cannot express, kept out of the generated migration; verify-rls.ts asserts it
+ * landed. All files apply inside one transaction so the DROP POLICY/CREATE
+ * POLICY re-apply in rls-policies.sql has no deny-all window.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
 
-const PUBLIC_RLS_FILES = ["grants.sql", "rls-policies.sql"] as const;
+const PUBLIC_SCHEMA_FILES = [
+  "grants.sql",
+  "rls-policies.sql",
+  "storage.sql",
+] as const;
 
 /**
  * Read the migration connection string from the environment.
@@ -41,16 +48,56 @@ function readDockerSql(file: string): string {
 }
 
 /**
- * Apply the public-schema grants and policies in a single transaction.
+ * Assert every `public.*()` function the policy DDL references exists before
+ * opening the apply transaction. The functions live in the owner-managed
+ * rls-functions.sql (db:rls:owner, applied out-of-band — the CI migrator has
+ * no piyaz_auth access), so a missing one must fail with the runbook instead
+ * of a bare 42883 mid-transaction.
+ *
+ * @param sql - Active postgres client.
+ * @throws Error naming the missing functions and the owner-apply runbook.
+ */
+async function assertPolicyFunctionsExist(
+  sql: ReturnType<typeof postgres>,
+): Promise<void> {
+  const referenced = [
+    ...new Set(
+      [
+        ...readDockerSql("rls-policies.sql").matchAll(/public\.(\w+)\s*\(/g),
+      ].map((m) => m[1]),
+    ),
+  ];
+  const live = await sql<{ proname: string }[]>`
+    SELECT p.proname
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+  `;
+  const liveSet = new Set(live.map((r) => r.proname));
+  const missing = referenced.filter((fn) => !liveSet.has(fn));
+  if (missing.length > 0) {
+    throw new Error(
+      "rls-policies.sql references functions missing on the target database: " +
+        `${missing.map((fn) => `public.${fn}`).join(", ")}.\n` +
+        "Run the owner apply first (db:rls:owner — owner-managed, out-of-band; " +
+        "the CI migrator role cannot install them), then re-run this step.",
+    );
+  }
+}
+
+/**
+ * Apply the public-schema grants, policies, and storage tuning in a single
+ * transaction.
  *
  * @param url - Migrator connection string.
- * @throws Error when the transaction fails.
+ * @throws Error when the preflight or the transaction fails.
  */
-async function applyPublicRls(url: string): Promise<void> {
+async function applyPublicSchema(url: string): Promise<void> {
   const sql = postgres(url, { max: 1, onnotice: () => undefined });
   try {
+    await assertPolicyFunctionsExist(sql);
     await sql.begin(async (tx) => {
-      for (const file of PUBLIC_RLS_FILES) {
+      for (const file of PUBLIC_SCHEMA_FILES) {
         await tx.unsafe(readDockerSql(file));
       }
     });
@@ -60,7 +107,7 @@ async function applyPublicRls(url: string): Promise<void> {
 }
 
 try {
-  await applyPublicRls(migrationUrl());
+  await applyPublicSchema(migrationUrl());
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);

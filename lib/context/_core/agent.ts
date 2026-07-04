@@ -1,10 +1,13 @@
 import "server-only";
 
 import {
+  capLines,
+  MAX_BUNDLE_RECORD_BLOCKS,
   section,
   formatCriteria,
   formatDecisions,
   formatLinkLine,
+  formatRelatedEdgeLine,
   formatTaskRefLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
@@ -87,11 +90,17 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
   const headerLines: string[] = [
     `# ${taskRef ? `\`${taskRef}\` ` : ""}${task.title}`,
   ];
+  if (task.category) headerLines.push(`Category: \`${task.category}\``);
   if (tags.length > 0) {
     headerLines.push(`Tags: ${tags.map((t) => `\`${t}\``).join(", ")}`);
   }
   if (priority) headerLines.push(`Priority: \`${priority}\``);
   if (estimate) headerLines.push(`Estimate: ${estimate} pts`);
+  if (task.assignees.length > 0) {
+    headerLines.push(
+      `Assignees: ${task.assignees.map((a) => a.name).join(", ")}`,
+    );
+  }
   if (prLink) headerLines.push(`PR: ${prLink.url}`);
   headerLines.push("");
   headerLines.push(task.description);
@@ -119,21 +128,42 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
   }
 
   if (deps.length > 0) {
-    const prereqLines: string[] = [];
+    const rawPrereqLines: string[] = [];
     const execLines: string[] = [];
+    let recordCount = 0;
 
     const depMap = new Map(depTasks.map((dt) => [dt.id, dt]));
 
     for (const dep of deps) {
       const info = depMap.get(dep.id);
       if (!info) continue;
-      prereqLines.push(formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)));
+      rawPrereqLines.push(
+        formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)),
+      );
 
       if (info.executionRecord) {
-        execLines.push(`### \`${info.taskRef}\` ${info.title}`);
-        if (info.prUrl) execLines.push(`PR: ${info.prUrl}`);
-        execLines.push(info.executionRecord);
+        recordCount++;
+        if (recordCount <= MAX_BUNDLE_RECORD_BLOCKS) {
+          execLines.push(`### \`${info.taskRef}\` ${info.title}`);
+          if (info.prUrl) execLines.push(`PR: ${info.prUrl}`);
+          execLines.push(info.executionRecord);
+        }
       }
+    }
+    if (recordCount > MAX_BUNDLE_RECORD_BLOCKS) {
+      execLines.push(
+        `… +${recordCount - MAX_BUNDLE_RECORD_BLOCKS} more upstream records — fetch one with piyaz_get task='<dep ref>' fields=['executionRecord'].`,
+      );
+    }
+
+    const prereqLines = capLines(
+      rawPrereqLines,
+      "walk the rest with piyaz_map view='neighbors' hops=2.",
+    );
+    if (data.depsTruncated) {
+      prereqLines.push(
+        "… prerequisite chain continues beyond depth 2 — walk further with piyaz_map view='neighbors' hops=2.",
+      );
     }
 
     if (prereqLines.length > 0) {
@@ -165,23 +195,37 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
     });
   }
 
-  if (task.executionRecord && status === "in_review") {
+  if (task.executionRecord) {
+    const heading =
+      status === "in_review"
+        ? "Execution Record"
+        : "Execution Record (work so far)";
     parts.push({
       id: "execution",
-      heading: "Execution Record",
-      markdown: section("Execution Record") + "\n" + task.executionRecord,
+      heading,
+      markdown: section(heading) + "\n" + task.executionRecord,
     });
   }
 
   if (downstream.length > 0) {
     const summaryMap = new Map(data.downstreamSummaries.map((s) => [s.id, s]));
-    const downLines: string[] = [];
+    const rawDownLines: string[] = [];
 
     for (const d of downstream) {
       const info = summaryMap.get(d.id);
       if (!info) continue;
-      downLines.push(
+      rawDownLines.push(
         formatTaskRefLine(info, data.downstreamEdgeNotes.get(d.id)),
+      );
+    }
+
+    const downLines = capLines(
+      rawDownLines,
+      `run piyaz_map view='downstream'${taskRef ? ` task='${taskRef}'` : ""} for the full transitive set.`,
+    );
+    if (data.downstreamTruncated) {
+      downLines.push(
+        `… deeper dependents exist beyond depth 2 — run piyaz_map view='downstream'${taskRef ? ` task='${taskRef}'` : ""} for the full transitive set.`,
       );
     }
 
@@ -195,6 +239,20 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
           downLines.join("\n"),
       });
     }
+  }
+
+  if (data.related.length > 0) {
+    parts.push({
+      id: "related",
+      heading: "Related (non-blocking)",
+      markdown:
+        section("Related (non-blocking)") +
+        "\n" +
+        capLines(
+          data.related.map(formatRelatedEdgeLine),
+          `run piyaz_map view='neighbors'${taskRef ? ` task='${taskRef}'` : ""} for the full list.`,
+        ).join("\n"),
+    });
   }
 
   if (task.decisions.length > 0) {
@@ -228,7 +286,7 @@ export function buildAgentContextFrom(data: AgentContextData): string {
 /**
  * Build lean, position-optimized context for external coding agents.
  *
- * The MCP `piyaz_context depth='agent'` entry point. For `done` /
+ * The MCP `piyaz_get lens='agent'` entry point. For `done` /
  * `cancelled` tasks it delegates to the retrospective record builder; the
  * status dispatch happens inside {@link resolveAgentBundleData}, which
  * reads it from the closure-core batch so both shapes resolve in two read

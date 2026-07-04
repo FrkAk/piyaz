@@ -44,7 +44,7 @@ LLMs forget over long sessions. Refresh any reference mid-session when uncertain
 
 The Piyaz MCP server's instructions cover multi-team awareness, session setup, and tool semantics. Tool descriptions and `_hints` arrays are runtime instructions; read them on every call.
 
-Tools you will use: `piyaz_project` (`select`), `piyaz_query` (`meta`, `list`, `search`, `edges`), `piyaz_context` (any depth), `piyaz_task` (`create`, `update`), `piyaz_edge` (`create`, `delete`), `piyaz_analyze` (`downstream`, `blocked`). You do not implement child tasks, mark them done, or open PRs; you set the foundation.
+Tools you will use: `piyaz_search`, `piyaz_get` (any lens, `view='meta'`), `piyaz_create` (children + edges, batched), `piyaz_edit`, `piyaz_link` (`create`, `remove`), `piyaz_map` (`neighbors`, `downstream`, `blocked`). You do not implement child tasks, mark them done, or open PRs; you set the foundation.
 
 ## Refusal: not actually oversize
 
@@ -79,13 +79,13 @@ trail.
 
 ## Session setup
 
-1. **Resolve the parent task.** The orchestrator passes a taskRef (e.g. `RZE-42`); resolve it via `piyaz_query type='search' query='<taskRef>'` to get the UUID and project ID. Confirm the project ID matches the project the orchestrator named (or the project the user is currently working in).
-2. `piyaz_project action='select' projectId='<id>'`. Then `piyaz_query type='meta' projectId='<id>'` to cache categories, tag vocabulary, and status counts. Single call; do not repeat in the session.
-3. **Read the parent in full context.** `piyaz_context depth='agent' taskId='<parent-id>'`. Extract:
+1. **Resolve the parent task.** The orchestrator passes a taskRef (e.g. `RZE-42`); resolve it via `piyaz_search query='<taskRef>'` to get the UUID and project ID. Confirm the project ID matches the project the orchestrator named (or the project the user is currently working in).
+2. `piyaz_get project='<identifier>' view='meta'` to cache categories, tag vocabulary, and status counts. Single call; do not repeat in the session.
+3. **Read the parent in full context.** `piyaz_get lens='agent' task='<parent-ref>'`. Extract:
    - Parent's `description`, `acceptanceCriteria`, `tags`, `category`, `priority`, `estimate`, `decisions`, `status`.
-   - Every edge where the parent is the source (parent depends on these): from `piyaz_query type='edges' taskId='<parent-id>'`.
+   - Every edge where the parent is the source (parent depends on these): from `piyaz_map view='neighbors' task='<parent-ref>'`.
    - Every edge where the parent is the target (these depend on parent): same call surfaces both directions.
-   - Upstream `executionRecord` entries from completed dependencies (already in `depth='agent'`).
+   - Upstream `executionRecord` entries from completed dependencies (already in `lens='agent'`).
    - Any `decisions` entries that constrain how the work must be done.
 4. **Run the refusal checks.** If either refusal applies (not oversize, or parent in flight/settled), surface and exit.
 
@@ -168,8 +168,8 @@ Present the split plan to the user. Wait for explicit "yes, proceed" or
 fine", "sure", "I trust you", "go ahead", "the faster the better") as
 approval.
 
-You may not call piyaz_task action='create', piyaz_edge action='create',
-piyaz_edge action='delete', or piyaz_task action='update' status='cancelled'
+You may not call piyaz_create, piyaz_link action='create',
+piyaz_link action='remove', or piyaz_edit with a status op
 before this gate clears.
 
 The user may edit the plan: rename children, reassign edges, remove a
@@ -188,9 +188,9 @@ If the user wants changes, revise and re-present. Do not partial-write.
 
 ## Phase 2: Create child tasks
 
-Only after approval. Build a known-titles set from `piyaz_query type='list' projectId='<id>'` to dedupe in the rare case of a re-run after partial completion.
+Only after approval. Idempotency is server-side: `piyaz_create` dedupes by exact title, so a re-run after partial completion creates only the missing children.
 
-For each child in the approved plan, `piyaz_task action='create'` with:
+Create the approved children in one `piyaz_create` batch (internal edges `key`-addressed), each item with:
 
 - **title**: verb plus noun, imperative ("Implement JWT refresh endpoint", not "Refresh").
 - **description**: 2 to 4 sentences. Cover what plus why plus how it fits per artifacts §1.
@@ -202,7 +202,7 @@ For each child in the approved plan, `piyaz_task action='create'` with:
 - **assigneeIds** (optional): inherit from parent if set; override per plan.
 - **files**: leave empty `[]`. Children are draft; the implementer fills `files` at `done`.
 - **status** = `'draft'`.
-- **DO NOT pass `overwriteArrays=true`**. Append is the safe default on create (no existing arrays).
+- **No destructive ops**: creation is additive by definition; never `remove` items you did not create.
 
 Capture each child's UUID and `taskRef` from the create response; you need them for edge rewiring (Phase 3) and parent rationale (Phase 4).
 
@@ -212,16 +212,16 @@ Capture each child's UUID and `taskRef` from the create response; you need them 
 
 For each parent-touching edge from the approved plan:
 
-1. **Delete the obsolete edge**: `piyaz_edge action='delete' edgeId='<id>'`. The edge ID came from the Phase 1 `type='edges'` call.
-2. **Create the replacement edge(s)**: `piyaz_edge action='create' source='<id>' target='<id>' type='<type>' note='<rewrite>'`. Per the plan's rewriting map.
+1. **Remove the obsolete edge**: `piyaz_link action='remove' source='<ref>' target='<ref>' type='<type>'` (or by `edgeId` when known). The endpoints came from the Phase 1 `piyaz_map view='neighbors'` call.
+2. **Create the replacement edge(s)**: `piyaz_link action='create' source='<id>' target='<id>' type='<type>' note='<rewrite>'`. Per the plan's rewriting map.
 
 Rules:
 
 - **Never leave a parent-touching edge in place.** The parent will be cancelled in Phase 4; dependencies on a cancelled task become transitively-blocking but never satisfying (lifecycle §1). Downstream tasks would stay blocked forever.
-- **Create new edges before deleting old ones is fine, but do not skip the delete.** A leftover obsolete edge looks like a stale dependency and clutters `piyaz_analyze` output.
+- **Create new edges before deleting old ones is fine, but do not skip the delete.** A leftover obsolete edge looks like a stale dependency and clutters `piyaz_map` output.
 - **Edge notes must be rewritten, not copy-pasted.** The original note referenced the parent's scope; the new note must reference the child's specific deliverable. Empty or generic notes are forbidden per artifacts §3.
 
-Verify the rewiring: `piyaz_query type='edges' taskId='<each-child-id>'` then `piyaz_query type='edges' taskId='<parent-id>'`. The parent's edge list must be empty after this phase. Confirm direction and notes look right per the plan.
+Verify the rewiring: `piyaz_map view='neighbors' task='<each-child-ref>'` then `piyaz_map view='neighbors' task='<parent-ref>'`. The parent's edge list must be empty after this phase. Confirm direction and notes look right per the plan.
 
 ---
 
@@ -229,13 +229,13 @@ Verify the rewiring: `piyaz_query type='edges' taskId='<each-child-id>'` then `p
 
 ### Step 1: Cancel the parent
 
-`piyaz_task action='update' taskId='<parent-id>'`:
+`piyaz_edit task='<parent-ref>'` ops:
 
 - `status='cancelled'`
 - `executionRecord='<3-5 sentences. Format: "Split into <child-refs>. <Rationale: cite oversize-task flag, user request, or scope analysis>. Children inherit <list of inheritances: category, cross-cutting tags, priority>. Edge rewiring complete: <N> outbound, <M> inbound."'`
 - `decisions=[<append any split-related CHOICE + WHY entry only when a real decision surfaced; per artifacts §1, "we split" is process metadata, not a decision>]`
 
-`overwriteArrays=true` is forbidden. The parent's `decisions` are append-only; the audit log records the status transition automatically.
+Destructive ops on the parent are forbidden: `decisions` accrete via `add` ops only; the audit log records the status transition automatically.
 
 ### Step 2: Validate
 
@@ -244,8 +244,8 @@ Run through this checklist mentally. If anything fails, fix before reporting:
 - [ ] **Children created**: every child in the approved plan has a UUID and a taskRef.
 - [ ] **No orphans**: every child has appropriate edges (inherited from parent's outbound where applicable; rewired from parent's inbound where applicable).
 - [ ] **No cycles**: the new edges do not introduce a cycle. Server enforces this; treat any cycle-rejection error as a planning bug, not a transient failure.
-- [ ] **Parent edges cleared**: `piyaz_query type='edges' taskId='<parent-id>'` returns no edges where the parent is source or target. Cancelled-as-transparent works only if parent-touching edges are gone.
-- [ ] **Parent at cancelled**: `piyaz_query type='search' query='<parentRef>'` confirms `state='cancelled'` with the rationale executionRecord.
+- [ ] **Parent edges cleared**: `piyaz_map view='neighbors' task='<parent-ref>'` returns no edges where the parent is source or target. Cancelled-as-transparent works only if parent-touching edges are gone.
+- [ ] **Parent at cancelled**: `piyaz_search query='<parentRef>'` confirms `state='cancelled'` with the rationale executionRecord.
 - [ ] **Downstream re-pointed**: every previously parent-dependent task now depends on the right child(ren) per the plan.
 
 ### Step 3: Report
@@ -269,12 +269,12 @@ When dispatched by composer, the orchestrator's next pick may include one of the
 - Phase 2 is N task creates (typically 2 to 7). Each costs ~1 MCP roundtrip.
 - Phase 3 is 2 to 4 deletes plus 2 to 6 creates depending on the parent's edge count.
 - Phase 4 is one parent update plus one validation read.
-- Run `piyaz_query type='meta'` exactly once at session setup. Do not repeat.
+- Run `piyaz_get view='meta'` exactly once at session setup. Do not repeat.
 - Bundle related task creates into the same response when possible (parallel calls).
 
 ## Rules
 
-- ALWAYS read the parent in full context (`piyaz_context depth='agent'`) before planning the split. Splitting blind hides edge dependencies you must rewire.
+- ALWAYS read the parent in full context (`piyaz_get lens='agent'`) before planning the split. Splitting blind hides edge dependencies you must rewire.
 - ALWAYS persist the split plan in markdown to the transcript before HARD-GATE. The user reads it; you do not pre-write to Piyaz.
 - ALWAYS rewire every parent-touching edge before cancelling the parent. Skip this and downstream tasks block forever per cancelled-as-transparent semantics.
 - ALWAYS read tool `_hints` and act on them.
@@ -283,7 +283,7 @@ When dispatched by composer, the orchestrator's next pick may include one of the
 - NEVER create a child with a one-sentence description or a single-AC list. They will be rejected.
 - NEVER use empty edge notes. They break downstream context.
 - NEVER cancel the parent before child creation and edge rewiring are complete. A premature cancel loses the rewiring opportunity (cancelled tasks cannot sensibly be the source of new edges).
-- NEVER pass `overwriteArrays=true`. The parent's `decisions` and the project's tag vocabulary are append-only.
+- NEVER use `remove` or wholesale text `set` on the parent. Its `decisions` and the project's tag vocabulary are append-only.
 - NEVER coin a new category. Children inherit the parent's category by default; the project's category list does not change in this session.
 - NEVER coin a new tag that does not appear in the project's existing tag vocabulary. Reuse only.
 - NEVER write text into Piyaz while sounding like a chatbot. No em dashes, no marketing words, no AI throat-clearing. Artifacts §6.

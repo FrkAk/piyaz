@@ -49,7 +49,7 @@ Cover, depending on task type:
 - **Solution sketch:** if you have one, include it. "Use Drizzle, mirror the patterns in `lib/data/task.ts`" is more useful than "Define the database tables".
 - **No speculation:** do not pad with implementation guesses when the approach is uncertain. The implementation plan is for that.
 
-Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are rejected.
+Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are never acceptable: the server flags them in `_hints`; rewrite before moving on.
 
 **For onboarding** (writing descriptions for tasks that already shipped): write the description as if the task were being created BEFORE the work, knowing what you now know about the codebase. The reader must be able to re-derive the work from the description. Do not write "added the auth middleware". Write "Build the JWT auth middleware in `lib/auth/middleware.ts`. Validate Bearer tokens against the user table, set `req.user`, reject on expiry. Required by every protected route."
 
@@ -140,7 +140,7 @@ BAD:
 - "Numbers match"
 ```
 
-Single-AC tasks are rejected. Tasks with vague ACs ("works correctly", "is complete", "performs well") are rejected.
+Single-AC tasks are flagged by the server in `_hints`; rewrite them. Tasks with vague ACs ("works correctly", "is complete", "performs well") must be rewritten before planning.
 
 ### `executionRecord` (only on `in_review`, `done`, and `cancelled`)
 
@@ -188,7 +188,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ## 2. Tag dimensions and first-class fields
 
-Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `piyaz_query type='meta'` before coining new ones.
+Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `piyaz_get project='<identifier>' view='meta'` before coining new ones.
 
 | Dimension | Count | Vocabulary |
 |---|---|---|
@@ -198,11 +198,11 @@ Every task, in every status, must carry tags across the three tag dimensions bel
 
 ### First-class fields (priority, estimate, assignees)
 
-These are top-level columns on every task, set via `piyaz_task` parameters of the same name. They are NOT tags.
+These are top-level columns on every task, set at creation (`piyaz_create` item fields) or via `piyaz_edit` (`set field='priority'` etc.). They are NOT tags.
 
 - **`priority`** (one of `urgent`, `core`, `normal`, `backlog`). Required-on-create-by-convention: pick deliberately. Defaults: onboarding (shipped features) lands at `core`; decompose picks per task and avoids `core` everywhere or `urgent` everywhere (the dimension carries no signal then). A 30-task project usually has 3 to 6 `urgent` tasks and the rest split between `core`, `normal`, and `backlog`.
 - **`estimate`** (Fibonacci story points: `1`, `2`, `3`, `5`, `8`, `13`). Optional. `1` is trivial, `2` and `3` are routine, `5` is nontrivial, `8` and `13` are risky or multi-day. If a task feels larger than `13`, split it (§5).
-- **`assigneeIds`** (array of team-member user UUIDs). Optional. Declares ownership / intent, not concurrent execution; the single-worker `in_progress` invariant still holds. Each id must be a member of the project's owning team (the server rejects non-members at write time).
+- **`assigneeIds`** (array of team-member user UUIDs). Optional. Declares ownership / intent, not concurrent execution; the single-worker `in_progress` invariant still holds. Each id must be a member of the project's owning team (the server rejects non-members at write time). Discover teammate UUIDs via `piyaz_workspace action='members'`.
 
 **Do NOT tag:**
 
@@ -300,6 +300,7 @@ You are choosing the architectural layers / product areas / subsystems of a sing
 ### Hard rules
 
 - 4 to 8 categories per project.
+- The list is server-enforced: `piyaz_create`, `piyaz_edit`, and project-scoped `piyaz_search` reject a category outside the project's vocabulary and name the valid set inline. Read it via `piyaz_get project view='meta'`; extend it deliberately via `piyaz_workspace action='update' categories=[...]`, never by coining mid-task. Rename or remove an in-use entry only via `action='rename_category'` / `action='delete_category'` (they move or uncategorize the tasks atomically); rewriting the array does not touch task rows and orphans them.
 - Architectural layer / product area / subsystem only. Not process phases (`requirements`, `planning`, `review`). Not work types (`bugs`, `features` are tags, not categories). Not priorities.
 - **Test: would this be a tag in some other project shape?** If yes, it's cross-cutting, not a category. Quality attributes (`security`, `perf`, `a11y`, `reliability`, `observability`, `dx`, `compliance`, `safety`) and multi-category feature clusters (`onboarding-flow`, `agent-loop`, `flight-control`, `inference-pipeline`, `dashboard-refresh`) belong in the tag dimension. Categories are subsystems the project shapes itself around: directories, build targets, layers a developer thinks about separately. §2 and §4 are mirrors. A name passes one test, not both.
 - Nouns. `data` not `data-modeling`. `ui` not `ui-work`.

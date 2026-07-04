@@ -262,3 +262,78 @@ describe("agent bundle blocked notice", () => {
     expect(result).not.toContain("⚠ Blocked");
   });
 });
+
+describe("closure depth-cap visibility", () => {
+  /**
+   * Seed a 4-task depends_on chain d3 → d2 → d1 → head, bypassing RLS.
+   *
+   * @param projectId - Owning project id.
+   * @returns Ids of the chain ends: head (everything depends on it) and
+   *   d3 (depends on everything).
+   */
+  async function seedChain(
+    projectId: string,
+  ): Promise<{ headId: string; tailId: string }> {
+    const sr = serviceRoleConnect();
+    try {
+      const ids: string[] = [];
+      for (let i = 1; i <= 4; i++) {
+        const [t] = await sr<{ id: string }[]>`
+          INSERT INTO tasks (project_id, title, sequence_number, description, status)
+          VALUES (${projectId}, ${"Chain task " + i}, ${i}, 'chain member', 'planned')
+          RETURNING id`;
+        ids.push(t.id);
+      }
+      for (let i = 1; i < 4; i++) {
+        await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+                 VALUES (${ids[i]}, ${ids[i - 1]}, 'depends_on')`;
+      }
+      return { headId: ids[0], tailId: ids[3] };
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+  }
+
+  test("a depth-3 chain surfaces the piyaz_map pointer instead of truncating silently", async () => {
+    const fx = await seedUserOrgProject("agent-depthcap");
+    const { headId, tailId } = await seedChain(fx.projectId);
+    const ctx = makeAuthContext(fx.userId);
+
+    const headBundle = await buildAgentContext(ctx, headId);
+    expect(headBundle).toContain("Chain task 2");
+    expect(headBundle).toContain("Chain task 3");
+    expect(headBundle).not.toContain("Chain task 4");
+    expect(headBundle).toContain("deeper dependents exist beyond depth 2");
+    expect(headBundle).toContain("piyaz_map view='downstream'");
+
+    const tailBundle = await buildAgentContext(ctx, tailId);
+    expect(tailBundle).toContain("prerequisite chain continues beyond depth 2");
+  });
+
+  test("a depth-2 chain emits no truncation pointer", async () => {
+    const fx = await seedUserOrgProject("agent-depth2");
+    const sr = serviceRoleConnect();
+    let headId: string;
+    try {
+      const ids: string[] = [];
+      for (let i = 1; i <= 3; i++) {
+        const [t] = await sr<{ id: string }[]>`
+          INSERT INTO tasks (project_id, title, sequence_number, description, status)
+          VALUES (${fx.projectId}, ${"Short chain " + i}, ${i}, 'chain member', 'planned')
+          RETURNING id`;
+        ids.push(t.id);
+      }
+      for (let i = 1; i < 3; i++) {
+        await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+                 VALUES (${ids[i]}, ${ids[i - 1]}, 'depends_on')`;
+      }
+      headId = ids[0];
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const bundle = await buildAgentContext(makeAuthContext(fx.userId), headId);
+    expect(bundle).toContain("Short chain 3");
+    expect(bundle).not.toContain("deeper dependents exist");
+  });
+});

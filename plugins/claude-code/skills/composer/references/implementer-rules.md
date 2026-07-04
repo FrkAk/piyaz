@@ -44,7 +44,7 @@ Examples of hints you must obey:
 
 - Missing required fields on `done`: hint says `executionRecord is required`. Re-call with the field.
 - Tool description says "REQUIRED in multi-team accounts". The server rejects ambiguous calls.
-- Hint says "no ready tasks; try `piyaz_analyze type='plannable'`". Switch to plannable. Do not invent ready work.
+- Hint says "no ready tasks; try `piyaz_map view='plannable'`". Switch to plannable. Do not invent ready work.
 - Hint says "edges to cancelled task remain in place". Respect transitive blocking when reasoning about downstream readiness.
 
 **Order rule when multiple hints fire.** When two or more `_hints` come back in the same response (e.g. "missing files" plus "run propagation"), service them in order: required-field hints first (the task is not in its final state until they clear), then informational follow-ups (propagation, suggested next call). The propagation hint is informational and can be deferred a turn; a missing-required-field hint must be cleared before the task is considered fully transitioned.
@@ -65,7 +65,7 @@ draft → planned → in_progress → in_review → done
 | Status | Required fields | Forbidden fields | Trigger to leave |
 |---|---|---|---|
 | `draft` | `description`, `acceptanceCriteria` | `executionRecord`, `implementationPlan` | implementation plan saved → `planned` |
-| `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `action='update' status='in_progress'` → `in_progress` |
+| `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `piyaz_edit` (`set status='in_progress'`) → `in_progress` |
 | `in_progress` | + active worker (one only) | — | work complete + record + ACs + Completion Protocol §2 run → `in_review` |
 | `in_review` | + `executionRecord`, `decisions`, `files`, every AC evaluated, `prUrl` (optional sugar — when a PR was opened; backend upserts a `task_links` row with `kind='pull_request'`) | — | HOTL operator inspects PR and flips → `done` (or back to `in_progress` for rework) |
 | `done` | (inherited from `in_review`) | — | terminal |
@@ -98,9 +98,11 @@ Before transitioning a task to `in_review`, `done`, or `cancelled`:
 
 ### 2.2. Populate the required fields
 
-`executionRecord`, `decisions`, `files`, `acceptanceCriteria`, plus `prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR). The MCP server returns `_hints` if any are missing. Re-call with the additions before continuing.
+One `piyaz_edit` call carries the whole payload as ordered ops: `set executionRecord`, one `add` per decision, `set files`, `check`/`uncheck` each acceptance criterion by its id, `set prUrl` when a PR was opened (backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR), and the `set status` transition. The call is atomic; the MCP server returns `_hints` if anything is missing. Re-call with the additions before continuing.
 
-For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, pass `files=[]` explicitly. Omitting the field leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, `set files` with `value=[]` explicitly. Omitting the op leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
+
+Criterion ids come from `piyaz_get lens='working'` or `fields=['acceptanceCriteria']`; evaluate each against the actual work.
 
 ### 2.3. Open a PR if the work changed code
 

@@ -23,6 +23,7 @@ export type SummaryContext = {
     title: string;
     status: string;
     description: string;
+    category: string | null;
     priority: Priority | null;
     estimate: Estimate | null;
     prUrl: string | null;
@@ -80,6 +81,7 @@ export async function buildSummaryContext(
       title: task.title,
       status: task.status,
       description: task.description,
+      category: task.category,
       priority: task.priority,
       estimate: task.estimate,
       prUrl,

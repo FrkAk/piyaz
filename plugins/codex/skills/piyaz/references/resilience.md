@@ -10,7 +10,7 @@ Agents read this file at session start (for resume mode) and after any compactio
 - §2 Persist the plan to Piyaz, not to the chat
 - §3 Local working file (`.piyaz/`)
 - §4 Resume mode (run before any write phase)
-- §5 Idempotent task creation
+- §5 Idempotent batch creation
 - §6 Quality checkpoints
 - §7 Compaction signals (when to STOP and resume)
 - §8 What this means in practice
@@ -38,12 +38,12 @@ Two failure modes, both lethal to Piyaz's value:
 After any approved gate (decompose Phase 1, onboarding Phase 3, brainstorm synthesis), append the approved plan to the project's `description` field.
 
 - **Why.** The project description is durable across machines and survives session compaction. The chat does not.
-- **Caveat.** `piyaz_project action='update' description='...'` REPLACES the field; it does not append. Read-modify-write.
-- **Effect.** The plan becomes recoverable on any session restart. `piyaz_project action='select'` returns the description including your plan. Token-cheap retrieval.
+- **Caveat.** `piyaz_workspace action='update' description='...'` REPLACES the field; it does not append. Read-modify-write.
+- **Effect.** The plan becomes recoverable on any session restart. `piyaz_get project='<identifier>' view='meta'` returns the description including your plan. Token-cheap retrieval.
 
 **Read-modify-write procedure:**
 
-1. Read the current description from the `select` response (already in your context).
+1. Read the current description via `piyaz_get project='<identifier>' view='meta'` (or reuse it if already in your context).
 2. Build the new value:
    ```
    <existing description>
@@ -54,7 +54,7 @@ After any approved gate (decompose Phase 1, onboarding Phase 3, brainstorm synth
 
    <plan markdown>
    ```
-3. `piyaz_project action='update' description='<combined>'`.
+3. `piyaz_workspace action='update' project='<identifier>' description='<combined>'`.
 
 ---
 
@@ -118,7 +118,7 @@ status: in-progress
 3. **Read first on resume**, when session-start runs resume mode or a compaction signal triggers mid-session.
    - Check the local file first via `Read`. If found, it has progress and notes; use it.
    - If missing, fall back to the project description (cross-machine scenario).
-   - Either way, re-fetch `piyaz_query type='list'` and dedupe.
+   - Either way, `piyaz_activity project='<identifier>' since='<last certain instant>'` shows what was created while your memory is fuzzy; the batch creator dedupes by exact title regardless.
 4. **Cleanup or archive** when the workflow completes. Either:
    - Delete `.piyaz/<workflow>-<projectIdentifier>.md`, or
    - Rename to `.piyaz/archive/<workflow>-<projectIdentifier>-<date>.md` if the user wants a paper trail.
@@ -129,33 +129,26 @@ The `.piyaz/` directory is scratch. Never committed. The first write should ensu
 
 ## 4. Resume mode (always run before any write phase)
 
-At the start of any decompose / onboarding session, before any `piyaz_task action='create'`:
+At the start of any decompose / onboarding session, before any `piyaz_create`:
 
 1. **Check the local working file first.** `Read` `.piyaz/<workflow>-<projectIdentifier>.md`. If it exists, that is your working state.
-2. If the local file is missing, `piyaz_query type='list'` (slim) plus re-read the project description from the `select` response. If a Decomposition Plan or Onboarding Proposal section exists in the description, that is your authoritative plan.
-3. Compare: which planned tasks already exist (match by title), which are missing.
-4. **If existing tasks > 0:** you are resuming. Surface this to the user: "I see N tasks already exist in this project. The approved plan calls for M tasks. I'll create the M-N missing ones." Do NOT recreate existing tasks.
+2. If the local file is missing: `piyaz_activity project='<identifier>' since='<last certain instant>'` shows everything created or changed while you were away; `piyaz_get project='<identifier>' view='meta'` re-reads the description. If a Decomposition Plan or Onboarding Proposal section exists in the description, that is your authoritative plan.
+3. Compare: which planned tasks already exist (the activity feed's `task_created` events name them by ref; `piyaz_search project='<identifier>' status=[...]` fills gaps), which are missing.
+4. **If existing tasks > 0:** you are resuming. Surface this to the user: "I see N tasks already exist in this project. The approved plan calls for M tasks. I'll create the M-N missing ones." Re-running the batch is safe: `piyaz_create` dedupes by exact title and returns matches as `deduped`.
 5. **If existing tasks == 0:** fresh run. Proceed normally.
 6. **If existing tasks do not match the approved plan** (different titles, manually-created tasks, etc): surface the conflict. Ask the user how to proceed. Do not silently overwrite.
 
 ---
 
-## 5. Idempotent task creation
+## 5. Idempotent batch creation
 
-**Build a known-titles set once at the start of the write phase, then dedupe in memory.**
+**The server dedupes for you.** `piyaz_create` skips items whose exact title already exists in the project and returns them as `deduped` (still usable as edge endpoints in the same call). A restarted decompose can therefore re-send the same batch payload verbatim:
 
-```
-existing = { task.title.lower() for task in piyaz_query_list_result }
-for planned_task in plan:
-    if planned_task.title.lower() in existing:
-        skip; continue
-    create planned_task
-    existing.add(planned_task.title.lower())
-```
+- Same payload, second run → `created: []`, `deduped: [every task]`, existing edges silently skipped. Clean no-op.
+- Partial first run → the re-run creates only the missing tail.
+- `onDuplicate='error'` flips the behavior to reject-the-whole-batch when duplication would signal a planning bug rather than a resume.
 
-- One slim `list` call (single MCP roundtrip).
-- Dedupe runs in-memory (free).
-- Cheaper than per-task search-before-create.
+Keep batches at ≤25 tasks with their internal edges (`key`-addressed) in the same call; chunk larger plans into consecutive batches. Read the `deduped` hint on every response so your working-file checklist stays truthful.
 
 ---
 
@@ -175,7 +168,7 @@ The audit:
    - ACs: 2 to 4 binary criteria? If single or vague, REWRITE.
    - Tags: all three dimensions (work-type, cross-cutting, tech) present? If any missing, FIX. Priority lives in the `priority` field, not in `tags`.
    - Category: matches a project category, not a forbidden one? If wrong, FIX.
-3. If any of those need fixing, run `piyaz_task action='update'` BEFORE creating more.
+3. If any of those need fixing, run `piyaz_edit` (surgical ops: `str_replace` for description text, `add`/`update` by id for ACs, `set` for tags/category) BEFORE creating more.
 
 Quality drift compounds. A bad task at position 15 is a 5-second fix. The same drift discovered at position 50 means rewriting 35 tasks.
 
@@ -199,7 +192,7 @@ Do not power through. The user invoked you to produce quality work, not to resta
 ## 8. What this means in practice
 
 - Plan is durable: it lives in the project description (cross-machine) and the local working file (in-session).
-- Progress is durable: progress checklist in the local working file; derivable from `piyaz_query type='list'` if the local file is missing.
+- Progress is durable: progress checklist in the local working file; derivable from `piyaz_activity since=...` and the batch creator's `deduped` responses if the local file is missing.
 - Quality is enforced: periodic self-audit catches drift.
 - Recovery is automatic: resume mode runs at every session start, reads local file first, falls back to project description.
 
@@ -213,9 +206,12 @@ Some Piyaz conventions are validated by the server; others depend on agent disci
 
 **Server-enforced** (the server rejects or warns):
 
-- Cycle creation in the dependency graph (rejected with a clean error).
+- Cycle creation in the dependency graph (rejected with the chain named).
 - Self-edges (rejected).
-- Duplicate edges (rejected with `Duplicate edge: an identical edge already exists.`).
+- Duplicate edges (rejected with "treat as success" guidance; in a `piyaz_create` batch, existing edges are silently skipped instead).
+- Batch title duplication (`piyaz_create` dedupes by exact title; `onDuplicate='error'` rejects).
+- Stale writes (`ifUpdatedAt` mismatch fails with the fresh `updatedAt`).
+- `str_replace` precision (0 or ≥2 matches rejected with the occurrence count).
 - Cancellation transparency: dependents stay blocked through cancelled deps' own unsatisfied prereqs.
 - Identifier uniqueness per team (rejected on collision).
 - Identifier rename cascades all task refs (with a warning hint).
@@ -227,9 +223,9 @@ Some Piyaz conventions are validated by the server; others depend on agent disci
 - Description length / quality: 2 to 4 sentences, no single-sentence descriptions.
 - Acceptance criteria: 2 to 4 binary items, no "works correctly" filler.
 - Edge note quality: substantive, no "needed" / "depends" placeholders.
-- Lifecycle monotonicity: `draft → planned → in_progress → done`. The server does not block direct draft → done jumps.
-- `piyaz_query type='overview'` frequency: at most once per session. Skill discipline only.
-- `overwriteArrays=true` confirmation: the server does NOT warn when the new array is shorter than the existing array. Confirm with the user before passing it.
+- Lifecycle monotonicity: `draft → planned → in_progress → in_review → done`. The server hints on jumps but does not block them.
+- `view='overview'` frequency: at most once per session. Skill discipline only.
+- Destructive edit ops: `set` on a text field replaces it wholesale and `remove` deletes the item; the server does not warn and there is no undo (the activity log records that a change happened, not the prior content). Prefer `str_replace`/`append`/by-id ops; confirm wholesale rewrites with the user.
 
 When in doubt, treat any rule that lives in `references/artifacts.md` or `references/lifecycle.md` as agent-enforced unless this section says otherwise.
 

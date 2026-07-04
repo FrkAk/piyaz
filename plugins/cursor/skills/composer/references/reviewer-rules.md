@@ -64,8 +64,8 @@ The graph is Piyaz's value. Skip once and it lies: ready tasks that aren't ready
 
 After any status change or significant refinement:
 
-1. `piyaz_query type='edges'` on the changed task. Current relationships.
-2. `piyaz_analyze type='downstream'`. Who depends on this task.
+1. `piyaz_map view='neighbors'` on the changed task. Current relationships.
+2. `piyaz_map view='downstream'`. Who depends on this task.
 3. For each downstream task, evaluate:
    - Do edge notes need updating to reflect new decisions?
    - Are there NEW relationships revealed by this change?

@@ -8,14 +8,34 @@ export type ProjectStatus =
   | "active"
   | "archived";
 
+/**
+ * Project lifecycle phases in progression order. Shared by the MCP
+ * workspace transition hints and the phase-gating checks so the order
+ * lives in one place.
+ */
+export const PROJECT_STATUS_ORDER = [
+  "brainstorming",
+  "decomposing",
+  "active",
+  "archived",
+] as const satisfies readonly ProjectStatus[];
+
+/**
+ * Task lifecycle statuses in progression order (`cancelled` is terminal
+ * from any phase). Shared by the MCP status schema, the edit-op validator,
+ * and the status-jump hints so the lifecycle list lives in one place.
+ */
+export const TASK_STATUSES = [
+  "draft",
+  "planned",
+  "in_progress",
+  "in_review",
+  "done",
+  "cancelled",
+] as const;
+
 /** Task lifecycle status. */
-export type TaskStatus =
-  | "draft"
-  | "planned"
-  | "in_progress"
-  | "in_review"
-  | "done"
-  | "cancelled";
+export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 /**
  * Terminal task statuses — work that will never resume. Shared by the
@@ -49,25 +69,6 @@ export type Decision = {
   text: string;
   date: string;
   source: "brainstorm" | "refinement" | "planning" | "execution";
-};
-
-/** A timestamped event in a node's history. */
-export type HistoryEntry = {
-  id: string;
-  type:
-    | "created"
-    | "refined"
-    | "decision"
-    | "edge_added"
-    | "edge_removed"
-    | "edge_updated"
-    | "status_change"
-    | "planned"
-    | "moved";
-  date: string;
-  label: string;
-  description: string;
-  actor: "user" | "ai";
 };
 
 /** Discrete, append-only activity event kinds for the audit log. */
@@ -135,3 +136,18 @@ export type AcceptanceCriterion = {
   text: string;
   checked: boolean;
 };
+
+/** Editorial kind of a note: reference material, guidance, or knowledge. */
+export type NoteType = "reference" | "guidance" | "knowledge";
+
+/** Note visibility scope: author-only or shared with the whole team. */
+export type Visibility = "private" | "team";
+
+/** How a note's feed selects tasks for agent exposure. */
+export type FeedMode = "none" | "all" | "categories" | "tags" | "tasks";
+
+/** Semantic relationship between a note and a task. */
+export type NoteTaskLinkKind = "mention" | "reference" | "spec_of";
+
+/** Lifecycle state of a note's semantic embedding. */
+export type EmbeddingStatus = "none" | "pending" | "ready" | "failed" | "stale";

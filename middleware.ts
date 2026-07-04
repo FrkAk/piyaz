@@ -5,6 +5,7 @@ import {
   matchRule,
   extractKey,
   rateLimitHeaders,
+  mcpRateLimitMessage,
   getBackend,
 } from "@/lib/api/rate-limit";
 import { buildCsp } from "@/lib/security/headers";
@@ -83,9 +84,13 @@ export async function middleware(request: NextRequest) {
       );
       rlHeaders = rateLimitHeaders(result, rule);
       if (!result.allowed) {
+        const message =
+          rule.bindingKey === "mcp"
+            ? mcpRateLimitMessage(rule.max, rule.window, result.resetIn)
+            : "Too many requests. Please try again later.";
         return withCsp(
           NextResponse.json(
-            { error: "Too many requests. Please try again later." },
+            { error: message },
             { status: 429, headers: rlHeaders },
           ),
         );

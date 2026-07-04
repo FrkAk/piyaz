@@ -3,6 +3,7 @@ import "server-only";
 import type { AcceptanceCriterion } from "@/lib/types";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import {
+  capLines,
   formatCriteria,
   formatLinkLine,
   untrustedContentNotice,
@@ -69,7 +70,7 @@ export function buildWorkingContextFrom(
  *
  * Resolves only the working data this depth renders (no dependency closure or
  * project header), then delegates to the pure {@link buildWorkingContextFrom}
- * assembler. Used by MCP for `piyaz_context depth='working'`.
+ * assembler. Used by MCP for `piyaz_get lens='working'`.
  *
  * @param ctx Resolved auth context.
  * @param taskId UUID of the task.
@@ -144,7 +145,7 @@ export function formatWorkingContextParts(ctx: WorkingContext): BundlePart[] {
     parts.push({ id: "decisions", heading: "Decisions", markdown: decisions });
   }
 
-  const edges = formatEdgesSection(ctx.edges);
+  const edges = formatEdgesSection(ctx.edges, ctx.taskRef);
   if (edges) {
     parts.push({
       id: "connected",
@@ -171,12 +172,13 @@ export async function formatWorkingContext(
 }
 
 /**
- * Format the meta section: priority, estimate, assignees. Each line is
- * suppressed when the corresponding field is unset, so a task with no
- * meta drops the section entirely.
+ * Format the meta section: category, priority, estimate, assignees. Each
+ * line is suppressed when the corresponding field is unset, so a task with
+ * no meta drops the section entirely.
  *
  * @param node - Raw task row.
  * @param assignees - Resolved assignee projection.
+ * @param links - Task links projection; the pull-request link drives the PR line.
  * @returns Formatted meta section or empty string.
  */
 function formatMetaSection(
@@ -185,8 +187,10 @@ function formatMetaSection(
   links: TaskLinkRef[],
 ): string {
   const lines: string[] = [];
+  const category = (node.category as string | null) ?? null;
   const priority = (node.priority as string | null) ?? null;
   const estimate = (node.estimate as number | null) ?? null;
+  if (category) lines.push(`- Category: \`${category}\``);
   if (priority) lines.push(`- Priority: \`${priority}\``);
   if (estimate) lines.push(`- Estimate: ${estimate} pts`);
   if (assignees.length > 0) {
@@ -233,17 +237,24 @@ function formatCriteriaSection(node: Record<string, unknown>): string {
 }
 
 /**
- * Format decisions section.
+ * Format decisions section. Each line carries the item's backticked id —
+ * the working lens is the edit-address read, so decisions must be
+ * addressable by `piyaz_edit` by-id ops just like acceptance criteria.
  * @param node - Raw node data.
  * @returns Formatted decisions section or empty string.
  */
 function formatDecisionsSection(node: Record<string, unknown>): string {
   const decisions =
-    (node.decisions as { text: string; source: string; date: string }[]) ?? [];
+    (node.decisions as {
+      id: string;
+      text: string;
+      source: string;
+      date: string;
+    }[]) ?? [];
   if (decisions.length === 0) return "";
   const lines = ["## Decisions"];
   for (const d of decisions) {
-    lines.push(`- [${d.source}] ${d.text} (${d.date})`);
+    lines.push(`- [${d.source}] \`${d.id}\` ${d.text} (${d.date})`);
   }
   return lines.join("\n");
 }
@@ -264,18 +275,28 @@ function formatHierarchySection(ctx: WorkingContext, title: string): string {
 }
 
 /**
- * Format connected edges section.
+ * Format connected edges section, width-capped for hub tasks.
  * @param edges - Array of edge data with notes.
+ * @param taskRef - Origin task ref for the truncation guidance.
  * @returns Formatted edges section or empty string.
  */
-function formatEdgesSection(edges: WorkingContext["edges"]): string {
+function formatEdgesSection(
+  edges: WorkingContext["edges"],
+  taskRef: string | null,
+): string {
   if (edges.length === 0) return "";
-  const lines = ["## Connected Tasks"];
+  const edgeLines: string[] = [];
   for (const e of edges) {
     const arrow = e.direction === "outgoing" ? "→" : "←";
     let line = `- ${e.edgeType} ${arrow} \`${e.taskRef}\` "${e.title}" (${e.status})`;
     if (e.note) line += ` — ${e.note}`;
-    lines.push(line);
+    edgeLines.push(line);
   }
-  return lines.join("\n");
+  return [
+    "## Connected Tasks",
+    ...capLines(
+      edgeLines,
+      `run piyaz_map view='neighbors'${taskRef ? ` task='${taskRef}'` : ""} for the full list.`,
+    ),
+  ].join("\n");
 }

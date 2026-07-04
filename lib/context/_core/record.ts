@@ -68,6 +68,7 @@ export function buildRecordContextParts(data: RecordContextData): BundlePart[] {
   const headerLines: string[] = [
     `# ${task.taskRef ? `\`${task.taskRef}\` ` : ""}${task.title}`,
   ];
+  if (task.category) headerLines.push(`Category: \`${task.category}\``);
   if (tags.length > 0) {
     headerLines.push(`Tags: ${tags.map((t) => `\`${t}\``).join(", ")}`);
   }

@@ -3,6 +3,10 @@ import "server-only";
 /** Opaque cursor for keyset pagination on `(updatedAt, id)`. */
 export type Cursor = string & { readonly __cursorBrand: unique symbol };
 
+/** Guards forged cursor ids before they reach a `::uuid` cast. */
+const UUID_RE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 /** Decoded cursor payload — the row position to seek past. */
 export type CursorValue = { updatedAt: Date; id: string };
 
@@ -37,6 +41,7 @@ export function decodeCursor(
     if (typeof parsed.u !== "string" || typeof parsed.i !== "string") {
       return null;
     }
+    if (!UUID_RE.test(parsed.i)) return null;
     const updatedAt = new Date(parsed.u);
     if (Number.isNaN(updatedAt.getTime())) return null;
     return { updatedAt, id: parsed.i };
@@ -74,6 +79,7 @@ export function decodeOrderCursor(
     const parsed = JSON.parse(json) as { o?: unknown; i?: unknown };
     if (typeof parsed.o !== "number" || typeof parsed.i !== "string")
       return null;
+    if (!UUID_RE.test(parsed.i)) return null;
     return { order: parsed.o, id: parsed.i };
   } catch {
     return null;

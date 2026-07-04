@@ -146,6 +146,181 @@ CREATE POLICY "team_invite_code_delete_admin_only" ON "team_invite_code"
   USING (public.current_user_org_role(organization_id) IN ('admin', 'owner'));
 
 
+-- notes — 2-hop via projects' RLS, plus per-note visibility. deleted_at
+-- filtering is a query concern, not RLS. The per-row predicate columns
+-- (visibility, created_by) are leakproof plain comparisons, so they are safe
+-- to evaluate on every scanned row; the caller lookup is wrapped in
+-- (SELECT ...) so it evaluates once per statement as an InitPlan — same
+-- discipline as the current_user_org_ids() sublink (header) — instead of
+-- paying a plpgsql call per scanned private row. Attribution is pinned end to
+-- end: the notes_insert_author_only floor below fixes created_by (and
+-- updated_by/share_requested_by) to the caller on INSERT (this permissive
+-- WITH CHECK OR-s past created_by on a visibility='team' insert), and the
+-- notes_created_by_immutable / notes_attribution_pinned triggers
+-- (rls-functions.sql) guard them on UPDATE, so a member can neither forge a
+-- team note's attribution nor privatize-and-steal one.
+DROP POLICY IF EXISTS "notes_member_access" ON "notes";
+CREATE POLICY "notes_member_access" ON "notes" AS PERMISSIVE FOR ALL TO app_user
+  USING (
+    project_id IN (SELECT id FROM public.projects)
+    AND (visibility = 'team'
+         OR created_by = (SELECT public.current_app_user_id()))
+  )
+  WITH CHECK (
+    project_id IN (SELECT id FROM public.projects)
+    AND (visibility = 'team'
+         OR created_by = (SELECT public.current_app_user_id()))
+  );
+
+-- RESTRICTIVE INSERT floor pinning attribution to the caller. The permissive
+-- notes_member_access WITH CHECK OR-s on visibility='team', so it never evaluates
+-- created_by on a team-note INSERT — without this floor a member could insert a
+-- team note attributed to any other user. RESTRICTIVE AND's with the permissive,
+-- forcing every inserted note to be self-authored (mirrors the note_revisions
+-- created_by pin and the note_links insert floor). Strict equality on created_by
+-- (no NULL): a fresh note always has an author, and a NULL-author private note is
+-- invisible to everyone. updated_by/share_requested_by start NULL or as the
+-- caller, never another user. INSERT-only; the UPDATE path is covered by the
+-- notes_created_by_immutable and notes_attribution_pinned triggers.
+DROP POLICY IF EXISTS "notes_insert_author_only" ON "notes";
+CREATE POLICY "notes_insert_author_only" ON "notes"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (
+    created_by = (SELECT public.current_app_user_id())
+    AND (updated_by IS NULL
+         OR updated_by = (SELECT public.current_app_user_id()))
+    AND (share_requested_by IS NULL
+         OR share_requested_by = (SELECT public.current_app_user_id()))
+  );
+
+-- note_task_links — both endpoints checked in RLS (mirror task_edges): the
+-- note via notes' RLS and the task via tasks' RLS. The same-project belt is
+-- the SECURITY INVOKER trigger reject_note_task_links_cross_project
+-- (rls-functions.sql); the task-side predicate here is a second floor for the
+-- trigger-loss case and never rejects a legitimate row (the trigger pins
+-- note.project_id == task's).
+--
+-- Endpoint checks on the notes-family link/revision tables are correlated
+-- EXISTS, not `IN (SELECT id FROM ...)`: every policy clause carrying an
+-- IN-sublist plans its own hashed SubPlan over the caller's ENTIRE visible-
+-- notes set (each row re-paying notes' RLS), so a single-row write evaluates
+-- that set up to six times (permissive + restrictive × USING + WITH CHECK).
+-- A correlated EXISTS is one notes_pkey probe per check with identical
+-- RLS-filtered semantics (same pattern as the activity_events task probe).
+DROP POLICY IF EXISTS "note_task_links_member_access" ON "note_task_links";
+CREATE POLICY "note_task_links_member_access" ON "note_task_links" AS PERMISSIVE FOR ALL TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
+  );
+
+-- RESTRICTIVE write floor on note_task_links (mirror note_links / task_edges).
+-- AND's with the OR of permissives so a future stray permissive cannot
+-- OR-relax both-endpoints-visible. Per-command to leave SELECT on permissive.
+DROP POLICY IF EXISTS "note_task_links_insert_member_only" ON "note_task_links";
+DROP POLICY IF EXISTS "note_task_links_update_member_only" ON "note_task_links";
+DROP POLICY IF EXISTS "note_task_links_delete_member_only" ON "note_task_links";
+
+CREATE POLICY "note_task_links_insert_member_only" ON "note_task_links"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
+  );
+
+CREATE POLICY "note_task_links_update_member_only" ON "note_task_links"
+  AS RESTRICTIVE FOR UPDATE TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
+  );
+
+CREATE POLICY "note_task_links_delete_member_only" ON "note_task_links"
+  AS RESTRICTIVE FOR DELETE TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_task_links.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
+  );
+
+-- note_revisions — 3-hop via notes' RLS (append-only body history). WITH CHECK
+-- also pins created_by to the caller (or NULL) so a member cannot forge a
+-- snapshot attributed to another user; UPDATE is revoked in grants.sql.
+-- Correlated EXISTS per the note_task_links rationale above.
+DROP POLICY IF EXISTS "note_revisions_member_access" ON "note_revisions";
+CREATE POLICY "note_revisions_member_access" ON "note_revisions" AS PERMISSIVE FOR ALL TO app_user
+  USING (EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_revisions.note_id))
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_revisions.note_id)
+    AND (created_by IS NULL
+         OR created_by = (SELECT public.current_app_user_id()))
+  );
+
+-- RESTRICTIVE INSERT floor re-pinning snapshot authorship (mirror
+-- notes_insert_author_only / task_edges_*_member_only): a future stray
+-- permissive cannot OR-relax the created_by pin above. NULL stays allowed —
+-- an unattributed snapshot is a documented design choice.
+DROP POLICY IF EXISTS "note_revisions_insert_author_only" ON "note_revisions";
+CREATE POLICY "note_revisions_insert_author_only" ON "note_revisions"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (
+    created_by IS NULL
+    OR created_by = (SELECT public.current_app_user_id())
+  );
+
+-- note_links — both endpoints must be visible (mirror task_edges).
+-- Correlated EXISTS per the note_task_links rationale above.
+DROP POLICY IF EXISTS "note_links_member_access" ON "note_links";
+CREATE POLICY "note_links_member_access" ON "note_links" AS PERMISSIVE FOR ALL TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
+  );
+
+-- RESTRICTIVE write floor on note_links (mirror task_edges_*_member_only).
+-- AND's with the OR of permissives so a future stray permissive cannot
+-- OR-relax both-endpoints-visible. Per-command to leave SELECT on permissive.
+DROP POLICY IF EXISTS "note_links_insert_member_only" ON "note_links";
+DROP POLICY IF EXISTS "note_links_update_member_only" ON "note_links";
+DROP POLICY IF EXISTS "note_links_delete_member_only" ON "note_links";
+
+CREATE POLICY "note_links_insert_member_only" ON "note_links"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
+  );
+
+CREATE POLICY "note_links_update_member_only" ON "note_links"
+  AS RESTRICTIVE FOR UPDATE TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
+  );
+
+CREATE POLICY "note_links_delete_member_only" ON "note_links"
+  AS RESTRICTIVE FOR DELETE TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.source_note_id)
+    AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
+  );
+
+
 -- ENABLE explicitly: testcontainer/self-host get this from `drizzle-kit
 -- push` reading `.enableRLS()`, but `drizzle-kit migrate` does not emit
 -- ENABLE, and FORCE without ENABLE is a no-op.
@@ -158,6 +333,10 @@ ALTER TABLE "task_decisions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "task_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "team_invite_code" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "activity_events" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "notes" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "note_task_links" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "note_links" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "note_revisions" ENABLE ROW LEVEL SECURITY;
 
 -- FORCE subjects the table owner to RLS. BYPASSRLS roles and real
 -- superusers still sidestep.
@@ -170,3 +349,7 @@ ALTER TABLE "task_decisions" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "task_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "team_invite_code" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "activity_events" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "notes" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "note_task_links" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "note_links" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "note_revisions" FORCE ROW LEVEL SECURITY;

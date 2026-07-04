@@ -1,10 +1,13 @@
 import "server-only";
 
 import {
+  capLines,
+  MAX_BUNDLE_RECORD_BLOCKS,
   section,
   formatCriteria,
   formatDecisions,
   formatLinkLine,
+  formatRelatedEdgeLine,
   formatTaskRefLine,
   untrustedContentNotice,
 } from "@/lib/context/format";
@@ -54,6 +57,7 @@ export function buildPlanningContextParts(
   const headerLines: string[] = [
     `# ${taskRef ? `\`${taskRef}\` ` : ""}${task.title}`,
   ];
+  if (task.category) headerLines.push(`Category: \`${task.category}\``);
   if (tags.length > 0) {
     headerLines.push(`Tags: ${tags.map((t) => `\`${t}\``).join(", ")}`);
   }
@@ -106,22 +110,51 @@ export function buildPlanningContextParts(
     });
   }
 
+  if (task.executionRecord) {
+    parts.push({
+      id: "work-so-far",
+      heading: "Work So Far",
+      markdown: section("Work So Far") + "\n" + task.executionRecord,
+    });
+  }
+
   if (deps.length > 0) {
-    const prereqLines: string[] = [];
+    const rawPrereqLines: string[] = [];
     const execLines: string[] = [];
+    let recordCount = 0;
 
     const depMap = new Map(depTasks.map((dt) => [dt.id, dt]));
 
     for (const dep of deps) {
       const info = depMap.get(dep.id);
       if (!info) continue;
-      prereqLines.push(formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)));
+      rawPrereqLines.push(
+        formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)),
+      );
 
       if (info.status === "done" && info.executionRecord) {
-        execLines.push(`### \`${info.taskRef}\` ${info.title}`);
-        if (info.prUrl) execLines.push(`PR: ${info.prUrl}`);
-        execLines.push(info.executionRecord);
+        recordCount++;
+        if (recordCount <= MAX_BUNDLE_RECORD_BLOCKS) {
+          execLines.push(`### \`${info.taskRef}\` ${info.title}`);
+          if (info.prUrl) execLines.push(`PR: ${info.prUrl}`);
+          execLines.push(info.executionRecord);
+        }
       }
+    }
+    if (recordCount > MAX_BUNDLE_RECORD_BLOCKS) {
+      execLines.push(
+        `… +${recordCount - MAX_BUNDLE_RECORD_BLOCKS} more upstream records — fetch one with piyaz_get task='<dep ref>' fields=['executionRecord'].`,
+      );
+    }
+
+    const prereqLines = capLines(
+      rawPrereqLines,
+      "walk the rest with piyaz_map view='neighbors' hops=2.",
+    );
+    if (data.depsTruncated) {
+      prereqLines.push(
+        "… prerequisite chain continues beyond depth 2 — walk further with piyaz_map view='neighbors' hops=2.",
+      );
     }
 
     if (prereqLines.length > 0) {
@@ -149,10 +182,15 @@ export function buildPlanningContextParts(
 
   if (abandonedDeps.length > 0) {
     const abandonedLines: string[] = [];
-    for (const d of abandonedDeps) {
+    for (const d of abandonedDeps.slice(0, MAX_BUNDLE_RECORD_BLOCKS)) {
       abandonedLines.push(`### \`${d.taskRef}\` ${d.title}`);
       if (d.prUrl) abandonedLines.push(`PR: ${d.prUrl} — closed, unmerged`);
-      abandonedLines.push(d.executionRecord ?? "");
+      abandonedLines.push(d.executionRecord || "(no rationale recorded)");
+    }
+    if (abandonedDeps.length > MAX_BUNDLE_RECORD_BLOCKS) {
+      abandonedLines.push(
+        `… +${abandonedDeps.length - MAX_BUNDLE_RECORD_BLOCKS} more abandoned approaches — fetch one with piyaz_get task='<dep ref>' lens='record'.`,
+      );
     }
     parts.push({
       id: "abandoned",
@@ -181,14 +219,24 @@ export function buildPlanningContextParts(
 
   if (downstream.length > 0) {
     const summaryMap = new Map(data.downstreamSummaries.map((s) => [s.id, s]));
-    const downLines: string[] = [];
+    const rawDownLines: string[] = [];
 
     for (const d of downstream) {
       const info = summaryMap.get(d.id);
       if (!info) continue;
       let line = formatTaskRefLine(info, data.downstreamEdgeNotes.get(d.id));
       if (info.description) line += `\n  ${info.description}`;
-      downLines.push(line);
+      rawDownLines.push(line);
+    }
+
+    const downLines = capLines(
+      rawDownLines,
+      `run piyaz_map view='downstream'${taskRef ? ` task='${taskRef}'` : ""} for the full transitive set.`,
+    );
+    if (data.downstreamTruncated) {
+      downLines.push(
+        `… deeper dependents exist beyond depth 2 — run piyaz_map view='downstream'${taskRef ? ` task='${taskRef}'` : ""} for the full transitive set.`,
+      );
     }
 
     if (downLines.length > 0) {
@@ -201,6 +249,20 @@ export function buildPlanningContextParts(
           downLines.join("\n"),
       });
     }
+  }
+
+  if (data.related.length > 0) {
+    parts.push({
+      id: "related",
+      heading: "Related (non-blocking)",
+      markdown:
+        section("Related (non-blocking)") +
+        "\n" +
+        capLines(
+          data.related.map(formatRelatedEdgeLine),
+          `run piyaz_map view='neighbors'${taskRef ? ` task='${taskRef}'` : ""} for the full list.`,
+        ).join("\n"),
+    });
   }
 
   return parts;
@@ -219,7 +281,7 @@ export function buildPlanningContextFrom(data: PlanningContextData): string {
 /**
  * Build planning-optimized context for a task.
  *
- * The MCP `piyaz_context` entry point. Resolves only the planning data this
+ * The MCP `piyaz_get lens='planning'` entry point. Resolves only the planning data this
  * depth renders, then delegates to the pure {@link buildPlanningContextFrom}
  * assembler.
  *

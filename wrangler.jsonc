@@ -66,6 +66,16 @@
           "name": "RATE_LIMIT_AUTH",
           "namespace_id": "1002",
           "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "RATE_LIMIT_MCP",
+          "namespace_id": "1003",
+          "simple": { "limit": 100, "period": 60 }
+        },
+        {
+          "name": "RATE_LIMIT_MCP_HEAVY",
+          "namespace_id": "1004",
+          "simple": { "limit": 20, "period": 60 }
         }
       ],
       "routes": [{ "pattern": "app.piyaz.ai", "custom_domain": true }],
@@ -140,6 +150,16 @@
           "name": "RATE_LIMIT_AUTH",
           "namespace_id": "2002",
           "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "RATE_LIMIT_MCP",
+          "namespace_id": "2003",
+          "simple": { "limit": 100, "period": 60 }
+        },
+        {
+          "name": "RATE_LIMIT_MCP_HEAVY",
+          "namespace_id": "2004",
+          "simple": { "limit": 20, "period": 60 }
         }
       ],
       "routes": [{ "pattern": "dev.app.piyaz.ai", "custom_domain": true }],

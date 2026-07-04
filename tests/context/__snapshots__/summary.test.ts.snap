@@ -14,10 +14,11 @@ Project: "Project summary-ctx-golden"
 
 Central description
 
-2 depends_on | 1 criteria | 1 decisions | priority: high | 3pts | 1 assigned | has plan
+2 depends_on | 1 relates_to | 1 criteria | 1 decisions | category: feature | priority: high | 3pts | 1 assigned | has plan
 PR: https://example.test/pr/1
 
 ## Edges
 - depends_on → \`PRJ-1\` "Prereq task" [done] \`<uuid>\` — needs prereq output
-- depends_on ← \`PRJ-3\` "Downstream task" [draft] \`<uuid>\` — consumes central"
+- depends_on ← \`PRJ-3\` "Downstream task" [draft] \`<uuid>\` — consumes central
+- relates_to → \`PRJ-4\` "Related task" [draft] \`<uuid>\` — shares the parser"
 `;

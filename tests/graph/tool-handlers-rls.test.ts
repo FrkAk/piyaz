@@ -6,21 +6,21 @@ import { db } from "@/lib/db";
 import { withUserContext } from "@/lib/db/rls";
 
 /**
- * Regression coverage for the bare `fetchAssigneesUnchecked(p.taskId)` call
- * that previously lived at `lib/graph/tool-handlers.ts:1056`. Under
- * `app_user` (the production role) without an `app.user_id` GUC frame, the
- * read returned `[]` silently, which made `priorAssigneeIds = []` and
- * caused the diff vs new `assigneeIds` to flag every assignee as "added" —
- * producing wrong history entries and broken completion-protocol hints.
+ * Regression coverage for the bare-call bug class around
+ * `fetchAssigneesUnchecked`. Under `app_user` (the production role)
+ * without an `app.user_id` GUC frame, the read returns `[]` silently —
+ * historically this made a prior-assignee diff flag every assignee as
+ * "added", producing wrong activity_events and broken
+ * completion-protocol hints.
  *
- * Test 1 pins the production fix: when the call sits inside a
+ * Test 1 pins the safe shape: when the call sits inside a
  * `withUserContext` frame the assignees come back.
  *
  * Test 2 locks in the bug class: without a GUC frame under `app_user`,
  * `fetchAssigneesUnchecked` returns empty. If a future regression
- * reintroduces a bare call elsewhere, this test still passes (correct
- * empty result for the unsafe shape) but the wrapped call in
- * `handleTask` remains the only path that produces a correct prior list.
+ * reintroduces a bare call (today's callers live in `lib/data/task-edit.ts`
+ * and the assignee primitives), this test still passes for the unsafe
+ * shape, but only GUC-framed calls produce a correct list.
  */
 
 afterEach(async () => {

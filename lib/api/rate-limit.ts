@@ -16,9 +16,10 @@ export type RateLimitResult = {
  * A rate limit rule matching a URL pattern to limits and key strategy.
  *
  * `bindingKey` selects which Cloudflare rate-limit binding backs the rule on
- * the Workers deploy (`'api'` → `RATE_LIMIT_API`, `'auth'` → `RATE_LIMIT_AUTH`).
- * Omitted defaults to `'api'`. Self-host ignores this field — both kinds resolve
- * to the same in-memory backend by absence of bindings.
+ * the Workers deploy (`'api'` → `RATE_LIMIT_API`, `'auth'` → `RATE_LIMIT_AUTH`,
+ * `'mcp'` → `RATE_LIMIT_MCP`, `'mcpHeavy'` → `RATE_LIMIT_MCP_HEAVY`).
+ * Omitted defaults to `'api'`. Self-host ignores this field — every kind
+ * resolves to an in-memory backend by absence of bindings.
  *
  * Invariant: when a CF binding backs the slot, `max` and `window` MUST equal
  * the binding's `simple.limit` and `simple.period` declared in
@@ -32,7 +33,7 @@ export type RateLimitRule = {
   max: number;
   window: number;
   keyStrategy: "session" | "apikey" | "ip";
-  bindingKey?: "api" | "auth";
+  bindingKey?: "api" | "auth" | "mcp" | "mcpHeavy";
 };
 
 /**
@@ -95,9 +96,25 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     keyStrategy: "ip",
     bindingKey: "auth",
   },
-  { pattern: "/api/mcp", max: 100, window: 60, keyStrategy: "apikey" },
+  {
+    pattern: "/api/mcp",
+    max: 100,
+    window: 60,
+    keyStrategy: "apikey",
+    bindingKey: "mcp",
+  },
   { pattern: "/api/*", max: 100, window: 60, keyStrategy: "session" },
 ];
+
+/**
+ * Heavy-tier MCP budget: 20 calls per 60s per caller for the expensive tool
+ * shapes (deep lenses, project overview, wide graph walks, large batches).
+ * Enforced inside the MCP tool wrapper — middleware cannot see tool names —
+ * against the `mcpHeavy` backend slot. On Workers the values MUST mirror the
+ * `RATE_LIMIT_MCP_HEAVY` binding's `simple.limit`/`simple.period` in
+ * `wrangler.jsonc` (same invariant as {@link RateLimitRule}).
+ */
+export const MCP_HEAVY_LIMIT = { max: 20, window: 60 } as const;
 
 /** SSE path pattern — excluded from request rate limiting (single per-user
  * stream, throughput is broker-bound rather than request-rate-bound). */
@@ -208,19 +225,46 @@ export function rateLimitHeaders(
   return headers;
 }
 
-type BackendKind = "api" | "auth" | "actions";
+/**
+ * Corrective 429 body for the MCP standard tier. Mirrors the heavy-tier
+ * copy in `lib/mcp/create-server.ts`: names the budget, the retry window,
+ * and the call-volume levers, so an agent can recover from the body text
+ * alone. On the Cloudflare backend `resetIn` is the full window (an upper
+ * bound), matching the heavy tier's behavior.
+ *
+ * @param max - Rule call budget per window.
+ * @param window - Rule window in seconds.
+ * @param resetIn - Seconds until the budget resets.
+ * @returns The corrective error message.
+ */
+export function mcpRateLimitMessage(
+  max: number,
+  window: number,
+  resetIn: number,
+): string {
+  return (
+    `MCP rate limit reached (${max} calls/${window}s, all tools combined). ` +
+    `Retry in ${resetIn}s, or reduce call volume: batch task creation into one piyaz_create ` +
+    `and combine field reads into one piyaz_get fields=[...].`
+  );
+}
+
+type BackendKind = "api" | "auth" | "actions" | "mcp" | "mcpHeavy";
 
 /**
- * Backend slot table keyed by kind. `worker-cf.ts` wires `api` and `auth` to
- * the matching Cloudflare bindings on first request; `actions` is
- * intentionally never bound (server actions declare tighter `max` values
- * than any single CF binding can enforce, so they stay on the per-isolate
- * `MemoryRateLimitBackend` where rule limits are honored exactly).
+ * Backend slot table keyed by kind. `worker-cf.ts` wires `api`, `auth`,
+ * `mcp`, and `mcpHeavy` to the matching Cloudflare bindings on first
+ * request; `actions` is intentionally never bound (server actions declare
+ * tighter `max` values than any single CF binding can enforce, so they stay
+ * on the per-isolate `MemoryRateLimitBackend` where rule limits are honored
+ * exactly).
  */
 const _backends: Record<BackendKind, RateLimitBackend | null> = {
   api: null,
   auth: null,
   actions: null,
+  mcp: null,
+  mcpHeavy: null,
 };
 
 const MAX_WINDOW_MS = Math.max(...RATE_LIMIT_RULES.map((r) => r.window)) * 1000;
@@ -245,7 +289,7 @@ export function getBackend(kind: BackendKind = "api"): RateLimitBackend {
  * binding-backed implementation. Self-host never calls this; the lazy memory
  * backend in `getBackend` covers that path.
  *
- * @param kind - Binding slot to write (`'api'` or `'auth'`).
+ * @param kind - Binding slot to write.
  * @param backend - The backend instance to register for that slot.
  */
 export function setBackend(kind: BackendKind, backend: RateLimitBackend): void {

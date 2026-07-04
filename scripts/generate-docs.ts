@@ -205,10 +205,6 @@ export function renderToolPage(tool: ToolDefinition): string {
   const props = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
   const discriminatorName = tool.discriminator;
-  const discriminator = props[discriminatorName];
-  const actions = discriminator?.enum ?? [];
-  const actionLabel =
-    discriminatorName.charAt(0).toUpperCase() + discriminatorName.slice(1);
   const firstSentence = `${tool.description.split(". ")[0]}.`;
 
   const paramNames = Object.keys(props).sort((a, b) => {
@@ -222,10 +218,29 @@ export function renderToolPage(tool: ToolDefinition): string {
     return `| \`${name}\` | \`${renderType(prop)}\` | ${req} | ${escapeCell(prop.description ?? "")} |`;
   });
 
-  const actionRows = parseActions(
-    discriminator?.description ?? "",
-    actions,
-  ).map(({ action, purpose }) => `| \`${action}\` | ${escapeCell(purpose)} |`);
+  let actionsSection = "";
+  if (discriminatorName !== null) {
+    const discriminator = props[discriminatorName];
+    const actions = discriminator?.enum ?? [];
+    const actionLabel =
+      discriminatorName.charAt(0).toUpperCase() + discriminatorName.slice(1);
+    const plural = actionLabel.endsWith("s")
+      ? `${actionLabel}es`
+      : `${actionLabel}s`;
+    const actionRows = parseActions(
+      discriminator?.description ?? "",
+      actions,
+    ).map(
+      ({ action, purpose }) => `| \`${action}\` | ${escapeCell(purpose)} |`,
+    );
+    actionsSection = `## ${plural}
+
+| ${actionLabel} | Purpose |
+|---|---|
+${actionRows.join("\n")}
+
+`;
+  }
 
   return `---
 title: ${yamlQuote(tool.name)}
@@ -238,13 +253,7 @@ ${GENERATED_NOTE}
 
 ${escapeProse(tool.description)}
 
-## ${actionLabel}s
-
-| ${actionLabel} | Purpose |
-|---|---|
-${actionRows.join("\n")}
-
-## Parameters
+${actionsSection}## Parameters
 
 | Name | Type | Required | Description |
 |---|---|---|---|

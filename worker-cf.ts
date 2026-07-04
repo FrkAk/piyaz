@@ -53,6 +53,8 @@ interface WorkerEnv {
   DATABASE_SERVICE_ROLE_URL?: string;
   RATE_LIMIT_API?: CloudflareRateLimitBinding;
   RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
+  RATE_LIMIT_MCP?: CloudflareRateLimitBinding;
+  RATE_LIMIT_MCP_HEAVY?: CloudflareRateLimitBinding;
   PIYAZ_BROKER?: DurableObjectNamespace;
 }
 
@@ -89,8 +91,9 @@ let _rateLimitInitialized = false;
  *
  * The AUTH binding is wired `failOpen: false` so a binding outage cannot
  * silently disable brute-force throttling on `/api/auth/sign-in/*` and
- * `/api/auth/sign-up/*`. The API binding stays `failOpen: true` (default) —
- * a rate-limit subsystem hiccup must not take the whole app offline.
+ * `/api/auth/sign-up/*`. The API, MCP, and MCP-heavy bindings stay
+ * `failOpen: true` (default) — a rate-limit subsystem hiccup must not take the
+ * whole app or every agent session offline.
  *
  * Missing bindings are tolerated (the slot stays on `MemoryRateLimitBackend`),
  * which keeps `wrangler dev --no-bundle` and one-off scripts that don't bind
@@ -109,12 +112,23 @@ function initRateLimitBindings(env: WorkerEnv): void {
       new CloudflareRateLimitBackend(env.RATE_LIMIT_AUTH, { failOpen: false }),
     );
   }
+  if (env.RATE_LIMIT_MCP) {
+    setBackend("mcp", new CloudflareRateLimitBackend(env.RATE_LIMIT_MCP));
+  }
+  if (env.RATE_LIMIT_MCP_HEAVY) {
+    setBackend(
+      "mcpHeavy",
+      new CloudflareRateLimitBackend(env.RATE_LIMIT_MCP_HEAVY),
+    );
+  }
   _rateLimitInitialized = true;
   console.log(
     JSON.stringify({
       event: "rate_limit_init",
       api: Boolean(env.RATE_LIMIT_API),
       auth: Boolean(env.RATE_LIMIT_AUTH),
+      mcp: Boolean(env.RATE_LIMIT_MCP),
+      mcpHeavy: Boolean(env.RATE_LIMIT_MCP_HEAVY),
     }),
   );
 }

@@ -141,6 +141,28 @@ test("resolvePlanningData surfaces direct cancelled deps with records", async ()
   expect(data.deps.map((d) => d.id)).not.toContain(data.abandonedDeps[0].id);
 });
 
+test("resolvePlanningData surfaces cancelled deps without a rationale", async () => {
+  const fx = await seedRichContextTask("closure-abandoned-bare");
+  const sr = serviceRoleConnect();
+  try {
+    const [dead] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number, description, status)
+      SELECT project_id, 'Silent abandonment', 8, 'dropped', 'cancelled'
+      FROM tasks WHERE id = ${fx.taskId} RETURNING id`;
+    await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
+             VALUES (${fx.taskId}, ${dead.id}, 'depends_on', 'old route')`;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+
+  const data = await resolvePlanningData(fx.userId, fx.taskId);
+
+  expect(data.abandonedDeps.map((d) => d.title)).toEqual([
+    "Silent abandonment",
+  ]);
+  expect(data.abandonedDeps[0].executionRecord).toBeNull();
+});
+
 test("resolveRecordData resolves in two read batches and skips upstream data", async () => {
   const fx = await seedRichContextTask("record-slim");
   const sr = serviceRoleConnect();
@@ -217,9 +239,17 @@ test("resolveWorkingData assembles detailed edges and ancestors", async () => {
   const data = await resolveWorkingData(fx.userId, fx.taskId);
 
   expect(data.task.id).toBe(fx.taskId);
-  expect(data.detailedEdges).toHaveLength(2);
-  const directions = data.detailedEdges.map((e) => e.direction).sort();
-  expect(directions).toEqual(["incoming", "outgoing"]);
+  expect(data.detailedEdges).toHaveLength(3);
+  const dependsOn = data.detailedEdges.filter(
+    (e) => e.edgeType === "depends_on",
+  );
+  expect(dependsOn.map((e) => e.direction).sort()).toEqual([
+    "incoming",
+    "outgoing",
+  ]);
+  const related = data.detailedEdges.filter((e) => e.edgeType === "relates_to");
+  expect(related).toHaveLength(1);
+  expect(related[0].connectedTask.title).toBe("Related task");
   expect(data.ancestors).toEqual([
     expect.objectContaining({ type: "project", title: "Project working-data" }),
   ]);

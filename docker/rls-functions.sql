@@ -260,6 +260,25 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.current_user_has_any_membership() FROM public;
 GRANT EXECUTE ON FUNCTION public.current_user_has_any_membership() TO app_user;
 
+-- Resolve the caller's user id from the `app.user_id` GUC set by
+-- `withUserContext` (lib/db/rls.ts). Plain SECURITY INVOKER — it only reads a
+-- session setting and touches no privileged schema, unlike the piyaz_auth-reading
+-- current_user_* helpers above, so it needs no DEFINER escalation. Used by the
+-- notes_member_access policy's per-note visibility predicate (created_by = caller).
+CREATE OR REPLACE FUNCTION public.current_app_user_id()
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN NULLIF(current_setting('app.user_id', TRUE), '')::uuid;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.current_app_user_id() FROM public;
+GRANT EXECUTE ON FUNCTION public.current_app_user_id() TO app_user, service_role;
+
 -- Returns NULL on both "doesn't exist" and "exists but cross-team", so
 -- callers cannot distinguish them (anti-enumeration).
 CREATE OR REPLACE FUNCTION public.current_user_visible_member(p_member_id uuid)
@@ -309,10 +328,41 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.team_member_roles_visible(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.team_member_roles_visible(uuid) TO app_user;
 
+-- Full member directory for one team: user id, display name, role. Gated on
+-- the caller's own membership of the same org, so probing a foreign team
+-- UUID returns zero rows and is indistinguishable from a team the caller
+-- cannot see. Emails are deliberately not disclosed; assignment flows need
+-- id + name + role only. Dropped before create because a legacy same-name
+-- function shipped with a different return signature.
+DROP FUNCTION IF EXISTS public.team_members_visible(uuid);
+CREATE FUNCTION public.team_members_visible(p_org_id uuid)
+RETURNS TABLE (user_id uuid, name text, role text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT m."userId", u.name, m.role
+  FROM piyaz_auth."member" m
+  INNER JOIN piyaz_auth."user" u ON u.id = m."userId"
+  WHERE m."organizationId" = p_org_id
+    AND EXISTS (
+      SELECT 1
+      FROM piyaz_auth."member" caller
+      WHERE caller."organizationId" = p_org_id
+        AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
+    )
+  ORDER BY u.name, m."userId";
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.team_members_visible(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.team_members_visible(uuid) TO app_user;
+
 -- Legacy SDFs without TS callers: dropped so re-running this file keeps
 -- prod in lockstep. Reintroduce alongside a JS caller if a future UI
 -- surface needs them.
-DROP FUNCTION IF EXISTS public.team_members_visible(uuid);
 DROP FUNCTION IF EXISTS public.team_invitations_visible(uuid);
 
 -- Non-shared users are filtered out so the caller cannot probe arbitrary
@@ -411,6 +461,59 @@ END;
 $$;
 REVOKE EXECUTE ON FUNCTION public.activity_actors_visible(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.activity_actors_visible(uuid) TO app_user;
+
+-- Per-project sibling of activity_actors_visible: one membership probe for
+-- the whole project's activity feed instead of per-task. Gated on the
+-- caller's membership of the project's org, so probing a foreign project
+-- UUID is indistinguishable from a project with no events.
+CREATE OR REPLACE FUNCTION public.activity_actors_for_project_visible(
+  p_project_id uuid
+)
+RETURNS TABLE (user_id uuid, name text, image text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT DISTINCT u.id, u.name, u.image
+  FROM public.activity_events ae
+  INNER JOIN piyaz_auth."user" u ON u.id = ae.actor_user_id
+  WHERE ae.project_id = p_project_id
+    AND EXISTS (
+      SELECT 1
+      FROM public.projects pj
+      INNER JOIN piyaz_auth."member" caller
+        ON caller."organizationId" = pj.organization_id
+      WHERE pj.id = p_project_id
+        AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
+    );
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.activity_actors_for_project_visible(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.activity_actors_for_project_visible(uuid) TO app_user;
+
+-- Resolve the caller's own user profile (id, name, email). Bound to the
+-- session's app.user_id GUC, so it never discloses another user's row: the
+-- WHERE clause matches only the caller. Used by the MCP whoami surface where
+-- app_user has no direct grant on piyaz_auth."user".
+CREATE OR REPLACE FUNCTION public.current_user_profile()
+RETURNS TABLE (user_id uuid, name text, email text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT u.id, u.name, u.email
+  FROM piyaz_auth."user" u
+  WHERE u.id = NULLIF(current_setting('app.user_id', TRUE), '')::uuid;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.current_user_profile() FROM public;
+GRANT EXECUTE ON FUNCTION public.current_user_profile() TO app_user;
 
 -- Resolve a single OAuth client display name (not secret). Scalar to avoid
 -- text[] array binding on the read path; callers loop the page's few ids.
@@ -665,6 +768,226 @@ CREATE TRIGGER task_edges_same_project_immutable
   BEFORE INSERT OR UPDATE OF source_task_id, target_task_id ON public.task_edges
   FOR EACH ROW
   EXECUTE FUNCTION public.reject_task_edges_cross_project();
+
+-- ---------------------------------------------------------------------------
+-- Notes hardening — mirror the tasks/task_edges defense-in-depth suite.
+-- notes.project_id immutability, attribution pinning, and cross-project
+-- rejection on both link tables.
+--
+-- The notes triggers are AFTER, not BEFORE (unlike the tasks mirrors): any
+-- BEFORE UPDATE row trigger on notes — even a column-scoped one that never
+-- fires — makes the executor recompute the STORED search_tsv (to_tsvector
+-- over up to 200k chars of body) on every UPDATE, including metadata-only
+-- ones; with AFTER row triggers the recompute is skipped when title/body are
+-- untouched. A RAISE from an AFTER row trigger still aborts the statement
+-- with the same SQLSTATE, so the rejection semantics are unchanged.
+--
+-- Trigger DDL is guarded on table existence (mirror grants.sql): this file is
+-- owner-applied out-of-band (the CI migrator has no piyaz_auth access), so
+-- db:rls:owner must be runnable BEFORE the migration that creates the notes
+-- tables — that pre-apply installs current_app_user_id() so the deploy's
+-- db:rls:ci policy apply succeeds first try. The skip is not silent:
+-- verify-rls.ts asserts every trigger in this file exists on the deploy DB
+-- and blocks the deploy with the db:rls:owner runbook when one is missing.
+-- ---------------------------------------------------------------------------
+
+-- notes.project_id immutable (mirror reject_tasks_project_id_change).
+CREATE OR REPLACE FUNCTION public.reject_notes_project_id_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN
+    RAISE EXCEPTION
+      'notes.project_id is immutable — cross-team note moves are forbidden'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF to_regclass('public.notes') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS notes_project_id_immutable ON public.notes';
+    EXECUTE 'CREATE TRIGGER notes_project_id_immutable
+      AFTER UPDATE OF project_id ON public.notes
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_notes_project_id_change()';
+  END IF;
+END $$;
+
+-- notes.created_by immutable once set. visibility and created_by are the
+-- notes_member_access predicate inputs; without this, a member can flip a
+-- team note to (visibility='private', created_by=self) — WITH CHECK passes on
+-- the self-owned private row — stealing it and hiding it from the team.
+--
+-- The only legitimate created_by change is the `ON DELETE SET NULL` FK nulling
+-- it when the author's user row is deleted. That cascade runs in the table
+-- owner's context (current_user = the owner role, never app_user), so the
+-- `current_user = 'app_user'` clause lets the cascade through while rejecting a
+-- member who tries to NULL out (erase) another member's authorship by hand. A
+-- bare `NEW.created_by IS NOT NULL` guard would let any member run
+-- `UPDATE notes SET created_by = NULL` and wipe a team note's author.
+CREATE OR REPLACE FUNCTION public.reject_notes_created_by_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NEW.created_by IS DISTINCT FROM OLD.created_by
+     AND (NEW.created_by IS NOT NULL OR current_user = 'app_user') THEN
+    RAISE EXCEPTION
+      'notes.created_by is immutable — note ownership cannot be reassigned'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF to_regclass('public.notes') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS notes_created_by_immutable ON public.notes';
+    EXECUTE 'CREATE TRIGGER notes_created_by_immutable
+      AFTER UPDATE OF created_by ON public.notes
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_notes_created_by_change()';
+  END IF;
+END $$;
+
+-- notes.updated_by / share_requested_by pinned to the caller. Both are
+-- editorial attribution that legitimately changes on edits and share
+-- requests, so they are not frozen like created_by; instead any new value an
+-- app_user writes must be the caller themselves. NULLing updated_by is
+-- reserved to the owner-context ON DELETE SET NULL cascade (same rationale
+-- as reject_notes_created_by_change); clearing share_requested_by to NULL is
+-- a legitimate app action (a share request being resolved), so it stays
+-- open. The whole check is gated on current_user = 'app_user': the FK
+-- cascade and service_role run in trusted contexts, and the gate keeps
+-- current_app_user_id() (EXECUTE granted to app_user/service_role only) from
+-- being called in an owner context that may lack the grant.
+CREATE OR REPLACE FUNCTION public.reject_notes_attribution_forgery()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF current_user = 'app_user' THEN
+    IF NEW.updated_by IS DISTINCT FROM OLD.updated_by
+       AND (NEW.updated_by IS NULL
+            OR NEW.updated_by IS DISTINCT FROM public.current_app_user_id()) THEN
+      RAISE EXCEPTION
+        'notes.updated_by may only be set to the caller'
+        USING ERRCODE = '42501';
+    END IF;
+    IF NEW.share_requested_by IS DISTINCT FROM OLD.share_requested_by
+       AND NEW.share_requested_by IS NOT NULL
+       AND NEW.share_requested_by IS DISTINCT FROM public.current_app_user_id() THEN
+      RAISE EXCEPTION
+        'notes.share_requested_by may only be set to the caller'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF to_regclass('public.notes') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS notes_attribution_pinned ON public.notes';
+    EXECUTE 'CREATE TRIGGER notes_attribution_pinned
+      AFTER UPDATE OF updated_by, share_requested_by ON public.notes
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_notes_attribution_forgery()';
+  END IF;
+END $$;
+
+-- note_links endpoints must share a project (mirror reject_task_edges_cross_project).
+-- SECURITY INVOKER, unlike reject_task_edges_cross_project: notes have a
+-- visibility split tasks don't, so a DEFINER lookup that bypasses notes' RLS
+-- would see a same-project PRIVATE note owned by someone else, let the row
+-- through here, and only then have it rejected by note_links' RLS WITH CHECK
+-- — leaking that private note's existence via the SQLSTATE difference (this
+-- trigger's 23514 vs RLS's 42501). Running the lookup as the caller makes an
+-- invisible note read back as NULL, identically to a nonexistent one, so
+-- both cases collapse into this trigger's own 23514 and RLS is never reached.
+CREATE OR REPLACE FUNCTION public.reject_note_links_cross_project()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_src uuid;
+  v_tgt uuid;
+BEGIN
+  SELECT project_id INTO v_src FROM public.notes WHERE id = NEW.source_note_id;
+  SELECT project_id INTO v_tgt FROM public.notes WHERE id = NEW.target_note_id;
+  IF v_src IS NULL OR v_tgt IS NULL OR v_src IS DISTINCT FROM v_tgt THEN
+    RAISE EXCEPTION 'note_links: invalid endpoint pair'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.reject_note_links_cross_project() FROM public;
+GRANT EXECUTE ON FUNCTION public.reject_note_links_cross_project() TO app_user;
+
+DO $$
+BEGIN
+  IF to_regclass('public.note_links') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS note_links_same_project_immutable ON public.note_links';
+    EXECUTE 'CREATE TRIGGER note_links_same_project_immutable
+      BEFORE INSERT OR UPDATE OF source_note_id, target_note_id ON public.note_links
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_note_links_cross_project()';
+  END IF;
+END $$;
+
+-- note_task_links pins note.project_id == task.project_id. SECURITY INVOKER
+-- for the same reason as reject_note_links_cross_project: a DEFINER lookup
+-- would bypass notes' RLS and let a same-project private note pass here,
+-- leaking its existence when note_task_links' RLS rejects it afterward with
+-- a different SQLSTATE. As the caller, an invisible note reads back NULL
+-- just like a nonexistent one, so this trigger's own 23514 covers both.
+CREATE OR REPLACE FUNCTION public.reject_note_task_links_cross_project()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_note uuid;
+  v_task uuid;
+BEGIN
+  SELECT project_id INTO v_note FROM public.notes WHERE id = NEW.note_id;
+  SELECT project_id INTO v_task FROM public.tasks WHERE id = NEW.task_id;
+  IF v_note IS NULL OR v_task IS NULL OR v_note IS DISTINCT FROM v_task THEN
+    RAISE EXCEPTION 'note_task_links: invalid note/task pair'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.reject_note_task_links_cross_project() FROM public;
+GRANT EXECUTE ON FUNCTION public.reject_note_task_links_cross_project() TO app_user;
+
+DO $$
+BEGIN
+  IF to_regclass('public.note_task_links') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS note_task_links_same_project_immutable ON public.note_task_links';
+    EXECUTE 'CREATE TRIGGER note_task_links_same_project_immutable
+      BEFORE INSERT OR UPDATE OF note_id, task_id ON public.note_task_links
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_note_task_links_cross_project()';
+  END IF;
+END $$;
 
 -- service_role only. Used by the org-delete hook after the org row is
 -- queued for deletion — caller-scoped variants race the cascade.

@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "lib/mcp/**"
-      - "lib/graph/tool-handlers.ts"
+      - "lib/graph/tools/**"
       - "lib/graph/identifier.ts"
       - "plugins/claude-code/**"
       - "scripts/generate-docs.ts"

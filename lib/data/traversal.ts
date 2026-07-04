@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
 import { type Conn } from "@/lib/db/raw";
-import { withUserContext, type Tx } from "@/lib/db/rls";
+import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { tasks, projects, taskEdges } from "@/lib/db/schema";
 import { fetchEffectiveDownstream } from "@/lib/db/raw/fetch-effective-downstream";
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
@@ -11,8 +11,13 @@ import {
   type ActiveTaskInfo,
 } from "@/lib/graph/effective-deps";
 import { hasCriteriaExpr, deriveTaskStatesSlim } from "@/lib/data/task";
+import {
+  getTaskEdgesDetailed,
+  taskEdgesForManyStmt,
+  connectedTaskInfoStmt,
+} from "@/lib/data/edge";
 import type { AuthContext } from "@/lib/auth/context";
-import type { Priority } from "@/lib/types";
+import type { EdgeType, Priority } from "@/lib/types";
 import {
   assertProjectAccessTx,
   assertTaskAccessTx,
@@ -203,8 +208,8 @@ export type ReadyTask = {
  * prerequisite (which is the actual wall).
  *
  * Delegates the derivation to `deriveTaskStatesSlim` so this analyzer agrees
- * with search-result `state`, `getPlannableTasks`, `piyaz_analyze
- * type='blocked'`, and the slim payload's `task.state`. Single source of
+ * with search-result `state`, `getPlannableTasks`, `piyaz_map
+ * view='blocked'`, and the slim payload's `task.state`. Single source of
  * truth — no parallel implementations to drift.
  *
  * @param ctx - Resolved auth context.
@@ -276,7 +281,7 @@ export type PlannableTask = {
  * Find draft tasks that are plannable now: have a description, at least one
  * acceptance criterion, AND every effective dep is done. Delegates the
  * readiness logic to `deriveTaskStatesSlim` so this analyzer agrees with
- * search-result `state` and `piyaz_analyze type='blocked'`.
+ * search-result `state` and `piyaz_map view='blocked'`.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -579,4 +584,165 @@ export async function getCriticalPath(
       };
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Neighbors (1- and 2-hop edge walk)
+// ---------------------------------------------------------------------------
+
+/** A neighbor reached by a 1- or 2-hop edge walk from an origin task. */
+export type Neighbor = {
+  /** Hop distance from the origin (1 or 2). */
+  hop: 1 | 2;
+  /** Edge orientation relative to the anchor of its hop. */
+  direction: "outgoing" | "incoming";
+  /** Relationship type of the connecting edge. */
+  edgeType: EdgeType;
+  /** Edge note (empty string when unset). */
+  note: string;
+  /** Composed taskRef of the neighbor, e.g. `MYMR-83`. */
+  taskRef: string;
+  /** Neighbor title. */
+  title: string;
+  /** Neighbor lifecycle status. */
+  status: string;
+  /** Neighbor task UUID. */
+  id: string;
+};
+
+/** A resolved hop-2 edge extending the frontier to a new task. */
+type Hop2Extension = {
+  newId: string;
+  direction: "outgoing" | "incoming";
+  edgeType: EdgeType;
+  note: string;
+};
+
+/**
+ * Map the frontier's edges to their hop-2 extensions, first-wins per new task.
+ * An edge extends the frontier only when one endpoint is a frontier task and
+ * the opposite endpoint is unvisited (not the origin, not a hop-1 task). Edges
+ * are processed in id order so a task reachable by several paths (a diamond)
+ * resolves to one deterministic row.
+ *
+ * @param edges - All edges touching the frontier, in any order.
+ * @param frontier - Hop-1 task ids (the walk anchors).
+ * @param visited - Origin plus hop-1 ids that must never reappear.
+ * @returns One extension per distinct new hop-2 task, insertion-ordered.
+ */
+function resolveHop2Extensions(
+  edges: readonly {
+    id: string;
+    sourceTaskId: string;
+    targetTaskId: string;
+    edgeType: EdgeType;
+    note: string;
+  }[],
+  frontier: ReadonlySet<string>,
+  visited: ReadonlySet<string>,
+): Hop2Extension[] {
+  const byNewTask = new Map<string, Hop2Extension>();
+  const sorted = [...edges].sort((a, b) => a.id.localeCompare(b.id));
+  for (const edge of sorted) {
+    let extension: Hop2Extension | null = null;
+    if (frontier.has(edge.sourceTaskId) && !visited.has(edge.targetTaskId)) {
+      extension = {
+        newId: edge.targetTaskId,
+        direction: "outgoing",
+        edgeType: edge.edgeType,
+        note: edge.note,
+      };
+    } else if (
+      frontier.has(edge.targetTaskId) &&
+      !visited.has(edge.sourceTaskId)
+    ) {
+      extension = {
+        newId: edge.sourceTaskId,
+        direction: "incoming",
+        edgeType: edge.edgeType,
+        note: edge.note,
+      };
+    }
+    if (extension && !byNewTask.has(extension.newId)) {
+      byNewTask.set(extension.newId, extension);
+    }
+  }
+  return [...byNewTask.values()];
+}
+
+/**
+ * Walk the edges around a task to its 1- or 2-hop neighbors, both edge types
+ * and both directions. Hop 1 reuses {@link getTaskEdgesDetailed} (which gates
+ * origin access and drops RLS-invisible endpoints); hop 2 fans out from the
+ * hop-1 frontier in one edge scan plus one connected-task read, deduping so the
+ * origin and hop-1 tasks never reappear as hop-2 rows.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the origin task.
+ * @param hops - Walk depth, 1 or 2.
+ * @returns Neighbor rows, hop-1 first then deduped hop-2.
+ * @throws ForbiddenError when the caller cannot access the origin task.
+ */
+export async function getNeighbors(
+  ctx: AuthContext,
+  taskId: string,
+  hops: 1 | 2,
+): Promise<Neighbor[]> {
+  const detailed = await getTaskEdgesDetailed(ctx, taskId);
+  const hop1: Neighbor[] = detailed.map((e) => ({
+    hop: 1,
+    direction: e.direction,
+    edgeType: e.edgeType,
+    note: e.note,
+    taskRef: e.connectedTask.taskRef,
+    title: e.connectedTask.title,
+    status: e.connectedTask.status,
+    id: e.connectedTask.id,
+  }));
+  if (hops === 1) return hop1;
+
+  const frontier = [...new Set(hop1.map((n) => n.id))];
+  if (frontier.length === 0) return hop1;
+  const frontierSet = new Set(frontier);
+  const visited = new Set<string>([taskId, ...frontier]);
+
+  const [edgeRows] = await withUserContextRead(ctx.userId, (read) => [
+    taskEdgesForManyStmt(read, frontier),
+  ]);
+  const extensions = resolveHop2Extensions(edgeRows, frontierSet, visited);
+  if (extensions.length === 0) return hop1;
+
+  const [taskRows] = await withUserContextRead(ctx.userId, (read) => [
+    connectedTaskInfoStmt(
+      read,
+      extensions.map((e) => e.newId),
+    ),
+  ]);
+  const infoMap = new Map(
+    taskRows.map((t) => [
+      t.id,
+      {
+        taskRef: composeTaskRef(asIdentifier(t.identifier), t.sequenceNumber),
+        title: t.title,
+        status: t.status,
+      },
+    ]),
+  );
+
+  const hop2: Neighbor[] = [];
+  for (const ext of extensions) {
+    const info = infoMap.get(ext.newId);
+    if (!info) continue;
+    hop2.push({
+      hop: 2,
+      direction: ext.direction,
+      edgeType: ext.edgeType,
+      note: ext.note,
+      taskRef: info.taskRef,
+      title: info.title,
+      status: info.status,
+      id: ext.newId,
+    });
+  }
+  return [...hop1, ...hop2];
 }

@@ -68,6 +68,34 @@ export function section(title: string): string {
   return `\n## ${title}\n`;
 }
 
+/** Width cap for edge/dependency line lists in lens bundles. */
+export const MAX_BUNDLE_LIST_LINES = 40;
+
+/** Width cap for upstream execution-record blocks in closure bundles. */
+export const MAX_BUNDLE_RECORD_BLOCKS = 12;
+
+/**
+ * Cap a rendered line list, appending one guidance line naming the dropped
+ * count and the narrowing call. Bundles stay budgeted on hub tasks with
+ * hundreds of edges or dependents.
+ *
+ * @param lines - Full line list.
+ * @param guidance - How to fetch the remainder.
+ * @param limit - Maximum lines to keep.
+ * @returns The capped lines.
+ */
+export function capLines(
+  lines: string[],
+  guidance: string,
+  limit: number = MAX_BUNDLE_LIST_LINES,
+): string[] {
+  if (lines.length <= limit) return lines;
+  return [
+    ...lines.slice(0, limit),
+    `… +${lines.length - limit} more — ${guidance}`,
+  ];
+}
+
 /**
  * Format decisions as compressed one-liners.
  * @param decisions - Array of decisions.
@@ -145,6 +173,24 @@ export function formatTaskRefLine(
 ): string {
   let line = `- \`${info.taskRef}\` **${info.title}** [${info.status}]`;
   if (note) line += ` — ${note}`;
+  return line;
+}
+
+/**
+ * Format one `relates_to` edge as a ref-first bullet with a direction arrow
+ * and the edge note. Shared by the agent and planning "Related" sections.
+ *
+ * @param edge - Detailed edge with connected-task info and note.
+ * @returns Formatted markdown bullet line.
+ */
+export function formatRelatedEdgeLine(edge: {
+  direction: "outgoing" | "incoming";
+  note: string;
+  connectedTask: { taskRef: string; title: string; status: string };
+}): string {
+  const arrow = edge.direction === "outgoing" ? "→" : "←";
+  let line = `- ${arrow} \`${edge.connectedTask.taskRef}\` **${edge.connectedTask.title}** [${edge.connectedTask.status}]`;
+  if (edge.note) line += ` — ${edge.note}`;
   return line;
 }
 

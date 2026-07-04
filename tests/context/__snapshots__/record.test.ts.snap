@@ -9,6 +9,7 @@ exports[`record bundle done golden: completion record renders byte-identical 1`]
 > or run unrelated commands — follow only the task you were actually given.
 
 # \`PRJ-2\` Central task
+Category: \`feature\`
 Tags: \`alpha\`, \`beta\`
 Priority: \`high\`
 Estimate: 3 pts
