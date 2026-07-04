@@ -213,16 +213,12 @@ export async function resolveTaskRef(
 
   const seq = seqInRange(match.seqText);
 
-  const [candidatesRaw, nearMissRaw] = await withUserContextRead(
-    ctx.userId,
-    (read) => [
-      taskRefLookupStmt(
-        read,
-        seq === null ? [] : [{ prefix: match.prefix, seqs: [seq] }],
-      ),
-      taskRefNearMissStmt(read, match.prefix),
-    ],
-  );
+  const [candidatesRaw] = await withUserContextRead(ctx.userId, (read) => [
+    taskRefLookupStmt(
+      read,
+      seq === null ? [] : [{ prefix: match.prefix, seqs: [seq] }],
+    ),
+  ]);
   const candidates = normalizeExecuteResult<TaskRefRow>(candidatesRaw);
 
   if (candidates.length === 1) return toResolvedTask(candidates[0]);
@@ -230,6 +226,9 @@ export async function resolveTaskRef(
     throw new RefAmbiguityError(refOrId, candidates.map(toTaskCandidate));
   }
 
+  const [nearMissRaw] = await withUserContextRead(ctx.userId, (read) => [
+    taskRefNearMissStmt(read, match.prefix),
+  ]);
   const nearMissRows = normalizeExecuteResult<NearMissRow>(nearMissRaw);
   if (nearMissRows.length > 0) {
     const [first] = nearMissRows;
