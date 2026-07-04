@@ -507,7 +507,7 @@ Resume mode: `piyaz_activity project='<identifier>' since='<last certain instant
 
 - Phase 1 is read-only. The plan is presented as markdown text, not a sequence of tool calls.
 - Phase 2 is N task creates. Each costs ~1 MCP roundtrip. Budget for it: 40 tasks ≈ 40 calls. Do not cap arbitrarily.
-- Run `piyaz_get view='overview'` exactly once at session start. After that use `type='list'` (slim) or `type='search'` (tag-filtered). Conventions §2 hints discipline applies to every response.
+- Run `piyaz_get view='overview'` exactly once at session start. After that use `piyaz_search` with tag or status filters (slim). Conventions §2 hints discipline applies to every response.
 - Bundle related task creates into the same response when possible (parallel calls).
 - Re-read `references/conventions.md` mid-session if your sense of the rules drifts. LLMs forget over long sessions; refreshing is cheap.
 

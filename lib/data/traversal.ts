@@ -208,7 +208,7 @@ export type ReadyTask = {
  * prerequisite (which is the actual wall).
  *
  * Delegates the derivation to `deriveTaskStatesSlim` so this analyzer agrees
- * with search-result `state`, `getPlannableTasks`, `piyaz_analyze
+ * with search-result `state`, `getPlannableTasks`, `piyaz_map
  * type='blocked'`, and the slim payload's `task.state`. Single source of
  * truth — no parallel implementations to drift.
  *
@@ -281,7 +281,7 @@ export type PlannableTask = {
  * Find draft tasks that are plannable now: have a description, at least one
  * acceptance criterion, AND every effective dep is done. Delegates the
  * readiness logic to `deriveTaskStatesSlim` so this analyzer agrees with
- * search-result `state` and `piyaz_analyze type='blocked'`.
+ * search-result `state` and `piyaz_map view='blocked'`.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.

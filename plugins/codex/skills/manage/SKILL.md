@@ -66,7 +66,7 @@ The skill (`/piyaz`) covers these inline; you cover them with deeper analysis an
 
 When the user picks: claim with `piyaz_edit` (`set status='in_progress'`), hand off `piyaz_get lens='agent'`.
 
-If no ready tasks: `type='plannable'`. Recommend planning a draft on the critical path. Plannable + critical-path is higher impact than plannable elsewhere.
+If no ready tasks: `piyaz_map view='plannable'`. Recommend planning a draft on the critical path. Plannable + critical-path is higher impact than plannable elsewhere.
 
 ### B. Dispatch coding agents in parallel
 

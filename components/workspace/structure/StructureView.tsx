@@ -101,13 +101,13 @@ interface StructureViewProps {
 
 /**
  * Decide which group a task belongs to. Reads the server-derived
- * `task.state` so the bucketing matches what `piyaz_analyze` and the bundle
+ * `task.state` so the bucketing matches what `piyaz_map` and the bundle
  * preview see — no client-side recomputation, no drift.
  *
  * `ready` and `plannable` collapse onto their own lanes; `blocked` for a
  * planned task with unsatisfied deps falls back to the `planned` bucket so
  * the operator still sees it grouped with its peers (the agent-state
- * distinction surfaces in the `piyaz_analyze` view, not the structure list).
+ * distinction surfaces in the `piyaz_map` view, not the structure list).
  *
  * @param task - Task to bucket.
  * @returns Group key.

@@ -416,8 +416,9 @@ export type TaskFieldsRawRow = Pick<
  * requested columns are egressed (others return as typed `NULL` literals),
  * so a single-field read pays for one column. Identity columns and
  * `updated_at` always ride along for ref composition and `ifUpdatedAt`
- * preconditions. Same UNCHECKED contract as {@link taskForDepthStmt}: batch
- * a `taskAccessGateStmt` alongside and evaluate the gate first.
+ * preconditions. Access is enforced by RLS on the `withUserContextRead`
+ * path: a foreign caller gets zero rows, which the caller maps to a
+ * 404-shaped error. No explicit access-gate statement is needed.
  *
  * @param read - Read statement-building handle.
  * @param taskId - UUID of the task.

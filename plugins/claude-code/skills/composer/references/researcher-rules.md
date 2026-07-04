@@ -29,7 +29,7 @@ When uncertain, write less. A short, true record is more valuable than a rich, f
 
 ## conventions §4 — taskRef format
 
-Tool responses include a `taskRef` like `MYMR-83`: uppercase project prefix, dash, integer. Use the ref in user-facing output. **Always pass the UUID `taskId` to tool calls. Never the ref.**
+Tool responses include a `taskRef` like `WHL-214`: uppercase project prefix, dash, integer. **Refs are first-class everywhere: use them in user-facing output AND in tool calls** (`task='WHL-214'`, `project='WHL'`). UUIDs also work and are the fallback when a ref is ambiguous across teams (the error lists the candidates with their UUIDs). Chain the refs that responses emit; never invent one — a miss returns the highest existing ref for the prefix.
 
 ---
 
