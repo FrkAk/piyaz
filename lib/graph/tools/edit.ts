@@ -1,13 +1,14 @@
 /**
  * `piyaz_edit` handler: ordered, atomic operation lists against one task.
  * The executor (`applyTaskEdit`) owns validation and application; this
- * layer resolves the ref, derives the status-lifecycle hints from the ops
- * and the persisted result, and slims the response to what the agent needs
- * to chain the next call.
+ * layer resolves the ref, derives the status-lifecycle and tag-quality
+ * hints from the ops and the persisted result, and slims the response to
+ * what the agent needs to chain the next call.
  */
 
 import { applyTaskEdit, type EditOp } from "@/lib/data/task-edit";
 import { getTaskFields } from "@/lib/data/task";
+import { getProjectTags } from "@/lib/data/project";
 import { LIMITS } from "@/lib/mcp/schemas";
 import type { Decision } from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
@@ -20,6 +21,8 @@ import {
   inReviewStatusHints,
   requireTaskId,
   statusJumpHints,
+  tagTaxonomyHints,
+  tagVariantHints,
   terminalReversalHints,
   translateError,
   type ToolResult,
@@ -98,6 +101,7 @@ type OpsPayload = {
   implementationPlan?: string;
   decisions?: Decision[];
   files?: string[];
+  tags?: string[];
   prUrl?: string | null;
   hasRemove: boolean;
 };
@@ -131,6 +135,9 @@ function summarizeOps(ops: EditOp[]): OpsPayload {
         break;
       case "files":
         payload.files = op.value as string[];
+        break;
+      case "tags":
+        payload.tags = op.value as string[];
         break;
       case "prUrl":
         payload.prUrl = op.value as string | null;
@@ -277,6 +284,19 @@ export async function handleEdit(
         implementationPlan: payload.implementationPlan,
       }),
     );
+    if (payload.tags && payload.tags.length > 0) {
+      const written = new Set(payload.tags);
+      // The vocabulary is read after the write, so it contains this call's
+      // tags; without excluding them every proposed tag exact-matches itself
+      // and findVariant never fires.
+      const projectTags = (await getProjectTags(ctx, result.projectId))
+        .map((t) => t.tag)
+        .filter((t) => !written.has(t));
+      hints.push(
+        ...tagVariantHints(payload.tags, projectTags),
+        ...tagTaxonomyHints(payload.tags),
+      );
+    }
     hints.push(
       ...(await statusHints(ctx, taskId, payload, priorStatus, {
         executionRecord: result.executionRecord,
