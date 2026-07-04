@@ -25,7 +25,7 @@ import {
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
 import { insertActivityEvents } from "@/lib/data/activity";
-import type { TaskStatus } from "@/lib/types";
+import type { ProjectStatus, TaskStatus } from "@/lib/types";
 import { STATUS_BUCKET } from "@/lib/data/views";
 import {
   asIdentifier,
@@ -517,26 +517,36 @@ export async function getProjectTags(
 }
 
 /**
- * Read a project's category vocabulary in one RLS-scoped read.
+ * Read a project's category vocabulary, lifecycle status, and identifier
+ * in one RLS-scoped read. Status and identifier ride along so the category
+ * mutations can gate on the archived phase without a second query.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @returns The vocabulary array (possibly empty).
+ * @returns The vocabulary array (possibly empty), project status, and identifier.
  * @throws ForbiddenError when the project is not visible to the caller.
  */
 export async function getProjectCategories(
   ctx: AuthContext,
   projectId: string,
-): Promise<string[]> {
+): Promise<{
+  categories: string[];
+  status: ProjectStatus;
+  identifier: string;
+}> {
   const [rows] = await withUserContextRead(ctx.userId, (read) => [
     read
-      .select({ categories: projects.categories })
+      .select({
+        categories: projects.categories,
+        status: projects.status,
+        identifier: projects.identifier,
+      })
       .from(projects)
       .where(eq(projects.id, projectId)),
   ]);
   const row = rows[0];
   if (!row) throw new ForbiddenError("Forbidden", "project", projectId);
-  return row.categories;
+  return row;
 }
 
 /**
@@ -1207,7 +1217,8 @@ const PROTECTED_PROJECT_FIELDS = [
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
  * @param changes - Typed subset of project fields to update.
- * @returns The updated project row.
+ * @returns The updated project row plus `priorStatus`, the lifecycle phase
+ *   before this update (for the MCP transition hints).
  * @throws {InsufficientRoleError} If `changes.identifier` is set.
  */
 export async function updateProject(
@@ -1229,13 +1240,13 @@ export async function updateProject(
     safe.description = formatted ?? safe.description;
   }
   const updated = await withUserContext(ctx.userId, async (tx) => {
-    await assertProjectAccessTx(tx, projectId);
+    const access = await assertProjectAccessTx(tx, projectId);
     const [row] = await tx
       .update(projects)
       .set({ ...safe, updatedAt: new Date() })
       .where(eq(projects.id, projectId))
       .returning();
-    return row;
+    return { ...row, priorStatus: access.project.status };
   });
   emitProjectEvent(projectId);
   return updated;

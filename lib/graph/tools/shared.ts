@@ -7,11 +7,12 @@
  */
 
 import type { TaskState } from "@/lib/data/task";
-import type { Decision } from "@/lib/types";
+import { PROJECT_STATUS_ORDER, type Decision } from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   MultiTeamAmbiguityError,
   NoTeamMembershipError,
+  ProjectArchivedError,
   TaskLimitError,
   SelfEdgeError,
   CrossProjectEdgeError,
@@ -333,6 +334,86 @@ export function terminalReversalHints(
   return [];
 }
 
+/** Task statuses that mean execution has started (post-decomposition work). */
+const EXECUTION_STATUSES = new Set(["in_progress", "in_review", "done"]);
+
+/**
+ * Build a hint when a task or edge write does not match the parent
+ * project's lifecycle phase. `brainstorming` hints on every write (the
+ * project has no task graph yet); `decomposing` hints only when a task
+ * enters an execution status; `active` and `archived` return nothing
+ * (archived writes are rejected in the data layer before reaching here).
+ *
+ * @param projectStatus - The parent project's lifecycle phase.
+ * @param projectIdentifier - Project identifier for the follow-up call.
+ * @param taskStatuses - Task statuses written by this call (empty for
+ *   edge-only writes).
+ * @returns At most one hint string; empty when the write fits the phase.
+ */
+export function projectPhaseHints(
+  projectStatus: string,
+  projectIdentifier: string,
+  taskStatuses: string[],
+): string[] {
+  if (projectStatus === "brainstorming") {
+    return [
+      `Project '${projectIdentifier}' is in 'brainstorming': it has not been decomposed into a task graph yet. If decomposition is starting now, flip the phase first: piyaz_workspace action='update' project='${projectIdentifier}' status='decomposing' (then status='active' once the graph is complete). If this is a stray note during scoping, carry on.`,
+    ];
+  }
+  if (
+    projectStatus === "decomposing" &&
+    taskStatuses.some((s) => EXECUTION_STATUSES.has(s))
+  ) {
+    return [
+      `Project '${projectIdentifier}' is in 'decomposing': execution statuses (in_progress/in_review/done) normally start after the task graph is complete. If decomposition is done, promote the project first: piyaz_workspace action='update' project='${projectIdentifier}' status='active'.`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * Build advisory hints for a project status transition: a forward jump
+ * that skips phases, a backward move, and the read-only consequence of
+ * entering `archived`. Never blocks; the order is
+ * {@link PROJECT_STATUS_ORDER}.
+ *
+ * @param priorStatus - The project's phase before the update.
+ * @param nextStatus - The phase the caller is transitioning to.
+ * @returns Hint strings; empty when the transition is a plain forward step.
+ */
+export function projectStatusTransitionHints(
+  priorStatus: string,
+  nextStatus: string,
+): string[] {
+  const priorIdx = PROJECT_STATUS_ORDER.indexOf(
+    priorStatus as (typeof PROJECT_STATUS_ORDER)[number],
+  );
+  const nextIdx = PROJECT_STATUS_ORDER.indexOf(
+    nextStatus as (typeof PROJECT_STATUS_ORDER)[number],
+  );
+  if (priorIdx === -1 || nextIdx === -1) return [];
+  const hints: string[] = [];
+  if (nextIdx > priorIdx + 1) {
+    const skipped = PROJECT_STATUS_ORDER.slice(priorIdx + 1, nextIdx).join(
+      " → ",
+    );
+    hints.push(
+      `Project status jumped ${priorStatus} → ${nextStatus}, skipping ${skipped} (lifecycle: brainstorming → decomposing → active → archived). Intentional jumps are fine; otherwise move through the phases as the work happens.`,
+    );
+  }
+  if (nextIdx < priorIdx) {
+    hints.push(
+      `Project status moved backward: ${priorStatus} → ${nextStatus}. Legitimate for reopening or re-scoping; confirm it is deliberate — tasks and history are untouched.`,
+    );
+  }
+  if (nextStatus === "archived" && priorStatus !== "archived") {
+    hints.push(
+      "Archived is read-only on the task surface: piyaz_create, piyaz_edit, and piyaz_link now fail for this project; reads (piyaz_get, piyaz_search, piyaz_map, piyaz_activity) keep working. Reopen anytime with status='active'.",
+    );
+  }
+  return hints;
+}
+
 /**
  * Build hints when a task is cancelled. Required-field hints fire first
  * (rationale + decisions per lifecycle §1); the propagation hint is
@@ -600,6 +681,11 @@ export function translateError(e: unknown): ToolResult {
   if (e instanceof TaskLimitError) {
     return fail(
       `${e.message}. Do not retry; clean up cancelled or obsolete tasks in project '${e.projectId}', or ask the operator to raise MAX_TASKS_PER_PROJECT.`,
+    );
+  }
+  if (e instanceof ProjectArchivedError) {
+    return fail(
+      `Project ${e.identifier} is archived (read-only): task writes, edge writes, and category cascades (rename_category/delete_category) fail; reads and piyaz_workspace update still work. No writes happened. To resume work, reopen it first: piyaz_workspace action='update' project='${e.identifier}' status='active' — confirm with the user before reopening.`,
     );
   }
   if (e instanceof SearchCriteriaRequiredError) {

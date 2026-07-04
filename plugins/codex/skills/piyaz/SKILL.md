@@ -48,7 +48,7 @@ Eight tools. Read tools have cost (slim → very heavy); pick the lightest that 
 | `teams` | slim | before creating a project (multi-team accounts), when `projects` is empty, or when the user mentions a team it did not surface. Returns memberships including empty teams. |
 | `members` | slim | before assigning work to a teammate. One team's directory (name, user UUID, role) — the UUID source for `assigneeIds`, assignee ops, and `assignee='<uuid>'` filters. `organizationId` picks the team; single-team accounts auto-resolve. |
 | `create` | mutation | new project after brainstorm gate clears, or explicit user request. Multi-team account: requires `organizationId`. Single-team: auto-resolves. |
-| `update` | mutation | rename, add categories, status transition (`brainstorming` → `decomposing` → `active` → `archived`), or change identifier (renames every taskRef, breaks external links). `categories=[...]` replaces the vocabulary WITHOUT touching task rows — additions and reorders only. |
+| `update` | mutation | rename, add categories, status transition (`brainstorming` → `decomposing` → `active` → `archived`; flip to `decomposing` when task creation starts, `active` when the graph is complete; `archived` makes the task surface read-only — unarchive via `status='active'`), or change identifier (renames every taskRef, breaks external links). `categories=[...]` replaces the vocabulary WITHOUT touching task rows — additions and reorders only. |
 | `rename_category` | mutation | rename a vocabulary entry AND move every task in it, atomically. Never "rename" via `update categories=[...]`; that orphans the tasks. |
 | `delete_category` | mutation | remove a vocabulary entry; its tasks become uncategorized (`category=null`). Re-categorize them afterwards. |
 
@@ -361,6 +361,7 @@ For projects with ≤300-word description and ≤15 features.
 2. Plan: feature inventory, technical foundations, dependency sketch.
 3. **HARD-GATE: present the plan as a markdown list of proposed tasks (title, status, one-line description) and edges (source, target, edge type, one-line note). Wait for explicit approval before any write.**
 4. After approval:
+   - `piyaz_workspace action='update' status='decomposing'` — flip the phase before the first write.
    - `piyaz_workspace action='update' categories=[...]` (project-level, from artifacts §4).
    - Create the tasks and their internal edges in `piyaz_create` batches (`key`-addressed edges; ≤25 tasks per call). A retried batch dedups by exact title, so a transport error mid-decompose is safe to re-run.
    - `piyaz_workspace action='update' status='active'`.

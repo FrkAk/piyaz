@@ -27,10 +27,12 @@ import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import {
   CrossProjectEdgeError,
   EdgeCycleError,
+  ProjectArchivedError,
   SelfEdgeError,
   TaskLimitError,
   UnknownCategoryError,
 } from "@/lib/graph/errors";
+import type { ProjectStatus } from "@/lib/types";
 import { formatMarkdown } from "@/lib/markdown/format";
 import { parseEnvInt } from "@/lib/config/env";
 import { emitEdgeMutation, emitTaskEvent } from "@/lib/realtime/events";
@@ -223,6 +225,7 @@ function detectCycle(adj: Map<string, string[]>): string[] | null {
  *   vocabulary.
  * @throws ForbiddenError when the caller cannot access the project, an item's
  *   prUrl is malformed, or a UUID edge endpoint is not an accessible task.
+ * @throws ProjectArchivedError when the project is archived (read-only).
  */
 export async function createTasksBatch(
   ctx: AuthContext,
@@ -234,6 +237,8 @@ export async function createTasksBatch(
   created: BatchItemResult[];
   deduped: BatchItemResult[];
   edges: number;
+  projectStatus: ProjectStatus;
+  projectIdentifier: string;
 }> {
   const keySet = validateBatch(items, edges);
 
@@ -268,6 +273,9 @@ export async function createTasksBatch(
   const result = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
     const identifier = access.project.identifier;
+    if (access.project.status === "archived") {
+      throw new ProjectArchivedError(identifier);
+    }
     const vocabulary = access.project.categories;
     if (vocabulary.length > 0) {
       const invalid = preparedItems.find(
@@ -402,6 +410,8 @@ export async function createTasksBatch(
       edges: edgeResult.count,
       firstEdge: edgeResult.firstEdge,
       lastCreated,
+      projectStatus: access.project.status,
+      projectIdentifier: identifier,
     };
   });
 
@@ -418,6 +428,8 @@ export async function createTasksBatch(
     created: result.created,
     deduped: result.deduped,
     edges: result.edges,
+    projectStatus: result.projectStatus,
+    projectIdentifier: result.projectIdentifier,
   };
 }
 

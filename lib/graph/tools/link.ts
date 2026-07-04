@@ -17,6 +17,7 @@ import {
   ok,
   fail,
   edgeNoteViolation,
+  projectPhaseHints,
   translateError,
   type ToolResult,
 } from "@/lib/graph/tools/shared";
@@ -101,13 +102,17 @@ export async function handleLink(
           p.source,
           p.target,
         );
-        const edge = await createEdge(ctx, {
-          sourceTaskId: sourceId,
-          targetTaskId: targetId,
-          edgeType: p.type as EdgeType,
-          note: p.note,
-        });
-        return ok(edge);
+        const { projectStatus, projectIdentifier, ...edge } = await createEdge(
+          ctx,
+          {
+            sourceTaskId: sourceId,
+            targetTaskId: targetId,
+            edgeType: p.type as EdgeType,
+            note: p.note,
+          },
+        );
+        const hints = projectPhaseHints(projectStatus, projectIdentifier, []);
+        return ok({ ...edge, ...(hints.length > 0 && { _hints: hints }) });
       }
       case "update": {
         if (p.note !== undefined) {

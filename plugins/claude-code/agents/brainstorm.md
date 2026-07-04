@@ -213,7 +213,7 @@ You may not call piyaz_workspace action='create' before this gate clears.
    - Hardware / aerospace: borrow from embedded plus domain layers (`flight-control`, `telemetry`, `safety`)
 
    Architectural layers / product areas only. **Forbidden categories** per artifacts §4: `requirements`, `architecture`, `planning`, `bugs`, `features`, `important`, `tbd`, `misc`.
-3. `piyaz_workspace action='create' title='<verb+noun project name>' description='<the synthesis brief, in markdown>' categories=[...] organizationId='<team-uuid>'`. The project lands in `brainstorming` status (the create default). Decompose moves it to `active` when its work completes; do NOT promote the status here.
+3. `piyaz_workspace action='create' title='<verb+noun project name>' description='<the synthesis brief, in markdown>' categories=[...] organizationId='<team-uuid>'`. The project lands in `brainstorming` status (the create default). Decompose flips it to `decomposing` while the task graph is built, then `active` when its work completes; do NOT promote the status here.
 4. Tell the user the project is created and offer to hand off to **`piyaz:decompose`** for task breakdown.
 
 ## Mid-conversation exits

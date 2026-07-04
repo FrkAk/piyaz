@@ -3,6 +3,6 @@
   "pins": {
     "plugins/claude-code/skills/piyaz/references/conventions.md": "e659bf9905575298afe348cf6c5b96b8f1205478b0576147893d2adb30d09c1e",
     "plugins/claude-code/skills/piyaz/references/artifacts.md": "1c5ae46e70b0137c00d8aca1825de0a9676f42cb4578a7d6450e44f976df12df",
-    "plugins/claude-code/skills/piyaz/references/lifecycle.md": "5f8fbce577c34b89897a8d7d7595d94f8782fe1eabd4f21c0610834a4cd8c2ac"
+    "plugins/claude-code/skills/piyaz/references/lifecycle.md": "cbe0a7545cc8f64593cb2f523f2ffbae68e6e39eb984591ae9d51f84d340d636"
   }
 }

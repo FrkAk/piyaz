@@ -23,13 +23,16 @@ import { formatTeamMembers, formatWhoami } from "@/lib/graph/format-responses";
 import {
   MultiTeamAmbiguityError,
   NoTeamMembershipError,
+  ProjectArchivedError,
   UnknownCategoryError,
 } from "@/lib/graph/errors";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import type { AuthContext } from "@/lib/auth/context";
+import type { ProjectStatus } from "@/lib/types";
 import {
   ok,
   fail,
+  projectStatusTransitionHints,
   requireProjectId,
   translateError,
   type ToolResult,
@@ -129,21 +132,25 @@ export async function handleWorkspace(
             "category and newCategory required. rename_category renames the vocabulary entry AND moves every task in it, atomically. See the current vocabulary via piyaz_get project view='meta'.",
           );
         const projectId = await requireProjectId(ctx, p.project);
-        const vocabulary = await getProjectCategories(ctx, projectId);
-        if (!vocabulary.includes(p.category))
-          throw new UnknownCategoryError(p.category, vocabulary);
+        const { categories, status, identifier } = await getProjectCategories(
+          ctx,
+          projectId,
+        );
+        if (status === "archived") throw new ProjectArchivedError(identifier);
+        if (!categories.includes(p.category))
+          throw new UnknownCategoryError(p.category, categories);
         if (p.category === p.newCategory)
           return fail(
             "category and newCategory are identical; nothing to rename.",
           );
-        if (vocabulary.includes(p.newCategory))
+        if (categories.includes(p.newCategory))
           return fail(
             `newCategory '${p.newCategory}' already exists. To merge, re-categorize the tasks (piyaz_search project='${p.project}' category='${p.category}', then piyaz_edit op='set' field='category' per task) and delete_category the emptied one.`,
           );
         await renameCategory(ctx, projectId, p.category, p.newCategory);
         return ok({
           renamed: { from: p.category, to: p.newCategory },
-          categories: vocabulary.map((c) =>
+          categories: categories.map((c) =>
             c === p.category ? p.newCategory : c,
           ),
           _hints: [
@@ -161,13 +168,17 @@ export async function handleWorkspace(
             "category required. delete_category removes the vocabulary entry and uncategorizes its tasks. See the current vocabulary via piyaz_get project view='meta'.",
           );
         const projectId = await requireProjectId(ctx, p.project);
-        const vocabulary = await getProjectCategories(ctx, projectId);
-        if (!vocabulary.includes(p.category))
-          throw new UnknownCategoryError(p.category, vocabulary);
+        const { categories, status, identifier } = await getProjectCategories(
+          ctx,
+          projectId,
+        );
+        if (status === "archived") throw new ProjectArchivedError(identifier);
+        if (!categories.includes(p.category))
+          throw new UnknownCategoryError(p.category, categories);
         await deleteCategory(ctx, projectId, p.category);
         return ok({
           deleted: p.category,
-          categories: vocabulary.filter((c) => c !== p.category),
+          categories: categories.filter((c) => c !== p.category),
           _hints: [
             "Its tasks now carry category=null (the category filter no longer finds them). Re-categorize via piyaz_edit op='set' field='category', or find them in piyaz_get project view='overview'.",
           ],
@@ -232,8 +243,15 @@ export async function handleWorkspace(
         if (parsed && !parsed.ok) return fail(parsed.error);
 
         let project: Project | undefined;
+        let priorStatus: ProjectStatus | undefined;
         if (Object.keys(changes).length > 0) {
-          project = await updateProject(ctx, projectId, changes);
+          const { priorStatus: prior, ...updated } = await updateProject(
+            ctx,
+            projectId,
+            changes,
+          );
+          project = updated;
+          priorStatus = prior;
         }
         // The rename runs last: the two writes are separate transactions,
         // and a failure between them must not leave the taskRef-cascading
@@ -246,6 +264,20 @@ export async function handleWorkspace(
         if (p.identifier !== undefined) {
           updateHints.push(
             `Renamed all task refs to '${p.identifier}-N'. External references (GitHub PRs, docs, commit messages) to the old prefix no longer resolve.`,
+          );
+        }
+        if (
+          p.status !== undefined &&
+          priorStatus !== undefined &&
+          priorStatus !== p.status
+        ) {
+          updateHints.push(
+            ...projectStatusTransitionHints(priorStatus, p.status),
+          );
+        }
+        if (p.status === undefined && project?.status === "archived") {
+          updateHints.push(
+            `Project '${p.project}' is archived (task surface read-only); this metadata update applied, but task/edge writes will fail. To resume work: piyaz_workspace action='update' project='${p.project}' status='active'.`,
           );
         }
         return ok(

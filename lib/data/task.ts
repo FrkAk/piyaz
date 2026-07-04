@@ -75,6 +75,7 @@ import {
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
 import {
+  ProjectArchivedError,
   ProjectNotFoundError,
   SearchCriteriaRequiredError,
   TaskLimitError,
@@ -3252,12 +3253,16 @@ export async function updateTask(
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task to delete.
  * @returns Deletion summary.
+ * @throws ProjectArchivedError when the parent project is archived (read-only).
  */
 export async function deleteTask(ctx: AuthContext, taskId: string) {
   const { projectId, deletedEdges } = await withUserContext(
     ctx.userId,
     async (tx) => {
       const task = await assertTaskAccessTx(tx, taskId);
+      if (task.projectStatus === "archived") {
+        throw new ProjectArchivedError(task.projectIdentifier);
+      }
 
       const removed = await tx
         .delete(taskEdges)

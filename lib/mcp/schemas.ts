@@ -121,7 +121,7 @@ export const DESCRIPTIONS = {
     "projects=all projects with identifier, status, team chip, task counts, progress; skips empty teams, so pair with teams for the full set. " +
     "members=one team's directory (name, user UUID, role): the UUID source for assigneeIds, assignee ops, and assignee filters. " +
     "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline). " +
-    "update=title, description, status, categories, or identifier. Renaming the identifier cascades every taskRef and breaks external references (PR titles, docs, commits); categories=[...] replaces the vocabulary WITHOUT touching task rows. " +
+    "update=title, description, status, categories, or identifier. Renaming the identifier cascades every taskRef and breaks external references (PR titles, docs, commits); categories=[...] replaces the vocabulary WITHOUT touching task rows. Archived projects are read-only on the task surface; update status='active' here to reopen. " +
     "rename_category/delete_category=vocabulary edits that cascade to task rows atomically. " +
     "Next: piyaz_search to find work, piyaz_map view='ready' to find unblocked tasks.",
   piyaz_search:
@@ -136,7 +136,7 @@ export const DESCRIPTIONS = {
   piyaz_create:
     "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('PYZ' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description (2-4 sentences; single-sentence flagged). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
     "Idempotent: exact-title matches against existing tasks are skipped and returned as 'deduped' (reusable as edge endpoints), so a restarted decompose run never duplicates a task set; onDuplicate='error' rejects the whole batch instead. Edges that already exist are silently skipped. " +
-    "Include acceptanceCriteria (2-4 binary), tags (three dimensions), category (from piyaz_get project view='meta'), priority, estimate up front — hints flag what's missing. " +
+    "Include acceptanceCriteria (2-4 binary), tags (three dimensions), category (from piyaz_get project view='meta'), priority, estimate up front — hints flag what's missing. Fails while the project is archived (reopen via piyaz_workspace status='active'). " +
     "Next: verify wiring with piyaz_map view='neighbors' task='<ref>'.",
   piyaz_edit:
     "Edit one task with an ordered list of operations, applied atomically (all or nothing). task accepts 'PYZ-42' or a UUID. " +
@@ -144,12 +144,12 @@ export const DESCRIPTIONS = {
     "Collections (acceptanceCriteria, decisions, links, assignees): op='add' (text/url; assignees take value='me' or a user UUID), op='update'/'remove'/'check'/'uncheck' by the item id from piyaz_get lens='working' or fields=[...] (assignees support add/remove only). Removed items are unrecoverable. " +
     "Scalars (status, priority, estimate, category, title, tags, files, prUrl): op='set' with value. Status transitions return lifecycle hints — read and act on them. " +
     "ifUpdatedAt (from a prior read) makes the whole call a compare-and-swap for contended tasks. " +
-    "op='delete_task' must be the only op: preview defaults to true (impact summary); preview=false executes. Prefer set status='cancelled' for abandoned scope — delete only pure noise.",
+    "op='delete_task' must be the only op: preview defaults to true (impact summary); preview=false executes. Prefer set status='cancelled' for abandoned scope — delete only pure noise. Fails while the project is archived (reopen via piyaz_workspace status='active').",
   piyaz_link:
     "Create, update, or remove dependency edges. source/target accept 'PYZ-42' or UUIDs. depends_on=source needs target's output (target must finish first). relates_to=informational, neither blocks. Litmus: removing the target makes the source impossible → depends_on; merely harder → relates_to. " +
     "create=new edge; note REQUIRED and substantive (placeholders 'needed'/'depends'/'related' rejected) — write it as a brief to the developer starting the source task. " +
     "update=rewrite the note, keyed by source+target+type (type is the lookup key there; pass edgeId to also change type). To re-type without an edgeId: remove, then create with a fresh note. remove=same keys. " +
-    "Server rejects self-edges, duplicates, and cycles (the error names the chain). On 'duplicate edge': treat as success. Verify with piyaz_map view='neighbors'.",
+    "Server rejects self-edges, duplicates, and cycles (the error names the chain). On 'duplicate edge': treat as success. Fails while the project is archived (reopen via piyaz_workspace status='active'). Verify with piyaz_map view='neighbors'.",
   piyaz_map:
     "Navigate the dependency graph. Lead with these for 'what's next', 'what's stuck', impact analysis. " +
     "ready=planned tasks with all deps done (drafts surface under plannable, not ready); pick from ready ∩ critical_path for highest-impact work. " +
@@ -206,7 +206,7 @@ export const workspaceInputSchema = z.object({
     .enum(["brainstorming", "decomposing", "active", "archived"])
     .optional()
     .describe(
-      "Lifecycle: brainstorming → decomposing → active → archived. Settable on create (defaults to 'brainstorming') or update.",
+      "Project lifecycle phase: brainstorming (scoping, no task graph yet) → decomposing (task graph being created) → active (execution) → archived (read-only: piyaz_create/piyaz_edit/piyaz_link fail; reads keep working; set status here to reopen). Flip to 'decomposing' when task creation starts and 'active' when the graph is complete. Settable on create (defaults to 'brainstorming') or update.",
     ),
   categories: z
     .array(z.string().max(LIMITS.category))

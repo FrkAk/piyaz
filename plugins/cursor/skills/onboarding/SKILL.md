@@ -53,7 +53,7 @@ digraph onboarding {
     "Phase 2: Create Piyaz project\n(status='brainstorming')" [shape=box];
     "Phase 3: Decomposition proposal\n(NO WRITES)" [shape=box];
     "HARD-GATE: user approves\nfeature inventory?" [shape=diamond];
-    "Phase 4: Create tasks + edges" [shape=box];
+    "Phase 4: Create tasks + edges\n(status='decomposing')" [shape=box];
     "Phase 5: Programmatic verification + summary\n(status='active')" [shape=box];
     "Phase 6: Housekeeping (offer cleanup)" [shape=box];
     "Project active + clean" [shape=doublecircle];
@@ -73,8 +73,8 @@ digraph onboarding {
     "Phase 2: Create Piyaz project\n(status='brainstorming')" -> "Phase 3: Decomposition proposal\n(NO WRITES)";
     "Phase 3: Decomposition proposal\n(NO WRITES)" -> "HARD-GATE: user approves\nfeature inventory?";
     "HARD-GATE: user approves\nfeature inventory?" -> "Phase 3: Decomposition proposal\n(NO WRITES)" [label="changes requested"];
-    "HARD-GATE: user approves\nfeature inventory?" -> "Phase 4: Create tasks + edges" [label="explicit yes"];
-    "Phase 4: Create tasks + edges" -> "Phase 5: Programmatic verification + summary\n(status='active')";
+    "HARD-GATE: user approves\nfeature inventory?" -> "Phase 4: Create tasks + edges\n(status='decomposing')" [label="explicit yes"];
+    "Phase 4: Create tasks + edges\n(status='decomposing')" -> "Phase 5: Programmatic verification + summary\n(status='active')";
     "Phase 5: Programmatic verification + summary\n(status='active')" -> "Phase 6: Housekeeping (offer cleanup)";
     "Phase 6: Housekeeping (offer cleanup)" -> "Project active + clean";
 }
@@ -101,7 +101,7 @@ Run all three:
 A project **matches** this repo when the package name OR the git remote URL (without the `.git` suffix and without the `https://` or `git@github.com:` prefix) appears in the project's `title` or `description`, **case-insensitive**, **as a whole word** (not a substring of a longer identifier).
 
 - **Match found, status `'active'`**: onboarding has already completed for this repo. STOP. Tell the user: "A Piyaz project for this repo already exists (`<project title>` in team `<team>`, status active). Use `/piyaz` and select it." Do not proceed.
-- **Match found, status `'brainstorming'`**: a previous onboarding run started but did not finish. **This is resume mode (resilience).** Run resume mode:
+- **Match found, status `'brainstorming'` or `'decomposing'`**: a previous onboarding run started but did not finish. **This is resume mode (resilience).** Run resume mode:
   1. **Check the local working file first.** `Read` `.piyaz/onboarding-<projectIdentifier>.md`. If it exists, that is your working state (proposal + progress checklist + discovery notes + in-flight decisions). Use it.
   2. If the local file is missing, `piyaz_get project='<identifier>' view='meta'` and read the description. If a `## Onboarding Proposal` section exists, that is the approved plan from a prior run (cross-machine fallback). Use it as the source of truth.
   3. `piyaz_activity project='<identifier>'` (or `piyaz_search project='<identifier>' status=[...]`) to see which tasks already exist. `piyaz_create` also dedupes by exact title server-side, so a re-sent batch is safe.
@@ -187,7 +187,7 @@ If any of these is uncertain, keep reading. Do not move on with hand-waved answe
    - `title`: inferred from package name or repo name (verb+noun where natural; otherwise the product name).
    - `description`: 3 to 5 sentence synthesis from Phase 1 (purpose, how it is built, key constraints).
    - `categories`: from step 2 above.
-   - `status='brainstorming'` (you promote to `'active'` at the end of Phase 5).
+   - `status='brainstorming'` (flip to `'decomposing'` when Phase 4 task creation starts, `'active'` at the end of Phase 5).
    - `organizationId`: required if multi-team.
 4. Note the returned `projectId`. Pass it explicitly on every subsequent call.
 
@@ -298,7 +298,7 @@ Before creating any tasks, persist the approved proposal in two places. Both ste
 
 ## Phase 4: Create tasks and edges
 
-Only after approval AND after the proposal is persisted.
+Only after approval AND after the proposal is persisted. First write of the phase: `piyaz_workspace action='update' status='decomposing'` — task creation has started; a project found already in `decomposing` means an interrupted run (resume mode).
 
 ### Idempotent creation (resilience)
 
@@ -526,7 +526,7 @@ Resume mode: `piyaz_activity project='<identifier>' since='<last certain instant
 ## Rules
 
 - ALWAYS read `skills/piyaz/references/conventions.md` at session start, and re-read mid-session before Phase 4 writes.
-- ALWAYS run the Phase 0 match check correctly: distinguish status `'active'` (stop) from status `'brainstorming'` (resume mode).
+- ALWAYS run the Phase 0 match check correctly: distinguish status `'active'` (stop) from status `'brainstorming'` or `'decomposing'` (resume mode).
 - ALWAYS finalize the Phase 3 task enumeration before writing the proposal headers; the header counts (`N tasks`, `M edges`) must match the bullets when the user sees the proposal. Drift between header and list signals careless drafting and breaks the gate.
 - ALWAYS persist the approved proposal to the project description after the HARD-GATE clears, before Phase 4 (resilience).
 - ALWAYS read the `deduped` list on every `piyaz_create` response; the server dedupes by exact title (resilience).

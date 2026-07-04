@@ -8,6 +8,18 @@ export type ProjectStatus =
   | "active"
   | "archived";
 
+/**
+ * Project lifecycle phases in progression order. Shared by the MCP
+ * workspace transition hints and the phase-gating checks so the order
+ * lives in one place.
+ */
+export const PROJECT_STATUS_ORDER = [
+  "brainstorming",
+  "decomposing",
+  "active",
+  "archived",
+] as const satisfies readonly ProjectStatus[];
+
 /** Task lifecycle status. */
 export type TaskStatus =
   | "draft"

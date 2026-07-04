@@ -8,11 +8,25 @@ Agents read this file before any status transition, before marking a task done o
 
 ## Contents
 
+- §0 Project lifecycle: the four project phases and who flips them
 - §1 Status lifecycle: what each state means, requires, and forbids
 - §2 Completion Protocol: mode detection, required fields, PR-opening, checklist
 - §3 Propagate after every change (Iron Law)
 
 ---
+
+## 0. Project lifecycle
+
+```
+brainstorming → decomposing → active → archived
+```
+
+- `brainstorming`: scoping; no task graph yet. Brainstorm creates the project here and leaves it here.
+- `decomposing`: the task graph is being created. Decompose and onboarding flip to it when task creation starts (`piyaz_workspace action='update' status='decomposing'`). Task/edge creation and refinement are the expected work; execution statuses come later.
+- `active`: the graph is complete; full task lifecycle (§1) runs. Decompose and onboarding flip to it when their graph is validated. decompose-feature never touches project status.
+- `archived`: read-only on the task surface — `piyaz_create`, `piyaz_edit`, and `piyaz_link` fail; reads keep working. Archiving is a human/manage decision. Unarchive via `piyaz_workspace action='update' status='active'`.
+
+The server emits `_hints` when a write does not match the phase (e.g. flipping a task to `in_progress` while the project is `decomposing`); act on them.
 
 ## 1. Status lifecycle
 

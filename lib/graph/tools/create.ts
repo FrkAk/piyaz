@@ -23,6 +23,7 @@ import {
   descriptionSizeHints,
   draftFieldHints,
   edgeNoteViolation,
+  projectPhaseHints,
   requireProjectId,
   tagTaxonomyHints,
   tagVariantHints,
@@ -244,6 +245,13 @@ export async function handleCreate(
         "No edges in this batch. Bare tasks orphan from critical_path, downstream, and agent-context propagation. Wire dependencies with piyaz_link (substantive notes); verify with piyaz_map view='neighbors'.",
       );
     }
+    hints.push(
+      ...projectPhaseHints(
+        result.projectStatus,
+        result.projectIdentifier,
+        p.tasks.map((t) => t.status ?? "draft"),
+      ),
+    );
 
     return ok({
       created: result.created.map((c) => ({

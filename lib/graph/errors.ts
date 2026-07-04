@@ -86,6 +86,23 @@ export class TaskLimitError extends Error {
 }
 
 /**
+ * Thrown by task, edge, and category writes when the parent project is
+ * `archived` (read-only task surface). A dedicated type — not
+ * `ForbiddenError` — so the MCP error translator can name the reopen call
+ * (`piyaz_workspace action='update' status='active'`) instead of rendering
+ * an anti-enumeration "not found".
+ */
+export class ProjectArchivedError extends Error {
+  /**
+   * @param identifier - Project identifier (e.g. `PYZ`) for the reopen hint.
+   */
+  constructor(public readonly identifier: string) {
+    super(`Project ${identifier} is archived`);
+    this.name = "ProjectArchivedError";
+  }
+}
+
+/**
  * Thrown by `createEdge` when source and target are the same task. A typed
  * class — not a plain `Error` — so the MCP error translator can surface it
  * as an actionable tool error instead of the opaque `Internal error`.

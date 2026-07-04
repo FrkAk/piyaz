@@ -23,6 +23,7 @@ import {
   CrossProjectEdgeError,
   DuplicateEdgeError,
   EdgeCycleError,
+  ProjectArchivedError,
   SelfEdgeError,
 } from "@/lib/graph/errors";
 
@@ -499,6 +500,7 @@ async function composeCycleLoopRefs(
  * @throws ForbiddenError when either endpoint is not an accessible task.
  * @throws DuplicateEdgeError when an identical edge already exists.
  * @throws EdgeCycleError when a `depends_on` edge would close a cycle.
+ * @throws ProjectArchivedError when the parent project is archived (read-only).
  */
 export async function createEdge(
   ctx: AuthContext,
@@ -512,77 +514,86 @@ export async function createEdge(
     data = { ...data, note: (await formatMarkdown(data.note)) ?? data.note };
   }
 
-  const { edge, projectId } = await withUserContext(ctx.userId, async (tx) => {
-    const [sourceTask, targetTask] = await Promise.all([
-      assertTaskAccessTx(tx, data.sourceTaskId),
-      assertTaskAccessTx(tx, data.targetTaskId),
-    ]);
+  const { edge, projectId, projectStatus, projectIdentifier } =
+    await withUserContext(ctx.userId, async (tx) => {
+      const [sourceTask, targetTask] = await Promise.all([
+        assertTaskAccessTx(tx, data.sourceTaskId),
+        assertTaskAccessTx(tx, data.targetTaskId),
+      ]);
 
-    if (sourceTask.projectId !== targetTask.projectId) {
-      throw new CrossProjectEdgeError();
-    }
+      if (sourceTask.projectId !== targetTask.projectId) {
+        throw new CrossProjectEdgeError();
+      }
+      if (sourceTask.projectStatus === "archived") {
+        throw new ProjectArchivedError(sourceTask.projectIdentifier);
+      }
 
-    const [existing] = await tx
-      .select({ id: taskEdges.id })
-      .from(taskEdges)
-      .where(
-        and(
-          eq(taskEdges.sourceTaskId, data.sourceTaskId),
-          eq(taskEdges.targetTaskId, data.targetTaskId),
-          eq(taskEdges.edgeType, data.edgeType),
-        ),
-      );
-    if (existing) {
-      throw new DuplicateEdgeError(
-        data.sourceTaskId,
-        data.targetTaskId,
-        data.edgeType,
-      );
-    }
-
-    if (data.edgeType === "depends_on") {
-      const chain = await fetchDependencyChain(
-        tx,
-        data.targetTaskId,
-        targetTask.projectId,
-        10,
-      );
-      if (chain.some((node) => node.id === data.sourceTaskId)) {
-        throw new EdgeCycleError(
-          chain.map((node) => node.id),
-          await composeCycleLoopRefs(
-            tx,
-            data.sourceTaskId,
-            data.targetTaskId,
-            chain,
+      const [existing] = await tx
+        .select({ id: taskEdges.id })
+        .from(taskEdges)
+        .where(
+          and(
+            eq(taskEdges.sourceTaskId, data.sourceTaskId),
+            eq(taskEdges.targetTaskId, data.targetTaskId),
+            eq(taskEdges.edgeType, data.edgeType),
           ),
         );
+      if (existing) {
+        throw new DuplicateEdgeError(
+          data.sourceTaskId,
+          data.targetTaskId,
+          data.edgeType,
+        );
       }
-    }
 
-    const [created] = await tx.insert(taskEdges).values(data).returning();
+      if (data.edgeType === "depends_on") {
+        const chain = await fetchDependencyChain(
+          tx,
+          data.targetTaskId,
+          targetTask.projectId,
+          10,
+        );
+        if (chain.some((node) => node.id === data.sourceTaskId)) {
+          throw new EdgeCycleError(
+            chain.map((node) => node.id),
+            await composeCycleLoopRefs(
+              tx,
+              data.sourceTaskId,
+              data.targetTaskId,
+              chain,
+            ),
+          );
+        }
+      }
 
-    await insertActivityEvents(tx, ctx.actor, [
-      {
+      const [created] = await tx.insert(taskEdges).values(data).returning();
+
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: sourceTask.projectId,
+          taskId: data.sourceTaskId,
+          type: "edge_added",
+          summary: `added ${data.edgeType} → target`,
+          targetRef: data.targetTaskId,
+          metadata: { direction: "outgoing", relation: data.edgeType },
+        },
+        {
+          projectId: sourceTask.projectId,
+          taskId: data.targetTaskId,
+          type: "edge_added",
+          summary: `added ${data.edgeType} ← source`,
+          targetRef: data.sourceTaskId,
+          metadata: { direction: "incoming", relation: data.edgeType },
+        },
+      ]);
+
+      return {
+        edge: created,
         projectId: sourceTask.projectId,
-        taskId: data.sourceTaskId,
-        type: "edge_added",
-        summary: `added ${data.edgeType} → target`,
-        targetRef: data.targetTaskId,
-        metadata: { direction: "outgoing", relation: data.edgeType },
-      },
-      {
-        projectId: sourceTask.projectId,
-        taskId: data.targetTaskId,
-        type: "edge_added",
-        summary: `added ${data.edgeType} ← source`,
-        targetRef: data.sourceTaskId,
-        metadata: { direction: "incoming", relation: data.edgeType },
-      },
-    ]);
-
-    return { edge: created, projectId: sourceTask.projectId };
-  });
+        projectStatus: sourceTask.projectStatus,
+        projectIdentifier: sourceTask.projectIdentifier,
+      };
+    });
 
   emitEdgeMutation(projectId, data.sourceTaskId, data.targetTaskId);
   return {
@@ -591,6 +602,8 @@ export async function createEdge(
     targetTaskId: edge.targetTaskId,
     edgeType: edge.edgeType,
     note: edge.note,
+    projectStatus,
+    projectIdentifier,
   };
 }
 
@@ -603,6 +616,7 @@ export async function createEdge(
  * @param edgeId - UUID of the edge.
  * @returns The edge row and its parent project id.
  * @throws ForbiddenError on missing edge, malformed id, or cross-team access.
+ * @throws ProjectArchivedError when the parent project is archived (read-only).
  */
 async function loadAuthorizedEdgeTx(tx: Tx, edgeId: string) {
   if (!isUuid(edgeId)) {
@@ -622,6 +636,9 @@ async function loadAuthorizedEdgeTx(tx: Tx, edgeId: string) {
     }
     throw err;
   }
+  if (sourceTask.projectStatus === "archived") {
+    throw new ProjectArchivedError(sourceTask.projectIdentifier);
+  }
   return { edge, projectId: sourceTask.projectId };
 }
 
@@ -636,6 +653,7 @@ async function loadAuthorizedEdgeTx(tx: Tx, edgeId: string) {
  * @throws ForbiddenError when the edge is not found or outside the caller's team.
  * @throws DuplicateEdgeError when the type change collides with an existing edge.
  * @throws EdgeCycleError when the type change would close a `depends_on` cycle.
+ * @throws ProjectArchivedError when the parent project is archived (read-only).
  */
 export async function updateEdge(
   ctx: AuthContext,
@@ -756,6 +774,7 @@ export async function updateEdge(
  * Remove an edge by ID and emit `activity_events` for both tasks.
  * @param ctx - Resolved auth context.
  * @param edgeId - UUID of the edge to delete.
+ * @throws ProjectArchivedError when the parent project is archived (read-only).
  */
 export async function removeEdge(ctx: AuthContext, edgeId: string) {
   const { edge, projectId } = await withUserContext(ctx.userId, async (tx) => {

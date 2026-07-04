@@ -78,7 +78,7 @@ Do not proceed. A vague brief begets vague tasks.
 digraph decompose {
     "Phase 1: Analysis & Plan" [shape=box];
     "HARD-GATE: user approves\nplan verbatim?" [shape=diamond];
-    "Phase 2: Create tasks" [shape=box];
+    "Phase 2: Create tasks\n(status='decomposing')" [shape=box];
     "Phase 3: Create edges" [shape=box];
     "Phase 4: Validate & summary\n(status='active')" [shape=box];
     "Phase 5: Housekeeping (offer cleanup)" [shape=box];
@@ -86,8 +86,8 @@ digraph decompose {
 
     "Phase 1: Analysis & Plan" -> "HARD-GATE: user approves\nplan verbatim?";
     "HARD-GATE: user approves\nplan verbatim?" -> "Phase 1: Analysis & Plan" [label="changes requested"];
-    "HARD-GATE: user approves\nplan verbatim?" -> "Phase 2: Create tasks" [label="explicit yes"];
-    "Phase 2: Create tasks" -> "Phase 3: Create edges";
+    "HARD-GATE: user approves\nplan verbatim?" -> "Phase 2: Create tasks\n(status='decomposing')" [label="explicit yes"];
+    "Phase 2: Create tasks\n(status='decomposing')" -> "Phase 3: Create edges";
     "Phase 3: Create edges" -> "Phase 4: Validate & summary\n(status='active')";
     "Phase 4: Validate & summary\n(status='active')" -> "Phase 5: Housekeeping (offer cleanup)";
     "Phase 5: Housekeeping (offer cleanup)" -> "Done: project active + clean";
@@ -274,8 +274,9 @@ After every 5 to 10 task creates, update `.piyaz/decompose-<projectIdentifier>.m
 
 ### Create the tasks
 
-1. `piyaz_workspace action='update' categories=[<list from plan>]`
-2. Create the plan's tasks in `piyaz_create` batches (≤25 per call, internal edges `key`-addressed), each item with:
+1. `piyaz_workspace action='update' status='decomposing'` — flip the phase before the first write. A project found already in `decomposing` means an interrupted decompose run: resume from the working file, do not restart.
+2. `piyaz_workspace action='update' categories=[<list from plan>]`
+3. Create the plan's tasks in `piyaz_create` batches (≤25 per call, internal edges `key`-addressed), each item with:
    - **title**: verb plus noun, imperative ("Implement JWT auth", not "Auth")
    - **description**: 2 to 4 sentences. Cover what + why + how it fits. Per artifacts §1, include a solution sketch if you have one.
    - **acceptanceCriteria**: 2 to 4 binary criteria. A reviewer answers YES or NO without ambiguity.

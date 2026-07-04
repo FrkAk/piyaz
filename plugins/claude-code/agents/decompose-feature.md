@@ -325,7 +325,7 @@ Run through this checklist mentally. If anything fails, fix it (update or delete
 - [ ] **Tag completeness**: all three dimensions per task; `priority` set.
 - [ ] **Category sanity**: every task uses a project category, no new ones invented mid-feature.
 
-**Project status is unchanged.** Decompose-feature does not call `piyaz_workspace action='update' status='active'`; the project was already active when this session started, and adding a feature does not re-gate it.
+**Project status is unchanged.** Decompose-feature does not call `piyaz_workspace action='update' status='active'` (nor `status='decomposing'`); the project was already active when this session started, and adding a feature does not re-gate it.
 
 Summary (markdown, to the user):
 

@@ -19,6 +19,7 @@ import {
   doneStatusHints,
   draftFieldHints,
   inReviewStatusHints,
+  projectPhaseHints,
   requireTaskId,
   statusJumpHints,
   tagTaxonomyHints,
@@ -304,6 +305,13 @@ export async function handleEdit(
         files: result.files as string[] | null,
         acceptanceCriteria: result.acceptanceCriteria,
       })),
+    );
+    hints.push(
+      ...projectPhaseHints(
+        result.projectStatus,
+        result.projectIdentifier,
+        payload.status ? [payload.status] : [],
+      ),
     );
 
     return ok({

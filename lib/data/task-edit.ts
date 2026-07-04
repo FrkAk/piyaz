@@ -19,7 +19,12 @@ import {
 } from "@/lib/auth/authorization";
 import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
 import type { ClassifiedLink, LinkKind } from "@/lib/links/classify";
-import { InvalidLinkUrlError, UnknownCategoryError } from "@/lib/graph/errors";
+import {
+  InvalidLinkUrlError,
+  ProjectArchivedError,
+  UnknownCategoryError,
+} from "@/lib/graph/errors";
+import type { ProjectStatus } from "@/lib/types";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import {
@@ -178,7 +183,11 @@ export type EditOp = {
  * `task` (preview) vs `deleted` (execution) property.
  */
 export type ApplyTaskEditResult =
-  | (UpdateTaskResult & { applied: string[] })
+  | (UpdateTaskResult & {
+      applied: string[];
+      projectStatus: ProjectStatus;
+      projectIdentifier: string;
+    })
   | (Awaited<ReturnType<typeof deleteTaskPreview>> & { applied: string[] })
   | (Awaited<ReturnType<typeof deleteTask>> & { applied: string[] });
 
@@ -1535,6 +1544,8 @@ async function applyPrUrl(
  * @throws ForbiddenError when access or an assignee is rejected.
  * @throws InvalidLinkUrlError when a link/prUrl URL is malformed.
  * @throws UnknownCategoryError when a category set is outside the vocabulary.
+ * @throws ProjectArchivedError when the parent project is archived (read-only);
+ *   `delete_task` previews are exempt (read-only path).
  */
 export async function applyTaskEdit(
   ctx: AuthContext,
@@ -1570,7 +1581,10 @@ export async function applyTaskEdit(
   }
 
   const result = await withUserContext(ctx.userId, async (tx) => {
-    await assertTaskAccessTx(tx, taskId);
+    const gate = await assertTaskAccessTx(tx, taskId);
+    if (gate.projectStatus === "archived") {
+      throw new ProjectArchivedError(gate.projectIdentifier);
+    }
     const [current] = await tx
       .select()
       .from(tasks)
@@ -1649,7 +1663,14 @@ export async function applyTaskEdit(
         date: d.date,
       }));
     }
-    return { row, criteriaResult, decisionsResult, applied };
+    return {
+      row,
+      criteriaResult,
+      decisionsResult,
+      applied,
+      projectStatus: gate.projectStatus,
+      projectIdentifier: gate.projectIdentifier,
+    };
   });
 
   emitTaskEvent(result.row.projectId, taskId);
@@ -1657,6 +1678,8 @@ export async function applyTaskEdit(
     acceptanceCriteria: result.criteriaResult,
     decisions: result.decisionsResult,
     applied: result.applied,
+    projectStatus: result.projectStatus,
+    projectIdentifier: result.projectIdentifier,
   });
 }
 

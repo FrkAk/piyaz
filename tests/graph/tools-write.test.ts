@@ -875,3 +875,255 @@ test("workspace delete_category uncategorizes its tasks", async () => {
 
   expect((await getTaskFull(ctx, task.id)).category).toBeNull();
 });
+
+test("create in a brainstorming project hints to flip to decomposing", async () => {
+  const fx = await seedUserOrgProject("TPHBRAIN");
+  const ctx = makeAuthContext(fx.userId);
+
+  const result = await handleCreate(
+    {
+      project: "PRJTPHBRAIN",
+      tasks: [
+        {
+          title: "First graph task",
+          description: "Lands during scoping. Should trigger the phase hint.",
+        },
+      ],
+    },
+    ctx,
+  );
+  const data = okData<CreatePayload>(result);
+  expect(data._hints?.join(" ")).toContain("status='decomposing'");
+});
+
+test("edit execution-status flip in a decomposing project hints to promote", async () => {
+  const fx = await seedUserOrgProject("TPHDECOMP");
+  const ctx = makeAuthContext(fx.userId);
+  await handleWorkspace(
+    { action: "update", project: "PRJTPHDECOMP", status: "decomposing" },
+    ctx,
+  );
+  await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Eager task",
+    description: "Started before the graph is complete. Tests the hint.",
+    status: "planned",
+  });
+
+  const flip = await handleEdit(
+    {
+      task: "PRJTPHDECOMP-1",
+      operations: [{ op: "set", field: "status", value: "in_progress" }],
+    },
+    ctx,
+  );
+  const flipHints = okData<{ _hints?: string[] }>(flip)._hints?.join(" ") ?? "";
+  expect(flipHints).toContain("status='active'");
+
+  const refine = await handleEdit(
+    {
+      task: "PRJTPHDECOMP-1",
+      operations: [
+        { op: "append", field: "description", text: "One more sentence." },
+      ],
+    },
+    ctx,
+  );
+  const refineHints =
+    okData<{ _hints?: string[] }>(refine)._hints?.join(" ") ?? "";
+  expect(refineHints).not.toContain("'decomposing'");
+});
+
+test("active project emits no phase hints on edit", async () => {
+  const fx = await seedUserOrgProject("TPHACTIVE");
+  const ctx = makeAuthContext(fx.userId);
+  await handleWorkspace(
+    { action: "update", project: "PRJTPHACTIVE", status: "active" },
+    ctx,
+  );
+  await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Normal task",
+    description: "Regular execution work. No phase hint expected.",
+    status: "planned",
+  });
+
+  const result = await handleEdit(
+    {
+      task: "PRJTPHACTIVE-1",
+      operations: [{ op: "set", field: "status", value: "in_progress" }],
+    },
+    ctx,
+  );
+  const hints = okData<{ _hints?: string[] }>(result)._hints?.join(" ") ?? "";
+  expect(hints).not.toContain("brainstorming");
+  expect(hints).not.toContain("'decomposing'");
+});
+
+test("archived project blocks writes, allows reads, and reopens", async () => {
+  const fx = await seedUserOrgProject("TPHARCH");
+  const ctx = makeAuthContext(fx.userId);
+  await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Frozen source",
+    description: "Exists before archival. Edge source in the block test.",
+  });
+  await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Frozen target",
+    description: "Exists before archival. Edge target in the block test.",
+  });
+  const archive = await handleWorkspace(
+    {
+      action: "update",
+      project: "PRJTPHARCH",
+      status: "archived",
+      categories: ["backend"],
+    },
+    ctx,
+  );
+  expect(okData<{ _hints?: string[] }>(archive)._hints?.join(" ")).toContain(
+    "read-only",
+  );
+
+  const blockedCreate = await handleCreate(
+    {
+      project: "PRJTPHARCH",
+      tasks: [
+        {
+          title: "Too late",
+          description: "Should never land. The project is archived.",
+        },
+      ],
+    },
+    ctx,
+  );
+  expect(blockedCreate.ok).toBe(false);
+  if (!blockedCreate.ok) {
+    expect(blockedCreate.error).toMatch(/archived/);
+    expect(blockedCreate.error).toContain("status='active'");
+  }
+
+  const blockedEdit = await handleEdit(
+    {
+      task: "PRJTPHARCH-1",
+      operations: [
+        { op: "append", field: "description", text: "Another sentence." },
+      ],
+    },
+    ctx,
+  );
+  expect(blockedEdit.ok).toBe(false);
+  if (!blockedEdit.ok) expect(blockedEdit.error).toMatch(/archived/);
+
+  const blockedLink = await handleLink(
+    {
+      action: "create",
+      source: "PRJTPHARCH-1",
+      target: "PRJTPHARCH-2",
+      type: "depends_on",
+      note: "source consumes the target's frozen output contract",
+    },
+    ctx,
+  );
+  expect(blockedLink.ok).toBe(false);
+  if (!blockedLink.ok) expect(blockedLink.error).toMatch(/archived/);
+
+  const previewDelete = await handleEdit(
+    { task: "PRJTPHARCH-1", operations: [{ op: "delete_task" }] },
+    ctx,
+  );
+  expect(previewDelete.ok).toBe(true);
+
+  const blockedDelete = await handleEdit(
+    {
+      task: "PRJTPHARCH-1",
+      operations: [{ op: "delete_task", preview: false }],
+    },
+    ctx,
+  );
+  expect(blockedDelete.ok).toBe(false);
+  if (!blockedDelete.ok) expect(blockedDelete.error).toMatch(/archived/);
+
+  const blockedRename = await handleWorkspace(
+    {
+      action: "rename_category",
+      project: "PRJTPHARCH",
+      category: "backend",
+      newCategory: "platform",
+    },
+    ctx,
+  );
+  expect(blockedRename.ok).toBe(false);
+  if (!blockedRename.ok) expect(blockedRename.error).toMatch(/archived/);
+
+  const read = await handleGet({ task: "PRJTPHARCH-1" }, ctx);
+  expect(read.ok).toBe(true);
+
+  const reopen = await handleWorkspace(
+    { action: "update", project: "PRJTPHARCH", status: "active" },
+    ctx,
+  );
+  expect(reopen.ok).toBe(true);
+
+  const editAfterReopen = await handleEdit(
+    {
+      task: "PRJTPHARCH-1",
+      operations: [
+        { op: "append", field: "description", text: "Thawed sentence." },
+      ],
+    },
+    ctx,
+  );
+  expect(editAfterReopen.ok).toBe(true);
+});
+
+test("workspace status transitions emit jump and backward hints", async () => {
+  const fx = await seedUserOrgProject("TPHTRANS");
+  const ctx = makeAuthContext(fx.userId);
+
+  const jump = await handleWorkspace(
+    { action: "update", project: "PRJTPHTRANS", status: "archived" },
+    ctx,
+  );
+  const jumpHints = okData<{ _hints?: string[] }>(jump)._hints?.join(" ") ?? "";
+  expect(jumpHints).toContain("skipping");
+  expect(jumpHints).toContain("read-only");
+
+  const backward = await handleWorkspace(
+    { action: "update", project: "PRJTPHTRANS", status: "brainstorming" },
+    ctx,
+  );
+  expect(okData<{ _hints?: string[] }>(backward)._hints?.join(" ")).toContain(
+    "moved backward",
+  );
+});
+
+test("archived metadata-only workspace update is allowed and hinted", async () => {
+  const fx = await seedUserOrgProject("TPHAMETA");
+  const ctx = makeAuthContext(fx.userId);
+  await handleWorkspace(
+    { action: "update", project: "PRJTPHAMETA", status: "archived" },
+    ctx,
+  );
+
+  const result = await handleWorkspace(
+    {
+      action: "update",
+      project: "PRJTPHAMETA",
+      title: "Renamed while frozen",
+    },
+    ctx,
+  );
+  const data = okData<{ title: string; _hints?: string[] }>(result);
+  expect(data.title).toBe("Renamed while frozen");
+  expect(data._hints?.join(" ")).toContain("archived");
+
+  const rename = await handleWorkspace(
+    { action: "update", project: "PRJTPHAMETA", identifier: "PHAMETA2" },
+    ctx,
+  );
+  const renameData = okData<{ identifier: string; _hints?: string[] }>(rename);
+  expect(renameData.identifier).toBe("PHAMETA2");
+  expect(renameData._hints?.join(" ")).toContain("archived");
+});
