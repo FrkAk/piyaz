@@ -6,8 +6,16 @@ import { seedUserOrgProject } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask } from "@/lib/data/task";
 import { createMcpServer } from "@/lib/mcp/create-server";
+import { setBackend, type RateLimitBackend } from "@/lib/api/rate-limit";
+import { MemoryRateLimitBackend } from "@/lib/api/rate-limit-memory";
+
+/** Deny-all stub for the heavy slot — deterministic, no 21-call warm-up. */
+const exhaustedHeavyBackend: RateLimitBackend = {
+  check: async () => ({ allowed: false, limit: 20, remaining: 0, resetIn: 42 }),
+};
 
 afterEach(async () => {
+  setBackend("mcpHeavy", new MemoryRateLimitBackend(60_000));
   await truncateAll();
 });
 
@@ -100,5 +108,86 @@ test("callTool surfaces handler failures with corrective copy", async () => {
   expect(result.isError).toBe(true);
   const text = (result.content as { type: string; text: string }[])[0].text;
   expect(text).toContain("piyaz_search");
+  await client.close();
+});
+
+test("heavy shapes are rejected when the heavy budget is exhausted", async () => {
+  const fx = await seedUserOrgProject("MCPHEAVY");
+  setBackend("mcpHeavy", exhaustedHeavyBackend);
+  const client = await connectedClient(fx.userId);
+
+  const heavyCalls = [
+    { name: "piyaz_get", arguments: { task: "PRJMCPHEAVY-1", lens: "agent" } },
+    {
+      name: "piyaz_map",
+      arguments: { view: "critical_path", project: "PRJMCPHEAVY" },
+    },
+    {
+      name: "piyaz_map",
+      arguments: { view: "neighbors", task: "PRJMCPHEAVY-1", hops: 2 },
+    },
+  ];
+  for (const call of heavyCalls) {
+    const result = await client.callTool(call);
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    expect(text).toContain("Heavy-read budget exhausted");
+    expect(text).toContain("Retry in 42s");
+  }
+  await client.close();
+});
+
+test("heavy gate rejects a large create batch before any write", async () => {
+  const fx = await seedUserOrgProject("MCPHVYCR");
+  setBackend("mcpHeavy", exhaustedHeavyBackend);
+  const client = await connectedClient(fx.userId);
+
+  const tasks = Array.from({ length: 6 }, (_, i) => ({
+    title: `Batch probe ${i + 1}`,
+    description: "Part of the throttled batch. Must never land.",
+  }));
+  const created = await client.callTool({
+    name: "piyaz_create",
+    arguments: { project: "PRJMCPHVYCR", tasks },
+  });
+  expect(created.isError).toBe(true);
+  const createdText = (created.content as { type: string; text: string }[])[0]
+    .text;
+  expect(createdText).toContain("Heavy-read budget exhausted");
+
+  const search = await client.callTool({
+    name: "piyaz_search",
+    arguments: { query: "Batch probe" },
+  });
+  expect(search.isError ?? false).toBe(false);
+  const searchText = (search.content as { type: string; text: string }[])[0]
+    .text;
+  expect(searchText).toContain("No results");
+  await client.close();
+});
+
+test("light shapes pass with the heavy budget exhausted", async () => {
+  const fx = await seedUserOrgProject("MCPLIGHT");
+  const ctx = makeAuthContext(fx.userId);
+  await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Light probe",
+    description: "Reads fine under a drained heavy budget. Cheap shape.",
+  });
+  setBackend("mcpHeavy", exhaustedHeavyBackend);
+  const client = await connectedClient(fx.userId);
+
+  const lightCalls = [
+    { name: "piyaz_get", arguments: { task: "PRJMCPLIGHT-1" } },
+    {
+      name: "piyaz_get",
+      arguments: { task: "PRJMCPLIGHT-1", lens: "agent", fields: ["title"] },
+    },
+    { name: "piyaz_map", arguments: { view: "ready", project: "PRJMCPLIGHT" } },
+  ];
+  for (const call of lightCalls) {
+    const result = await client.callTool(call);
+    expect(result.isError ?? false).toBe(false);
+  }
   await client.close();
 });

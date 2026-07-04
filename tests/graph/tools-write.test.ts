@@ -1,11 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
+import { superuserPool } from "@/tests/setup/global";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask, getTaskFull } from "@/lib/data/task";
 import { handleCreate } from "@/lib/graph/tools/create";
 import { handleEdit } from "@/lib/graph/tools/edit";
 import { handleLink } from "@/lib/graph/tools/link";
+import { handleGet } from "@/lib/graph/tools/get";
+import { handleWorkspace } from "@/lib/graph/tools/workspace";
 
 afterEach(async () => {
   await truncateAll();
@@ -20,6 +23,17 @@ afterEach(async () => {
 function okData<T>(result: { ok: boolean }): T {
   expect(result.ok).toBe(true);
   return (result as { ok: true; data: T }).data;
+}
+
+/**
+ * Unwrap a successful ToolResult's data as a string.
+ *
+ * @param result - Handler result expected to be ok with string data.
+ * @returns The data string.
+ */
+function okText(result: { ok: boolean }): string {
+  expect(result.ok).toBe(true);
+  return (result as { ok: true; data: unknown }).data as string;
 }
 
 /** Object payload shape returned by handleCreate. */
@@ -548,4 +562,206 @@ test("edit rejects op text exceeding the per-field cap before resolving the task
     expect(result.error).toContain("description text exceeds");
     expect(result.error).toContain("100000");
   }
+});
+
+test("edit set tags fires variant and taxonomy hints", async () => {
+  const fx = await seedUserOrgProject("TEDITTAGS");
+  const ctx = makeAuthContext(fx.userId);
+  await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Vocabulary anchor",
+    tags: ["frontend", "feature"],
+  });
+  await createTask(ctx, { projectId: fx.projectId, title: "Tag target" });
+
+  const result = await handleEdit(
+    {
+      task: "PRJTEDITTAGS-2",
+      operations: [{ op: "set", field: "tags", value: ["front-end"] }],
+    },
+    ctx,
+  );
+  const hints = okData<{ _hints?: string[] }>(result)._hints?.join(" ") ?? "";
+  expect(hints).toContain('variant of existing "frontend"');
+  expect(hints).toContain("work-type dimension");
+});
+
+test("edit set tags stays quiet on exact vocabulary reuse", async () => {
+  const fx = await seedUserOrgProject("TEDITTAGQ");
+  const ctx = makeAuthContext(fx.userId);
+  await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Vocabulary anchor",
+    tags: ["frontend", "feature"],
+  });
+  await createTask(ctx, { projectId: fx.projectId, title: "Tag target" });
+
+  const result = await handleEdit(
+    {
+      task: "PRJTEDITTAGQ-2",
+      operations: [
+        { op: "set", field: "tags", value: ["feature", "frontend"] },
+      ],
+    },
+    ctx,
+  );
+  const hints = okData<{ _hints?: string[] }>(result)._hints?.join(" ") ?? "";
+  expect(hints).not.toContain("variant");
+  expect(hints).not.toContain("work-type dimension");
+});
+
+test("workspace update persists every plain field", async () => {
+  const fx = await seedUserOrgProject("TWSUPD");
+  const ctx = makeAuthContext(fx.userId);
+
+  const result = await handleWorkspace(
+    {
+      action: "update",
+      project: "PRJTWSUPD",
+      title: "Updated project",
+      description: "Covers the update path. Persists every plain field.",
+      status: "active",
+      categories: ["backend", "frontend"],
+    },
+    ctx,
+  );
+  const data = okData<{
+    title: string;
+    status: string;
+    categories: string[];
+    description: string;
+  }>(result);
+  expect(data.title).toBe("Updated project");
+  expect(data.status).toBe("active");
+  expect(data.categories).toEqual(["backend", "frontend"]);
+  expect(data.description).toContain("Persists every plain field");
+});
+
+test("workspace update requires a project and at least one field", async () => {
+  const fx = await seedUserOrgProject("TWSREQ");
+  const ctx = makeAuthContext(fx.userId);
+
+  const noProject = await handleWorkspace({ action: "update" }, ctx);
+  expect(noProject.ok).toBe(false);
+  if (!noProject.ok) expect(noProject.error).toContain("project required");
+
+  const noFields = await handleWorkspace(
+    { action: "update", project: "PRJTWSREQ" },
+    ctx,
+  );
+  expect(noFields.ok).toBe(false);
+  if (!noFields.ok) expect(noFields.error).toContain("at least one of");
+});
+
+test("workspace update rejects a malformed identifier before any write", async () => {
+  const fx = await seedUserOrgProject("TWSBADID");
+  const ctx = makeAuthContext(fx.userId);
+
+  const result = await handleWorkspace(
+    {
+      action: "update",
+      project: "PRJTWSBADID",
+      title: "Should not land",
+      identifier: "bad!",
+    },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+
+  const meta = okText(await handleGet({ project: "PRJTWSBADID" }, ctx));
+  expect(meta).toContain("Project TWSBADID");
+  expect(meta).not.toContain("Should not land");
+});
+
+test("workspace update renames the identifier and cascades taskRefs", async () => {
+  const fx = await seedUserOrgProject("TWSREN");
+  const ctx = makeAuthContext(fx.userId);
+  await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Ref carrier",
+    description: "Holds the first ref. Proves the rename cascade.",
+  });
+
+  const result = await handleWorkspace(
+    { action: "update", project: "PRJTWSREN", identifier: "WSRENX" },
+    ctx,
+  );
+  const data = okData<{ identifier: string; _hints?: string[] }>(result);
+  expect(data.identifier).toBe("WSRENX");
+  expect(data._hints?.join(" ")).toContain("no longer resolve");
+
+  const renamed = await handleGet({ task: "WSRENX-1", lens: "summary" }, ctx);
+  expect(okText(renamed)).toContain("Ref carrier");
+
+  const stale = await handleGet({ task: "PRJTWSREN-1" }, ctx);
+  expect(stale.ok).toBe(false);
+  if (!stale.ok) expect(stale.error).toContain("not found");
+});
+
+test("workspace update applies field changes and a rename in one call", async () => {
+  const fx = await seedUserOrgProject("TWSBOTH");
+  const ctx = makeAuthContext(fx.userId);
+
+  const result = await handleWorkspace(
+    {
+      action: "update",
+      project: "PRJTWSBOTH",
+      title: "Both applied",
+      identifier: "WSBOTH",
+    },
+    ctx,
+  );
+  const data = okData<{
+    title: string;
+    identifier: string;
+    _hints?: string[];
+  }>(result);
+  expect(data.title).toBe("Both applied");
+  expect(data.identifier).toBe("WSBOTH");
+  expect(data._hints?.join(" ")).toContain("Renamed all task refs");
+});
+
+test("workspace update rename onto a taken identifier is a clean conflict", async () => {
+  const fx = await seedUserOrgProject("TWSTAKEN");
+  const ctx = makeAuthContext(fx.userId);
+  const sr = serviceRoleConnect();
+  try {
+    await sr`
+      INSERT INTO projects ("organization_id", "title", "identifier")
+      VALUES (${fx.organizationId}, 'Occupant', 'WSTAKEN')
+    `;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+
+  const result = await handleWorkspace(
+    { action: "update", project: "PRJTWSTAKEN", identifier: "WSTAKEN" },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error).toMatch(/identifier already in use/i);
+    expect(result.error).not.toMatch(/insert into|select .* from/i);
+  }
+});
+
+test("workspace update rename is refused for a member-role caller", async () => {
+  const fx = await seedUserOrgProject("TWSROLE");
+  const su = superuserPool();
+  const [member] = await su<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES ('Member TWSROLE', 'member-twsrole@test.local', true, now())
+    RETURNING id
+  `;
+  await su`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${fx.organizationId}, ${member.id}, 'member', now())
+  `;
+
+  const result = await handleWorkspace(
+    { action: "update", project: "PRJTWSROLE", identifier: "WSROLE" },
+    makeAuthContext(member.id),
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toContain("only team admins");
 });
