@@ -14,7 +14,7 @@ interface TwoPanelLayoutProps {
 }
 
 /**
- * Split two-panel layout filling viewport below TopBar.
+ * Split two-panel layout filling its parent.
  * Above lg breakpoint: side-by-side with left (40%) and right (60%).
  * Below lg: toggle bar with "Navigator" / "Details" tabs showing one panel at a time.
  * @param props - Panel content, optional className, and optional activePanelHint.
@@ -39,9 +39,7 @@ export function TwoPanelLayout({
   }
 
   return (
-    <div
-      className={`h-[calc(var(--viewport-height)-var(--topbar-h))] ${className}`}
-    >
+    <div className={`h-full ${className}`}>
       {/* Desktop: side-by-side */}
       <div className="hidden lg:flex h-full">
         <div data-panel="navigator" className="w-2/5 min-h-0 overflow-y-auto">

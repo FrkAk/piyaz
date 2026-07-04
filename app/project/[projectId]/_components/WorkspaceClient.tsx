@@ -17,6 +17,12 @@ import { DetailPanel } from "@/components/workspace/DetailPanel";
 import { PropRail } from "@/components/workspace/detail/PropRail";
 import { PropRailDrawer } from "@/components/workspace/detail/PropRailDrawer";
 import { WorkspaceGraphView } from "@/components/workspace/graph/WorkspaceGraphView";
+import { NotesView } from "@/components/workspace/notes/NotesView";
+import {
+  ViewSwitcher,
+  readView,
+  type WorkspaceView,
+} from "@/components/workspace/ViewSwitcher";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSkeletonVisibility } from "@/hooks/useSkeletonVisibility";
 import { useUndo } from "@/hooks/useUndo";
@@ -30,21 +36,6 @@ import type {
   TaskFullWithEdges,
   TaskGraphSlim,
 } from "@/lib/data/views";
-
-/** Workspace view identifier — mirrors the navigator's FilterBar value. */
-type WorkspaceView = "structure" | "graph";
-
-/**
- * Resolve the active view from the URL — defaults to `structure`. Mirrors
- * the navigator's own `readView` so the page-level branch and the FilterBar
- * never disagree about which surface is active.
- *
- * @param raw - Raw `view` query param.
- * @returns Workspace view identifier.
- */
-function readView(raw: string | null): WorkspaceView {
-  return raw === "graph" ? "graph" : "structure";
-}
 
 interface WorkspaceClientProps {
   /** Project UUID — taken from the route params on the server shell. */
@@ -61,7 +52,8 @@ interface WorkspaceClientProps {
  * triggering 404 refetches via SSE invalidations.
  *
  * @param props - Workspace configuration.
- * @returns Three-column workspace, with graph mode swap when `?view=graph`.
+ * @returns Three-column workspace, with graph mode swap when `?view=graph`
+ *   and the notes surface when `?view=notes`.
  */
 export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
   const qc = useQueryClient();
@@ -85,6 +77,13 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
    * `?task=` are coalesced to `null` so we never select an empty id.
    */
   const taskParam = searchParams.get("task") || null;
+  /**
+   * Selected note sourced from the `?note=<id>` query param. Unlike
+   * `?task`, the param is persistent selection state (like `?sort`), never
+   * consumed and stripped — switching views keeps it, and returning to
+   * Notes restores the selection. Empty-string values coalesce to `null`.
+   */
+  const noteId = searchParams.get("note") || null;
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
     taskParam,
   );
@@ -259,9 +258,30 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     setSelectedTaskId(null);
   }, []);
 
-  const handleSwitchToStructure = useCallback(() => {
-    updateParam("view", null);
-  }, [updateParam]);
+  /**
+   * Switch the workspace view — `structure` is the URL default and clears
+   * the param instead of writing it.
+   *
+   * @param next - Target workspace view.
+   */
+  const handleViewChange = useCallback(
+    (next: WorkspaceView) => {
+      updateParam("view", next === "structure" ? null : next);
+    },
+    [updateParam],
+  );
+
+  /**
+   * Select a note (writes `?note=<id>`) or clear the selection with `null`.
+   *
+   * @param nextNoteId - Note to select, or null to clear.
+   */
+  const handleSelectNote = useCallback(
+    (nextNoteId: string | null) => {
+      updateParam("note", nextNoteId);
+    },
+    [updateParam],
+  );
 
   const [prevSelectedTaskId, setPrevSelectedTaskId] = useState<string | null>(
     null,
@@ -324,7 +344,9 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     setPropRailOpen,
     handleSelectNode,
     handleClose,
-    handleSwitchToStructure,
+    handleViewChange,
+    noteId,
+    handleSelectNote,
     refreshAll,
     taskMap,
     projectTags,
@@ -384,7 +406,12 @@ interface SharedLayoutProps {
   setPropRailOpen: (updater: (v: boolean) => boolean) => void;
   handleSelectNode: (taskId: string) => void;
   handleClose: () => void;
-  handleSwitchToStructure: () => void;
+  /** Switch the workspace view — writes the `?view` param. */
+  handleViewChange: (next: WorkspaceView) => void;
+  /** Selected note id from the `?note` query param, or null. */
+  noteId: string | null;
+  /** Select a note (writes `?note=<id>`) or clear with null. */
+  handleSelectNote: (noteId: string | null) => void;
   refreshAll: () => void;
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   projectTags: string[];
@@ -599,10 +626,12 @@ interface WorkspaceLayoutProps extends SharedLayoutProps {
 }
 
 /**
- * Pure layout shell. Receives pre-built `detail` and `propRail` JSX so the
- * useQuery for the task body lives outside this component. Branches on
- * `view`, `isXl`, and presence of `taskSlim` to drive the three layout
- * shapes (graph overlay, xl 3-column, narrow drawer).
+ * Pure layout shell. Renders the workspace toolbar (view switcher) above
+ * the layout body so the switcher stays visible in every view. Receives
+ * pre-built `detail` and `propRail` JSX so the useQuery for the task body
+ * lives outside this component. Branches on `view`, `isXl`, and presence
+ * of `taskSlim` to drive the four layout shapes (graph overlay, xl
+ * 3-column, narrow drawer, notes).
  *
  * @param props - Layout shape configuration plus pre-built slot JSX.
  * @returns The right layout for the current breakpoint and view.
@@ -619,7 +648,9 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     navigatorClosed,
     handleSelectNode,
     handleClose,
-    handleSwitchToStructure,
+    handleViewChange,
+    noteId,
+    handleSelectNote,
     refreshAll,
     taskSlim,
     detail,
@@ -649,19 +680,25 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
   );
 
   // Layout-shape key. Every transition between these shapes (graph ↔ xl-
-  // structure ↔ narrow-structure) unmounts a heavy subtree and mounts another
-  // — synchronous reconciliation that, without animation, reads as a "jump"
-  // and a brief input freeze. Keying an `AnimatePresence` on this value with
-  // `mode="wait"` defers the new tree until the old one has faded out, so the
-  // mount cost is hidden inside the opacity-0 phase of the transition.
-  const layoutShape: "graph" | "xl" | "narrow" =
-    view === "graph" ? "graph" : isXl ? "xl" : "narrow";
+  // structure ↔ narrow-structure ↔ notes) unmounts a heavy subtree and mounts
+  // another — synchronous reconciliation that, without animation, reads as a
+  // "jump" and a brief input freeze. Keying an `AnimatePresence` on this value
+  // with `mode="wait"` defers the new tree until the old one has faded out, so
+  // the mount cost is hidden inside the opacity-0 phase of the transition.
+  const layoutShape: "graph" | "xl" | "narrow" | "notes" =
+    view === "graph"
+      ? "graph"
+      : view === "notes"
+        ? "notes"
+        : isXl
+          ? "xl"
+          : "narrow";
 
   let layoutBody: React.ReactNode;
   if (layoutShape === "graph") {
     const showOverlay = isXl && Boolean(taskSlim);
     layoutBody = (
-      <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
+      <div className="flex h-full">
         <div className="flex min-w-0 flex-1 flex-col">
           <WorkspaceGraphView
             projectId={projectId}
@@ -670,7 +707,6 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
             selectedNodeId={selectedTaskId}
             onSelectNode={handleSelectNode}
             onDeselect={handleClose}
-            onSwitchToStructure={handleSwitchToStructure}
             detailSlot={showOverlay ? detail : undefined}
             propRailSlot={showOverlay ? propRail : undefined}
             propRailOpen={propRailOpen}
@@ -678,9 +714,11 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
         </div>
       </div>
     );
+  } else if (layoutShape === "notes") {
+    layoutBody = <NotesView noteId={noteId} onSelectNote={handleSelectNote} />;
   } else if (layoutShape === "xl") {
     layoutBody = (
-      <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
+      <div className="flex h-full">
         <motion.div
           className="flex flex-col overflow-hidden"
           animate={{ width: navigatorClosed ? 0 : 460 }}
@@ -726,18 +764,25 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
   }
 
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      <motion.div
-        key={layoutShape}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-        className="h-full"
-      >
-        {layoutBody}
-      </motion.div>
-    </AnimatePresence>
+    <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))] flex-col">
+      <div className="flex h-11 shrink-0 items-center border-b border-border bg-base px-3">
+        <ViewSwitcher active={view} onChange={handleViewChange} />
+      </div>
+      <div className="min-h-0 flex-1">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={layoutShape}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            className="h-full"
+          >
+            {layoutBody}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
   );
 }
 
