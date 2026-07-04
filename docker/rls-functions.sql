@@ -309,10 +309,41 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.team_member_roles_visible(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.team_member_roles_visible(uuid) TO app_user;
 
+-- Full member directory for one team: user id, display name, role. Gated on
+-- the caller's own membership of the same org, so probing a foreign team
+-- UUID returns zero rows and is indistinguishable from a team the caller
+-- cannot see. Emails are deliberately not disclosed; assignment flows need
+-- id + name + role only. Dropped before create because a legacy same-name
+-- function shipped with a different return signature.
+DROP FUNCTION IF EXISTS public.team_members_visible(uuid);
+CREATE FUNCTION public.team_members_visible(p_org_id uuid)
+RETURNS TABLE (user_id uuid, name text, role text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT m."userId", u.name, m.role
+  FROM piyaz_auth."member" m
+  INNER JOIN piyaz_auth."user" u ON u.id = m."userId"
+  WHERE m."organizationId" = p_org_id
+    AND EXISTS (
+      SELECT 1
+      FROM piyaz_auth."member" caller
+      WHERE caller."organizationId" = p_org_id
+        AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
+    )
+  ORDER BY u.name, m."userId";
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.team_members_visible(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.team_members_visible(uuid) TO app_user;
+
 -- Legacy SDFs without TS callers: dropped so re-running this file keeps
 -- prod in lockstep. Reintroduce alongside a JS caller if a future UI
 -- surface needs them.
-DROP FUNCTION IF EXISTS public.team_members_visible(uuid);
 DROP FUNCTION IF EXISTS public.team_invitations_visible(uuid);
 
 -- Non-shared users are filtered out so the caller cannot probe arbitrary

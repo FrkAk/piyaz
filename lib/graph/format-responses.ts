@@ -20,6 +20,7 @@ import type {
 } from "@/lib/data/traversal";
 import type { ActivityEvent } from "@/lib/types";
 import type { Whoami } from "@/lib/data/account";
+import type { TeamMemberEntry } from "@/lib/data/membership";
 import type { UserTeamEntry } from "@/lib/data/project";
 import type { ProjectOverview } from "@/lib/context/_core/overview";
 import type { SummaryContext } from "@/lib/context/_core/summary";
@@ -433,6 +434,36 @@ export function formatWhoami(who: Whoami, teams: UserTeamEntry[]): string {
     );
   }
   return parts.join("\n");
+}
+
+/** Row cap for the members directory; large orgs truncate with guidance. */
+const MEMBER_LIST_LIMIT = 100;
+
+/**
+ * Format the `piyaz_workspace action='members'` directory: one line per
+ * member with the user UUID (the assignment handle) and role, capped at
+ * {@link MEMBER_LIST_LIMIT}, closing with the assignment-parameter cue.
+ *
+ * @param members - Members from listTeamMembers.
+ * @returns Formatted text plus the truncation flag for the call log.
+ */
+export function formatTeamMembers(members: TeamMemberEntry[]): {
+  text: string;
+  truncated: boolean;
+} {
+  const lines = members.map((m) => `- ${m.name} \`${m.userId}\` (${m.role})`);
+  const budgeted = budgetLines(
+    lines,
+    MEMBER_LIST_LIMIT,
+    "match the teammate by name with the user, or find them on a task via piyaz_get fields=['assignees']",
+  );
+  const parts = [
+    `${members.length} team member${members.length === 1 ? "" : "s"}:`,
+    ...budgeted.lines,
+    "",
+    "> Use the UUID as assigneeIds on piyaz_create, op='add'/'remove' collection='assignees' on piyaz_edit, or assignee='<uuid>' on piyaz_search.",
+  ];
+  return { text: parts.join("\n"), truncated: budgeted.truncated };
 }
 
 /**

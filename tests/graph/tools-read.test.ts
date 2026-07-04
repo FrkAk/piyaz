@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
+import { superuserPool } from "@/tests/setup/global";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask } from "@/lib/data/task";
 import { handleWorkspace } from "@/lib/graph/tools/workspace";
@@ -307,4 +308,65 @@ test("map empty states steer to view= shapes, not the removed type=", async () =
   );
   expect(plannable).toContain("piyaz_map view='blocked'");
   expect(plannable).not.toContain("type='");
+});
+
+test("workspace members lists the team directory with assignment steering", async () => {
+  const fx = await seedUserOrgProject("TMEMBERS");
+  const su = superuserPool();
+  const [member] = await su<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES ('Dana TMEMBERS', 'dana-tmembers@test.local', true, now())
+    RETURNING id
+  `;
+  await su`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${fx.organizationId}, ${member.id}, 'member', now())
+  `;
+
+  const result = await handleWorkspace(
+    { action: "members" },
+    makeAuthContext(fx.userId),
+  );
+  const text = okText(result);
+  expect(text).toContain("2 team members");
+  expect(text).toContain("Dana TMEMBERS");
+  expect(text).toContain(member.id);
+  expect(text).toContain("(member)");
+  expect(text).toContain("(owner)");
+  expect(text).toContain("assigneeIds");
+});
+
+test("workspace members is 404-shaped for a foreign team", async () => {
+  const a = await seedUserOrgProject("TMEMA");
+  const b = await seedUserOrgProject("TMEMB");
+  const result = await handleWorkspace(
+    { action: "members", organizationId: b.organizationId },
+    makeAuthContext(a.userId),
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toContain("not a team you belong to");
+});
+
+test("workspace members requires organizationId on multi-team accounts", async () => {
+  const fx = await seedUserOrgProject("TMEMMULTI");
+  const su = superuserPool();
+  const [org] = await su<{ id: string }[]>`
+    INSERT INTO piyaz_auth."organization" ("name", "slug", "createdAt")
+    VALUES ('Second TMEMMULTI', 'second-tmemmulti', now())
+    RETURNING id
+  `;
+  await su`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${org.id}, ${fx.userId}, 'member', now())
+  `;
+
+  const result = await handleWorkspace(
+    { action: "members" },
+    makeAuthContext(fx.userId),
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error).toContain("organizationId required");
+    expect(result.error).toContain("Second TMEMMULTI");
+  }
 });

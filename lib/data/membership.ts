@@ -257,6 +257,40 @@ export async function lookupUserNames(
   return new Map(rows.map((u) => [u.id, u.name]));
 }
 
+/** One team member for the MCP members directory. */
+export type TeamMemberEntry = {
+  /** User UUID — the value for assigneeIds, assignee ops, and filters. */
+  userId: string;
+  /** Display name. */
+  name: string;
+  /** Membership role (owner / admin / member). */
+  role: string;
+};
+
+/**
+ * List every member of a team the caller belongs to (user id, display
+ * name, role) via the `team_members_visible` SECURITY DEFINER function.
+ * A team the caller is not in yields zero rows, indistinguishable from a
+ * team that does not exist (anti-enumeration); a real membership always
+ * yields at least the caller's own row.
+ *
+ * @param userId - Verified user id of the caller.
+ * @param organizationId - UUID of the team.
+ * @returns Members ordered by name; empty when the caller is not a member.
+ */
+export async function listTeamMembers(
+  userId: string,
+  organizationId: string,
+): Promise<TeamMemberEntry[]> {
+  const rows = await withUserContext(userId, async (tx) =>
+    executeRaw<{ user_id: string; name: string; role: string }>(
+      tx,
+      sql`SELECT user_id, name, role FROM public.team_members_visible(${organizationId}::uuid)`,
+    ),
+  );
+  return rows.map((r) => ({ userId: r.user_id, name: r.name, role: r.role }));
+}
+
 /**
  * Read the caller's role string for a given organization.
  *

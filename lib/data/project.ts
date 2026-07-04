@@ -517,6 +517,29 @@ export async function getProjectTags(
 }
 
 /**
+ * Read a project's category vocabulary in one RLS-scoped read.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @returns The vocabulary array (possibly empty).
+ * @throws ForbiddenError when the project is not visible to the caller.
+ */
+export async function getProjectCategories(
+  ctx: AuthContext,
+  projectId: string,
+): Promise<string[]> {
+  const [rows] = await withUserContextRead(ctx.userId, (read) => [
+    read
+      .select({ categories: projects.categories })
+      .from(projects)
+      .where(eq(projects.id, projectId)),
+  ]);
+  const row = rows[0];
+  if (!row) throw new ForbiddenError("Forbidden", "project", projectId);
+  return row.categories;
+}
+
+/**
  * {@link getProjectTags} on a caller-supplied tx.
  *
  * @param tx - Active RLS transaction handle.

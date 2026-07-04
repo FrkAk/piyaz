@@ -765,3 +765,113 @@ test("workspace update rename is refused for a member-role caller", async () => 
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toContain("only team admins");
 });
+
+test("workspace rename_category moves tasks with the vocabulary entry", async () => {
+  const fx = await seedUserOrgProject("TWSCATREN");
+  const ctx = makeAuthContext(fx.userId);
+  await handleWorkspace(
+    {
+      action: "update",
+      project: "PRJTWSCATREN",
+      categories: ["backend", "frontend"],
+    },
+    ctx,
+  );
+  const moved = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Backend task",
+    category: "backend",
+  });
+  const kept = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Frontend task",
+    category: "frontend",
+  });
+
+  const result = await handleWorkspace(
+    {
+      action: "rename_category",
+      project: "PRJTWSCATREN",
+      category: "backend",
+      newCategory: "platform",
+    },
+    ctx,
+  );
+  const data = okData<{ categories: string[]; _hints?: string[] }>(result);
+  expect(data.categories).toEqual(["platform", "frontend"]);
+  expect(data._hints?.join(" ")).toContain("view='meta'");
+
+  expect((await getTaskFull(ctx, moved.id)).category).toBe("platform");
+  expect((await getTaskFull(ctx, kept.id)).category).toBe("frontend");
+});
+
+test("workspace rename_category rejects unknown and colliding names", async () => {
+  const fx = await seedUserOrgProject("TWSCATBAD");
+  const ctx = makeAuthContext(fx.userId);
+  await handleWorkspace(
+    {
+      action: "update",
+      project: "PRJTWSCATBAD",
+      categories: ["backend", "frontend"],
+    },
+    ctx,
+  );
+
+  const unknown = await handleWorkspace(
+    {
+      action: "rename_category",
+      project: "PRJTWSCATBAD",
+      category: "nope",
+      newCategory: "platform",
+    },
+    ctx,
+  );
+  expect(unknown.ok).toBe(false);
+  if (!unknown.ok)
+    expect(unknown.error).toContain("not in this project's categories");
+
+  const collide = await handleWorkspace(
+    {
+      action: "rename_category",
+      project: "PRJTWSCATBAD",
+      category: "backend",
+      newCategory: "frontend",
+    },
+    ctx,
+  );
+  expect(collide.ok).toBe(false);
+  if (!collide.ok) expect(collide.error).toContain("already exists");
+});
+
+test("workspace delete_category uncategorizes its tasks", async () => {
+  const fx = await seedUserOrgProject("TWSCATDEL");
+  const ctx = makeAuthContext(fx.userId);
+  await handleWorkspace(
+    {
+      action: "update",
+      project: "PRJTWSCATDEL",
+      categories: ["backend", "frontend"],
+    },
+    ctx,
+  );
+  const task = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Orphaned soon",
+    category: "backend",
+  });
+
+  const result = await handleWorkspace(
+    { action: "delete_category", project: "PRJTWSCATDEL", category: "backend" },
+    ctx,
+  );
+  const data = okData<{
+    deleted: string;
+    categories: string[];
+    _hints?: string[];
+  }>(result);
+  expect(data.deleted).toBe("backend");
+  expect(data.categories).toEqual(["frontend"]);
+  expect(data._hints?.join(" ")).toContain("category=null");
+
+  expect((await getTaskFull(ctx, task.id)).category).toBeNull();
+});

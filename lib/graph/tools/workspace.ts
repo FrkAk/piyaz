@@ -1,20 +1,31 @@
 /**
- * `piyaz_workspace` handler: caller identity, team memberships, and project
- * list/create/update. The session-start tool.
+ * `piyaz_workspace` handler: caller identity, team memberships, member
+ * directory, and project list/create/update plus category-cascade edits.
+ * The session-start tool.
  */
 
 import {
   createProject,
   updateProject,
   renameProjectIdentifier,
+  renameCategory,
+  deleteCategory,
+  getProjectCategories,
   listProjectsForMcp,
   listUserTeams,
   type ProjectUpdate,
 } from "@/lib/data/project";
 import { getWhoami } from "@/lib/data/account";
+import { listTeamMembers } from "@/lib/data/membership";
 import type { Project } from "@/lib/db/schema";
 import { parseIdentifier } from "@/lib/graph/identifier";
-import { formatWhoami } from "@/lib/graph/format-responses";
+import { formatTeamMembers, formatWhoami } from "@/lib/graph/format-responses";
+import {
+  MultiTeamAmbiguityError,
+  NoTeamMembershipError,
+  UnknownCategoryError,
+} from "@/lib/graph/errors";
+import { ForbiddenError } from "@/lib/auth/authorization";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   ok,
@@ -29,7 +40,15 @@ const MAX_LIST_ROWS = 100;
 
 /** Params for piyaz_workspace. */
 export type WorkspaceParams = {
-  action: "whoami" | "teams" | "projects" | "create" | "update";
+  action:
+    | "whoami"
+    | "teams"
+    | "projects"
+    | "members"
+    | "create"
+    | "update"
+    | "rename_category"
+    | "delete_category";
   project?: string;
   title?: string;
   description?: string;
@@ -37,6 +56,8 @@ export type WorkspaceParams = {
   categories?: string[];
   identifier?: string;
   organizationId?: string;
+  category?: string;
+  newCategory?: string;
 };
 
 /**
@@ -73,6 +94,82 @@ export async function handleWorkspace(
           projects: projects.slice(0, MAX_LIST_ROWS),
           _hints: [
             `Showing ${MAX_LIST_ROWS} of ${projects.length} projects. Address a specific project via piyaz_get project='<identifier>' view='meta', or archive stale projects.`,
+          ],
+        });
+      }
+      case "members": {
+        let organizationId = p.organizationId;
+        if (organizationId === undefined) {
+          const teams = await listUserTeams(ctx);
+          if (teams.length === 0) throw new NoTeamMembershipError();
+          if (teams.length > 1) {
+            throw new MultiTeamAmbiguityError(
+              teams.map((t) => ({ id: t.id, name: t.name })),
+            );
+          }
+          organizationId = teams[0].id;
+        }
+        const members = await listTeamMembers(ctx.userId, organizationId);
+        if (members.length === 0) {
+          throw new ForbiddenError("Forbidden", "team", organizationId);
+        }
+        const rendered = formatTeamMembers(members);
+        return ok(
+          rendered.text,
+          rendered.truncated ? { truncated: true } : undefined,
+        );
+      }
+      case "rename_category": {
+        if (!p.project)
+          return fail(
+            "project required for rename_category: identifier ('PYZ') or UUID.",
+          );
+        if (!p.category?.trim() || !p.newCategory?.trim())
+          return fail(
+            "category and newCategory required. rename_category renames the vocabulary entry AND moves every task in it, atomically. See the current vocabulary via piyaz_get project view='meta'.",
+          );
+        const projectId = await requireProjectId(ctx, p.project);
+        const vocabulary = await getProjectCategories(ctx, projectId);
+        if (!vocabulary.includes(p.category))
+          throw new UnknownCategoryError(p.category, vocabulary);
+        if (p.category === p.newCategory)
+          return fail(
+            "category and newCategory are identical; nothing to rename.",
+          );
+        if (vocabulary.includes(p.newCategory))
+          return fail(
+            `newCategory '${p.newCategory}' already exists. To merge, re-categorize the tasks (piyaz_search project='${p.project}' category='${p.category}', then piyaz_edit op='set' field='category' per task) and delete_category the emptied one.`,
+          );
+        await renameCategory(ctx, projectId, p.category, p.newCategory);
+        return ok({
+          renamed: { from: p.category, to: p.newCategory },
+          categories: vocabulary.map((c) =>
+            c === p.category ? p.newCategory : c,
+          ),
+          _hints: [
+            "Every task in the old category was moved in the same transaction. Verify with piyaz_get project view='meta'.",
+          ],
+        });
+      }
+      case "delete_category": {
+        if (!p.project)
+          return fail(
+            "project required for delete_category: identifier ('PYZ') or UUID.",
+          );
+        if (!p.category?.trim())
+          return fail(
+            "category required. delete_category removes the vocabulary entry and uncategorizes its tasks. See the current vocabulary via piyaz_get project view='meta'.",
+          );
+        const projectId = await requireProjectId(ctx, p.project);
+        const vocabulary = await getProjectCategories(ctx, projectId);
+        if (!vocabulary.includes(p.category))
+          throw new UnknownCategoryError(p.category, vocabulary);
+        await deleteCategory(ctx, projectId, p.category);
+        return ok({
+          deleted: p.category,
+          categories: vocabulary.filter((c) => c !== p.category),
+          _hints: [
+            "Its tasks now carry category=null (the category filter no longer finds them). Re-categorize via piyaz_edit op='set' field='category', or find them in piyaz_get project view='overview'.",
           ],
         });
       }

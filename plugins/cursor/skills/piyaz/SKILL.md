@@ -46,8 +46,11 @@ Eight tools. Read tools have cost (slim → very heavy); pick the lightest that 
 | `whoami` | slim | session start. Caller's user id, name, team count. |
 | `projects` | slim | session start. Project metadata (title, identifier, description, counts, team) for every team you belong to. Skips empty teams. |
 | `teams` | slim | before creating a project (multi-team accounts), when `projects` is empty, or when the user mentions a team it did not surface. Returns memberships including empty teams. |
+| `members` | slim | before assigning work to a teammate. One team's directory (name, user UUID, role) — the UUID source for `assigneeIds`, assignee ops, and `assignee='<uuid>'` filters. `organizationId` picks the team; single-team accounts auto-resolve. |
 | `create` | mutation | new project after brainstorm gate clears, or explicit user request. Multi-team account: requires `organizationId`. Single-team: auto-resolves. |
-| `update` | mutation | rename, reshape categories, status transition (`brainstorming` → `decomposing` → `active` → `archived`), or change identifier (renames every taskRef, breaks external links). |
+| `update` | mutation | rename, add categories, status transition (`brainstorming` → `decomposing` → `active` → `archived`), or change identifier (renames every taskRef, breaks external links). `categories=[...]` replaces the vocabulary WITHOUT touching task rows — additions and reorders only. |
+| `rename_category` | mutation | rename a vocabulary entry AND move every task in it, atomically. Never "rename" via `update categories=[...]`; that orphans the tasks. |
+| `delete_category` | mutation | remove a vocabulary entry; its tasks become uncategorized (`category=null`). Re-categorize them afterwards. |
 
 There is no `select` and no server-side session: pass the project identifier (or a taskRef, which implies the project) on every call.
 

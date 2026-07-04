@@ -116,8 +116,10 @@ export const DESCRIPTIONS = {
     "whoami=caller identity (user id, name, team count); run once at session start. " +
     "teams=every membership (id, name, slug, role, projectCount) including empty teams. " +
     "projects=all projects with identifier, status, team chip, task counts, progress; skips empty teams, so pair with teams for the full set. " +
+    "members=one team's directory (name, user UUID, role): the UUID source for assigneeIds, assignee ops, and assignee filters. " +
     "create=new project; multi-team accounts MUST pass organizationId (server rejects ambiguous calls with the team list inline). " +
-    "update=title, description, status, categories, or identifier. Renaming the identifier cascades every taskRef and breaks external references (PR titles, docs, commits). " +
+    "update=title, description, status, categories, or identifier. Renaming the identifier cascades every taskRef and breaks external references (PR titles, docs, commits); categories=[...] replaces the vocabulary WITHOUT touching task rows. " +
+    "rename_category/delete_category=vocabulary edits that cascade to task rows atomically. " +
     "Next: piyaz_search to find work, piyaz_map view='ready' to find unblocked tasks.",
   piyaz_search:
     "Universal task finder. Cross-project across every team by default; pass project='PYZ' to scope. At least one criterion required: query (matches taskRef, title, tags), status[], priority[], assignee ('me' or a user UUID), category, or tags[] (AND-within). " +
@@ -165,9 +167,18 @@ export const DESCRIPTIONS = {
 
 export const workspaceInputSchema = z.object({
   action: z
-    .enum(["whoami", "teams", "projects", "create", "update"])
+    .enum([
+      "whoami",
+      "teams",
+      "projects",
+      "members",
+      "create",
+      "update",
+      "rename_category",
+      "delete_category",
+    ])
     .describe(
-      "whoami=caller identity: user id, display name, team count; run at session start. teams=every membership (id, name, slug, role, projectCount), including empty teams. projects=projects across every team (identifier, title, status, team chip, task counts, progress); skips empty teams. create=new project (organizationId REQUIRED for multi-team accounts). update=modify title, description, status, categories, or identifier.",
+      "whoami=caller identity: user id, display name, team count; run at session start. teams=every membership (id, name, slug, role, projectCount), including empty teams. projects=projects across every team (identifier, title, status, team chip, task counts, progress); skips empty teams. members=one team's directory (name, user UUID, role) — the UUID source for assigneeIds, assignee ops, and assignee filters; organizationId picks the team (auto-resolved for single-team accounts). create=new project (organizationId REQUIRED for multi-team accounts). update=modify title, description, status, categories, or identifier. rename_category=rename a vocabulary entry AND move every task in it, atomically. delete_category=remove a vocabulary entry and uncategorize its tasks.",
     ),
   project: projectRefParam
     .optional()
@@ -199,7 +210,21 @@ export const workspaceInputSchema = z.object({
     .max(LIMITS.arrayItems)
     .optional()
     .describe(
-      "Task categories for this project (e.g. ['backend', 'frontend', 'mcp']). Drives drawer grouping in the UI.",
+      "update only: FULL REPLACEMENT of the project's category vocabulary (e.g. ['backend', 'frontend', 'mcp']). Does not touch task rows — renaming or removing an in-use entry this way orphans its tasks; use rename_category / delete_category for cascades. Best for adding entries or reordering.",
+    ),
+  category: z
+    .string()
+    .max(LIMITS.category)
+    .optional()
+    .describe(
+      "rename_category/delete_category: the existing entry, exactly as listed by piyaz_get project view='meta'.",
+    ),
+  newCategory: z
+    .string()
+    .max(LIMITS.category)
+    .optional()
+    .describe(
+      "rename_category only: the replacement name. Must not already exist — merge by re-categorizing tasks instead.",
     ),
   identifier: identifierSchema
     .optional()
@@ -210,7 +235,7 @@ export const workspaceInputSchema = z.object({
     .uuid()
     .optional()
     .describe(
-      "Target team UUID for create. REQUIRED when you're a member of more than one team; the create is rejected with the team list inline otherwise. Auto-resolved when you belong to exactly one team. Membership is verified server-side; non-member targets return 'not found'.",
+      "Target team UUID for create and members. REQUIRED when you're a member of more than one team; the call is rejected with the team list inline otherwise. Auto-resolved when you belong to exactly one team. Membership is verified server-side; non-member targets return 'not found'.",
     ),
 });
 
