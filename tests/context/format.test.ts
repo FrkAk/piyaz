@@ -4,6 +4,7 @@ import {
   formatCriteria,
   MAX_BUNDLE_LIST_LINES,
 } from "@/lib/context/format";
+import { budgetLines } from "@/lib/mcp/budget";
 
 const remaining = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -54,5 +55,16 @@ describe("capLines", () => {
     const capped = capLines(lines, "run piyaz_map view='neighbors'.");
     expect(capped).toHaveLength(MAX_BUNDLE_LIST_LINES + 1);
     expect(capped.at(-1)).toBe("… +5 more — run piyaz_map view='neighbors'.");
+  });
+});
+
+describe("budgetLines", () => {
+  test("reports truncation and appends the guidance line", () => {
+    const under = budgetLines(["a", "b"], 3, "narrow the filter.");
+    expect(under).toEqual({ lines: ["a", "b"], truncated: false });
+
+    const over = budgetLines(["a", "b", "c", "d"], 2, "narrow the filter.");
+    expect(over.truncated).toBe(true);
+    expect(over.lines).toEqual(["a", "b", "… +2 more — narrow the filter."]);
   });
 });

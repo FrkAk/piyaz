@@ -18,8 +18,10 @@ import {
   linkInputSchema,
   mapInputSchema,
   activityInputSchema,
+  DEEP_LENSES,
 } from "@/lib/mcp/schemas";
 import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
+import { isVerboseErrors } from "@/lib/api/error";
 import type { AuthContext } from "@/lib/auth/context";
 
 /**
@@ -98,7 +100,7 @@ function wrapTool<P>(
         );
         if (!check.allowed) {
           response = err(
-            `Heavy-read budget exhausted (${MCP_HEAVY_LIMIT.max}/${MCP_HEAVY_LIMIT.window}s for deep lenses, overviews, wide walks, large batches). Retry in ${check.resetIn}s, or use a lighter shape now: piyaz_get fields=[...], lens='summary', or piyaz_search with filters.`,
+            `Heavy-tier budget exhausted (${MCP_HEAVY_LIMIT.max}/${MCP_HEAVY_LIMIT.window}s for deep lenses, overviews, wide walks, large batches, category cascades). Retry in ${check.resetIn}s, or use a lighter shape now: piyaz_get fields=[...], lens='summary', or piyaz_search with filters.`,
           );
           return response;
         }
@@ -110,9 +112,8 @@ function wrapTool<P>(
     } catch (e) {
       console.error(`[mcp:${name}] error:`, e);
       errName = e instanceof Error ? e.name : "unknown";
-      const verbose = process.env.NODE_ENV === "development";
       response = err(
-        verbose && e instanceof Error ? e.message : "Internal error",
+        isVerboseErrors() && e instanceof Error ? e.message : "Internal error",
       );
       return response;
     } finally {
@@ -202,7 +203,11 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
     wrapTool(
       "piyaz_workspace",
       ctx,
-      { disc: (p) => p.action },
+      {
+        disc: (p) => p.action,
+        heavy: (p) =>
+          p.action === "rename_category" || p.action === "delete_category",
+      },
       handleWorkspace,
     ),
   );
@@ -244,9 +249,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         heavy: (p) =>
           (Boolean(p.task) &&
             !p.fields?.length &&
-            ["agent", "planning", "review", "record"].includes(
-              p.lens ?? "working",
-            )) ||
+            (DEEP_LENSES as readonly string[]).includes(p.lens ?? "working")) ||
           (Boolean(p.project) && p.view === "overview"),
       },
       handleGet,

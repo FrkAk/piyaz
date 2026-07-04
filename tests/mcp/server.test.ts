@@ -131,7 +131,7 @@ test("heavy shapes are rejected when the heavy budget is exhausted", async () =>
     const result = await client.callTool(call);
     expect(result.isError).toBe(true);
     const text = (result.content as { type: string; text: string }[])[0].text;
-    expect(text).toContain("Heavy-read budget exhausted");
+    expect(text).toContain("Heavy-tier budget exhausted");
     expect(text).toContain("Retry in 42s");
   }
   await client.close();
@@ -153,7 +153,7 @@ test("heavy gate rejects a large create batch before any write", async () => {
   expect(created.isError).toBe(true);
   const createdText = (created.content as { type: string; text: string }[])[0]
     .text;
-  expect(createdText).toContain("Heavy-read budget exhausted");
+  expect(createdText).toContain("Heavy-tier budget exhausted");
 
   const search = await client.callTool({
     name: "piyaz_search",
@@ -163,6 +163,49 @@ test("heavy gate rejects a large create batch before any write", async () => {
   const searchText = (search.content as { type: string; text: string }[])[0]
     .text;
   expect(searchText).toContain("No results");
+  await client.close();
+});
+
+test("category cascades are rejected when the heavy budget is exhausted", async () => {
+  const fx = await seedUserOrgProject("MCPHVYWS");
+  setBackend("mcpHeavy", exhaustedHeavyBackend);
+  const client = await connectedClient(fx.userId);
+
+  const cascadeCalls = [
+    {
+      name: "piyaz_workspace",
+      arguments: {
+        action: "rename_category",
+        project: "PRJMCPHVYWS",
+        category: "backend",
+        newCategory: "api",
+      },
+    },
+    {
+      name: "piyaz_workspace",
+      arguments: {
+        action: "delete_category",
+        project: "PRJMCPHVYWS",
+        category: "backend",
+      },
+    },
+  ];
+  for (const call of cascadeCalls) {
+    const result = await client.callTool(call);
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    expect(text).toContain("Heavy-tier budget exhausted");
+  }
+
+  const update = await client.callTool({
+    name: "piyaz_workspace",
+    arguments: {
+      action: "update",
+      project: "PRJMCPHVYWS",
+      title: "Still writable",
+    },
+  });
+  expect(update.isError ?? false).toBe(false);
   await client.close();
 });
 

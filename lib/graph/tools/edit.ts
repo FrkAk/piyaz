@@ -7,7 +7,6 @@
  */
 
 import { applyTaskEdit, type EditOp } from "@/lib/data/task-edit";
-import { getTaskFields } from "@/lib/data/task";
 import { getProjectTags } from "@/lib/data/project";
 import { LIMITS } from "@/lib/mcp/schemas";
 import type { Decision } from "@/lib/types";
@@ -154,17 +153,12 @@ function summarizeOps(ops: EditOp[]): OpsPayload {
  * required-field checks against the persisted row, jump and terminal-
  * reversal warnings against the pre-edit status.
  *
- * @param ctx - Resolved auth context.
- * @param taskId - Task UUID.
  * @param payload - Fields this call's ops wrote.
- * @param priorStatus - Status before this edit (read only when a status op
- *   is present).
- * @param persisted - Persisted row state after the edit.
+ * @param priorStatus - Status before this edit, from the locked pre-edit row.
+ * @param persisted - Persisted row state after the edit, including links.
  * @returns Hint strings.
  */
-async function statusHints(
-  ctx: AuthContext,
-  taskId: string,
+function statusHints(
   payload: OpsPayload,
   priorStatus: string | undefined,
   persisted: {
@@ -172,8 +166,9 @@ async function statusHints(
     decisions?: Decision[] | null;
     files?: string[] | null;
     acceptanceCriteria?: { checked: boolean }[] | null;
+    links: { kind: string }[];
   },
-): Promise<string[]> {
+): string[] {
   const hints: string[] = [];
   const next = payload.status;
   if (!next) return hints;
@@ -201,7 +196,6 @@ async function statusHints(
     );
   }
   if (next === "in_review") {
-    const linksRow = await getTaskFields(ctx, taskId, ["links"]);
     hints.push(
       ...inReviewStatusHints(
         {
@@ -210,7 +204,7 @@ async function statusHints(
           files: payload.files,
           prUrl: payload.prUrl,
         },
-        { ...persisted, links: linksRow.links ?? [] },
+        persisted,
       ),
     );
   }
@@ -249,10 +243,6 @@ export async function handleEdit(
       return fail(`${oversize}. The per-field limits match piyaz_create.`);
     const taskId = await requireTaskId(ctx, p.task);
     const payload = summarizeOps(p.operations);
-
-    const priorStatus = payload.status
-      ? ((await getTaskFields(ctx, taskId, ["status"])).status ?? undefined)
-      : undefined;
 
     const result = await applyTaskEdit(
       ctx,
@@ -299,12 +289,13 @@ export async function handleEdit(
       );
     }
     hints.push(
-      ...(await statusHints(ctx, taskId, payload, priorStatus, {
+      ...statusHints(payload, result.previousStatus, {
         executionRecord: result.executionRecord,
         decisions: result.decisions,
         files: result.files as string[] | null,
         acceptanceCriteria: result.acceptanceCriteria,
-      })),
+        links: result.links ?? [],
+      }),
     );
     hints.push(
       ...projectPhaseHints(

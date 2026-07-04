@@ -11,7 +11,10 @@ import {
   taskAssignees,
   type Task,
 } from "@/lib/db/schema";
-import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
+import {
+  fetchTaskChildren,
+  type TaskChildrenRow,
+} from "@/lib/db/raw/fetch-task-children";
 import {
   assertTaskAccessTx,
   ForbiddenError,
@@ -32,6 +35,7 @@ import {
   type ActivityEventInput,
 } from "@/lib/data/activity";
 import {
+  applyPrUrlTx,
   assertAssigneesInTeam,
   deleteTask,
   deleteTaskPreview,
@@ -40,13 +44,14 @@ import {
   setTaskAssignees,
   type UpdateTaskResult,
 } from "@/lib/data/task";
-import type {
-  AcceptanceCriterion,
-  ActivityEventType,
-  Decision,
-  Estimate,
-  Priority,
-  TaskStatus,
+import {
+  TASK_STATUSES,
+  type AcceptanceCriterion,
+  type ActivityEventType,
+  type Decision,
+  type Estimate,
+  type Priority,
+  type TaskStatus,
 } from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
 
@@ -179,12 +184,16 @@ export type EditOp = {
 
 /**
  * Result of {@link applyTaskEdit}. The edit path returns the refetched task row
- * plus `applied`; the two `delete_task` paths are distinguishable by their
- * `task` (preview) vs `deleted` (execution) property.
+ * plus `applied`, the pre-edit `previousStatus` from the locked row, and
+ * `links` (populated only on the status-refetch path); the two `delete_task`
+ * paths are distinguishable by their `task` (preview) vs `deleted`
+ * (execution) property.
  */
 export type ApplyTaskEditResult =
   | (UpdateTaskResult & {
       applied: string[];
+      previousStatus: TaskStatus;
+      links: TaskChildrenRow["links"];
       projectStatus: ProjectStatus;
       projectIdentifier: string;
     })
@@ -221,14 +230,6 @@ const ROW_FIELDS: readonly RowScalarField[] = [
   "tags",
   "files",
 ];
-const TASK_STATUSES = [
-  "draft",
-  "planned",
-  "in_progress",
-  "in_review",
-  "done",
-  "cancelled",
-] as const satisfies readonly TaskStatus[];
 const PRIORITIES = [
   "urgent",
   "core",
@@ -1465,62 +1466,6 @@ async function foldFormattedText(acc: EditAccumulator): Promise<void> {
 }
 
 /**
- * Delete or upsert the task's `pull_request` link for a `set prUrl` op,
- * mirroring `updateTask`'s prUrl handling.
- *
- * @param tx - Active RLS-scoped transaction.
- * @param taskId - Owning task id.
- * @param projectId - Owning project id.
- * @param classified - Classified link, or null to clear the pull_request link.
- * @param createdBy - Caller id for the `created_by` column on inserts.
- * @returns The activity event, or null when nothing changed.
- */
-async function applyPrUrl(
-  tx: Tx,
-  taskId: string,
-  projectId: string,
-  classified: ClassifiedLink | null,
-  createdBy: string,
-): Promise<ActivityEventInput | null> {
-  if (classified === null) {
-    const deleted = await tx
-      .delete(taskLinks)
-      .where(
-        and(eq(taskLinks.taskId, taskId), eq(taskLinks.kind, "pull_request")),
-      )
-      .returning({ id: taskLinks.id });
-    return deleted.length > 0
-      ? {
-          projectId,
-          taskId,
-          type: "link_removed",
-          summary: "removed the pull request link",
-        }
-      : null;
-  }
-  const [inserted] = await tx
-    .insert(taskLinks)
-    .values({
-      taskId,
-      kind: classified.kind,
-      url: classified.url,
-      label: classified.label,
-      createdBy,
-    })
-    .onConflictDoNothing({ target: [taskLinks.taskId, taskLinks.url] })
-    .returning({ id: taskLinks.id });
-  return inserted
-    ? {
-        projectId,
-        taskId,
-        type: "link_added",
-        summary: `linked ${classified.label ?? classified.kind}`,
-        targetRef: classified.url,
-      }
-    : null;
-}
-
-/**
  * Apply an operation-based edit to a task atomically. Validates every op first,
  * routes `delete_task` before opening a transaction, then applies text, scalar,
  * and by-id collection ops in order inside one transaction — a failing op rolls
@@ -1534,8 +1479,9 @@ async function applyPrUrl(
  * @param ops - Ordered operations (capped at {@link MAX_OPS}).
  * @param ifUpdatedAt - Optional optimistic-concurrency precondition; the task's
  *   current `updatedAt` must match to millisecond precision.
- * @returns The refetched task row plus `applied` labels, or the `delete_task`
- *   preview/execution result.
+ * @returns The refetched task row plus `applied` labels, the pre-edit
+ *   `previousStatus`, and `links` (on the status-refetch path), or the
+ *   `delete_task` preview/execution result.
  * @throws InvalidEditOpError on op incoherence.
  * @throws StaleWriteError when `ifUpdatedAt` does not match.
  * @throws StrReplaceNoMatchError / StrReplaceMultipleMatchError on bad replaces.
@@ -1649,6 +1595,7 @@ export async function applyTaskEdit(
     if (acc.statusSet) refetchNeeded = true;
     let criteriaResult: AcceptanceCriterion[] | null = null;
     let decisionsResult: Decision[] | null = null;
+    let linksResult: TaskChildrenRow["links"] = null;
     if (refetchNeeded) {
       const children = await fetchTaskChildren(tx, taskId);
       criteriaResult = (children.acceptance_criteria ?? []).map((c) => ({
@@ -1662,12 +1609,15 @@ export async function applyTaskEdit(
         source: d.source as Decision["source"],
         date: d.date,
       }));
+      linksResult = children.links;
     }
     return {
       row,
       criteriaResult,
       decisionsResult,
+      linksResult,
       applied,
+      previousStatus: current.status,
       projectStatus: gate.projectStatus,
       projectIdentifier: gate.projectIdentifier,
     };
@@ -1677,7 +1627,9 @@ export async function applyTaskEdit(
   return Object.assign(result.row, {
     acceptanceCriteria: result.criteriaResult,
     decisions: result.decisionsResult,
+    links: result.linksResult,
     applied: result.applied,
+    previousStatus: result.previousStatus,
     projectStatus: result.projectStatus,
     projectIdentifier: result.projectIdentifier,
   });
@@ -1749,7 +1701,13 @@ async function applyPreparedOp(
       return { event: null, applied: `set ${prep.field}`, refetch: false };
     case "prUrl":
       return {
-        event: await applyPrUrl(tx, taskId, projectId, prep.classified, userId),
+        event: await applyPrUrlTx(
+          tx,
+          taskId,
+          projectId,
+          prep.classified,
+          userId,
+        ),
         applied: "set prUrl",
         refetch: false,
       };

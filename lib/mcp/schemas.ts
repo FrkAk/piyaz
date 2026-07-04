@@ -14,6 +14,7 @@
  */
 import { z } from "zod/v4";
 import { identifierSchema } from "@/lib/graph/identifier";
+import { TASK_STATUSES } from "@/lib/types";
 
 /**
  * Per-field anti-abuse ceilings for MCP tool inputs. These are deliberately
@@ -78,15 +79,27 @@ export const TASK_FIELD_ENUM = [
   "assignees",
 ] as const;
 
-/** Task lifecycle statuses, in progression order. */
-const TASK_STATUS_ENUM = [
-  "draft",
-  "planned",
-  "in_progress",
-  "in_review",
-  "done",
-  "cancelled",
+/** piyaz_get task lenses, lightest to deepest. */
+export const GET_LENSES = [
+  "summary",
+  "working",
+  "agent",
+  "planning",
+  "review",
+  "record",
 ] as const;
+
+/**
+ * Lenses billed to the heavy rate tier: each renders multi-hop closures or
+ * full execution records. Membership in {@link GET_LENSES} is
+ * compiler-checked via `satisfies`.
+ */
+export const DEEP_LENSES = [
+  "agent",
+  "planning",
+  "review",
+  "record",
+] as const satisfies readonly (typeof GET_LENSES)[number][];
 
 /** Task priority levels, most to least urgent. */
 const PRIORITY_ENUM = ["urgent", "core", "normal", "backlog"] as const;
@@ -256,8 +269,8 @@ export const searchInputSchema = z.object({
       "Project identifier ('PYZ') or UUID to scope the search. DEFAULT: cross-project across every team you belong to. Project-scoped results include the derived state (ready/blocked/plannable/...).",
     ),
   status: z
-    .array(z.enum(TASK_STATUS_ENUM))
-    .max(TASK_STATUS_ENUM.length)
+    .array(z.enum(TASK_STATUSES))
+    .max(TASK_STATUSES.length)
     .optional()
     .describe("Lifecycle statuses to include (OR-within)."),
   priority: z
@@ -312,7 +325,7 @@ export const getInputSchema = z.object({
       "Project identifier ('PYZ') or project UUID. Pass exactly one of task or project.",
     ),
   lens: z
-    .enum(["summary", "working", "agent", "planning", "review", "record"])
+    .enum(GET_LENSES)
     .optional()
     .describe(
       "Task reads only; default 'working'. summary=header + description + counts + 1-hop edges with notes (lightest with edges). working=criteria/decisions/links WITH their ids (the edit-address read) + 1-hop edges. agent=multi-hop deps + upstream execution records + related (non-blocking) tasks; fetch BEFORE coding; done/cancelled tasks return the retrospective record instead. planning=project description, prereqs, work-so-far, downstream specs, abandoned approaches; fetch BEFORE writing the implementation plan. review=implementationPlan alongside executionRecord, PR link, AC evaluation, review-lens prompts; for in_review tasks. record=retrospective bundle (outcome, decisions, PR link) for done/cancelled tasks.",
@@ -369,7 +382,7 @@ const createTaskItemSchema = z.object({
       "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence flagged): what + who it serves + where it fits.",
     ),
   status: z
-    .enum(TASK_STATUS_ENUM)
+    .enum(TASK_STATUSES)
     .optional()
     .describe(
       "Defaults to 'draft'. Lifecycle: draft → planned → in_progress → in_review → done.",

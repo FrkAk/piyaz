@@ -39,7 +39,8 @@ const STATUS_ORDER = [
 
 /**
  * Format a task as a compact single line.
- * @param t - Task with id, title, status, and optional tags/category/priority/estimate/assignees.
+ * @param t - Task with id, title, status, and optional state/tags/category/
+ *   priority/estimate/assignees. `state` renders as `[status|state]`.
  * @returns Formatted line string.
  */
 function taskLine(t: {
@@ -47,13 +48,15 @@ function taskLine(t: {
   taskRef: string;
   title: string;
   status: string;
+  state?: string | null;
   tags?: string[];
   category?: string | null;
   priority?: string | null;
   estimate?: number | null;
   assigneeCount?: number;
 }): string {
-  let line = `- \`${t.taskRef}\` "${t.title}" [${t.status}] \`${t.id}\``;
+  const stateSuffix = t.state ? `|${t.state}` : "";
+  let line = `- \`${t.taskRef}\` "${t.title}" [${t.status}${stateSuffix}] \`${t.id}\``;
   if (t.category) line += ` | ${t.category}`;
   if (t.priority) line += ` | ${t.priority}`;
   if (t.estimate) line += ` | ${t.estimate}pts`;
@@ -320,21 +323,6 @@ export function formatOverview(
 }
 
 /**
- * Format one cross-project / filtered search result line, ref-first.
- * @param r - Search item; `state` renders when present (project-scoped mode).
- * @returns Formatted line.
- */
-function mcpSearchLine(r: McpSearchItem): string {
-  const stateSuffix = r.state ? `|${r.state}` : "";
-  let line = `- \`${r.taskRef}\` "${r.title}" [${r.status}${stateSuffix}] \`${r.id}\``;
-  if (r.category) line += ` | ${r.category}`;
-  if (r.priority) line += ` | ${r.priority}`;
-  if (r.estimate) line += ` | ${r.estimate}pts`;
-  if (r.tags.length > 0) line += `  tags: ${r.tags.join(", ")}`;
-  return line;
-}
-
-/**
  * Format a `piyaz_search` result page: ref-first lines, newest first, with
  * cursor guidance when more pages exist.
  * @param page - Search page from searchTasksForMcp.
@@ -353,7 +341,7 @@ export function formatMcpSearchPage(
       : [
           `${page.items.length} result${page.items.length > 1 ? "s" : ""} (newest first):`,
         ];
-  for (const r of page.items) parts.push(mcpSearchLine(r));
+  for (const r of page.items) parts.push(taskLine(r));
   if (page.nextCursor) {
     parts.push(
       `\nMore pages exist. Pass cursor='${String(page.nextCursor)}' for the next page, or narrow with filters.`,

@@ -7,7 +7,11 @@
  */
 
 import type { TaskState } from "@/lib/data/task";
-import { PROJECT_STATUS_ORDER, type Decision } from "@/lib/types";
+import {
+  PROJECT_STATUS_ORDER,
+  TASK_STATUSES,
+  type Decision,
+} from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   MultiTeamAmbiguityError,
@@ -48,6 +52,7 @@ import {
   InsufficientRoleError,
 } from "@/lib/auth/authorization";
 import { unwrapDriverError } from "@/lib/db/errors";
+import { isVerboseErrors } from "@/lib/api/error";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -297,7 +302,9 @@ export function statusJumpHints(
   priorStatus: string,
   nextStatus: string,
 ): string[] {
-  const order = ["draft", "planned", "in_progress", "in_review", "done"];
+  const order: readonly string[] = TASK_STATUSES.filter(
+    (s) => s !== "cancelled",
+  );
   const priorIdx = order.indexOf(priorStatus);
   const nextIdx = order.indexOf(nextStatus);
   if (priorIdx === -1 || nextIdx === -1) return [];
@@ -453,17 +460,15 @@ export function cancelledStatusHints(
 }
 
 /**
- * Build completion-protocol hints when a task transitions to or is created
- * in the `done` state. Required-field hints come first (executionRecord,
- * decisions, files, AC evaluation per lifecycle §1); the PR-opening hint
- * fires when the work touched files (lifecycle §2 step 3); the
- * propagation hint is informational (lifecycle §3).
+ * Build the completion-artifact hints shared by the `done` and `in_review`
+ * transitions: executionRecord, decisions, files, and AC evaluation per
+ * lifecycle §1.
+ *
  * @param payload - Fields supplied by the caller in this request.
  * @param persisted - Row state after the mutation.
- * @returns Hint strings for missing execution metadata, PR-opening, and
- *   downstream propagation.
+ * @returns Hint strings for missing execution metadata.
  */
-export function doneStatusHints(
+function completionArtifactHints(
   payload: {
     executionRecord?: string;
     decisions?: Decision[];
@@ -506,6 +511,34 @@ export function doneStatusHints(
       "Acceptance criteria are all unchecked. Evaluate each against your executionRecord and check the ones that hold via piyaz_edit op='check' with the item id. Do not auto-check everything.",
     );
   }
+  return hints;
+}
+
+/**
+ * Build completion-protocol hints when a task transitions to or is created
+ * in the `done` state. Required-field hints come first (executionRecord,
+ * decisions, files, AC evaluation per lifecycle §1); the PR-opening hint
+ * fires when the work touched files (lifecycle §2 step 3); the
+ * propagation hint is informational (lifecycle §3).
+ * @param payload - Fields supplied by the caller in this request.
+ * @param persisted - Row state after the mutation.
+ * @returns Hint strings for missing execution metadata, PR-opening, and
+ *   downstream propagation.
+ */
+export function doneStatusHints(
+  payload: {
+    executionRecord?: string;
+    decisions?: Decision[];
+    files?: string[];
+  },
+  persisted: {
+    executionRecord?: string | null;
+    decisions?: Decision[] | null;
+    files?: string[] | null;
+    acceptanceCriteria?: { checked: boolean }[] | null;
+  },
+): string[] {
+  const hints = completionArtifactHints(payload, persisted);
   const persistedFiles = payload.files ?? persisted.files ?? [];
   if (persistedFiles.length > 0) {
     hints.push(
@@ -545,36 +578,7 @@ export function inReviewStatusHints(
     links: { kind: string }[];
   },
 ): string[] {
-  const hints: string[] = [];
-  if (!payload.executionRecord && !persisted.executionRecord) {
-    hints.push(
-      "Missing executionRecord (lifecycle §1). Add 3-5 sentences on HOW it was built: function names, file paths, endpoints. Distinct from description (scope). Downstream tasks depend on this for context.",
-    );
-  }
-  if (
-    !payload.decisions &&
-    (!persisted.decisions || persisted.decisions.length === 0)
-  ) {
-    hints.push(
-      "Missing decisions (lifecycle §1). Record technical choices (CHOICE + WHY); downstream tasks need them.",
-    );
-  }
-  if (!payload.files && (!persisted.files || persisted.files.length === 0)) {
-    hints.push(
-      "Missing files (lifecycle §1). Record every path created or modified. For pure spec-review / docs / decision-only tasks that touched no repo files, set files=[] explicitly so this hint clears.",
-    );
-  }
-  const criteria = persisted.acceptanceCriteria;
-  if (
-    persisted.executionRecord &&
-    criteria &&
-    criteria.length > 0 &&
-    criteria.every((c) => !c.checked)
-  ) {
-    hints.push(
-      "Acceptance criteria are all unchecked. Evaluate each against your executionRecord and check the ones that hold via piyaz_edit op='check' with the item id. Do not auto-check everything.",
-    );
-  }
+  const hints = completionArtifactHints(payload, persisted);
   const hasPrLink = persisted.links.some((l) => l.kind === "pull_request");
   if (payload.prUrl == null && !hasPrLink) {
     hints.push(
@@ -849,6 +853,7 @@ export function translateError(e: unknown): ToolResult {
     return fail("Conflict: a record with that value already exists.");
   }
   console.error("[graph:tools] unhandled error:", e);
-  const verbose = process.env.NODE_ENV === "development";
-  return fail(verbose && e instanceof Error ? e.message : "Internal error");
+  return fail(
+    isVerboseErrors() && e instanceof Error ? e.message : "Internal error",
+  );
 }

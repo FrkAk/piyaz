@@ -473,6 +473,62 @@ test("prUrl set to null removes the pull_request link", async () => {
   expect(full.links).toEqual([]);
 });
 
+test("set prUrl converts a same-url link of another kind to pull_request", async () => {
+  const f = await seedUserOrgProject("prurl-convert");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  const url = "https://example.com/docs/spec";
+
+  await applyTaskEdit(ctx, task.id, [{ op: "add", collection: "links", url }]);
+  let full = await getTaskFull(ctx, task.id);
+  expect(full.links.map((l) => l.kind)).toEqual(["link"]);
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "prUrl", value: url },
+  ]);
+  full = await getTaskFull(ctx, task.id);
+  expect(full.links).toHaveLength(1);
+  expect(full.links[0]?.kind).toBe("pull_request");
+});
+
+test("set prUrl forces pull_request kind for non-github hosts", async () => {
+  const f = await seedUserOrgProject("prurl-host");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await applyTaskEdit(ctx, task.id, [
+    {
+      op: "set",
+      field: "prUrl",
+      value: "https://bitbucket.org/o/r/pull-requests/7",
+    },
+  ]);
+  const full = await getTaskFull(ctx, task.id);
+  expect(full.links.map((l) => l.kind)).toEqual(["pull_request"]);
+});
+
+test("set prUrl with a second url keeps both pull_request links", async () => {
+  const f = await seedUserOrgProject("prurl-multi");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "prUrl", value: "https://github.com/o/r/pull/1" },
+  ]);
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "prUrl", value: "https://github.com/o/r/pull/2" },
+  ]);
+  const full = await getTaskFull(ctx, task.id);
+  expect(full.links.map((l) => l.kind)).toEqual([
+    "pull_request",
+    "pull_request",
+  ]);
+  expect(full.links.map((l) => l.url).sort()).toEqual([
+    "https://github.com/o/r/pull/1",
+    "https://github.com/o/r/pull/2",
+  ]);
+});
+
 test("scalar set fires status and tag activity events", async () => {
   const f = await seedUserOrgProject("scalar");
   const ctx = makeAuthContext(f.userId);

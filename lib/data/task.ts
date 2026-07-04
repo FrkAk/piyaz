@@ -112,7 +112,11 @@ import type {
 import { edgeRefColumns } from "@/lib/data/edge-columns";
 import { projectColor } from "@/lib/ui/project-color";
 import { emitTaskEvent } from "@/lib/realtime/events";
-import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
+import {
+  classifyLink,
+  MalformedLinkError,
+  type ClassifiedLink,
+} from "@/lib/links/classify";
 
 /**
  * Compute one discrete activity event per changed task field. Scalars compare
@@ -2526,6 +2530,8 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
  * @param tx - Drizzle transaction handle.
  * @param projectId - UUID of the project the task belongs to.
  * @param userIds - Caller-supplied assignee ids.
+ * @param organizationId - Owning team id when the caller already resolved it
+ *   (e.g. from `assertProjectAccessTx`); skips the project lookup.
  * @throws ForbiddenError with a generic message and no `resourceId` if any
  *   supplied id is not a team member. Per-id details are deliberately
  *   withheld so the error cannot be used as a membership oracle.
@@ -2534,18 +2540,23 @@ export async function assertAssigneesInTeam(
   tx: Tx,
   projectId: string,
   userIds: string[],
+  organizationId?: string,
 ): Promise<void> {
   if (userIds.length === 0) return;
-  const [proj] = await tx
-    .select({ organizationId: projects.organizationId })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
-  if (!proj) throw new ProjectNotFoundError(projectId);
+  let orgId = organizationId;
+  if (!orgId) {
+    const [proj] = await tx
+      .select({ organizationId: projects.organizationId })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!proj) throw new ProjectNotFoundError(projectId);
+    orgId = proj.organizationId;
+  }
   const dedup = [...new Set(userIds)];
   const rows = await executeRaw<{ user_id: string }>(
     tx,
-    sql`SELECT user_id FROM public.org_member_user_ids_visible(${proj.organizationId}::uuid, ${uuidArray(dedup)})`,
+    sql`SELECT user_id FROM public.org_member_user_ids_visible(${orgId}::uuid, ${uuidArray(dedup)})`,
   );
   const found = new Set(rows.map((r) => r.user_id));
   const allInTeam = dedup.every((id) => found.has(id));
@@ -2653,20 +2664,21 @@ export async function prepareCreateTaskInput(
  * Insert one task row plus its child records inside an existing RLS-scoped
  * transaction, using a caller-computed allocation. The composable seam shared
  * by `createTask` (single) and `createTasksBatch`. `data` MUST already be
- * normalized/formatted via {@link prepareCreateTaskInput}; the allocation's
- * sequence number and order override any values on `data`.
+ * normalized/formatted via {@link prepareCreateTaskInput}, and any
+ * `assigneeIds` MUST already be membership-checked via
+ * {@link assertAssigneesInTeam}; the allocation's sequence number and order
+ * override any values on `data`.
  *
  * @param tx - Active RLS-scoped transaction handle.
  * @param actor - Resolved actor descriptor for activity attribution and the
  *   `created_by` column on any prUrl link.
  * @param data - Prepared create-task input (criteria/decisions normalized,
- *   text formatted, prUrl pre-validated).
+ *   text formatted, prUrl pre-validated, assignees pre-checked).
  * @param alloc - Allocated sequence number, order, and project identifier.
  * @param opts - When `deferActivity` is true, the `task_created` event is
  *   returned unwritten so the caller can batch the insert; otherwise it is
  *   written here.
  * @returns The created-task summary and the constructed `task_created` events.
- * @throws ForbiddenError when an assigneeId is not a member of the task's team.
  */
 export async function createTaskTx(
   tx: Tx,
@@ -2705,7 +2717,6 @@ export async function createTaskTx(
     .returning();
 
   if (assigneeIds && assigneeIds.length > 0) {
-    await assertAssigneesInTeam(tx, taskFields.projectId, assigneeIds);
     await setTaskAssignees(tx, task.id, assigneeIds, "replace");
   }
   if (formattedCriteria && formattedCriteria.length > 0) {
@@ -2720,7 +2731,7 @@ export async function createTaskTx(
       .insert(taskLinks)
       .values({
         taskId: task.id,
-        kind: classified.kind,
+        kind: "pull_request",
         url: classified.url,
         label: classified.label,
         createdBy: actor.userId,
@@ -2768,7 +2779,8 @@ export async function createTaskTx(
  * @param ctx - Resolved auth context.
  * @param data - Task fields. sequenceNumber assigned internally.
  * @returns Task summary with composed taskRef.
- * @throws ForbiddenError when the caller cannot access the project.
+ * @throws ForbiddenError when the caller cannot access the project or an
+ *   assigneeId is not a member of the project's team.
  * @throws ProjectNotFoundError when the project does not exist.
  * @throws TaskLimitError when the project's task cap is reached.
  */
@@ -2779,7 +2791,15 @@ export async function createTask(
   const prepared = await prepareCreateTaskInput(data);
 
   const result = await withUserContext(ctx.userId, async (tx) => {
-    await assertProjectAccessTx(tx, prepared.projectId);
+    const access = await assertProjectAccessTx(tx, prepared.projectId);
+    if (prepared.assigneeIds && prepared.assigneeIds.length > 0) {
+      await assertAssigneesInTeam(
+        tx,
+        prepared.projectId,
+        prepared.assigneeIds,
+        access.project.organizationId,
+      );
+    }
     await acquireProjectLock(tx, prepared.projectId);
 
     const [proj] = await tx
@@ -2896,6 +2916,85 @@ export type UpdateTaskResult = typeof tasks.$inferSelect & {
   acceptanceCriteria: AcceptanceCriterion[] | null;
   decisions: Decision[] | null;
 };
+
+/**
+ * Apply a `prUrl` write inside an open transaction. `null` clears every
+ * `pull_request` link; a URL guarantees a `pull_request`-kind link at that
+ * URL: the kind is forced so non-GitHub/GitLab PR hosts satisfy the review
+ * contract, and a same-URL link of another kind is converted in place.
+ * Other `pull_request` links are untouched — a task may carry several PRs.
+ * A same-URL `pull_request` link makes the call an idempotent no-op.
+ *
+ * @param tx - Active RLS-scoped transaction.
+ * @param taskId - Owning task id.
+ * @param projectId - Owning project id for the event row.
+ * @param classified - Classified link, or null to clear pull_request links.
+ * @param createdBy - Caller id for the `created_by` column on inserts.
+ * @returns The activity event, or null when nothing changed.
+ */
+export async function applyPrUrlTx(
+  tx: Tx,
+  taskId: string,
+  projectId: string,
+  classified: ClassifiedLink | null,
+  createdBy: string,
+): Promise<ActivityEventInput | null> {
+  if (classified === null) {
+    const deleted = await tx
+      .delete(taskLinks)
+      .where(
+        and(eq(taskLinks.taskId, taskId), eq(taskLinks.kind, "pull_request")),
+      )
+      .returning({ id: taskLinks.id });
+    return deleted.length > 0
+      ? {
+          projectId,
+          taskId,
+          type: "link_removed",
+          summary: "removed the pull request link",
+        }
+      : null;
+  }
+  const [existing] = await tx
+    .select({ id: taskLinks.id, kind: taskLinks.kind })
+    .from(taskLinks)
+    .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, classified.url)))
+    .limit(1);
+  if (existing?.kind === "pull_request") return null;
+  if (existing) {
+    await tx
+      .update(taskLinks)
+      .set({ kind: "pull_request", label: classified.label })
+      .where(eq(taskLinks.id, existing.id));
+    return {
+      projectId,
+      taskId,
+      type: "link_updated",
+      summary: `updated link to ${classified.label ?? "pull request"}`,
+      targetRef: classified.url,
+    };
+  }
+  const [inserted] = await tx
+    .insert(taskLinks)
+    .values({
+      taskId,
+      kind: "pull_request",
+      url: classified.url,
+      label: classified.label,
+      createdBy,
+    })
+    .onConflictDoNothing({ target: [taskLinks.taskId, taskLinks.url] })
+    .returning({ id: taskLinks.id });
+  return inserted
+    ? {
+        projectId,
+        taskId,
+        type: "link_added",
+        summary: `linked ${classified.label ?? "pull request"}`,
+        targetRef: classified.url,
+      }
+    : null;
+}
 
 /**
  * Update a task and emit `activity_events` for the changes. Protected fields
@@ -3153,49 +3252,16 @@ export async function updateTask(
     }
 
     if (hasPrUrl) {
-      if (typeof prUrl !== "string" || prUrl.length === 0) {
-        const deleted = await tx
-          .delete(taskLinks)
-          .where(
-            and(
-              eq(taskLinks.taskId, taskId),
-              eq(taskLinks.kind, "pull_request"),
-            ),
-          )
-          .returning({ id: taskLinks.id });
-        if (deleted.length > 0) {
-          eventInputs.push({
-            projectId: current.projectId,
-            taskId,
-            type: "link_removed",
-            summary: "removed the pull request link",
-          });
-        }
-      } else {
-        const classified = classifyLink(prUrl);
-        const [inserted] = await tx
-          .insert(taskLinks)
-          .values({
-            taskId,
-            kind: classified.kind,
-            url: classified.url,
-            label: classified.label,
-            createdBy: ctx.userId,
-          })
-          .onConflictDoNothing({
-            target: [taskLinks.taskId, taskLinks.url],
-          })
-          .returning({ id: taskLinks.id });
-        if (inserted) {
-          eventInputs.push({
-            projectId: current.projectId,
-            taskId,
-            type: "link_added",
-            summary: `linked ${classified.label ?? classified.kind}`,
-            targetRef: classified.url,
-          });
-        }
-      }
+      const event = await applyPrUrlTx(
+        tx,
+        taskId,
+        current.projectId,
+        typeof prUrl === "string" && prUrl.length > 0
+          ? classifyLink(prUrl)
+          : null,
+        ctx.userId,
+      );
+      if (event) eventInputs.push(event);
     }
 
     if (eventInputs.length > 0) {

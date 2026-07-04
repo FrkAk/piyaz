@@ -4,6 +4,8 @@
  * a whole project into context and always learn the narrowing call.
  */
 
+import { capLines } from "@/lib/context/format";
+
 /** Result of a {@link budgetLines} pass. */
 export type BudgetedLines = {
   /** The lines that fit the budget. */
@@ -13,8 +15,8 @@ export type BudgetedLines = {
 };
 
 /**
- * Cap a line list at `limit`, appending one guidance line naming what was
- * dropped and how to fetch the rest.
+ * Cap a line list at `limit` via {@link capLines}, adding the truncation
+ * flag callers log.
  *
  * @param lines - Full line list.
  * @param limit - Maximum lines to keep.
@@ -27,8 +29,8 @@ export function budgetLines(
   limit: number,
   guidance: string,
 ): BudgetedLines {
-  if (lines.length <= limit) return { lines, truncated: false };
-  const kept = lines.slice(0, limit);
-  kept.push(`… +${lines.length - limit} more — ${guidance}`);
-  return { lines: kept, truncated: true };
+  return {
+    lines: capLines(lines, guidance, limit),
+    truncated: lines.length > limit,
+  };
 }

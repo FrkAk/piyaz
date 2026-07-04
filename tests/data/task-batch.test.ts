@@ -408,6 +408,39 @@ describe("createTasksBatch", () => {
     expect(t.sequenceNumber).toBe(1);
     expect(String(t.taskRef)).toBe("PRJb11-1");
   });
+
+  test("batch items with assigneeIds persist assignees", async () => {
+    const f = await seedUserOrgProject("b12");
+    const ctx = makeAuthContext(f.userId);
+    const { created } = await createTasksBatch(ctx, f.projectId, [
+      { title: "A", description: "Does A.", assigneeIds: [f.userId] },
+      { title: "B", description: "Does B.", assigneeIds: [f.userId] },
+    ]);
+    expect(created).toHaveLength(2);
+    const sql = superuserPool();
+    const rows = await sql<{ count: string }[]>`
+      SELECT COUNT(*) AS count FROM task_assignees
+      WHERE task_id = ANY(${created.map((c) => c.id)})`;
+    expect(Number(rows[0].count)).toBe(2);
+  });
+
+  test("batch with a non-member assignee fails before any write", async () => {
+    const f = await seedUserOrgProject("b13");
+    const ctx = makeAuthContext(f.userId);
+    const err = await createTasksBatch(ctx, f.projectId, [
+      { title: "A", description: "Does A." },
+      {
+        title: "B",
+        description: "Does B.",
+        assigneeIds: ["00000000-0000-4000-8000-000000000000"],
+      },
+    ]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ForbiddenError);
+    const sql = superuserPool();
+    const rows = await sql<{ count: string }[]>`
+      SELECT COUNT(*) AS count FROM tasks WHERE project_id = ${f.projectId}`;
+    expect(Number(rows[0].count)).toBe(0);
+  });
 });
 
 test("batch rejects a category outside the project vocabulary before any write", async () => {

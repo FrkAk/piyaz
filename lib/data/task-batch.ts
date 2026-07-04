@@ -14,6 +14,7 @@ import {
   type ActivityEventInput,
 } from "@/lib/data/activity";
 import {
+  assertAssigneesInTeam,
   createTaskTx,
   prepareCreateTaskInput,
   type CreateTaskInput,
@@ -224,7 +225,8 @@ function detectCycle(adj: Map<string, string[]>): string[] | null {
  * @throws UnknownCategoryError when an item's category is outside the project's
  *   vocabulary.
  * @throws ForbiddenError when the caller cannot access the project, an item's
- *   prUrl is malformed, or a UUID edge endpoint is not an accessible task.
+ *   prUrl is malformed, an assigneeId is not a team member, or a UUID edge
+ *   endpoint is not an accessible task.
  * @throws ProjectArchivedError when the project is archived (read-only).
  */
 export async function createTasksBatch(
@@ -287,6 +289,17 @@ export async function createTasksBatch(
           vocabulary,
         );
       }
+    }
+    const allAssigneeIds = [
+      ...new Set(preparedItems.flatMap((p) => p.data.assigneeIds ?? [])),
+    ];
+    if (allAssigneeIds.length > 0) {
+      await assertAssigneesInTeam(
+        tx,
+        projectId,
+        allAssigneeIds,
+        access.project.organizationId,
+      );
     }
     await acquireProjectLock(tx, projectId);
 

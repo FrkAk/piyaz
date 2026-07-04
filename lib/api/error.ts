@@ -14,7 +14,7 @@ import { error } from "@/lib/api/response";
  *
  * @returns True only when `NODE_ENV === "development"`.
  */
-function isVerboseErrors(): boolean {
+export function isVerboseErrors(): boolean {
   return process.env.NODE_ENV === "development";
 }
 
