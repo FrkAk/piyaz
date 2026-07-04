@@ -185,9 +185,9 @@ export type EditOp = {
 /**
  * Result of {@link applyTaskEdit}. The edit path returns the refetched task row
  * plus `applied`, the pre-edit `previousStatus` from the locked row, and
- * `links` (populated only on the status-refetch path); the two `delete_task`
- * paths are distinguishable by their `task` (preview) vs `deleted`
- * (execution) property.
+ * `links` (populated whenever the child refetch runs: a status set or any
+ * collection op); the two `delete_task` paths are distinguishable by their
+ * `task` (preview) vs `deleted` (execution) property.
  */
 export type ApplyTaskEditResult =
   | (UpdateTaskResult & {
@@ -1480,7 +1480,7 @@ async function foldFormattedText(acc: EditAccumulator): Promise<void> {
  * @param ifUpdatedAt - Optional optimistic-concurrency precondition; the task's
  *   current `updatedAt` must match to millisecond precision.
  * @returns The refetched task row plus `applied` labels, the pre-edit
- *   `previousStatus`, and `links` (on the status-refetch path), or the
+ *   `previousStatus`, and `links` (when the child refetch runs), or the
  *   `delete_task` preview/execution result.
  * @throws InvalidEditOpError on op incoherence.
  * @throws StaleWriteError when `ifUpdatedAt` does not match.

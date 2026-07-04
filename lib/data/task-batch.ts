@@ -290,17 +290,6 @@ export async function createTasksBatch(
         );
       }
     }
-    const allAssigneeIds = [
-      ...new Set(preparedItems.flatMap((p) => p.data.assigneeIds ?? [])),
-    ];
-    if (allAssigneeIds.length > 0) {
-      await assertAssigneesInTeam(
-        tx,
-        projectId,
-        allAssigneeIds,
-        access.project.organizationId,
-      );
-    }
     await acquireProjectLock(tx, projectId);
 
     const [maxRow] = await tx
@@ -350,6 +339,20 @@ export async function createTasksBatch(
     const maxTasks = parseEnvInt(process.env.MAX_TASKS_PER_PROJECT, 50_000);
     if (count + toCreate.length > maxTasks) {
       throw new TaskLimitError(projectId, maxTasks);
+    }
+
+    const toCreateAssigneeIds = [
+      ...new Set(
+        toCreate.flatMap((i) => preparedItems[i].data.assigneeIds ?? []),
+      ),
+    ];
+    if (toCreateAssigneeIds.length > 0) {
+      await assertAssigneesInTeam(
+        tx,
+        projectId,
+        toCreateAssigneeIds,
+        access.project.organizationId,
+      );
     }
 
     let seq = maxSeqBase;

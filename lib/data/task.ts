@@ -2499,9 +2499,10 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
    */
   assigneeIds?: string[];
   /**
-   * Optional PR URL. Sugar: upserts a `task_links` row with kind derived
-   * from {@link classifyLink} inside the same transaction as the task
-   * insert. Not a column on `tasks`; stripped before the typed insert.
+   * Optional PR URL. Sugar: upserts a `task_links` row with kind forced to
+   * `pull_request` ({@link classifyLink} validates the URL and derives the
+   * label) inside the same transaction as the task insert. Not a column on
+   * `tasks`; stripped before the typed insert.
    */
   prUrl?: string | null;
   /**
@@ -2921,7 +2922,8 @@ export type UpdateTaskResult = typeof tasks.$inferSelect & {
  * Apply a `prUrl` write inside an open transaction. `null` clears every
  * `pull_request` link; a URL guarantees a `pull_request`-kind link at that
  * URL: the kind is forced so non-GitHub/GitLab PR hosts satisfy the review
- * contract, and a same-URL link of another kind is converted in place.
+ * contract, and a same-URL link of another kind is converted in place,
+ * keeping any user-authored label.
  * Other `pull_request` links are untouched — a task may carry several PRs.
  * A same-URL `pull_request` link makes the call an idempotent no-op.
  *
@@ -2956,7 +2958,11 @@ export async function applyPrUrlTx(
       : null;
   }
   const [existing] = await tx
-    .select({ id: taskLinks.id, kind: taskLinks.kind })
+    .select({
+      id: taskLinks.id,
+      kind: taskLinks.kind,
+      label: taskLinks.label,
+    })
     .from(taskLinks)
     .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, classified.url)))
     .limit(1);
@@ -2964,13 +2970,13 @@ export async function applyPrUrlTx(
   if (existing) {
     await tx
       .update(taskLinks)
-      .set({ kind: "pull_request", label: classified.label })
+      .set({ kind: "pull_request" })
       .where(eq(taskLinks.id, existing.id));
     return {
       projectId,
       taskId,
       type: "link_updated",
-      summary: `updated link to ${classified.label ?? "pull request"}`,
+      summary: `updated link to ${existing.label ?? classified.label ?? "pull request"}`,
       targetRef: classified.url,
     };
   }

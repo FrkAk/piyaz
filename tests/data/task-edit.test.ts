@@ -479,7 +479,9 @@ test("set prUrl converts a same-url link of another kind to pull_request", async
   const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
   const url = "https://example.com/docs/spec";
 
-  await applyTaskEdit(ctx, task.id, [{ op: "add", collection: "links", url }]);
+  await applyTaskEdit(ctx, task.id, [
+    { op: "add", collection: "links", url, label: "design brief" },
+  ]);
   let full = await getTaskFull(ctx, task.id);
   expect(full.links.map((l) => l.kind)).toEqual(["link"]);
 
@@ -489,6 +491,7 @@ test("set prUrl converts a same-url link of another kind to pull_request", async
   full = await getTaskFull(ctx, task.id);
   expect(full.links).toHaveLength(1);
   expect(full.links[0]?.kind).toBe("pull_request");
+  expect(full.links[0]?.label).toBe("design brief");
 });
 
 test("set prUrl forces pull_request kind for non-github hosts", async () => {
