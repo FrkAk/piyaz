@@ -243,7 +243,7 @@ export function mcpRateLimitMessage(
   resetIn: number,
 ): string {
   return (
-    `MCP rate limit reached (${max} calls/${window}s per API key, all tools combined). ` +
+    `MCP rate limit reached (${max} calls/${window}s, all tools combined). ` +
     `Retry in ${resetIn}s, or reduce call volume: batch task creation into one piyaz_create ` +
     `and combine field reads into one piyaz_get fields=[...].`
   );

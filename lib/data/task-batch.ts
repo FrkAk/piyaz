@@ -216,7 +216,9 @@ function detectCycle(adj: Map<string, string[]>): string[] | null {
  * @param edges - Edges between item keys and/or existing project task UUIDs.
  * @param onDuplicate - `skip` dedups title collisions; `error` rejects the
  *   whole batch with {@link DuplicateTaskTitleError} before any write.
- * @returns Created and deduped items in input order, plus the inserted edge count.
+ * @returns Created and deduped items in input order, the inserted edge
+ *   count, the project's status and identifier, and the pre-existing task
+ *   count (`priorTaskCount`).
  * @throws BatchInputError on a structurally invalid payload.
  * @throws DuplicateTaskTitleError when `onDuplicate` is `error` and titles collide.
  * @throws TaskLimitError when the create count would exceed the project cap.

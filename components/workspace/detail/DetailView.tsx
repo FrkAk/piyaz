@@ -145,8 +145,8 @@ export function DetailView({
     [taskId, allEdges, taskMap, recordFlags],
   );
   const abandoned = useMemo(
-    () => buildAbandoned(taskId, allEdges, taskMap, recordFlags),
-    [taskId, allEdges, taskMap, recordFlags],
+    () => buildAbandoned(taskId, allEdges, taskMap),
+    [taskId, allEdges, taskMap],
   );
   const blockedBy = useMemo(
     () => buildBlockedBy(taskId, allEdges, taskMap),
@@ -327,20 +327,18 @@ function buildPrerequisites(
 
 /**
  * Build the abandoned-approaches refs — direct cancelled `depends_on`
- * prerequisites carrying execution records, mirroring the planning
- * bundle's record-gated Abandoned Approaches list.
+ * prerequisites with or without a recorded rationale, mirroring the
+ * planning bundle's Abandoned Approaches list.
  *
  * @param taskId - Current task UUID.
  * @param edges - All slim project edges.
  * @param taskMap - Map of task IDs to title/status/taskRef.
- * @param recordFlags - Execution-record presence per task id.
- * @returns Cancelled direct prerequisite rows with records.
+ * @returns Cancelled direct prerequisite rows.
  */
 function buildAbandoned(
   taskId: string,
   edges: TaskGraphEdge[],
   taskMap: Map<string, { title: string; status: string; taskRef: string }>,
-  recordFlags: Map<string, boolean>,
 ): BundleNeighbor[] {
   const out: BundleNeighbor[] = [];
   for (const edge of edges) {
@@ -349,7 +347,6 @@ function buildAbandoned(
     if (edge.targetTaskId === taskId) continue;
     const info = taskMap.get(edge.targetTaskId);
     if (!info || info.status !== "cancelled") continue;
-    if (!recordFlags.get(edge.targetTaskId)) continue;
     out.push({
       id: edge.targetTaskId,
       taskRef: info.taskRef,

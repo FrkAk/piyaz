@@ -163,7 +163,7 @@ interface BundlePreviewProps {
   plan: string | null;
   /** Effective prerequisites within the closure depth (cancelled-transparent walk). */
   prerequisites: BundlePrereqRef[];
-  /** Direct cancelled prerequisites with execution records ("Abandoned Approaches"). */
+  /** Direct cancelled prerequisites ("Abandoned Approaches"). */
   abandoned: BundleNeighbor[];
   /** Unfinished effective direct prerequisites (cancelled-transparent walk). */
   blockedBy: BundleNeighbor[];
