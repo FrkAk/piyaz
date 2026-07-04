@@ -19,7 +19,6 @@ import { PropRailDrawer } from "@/components/workspace/detail/PropRailDrawer";
 import { WorkspaceGraphView } from "@/components/workspace/graph/WorkspaceGraphView";
 import { NotesView } from "@/components/workspace/notes/NotesView";
 import {
-  ViewSwitcher,
   readView,
   type WorkspaceView,
 } from "@/components/workspace/ViewSwitcher";
@@ -259,19 +258,6 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
   }, []);
 
   /**
-   * Switch the workspace view — `structure` is the URL default and clears
-   * the param instead of writing it.
-   *
-   * @param next - Target workspace view.
-   */
-  const handleViewChange = useCallback(
-    (next: WorkspaceView) => {
-      updateParam("view", next === "structure" ? null : next);
-    },
-    [updateParam],
-  );
-
-  /**
    * Select a note (writes `?note=<id>`) or clear the selection with `null`.
    *
    * @param nextNoteId - Note to select, or null to clear.
@@ -344,7 +330,6 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     setPropRailOpen,
     handleSelectNode,
     handleClose,
-    handleViewChange,
     noteId,
     handleSelectNote,
     refreshAll,
@@ -406,8 +391,6 @@ interface SharedLayoutProps {
   setPropRailOpen: (updater: (v: boolean) => boolean) => void;
   handleSelectNode: (taskId: string) => void;
   handleClose: () => void;
-  /** Switch the workspace view — writes the `?view` param. */
-  handleViewChange: (next: WorkspaceView) => void;
   /** Selected note id from the `?note` query param, or null. */
   noteId: string | null;
   /** Select a note (writes `?note=<id>`) or clear with null. */
@@ -626,12 +609,11 @@ interface WorkspaceLayoutProps extends SharedLayoutProps {
 }
 
 /**
- * Pure layout shell. Renders the workspace toolbar (view switcher) above
- * the layout body so the switcher stays visible in every view. Receives
- * pre-built `detail` and `propRail` JSX so the useQuery for the task body
- * lives outside this component. Branches on `view`, `isXl`, and presence
- * of `taskSlim` to drive the four layout shapes (graph overlay, xl
- * 3-column, narrow drawer, notes).
+ * Pure layout shell. Receives pre-built `detail` and `propRail` JSX so the
+ * useQuery for the task body lives outside this component. Branches on
+ * `view`, `isXl`, and presence of `taskSlim` to drive the four layout
+ * shapes (graph overlay, xl 3-column, narrow drawer, notes). The view
+ * switcher lives in the global TopBar, not here.
  *
  * @param props - Layout shape configuration plus pre-built slot JSX.
  * @returns The right layout for the current breakpoint and view.
@@ -648,7 +630,6 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     navigatorClosed,
     handleSelectNode,
     handleClose,
-    handleViewChange,
     noteId,
     handleSelectNote,
     refreshAll,
@@ -698,7 +679,7 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
   if (layoutShape === "graph") {
     const showOverlay = isXl && Boolean(taskSlim);
     layoutBody = (
-      <div className="flex h-full">
+      <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
         <div className="flex min-w-0 flex-1 flex-col">
           <WorkspaceGraphView
             projectId={projectId}
@@ -715,10 +696,14 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
       </div>
     );
   } else if (layoutShape === "notes") {
-    layoutBody = <NotesView noteId={noteId} onSelectNote={handleSelectNote} />;
+    layoutBody = (
+      <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
+        <NotesView noteId={noteId} onSelectNote={handleSelectNote} />
+      </div>
+    );
   } else if (layoutShape === "xl") {
     layoutBody = (
-      <div className="flex h-full">
+      <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
         <motion.div
           className="flex flex-col overflow-hidden"
           animate={{ width: navigatorClosed ? 0 : 460 }}
@@ -764,25 +749,18 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
   }
 
   return (
-    <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))] flex-col">
-      <div className="flex h-11 shrink-0 items-center border-b border-border bg-base px-3">
-        <ViewSwitcher active={view} onChange={handleViewChange} />
-      </div>
-      <div className="min-h-0 flex-1">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={layoutShape}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-            className="h-full"
-          >
-            {layoutBody}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-    </div>
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={layoutShape}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+        className="h-full"
+      >
+        {layoutBody}
+      </motion.div>
+    </AnimatePresence>
   );
 }
 

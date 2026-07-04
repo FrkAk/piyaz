@@ -2,6 +2,7 @@
 
 import { useCallback, useRef } from "react";
 import type { ReactNode } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { IconDoc, IconGraph, IconList } from "@/components/shared/icons";
 
 /** Workspace view identifier — the `?view` query param value space. */
@@ -90,6 +91,7 @@ export function ViewSwitcher({ active, onChange }: ViewSwitcherProps) {
             role="tab"
             type="button"
             aria-selected={on}
+            aria-label={t.label}
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(t.id)}
             onKeyDown={handleKeyDown}
@@ -110,12 +112,43 @@ export function ViewSwitcher({ active, onChange }: ViewSwitcherProps) {
             >
               {t.icon}
             </span>
-            {t.label}
+            <span className="hidden sm:inline">{t.label}</span>
           </button>
         );
       })}
     </div>
   );
+}
+
+/**
+ * URL-wired workspace view switcher for the global TopBar. Reads the
+ * active view from the `?view` query param and writes changes with
+ * `router.replace` — `structure` is the default and clears the param.
+ * Mount only on the project workspace route.
+ *
+ * @returns The controlled {@link ViewSwitcher}.
+ */
+export function WorkspaceViewSwitcher() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const view = readView(searchParams.get("view"));
+
+  const handleChange = useCallback(
+    (next: WorkspaceView) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === "structure") params.delete("view");
+      else params.set("view", next);
+      const nextQs = params.toString();
+      if (nextQs === searchParams.toString()) return;
+      router.replace(nextQs ? `${pathname}?${nextQs}` : pathname, {
+        scroll: false,
+      });
+    },
+    [router, pathname, searchParams],
+  );
+
+  return <ViewSwitcher active={view} onChange={handleChange} />;
 }
 
 export default ViewSwitcher;

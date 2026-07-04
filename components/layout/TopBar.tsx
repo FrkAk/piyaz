@@ -1,10 +1,12 @@
 "use client";
 
+import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import { useTheme } from "@/components/layout/ThemeProvider";
 import { ProjectBreadcrumb } from "@/components/layout/ProjectBreadcrumb";
 import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
 import { useMobileNav } from "@/components/layout/MobileNav";
+import { WorkspaceViewSwitcher } from "@/components/workspace/ViewSwitcher";
 import { Kbd } from "@/components/shared/Kbd";
 import {
   IconDoc,
@@ -35,8 +37,9 @@ interface TopBarProps {
  * In-flow top bar that sits at the head of the main column inside
  * {@link AppShell}. Renders a hamburger that opens the mobile nav drawer
  * (below `lg` only), the workspace breadcrumb (when available), an optional
- * page or project crumb, and the right-side action cluster (Jump, theme
- * toggle, avatar).
+ * page or project crumb, the workspace view switcher (project workspace
+ * route only, right of the breadcrumb), and the right-side action cluster
+ * (Jump, theme toggle, avatar).
  *
  * @param props - TopBar configuration.
  * @returns Sticky header element styled per the design spec.
@@ -59,6 +62,9 @@ export function TopBar({
     pageLabel,
     pathname,
   });
+  const showViewSwitcher = Boolean(
+    projectId && pathname === `/project/${projectId}`,
+  );
 
   /** Toggle between light and dark theme and persist the choice. */
   const toggleTheme = () => {
@@ -81,7 +87,7 @@ export function TopBar({
       </button>
       <nav
         aria-label="Breadcrumb"
-        className="flex min-w-0 flex-1 items-center gap-1.5"
+        className="flex min-w-0 items-center gap-1.5"
       >
         {projectName &&
           (projectId && onOpenProjectSettings ? (
@@ -102,6 +108,16 @@ export function TopBar({
           </span>
         )}
       </nav>
+
+      {showViewSwitcher && (
+        <Suspense fallback={null}>
+          <span className="ml-1 inline-flex flex-shrink-0">
+            <WorkspaceViewSwitcher />
+          </span>
+        </Suspense>
+      )}
+
+      <span className="min-w-0 flex-1" />
 
       <div className="flex items-center gap-1">
         <button
