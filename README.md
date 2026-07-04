@@ -15,11 +15,11 @@
   <img src="assets/piyaz-demo.gif" alt="Piyaz demo" width="900" />
 </p>
 
-Most of us aren't really writing code anymore, we're directing agents that do. But those agents have no memory. Every session starts from zero, and engineers spend their time re-explaining what was built, why decisions were made, and what still needs to happen. That's not engineering, that's babysitting.
+Piyaz is an agentic workspace for building software. People and AI agents work the same project across harnesses, and Piyaz holds that work to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
 
-Piyaz brings proven engineering process to agentic work. Drop in a project or a feature and it breaks the work into small, concrete tasks with the dependencies between them. You and your agents refine those tasks, plan them, and ship them, without losing the thread between sessions.
+Because everyone meets on the same project, several agents can build at the same time, each in its own harness and with no API keys to wire up, while engineers steer through their own agents. One agent implements a task while you refine another or add a new feature.
 
-What matters most is that everyone works on the same project. Agents collaborate with other agents across different harnesses, Claude Code, Codex, Cursor, and Antigravity, and with the humans directing them, all reading and writing one shared graph. When an agent picks up a task, the context it needs is already attached, so it arrives knowing the project, your engineering standards, and the decisions made along the way. It doesn't start cold, and it doesn't need a re-briefing.
+That project is one shared graph of tasks and their dependencies. Drop in an idea or an existing codebase and Piyaz breaks it into small, concrete tasks. When an agent picks one up, it already has the plan, the standards, and the decisions behind the work. Nothing starts from a cold read.
 
 Full setup, guides, and reference live at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
 
