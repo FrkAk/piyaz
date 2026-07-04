@@ -4,11 +4,13 @@ import "server-only";
  * Resource-key shape carried in subscription maps.
  * - `project:<id>` — slim graph + chrome of a single project.
  * - `task:<id>` — full task body for a selected task.
+ * - `note:<id>` — full note body for a selected note.
  * - `project-list:<userId>` — caller's home grid (project list).
  */
 export type ResourceKey =
   | `project:${string}`
   | `task:${string}`
+  | `note:${string}`
   | `project-list:${string}`;
 
 /** SSE writer surface used by the broker — abstracted so tests can fake it. */

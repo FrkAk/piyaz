@@ -40,6 +40,28 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
 }
 
 /**
+ * Emit a note-affecting event. Always paired with the project event since
+ * the notes tree list is project-scoped — any note change is also a tree
+ * change. Batched via `dispatchMany` so the Workers backend costs one DO
+ * sub-request instead of two.
+ *
+ * @param projectId - Owning project id.
+ * @param noteId - Note that changed.
+ */
+export function emitNoteEvent(projectId: string, noteId: string): void {
+  broker.dispatchMany([
+    {
+      key: `note:${noteId}`,
+      payload: { kind: "note", projectId, noteId } satisfies RealtimeEvent,
+    },
+    {
+      key: `project:${projectId}`,
+      payload: { kind: "project", projectId } satisfies RealtimeEvent,
+    },
+  ]);
+}
+
+/**
  * Emit project + both endpoint task events for an edge mutation. Avoids the
  * double project dispatch that two `emitTaskEvent` calls would produce.
  * Batched into one Workers sub-request.

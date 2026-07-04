@@ -8,7 +8,14 @@
  */
 import "server-only";
 import { eq, sql } from "drizzle-orm";
-import { projects, tasks, type Project, type Task } from "@/lib/db/schema";
+import {
+  notes,
+  projects,
+  tasks,
+  type Note,
+  type Project,
+  type Task,
+} from "@/lib/db/schema";
 import { executeRaw, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import type { ProjectListOrganization } from "@/lib/data/views";
@@ -172,6 +179,110 @@ export function taskAccessGateStmt(read: ReadConn, taskId: string) {
     .from(tasks)
     .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(eq(tasks.id, taskId))
+    .limit(1);
+}
+
+/**
+ * Note gate columns shared by the interactive finder and the batch
+ * statement. `projectStatus`/`projectIdentifier` come from the projects
+ * join: writes gate on the parent project's lifecycle phase and link
+ * derivation composes taskRefs from the identifier without a second query.
+ */
+const noteGateColumns = {
+  id: notes.id,
+  projectId: notes.projectId,
+  title: notes.title,
+  slug: notes.slug,
+  folder: notes.folder,
+  visibility: notes.visibility,
+  agentWritable: notes.agentWritable,
+  locked: notes.locked,
+  version: notes.version,
+  embeddingStatus: notes.embeddingStatus,
+  shareRequestedBy: notes.shareRequestedBy,
+  createdBy: notes.createdBy,
+  updatedAt: notes.updatedAt,
+  deletedAt: notes.deletedAt,
+  projectStatus: projects.status,
+  projectIdentifier: projects.identifier,
+} as const;
+
+/**
+ * Slim note row returned by the membership gate. Deliberately does NOT
+ * filter `deleted_at`: restore is the one write that must reach trashed
+ * rows, so every other caller checks `deletedAt` itself and read queries
+ * filter `deleted_at IS NULL` in their own statements.
+ */
+export type NoteAccessGate = Pick<
+  Note,
+  | "id"
+  | "projectId"
+  | "title"
+  | "slug"
+  | "folder"
+  | "visibility"
+  | "agentWritable"
+  | "locked"
+  | "version"
+  | "embeddingStatus"
+  | "shareRequestedBy"
+  | "createdBy"
+  | "updatedAt"
+  | "deletedAt"
+> & { projectStatus: ProjectStatus; projectIdentifier: string };
+
+/**
+ * Membership-gated note lookup. RLS gates membership and per-note
+ * visibility (`team` or own-private); no piyaz_auth JOIN.
+ *
+ * @param userId - Verified user id.
+ * @param noteId - UUID of the note.
+ * @returns Gate row with only the columns callers read, or null when inaccessible.
+ */
+export async function findNoteAccess(
+  userId: string,
+  noteId: string,
+): Promise<NoteAccessGate | null> {
+  return withUserContext(userId, (tx) => findNoteAccessTx(tx, noteId));
+}
+
+/**
+ * {@link findNoteAccess} on a caller-supplied tx.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param noteId - UUID of the note.
+ * @returns Gate row with only the columns callers read, or null when inaccessible.
+ */
+export async function findNoteAccessTx(
+  tx: Tx,
+  noteId: string,
+): Promise<NoteAccessGate | null> {
+  const [row] = await tx
+    .select(noteGateColumns)
+    .from(notes)
+    .innerJoin(projects, eq(projects.id, notes.projectId))
+    .where(eq(notes.id, noteId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Build the note access-gate read as a lazy batch statement. Same
+ * projection as {@link findNoteAccessTx}; RLS scopes visibility, so an
+ * empty result post-batch means missing note, cross-team access, or
+ * another member's private note. Evaluate the rows with
+ * `assertNoteGateRows`.
+ *
+ * @param read - Read statement-building handle.
+ * @param noteId - UUID of the note.
+ * @returns Lazy select statement yielding zero or one gate rows.
+ */
+export function noteAccessGateStmt(read: ReadConn, noteId: string) {
+  return read
+    .select(noteGateColumns)
+    .from(notes)
+    .innerJoin(projects, eq(projects.id, notes.projectId))
+    .where(eq(notes.id, noteId))
     .limit(1);
 }
 

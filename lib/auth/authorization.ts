@@ -4,10 +4,13 @@ import { cache } from "react";
 import type { AuthContext } from "@/lib/auth/context";
 import type { Tx } from "@/lib/db/rls";
 import {
+  findNoteAccess,
+  findNoteAccessTx,
   findProjectAccess,
   findProjectAccessTx,
   findTaskAccess,
   findTaskAccessTx,
+  type NoteAccessGate,
   type ProjectAccessRow,
   type TaskAccessGate,
 } from "@/lib/data/access";
@@ -17,7 +20,7 @@ import {
 } from "@/lib/auth/permissions";
 
 /** Resource kind a {@link ForbiddenError} refers to. */
-export type ForbiddenResource = "project" | "task" | "edge" | "team";
+export type ForbiddenResource = "project" | "task" | "edge" | "team" | "note";
 
 /** Strict UUID v1-v5 shape. */
 const UUID_PATTERN =
@@ -232,6 +235,52 @@ export async function assertTaskAccessTx(
 }
 
 /**
+ * Verify the caller can access the note and return its gate row. Joins
+ * through the parent project; RLS additionally hides other members'
+ * private notes, so those surface as the same 404-shaped error as a
+ * missing note. Trashed notes still pass the gate (the row carries
+ * `deletedAt`) — restore is the one caller that needs them, and every
+ * other caller rejects or filters on `deletedAt` itself.
+ *
+ * @param noteId - UUID of the note to authorize.
+ * @param ctx - Resolved auth context.
+ * @returns The slim gate row for the note.
+ * @throws ForbiddenError on malformed id, missing note, cross-team access,
+ *   or another member's private note.
+ */
+export async function assertNoteAccess(
+  noteId: string,
+  ctx: AuthContext,
+): Promise<NoteAccessGate> {
+  if (!isUuid(noteId)) {
+    throw new ForbiddenError("Forbidden", "note", noteId);
+  }
+  const note = await findNoteAccess(ctx.userId, noteId);
+  if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
+  return note;
+}
+
+/**
+ * {@link assertNoteAccess} on a caller-supplied tx.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param noteId - UUID of the note to authorize.
+ * @returns The slim gate row for the note.
+ * @throws ForbiddenError on malformed id, missing note, or invisible note.
+ */
+export async function assertNoteAccessTx(
+  tx: Tx,
+  noteId: string,
+): Promise<NoteAccessGate> {
+  if (!isUuid(noteId)) {
+    throw new ForbiddenError("Forbidden", "note", noteId);
+  }
+  const note = await findNoteAccessTx(tx, noteId);
+  if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
+  return note;
+}
+
+/**
  * Reject a malformed task id before any statement is built. The batch read
  * path counterpart of the `isUuid` pre-check inside
  * {@link assertTaskAccessTx}: a non-UUID id must surface as a 404-shaped
@@ -256,6 +305,19 @@ export function assertValidTaskId(taskId: string): void {
 export function assertValidProjectId(projectId: string): void {
   if (!isUuid(projectId)) {
     throw new ForbiddenError("Forbidden", "project", projectId);
+  }
+}
+
+/**
+ * Reject a malformed note id before any statement is built. See
+ * {@link assertValidTaskId}.
+ *
+ * @param noteId - Candidate note id from the caller.
+ * @throws ForbiddenError when the id is not UUID-shaped.
+ */
+export function assertValidNoteId(noteId: string): void {
+  if (!isUuid(noteId)) {
+    throw new ForbiddenError("Forbidden", "note", noteId);
   }
 }
 
@@ -315,4 +377,23 @@ export function assertTaskGateRows(
   rows: readonly TaskAccessGate[],
 ): TaskAccessGate {
   return firstRowOrForbidden("task", taskId, rows);
+}
+
+/**
+ * Evaluate the access-gate rows returned by a `noteAccessGateStmt` batch
+ * statement. The batch read path counterpart of {@link assertNoteAccessTx}:
+ * RLS already filtered invisible rows, so an empty result means missing
+ * note, cross-team access, or another member's private note — all
+ * 404-shaped.
+ *
+ * @param noteId - UUID of the note the gate statement targeted.
+ * @param rows - Gate rows from the batch result.
+ * @returns The slim gate row for the note.
+ * @throws ForbiddenError when no gate row is visible to the caller.
+ */
+export function assertNoteGateRows(
+  noteId: string,
+  rows: readonly NoteAccessGate[],
+): NoteAccessGate {
+  return firstRowOrForbidden("note", noteId, rows);
 }

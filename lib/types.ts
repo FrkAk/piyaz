@@ -102,7 +102,13 @@ export type ActivityEventType =
   | "edge_added"
   | "edge_removed"
   | "edge_updated"
-  | "project_created";
+  | "project_created"
+  | "note_created"
+  | "note_updated"
+  | "note_moved"
+  | "note_deleted"
+  | "note_restored"
+  | "note_share_requested";
 
 /** Origin of an activity event. */
 export type ActivitySource = "web" | "mcp" | "system";
