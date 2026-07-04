@@ -18,7 +18,8 @@ export type NotesTreeVersionRow = {
 };
 
 /**
- * The notes tree-version read as a lazy batch statement.
+ * The notes tree-version read as a lazy batch statement. Batch alongside
+ * `projectAccessGateStmt` and evaluate the gate rows first.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project.

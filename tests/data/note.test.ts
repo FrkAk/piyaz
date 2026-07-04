@@ -176,6 +176,44 @@ test("moveFolder re-parents the subtree in one update with a cycle guard", async
   );
 });
 
+test("moveFolder rewrites paths containing non-BMP characters correctly", async () => {
+  const f = await seedUserOrgProject("notemoji");
+  const ctx = makeAuthContext(f.userId);
+  const parent = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "In emoji folder",
+    folder: "📁a",
+  });
+  const child = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Emoji child",
+    folder: "📁a/child",
+  });
+
+  const moved = await moveFolder(ctx, f.projectId, "📁a", "x");
+  expect(moved).toEqual({ dest: "x/📁a", movedCount: 2 });
+
+  const tree = await getNoteTreeList(ctx, f.projectId);
+  const folders = new Map(tree.map((n) => [n.id, n.folder]));
+  expect(folders.get(parent.id)).toBe("x/📁a");
+  expect(folders.get(child.id)).toBe("x/📁a/child");
+});
+
+test("moveFolder rejects moves that push a path past the folder cap", async () => {
+  const f = await seedUserOrgProject("notecap");
+  const ctx = makeAuthContext(f.userId);
+  const longFolder = "f".repeat(500);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Deep",
+    folder: longFolder,
+  });
+
+  await expect(
+    moveFolder(ctx, f.projectId, longFolder, "p".repeat(20)),
+  ).rejects.toBeInstanceOf(NoteValidationError);
+});
+
 test("moveNote relocates a single note", async () => {
   const f = await seedUserOrgProject("notemv1");
   const ctx = makeAuthContext(f.userId);

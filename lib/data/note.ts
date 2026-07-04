@@ -557,6 +557,26 @@ function summaryTitle(title: string): string {
     : `${title.slice(0, SUMMARY_TITLE_MAX - 1)}…`;
 }
 
+/**
+ * Compose a {@link NoteSummary} from an access-gate row. The gate already
+ * carries every summary column, so no-op paths return it without a
+ * redundant select.
+ *
+ * @param gate - Note access-gate row.
+ * @returns Slim summary of the note.
+ */
+function gateSummary(gate: NoteAccessGate): NoteSummary {
+  return {
+    id: gate.id,
+    slug: gate.slug,
+    title: gate.title,
+    projectId: gate.projectId,
+    folder: gate.folder,
+    version: gate.version,
+    updatedAt: gate.updatedAt,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // In-transaction helpers
 // ---------------------------------------------------------------------------
@@ -724,6 +744,9 @@ async function insertRevisionWithPrune(
 /**
  * Build the slim tree-list read as a lazy batch statement. Live notes
  * only, ordered by folder then title; never selects `body`/`search_tsv`.
+ * Batch alongside `projectAccessGateStmt` and evaluate the gate rows
+ * first — RLS protects the rows, but only the gate 404-shapes a missing
+ * or cross-team project.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project.
@@ -740,6 +763,8 @@ export function noteTreeListStmt(read: ReadConn, projectId: string) {
 /**
  * Build the single live-note full-row read as a lazy batch statement.
  * Every column except `search_tsv`; trashed notes yield zero rows.
+ * Batch alongside `noteAccessGateStmt` and evaluate the gate rows first
+ * (`assertNoteGateRows`) so missing and cross-team notes 404-shape.
  *
  * @param read - Read statement-building handle.
  * @param noteId - UUID of the note.
@@ -756,7 +781,8 @@ export function noteRowStmt(read: ReadConn, noteId: string) {
 /**
  * Build the mentions read as a lazy batch statement: the tasks this note
  * links to, with the identifier + sequence columns taskRef composition
- * needs.
+ * needs. Batch alongside `noteAccessGateStmt` and evaluate the gate rows
+ * first.
  *
  * @param read - Read statement-building handle.
  * @param noteId - UUID of the note.
@@ -780,7 +806,8 @@ export function noteMentionsStmt(read: ReadConn, noteId: string) {
 
 /**
  * Build the outgoing note-links read as a lazy batch statement: live
- * notes this note links to, slim projection.
+ * notes this note links to, slim projection. Batch alongside
+ * `noteAccessGateStmt` and evaluate the gate rows first.
  *
  * @param read - Read statement-building handle.
  * @param noteId - UUID of the source note.
@@ -803,7 +830,8 @@ export function noteLinksOutStmt(read: ReadConn, noteId: string) {
 
 /**
  * Build the incoming note-links read as a lazy batch statement: live
- * notes linking to this note (backlinks), slim projection.
+ * notes linking to this note (backlinks), slim projection. Batch
+ * alongside `noteAccessGateStmt` and evaluate the gate rows first.
  *
  * @param read - Read statement-building handle.
  * @param noteId - UUID of the target note.
@@ -980,7 +1008,9 @@ export async function searchNotes(
 
 /**
  * Preview the impact of deleting a note: linked-row counts, no mutation.
- * One read batch: gate + four counts.
+ * One read batch: gate + four counts. Note-link counts join the other
+ * endpoint and skip trashed notes so the preview matches what
+ * {@link getNoteFull} renders.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -1003,11 +1033,17 @@ export async function deleteNotePreview(
       read
         .select({ count: countCol })
         .from(noteLinks)
-        .where(eq(noteLinks.targetNoteId, noteId)),
+        .innerJoin(notes, eq(notes.id, noteLinks.sourceNoteId))
+        .where(
+          and(eq(noteLinks.targetNoteId, noteId), isNull(notes.deletedAt)),
+        ),
       read
         .select({ count: countCol })
         .from(noteLinks)
-        .where(eq(noteLinks.sourceNoteId, noteId)),
+        .innerJoin(notes, eq(notes.id, noteLinks.targetNoteId))
+        .where(
+          and(eq(noteLinks.sourceNoteId, noteId), isNull(notes.deletedAt)),
+        ),
       read
         .select({ count: countCol })
         .from(noteRevisions)
@@ -1118,7 +1154,9 @@ export async function createNote(
  * compare-and-swap. A body change bumps `version`, snapshots a revision
  * (pruned to the retention cap), re-derives links, and flips
  * `embedding_status` to `stale` when the note is already in the embedding
- * pipeline. `slug` is never touched — slugs are stable once assigned.
+ * pipeline. `slug` is never touched — slugs are stable once assigned. The
+ * locked re-read selects `body` only when the patch carries one and
+ * re-asserts the note is live after acquiring the row lock.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -1158,19 +1196,40 @@ export async function updateNote(
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
 
-    const [current] = await tx
-      .select({
-        body: notes.body,
-        title: notes.title,
-        version: notes.version,
-        updatedAt: notes.updatedAt,
-        embeddingStatus: notes.embeddingStatus,
-        visibility: notes.visibility,
-      })
-      .from(notes)
-      .where(eq(notes.id, noteId))
-      .for("update");
-    if (!current) throw new ForbiddenError("Forbidden", "note", noteId);
+    const appliedFields = Object.keys(applied);
+    if (appliedFields.length === 0) {
+      if (
+        ifUpdatedAtMs !== undefined &&
+        ifUpdatedAtMs !== gate.updatedAt.getTime()
+      ) {
+        throw new NoteStaleWriteError(gate.updatedAt, gate.version);
+      }
+      return { summary: gateSummary(gate), wasNoOp: true };
+    }
+
+    const needsBody = applied.body !== undefined;
+    const lockColumns = {
+      title: notes.title,
+      version: notes.version,
+      updatedAt: notes.updatedAt,
+      embeddingStatus: notes.embeddingStatus,
+      visibility: notes.visibility,
+      deletedAt: notes.deletedAt,
+    } as const;
+    const [current] = needsBody
+      ? await tx
+          .select({ ...lockColumns, body: notes.body })
+          .from(notes)
+          .where(eq(notes.id, noteId))
+          .for("update")
+      : await tx
+          .select({ ...lockColumns, body: sql<string>`''` })
+          .from(notes)
+          .where(eq(notes.id, noteId))
+          .for("update");
+    if (!current || current.deletedAt !== null) {
+      throw new ForbiddenError("Forbidden", "note", noteId);
+    }
     if (
       ifUpdatedAtMs !== undefined &&
       ifUpdatedAtMs !== current.updatedAt.getTime()
@@ -1178,18 +1237,7 @@ export async function updateNote(
       throw new NoteStaleWriteError(current.updatedAt, current.version);
     }
 
-    const appliedFields = Object.keys(applied);
-    if (appliedFields.length === 0) {
-      const [summary] = await tx
-        .select(noteSummaryColumns)
-        .from(notes)
-        .where(eq(notes.id, noteId))
-        .limit(1);
-      return { summary, wasNoOp: true };
-    }
-
-    const bodyChanged =
-      applied.body !== undefined && applied.body !== current.body;
+    const bodyChanged = needsBody && applied.body !== current.body;
     const newVersion = bodyChanged ? current.version + 1 : current.version;
     const changes: Record<string, unknown> = {
       ...applied,
@@ -1272,12 +1320,7 @@ export async function moveNote(
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     if (gate.folder === dest) {
-      const [summary] = await tx
-        .select(noteSummaryColumns)
-        .from(notes)
-        .where(eq(notes.id, noteId))
-        .limit(1);
-      return { summary, wasNoOp: true };
+      return { summary: gateSummary(gate), wasNoOp: true };
     }
     const [summary] = await tx
       .update(notes)
@@ -1316,7 +1359,8 @@ export async function moveNote(
  * @throws ForbiddenError when the caller cannot access the project.
  * @throws ProjectArchivedError when the project is archived.
  * @throws FolderCycleError when `destParent` is `src` or a descendant.
- * @throws NoteValidationError when a path fails normalization.
+ * @throws NoteValidationError when a path fails normalization or the move
+ *   would push any resulting path past the folder cap.
  */
 export async function moveFolder(
   ctx: AuthContext,
@@ -1336,27 +1380,47 @@ export async function moveFolder(
   const leaf = srcPath.split("/").at(-1) ?? srcPath;
   const dest = destParentPath === "" ? leaf : `${destParentPath}/${leaf}`;
   if (dest === srcPath) return { dest, movedCount: 0 };
+  if (dest.length > FOLDER_MAX_CHARS) {
+    throw new NoteValidationError(
+      "folder",
+      `folder exceeds ${FOLDER_MAX_CHARS} characters`,
+    );
+  }
+  const growth = [...dest].length - [...srcPath].length;
 
   const moved = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
     assertProjectWritable(access.project.status, access.project.identifier);
+    const subtreeFilter = and(
+      eq(notes.projectId, projectId),
+      isNull(notes.deletedAt),
+      or(
+        eq(notes.folder, srcPath),
+        like(notes.folder, `${escapeLike(srcPath)}/%`),
+      ),
+    );
+    if (growth > 0) {
+      const [row] = await tx
+        .select({
+          longest: sql<number | null>`MAX(char_length(${notes.folder}))`,
+        })
+        .from(notes)
+        .where(subtreeFilter);
+      if ((row?.longest ?? 0) + growth > FOLDER_MAX_CHARS) {
+        throw new NoteValidationError(
+          "folder",
+          `move would push a descendant past ${FOLDER_MAX_CHARS} characters`,
+        );
+      }
+    }
     const rows = await tx
       .update(notes)
       .set({
-        folder: sql`${dest} || substr(${notes.folder}, ${srcPath.length + 1})`,
+        folder: sql`${dest} || substr(${notes.folder}, char_length(${srcPath}::text) + 1)`,
         updatedBy: ctx.userId,
         updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(notes.projectId, projectId),
-          isNull(notes.deletedAt),
-          or(
-            eq(notes.folder, srcPath),
-            like(notes.folder, `${escapeLike(srcPath)}/%`),
-          ),
-        ),
-      )
+      .where(subtreeFilter)
       .returning({ id: notes.id });
     if (rows.length > 0) {
       await insertActivityEvents(tx, ctx.actor, [
@@ -1451,18 +1515,25 @@ export async function restoreNote(
   const result = await withUserContext(ctx.userId, async (tx) => {
     const gate = await assertNoteAccessTx(tx, noteId);
     if (gate.deletedAt === null) {
-      const [summary] = await tx
-        .select(noteSummaryColumns)
-        .from(notes)
-        .where(eq(notes.id, noteId))
-        .limit(1);
-      return { summary, wasNoOp: true };
+      return { summary: gateSummary(gate), wasNoOp: true };
     }
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     await acquireProjectLock(tx, gate.projectId);
-    const base = gate.slug.replace(/-\d+$/, "") || gate.slug;
+    const [current] = await tx
+      .select({ ...noteSummaryColumns, deletedAt: notes.deletedAt })
+      .from(notes)
+      .where(eq(notes.id, noteId))
+      .for("update");
+    if (!current) throw new ForbiddenError("Forbidden", "note", noteId);
+    if (current.deletedAt === null) {
+      const { deletedAt: _live, ...summary } = current;
+      return { summary, wasNoOp: true };
+    }
+    const base = current.slug.replace(/-\d+$/, "") || current.slug;
     const taken = await loadSlugNamespace(tx, gate.projectId, base);
-    const slug = taken.has(gate.slug) ? nextFreeSlug(base, taken) : gate.slug;
+    const slug = taken.has(current.slug)
+      ? nextFreeSlug(base, taken)
+      : current.slug;
 
     const [summary] = await tx
       .update(notes)
@@ -1481,7 +1552,7 @@ export async function restoreNote(
         type: "note_restored",
         targetRef: slug,
         summary: `restored note "${summaryTitle(summary.title)}"`,
-        metadata: slug === gate.slug ? null : { previousSlug: gate.slug },
+        metadata: slug === current.slug ? null : { previousSlug: current.slug },
       },
     ]);
     return { summary, wasNoOp: false };

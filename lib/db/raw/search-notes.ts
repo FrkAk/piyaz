@@ -37,7 +37,8 @@ export type NoteSearchRawRow = {
 };
 
 /**
- * The ranked note search as a lazy batch statement.
+ * The ranked note search as a lazy batch statement. Batch alongside
+ * `projectAccessGateStmt` and evaluate the gate rows first.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project to search in.
@@ -74,5 +75,6 @@ export function noteSearchStmt(
       ORDER BY rank DESC, n.updated_at DESC
       LIMIT ${NOTE_SEARCH_LIMIT}
     ) m
+    ORDER BY m.rank DESC, m.updated_at DESC
   `);
 }
