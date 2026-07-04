@@ -110,6 +110,7 @@ test("get fields returns only requested fields with ids and updatedAt", async ()
     ctx,
   );
   const text = okText(result);
+  expect(text).toContain("Note on the content below.");
   expect(text).toContain("updatedAt:");
   expect(text).toContain("Plan body here");
   expect(text).toContain("It works end to end");

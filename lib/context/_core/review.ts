@@ -1,6 +1,8 @@
 import "server-only";
 
 import {
+  capLines,
+  MAX_BUNDLE_RECORD_BLOCKS,
   section,
   formatCriteria,
   formatDecisions,
@@ -153,25 +155,40 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
   }
 
   if (deps.length > 0) {
-    const prereqLines: string[] = [];
+    const rawPrereqLines: string[] = [];
     const execLines: string[] = [];
+    let recordCount = 0;
 
     const depMap = new Map(depTasks.map((dt) => [dt.id, dt]));
 
     for (const dep of deps) {
       const info = depMap.get(dep.id);
       if (!info) continue;
-      prereqLines.push(formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)));
+      rawPrereqLines.push(
+        formatTaskRefLine(info, upstreamEdgeNotes.get(dep.id)),
+      );
 
       // Deliberately no upstream PR links here (unlike agent/planning): the
       // reviewer's artifact is the current task's PR, and extra upstream
       // URLs dilute attention on it.
       if (info.status === "done" && info.executionRecord) {
-        execLines.push(`### \`${info.taskRef}\` ${info.title}`);
-        execLines.push(info.executionRecord);
+        recordCount++;
+        if (recordCount <= MAX_BUNDLE_RECORD_BLOCKS) {
+          execLines.push(`### \`${info.taskRef}\` ${info.title}`);
+          execLines.push(info.executionRecord);
+        }
       }
     }
+    if (recordCount > MAX_BUNDLE_RECORD_BLOCKS) {
+      execLines.push(
+        `… +${recordCount - MAX_BUNDLE_RECORD_BLOCKS} more upstream records — fetch one with piyaz_get task='<dep ref>' fields=['executionRecord'].`,
+      );
+    }
 
+    const prereqLines = capLines(
+      rawPrereqLines,
+      "walk the rest with piyaz_map view='neighbors' hops=2.",
+    );
     if (prereqLines.length > 0) {
       parts.push({
         id: "prerequisites",
@@ -191,16 +208,20 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
 
   if (downstream.length > 0) {
     const summaryMap = new Map(data.downstreamSummaries.map((s) => [s.id, s]));
-    const downLines: string[] = [];
+    const rawDownLines: string[] = [];
 
     for (const d of downstream) {
       const info = summaryMap.get(d.id);
       if (!info) continue;
-      downLines.push(
+      rawDownLines.push(
         formatTaskRefLine(info, data.downstreamEdgeNotes.get(d.id)),
       );
     }
 
+    const downLines = capLines(
+      rawDownLines,
+      `run piyaz_map view='downstream'${taskRef ? ` task='${taskRef}'` : ""} for the full transitive set.`,
+    );
     if (downLines.length > 0) {
       parts.push({
         id: "downstream",
@@ -235,7 +256,7 @@ export function buildReviewContextFrom(data: ReviewContextData): string {
 /**
  * Build review-optimized context for an `in_review` task.
  *
- * The MCP `piyaz_context depth='review'` entry point. Resolves only the
+ * The MCP `piyaz_get lens='review'` entry point. Resolves only the
  * review data this depth renders, then delegates to the pure
  * {@link buildReviewContextFrom} assembler.
  *

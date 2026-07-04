@@ -23,6 +23,7 @@ import {
   formatOverview,
   formatProjectMeta,
 } from "@/lib/graph/format-responses";
+import { untrustedContentNotice } from "@/lib/context/format";
 import { composeTaskRef, asIdentifier } from "@/lib/graph/identifier";
 import type { AuthContext } from "@/lib/auth/context";
 import {
@@ -146,6 +147,8 @@ async function handleFieldsRead(
   );
   const updatedAt = new Date(row.updated_at as string | Date).toISOString();
   const parts: string[] = [
+    untrustedContentNotice(),
+    "",
     `# \`${ref}\` fields`,
     `updatedAt: ${updatedAt} (pass as ifUpdatedAt on piyaz_edit for a compare-and-swap)`,
   ];

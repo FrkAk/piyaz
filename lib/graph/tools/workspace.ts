@@ -24,6 +24,9 @@ import {
   type ToolResult,
 } from "@/lib/graph/tools/shared";
 
+/** Backstop row cap for the teams/projects list actions. */
+const MAX_LIST_ROWS = 100;
+
 /** Params for piyaz_workspace. */
 export type WorkspaceParams = {
   action: "whoami" | "teams" | "projects" | "create" | "update";
@@ -55,10 +58,24 @@ export async function handleWorkspace(
         ]);
         return ok(formatWhoami(who, teams));
       }
-      case "teams":
-        return ok(await listUserTeams(ctx));
-      case "projects":
-        return ok(await listProjectsForMcp(ctx));
+      case "teams": {
+        const teams = await listUserTeams(ctx);
+        if (teams.length <= MAX_LIST_ROWS) return ok(teams);
+        return ok({
+          teams: teams.slice(0, MAX_LIST_ROWS),
+          _hints: [`Showing ${MAX_LIST_ROWS} of ${teams.length} teams.`],
+        });
+      }
+      case "projects": {
+        const projects = await listProjectsForMcp(ctx);
+        if (projects.length <= MAX_LIST_ROWS) return ok(projects);
+        return ok({
+          projects: projects.slice(0, MAX_LIST_ROWS),
+          _hints: [
+            `Showing ${MAX_LIST_ROWS} of ${projects.length} projects. Address a specific project via piyaz_get project='<identifier>' view='meta', or archive stale projects.`,
+          ],
+        });
+      }
       case "create": {
         if (!p.title)
           return fail(

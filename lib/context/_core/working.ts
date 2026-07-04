@@ -3,6 +3,7 @@ import "server-only";
 import type { AcceptanceCriterion } from "@/lib/types";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import {
+  capLines,
   formatCriteria,
   formatLinkLine,
   untrustedContentNotice,
@@ -69,7 +70,7 @@ export function buildWorkingContextFrom(
  *
  * Resolves only the working data this depth renders (no dependency closure or
  * project header), then delegates to the pure {@link buildWorkingContextFrom}
- * assembler. Used by MCP for `piyaz_context depth='working'`.
+ * assembler. Used by MCP for `piyaz_get lens='working'`.
  *
  * @param ctx Resolved auth context.
  * @param taskId UUID of the task.
@@ -144,7 +145,7 @@ export function formatWorkingContextParts(ctx: WorkingContext): BundlePart[] {
     parts.push({ id: "decisions", heading: "Decisions", markdown: decisions });
   }
 
-  const edges = formatEdgesSection(ctx.edges);
+  const edges = formatEdgesSection(ctx.edges, ctx.taskRef);
   if (edges) {
     parts.push({
       id: "connected",
@@ -273,18 +274,28 @@ function formatHierarchySection(ctx: WorkingContext, title: string): string {
 }
 
 /**
- * Format connected edges section.
+ * Format connected edges section, width-capped for hub tasks.
  * @param edges - Array of edge data with notes.
+ * @param taskRef - Origin task ref for the truncation guidance.
  * @returns Formatted edges section or empty string.
  */
-function formatEdgesSection(edges: WorkingContext["edges"]): string {
+function formatEdgesSection(
+  edges: WorkingContext["edges"],
+  taskRef: string | null,
+): string {
   if (edges.length === 0) return "";
-  const lines = ["## Connected Tasks"];
+  const edgeLines: string[] = [];
   for (const e of edges) {
     const arrow = e.direction === "outgoing" ? "→" : "←";
     let line = `- ${e.edgeType} ${arrow} \`${e.taskRef}\` "${e.title}" (${e.status})`;
     if (e.note) line += ` — ${e.note}`;
-    lines.push(line);
+    edgeLines.push(line);
   }
-  return lines.join("\n");
+  return [
+    "## Connected Tasks",
+    ...capLines(
+      edgeLines,
+      `run piyaz_map view='neighbors'${taskRef ? ` task='${taskRef}'` : ""} for the full list.`,
+    ),
+  ].join("\n");
 }

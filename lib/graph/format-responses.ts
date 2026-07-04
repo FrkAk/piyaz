@@ -23,7 +23,7 @@ import type { Whoami } from "@/lib/data/account";
 import type { UserTeamEntry } from "@/lib/data/project";
 import type { ProjectOverview } from "@/lib/context/_core/overview";
 import type { SummaryContext } from "@/lib/context/_core/summary";
-import { untrustedContentNotice } from "@/lib/context/format";
+import { capLines, untrustedContentNotice } from "@/lib/context/format";
 import { budgetLines } from "@/lib/mcp/budget";
 import type { ProjectMeta } from "@/lib/data/views";
 
@@ -123,12 +123,18 @@ export function formatSummary(ctx: SummaryContext): string {
 
   if (ctx.edges.length > 0) {
     parts.push("\n## Edges");
-    for (const e of ctx.edges) {
+    const edgeLines = ctx.edges.map((e) => {
       const arrow = e.direction === "outgoing" ? "\u2192" : "\u2190";
       let line = `- ${e.edgeType} ${arrow} \`${e.connectedTaskRef}\` "${e.connectedTaskTitle}" [${e.connectedTaskStatus}] \`${e.connectedTaskId}\``;
       if (e.note) line += ` \u2014 ${e.note}`;
-      parts.push(line);
-    }
+      return line;
+    });
+    parts.push(
+      ...capLines(
+        edgeLines,
+        `run piyaz_map view='neighbors'${ctx.node.taskRef ? ` task='${ctx.node.taskRef}'` : ""} for the full list.`,
+      ),
+    );
   }
   return untrustedContentNotice() + "\n\n" + parts.join("\n");
 }
