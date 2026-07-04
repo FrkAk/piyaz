@@ -290,3 +290,21 @@ test("activity rejects a malformed since with corrective copy", async () => {
     "not a valid timestamp",
   );
 });
+
+test("map empty states steer to view= shapes, not the removed type=", async () => {
+  const fx = await seedUserOrgProject("TMAPHINT");
+  const ctx = makeAuthContext(fx.userId);
+
+  const ready = okText(
+    await handleMap({ view: "ready", project: "PRJTMAPHINT" }, ctx),
+  );
+  expect(ready).toContain("piyaz_map view='plannable'");
+  expect(ready).toContain("view='blocked'");
+  expect(ready).not.toContain("type='");
+
+  const plannable = okText(
+    await handleMap({ view: "plannable", project: "PRJTMAPHINT" }, ctx),
+  );
+  expect(plannable).toContain("piyaz_map view='blocked'");
+  expect(plannable).not.toContain("type='");
+});

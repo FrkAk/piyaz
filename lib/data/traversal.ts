@@ -209,7 +209,7 @@ export type ReadyTask = {
  *
  * Delegates the derivation to `deriveTaskStatesSlim` so this analyzer agrees
  * with search-result `state`, `getPlannableTasks`, `piyaz_map
- * type='blocked'`, and the slim payload's `task.state`. Single source of
+ * view='blocked'`, and the slim payload's `task.state`. Single source of
  * truth — no parallel implementations to drift.
  *
  * @param ctx - Resolved auth context.

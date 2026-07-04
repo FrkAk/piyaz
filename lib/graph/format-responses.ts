@@ -442,7 +442,7 @@ export function formatWhoami(who: Whoami, teams: UserTeamEntry[]): string {
  */
 export function formatReadyTasks(tasks: ReadyTask[]): string {
   if (tasks.length === 0)
-    return "No ready tasks.\n\n> Run type='plannable' to find tasks to plan, or type='blocked' for blockers.";
+    return "No ready tasks.\n\n> Run piyaz_map view='plannable' to find tasks to plan, or view='blocked' for blockers.";
   const parts = [`${tasks.length} ready task${tasks.length > 1 ? "s" : ""}:`];
   for (const t of tasks) parts.push(taskLine(t));
   return parts.join("\n");
@@ -510,7 +510,7 @@ export function formatCriticalPath(tasks: CriticalPathTask[]): string {
  */
 export function formatPlannableTasks(tasks: PlannableTask[]): string {
   if (tasks.length === 0)
-    return "No plannable tasks.\n\n> Drafts must have description, acceptance criteria, AND every effective dep done. Run type='blocked' to see what's gating drafts.";
+    return "No plannable tasks.\n\n> Drafts must have description, acceptance criteria, AND every effective dep done. Run piyaz_map view='blocked' to see what's gating drafts.";
   const parts = [
     `${tasks.length} plannable task${tasks.length > 1 ? "s" : ""}:`,
   ];
