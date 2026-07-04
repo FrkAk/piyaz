@@ -26,3 +26,19 @@ GRANT USAGE ON SCHEMA public TO app_user, service_role;
 GRANT CREATE ON SCHEMA public TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user, service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user, service_role;
+
+-- note_revisions is an append-only audit/rollback trail: app_user may INSERT
+-- and DELETE but never UPDATE a snapshot. Runs after the schema-wide GRANT
+-- above so it narrows it; re-applied with it.
+--
+-- Guarded on table existence: grants.sql is `\i`-included by docker/init-rls.sh
+-- at container-init (before db:migrate creates any public table), so a bare
+-- per-table REVOKE would abort first bootstrap with "relation does not exist".
+-- The schema-wide GRANT above is a no-op on an empty schema; this is not, so it
+-- self-skips until the table exists and applies on every post-migrate re-run.
+DO $$
+BEGIN
+  IF to_regclass('public.note_revisions') IS NOT NULL THEN
+    EXECUTE 'REVOKE UPDATE ON public.note_revisions FROM app_user';
+  END IF;
+END $$;
