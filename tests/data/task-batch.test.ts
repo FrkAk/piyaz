@@ -14,7 +14,7 @@ import {
   EdgeCycleError,
   UnknownCategoryError,
 } from "@/lib/graph/errors";
-import { CrossProjectEdgeError, DuplicateEdgeError } from "@/lib/graph/errors";
+import { CrossProjectEdgeError } from "@/lib/graph/errors";
 import { ForbiddenError } from "@/lib/auth/authorization";
 
 afterEach(async () => {
@@ -370,24 +370,24 @@ describe("createTasksBatch", () => {
     expect(await countActivity(f.projectId, "edge_added")).toBe(4);
   });
 
-  test("duplicate edge within the batch throws DuplicateEdgeError", async () => {
+  test("duplicate edge within the batch dedupes to its first occurrence", async () => {
     const f = await seedUserOrgProject("b10");
     const ctx = makeAuthContext(f.userId);
-    const err = await catchErr(
-      createTasksBatch(
-        ctx,
-        f.projectId,
-        [
-          { key: "a", title: "A" },
-          { key: "b", title: "B" },
-        ],
-        [
-          { source: "a", target: "b", type: "relates_to", note: "n" },
-          { source: "a", target: "b", type: "relates_to", note: "n" },
-        ],
-      ),
+    const result = await createTasksBatch(
+      ctx,
+      f.projectId,
+      [
+        { key: "a", title: "A" },
+        { key: "b", title: "B" },
+      ],
+      [
+        { source: "a", target: "b", type: "relates_to", note: "kept" },
+        { source: "a", target: "b", type: "relates_to", note: "dropped" },
+      ],
     );
-    expect(err).toBeInstanceOf(DuplicateEdgeError);
+    expect(result.created).toHaveLength(2);
+    expect(result.edges).toBe(1);
+    expect(await countActivity(f.projectId, "edge_added")).toBe(2);
   });
 
   test("createTask summary shape unchanged", async () => {

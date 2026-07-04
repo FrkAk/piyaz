@@ -26,7 +26,6 @@ import {
 import { asIdentifier, composeTaskRef } from "@/lib/graph/identifier";
 import {
   CrossProjectEdgeError,
-  DuplicateEdgeError,
   EdgeCycleError,
   SelfEdgeError,
   TaskLimitError,
@@ -218,8 +217,8 @@ function detectCycle(adj: Map<string, string[]>): string[] | null {
  * @throws BatchInputError on a structurally invalid payload.
  * @throws DuplicateTaskTitleError when `onDuplicate` is `error` and titles collide.
  * @throws TaskLimitError when the create count would exceed the project cap.
- * @throws SelfEdgeError / CrossProjectEdgeError / DuplicateEdgeError / EdgeCycleError
- *   on an invalid edge.
+ * @throws SelfEdgeError / CrossProjectEdgeError / EdgeCycleError on an
+ *   invalid edge.
  * @throws ForbiddenError when a UUID endpoint is not a task the caller can access.
  */
 export async function createTasksBatch(
@@ -431,7 +430,7 @@ type ResolvedEdge = {
  * Resolve, validate, cycle-check, and insert the batch's edges, returning the
  * inserted count plus the `edge_added` events for the caller's single activity
  * write. Edges duplicating an existing row are silently skipped (idempotent
- * re-run); duplicates within the batch throw {@link DuplicateEdgeError}.
+ * re-run); duplicates within the batch dedupe to their first occurrence.
  *
  * @param tx - Active RLS-scoped transaction handle.
  * @param projectId - Owning project id (UUID endpoints must belong to it).
@@ -441,7 +440,6 @@ type ResolvedEdge = {
  * @returns The inserted edge count, the first inserted edge's endpoints (for
  *   the caller's post-commit realtime emit), and the `edge_added` events.
  * @throws SelfEdgeError when a resolved edge connects a task to itself.
- * @throws DuplicateEdgeError on a duplicate edge within the batch.
  * @throws CrossProjectEdgeError when a UUID endpoint is in another project.
  * @throws ForbiddenError when a UUID endpoint is not an accessible task.
  * @throws EdgeCycleError when the new `depends_on` edges close a cycle.
@@ -484,8 +482,7 @@ async function applyBatchEdges(
     const targetId = keySet.has(e.target) ? keyToId.get(e.target)! : e.target;
     if (sourceId === targetId) throw new SelfEdgeError();
     const dedupeKey = `${sourceId}|${targetId}|${e.type}`;
-    if (seen.has(dedupeKey))
-      throw new DuplicateEdgeError(sourceId, targetId, e.type);
+    if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
     resolved.push({ sourceId, targetId, type: e.type, note: e.note });
   }
