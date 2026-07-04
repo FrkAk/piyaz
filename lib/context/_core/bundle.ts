@@ -471,8 +471,8 @@ async function finishClosure(
 
 /**
  * Resolve the dependency closure plus the parent project header and the
- * direct cancelled deps with execution records ("Abandoned Approaches"),
- * the planning core's full input. Two read batches: the closure batch with
+ * direct cancelled deps ("Abandoned Approaches", with or without a
+ * recorded rationale), the planning core's full input. Two read batches: the closure batch with
  * header, then a secondaries batch that always runs — the cancelled-dep
  * statement rides it unconditionally because direct cancelled deps are
  * transparent to the effective-dep walk and so never appear in the closure.

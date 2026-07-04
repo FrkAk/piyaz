@@ -240,7 +240,11 @@ export async function handleCreate(
         `${missingCategory} task(s) have no category. Run piyaz_get project='${p.project}' view='meta' for the vocabulary, then set one per task via piyaz_edit.`,
       );
     }
-    if (edges.length === 0 && result.created.length > 0) {
+    if (
+      edges.length === 0 &&
+      result.created.length > 0 &&
+      (result.priorTaskCount > 0 || result.created.length > 1)
+    ) {
       hints.push(
         "No edges in this batch. Bare tasks orphan from critical_path, downstream, and agent-context propagation. Wire dependencies with piyaz_link (substantive notes); verify with piyaz_map view='neighbors'.",
       );

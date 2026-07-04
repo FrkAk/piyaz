@@ -219,13 +219,18 @@ export function formatProjectMeta(meta: ProjectMeta): string {
     `# \`${meta.identifier}\` "${meta.title}" [${meta.status}]`,
     `Progress: ${meta.taskStats.done}/${denominator} done (${meta.progress}%) | ${meta.taskStats.inProgress} in_progress | ${meta.taskStats.cancelled} cancelled`,
   ];
-  if (meta.categories.length > 0)
-    parts.push(`Categories: ${meta.categories.join(", ")}`);
+  parts.push(
+    meta.categories.length > 0
+      ? `Categories: ${meta.categories.join(", ")}`
+      : "Categories: (none yet — set with piyaz_workspace action='update' categories=[...])",
+  );
   if (meta.tagVocabulary.length > 0) {
     const tagLine = meta.tagVocabulary
       .map((t) => `${t.tag} (${t.count})`)
       .join(", ");
     parts.push(`Tags: ${tagLine}`);
+  } else {
+    parts.push("Tags: (none in use yet)");
   }
   if (meta.description) parts.push(`\n${meta.description}`);
   return parts.join("\n");

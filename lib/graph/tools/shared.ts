@@ -794,6 +794,11 @@ export function translateError(e: unknown): ToolResult {
     );
   }
   if (e instanceof CollectionItemNotFoundError) {
+    if (e.currentItems.length === 0) {
+      return fail(
+        `The task has no ${e.collection} items yet (id '${e.id}' not found). Add one with piyaz_edit op='add' collection='${e.collection}'.`,
+      );
+    }
     const items = e.currentItems.map((i) => `${i.id}: ${i.text}`).join(", ");
     return fail(
       `No ${e.collection} item with id '${e.id}'. Current items: ${items}.`,

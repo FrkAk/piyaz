@@ -185,7 +185,7 @@ export function buildPlanningContextParts(
     for (const d of abandonedDeps.slice(0, MAX_BUNDLE_RECORD_BLOCKS)) {
       abandonedLines.push(`### \`${d.taskRef}\` ${d.title}`);
       if (d.prUrl) abandonedLines.push(`PR: ${d.prUrl} — closed, unmerged`);
-      abandonedLines.push(d.executionRecord ?? "");
+      abandonedLines.push(d.executionRecord ?? "(no rationale recorded)");
     }
     if (abandonedDeps.length > MAX_BUNDLE_RECORD_BLOCKS) {
       abandonedLines.push(

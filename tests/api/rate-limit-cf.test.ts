@@ -3,6 +3,7 @@ import {
   getBackend,
   setBackend,
   matchRule,
+  mcpRateLimitMessage,
   MCP_HEAVY_LIMIT,
 } from "@/lib/api/rate-limit";
 import { MemoryRateLimitBackend } from "@/lib/api/rate-limit-memory";
@@ -164,4 +165,12 @@ test("CloudflareRateLimitBackend fails closed on binding RPC error when failOpen
   expect(result.limit).toBe(5);
   expect(result.remaining).toBe(0);
   expect(result.resetIn).toBe(60);
+});
+
+test("mcpRateLimitMessage names the budget, retry window, and lighter call shapes", () => {
+  const message = mcpRateLimitMessage(100, 60, 42);
+  expect(message).toContain("100 calls/60s");
+  expect(message).toContain("Retry in 42s");
+  expect(message).toContain("piyaz_create");
+  expect(message).toContain("piyaz_get fields=[...]");
 });

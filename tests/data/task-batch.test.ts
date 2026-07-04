@@ -465,3 +465,18 @@ test("batch rejects a category outside the project vocabulary before any write",
     SELECT COUNT(*) AS count FROM tasks WHERE project_id = ${f.projectId}`;
   expect(Number(rows[0].count)).toBe(0);
 });
+
+test("batch result reports the pre-existing task count", async () => {
+  const f = await seedUserOrgProject("bprior");
+  const ctx = makeAuthContext(f.userId);
+
+  const first = await createTasksBatch(ctx, f.projectId, [
+    { title: "Opens the project", description: "First task. Does A." },
+  ]);
+  expect(first.priorTaskCount).toBe(0);
+
+  const second = await createTasksBatch(ctx, f.projectId, [
+    { title: "Lands second", description: "Second task. Does B." },
+  ]);
+  expect(second.priorTaskCount).toBe(1);
+});

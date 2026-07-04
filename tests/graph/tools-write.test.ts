@@ -1127,3 +1127,91 @@ test("archived metadata-only workspace update is allowed and hinted", async () =
   expect(renameData.identifier).toBe("PHAMETA2");
   expect(renameData._hints?.join(" ")).toContain("archived");
 });
+
+test("edit by-id op on an empty collection names the op='add' recovery", async () => {
+  const fx = await seedUserOrgProject("TEDITEMPTYCOLL");
+  const ctx = makeAuthContext(fx.userId);
+  const task = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "No criteria yet",
+  });
+
+  const result = await handleEdit(
+    {
+      task: task.id,
+      operations: [
+        {
+          op: "check",
+          collection: "acceptanceCriteria",
+          id: "00000000-0000-0000-0000-000000000001",
+        },
+      ],
+    },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error).toContain("has no acceptanceCriteria items yet");
+    expect(result.error).toContain("op='add' collection='acceptanceCriteria'");
+  }
+});
+
+test("create suppresses the orphan-edges hint when there is nothing to wire to", async () => {
+  const fx = await seedUserOrgProject("TCRORPH1");
+  const ctx = makeAuthContext(fx.userId);
+
+  const result = await handleCreate(
+    {
+      project: "PRJTCRORPH1",
+      tasks: [
+        {
+          title: "First and only task",
+          description: "Opens the project. Nothing exists to depend on yet.",
+        },
+      ],
+    },
+    ctx,
+  );
+  const data = okData<CreatePayload>(result);
+  expect(data.created).toHaveLength(1);
+  expect(data._hints?.join(" ") ?? "").not.toContain("No edges in this batch");
+});
+
+test("create keeps the orphan-edges hint when the batch or project has wiring targets", async () => {
+  const fx = await seedUserOrgProject("TCRORPH2");
+  const ctx = makeAuthContext(fx.userId);
+
+  const pair = await handleCreate(
+    {
+      project: "PRJTCRORPH2",
+      tasks: [
+        {
+          title: "Parser",
+          description: "Parses the input. Feeds the renderer.",
+        },
+        {
+          title: "Renderer",
+          description: "Renders parser output. Depends on the parser.",
+        },
+      ],
+    },
+    ctx,
+  );
+  const pairData = okData<CreatePayload>(pair);
+  expect(pairData._hints?.join(" ")).toContain("No edges in this batch");
+
+  const single = await handleCreate(
+    {
+      project: "PRJTCRORPH2",
+      tasks: [
+        {
+          title: "Late addition",
+          description: "Lands after the graph exists. Should get wired in.",
+        },
+      ],
+    },
+    ctx,
+  );
+  const singleData = okData<CreatePayload>(single);
+  expect(singleData._hints?.join(" ")).toContain("No edges in this batch");
+});

@@ -241,6 +241,7 @@ export async function createTasksBatch(
   edges: number;
   projectStatus: ProjectStatus;
   projectIdentifier: string;
+  priorTaskCount: number;
 }> {
   const keySet = validateBatch(items, edges);
 
@@ -428,6 +429,7 @@ export async function createTasksBatch(
       lastCreated,
       projectStatus: access.project.status,
       projectIdentifier: identifier,
+      priorTaskCount: count,
     };
   });
 
@@ -446,6 +448,7 @@ export async function createTasksBatch(
     edges: result.edges,
     projectStatus: result.projectStatus,
     projectIdentifier: result.projectIdentifier,
+    priorTaskCount: result.priorTaskCount,
   };
 }
 

@@ -225,6 +225,30 @@ export function rateLimitHeaders(
   return headers;
 }
 
+/**
+ * Corrective 429 body for the MCP standard tier. Mirrors the heavy-tier
+ * copy in `lib/mcp/create-server.ts`: names the budget, the retry window,
+ * and the call-volume levers, so an agent can recover from the body text
+ * alone. On the Cloudflare backend `resetIn` is the full window (an upper
+ * bound), matching the heavy tier's behavior.
+ *
+ * @param max - Rule call budget per window.
+ * @param window - Rule window in seconds.
+ * @param resetIn - Seconds until the budget resets.
+ * @returns The corrective error message.
+ */
+export function mcpRateLimitMessage(
+  max: number,
+  window: number,
+  resetIn: number,
+): string {
+  return (
+    `MCP rate limit reached (${max} calls/${window}s per API key, all tools combined). ` +
+    `Retry in ${resetIn}s, or reduce call volume: batch task creation into one piyaz_create ` +
+    `and combine field reads into one piyaz_get fields=[...].`
+  );
+}
+
 type BackendKind = "api" | "auth" | "actions" | "mcp" | "mcpHeavy";
 
 /**

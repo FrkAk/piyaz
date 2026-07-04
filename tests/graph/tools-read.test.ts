@@ -170,6 +170,19 @@ test("get project view=meta resolves the identifier", async () => {
   expect(text).toContain("Progress:");
 });
 
+test("get project view=meta names empty category and tag vocabularies", async () => {
+  const fx = await seedUserOrgProject("TGMEMPTY");
+  const result = await handleGet(
+    { project: "PRJTGMEMPTY" },
+    makeAuthContext(fx.userId),
+  );
+  const text = okText(result);
+  expect(text).toContain(
+    "Categories: (none yet — set with piyaz_workspace action='update' categories=[...])",
+  );
+  expect(text).toContain("Tags: (none in use yet)");
+});
+
 test("get overview truncates status groups at the limit with search guidance", async () => {
   const fx = await seedUserOrgProject("TGETOV");
   const ctx = makeAuthContext(fx.userId);

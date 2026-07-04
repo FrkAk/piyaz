@@ -7,7 +7,6 @@ import {
   eq,
   ilike,
   inArray,
-  isNotNull,
   ne,
   or,
   sql,
@@ -2400,16 +2399,17 @@ export function mapDependencyTaskRows(
 }
 
 /**
- * Direct cancelled prerequisites that carry an execution record, as a lazy
- * batch statement, for the planning bundle's "Abandoned Approaches" section.
- * Direct 1-hop `depends_on` targets only — the effective-dep walk treats
- * cancelled tasks as transparent, so they never appear in the closure's
- * `deps`. Map the rows with {@link mapDependencyTaskRows}.
+ * Direct cancelled prerequisites, as a lazy batch statement, for the
+ * planning bundle's "Abandoned Approaches" section. Rationale-less
+ * cancellations are included so an abandoned dep never vanishes from the
+ * lens. Direct 1-hop `depends_on` targets only — the effective-dep walk
+ * treats cancelled tasks as transparent, so they never appear in the
+ * closure's `deps`. Map the rows with {@link mapDependencyTaskRows}.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project the task belongs to.
  * @param taskId - UUID of the planning task.
- * @returns Lazy select yielding cancelled-dep rows with execution records.
+ * @returns Lazy select yielding cancelled-dep rows.
  */
 export function cancelledDepRecordsStmt(
   read: ReadConn,
@@ -2435,7 +2435,6 @@ export function cancelledDepRecordsStmt(
         eq(taskEdges.edgeType, "depends_on"),
         eq(tasks.projectId, projectId),
         eq(tasks.status, "cancelled"),
-        isNotNull(tasks.executionRecord),
       ),
     );
 }
