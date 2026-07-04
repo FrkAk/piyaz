@@ -269,7 +269,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
     wrapTool(
       "piyaz_create",
       ctx,
-      { heavy: (p) => p.tasks.length > 5 },
+      { heavy: (p) => p.tasks.length > 5 || (p.edges?.length ?? 0) > 5 },
       handleCreate,
     ),
   );

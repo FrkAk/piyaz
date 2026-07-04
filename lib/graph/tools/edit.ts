@@ -8,10 +8,12 @@
 
 import { applyTaskEdit, type EditOp } from "@/lib/data/task-edit";
 import { getTaskFields } from "@/lib/data/task";
+import { LIMITS } from "@/lib/mcp/schemas";
 import type { Decision } from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   ok,
+  fail,
   cancelledStatusHints,
   doneStatusHints,
   draftFieldHints,
@@ -29,6 +31,65 @@ export type EditParams = {
   ifUpdatedAt?: string;
   operations: EditOp[];
 };
+
+/** Per-field ceilings for edit-op text, mirroring the create-path caps. */
+const TEXT_FIELD_CAPS: Record<string, number> = {
+  description: LIMITS.description,
+  implementationPlan: LIMITS.plan,
+  executionRecord: LIMITS.executionRecord,
+};
+
+/** Per-collection item-text ceilings, mirroring the create-path caps. */
+const COLLECTION_TEXT_CAPS: Record<string, number> = {
+  acceptanceCriteria: LIMITS.criterionText,
+  decisions: LIMITS.decision,
+};
+
+/**
+ * Enforce the create-path per-field size caps on edit ops. The flat op
+ * schema caps `text`/`value` only at the loosest field's ceiling, so the
+ * field-specific ceilings are checked here before the executor runs.
+ *
+ * @param ops - The call's operations.
+ * @returns A corrective error message, or null when every op fits.
+ */
+function oversizeOpError(ops: EditOp[]): string | null {
+  for (const [i, op] of ops.entries()) {
+    const fieldCap = op.field ? TEXT_FIELD_CAPS[op.field] : undefined;
+    if (fieldCap !== undefined) {
+      for (const s of [
+        op.text,
+        op.newStr,
+        typeof op.value === "string" ? op.value : undefined,
+      ]) {
+        if (typeof s === "string" && s.length > fieldCap)
+          return `operations[${i}]: ${op.field} text exceeds ${fieldCap} characters`;
+      }
+    }
+    if (
+      op.field === "title" &&
+      typeof op.value === "string" &&
+      op.value.length > LIMITS.title
+    )
+      return `operations[${i}]: title exceeds ${LIMITS.title} characters`;
+    if (op.field === "tags" && Array.isArray(op.value)) {
+      if (op.value.length > LIMITS.tags)
+        return `operations[${i}]: tags exceeds ${LIMITS.tags} items`;
+      if (op.value.some((t) => typeof t === "string" && t.length > LIMITS.tag))
+        return `operations[${i}]: a tag exceeds ${LIMITS.tag} characters`;
+    }
+    const collectionCap = op.collection
+      ? COLLECTION_TEXT_CAPS[op.collection]
+      : undefined;
+    if (
+      collectionCap !== undefined &&
+      typeof op.text === "string" &&
+      op.text.length > collectionCap
+    )
+      return `operations[${i}]: ${op.collection} text exceeds ${collectionCap} characters`;
+  }
+  return null;
+}
 
 /** Fields this call's ops touched, for the completion-protocol hints. */
 type OpsPayload = {
@@ -175,6 +236,9 @@ export async function handleEdit(
   ctx: AuthContext,
 ): Promise<ToolResult> {
   try {
+    const oversize = oversizeOpError(p.operations);
+    if (oversize)
+      return fail(`${oversize}. The per-field limits match piyaz_create.`);
     const taskId = await requireTaskId(ctx, p.task);
     const payload = summarizeOps(p.operations);
 

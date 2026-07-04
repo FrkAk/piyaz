@@ -41,7 +41,7 @@ export type MapParams = {
     | "neighbors";
   project?: string;
   task?: string;
-  hops?: 1 | 2;
+  hops?: number;
   limit?: number;
 };
 
@@ -98,7 +98,7 @@ export async function handleMap(
           "raise limit, or inspect a specific dependent with piyaz_get",
         );
       }
-      const neighbors = await getNeighbors(ctx, taskId, p.hops ?? 1);
+      const neighbors = await getNeighbors(ctx, taskId, p.hops === 2 ? 2 : 1);
       const origin = p.task;
       return budgeted(
         neighbors,

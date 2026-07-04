@@ -529,3 +529,23 @@ test("a malformed url is an invalid-url error, never task-not-found", async () =
   expect(error).toContain("Invalid url");
   expect(error).not.toContain("not found");
 });
+
+test("edit rejects op text exceeding the per-field cap before resolving the task", async () => {
+  const fx = await seedUserOrgProject("TCAP");
+  const ctx = makeAuthContext(fx.userId);
+
+  const result = await handleEdit(
+    {
+      task: "PRJTCAP-1",
+      operations: [
+        { op: "set", field: "description", text: "x".repeat(100_001) },
+      ],
+    },
+    ctx,
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error).toContain("description text exceeds");
+    expect(result.error).toContain("100000");
+  }
+});

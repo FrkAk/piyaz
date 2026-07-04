@@ -531,7 +531,12 @@ const editOpSchema = z.object({
       "append: paragraph to add. set on a text field: the full new text. add/update on acceptanceCriteria/decisions: the item text.",
     ),
   value: z
-    .union([z.string(), z.number(), z.array(z.string()), z.null()])
+    .union([
+      z.string().max(LIMITS.plan),
+      z.number(),
+      z.array(z.string().max(LIMITS.filePath)).max(LIMITS.files),
+      z.null(),
+    ])
     .optional()
     .describe(
       "set on a scalar field: the new value (tags/files take arrays; prUrl takes a URL or null to remove). add/remove on assignees: 'me' or a user UUID.",
@@ -551,13 +556,15 @@ const editOpSchema = z.object({
     .string()
     .max(LIMITS.url)
     .optional()
-    .describe("add/update on links: the link URL."),
+    .describe(
+      "add on links: the link URL (required). update on links: replacement URL; update patches only the supplied fields.",
+    ),
   kind: z
     .string()
     .max(LIMITS.tag)
     .optional()
     .describe(
-      "add/update on links: override the link kind (pull_request, issue, commit, doc, link); defaults from the URL classifier.",
+      "add/update on links: override the link kind (pull_request, issue, commit, doc, link); add defaults from the URL classifier, update keeps the stored kind unless supplied.",
     ),
   label: z
     .string()
@@ -649,7 +656,9 @@ export const mapInputSchema = z.object({
     .optional()
     .describe("taskRef ('PYZ-42') or UUID. Required for downstream/neighbors."),
   hops: z
-    .union([z.literal(1), z.literal(2)])
+    .int()
+    .min(1)
+    .max(2)
     .optional()
     .describe("neighbors only: walk depth (default 1)."),
   limit: z
