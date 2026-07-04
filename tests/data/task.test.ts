@@ -1440,6 +1440,15 @@ test("findTaskAccess returns only the gate columns", async () => {
   }
   const row = await findTaskAccess(fx.userId, taskId);
   expect(Object.keys(row ?? {}).sort()).toEqual(
-    ["files", "id", "projectId", "status", "title", "updatedAt"].sort(),
+    [
+      "files",
+      "id",
+      "projectId",
+      "projectIdentifier",
+      "projectStatus",
+      "status",
+      "title",
+      "updatedAt",
+    ].sort(),
   );
 });

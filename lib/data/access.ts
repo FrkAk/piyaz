@@ -12,8 +12,14 @@ import { projects, tasks, type Project, type Task } from "@/lib/db/schema";
 import { executeRaw, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import type { ProjectListOrganization } from "@/lib/data/views";
+import type { ProjectStatus } from "@/lib/types";
 
-/** Gate columns shared by the interactive finder and the batch statement. */
+/**
+ * Gate columns shared by the interactive finder and the batch statement.
+ * `projectStatus`/`projectIdentifier` come from the projects join so task
+ * writes can gate on the parent project's lifecycle phase without a
+ * second query.
+ */
 const taskGateColumns = {
   id: tasks.id,
   projectId: tasks.projectId,
@@ -21,6 +27,8 @@ const taskGateColumns = {
   status: tasks.status,
   files: tasks.files,
   updatedAt: tasks.updatedAt,
+  projectStatus: projects.status,
+  projectIdentifier: projects.identifier,
 } as const;
 
 /** Project gate columns shared by the finder and the batch statement. */
@@ -35,11 +43,15 @@ const projectGateColumns = {
   updatedAt: projects.updatedAt,
 } as const;
 
-/** Slim task row returned by the membership gate. Only the columns callers read. */
+/**
+ * Slim task row returned by the membership gate. Only the columns callers
+ * read, plus the parent project's lifecycle phase and identifier from the
+ * same join.
+ */
 export type TaskAccessGate = Pick<
   Task,
   "id" | "projectId" | "title" | "status" | "files" | "updatedAt"
->;
+> & { projectStatus: ProjectStatus; projectIdentifier: string };
 
 /**
  * Project columns the access check returns. Omits `createdAt` to reduce DB
@@ -138,6 +150,7 @@ export async function findTaskAccessTx(
   const [row] = await tx
     .select(taskGateColumns)
     .from(tasks)
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(eq(tasks.id, taskId))
     .limit(1);
   return row ?? null;
@@ -157,6 +170,7 @@ export function taskAccessGateStmt(read: ReadConn, taskId: string) {
   return read
     .select(taskGateColumns)
     .from(tasks)
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
     .where(eq(tasks.id, taskId))
     .limit(1);
 }

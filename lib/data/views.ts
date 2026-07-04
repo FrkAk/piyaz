@@ -118,9 +118,9 @@ export type ProjectIndexEntry = Pick<
 
 /**
  * Slim project entry returned by `listProjectsForMcp` — the agent-facing
- * shape for `piyaz_project action='list'`. Strips description, categories,
+ * shape for `piyaz_workspace action='projects'`. Strips description, categories,
  * and timestamps to keep the payload tight; agents fetch the
- * description and tag vocabulary on demand via `piyaz_query type='meta'`.
+ * description and tag vocabulary on demand via `piyaz_get project view='meta'`.
  */
 export type ProjectListEntryMcp = Pick<
   Project,

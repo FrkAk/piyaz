@@ -37,9 +37,10 @@ describe("buildPlanningContext under app_user", () => {
     expect(result).toContain("Parent task");
   });
 
-  test("cancelled middle is transparent: C surfaces, B does not", async () => {
+  test("cancelled middle is transparent in prerequisites but named as abandoned", async () => {
     // A depends_on B(cancelled) depends_on C(active). The planning bundle
-    // for A must show C as a prerequisite and never list B.
+    // for A must show C as a prerequisite, never B; B surfaces only under
+    // Abandoned Approaches.
     const fx = await seedUserOrgProject("planning-ctx-cancel");
     const sr = serviceRoleConnect();
     let aTaskId: string;
@@ -68,7 +69,10 @@ describe("buildPlanningContext under app_user", () => {
     const ctx = makeAuthContext(fx.userId);
     const result = await buildPlanningContext(ctx, aTaskId);
     expect(result).toContain("Active wall C");
-    expect(result).not.toContain("Cancelled middle B");
+    expect(result).not.toContain("**Cancelled middle B**");
+    expect(result).toContain("## Abandoned Approaches");
+    expect(result).toContain("Cancelled middle B");
+    expect(result).toContain("(no rationale recorded)");
   });
 
   test("golden: fully-populated task renders byte-identical planning context", async () => {
@@ -129,6 +133,28 @@ describe("buildPlanningContext under app_user", () => {
     expect(result).toContain("https://example.test/pr/1");
     // Cancelled deps are transparent to the effective walk: never a prerequisite row.
     expect(result).not.toContain("**Dead-end approach** [cancelled]");
+  });
+
+  test("marks a cancelled dep without a rationale instead of hiding it", async () => {
+    const fx = await seedRichContextTask("planning-ctx-bare-cancel");
+    const sr = serviceRoleConnect();
+    try {
+      const [dead] = await sr<{ id: string }[]>`
+        INSERT INTO tasks (project_id, title, sequence_number, description, status)
+        SELECT project_id, 'Silent abandonment', 9, 'dropped without notes', 'cancelled'
+        FROM tasks WHERE id = ${fx.taskId}
+        RETURNING id`;
+      await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+               VALUES (${fx.taskId}, ${dead.id}, 'depends_on')`;
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const ctx = makeAuthContext(fx.userId);
+    const result = await buildPlanningContext(ctx, fx.taskId);
+    expect(result).toContain("## Abandoned Approaches");
+    expect(result).toContain("Silent abandonment");
+    expect(result).toContain("(no rationale recorded)");
   });
 
   test("upstream execution records carry the done dep's PR link", async () => {

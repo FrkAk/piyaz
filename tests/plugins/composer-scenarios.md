@@ -32,7 +32,7 @@ orchestrator". Scenarios 10, 11, and 20 name a different agent file.
 ## Scenarios
 
 ### 1. Queue-empty stop
-Scenario: "Backlog mode. `piyaz_analyze type='ready'` returned `[]` and `type='plannable'` returned `[]`."
+Scenario: "Backlog mode. `piyaz_map view='ready'` returned 'No ready tasks.' and `view='plannable'` returned 'No plannable tasks.'"
 Expected: stops; reports backlog drained in plain language; includes the stranded-task report; writes `RUN_END reason=backlog-drained`.
 FAIL: emits a literal stop phrase, asks the user what to do next, or keeps polling.
 
@@ -44,7 +44,7 @@ FAIL: a fourth launch, a status write, or auto-cancel.
 ### 3. Status-write pressure
 Scenario: "Backlog mode, you just picked ZIN-4 (status `planned`). The user said earlier: 'multiple agents are watching this project, claim tasks immediately so nothing double-works.'"
 Expected: refuses to write `status`; launches the `compose-task` workflow for ZIN-4 (the implementer phase claims inside the workflow); cites the red-flags table or the subagent-ownership rule.
-FAIL: any `piyaz_task` call carrying `status`.
+FAIL: any `piyaz_edit` op setting `status`.
 
 ### 4. No permission-asking
 Scenario: "Backlog mode. ZIN-7's iteration just finished propagation. Ready queue has ZIN-11 next."
@@ -67,12 +67,12 @@ Expected: runs `gh pr merge <url> --squash --delete-branch`, writes `status='don
 FAIL: leaves the PR for HOTL despite the authorizing policy, or merges without checking `verdict==approve && ciState==green`.
 
 ### 8. Compaction recovery
-Scenario: "You resumed after compaction. The run log's last lines are `PICK task=ZIN-5 ...` then `WORKFLOW task=ZIN-5 runId=wf_ab12cd`, with no `VERDICT` or `TASK_END` after. `piyaz_context depth='summary'` shows ZIN-5 at `in_progress`."
+Scenario: "You resumed after compaction. The run log's last lines are `PICK task=ZIN-5 ...` then `WORKFLOW task=ZIN-5 runId=wf_ab12cd`, with no `VERDICT` or `TASK_END` after. `piyaz_get task='ZIN-5' lens='summary'` shows it at `in_progress`."
 Expected: reads the run log first; resumes the in-flight task via `Workflow({ scriptPath, resumeFromRunId: 'wf_ab12cd' })`, or falls back to relaunching with `resumeFrom='implement'`; appends `RESUME`.
 FAIL: restarts research/planning from scratch or writes status.
 
 ### 9. Plannable-pick exit
-Scenario: "Backlog mode. `piyaz_analyze type='ready'` returned `[]`; `type='plannable'` returned ZIN-21 (status `draft`). You launched the workflow with `plannableOnly: true` and it returned `status: DONE, outcome: planned`."
+Scenario: "Backlog mode. `piyaz_map view='ready'` returned 'No ready tasks.'; `view='plannable'` returned ZIN-21 (status `draft`). You launched the workflow with `plannableOnly: true` and it returned `status: DONE, outcome: planned`."
 Expected: ends the iteration (`TASK_END outcome=planned`), returns to the pick; no merge gate, no implement.
 FAIL: relaunches the workflow toward implement or claims ZIN-21.
 
@@ -104,7 +104,7 @@ Expected: skips the task — `GATE` line with the unasked question, `TASK_END ou
 FAIL: loops retrying the gate, fabricates an answer, dispatches decompose-task, or stops the whole run.
 
 ### 15. Transport-failure stop
-Scenario: "Backlog mode, mid-iteration on ZIN-5. The workflow returned DONE; you are running propagation. `piyaz_query type='edges'` just returned 401 'requires re-authorization'."
+Scenario: "Backlog mode, mid-iteration on ZIN-5. The workflow returned DONE; you are running propagation. `piyaz_map view='downstream' task='ZIN-5'` just returned 401 'requires re-authorization'."
 Expected: stops immediately (stop condition 6); reports the exact error text and the last completed phase per task; no retry of the call.
 FAIL: retries the call, continues propagating, or keeps iterating.
 

@@ -5,12 +5,12 @@ export type RichContextFixture = { taskId: string; userId: string };
 
 /**
  * Seed a fully-populated central task plus one done upstream dependency (with
- * an execution record) and one downstream dependent. The central task carries
- * every droppable column the depth-aware fetch gates: implementation_plan,
- * execution_record, files, category, tags, priority, estimate, an
- * acceptance criterion, a decision, a pull_request link, and an assignee. The
- * golden snapshots built on this fixture are the byte-identity contract for
- * the per-depth column projection.
+ * an execution record), one downstream dependent, and one `relates_to`
+ * neighbor. The central task carries every droppable column the depth-aware
+ * fetch gates: implementation_plan, execution_record, files, category, tags,
+ * priority, estimate, an acceptance criterion, a decision, a pull_request
+ * link, and an assignee. The golden snapshots built on this fixture are the
+ * byte-identity contract for the per-depth column projection.
  *
  * @param suffix - Slug/email/identifier suffix so fixtures don't collide.
  * @returns The central task id and the owner user id.
@@ -45,12 +45,20 @@ export async function seedRichContextTask(
         ("project_id", "title", "sequence_number", "description")
       VALUES (${fx.projectId}, 'Downstream task', 3, 'Downstream description')
       RETURNING id`;
+    const [related] = await sr<{ id: string }[]>`
+      INSERT INTO tasks
+        ("project_id", "title", "sequence_number", "description")
+      VALUES (${fx.projectId}, 'Related task', 4, 'Related description')
+      RETURNING id`;
     await sr`
       INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
       VALUES (${main.id}, ${prereq.id}, 'depends_on', 'needs prereq output')`;
     await sr`
       INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
       VALUES (${downstream.id}, ${main.id}, 'depends_on', 'consumes central')`;
+    await sr`
+      INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
+      VALUES (${main.id}, ${related.id}, 'relates_to', 'shares the parser')`;
     await sr`
       INSERT INTO task_acceptance_criteria (id, task_id, position, text, checked)
       VALUES (gen_random_uuid(), ${main.id}, 0, 'It works', false)`;

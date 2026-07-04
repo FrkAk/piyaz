@@ -1,13 +1,16 @@
 import "server-only";
 
-import { activityEvents } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { activityEvents, projects, tasks } from "@/lib/db/schema";
 import { withUserContextRead, type Tx } from "@/lib/db/rls";
 import { normalizeExecuteResult } from "@/lib/db/raw";
+import { ForbiddenError } from "@/lib/auth/authorization";
 import {
   taskActivityStmt,
   type ActivityCursor,
   type ActivityRawRow,
 } from "@/lib/db/raw/fetch-task-activity";
+import { projectActivityStmt } from "@/lib/db/raw/fetch-project-activity";
 import type { ActorDescriptor, AuthContext } from "@/lib/auth/context";
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
 import { isVerifiedOAuthClient } from "@/lib/auth/verified-oauth-clients";
@@ -292,6 +295,20 @@ function toDate(value: Date | string): Date {
 }
 
 /**
+ * Normalize a caller-supplied `since` bound to a safe ISO literal. Guards the
+ * value before it reaches a `::timestamptz` cast: a malformed timestamp maps to
+ * null (no filter) instead of throwing a 500.
+ *
+ * @param since - Caller-supplied ISO timestamp, or undefined.
+ * @returns A canonical ISO string, or null when absent or malformed.
+ */
+function normalizeSince(since: string | undefined): string | null {
+  if (!since) return null;
+  const d = new Date(since);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/**
  * Map a raw page row to the API read model. Identity is already hydrated by
  * the SDF join (null when the actor cannot be resolved).
  *
@@ -319,27 +336,79 @@ function toActivityEvent(r: ActivityRawRow): ActivityEvent {
 }
 
 /**
- * List a task's activity newest-first, keyset-paginated. One RLS-scoped read:
- * the page and its read-time identity are resolved in a single statement that
- * joins the `activity_actors_visible` / `oauth_client_name` SECURITY DEFINER
- * functions — no `service_role`. A non-member transparently sees an empty page.
+ * List a task's activity newest-first, keyset-paginated. One RLS-scoped read
+ * batch: the page (with read-time identity via the `activity_actors_visible`
+ * / `oauth_client_name` SECURITY DEFINER functions — no `service_role`) plus
+ * a task-existence probe, so a stale or foreign task id is 404-shaped
+ * instead of masquerading as "no activity".
  *
  * @param ctx - Caller auth context.
  * @param taskId - Task whose events to read.
- * @param opts - `limit` (clamped to {@link MAX_LIMIT}) and an opaque `cursor`.
+ * @param opts - `limit` (clamped to {@link MAX_LIMIT}), an opaque `cursor`, and
+ *   an optional `since` lower bound (events with `created_at > since`).
  * @returns A page of events plus the next cursor (null when exhausted).
+ * @throws ForbiddenError when the task is not visible to the caller.
  */
 export async function listTaskActivity(
   ctx: AuthContext,
   taskId: string,
-  opts: { cursor?: string; limit?: number },
+  opts: { cursor?: string; limit?: number; since?: string },
 ): Promise<{ events: ActivityEvent[]; nextCursor: string | null }> {
   const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
   const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
 
-  const [raw] = await withUserContextRead(ctx.userId, (read) => [
-    taskActivityStmt(read, taskId, cur, limit + 1),
+  const [raw, probe] = await withUserContextRead(ctx.userId, (read) => [
+    taskActivityStmt(read, taskId, cur, limit + 1, since),
+    read.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)),
   ]);
+  if (probe.length === 0) throw new ForbiddenError("Forbidden", "task", taskId);
+  const rows = normalizeExecuteResult<ActivityRawRow>(raw);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  if (page.length === 0) return { events: [], nextCursor: null };
+
+  const last = page[page.length - 1];
+  return {
+    events: page.map(toActivityEvent),
+    nextCursor: hasMore ? encodeCursor(last.created_at_cursor, last.id) : null,
+  };
+}
+
+/**
+ * List a project's activity newest-first, keyset-paginated. One RLS-scoped
+ * read batch anchored on `project_id`: the page (read-time identity via the
+ * `activity_actors_for_project_visible` / `oauth_client_name` SECURITY
+ * DEFINER functions — no `service_role`) plus a project-existence probe, so
+ * a stale or foreign project id is 404-shaped instead of masquerading as
+ * "no activity".
+ *
+ * @param ctx - Caller auth context.
+ * @param projectId - Project whose events to read.
+ * @param opts - `limit` (clamped to {@link MAX_LIMIT}), an opaque `cursor`, and
+ *   an optional `since` lower bound (events with `created_at > since`).
+ * @returns A page of events plus the next cursor (null when exhausted).
+ * @throws ForbiddenError when the project is not visible to the caller.
+ */
+export async function listProjectActivity(
+  ctx: AuthContext,
+  projectId: string,
+  opts: { cursor?: string; limit?: number; since?: string },
+): Promise<{ events: ActivityEvent[]; nextCursor: string | null }> {
+  const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
+
+  const [raw, probe] = await withUserContextRead(ctx.userId, (read) => [
+    projectActivityStmt(read, projectId, cur, limit + 1, since),
+    read
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, projectId)),
+  ]);
+  if (probe.length === 0)
+    throw new ForbiddenError("Forbidden", "project", projectId);
   const rows = normalizeExecuteResult<ActivityRawRow>(raw);
 
   const hasMore = rows.length > limit;

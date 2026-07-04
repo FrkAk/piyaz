@@ -7,10 +7,10 @@ import {
   eq,
   ilike,
   inArray,
-  isNotNull,
   ne,
   or,
   sql,
+  type SQL,
 } from "drizzle-orm";
 import {
   executeRaw,
@@ -36,7 +36,10 @@ import {
 } from "@/lib/db/schema";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
 import {
+  taskFieldsStmt,
   taskFullStmt,
+  type TaskFieldName,
+  type TaskFieldsRawRow,
   type TaskFullRawRow,
 } from "@/lib/db/raw/fetch-task-full";
 import { fetchTaskChildren } from "@/lib/db/raw/fetch-task-children";
@@ -51,6 +54,8 @@ import {
   asIdentifier,
   composeTaskRef,
   enrichWithTaskRef,
+  type Identifier,
+  type TaskRef,
 } from "@/lib/graph/identifier";
 import {
   buildEffectiveDepGraph,
@@ -68,10 +73,16 @@ import {
 } from "@/lib/data/activity";
 import { fetchMyTaskDepStats } from "@/lib/db/raw/fetch-my-task-dep-stats";
 import { normalizeTags } from "@/lib/graph/tag-similarity";
-import { ProjectNotFoundError, TaskLimitError } from "@/lib/graph/errors";
+import {
+  ProjectArchivedError,
+  ProjectNotFoundError,
+  SearchCriteriaRequiredError,
+  TaskLimitError,
+  UnknownCategoryError,
+} from "@/lib/graph/errors";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { parseEnvInt } from "@/lib/config/env";
-import type { AuthContext } from "@/lib/auth/context";
+import type { ActorDescriptor, AuthContext } from "@/lib/auth/context";
 import {
   assertProjectAccessTx,
   assertProjectGateRows,
@@ -83,7 +94,9 @@ import {
   isUuid,
 } from "@/lib/auth/authorization";
 import {
+  decodeCursor,
   decodeOrderCursor,
+  encodeCursor,
   encodeOrderCursor,
   type Cursor,
 } from "@/lib/data/cursor";
@@ -98,7 +111,11 @@ import type {
 import { edgeRefColumns } from "@/lib/data/edge-columns";
 import { projectColor } from "@/lib/ui/project-color";
 import { emitTaskEvent } from "@/lib/realtime/events";
-import { classifyLink, MalformedLinkError } from "@/lib/links/classify";
+import {
+  classifyLink,
+  MalformedLinkError,
+  type ClassifiedLink,
+} from "@/lib/links/classify";
 
 /**
  * Compute one discrete activity event per changed task field. Scalars compare
@@ -269,7 +286,7 @@ function normalizeCriteria(input: unknown[]): AcceptanceCriterion[] {
  * @param input - Caller-supplied decisions array.
  * @returns Canonical decisions array.
  */
-function normalizeDecisions(input: unknown[]): Decision[] {
+export function normalizeDecisions(input: unknown[]): Decision[] {
   return input.map((d) => {
     if (typeof d === "string") {
       return {
@@ -560,6 +577,33 @@ export async function getTaskFull(
     normalizeExecuteResult<TaskFullRawRow>(fullRaw),
     taskId,
   );
+}
+
+/**
+ * Read exactly the requested task fields in one RLS-scoped round trip. The
+ * MCP `piyaz_get fields=[...]` path: only the requested columns are
+ * egressed; identity columns and `updated_at` always ride along for ref
+ * composition and `ifUpdatedAt` preconditions. RLS hides rows the caller
+ * cannot access, so an empty result is 404-shaped like {@link getTaskFull}.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @param fields - Field names to project.
+ * @returns The raw field-projected row.
+ * @throws ForbiddenError when no row is visible to the caller.
+ */
+export async function getTaskFields(
+  ctx: AuthContext,
+  taskId: string,
+  fields: readonly TaskFieldName[],
+): Promise<TaskFieldsRawRow> {
+  assertValidTaskId(taskId);
+  const [raw] = await withUserContextRead(ctx.userId, (read) => [
+    taskFieldsStmt(read, taskId, fields),
+  ]);
+  const [row] = normalizeExecuteResult<TaskFieldsRawRow>(raw);
+  if (!row) throw new ForbiddenError("Forbidden", "task", taskId);
+  return row;
 }
 
 /**
@@ -1114,7 +1158,7 @@ export type SearchResult = {
 };
 
 /** Match a full taskRef like "MYMR-83" (case-insensitive). */
-const TASK_REF_PATTERN = /^([A-Z0-9]+)-(\d+)$/i;
+export const TASK_REF_PATTERN = /^([A-Z0-9]+)-(\d+)$/i;
 
 /** Filter options for {@link searchTasks} and {@link searchTasksRead}. */
 export type SearchTasksOpts = {
@@ -1122,7 +1166,7 @@ export type SearchTasksOpts = {
   query?: string;
   /** Optional exact tag filter (OR-within). */
   tags?: string[];
-  /** Optional exact project-category filter (AND-narrows). Caller validates. */
+  /** Optional exact project-category filter (AND-narrows); unknown values match nothing. */
   category?: string;
 };
 
@@ -1612,6 +1656,415 @@ export async function searchTasksAcrossProjects(
   });
 }
 
+// ---------------------------------------------------------------------------
+// MCP search (cross-project + project-scoped, keyset on updated_at)
+// ---------------------------------------------------------------------------
+
+/** Filter and pagination options for {@link searchTasksForMcp}. */
+export type McpSearchOpts = {
+  /** Free-text match on taskRef, title, or tags. */
+  query?: string;
+  /** Project UUID; present selects project-scoped mode (adds derived `state`). */
+  projectId?: string;
+  /** Lifecycle statuses to include (OR-within). */
+  status?: string[];
+  /** Priorities to include (OR-within). */
+  priority?: string[];
+  /** Assignee user UUID, or the literal `me` (mapped to the caller). */
+  assignee?: string;
+  /** Exact project-category filter. */
+  category?: string;
+  /** Exact tags; every tag must be present on the task (AND-within). */
+  tags?: string[];
+  /** Page size, clamped to 1..50 (default 20). */
+  limit?: number;
+  /** Opaque `(updated_at, id)` cursor from a previous page. */
+  cursor?: Cursor | string | null;
+};
+
+/**
+ * A search result row. `state` is present only in project-scoped mode, where
+ * the effective dependency graph is available; cross-project rows omit it.
+ */
+export type McpSearchItem = {
+  id: string;
+  taskRef: string;
+  title: string;
+  status: string;
+  priority: Priority | null;
+  estimate: Estimate | null;
+  category: string | null;
+  tags: string[];
+  updatedAt: Date;
+  state?: TaskState;
+};
+
+/** A page of {@link McpSearchItem}s with a cursor for the next slice. */
+export type McpSearchPage = {
+  items: McpSearchItem[];
+  nextCursor: Cursor | null;
+};
+
+/** Row columns shared by both search modes, before taskRef composition. */
+type McpSearchRow = {
+  id: string;
+  title: string;
+  status: string;
+  priority: Priority | null;
+  estimate: Estimate | null;
+  category: string | null;
+  tags: string[];
+  sequenceNumber: number;
+  updatedAt: Date;
+};
+
+const MCP_SEARCH_DEFAULT_LIMIT = 20;
+const MCP_SEARCH_MAX_LIMIT = 50;
+
+/**
+ * Whether the caller supplied at least one search criterion.
+ *
+ * @param opts - Caller-supplied search options.
+ * @returns True when any of query/status/priority/assignee/category/tags is set.
+ */
+function hasAnySearchCriterion(opts: McpSearchOpts): boolean {
+  return Boolean(
+    opts.query?.trim() ||
+      opts.status?.length ||
+      opts.priority?.length ||
+      opts.assignee ||
+      opts.category?.trim() ||
+      opts.tags?.length,
+  );
+}
+
+/**
+ * Build the mode-independent filter clauses (status, priority, assignee,
+ * category, tags). The `me` assignee literal maps to the caller's id. Exact
+ * tags AND-narrow: every tag must be present on the task.
+ *
+ * @param opts - Caller-supplied search options.
+ * @param userId - Caller's id, for the `me` assignee mapping.
+ * @returns Drizzle `where` clauses to AND into the query.
+ */
+function mcpScalarFilterClauses(opts: McpSearchOpts, userId: string): SQL[] {
+  const clauses: SQL[] = [];
+  if (opts.status?.length) {
+    clauses.push(inArray(tasks.status, opts.status as TaskStatus[]));
+  }
+  if (opts.priority?.length) {
+    clauses.push(inArray(tasks.priority, opts.priority as Priority[]));
+  }
+  if (opts.assignee) {
+    const assigneeId = opts.assignee === "me" ? userId : opts.assignee;
+    clauses.push(
+      sql`EXISTS (SELECT 1 FROM "task_assignees" "ta_f" WHERE "ta_f"."task_id" = "tasks"."id" AND "ta_f"."user_id" = ${assigneeId})`,
+    );
+  }
+  const category = opts.category?.trim();
+  if (category) clauses.push(eq(tasks.category, category));
+  for (const tag of normalizeTags(opts.tags)) {
+    clauses.push(
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t = ${tag})`,
+    );
+  }
+  return clauses;
+}
+
+/**
+ * Cross-project `query` clauses: the ref short-circuit and tokenized OR match
+ * from {@link searchTasksAcrossProjects}, over the org-bounded `tasks JOIN
+ * projects` set. Empty when `trimmed` is empty.
+ *
+ * @param trimmed - Trimmed query string.
+ * @returns Drizzle `where` clauses to AND into the query.
+ */
+function crossProjectQueryClauses(trimmed: string): SQL[] {
+  if (trimmed.length === 0) return [];
+  const refMatch = trimmed.match(TASK_REF_PATTERN);
+  if (refMatch) {
+    return [
+      eq(projects.identifier, refMatch[1].toUpperCase()),
+      eq(tasks.sequenceNumber, Number(refMatch[2])),
+    ];
+  }
+  const clauses: SQL[] = [];
+  for (const token of trimmed.split(/[\s-]+/).filter((t) => t.length > 0)) {
+    const pattern = `%${token}%`;
+    const orClauses = [
+      ilike(tasks.title, pattern),
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`,
+      ilike(projects.title, pattern),
+      ilike(projects.identifier, pattern),
+    ];
+    if (/^\d+$/.test(token)) {
+      orClauses.push(eq(tasks.sequenceNumber, Number(token)));
+    }
+    const tokenClause = or(...orClauses);
+    if (tokenClause) clauses.push(tokenClause);
+  }
+  return clauses;
+}
+
+/**
+ * Project-scoped `query` clause: the ref short-circuit and title/tag substring
+ * match from {@link searchTasksPaged}, over a single known project.
+ *
+ * @param trimmed - Trimmed query string.
+ * @param projectIdentifier - The scoped project's identifier prefix.
+ * @returns A single `where` clause, or null when `trimmed` is empty.
+ */
+function projectScopedQueryClause(
+  trimmed: string,
+  projectIdentifier: string,
+): SQL | null {
+  if (trimmed.length === 0) return null;
+  const refMatch = trimmed.match(TASK_REF_PATTERN);
+  if (refMatch && refMatch[1].toUpperCase() === projectIdentifier) {
+    return eq(tasks.sequenceNumber, Number(refMatch[2]));
+  }
+  const pattern = `%${trimmed}%`;
+  const tagSubstring = sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${tasks.tags}) AS t WHERE t ILIKE ${pattern})`;
+  return or(ilike(tasks.title, pattern), tagSubstring) ?? null;
+}
+
+/**
+ * Compose a search row into an {@link McpSearchItem}. Attaches `state` only
+ * when the caller resolved one (project-scoped mode).
+ *
+ * @param row - The selected task row.
+ * @param identifier - The row's project identifier for taskRef composition.
+ * @param state - Derived workflow state, or undefined in cross-project mode.
+ * @returns The composed search item.
+ */
+function toMcpSearchItem(
+  row: McpSearchRow,
+  identifier: Identifier,
+  state?: TaskState,
+): McpSearchItem {
+  const item: McpSearchItem = {
+    id: row.id,
+    taskRef: composeTaskRef(identifier, row.sequenceNumber),
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    estimate: row.estimate,
+    category: row.category,
+    tags: row.tags,
+    updatedAt: row.updatedAt,
+  };
+  if (state) item.state = state;
+  return item;
+}
+
+/**
+ * The `(updated_at, id)` keyset seek clause for the search page. Compares on a
+ * millisecond-truncated `updated_at` so a `Date`-precision cursor matches the
+ * microsecond-precision column at a page boundary (same idiom as
+ * `listProjectsSlim`).
+ *
+ * @param cursor - Decoded cursor position, or null for the first page.
+ * @param updatedAtMs - The millisecond-truncated `updated_at` expression.
+ * @returns The seek clause (`TRUE` on the first page).
+ */
+function mcpSearchCursorClause(
+  cursor: { updatedAt: Date; id: string } | null,
+  updatedAtMs: SQL,
+): SQL {
+  if (!cursor) return sql`TRUE`;
+  const afterIso = cursor.updatedAt.toISOString();
+  return sql`(${updatedAtMs} < ${afterIso}::timestamptz
+      OR (${updatedAtMs} = ${afterIso}::timestamptz AND ${tasks.id} < ${cursor.id}))`;
+}
+
+/**
+ * Cross-project search (default mode). Org-bounded via `current_user_orgs()`
+ * for defense-in-depth over RLS, keyset-paginated on `(updated_at DESC, id
+ * DESC)`. Rows omit `state` (no per-project effective graph resolved here).
+ *
+ * @param ctx - Resolved auth context.
+ * @param opts - Search options (already criterion-checked by the caller).
+ * @returns A page of items plus the next cursor.
+ */
+async function searchMcpCrossProject(
+  ctx: AuthContext,
+  opts: McpSearchOpts,
+): Promise<McpSearchPage> {
+  const limit = Math.min(
+    Math.max(opts.limit ?? MCP_SEARCH_DEFAULT_LIMIT, 1),
+    MCP_SEARCH_MAX_LIMIT,
+  );
+  const after = decodeCursor(opts.cursor);
+  const updatedAtMs = sql`date_trunc('milliseconds', ${tasks.updatedAt})`;
+
+  return withUserContext(ctx.userId, async (tx) => {
+    const orgRows = await executeRaw<{ org_id: string }>(
+      tx,
+      sql`SELECT org_id FROM public.current_user_orgs()`,
+    );
+    const orgIds = orgRows.map((r) => r.org_id);
+    if (orgIds.length === 0) return { items: [], nextCursor: null };
+
+    const clauses: SQL[] = [
+      inArray(projects.organizationId, orgIds),
+      ...crossProjectQueryClauses(opts.query?.trim() ?? ""),
+      ...mcpScalarFilterClauses(opts, ctx.userId),
+    ];
+
+    const rows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        category: tasks.category,
+        tags: tasks.tags,
+        sequenceNumber: tasks.sequenceNumber,
+        updatedAt: tasks.updatedAt,
+        projectIdentifier: projects.identifier,
+      })
+      .from(tasks)
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(and(...clauses, mcpSearchCursorClause(after, updatedAtMs)))
+      .orderBy(desc(updatedAtMs), desc(tasks.id))
+      .limit(limit + 1);
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const items = page.map((row) =>
+      toMcpSearchItem(row, asIdentifier(row.projectIdentifier)),
+    );
+    const last = page[page.length - 1];
+    const nextCursor =
+      hasMore && last
+        ? encodeCursor({ updatedAt: new Date(last.updatedAt), id: last.id })
+        : null;
+    return { items, nextCursor };
+  });
+}
+
+/**
+ * Project-scoped search. Same filter set as {@link searchMcpCrossProject} over
+ * one authorized project, keyset-paginated on `(updated_at DESC, id DESC)`.
+ * Rows carry derived `state` via {@link deriveTaskStatesSlim}.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project to scope to.
+ * @param opts - Search options (already criterion-checked by the caller).
+ * @returns A page of items (with `state`) plus the next cursor.
+ * @throws ForbiddenError on missing or cross-team project.
+ * @throws UnknownCategoryError when `opts.category` is not one of the project's
+ *   known categories.
+ */
+async function searchMcpProjectScoped(
+  ctx: AuthContext,
+  projectId: string,
+  opts: McpSearchOpts,
+): Promise<McpSearchPage> {
+  const limit = Math.min(
+    Math.max(opts.limit ?? MCP_SEARCH_DEFAULT_LIMIT, 1),
+    MCP_SEARCH_MAX_LIMIT,
+  );
+  const after = decodeCursor(opts.cursor);
+  const updatedAtMs = sql`date_trunc('milliseconds', ${tasks.updatedAt})`;
+
+  return withUserContext(ctx.userId, async (tx) => {
+    const { project } = await assertProjectAccessTx(tx, projectId);
+    const identifier = asIdentifier(project.identifier);
+
+    const category = opts.category?.trim();
+    if (
+      category &&
+      project.categories.length > 0 &&
+      !project.categories.includes(category)
+    ) {
+      throw new UnknownCategoryError(category, project.categories);
+    }
+
+    const queryClause = projectScopedQueryClause(
+      opts.query?.trim() ?? "",
+      project.identifier,
+    );
+    const clauses: SQL[] = [
+      eq(tasks.projectId, projectId),
+      ...(queryClause ? [queryClause] : []),
+      ...mcpScalarFilterClauses(opts, ctx.userId),
+    ];
+
+    const rows = await tx
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        priority: tasks.priority,
+        estimate: tasks.estimate,
+        category: tasks.category,
+        tags: tasks.tags,
+        sequenceNumber: tasks.sequenceNumber,
+        updatedAt: tasks.updatedAt,
+        hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
+        hasCriteria: hasCriteriaExpr(),
+      })
+      .from(tasks)
+      .where(and(...clauses, mcpSearchCursorClause(after, updatedAtMs)))
+      .orderBy(desc(updatedAtMs), desc(tasks.id))
+      .limit(limit + 1);
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    if (page.length === 0) return { items: [], nextCursor: null };
+
+    const stateMap = await deriveTaskStatesSlim(
+      projectId,
+      page.map((t) => ({
+        id: t.id,
+        status: t.status,
+        hasDescription: t.hasDescription,
+        hasCriteria: t.hasCriteria,
+      })),
+      tx,
+    );
+
+    const items = page.map((row) =>
+      toMcpSearchItem(row, identifier, stateMap.get(row.id) ?? "draft"),
+    );
+    const last = page[page.length - 1];
+    const nextCursor =
+      hasMore && last
+        ? encodeCursor({ updatedAt: new Date(last.updatedAt), id: last.id })
+        : null;
+    return { items, nextCursor };
+  });
+}
+
+/**
+ * Filtered task search for the MCP surface. Cross-project by default (org-
+ * bounded), or project-scoped when `opts.projectId` is set (adds derived
+ * `state`). Supports query, status, priority, assignee (`me` → caller),
+ * category, and exact-tag filters, keyset-paginated on `(updated_at DESC, id
+ * DESC)`.
+ *
+ * @param ctx - Resolved auth context.
+ * @param opts - Filter and pagination options.
+ * @returns A page of items plus the next cursor (null on the last page).
+ * @throws SearchCriteriaRequiredError when no criterion is supplied.
+ * @throws ForbiddenError on a missing or cross-team `projectId`.
+ * @throws UnknownCategoryError when `category` is not one of the project's
+ *   known categories.
+ */
+export async function searchTasksForMcp(
+  ctx: AuthContext,
+  opts: McpSearchOpts,
+): Promise<McpSearchPage> {
+  if (!hasAnySearchCriterion(opts)) {
+    throw new SearchCriteriaRequiredError();
+  }
+  return opts.projectId
+    ? searchMcpProjectScoped(ctx, opts.projectId, opts)
+    : searchMcpCrossProject(ctx, opts);
+}
+
 /**
  * Bounded by `current_user_orgs()` for defense-in-depth over RLS.
  * Tie-break on `tasks.id` asc for stable output across calls.
@@ -1946,16 +2399,17 @@ export function mapDependencyTaskRows(
 }
 
 /**
- * Direct cancelled prerequisites that carry an execution record, as a lazy
- * batch statement, for the planning bundle's "Abandoned Approaches" section.
- * Direct 1-hop `depends_on` targets only — the effective-dep walk treats
- * cancelled tasks as transparent, so they never appear in the closure's
- * `deps`. Map the rows with {@link mapDependencyTaskRows}.
+ * Direct cancelled prerequisites, as a lazy batch statement, for the
+ * planning bundle's "Abandoned Approaches" section. Rationale-less
+ * cancellations are included so an abandoned dep never vanishes from the
+ * lens. Direct 1-hop `depends_on` targets only — the effective-dep walk
+ * treats cancelled tasks as transparent, so they never appear in the
+ * closure's `deps`. Map the rows with {@link mapDependencyTaskRows}.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project the task belongs to.
  * @param taskId - UUID of the planning task.
- * @returns Lazy select yielding cancelled-dep rows with execution records.
+ * @returns Lazy select yielding cancelled-dep rows.
  */
 export function cancelledDepRecordsStmt(
   read: ReadConn,
@@ -1981,7 +2435,6 @@ export function cancelledDepRecordsStmt(
         eq(taskEdges.edgeType, "depends_on"),
         eq(tasks.projectId, projectId),
         eq(tasks.status, "cancelled"),
-        isNotNull(tasks.executionRecord),
       ),
     );
 }
@@ -2045,9 +2498,10 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
    */
   assigneeIds?: string[];
   /**
-   * Optional PR URL. Sugar: upserts a `task_links` row with kind derived
-   * from {@link classifyLink} inside the same transaction as the task
-   * insert. Not a column on `tasks`; stripped before the typed insert.
+   * Optional PR URL. Sugar: upserts a `task_links` row with kind forced to
+   * `pull_request` ({@link classifyLink} validates the URL and derives the
+   * label) inside the same transaction as the task insert. Not a column on
+   * `tasks`; stripped before the typed insert.
    */
   prUrl?: string | null;
   /**
@@ -2076,26 +2530,33 @@ export type CreateTaskInput = Omit<NewTask, "id" | "sequenceNumber"> & {
  * @param tx - Drizzle transaction handle.
  * @param projectId - UUID of the project the task belongs to.
  * @param userIds - Caller-supplied assignee ids.
+ * @param organizationId - Owning team id when the caller already resolved it
+ *   (e.g. from `assertProjectAccessTx`); skips the project lookup.
  * @throws ForbiddenError with a generic message and no `resourceId` if any
  *   supplied id is not a team member. Per-id details are deliberately
  *   withheld so the error cannot be used as a membership oracle.
  */
-async function assertAssigneesInTeam(
+export async function assertAssigneesInTeam(
   tx: Tx,
   projectId: string,
   userIds: string[],
+  organizationId?: string,
 ): Promise<void> {
   if (userIds.length === 0) return;
-  const [proj] = await tx
-    .select({ organizationId: projects.organizationId })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
-  if (!proj) throw new ProjectNotFoundError(projectId);
+  let orgId = organizationId;
+  if (!orgId) {
+    const [proj] = await tx
+      .select({ organizationId: projects.organizationId })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!proj) throw new ProjectNotFoundError(projectId);
+    orgId = proj.organizationId;
+  }
   const dedup = [...new Set(userIds)];
   const rows = await executeRaw<{ user_id: string }>(
     tx,
-    sql`SELECT user_id FROM public.org_member_user_ids_visible(${proj.organizationId}::uuid, ${uuidArray(dedup)})`,
+    sql`SELECT user_id FROM public.org_member_user_ids_visible(${orgId}::uuid, ${uuidArray(dedup)})`,
   );
   const found = new Set(rows.map((r) => r.user_id));
   const allInTeam = dedup.every((id) => found.has(id));
@@ -2119,7 +2580,7 @@ async function assertAssigneesInTeam(
  * @param incoming - Caller-supplied user ids.
  * @param mode - `append` (default) or `replace`.
  */
-async function setTaskAssignees(
+export async function setTaskAssignees(
   tx: Tx,
   taskId: string,
   incoming: string[],
@@ -2142,9 +2603,173 @@ async function setTaskAssignees(
     .onConflictDoNothing();
 }
 
+/** A caller-computed sequence/order/identifier allocation for one task row. */
+export type TaskAllocation = {
+  sequenceNumber: number;
+  order: number;
+  identifier: string;
+};
+
+/** Summary of a created task; `taskRef` is composed from the allocation. */
+export type CreatedTaskSummary = {
+  id: string;
+  title: string;
+  projectId: string;
+  order: number;
+  sequenceNumber: number;
+  taskRef: TaskRef;
+};
+
+/**
+ * Normalize and format a create-task payload before any transaction opens:
+ * mint criteria/decision ids, markdown-format text bodies (and each criterion
+ * / decision body), and pre-validate `prUrl`. Shared by `createTask` and the
+ * batch path so the work runs exactly once per item.
+ *
+ * @param data - Raw create-task input.
+ * @returns The input with normalized/formatted criteria, decisions, and text.
+ * @throws ForbiddenError when `prUrl` is a malformed link.
+ */
+export async function prepareCreateTaskInput(
+  data: CreateTaskInput,
+): Promise<CreateTaskInput> {
+  const normalizedCriteria = Array.isArray(data.acceptanceCriteria)
+    ? normalizeCriteria(data.acceptanceCriteria)
+    : undefined;
+  const normalizedDecisions = Array.isArray(data.decisions)
+    ? normalizeDecisions(data.decisions)
+    : undefined;
+
+  const formatInput: Record<string, unknown> = { ...data };
+  if (normalizedCriteria) formatInput.acceptanceCriteria = normalizedCriteria;
+  if (normalizedDecisions) formatInput.decisions = normalizedDecisions;
+  const formatted = (await formatTaskMarkdownFields(
+    formatInput,
+  )) as CreateTaskInput;
+
+  if (typeof formatted.prUrl === "string") {
+    try {
+      classifyLink(formatted.prUrl);
+    } catch (e) {
+      if (e instanceof MalformedLinkError) {
+        throw new ForbiddenError("Invalid prUrl", "task", data.projectId);
+      }
+      throw e;
+    }
+  }
+  return formatted;
+}
+
+/**
+ * Insert one task row plus its child records inside an existing RLS-scoped
+ * transaction, using a caller-computed allocation. The composable seam shared
+ * by `createTask` (single) and `createTasksBatch`. `data` MUST already be
+ * normalized/formatted via {@link prepareCreateTaskInput}, and any
+ * `assigneeIds` MUST already be membership-checked via
+ * {@link assertAssigneesInTeam}; the allocation's sequence number and order
+ * override any values on `data`.
+ *
+ * @param tx - Active RLS-scoped transaction handle.
+ * @param actor - Resolved actor descriptor for activity attribution and the
+ *   `created_by` column on any prUrl link.
+ * @param data - Prepared create-task input (criteria/decisions normalized,
+ *   text formatted, prUrl pre-validated, assignees pre-checked).
+ * @param alloc - Allocated sequence number, order, and project identifier.
+ * @param opts - When `deferActivity` is true, the `task_created` event is
+ *   returned unwritten so the caller can batch the insert; otherwise it is
+ *   written here.
+ * @returns The created-task summary and the constructed `task_created` events.
+ */
+export async function createTaskTx(
+  tx: Tx,
+  actor: ActorDescriptor,
+  data: CreateTaskInput,
+  alloc: TaskAllocation,
+  opts?: { deferActivity?: boolean },
+): Promise<{ task: CreatedTaskSummary; events: ActivityEventInput[] }> {
+  const formattedCriteria = Array.isArray(data.acceptanceCriteria)
+    ? (data.acceptanceCriteria as AcceptanceCriterion[])
+    : undefined;
+  const formattedDecisions = Array.isArray(data.decisions)
+    ? (data.decisions as Decision[])
+    : undefined;
+
+  // acceptanceCriteria, decisions, assigneeIds, and prUrl are not columns on
+  // `tasks`; strip before the typed insert so the row spread does not poison
+  // the values clause. Child-table writes happen below in the same transaction.
+  const {
+    assigneeIds,
+    prUrl,
+    acceptanceCriteria: _ac,
+    decisions: _dec,
+    ...taskFields
+  } = data;
+  void _ac;
+  void _dec;
+
+  const [task] = await tx
+    .insert(tasks)
+    .values({
+      ...taskFields,
+      order: alloc.order,
+      sequenceNumber: alloc.sequenceNumber,
+    })
+    .returning();
+
+  if (assigneeIds && assigneeIds.length > 0) {
+    await setTaskAssignees(tx, task.id, assigneeIds, "replace");
+  }
+  if (formattedCriteria && formattedCriteria.length > 0) {
+    await applyCriteriaWrite(tx, task.id, formattedCriteria, "replace");
+  }
+  if (formattedDecisions && formattedDecisions.length > 0) {
+    await applyDecisionsWrite(tx, task.id, formattedDecisions, "replace");
+  }
+  if (typeof prUrl === "string" && prUrl.length > 0) {
+    const classified = classifyLink(prUrl);
+    await tx
+      .insert(taskLinks)
+      .values({
+        taskId: task.id,
+        kind: "pull_request",
+        url: classified.url,
+        label: classified.label,
+        createdBy: actor.userId,
+      })
+      .onConflictDoNothing({ target: [taskLinks.taskId, taskLinks.url] });
+  }
+
+  const events: ActivityEventInput[] = [
+    {
+      projectId: task.projectId,
+      taskId: task.id,
+      type: "task_created",
+      summary: `created task "${task.title}"`,
+    },
+  ];
+  if (!opts?.deferActivity) {
+    await insertActivityEvents(tx, actor, events);
+  }
+
+  return {
+    task: {
+      id: task.id,
+      title: task.title,
+      projectId: task.projectId,
+      order: task.order,
+      sequenceNumber: task.sequenceNumber,
+      taskRef: composeTaskRef(
+        asIdentifier(alloc.identifier),
+        task.sequenceNumber,
+      ),
+    },
+    events,
+  };
+}
+
 /**
  * Insert a new task under a project the caller has access to. The
- * project's team scope is verified by `assertProjectAccess` and inherited
+ * project's team scope is verified by `assertProjectAccessTx` and inherited
  * by the new task — task team scope is never derived from the session.
  *
  * Uses a transaction-scoped PostgreSQL advisory lock keyed on the project UUID
@@ -2154,64 +2779,34 @@ async function setTaskAssignees(
  * @param ctx - Resolved auth context.
  * @param data - Task fields. sequenceNumber assigned internally.
  * @returns Task summary with composed taskRef.
+ * @throws ForbiddenError when the caller cannot access the project or an
+ *   assigneeId is not a member of the project's team.
+ * @throws ProjectNotFoundError when the project does not exist.
+ * @throws TaskLimitError when the project's task cap is reached.
  */
-export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
-  const normalizedCriteria = Array.isArray(data.acceptanceCriteria)
-    ? normalizeCriteria(data.acceptanceCriteria)
-    : undefined;
-  const normalizedDecisions = Array.isArray(data.decisions)
-    ? normalizeDecisions(data.decisions)
-    : undefined;
-
-  // formatTaskMarkdownFields walks acceptanceCriteria/decisions when present,
-  // so feed it the normalized arrays before the split so the text-format pass
-  // still runs on every criterion / decision body.
-  const formatInput: Record<string, unknown> = { ...data };
-  if (normalizedCriteria) formatInput.acceptanceCriteria = normalizedCriteria;
-  if (normalizedDecisions) formatInput.decisions = normalizedDecisions;
-  const formatted = await formatTaskMarkdownFields(formatInput);
-
-  const formattedCriteria = Array.isArray(formatted.acceptanceCriteria)
-    ? (formatted.acceptanceCriteria as AcceptanceCriterion[])
-    : undefined;
-  const formattedDecisions = Array.isArray(formatted.decisions)
-    ? (formatted.decisions as Decision[])
-    : undefined;
-
-  // acceptanceCriteria, decisions, assigneeIds, and prUrl are not columns on
-  // `tasks`; strip before the typed insert so the row spread does not poison
-  // the values clause. Junction / child-table writes happen later inside the
-  // same transaction.
-  const {
-    assigneeIds,
-    prUrl,
-    acceptanceCriteria: _ac,
-    decisions: _dec,
-    ...taskFields
-  } = formatted as CreateTaskInput;
-  void _ac;
-  void _dec;
-
-  if (typeof prUrl === "string") {
-    try {
-      classifyLink(prUrl);
-    } catch (e) {
-      if (e instanceof MalformedLinkError) {
-        throw new ForbiddenError("Invalid prUrl", "task", data.projectId);
-      }
-      throw e;
-    }
-  }
+export async function createTask(
+  ctx: AuthContext,
+  data: CreateTaskInput,
+): Promise<CreatedTaskSummary> {
+  const prepared = await prepareCreateTaskInput(data);
 
   const result = await withUserContext(ctx.userId, async (tx) => {
-    await assertProjectAccessTx(tx, taskFields.projectId);
-    await acquireProjectLock(tx, taskFields.projectId);
+    const access = await assertProjectAccessTx(tx, prepared.projectId);
+    if (prepared.assigneeIds && prepared.assigneeIds.length > 0) {
+      await assertAssigneesInTeam(
+        tx,
+        prepared.projectId,
+        prepared.assigneeIds,
+        access.project.organizationId,
+      );
+    }
+    await acquireProjectLock(tx, prepared.projectId);
 
     const [proj] = await tx
       .select({ identifier: projects.identifier })
       .from(projects)
-      .where(eq(projects.id, taskFields.projectId));
-    if (!proj) throw new ProjectNotFoundError(taskFields.projectId);
+      .where(eq(projects.id, prepared.projectId));
+    if (!proj) throw new ProjectNotFoundError(prepared.projectId);
 
     const [maxRow] = await tx
       .select({
@@ -2220,76 +2815,25 @@ export async function createTask(ctx: AuthContext, data: CreateTaskInput) {
         taskCount: sql<number>`COUNT(*)`,
       })
       .from(tasks)
-      .where(eq(tasks.projectId, taskFields.projectId));
+      .where(eq(tasks.projectId, prepared.projectId));
 
     const maxTasks = parseEnvInt(process.env.MAX_TASKS_PER_PROJECT, 50_000);
     if (Number(maxRow?.taskCount ?? 0) >= maxTasks) {
-      throw new TaskLimitError(taskFields.projectId, maxTasks);
+      throw new TaskLimitError(prepared.projectId, maxTasks);
     }
 
     const sequenceNumber = (maxRow?.maxSeq ?? 0) + 1;
     const order =
-      taskFields.order === undefined || taskFields.order === 0
+      prepared.order === undefined || prepared.order === 0
         ? (maxRow?.maxOrder ?? -1) + 1
-        : taskFields.order;
+        : prepared.order;
 
-    const [task] = await tx
-      .insert(tasks)
-      .values({
-        ...taskFields,
-        order,
-        sequenceNumber,
-      })
-      .returning();
-
-    if (assigneeIds && assigneeIds.length > 0) {
-      await assertAssigneesInTeam(tx, taskFields.projectId, assigneeIds);
-      await setTaskAssignees(tx, task.id, assigneeIds, "replace");
-    }
-
-    if (formattedCriteria && formattedCriteria.length > 0) {
-      await applyCriteriaWrite(tx, task.id, formattedCriteria, "replace");
-    }
-    if (formattedDecisions && formattedDecisions.length > 0) {
-      await applyDecisionsWrite(tx, task.id, formattedDecisions, "replace");
-    }
-
-    if (typeof prUrl === "string" && prUrl.length > 0) {
-      const classified = classifyLink(prUrl);
-      await tx
-        .insert(taskLinks)
-        .values({
-          taskId: task.id,
-          kind: classified.kind,
-          url: classified.url,
-          label: classified.label,
-          createdBy: ctx.userId,
-        })
-        .onConflictDoNothing({
-          target: [taskLinks.taskId, taskLinks.url],
-        });
-    }
-
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: task.projectId,
-        taskId: task.id,
-        type: "task_created",
-        summary: `created task "${task.title}"`,
-      },
-    ]);
-
-    return {
-      id: task.id,
-      title: task.title,
-      projectId: task.projectId,
-      order: task.order,
-      sequenceNumber: task.sequenceNumber,
-      taskRef: composeTaskRef(
-        asIdentifier(proj.identifier),
-        task.sequenceNumber,
-      ),
-    };
+    const { task } = await createTaskTx(tx, ctx.actor, prepared, {
+      sequenceNumber,
+      order,
+      identifier: proj.identifier,
+    });
+    return task;
   });
 
   emitTaskEvent(result.projectId, result.id);
@@ -2347,7 +2891,7 @@ export type TaskUpdate = {
 /**
  * Update result enriches the raw `Task` row with the post-write criteria
  * and decisions so callers that consult them (completion-protocol hint
- * checks in `lib/graph/tool-handlers.ts`) see the same shape they saw on
+ * checks in `lib/graph/tools/edit.ts`) see the same shape they saw on
  * the JSONB-storage path.
  *
  * Partial contract: `acceptanceCriteria` and `decisions` are the
@@ -2372,6 +2916,90 @@ export type UpdateTaskResult = typeof tasks.$inferSelect & {
   acceptanceCriteria: AcceptanceCriterion[] | null;
   decisions: Decision[] | null;
 };
+
+/**
+ * Apply a `prUrl` write inside an open transaction. `null` clears every
+ * `pull_request` link; a URL guarantees a `pull_request`-kind link at that
+ * URL: the kind is forced so non-GitHub/GitLab PR hosts satisfy the review
+ * contract, and a same-URL link of another kind is converted in place,
+ * keeping any user-authored label.
+ * Other `pull_request` links are untouched — a task may carry several PRs.
+ * A same-URL `pull_request` link makes the call an idempotent no-op.
+ *
+ * @param tx - Active RLS-scoped transaction.
+ * @param taskId - Owning task id.
+ * @param projectId - Owning project id for the event row.
+ * @param classified - Classified link, or null to clear pull_request links.
+ * @param createdBy - Caller id for the `created_by` column on inserts.
+ * @returns The activity event, or null when nothing changed.
+ */
+export async function applyPrUrlTx(
+  tx: Tx,
+  taskId: string,
+  projectId: string,
+  classified: ClassifiedLink | null,
+  createdBy: string,
+): Promise<ActivityEventInput | null> {
+  if (classified === null) {
+    const deleted = await tx
+      .delete(taskLinks)
+      .where(
+        and(eq(taskLinks.taskId, taskId), eq(taskLinks.kind, "pull_request")),
+      )
+      .returning({ id: taskLinks.id });
+    return deleted.length > 0
+      ? {
+          projectId,
+          taskId,
+          type: "link_removed",
+          summary: "removed the pull request link",
+        }
+      : null;
+  }
+  const [existing] = await tx
+    .select({
+      id: taskLinks.id,
+      kind: taskLinks.kind,
+      label: taskLinks.label,
+    })
+    .from(taskLinks)
+    .where(and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, classified.url)))
+    .limit(1);
+  if (existing?.kind === "pull_request") return null;
+  if (existing) {
+    await tx
+      .update(taskLinks)
+      .set({ kind: "pull_request" })
+      .where(eq(taskLinks.id, existing.id));
+    return {
+      projectId,
+      taskId,
+      type: "link_updated",
+      summary: `updated link to ${existing.label ?? classified.label ?? "pull request"}`,
+      targetRef: classified.url,
+    };
+  }
+  const [inserted] = await tx
+    .insert(taskLinks)
+    .values({
+      taskId,
+      kind: "pull_request",
+      url: classified.url,
+      label: classified.label,
+      createdBy,
+    })
+    .onConflictDoNothing({ target: [taskLinks.taskId, taskLinks.url] })
+    .returning({ id: taskLinks.id });
+  return inserted
+    ? {
+        projectId,
+        taskId,
+        type: "link_added",
+        summary: `linked ${classified.label ?? "pull request"}`,
+        targetRef: classified.url,
+      }
+    : null;
+}
 
 /**
  * Update a task and emit `activity_events` for the changes. Protected fields
@@ -2629,49 +3257,16 @@ export async function updateTask(
     }
 
     if (hasPrUrl) {
-      if (typeof prUrl !== "string" || prUrl.length === 0) {
-        const deleted = await tx
-          .delete(taskLinks)
-          .where(
-            and(
-              eq(taskLinks.taskId, taskId),
-              eq(taskLinks.kind, "pull_request"),
-            ),
-          )
-          .returning({ id: taskLinks.id });
-        if (deleted.length > 0) {
-          eventInputs.push({
-            projectId: current.projectId,
-            taskId,
-            type: "link_removed",
-            summary: "removed the pull request link",
-          });
-        }
-      } else {
-        const classified = classifyLink(prUrl);
-        const [inserted] = await tx
-          .insert(taskLinks)
-          .values({
-            taskId,
-            kind: classified.kind,
-            url: classified.url,
-            label: classified.label,
-            createdBy: ctx.userId,
-          })
-          .onConflictDoNothing({
-            target: [taskLinks.taskId, taskLinks.url],
-          })
-          .returning({ id: taskLinks.id });
-        if (inserted) {
-          eventInputs.push({
-            projectId: current.projectId,
-            taskId,
-            type: "link_added",
-            summary: `linked ${classified.label ?? classified.kind}`,
-            targetRef: classified.url,
-          });
-        }
-      }
+      const event = await applyPrUrlTx(
+        tx,
+        taskId,
+        current.projectId,
+        typeof prUrl === "string" && prUrl.length > 0
+          ? classifyLink(prUrl)
+          : null,
+        ctx.userId,
+      );
+      if (event) eventInputs.push(event);
     }
 
     if (eventInputs.length > 0) {
@@ -2729,12 +3324,16 @@ export async function updateTask(
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task to delete.
  * @returns Deletion summary.
+ * @throws ProjectArchivedError when the parent project is archived (read-only).
  */
 export async function deleteTask(ctx: AuthContext, taskId: string) {
   const { projectId, deletedEdges } = await withUserContext(
     ctx.userId,
     async (tx) => {
       const task = await assertTaskAccessTx(tx, taskId);
+      if (task.projectStatus === "archived") {
+        throw new ProjectArchivedError(task.projectIdentifier);
+      }
 
       const removed = await tx
         .delete(taskEdges)

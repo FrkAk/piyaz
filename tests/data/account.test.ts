@@ -2,9 +2,11 @@ import { test, expect, describe, afterEach } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
+import { makeAuthContext } from "@/lib/auth/context";
 import {
   clearOrgMembershipArtifacts,
   getPasswordUpdatedAt,
+  getWhoami,
 } from "@/lib/data/account";
 
 afterEach(async () => {
@@ -112,5 +114,26 @@ describe("clearOrgMembershipArtifacts", () => {
     } finally {
       await sqlc.end({ timeout: 5 });
     }
+  });
+});
+
+describe("getWhoami", () => {
+  test("returns the caller's own id, name, and email", async () => {
+    const f = await seedUserOrgProject("whoami-self");
+    const who = await getWhoami(makeAuthContext(f.userId));
+    expect(who).toEqual({
+      userId: f.userId,
+      name: "User whoami-self",
+      email: "userwhoami-self@test.local",
+    });
+  });
+
+  test("never discloses another user's row", async () => {
+    const a = await seedUserOrgProject("whoami-a");
+    const b = await seedUserOrgProject("whoami-b");
+    const who = await getWhoami(makeAuthContext(a.userId));
+    expect(who.userId).toBe(a.userId);
+    expect(who.userId).not.toBe(b.userId);
+    expect(who.email).toBe("userwhoami-a@test.local");
   });
 });

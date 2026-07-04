@@ -328,10 +328,41 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.team_member_roles_visible(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.team_member_roles_visible(uuid) TO app_user;
 
+-- Full member directory for one team: user id, display name, role. Gated on
+-- the caller's own membership of the same org, so probing a foreign team
+-- UUID returns zero rows and is indistinguishable from a team the caller
+-- cannot see. Emails are deliberately not disclosed; assignment flows need
+-- id + name + role only. Dropped before create because a legacy same-name
+-- function shipped with a different return signature.
+DROP FUNCTION IF EXISTS public.team_members_visible(uuid);
+CREATE FUNCTION public.team_members_visible(p_org_id uuid)
+RETURNS TABLE (user_id uuid, name text, role text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT m."userId", u.name, m.role
+  FROM piyaz_auth."member" m
+  INNER JOIN piyaz_auth."user" u ON u.id = m."userId"
+  WHERE m."organizationId" = p_org_id
+    AND EXISTS (
+      SELECT 1
+      FROM piyaz_auth."member" caller
+      WHERE caller."organizationId" = p_org_id
+        AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
+    )
+  ORDER BY u.name, m."userId";
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.team_members_visible(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.team_members_visible(uuid) TO app_user;
+
 -- Legacy SDFs without TS callers: dropped so re-running this file keeps
 -- prod in lockstep. Reintroduce alongside a JS caller if a future UI
 -- surface needs them.
-DROP FUNCTION IF EXISTS public.team_members_visible(uuid);
 DROP FUNCTION IF EXISTS public.team_invitations_visible(uuid);
 
 -- Non-shared users are filtered out so the caller cannot probe arbitrary
@@ -430,6 +461,59 @@ END;
 $$;
 REVOKE EXECUTE ON FUNCTION public.activity_actors_visible(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.activity_actors_visible(uuid) TO app_user;
+
+-- Per-project sibling of activity_actors_visible: one membership probe for
+-- the whole project's activity feed instead of per-task. Gated on the
+-- caller's membership of the project's org, so probing a foreign project
+-- UUID is indistinguishable from a project with no events.
+CREATE OR REPLACE FUNCTION public.activity_actors_for_project_visible(
+  p_project_id uuid
+)
+RETURNS TABLE (user_id uuid, name text, image text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT DISTINCT u.id, u.name, u.image
+  FROM public.activity_events ae
+  INNER JOIN piyaz_auth."user" u ON u.id = ae.actor_user_id
+  WHERE ae.project_id = p_project_id
+    AND EXISTS (
+      SELECT 1
+      FROM public.projects pj
+      INNER JOIN piyaz_auth."member" caller
+        ON caller."organizationId" = pj.organization_id
+      WHERE pj.id = p_project_id
+        AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
+    );
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.activity_actors_for_project_visible(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.activity_actors_for_project_visible(uuid) TO app_user;
+
+-- Resolve the caller's own user profile (id, name, email). Bound to the
+-- session's app.user_id GUC, so it never discloses another user's row: the
+-- WHERE clause matches only the caller. Used by the MCP whoami surface where
+-- app_user has no direct grant on piyaz_auth."user".
+CREATE OR REPLACE FUNCTION public.current_user_profile()
+RETURNS TABLE (user_id uuid, name text, email text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT u.id, u.name, u.email
+  FROM piyaz_auth."user" u
+  WHERE u.id = NULLIF(current_setting('app.user_id', TRUE), '')::uuid;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.current_user_profile() FROM public;
+GRANT EXECUTE ON FUNCTION public.current_user_profile() TO app_user;
 
 -- Resolve a single OAuth client display name (not secret). Scalar to avoid
 -- text[] array binding on the read path; callers loop the page's few ids.

@@ -84,3 +84,146 @@ export class TaskLimitError extends Error {
     this.name = "TaskLimitError";
   }
 }
+
+/**
+ * Thrown by task, edge, and category writes when the parent project is
+ * `archived` (read-only task surface). A dedicated type — not
+ * `ForbiddenError` — so the MCP error translator can name the reopen call
+ * (`piyaz_workspace action='update' status='active'`) instead of rendering
+ * an anti-enumeration "not found".
+ */
+export class ProjectArchivedError extends Error {
+  /**
+   * @param identifier - Project identifier (e.g. `PYZ`) for the reopen hint.
+   */
+  constructor(public readonly identifier: string) {
+    super(`Project ${identifier} is archived`);
+    this.name = "ProjectArchivedError";
+  }
+}
+
+/**
+ * Thrown by `createEdge` when source and target are the same task. A typed
+ * class — not a plain `Error` — so the MCP error translator can surface it
+ * as an actionable tool error instead of the opaque `Internal error`.
+ */
+export class SelfEdgeError extends Error {
+  constructor() {
+    super("Cannot create self-edge: source and target are the same task.");
+    this.name = "SelfEdgeError";
+  }
+}
+
+/**
+ * Thrown by `createEdge` when the two endpoints belong to different
+ * projects. Edges are intra-project only (enforced in-app and by the
+ * `task_edges_same_project_immutable` trigger).
+ */
+export class CrossProjectEdgeError extends Error {
+  constructor() {
+    super("Cannot create edge between tasks in different projects.");
+    this.name = "CrossProjectEdgeError";
+  }
+}
+
+/**
+ * Thrown by `createEdge`/`updateEdge` when an identical edge already exists.
+ * Carries the endpoints and type so the translator can steer the agent to
+ * treat the conflict as success and verify.
+ */
+export class DuplicateEdgeError extends Error {
+  /**
+   * @param sourceTaskId - Source endpoint of the conflicting edge.
+   * @param targetTaskId - Target endpoint of the conflicting edge.
+   * @param edgeType - Relationship type of the conflicting edge.
+   * @param message - Existing wording, preserved for callers asserting it.
+   */
+  constructor(
+    public readonly sourceTaskId: string,
+    public readonly targetTaskId: string,
+    public readonly edgeType: string,
+    message = "Duplicate edge: an identical edge already exists.",
+  ) {
+    super(message);
+    this.name = "DuplicateEdgeError";
+  }
+}
+
+/**
+ * Thrown when a link/prUrl value cannot be parsed as a URL. A dedicated
+ * type — not `ForbiddenError` — because the MCP error translator renders
+ * `ForbiddenError` as an anti-enumeration "not found", which would send an
+ * agent hunting for a task that exists when the URL is the problem.
+ */
+export class InvalidLinkUrlError extends Error {
+  /**
+   * @param field - The parameter carrying the URL (`url` or `prUrl`).
+   * @param value - The rejected value.
+   */
+  constructor(
+    public readonly field: "url" | "prUrl",
+    public readonly value: string,
+  ) {
+    super(`Invalid ${field}: '${value}' is not a parseable URL`);
+    this.name = "InvalidLinkUrlError";
+  }
+}
+
+/**
+ * Thrown when a task write or a project-scoped search names a category
+ * outside the project's closed vocabulary. Carries the vocabulary so the
+ * MCP error translator can render the valid set inline. Never thrown for
+ * projects with an empty vocabulary (categories are optional).
+ */
+export class UnknownCategoryError extends Error {
+  /**
+   * @param category - The rejected category value.
+   * @param vocabulary - The project's current category list.
+   */
+  constructor(
+    public readonly category: string,
+    public readonly vocabulary: string[],
+  ) {
+    super(`Category "${category}" is not in the project's vocabulary`);
+    this.name = "UnknownCategoryError";
+  }
+}
+
+/**
+ * Thrown by `searchTasksForMcp` when the caller supplies no search criterion
+ * (no query, status, priority, assignee, category, or tags). A dedicated type
+ * so the MCP error translator can steer the agent to add a filter instead of
+ * rendering an anti-enumeration "not found".
+ */
+export class SearchCriteriaRequiredError extends Error {
+  constructor() {
+    super(
+      "At least one search criterion is required: query, status, priority, assignee, category, or tags.",
+    );
+    this.name = "SearchCriteriaRequiredError";
+  }
+}
+
+/**
+ * Thrown by `createEdge`/`updateEdge` when a `depends_on` edge would close a
+ * cycle. Carries the dependency chain that would close the cycle when it is
+ * cheaply available (empty otherwise) so the translator can name it.
+ */
+export class EdgeCycleError extends Error {
+  /**
+   * @param chainTaskIds - Task ids in the closing dependency chain; empty
+   *   when the chain is not cheaply available.
+   * @param chainRefs - The loop as taskRefs, starting and ending at the
+   *   attempted edge's source so the closure is visible; the translator
+   *   prefers these over the raw ids.
+   * @param message - Existing wording, preserved for callers asserting it.
+   */
+  constructor(
+    public readonly chainTaskIds: string[] = [],
+    public readonly chainRefs: string[] = [],
+    message = "Circular dependency: adding this edge would create a cycle.",
+  ) {
+    super(message);
+    this.name = "EdgeCycleError";
+  }
+}

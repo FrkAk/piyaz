@@ -126,3 +126,31 @@ describe("buildWorkingContext under app_user", () => {
     ]);
   });
 });
+
+test("decisions render with their item id for by-id edit addressing", async () => {
+  const fx = await seedUserOrgProject("working-dec-ids");
+  const sr = serviceRoleConnect();
+  let taskId: string;
+  let decisionId: string;
+  try {
+    const [t] = await sr<{ id: string }[]>`
+      INSERT INTO tasks (project_id, title, sequence_number)
+      VALUES (${fx.projectId}, 'Main', 1)
+      RETURNING id`;
+    taskId = t.id;
+    const [d] = await sr<{ id: string }[]>`
+      INSERT INTO task_decisions (id, task_id, text, source, decision_date, position)
+      VALUES (gen_random_uuid(), ${taskId}, 'Use Drizzle for the data ring', 'agent', '2026-01-01', 0)
+      RETURNING id`;
+    decisionId = d.id;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+
+  const ctx = makeAuthContext(fx.userId);
+  const rendered = await formatWorkingContext(
+    await buildWorkingContext(ctx, taskId),
+  );
+  expect(rendered).toContain(`\`${decisionId}\``);
+  expect(rendered).toContain("Use Drizzle for the data ring");
+});

@@ -43,7 +43,7 @@ LLMs forget over long sessions. Refresh any reference mid-session when uncertain
 
 The Piyaz MCP server's instructions cover multi-team awareness, session setup, and tool semantics. Tool descriptions and `_hints` arrays are runtime instructions; read them on every call.
 
-Tools you will use in this session: `piyaz_project` (`select`, `update`), `piyaz_query` (`overview` once for tag vocab, `list` for slim task browsing, `edges` to verify), `piyaz_task` (`create`), `piyaz_edge` (`create`). You do not implement tasks, mark them done, or open PRs; you set the foundation.
+Tools you will use in this session: `piyaz_workspace` (`update`), `piyaz_get` (`view='overview'` once, `view='meta'`), `piyaz_search`, `piyaz_map` (`neighbors` to verify), `piyaz_create` (tasks + edges, batched), `piyaz_link` (`create`). You do not implement tasks, mark them done, or open PRs; you set the foundation.
 
 ## Refusal: thin specs
 
@@ -60,13 +60,13 @@ Do not proceed. A vague brief begets vague tasks.
 
 ## Session setup
 
-1. `piyaz_project action='list'` then `action='select'`. Note the projectId and pass it on every subsequent call (no server-side session state).
-   - **Project-confirmation gate.** If `list` returns multiple projects whose titles or descriptions overlap what the user is asking to decompose, ASK before selecting. Do not silently pick the closest match. Surface the candidates and the user's stated intent: "I see `<A>` and `<B>` that could match. Which one are we decomposing?" Decomposing the wrong project pollutes its graph and is hard to undo cleanly.
-2. `piyaz_query type='overview'` once. Returns existing tags, categories, any tasks already present. **Heavy call; do not repeat in the session.** For subsequent task browsing use `piyaz_query type='list'` (slim) or `type='search'` with tag filters.
+1. `piyaz_workspace action='projects'`. Note the project identifier and pass it on every subsequent call (no server-side session state).
+   - **Project-confirmation gate.** If `projects` returns multiple candidates whose titles or descriptions overlap what the user is asking to decompose, ASK before proceeding. Do not silently pick the closest match. Surface the candidates and the user's stated intent: "I see `<A>` and `<B>` that could match. Which one are we decomposing?" Decomposing the wrong project pollutes its graph and is hard to undo cleanly.
+2. `piyaz_get project='<identifier>' view='overview'` once. Returns existing tags, categories, any tasks already present. **Heavy call; do not repeat in the session.** For subsequent task browsing use `piyaz_search` with tag or status filters.
 3. **Resume mode** per resilience (mid-session resilience):
    - **Check the local working file first.** `Read` `.piyaz/decompose-<projectIdentifier>.md`. If it exists, that is your working state (plan + progress checklist + in-flight notes). Use it.
-   - If the local file is missing, read the project description from the `select` response. If a `## Decomposition Plan` section exists, that is the authoritative plan (cross-machine fallback). Use it as the source of truth, not your conversation memory.
-   - `piyaz_query type='list'` to get the slim list of existing tasks. Build a known-titles set from it.
+   - If the local file is missing, read the project description via `piyaz_get project='<identifier>' view='meta'`. If a `## Decomposition Plan` section exists, that is the authoritative plan (cross-machine fallback). Use it as the source of truth, not your conversation memory.
+   - `piyaz_activity project='<identifier>'` (or `piyaz_search project='<identifier>' status=[...]`) shows what already exists; `piyaz_create` dedupes by exact title regardless.
    - **If existing tasks > 0 AND a plan exists** (local file or project description): you are resuming a prior run. Surface this to the user: "I see N tasks already exist. The approved plan calls for M. I'll create only the missing M-N tasks." Do NOT recreate existing tasks.
    - **If existing tasks > 0 AND no plan exists anywhere**: ask the user how to proceed. Manually-created tasks may exist that no plan accounts for. Do not silently overwrite or duplicate.
    - **If existing tasks == 0**: fresh run. Proceed to Phase 1 normally.
@@ -77,7 +77,7 @@ Do not proceed. A vague brief begets vague tasks.
 digraph decompose {
     "Phase 1: Analysis & Plan" [shape=box];
     "HARD-GATE: user approves\nplan verbatim?" [shape=diamond];
-    "Phase 2: Create tasks" [shape=box];
+    "Phase 2: Create tasks\n(status='decomposing')" [shape=box];
     "Phase 3: Create edges" [shape=box];
     "Phase 4: Validate & summary\n(status='active')" [shape=box];
     "Phase 5: Housekeeping (offer cleanup)" [shape=box];
@@ -85,8 +85,8 @@ digraph decompose {
 
     "Phase 1: Analysis & Plan" -> "HARD-GATE: user approves\nplan verbatim?";
     "HARD-GATE: user approves\nplan verbatim?" -> "Phase 1: Analysis & Plan" [label="changes requested"];
-    "HARD-GATE: user approves\nplan verbatim?" -> "Phase 2: Create tasks" [label="explicit yes"];
-    "Phase 2: Create tasks" -> "Phase 3: Create edges";
+    "HARD-GATE: user approves\nplan verbatim?" -> "Phase 2: Create tasks\n(status='decomposing')" [label="explicit yes"];
+    "Phase 2: Create tasks\n(status='decomposing')" -> "Phase 3: Create edges";
     "Phase 3: Create edges" -> "Phase 4: Validate & summary\n(status='active')";
     "Phase 4: Validate & summary\n(status='active')" -> "Phase 5: Housekeeping (offer cleanup)";
     "Phase 5: Housekeeping (offer cleanup)" -> "Done: project active + clean";
@@ -183,7 +183,7 @@ or unambiguous green light. Do NOT interpret hedging ("looks fine", "sure",
 "I guess", "I trust you", "go ahead", "I'm in a hurry", "you decide", "the
 faster the better", "skip the plan") as approval.
 
-You may not call piyaz_task action='create' or piyaz_edge action='create'
+You may not call piyaz_create or piyaz_link action='create'
 before this gate clears.
 
 The user may also edit the plan: add tasks, remove tasks, rewrite descriptions,
@@ -206,7 +206,7 @@ Before creating any tasks, persist the approved plan in two places. Both steps a
 
 ### Step A: append to the project description (cross-machine durable)
 
-1. Read the current `description` from your `select` response (already in your context).
+1. Read the current `description` via `piyaz_get project='<identifier>' view='meta'` (or reuse it if already in your context).
 2. Build the new value:
    ```
    <existing description>
@@ -217,7 +217,7 @@ Before creating any tasks, persist the approved plan in two places. Both steps a
 
    <plan content from Phase 1, verbatim>
    ```
-3. `piyaz_project action='update' description='<combined>'`.
+3. `piyaz_workspace action='update' description='<combined>'`.
 
 ### Step B: write the local working file (in-session, faster, richer)
 
@@ -261,7 +261,7 @@ Only after approval AND after the plan is persisted. Set categories at the proje
 
 ### Idempotent creation (resilience)
 
-Build a known-titles set from the resume-mode `list` call. Before each `piyaz_task action='create'`, check the new task's title (lowercased) against the set. If present, skip; otherwise create and add the title to the set. The slim `list` is one MCP roundtrip; in-memory dedupe is free. This protects against duplicate creation if the conversation compacts mid-batch.
+Idempotency is server-side: `piyaz_create` skips items whose exact title already exists and returns them as `deduped` (still usable as edge endpoints). If the conversation compacts mid-batch, re-send the same batch; the re-run creates only the missing tail. Read the `deduped` list on every response and keep the working-file checklist truthful.
 
 ### Update the local working file as you go
 
@@ -273,8 +273,9 @@ After every 5 to 10 task creates, update `.piyaz/decompose-<projectIdentifier>.m
 
 ### Create the tasks
 
-1. `piyaz_project action='update' categories=[<list from plan>]`
-2. For each task, `piyaz_task action='create'` with:
+1. `piyaz_workspace action='update' status='decomposing'` — flip the phase before the first write. A project found already in `decomposing` means an interrupted decompose run: resume from the working file, do not restart.
+2. `piyaz_workspace action='update' categories=[<list from plan>]`
+3. Create the plan's tasks in `piyaz_create` batches (≤25 per call, internal edges `key`-addressed), each item with:
    - **title**: verb plus noun, imperative ("Implement JWT auth", not "Auth")
    - **description**: 2 to 4 sentences. Cover what + why + how it fits. Per artifacts §1, include a solution sketch if you have one.
    - **acceptanceCriteria**: 2 to 4 binary criteria. A reviewer answers YES or NO without ambiguity.
@@ -285,9 +286,9 @@ After every 5 to 10 task creates, update `.piyaz/decompose-<projectIdentifier>.m
    - **assigneeIds** (optional): array of team-member user UUIDs. Server rejects non-members.
    - **files**: leave empty `[]`. Drafts predate implementation; the agent shipping the task fills `files` at `done`. Speculation here violates artifacts §1.
    - **status** = `'draft'`. The manage agent or coding agent promotes to `'planned'` after writing the implementation plan.
-   - **DO NOT pass `overwriteArrays=true`**. Append is the safe default. Overwrite is destructive and only relevant on `update`, not `create`.
+   - **No destructive ops**: creation is additive; `remove` and wholesale text `set` have no place in a decompose session.
 
-### Quality bar before each `piyaz_task action='create'` call
+### Quality bar before each `piyaz_create` batch
 
 - [ ] Title is verb plus noun and specific (not "Auth", not "User stuff")
 - [ ] Description is 2 to 4 sentences
@@ -305,7 +306,7 @@ After every 10 task creates, pause and self-audit. Quality decay is the second-m
 
 1. Re-read artifacts §1 (artifact quality).
 2. Pick the last 3 tasks you created. For each, score against the bar above:
-   - Description: 2 to 4 sentences? Single-sentence is a REJECT; rewrite via `piyaz_task action='update'`.
+   - Description: 2 to 4 sentences? Single-sentence is a REJECT; rewrite via `piyaz_edit`.
    - ACs: 2 to 4 binary? Single or vague ("works correctly", "is complete") is a REJECT; rewrite.
    - Tags: all three dimensions present (work-type, cross-cutting, tech)? Missing dimensions is a REJECT; fix. Priority field set? Missing priority is a REJECT; fix.
    - Category: matches a project category, not a forbidden one (`requirements`, `bugs`, etc)? Wrong is a REJECT; fix.
@@ -386,7 +387,7 @@ BAD:
 
 ## Phase 3: Create Edges
 
-For each dependency from your plan, `piyaz_edge action='create'`:
+For each dependency from your plan, `piyaz_link action='create'`:
 
 - **type**: `depends_on` (source needs target's output) or `relates_to` (informational link, neither blocks the other). Litmus test: removing the target makes source impossible, that is `depends_on`. Just makes it harder, that is `relates_to`. Artifacts §3.
 - **note**: write it as a brief to a developer about to start the source task. What does this task get from the target? Empty notes ("needed", "depends") are forbidden.
@@ -412,7 +413,7 @@ BAD: "depends on this"
 BAD: "related"
 ```
 
-After all edges created: `piyaz_query type='edges'` per high-degree task. Confirm direction and notes look right.
+After all edges created: `piyaz_map view='neighbors'` per high-degree task. Confirm direction and notes look right.
 
 ---
 
@@ -430,7 +431,7 @@ Run through this checklist mentally. If anything fails, fix it (update or delete
 - [ ] **Tag completeness**: every task has all three tag dimensions (work-type, cross-cutting, tech) and a `priority` field set.
 - [ ] **Category sanity**: 4 to 8 categories, all architectural / product-area, none from the forbidden list.
 
-Then `piyaz_project action='update' status='active'`.
+Then `piyaz_workspace action='update' status='active'`.
 
 Summary (markdown, to the user):
 
@@ -467,7 +468,7 @@ If the user approves:
 
 1. Compose a tight 3-5 sentence synthesis of the project (purpose, scope, primary tech / domain, target user). The task graph holds the structural truth; the description is the elevator pitch.
 2. Show the proposed text to the user. Confirm before writing.
-3. `piyaz_project action='update' description='<new synthesis>'`. The description field is a scalar replace, so this drops the appended `## Decomposition Plan` block entirely.
+3. `piyaz_workspace action='update' description='<new synthesis>'`. The description field is a scalar replace, so this drops the appended `## Decomposition Plan` block entirely.
 
 If the user declines this step, leave the description as-is and note in the closing message that the plan block is still appended.
 
@@ -501,13 +502,13 @@ If you sense any of these during the session, STOP creating tasks and run resume
 - Your sense of progress through the plan is fuzzy.
 - The conversation has been long and you suspect compaction.
 
-Resume mode: re-fetch `piyaz_query type='list'`, re-read project description (which contains the persisted plan), diff against the plan, create only the missing tasks. **Do not power through.** Restarting from BAT-1 on top of an existing BAT-1..12 is the worst possible outcome: a polluted graph, no clear truth, and a user who will never trust Piyaz again.
+Resume mode: `piyaz_activity project='<identifier>' since='<last certain instant>'`, re-read the project description (which contains the persisted plan), diff against the plan, re-send the batch (`piyaz_create` skips existing titles). **Do not power through.** Restarting from BAT-1 on top of an existing BAT-1..12 is the worst possible outcome: a polluted graph, no clear truth, and a user who will never trust Piyaz again.
 
 ## Token discipline
 
 - Phase 1 is read-only. The plan is presented as markdown text, not a sequence of tool calls.
 - Phase 2 is N task creates. Each costs ~1 MCP roundtrip. Budget for it: 40 tasks ≈ 40 calls. Do not cap arbitrarily.
-- Run `piyaz_query type='overview'` exactly once at session start. After that use `type='list'` (slim) or `type='search'` (tag-filtered). Conventions §2 hints discipline applies to every response.
+- Run `piyaz_get view='overview'` exactly once at session start. After that use `piyaz_search` with tag or status filters (slim). Conventions §2 hints discipline applies to every response.
 - Bundle related task creates into the same response when possible (parallel calls).
 - Re-read `references/conventions.md` mid-session if your sense of the rules drifts. LLMs forget over long sessions; refreshing is cheap.
 
@@ -515,7 +516,7 @@ Resume mode: re-fetch `piyaz_query type='list'`, re-read project description (wh
 
 - ALWAYS run resume mode at session start (Session setup step 3, resilience). Read existing tasks before writing.
 - ALWAYS persist the approved plan to the project description after the HARD-GATE clears, before Phase 2 (resilience).
-- ALWAYS dedupe via the known-titles set before each `piyaz_task action='create'` (resilience).
+- ALWAYS read the `deduped` list on every `piyaz_create` response; the server dedupes by exact title (resilience).
 - ALWAYS run a quality checkpoint after every 10 task creates (resilience).
 - ALWAYS read tool `_hints` and act on them.
 - ALWAYS reuse existing tags from the overview before coining new ones.
@@ -526,7 +527,7 @@ Resume mode: re-fetch `piyaz_query type='list'`, re-read project description (wh
 - NEVER decompose a project description that is too thin (refusal block above).
 - NEVER skip Phase 4 validation. Finish what you started.
 - ALWAYS offer Phase 5 housekeeping after Phase 4: refresh the project description (drops the `## Decomposition Plan` block) and delete `.piyaz/decompose-<projectIdentifier>.md`. **Auto-cleanup is forbidden; require explicit user confirmation per item.** The user may keep either or both.
-- NEVER pass `overwriteArrays=true` in this session. Decompose creates; it does not need overwrite.
+- NEVER use `remove` or wholesale text `set` ops in this session. Decompose creates; it does not rewrite.
 - NEVER use forbidden categories (`requirements`, `architecture`, `planning`, `bugs`, `features`, `important`, `tbd`, `misc`). Artifacts §4.
 - NEVER write text into Piyaz while sounding like a chatbot. No em dashes, no marketing words ("comprehensive", "robust", "leverage"), no AI throat-clearing. Artifacts §6.
 - NEVER recreate a task when its title already exists in the project. Resume mode + idempotent dedupe protects against this (resilience).

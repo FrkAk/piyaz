@@ -1,22 +1,27 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  handleProject,
-  handleTask,
-  handleEdge,
-  handleQuery,
-  handleContext,
-  handleAnalyze,
-} from "@/lib/graph/tool-handlers";
-import type { ToolResult } from "@/lib/graph/tool-handlers";
+import { handleWorkspace } from "@/lib/graph/tools/workspace";
+import { handleSearch } from "@/lib/graph/tools/search";
+import { handleGet } from "@/lib/graph/tools/get";
+import { handleCreate } from "@/lib/graph/tools/create";
+import { handleEdit } from "@/lib/graph/tools/edit";
+import { handleLink } from "@/lib/graph/tools/link";
+import { handleMap } from "@/lib/graph/tools/map";
+import { handleActivity } from "@/lib/graph/tools/activity";
+import type { ToolResult } from "@/lib/graph/tools/shared";
 import {
   DESCRIPTIONS,
-  projectInputSchema,
-  taskInputSchema,
-  edgeInputSchema,
-  queryInputSchema,
-  contextInputSchema,
-  analyzeInputSchema,
+  workspaceInputSchema,
+  searchInputSchema,
+  getInputSchema,
+  createInputSchema,
+  editInputSchema,
+  linkInputSchema,
+  mapInputSchema,
+  activityInputSchema,
+  DEEP_LENSES,
 } from "@/lib/mcp/schemas";
+import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
+import { isVerboseErrors } from "@/lib/api/error";
 import type { AuthContext } from "@/lib/auth/context";
 
 /**
@@ -41,38 +46,8 @@ function err(message: string) {
 }
 
 /**
- * Sanitised MCP error emitter for tool catch blocks. Mirrors the frontend
- * `internalError` helper in `lib/api/error.ts`: logs the original error
- * server-side with a tool-scoped label so failures stay debuggable, but
- * returns an opaque `Internal error` body so untrusted callers can't read
- * driver-level SQL fragments, bound parameters, or schema names that show
- * up in a raw Postgres exception.
- *
- * Domain errors thrown deliberately by handlers should reach the client
- * via the `ToolResult.ok = false` path through `toMcp`, not through this
- * catch. This helper exists to neutralise unexpected throws (e.g. a unique
- * constraint violation that bubbles up from Drizzle without a wrapper).
- *
- * Verbose mode is whitelist-gated to `NODE_ENV === "development"` (i.e.
- * `bun run dev`). Production, test, staging, undefined, typos, future
- * Next.js renames all fall through to the generic body. Fail-safe by
- * default: a silent env-var change can never start leaking SQL fragments,
- * bound parameters, or stack traces to MCP clients.
- *
- * @param label - Tool name (e.g. `"piyaz_project"`).
- * @param e - The thrown error.
- * @returns MCP error response.
- */
-function mcpError(label: string, e: unknown) {
-  console.error(`[mcp:${label}] error:`, e);
-  const verbose = process.env.NODE_ENV === "development";
-  const message = verbose && e instanceof Error ? e.message : "Internal error";
-  return err(message);
-}
-
-/**
  * Convert a ToolResult to MCP response format.
- * Handles string results (context depths) as raw text.
+ * Handles string results (context bundles, formatted views) as raw text.
  * @param result - Tool handler result.
  * @returns MCP content response.
  */
@@ -84,181 +59,250 @@ function toMcp(result: ToolResult) {
   return json(result.data);
 }
 
-const INSTRUCTIONS = `Piyaz is an agentic project management server for software projects. It tracks tasks, dependencies, decisions, and execution records across sessions and teammates so coding agents and engineers can hand work to each other. Stateless HTTP endpoint with no server-side session state; pass \`projectId\` explicitly on every call.
-
-This file documents the canonical flows the skill expects the server to cover: session start, find work, implement, plan, refine, the Completion Protocol, and propagation. Everything else, including persona, the three-dimension tag taxonomy plus the first-class \`priority\` / \`estimate\` / \`assigneeIds\` fields, the category vocabulary by project type, the full per-status lifecycle table, the dispatch / decompose / onboarding / brainstorm / manage agents, parallel-agent orchestration, and the resume-after-compaction pattern, lives in the \`piyaz\` skill on your platform (Claude Code, Codex, Cursor, Antigravity) and its references (\`conventions.md\`, \`artifacts.md\`, \`lifecycle.md\`, \`resilience.md\`). The skill is the ground truth.
-
-## Multi-team awareness
-The caller's account spans every membership. There is no 'active' team. Read tools span every team you belong to; writes name \`organizationId\` or auto-resolve when the account has exactly one membership.
-- \`piyaz_project action='list'\`: projects with team metadata. Skips teams with zero projects, so pair with \`teams\` for the full set.
-- \`piyaz_project action='teams'\`: every membership (id, name, slug, role, projectCount). Includes empty teams. Run before \`create\`, when \`list\` is empty, or when the user names a team \`list\` did not surface.
-- Out-of-team probes (an id from a team you do not belong to) return 404-shaped. Within-team-other-project reads succeed by design; every team member can read all projects in their teams. Only trust ids returned by list, teams, search, or context.
-
-## Session start
-1. \`piyaz_project action='list'\`.
-2. \`piyaz_project action='teams'\` if \`list\` was empty or the user names a team it missed.
-3. \`piyaz_project action='select' projectId='...'\` to confirm. Pass \`projectId\` on every subsequent call.
-
-## Find work
-Lead with \`piyaz_analyze\` (all variants slim):
-- \`critical_path\` first on continue / resume / "what's next"; the bottleneck dictates priority.
-- \`ready\` for unblocked planned tasks (drafts with satisfied deps surface as \`plannable\`, not \`ready\`); pick from \`ready ∩ critical_path\` for the highest-impact unblocked work.
-- \`plannable\` when nothing is ready to code (drafts with description + criteria + deps satisfied).
-- \`blocked\` to diagnose what's stuck (waiting tasks with blocker detail).
-- \`downstream\` for impact analysis before a status change, refinement, or cancellation; not for picking next work.
-
-Drop to \`piyaz_query\` for browse / lookup:
-- \`search\` (slim): find a task by taskRef, title fragment, or tag substring; \`tags=[...]\` for exact-tag OR-filter; single-result responses carry a state hint pointing at the right next call.
-- \`list\` (medium): every task in the project, slim per-task fields, ordered by position.
-- \`edges\` (slim): one task's relationships (connected ref, title, status, direction, note).
-- \`meta\` (slim): the project's categories, tag vocabulary with usage counts, description, status, and progress. Use before setting a \`category\` or coining new tags; lighter than overview.
-- \`overview\` (very heavy): full structure (every task, every edge, full tag vocab, progress). Reserve for unfamiliar-project orientation, decompose's pre-write coverage check, or strategic review. At most once per session. Do not run on routine status questions.
-
-## Refine a task
-1. \`piyaz_context taskId='...' depth='working'\` for current state and 1-hop edges.
-2. Before proposing changes, explore. Search related tasks (\`piyaz_query type='search'\` by tag or title fragment), read current docs for any framework or library the task touches, check the actual codebase for what already exists. No speculation. If you don't know, look; if you can't find it, ask. Refining on assumptions is how vague tasks survive review.
-3. Improve description, acceptance criteria, decisions, dependencies. Push back on vagueness; rewrite single-sentence descriptions and "works correctly" ACs before saving.
-4. \`piyaz_task action='update'\`. The default appends to array fields; \`overwriteArrays=true\` REPLACES them and is destructive. Confirm with the user before using it.
-5. Propagate per the Propagate section if decisions changed.
-
-## Implement a task
-0. If the task is \`draft\`, plan it first (see Plan a draft task).
-1. Claim. \`piyaz_task action='update' status='in_progress'\`. Prevents two agents grabbing the same task.
-2. Context. \`piyaz_context taskId='...' depth='agent'\`. Multi-hop dependencies, upstream execution records, acceptance criteria.
-3. Understand before doing. Read the description, the executionRecords from upstream tasks, and the relevant code. Reason about what could go wrong. Ask if anything is unclear. Then implement. Rushing here produces work that misses the actual requirement.
-4. Build the work.
-5. Mark in_review via the Completion Protocol below. The \`in_review\` update carries:
-   - \`executionRecord\`: 3 to 5 sentences with concrete file paths, function names, endpoints. Description is scope; executionRecord is HOW it was built.
-   - \`decisions\`: one line per technical choice. Format: CHOICE plus WHY.
-   - \`files\`: every path created or modified.
-   - \`acceptanceCriteria\`: pass each item as \`{text, checked: true|false}\`. Evaluate against the work; do not auto-check everything.
-   - \`prUrl\`: the PR URL the implementer just opened (optional sugar; backend upserts a \`task_links\` row with kind='pull_request' so the review subagent and detail UI can read it). Omit when no PR was opened.
-   Do not pass \`overwriteArrays=true\` unless replacing the arrays is the intent and the user has confirmed.
-   The HOTL gate flips \`in_review → done\` after PR approval/merge. Agents must not self-promote to \`done\`.
-6. Propagate per the Propagate section.
-
-## Plan a draft task
-1. \`piyaz_context taskId='...' depth='planning'\` for project description, prerequisites, downstream specs.
-2. Write the implementation plan. Search the codebase for what already exists, read up-to-date docs for any new dependency, clarify open questions with the user, reason through edge cases. File paths, line numbers, specific changes, verification steps. No speculation.
-3. \`piyaz_task action='update' implementationPlan='<full markdown>' status='planned'\`. Save the complete unabridged plan. Do not summarize.
-
-## Completion Protocol
-Run before transitioning a task to \`in_review\`, \`done\`, or \`cancelled\`. The implementer phase terminates at \`in_review\` with the full payload; \`done\` is reserved for the HOTL operator after PR approval (no extra fields required, transition only).
-
-1. Detect mode by transcript.
-   - Dispatched: your context shows a parent agent invoked you. Mark \`in_review\` directly with the full payload (the implementer's terminal write); the HOTL operator finalizes to \`done\`. Return a one-sentence summary to the parent. Do not ask.
-   - Direct: invoked by the user in a normal session. Ask "Ready to mark this \`in_review\`?" with a one-sentence \`executionRecord\` preview. Wait for explicit confirmation; the HOTL operator finalizes to \`done\` after PR approval.
-   - Uncertain: default to asking. A spurious confirmation is cheap; an unauthorized status change is expensive.
-
-2. Populate required fields. \`executionRecord\`, \`decisions\`, \`files\`, \`acceptanceCriteria\`, and \`prUrl\` when a PR was opened (backend upserts a \`task_links\` row with kind='pull_request'). The server returns \`_hints\` for any missing fields; re-call with the additions before continuing. For \`cancelled\`: \`executionRecord\` carries the rationale (why abandoned, what was tried) and \`decisions\` records anything learned.
-
-3. Open a PR if the work changed code. Detect a template at \`.github/PULL_REQUEST_TEMPLATE.md\`, \`.github/pull_request_template.md\`, \`.github/PULL_REQUEST_TEMPLATE/<name>.md\`, or \`docs/pull_request_template.md\`. If a template exists, fill it; map task fields onto template sections only where they fit, and leave a section blank rather than invent content. Common mappings:
-   - Linked issue / linked task: include the \`taskRef\` in \`[BRACKETS]\` (e.g. \`[MYMR-83]\`). Bracket form triggers Piyaz PR-status tracking; use it for the ONE primary task this PR builds. Reference related tasks elsewhere as plain links (no brackets). Add \`Closes #N\` on its own line if a GitHub issue is being resolved.
-   - Summary: 2 to 3 sentences from \`executionRecord\`.
-   - Test plan / verification: the checked \`acceptanceCriteria\` items.
-   - Decisions or notes-for-reviewer: relevant entries from \`decisions\`.
-   If no template exists, use a concise default with Summary (containing the bracketed task reference and an optional \`Closes #N\` line), Type of change, Testing, and Notes for reviewer. Always concise; empty optional sections beat fabricated content.
-
-4. Skip the PR for these task types: research / investigation (no code change), decision-only, pure-Piyaz refinement (no repo changes), tasks the user explicitly said "no PR" on. When in doubt, ask before opening.
-
-## Propagate after every change
-After any status change or significant refinement:
-1. \`piyaz_query type='edges'\` on the changed task to see current relationships.
-2. \`piyaz_analyze type='downstream'\` to enumerate dependents.
-3. For each downstream task evaluate: do edge notes need updating to reflect new decisions; are there NEW relationships revealed by this change; are there STALE relationships that no longer hold; do downstream descriptions need updating based on the decisions made.
-4. Create, update, or remove edges as needed.
-
-For cancellations: edges to a cancelled task remain in place because cancellation is transitive-aware (dependents stay blocked through the cancelled task's own unsatisfied prereqs). Ask whether there is a replacement. If yes, rewire dependents to the replacement. If no, dependents may need to be cancelled too or re-scoped to no longer require the cancelled work.
-
-Skipping propagation is how dependency graphs go stale. Stale graphs make Piyaz useless.
-
-## Tool descriptions and \`_hints\` are runtime instructions
-Every tool injects two things into your context: the parameter schema before the call, and a \`_hints\` array in the response. These are not optional commentary. They are server-side rules and state you cannot see otherwise, and they override any prior plan you had. Read on every tool call; act on them before continuing. Skipping a hint is operating on stale information. Errors are token dense and self correcting; the message often names the next call with the team or task list inline. Re-read errors and act on them before falling back to asking the user.
-
-## Iron Law of grounding
-Never write what you cannot cite or do not know. Applies wherever an agent generates \`executionRecord\`, \`decisions\`, \`description\`, or \`files\`. When uncertain, write less; a short true record is more valuable than a rich fabricated one. The full quality bar for titles, descriptions, ACs, tag dimensions, categories, edge notes, and markdown tone lives in the skill's \`artifacts.md\`.
-
-## Mutation safety
-Update array fields (\`decisions\`, \`acceptanceCriteria\`, \`files\`) APPEND by default. Pass \`overwriteArrays=true\` only when replacing is the intent and the user has confirmed. \`piyaz_task action='delete'\` defaults to \`preview=true\`; show impact, get explicit confirmation, then \`preview=false\`. For abandoned scope prefer \`status='cancelled'\` with rationale in \`executionRecord\` over deletion; edges to cancelled tasks remain in place and cancellation is transitive-aware.
-
-## Remote mode
-This is a stateless HTTP endpoint. No session state is persisted server-side. The \`select\` action on \`piyaz_project\` returns a confirmation but does not set server state. Always pass \`projectId\` explicitly on every subsequent call.`;
+/** MCP content response shape produced by {@link toMcp} / {@link err}. */
+type McpResponse = ReturnType<typeof toMcp>;
 
 /**
- * Register all 6 Piyaz tools on a server instance, bound to the caller's
- * auth context. Each tool handler receives `ctx` as its second arg so
- * authorization and team scoping happen inside the data layer.
+ * Wrap a tool handler with the cross-cutting concerns every tool shares:
+ * the heavy-tier rate check (middleware cannot see tool names, so the
+ * expensive shapes are throttled here), the sanitised catch-all (mirrors
+ * `internalError` in `lib/api/error.ts`: log server-side, return opaque
+ * `Internal error` unless NODE_ENV is exactly `development`), and one
+ * structured `mcp_tool` log line per call for observability.
+ *
+ * @param name - Tool name (e.g. `"piyaz_get"`).
+ * @param ctx - Resolved auth context.
+ * @param opts - Per-tool hooks: `disc` extracts the action/variant for the
+ *   log line; `heavy` marks the parameter shapes billed to the heavy tier.
+ * @param handler - The tool handler.
+ * @returns The MCP callback.
+ */
+function wrapTool<P>(
+  name: string,
+  ctx: AuthContext,
+  opts: {
+    disc?: (params: P) => string | undefined;
+    heavy?: (params: P) => boolean;
+  },
+  handler: (params: P, ctx: AuthContext) => Promise<ToolResult>,
+): (params: P) => Promise<McpResponse> {
+  return async (params: P) => {
+    const started = Date.now();
+    let response: McpResponse;
+    let truncated: boolean | undefined;
+    let errName: string | undefined;
+    try {
+      if (opts.heavy?.(params)) {
+        const check = await getBackend("mcpHeavy").check(
+          `mcp-heavy:${ctx.userId}`,
+          MCP_HEAVY_LIMIT.max,
+          MCP_HEAVY_LIMIT.window,
+        );
+        if (!check.allowed) {
+          response = err(
+            `Heavy-tier budget exhausted (${MCP_HEAVY_LIMIT.max}/${MCP_HEAVY_LIMIT.window}s for deep lenses, overviews, wide walks, large batches, category cascades). Retry in ${check.resetIn}s, or use a lighter shape now: piyaz_get fields=[...], lens='summary', or piyaz_search with filters.`,
+          );
+          return response;
+        }
+      }
+      const result = await handler(params, ctx);
+      if (result.ok) truncated = result.meta?.truncated;
+      response = toMcp(result);
+      return response;
+    } catch (e) {
+      console.error(`[mcp:${name}] error:`, e);
+      errName = e instanceof Error ? e.name : "unknown";
+      response = err(
+        isVerboseErrors() && e instanceof Error ? e.message : "Internal error",
+      );
+      return response;
+    } finally {
+      const bytesOut = response!
+        ? response!.content.reduce((n, c) => n + c.text.length, 0)
+        : 0;
+      console.log(
+        JSON.stringify({
+          evt: "mcp_tool",
+          tool: name,
+          disc: opts.disc?.(params),
+          userId: ctx.userId,
+          clientId:
+            ctx.actor.source === "mcp" ? (ctx.actor.clientId ?? null) : null,
+          ok: !("isError" in response!),
+          ms: Date.now() - started,
+          bytesOut,
+          ...(truncated !== undefined && { truncated }),
+          ...(errName !== undefined && { err: errName }),
+        }),
+      );
+    }
+  };
+}
+
+const INSTRUCTIONS = `Piyaz tracks tasks, dependencies, decisions, and execution records for software projects, so agents and engineers hand work across sessions. 8 tools: piyaz_workspace (identity, projects), piyaz_search (find tasks), piyaz_get (read task/project), piyaz_create (batch create), piyaz_edit (operation edits), piyaz_link (edges), piyaz_map (graph views), piyaz_activity (what changed). Refs are first-class: pass 'PYZ-42' / 'PYZ' anywhere a task/project is named (UUIDs also work); responses emit refs. Stateless server: name the project or task on every call.
+
+Doctrine (persona, tag taxonomy, category vocabulary, full lifecycle table, orchestration) lives in the \`piyaz\` skill on your platform and its references (conventions.md, artifacts.md, lifecycle.md, resilience.md). The skill is ground truth; this server steers.
+
+## Session start
+1. piyaz_workspace action='whoami' — confirm who you are and how many teams.
+2. piyaz_workspace action='projects' — identifiers for every project (pair with action='teams' when a team is empty or missing).
+
+## Find work
+Lead with piyaz_map: view='critical_path' on resume / "what's next" (the bottleneck dictates priority); view='ready' for unblocked planned tasks (pick from ready ∩ critical_path); view='plannable' when nothing is ready to code; view='blocked' to diagnose; view='downstream' task='<ref>' for impact analysis before changes. Drop to piyaz_search for lookups: cross-project by default, filters (status, priority, assignee='me', category, tags) AND-narrow, project='PYZ' scopes and adds derived state.
+
+## Read
+Pick the lightest shape: piyaz_get task='<ref>' fields=['<field>'] for one field's exact text (the read before every surgical edit; response carries updatedAt and collection item ids); lens='summary' for orientation with edges; lens='working' for refinement (ids for every criterion/decision/link); lens='agent' BEFORE coding (multi-hop deps, upstream execution records, related tasks); lens='planning' BEFORE writing a plan; lens='review' for in_review tasks; lens='record' for done/cancelled retrospectives. Project: view='meta' for categories + tag vocabulary (check before coining either); view='overview' at most once per session.
+
+## Write
+piyaz_create makes 1-25 tasks + edges atomically and is idempotent by exact title (deduped tasks return with their existing refs) — safe to re-run a restarted decompose. piyaz_edit applies ordered ops atomically to one task: str_replace (oldStr must match exactly once — copy exact text from fields=[...] first), append for accretion, set for scalars and full rewrites; add/update/remove/check/uncheck by item id for criteria, decisions, links, assignees. remove is destructive with no undo. Pass ifUpdatedAt (from the last read) on contended tasks; a unique oldStr is an implicit compare-and-swap. Assignee UUIDs come from piyaz_workspace action='members'; category renames/removals go through action='rename_category' / 'delete_category' (they cascade to task rows — update categories=[...] does not).
+
+## Completion Protocol
+Run before setting status to in_review, done, or cancelled. The implementer's terminal write is in_review; the HOTL operator flips in_review → done after PR approval. Agents never self-promote to done.
+1. Detect mode by transcript. Dispatched (a parent agent invoked you): set in_review directly with the full payload, return a one-sentence summary; do not ask. Direct (normal user session): ask "Ready to mark this in_review?" with a one-sentence executionRecord preview and wait. Uncertain: ask.
+2. Populate in ONE piyaz_edit call: set executionRecord (3-5 sentences: file paths, function names, endpoints — HOW it was built, distinct from description), add decisions (CHOICE + WHY, one op each), set files (every path; [] when none), check/uncheck each acceptance criterion by id against the work (never auto-check), set prUrl when a PR was opened, set status='in_review'. The server returns _hints for anything missing; act on them before continuing. For cancelled: executionRecord carries the rationale (why abandoned, what was tried).
+3. Open a PR if code changed. Detect a template (.github/PULL_REQUEST_TEMPLATE.md and variants); fill it concisely from executionRecord and ACs; put the ONE primary taskRef in [BRACKETS] in the title (triggers Piyaz PR tracking); plain links for related tasks; 'Closes #N' on its own line when a GitHub issue resolves. No template: Summary / Type of change / Testing / Notes. Empty sections beat fabricated content.
+4. Skip the PR for research / decision-only / Piyaz-only tasks; when in doubt, ask.
+
+## Link & propagate
+depends_on = source needs target's output (litmus: removing the target makes source impossible; merely harder = relates_to). Notes are REQUIRED and substantive — a brief to the developer starting the source task; placeholders rejected. After any status change or significant refinement: piyaz_map view='downstream' task='<ref>', then update edge notes, retire stale edges, add newly revealed ones, and update downstream descriptions. Cancellation is transparent (dependents stay blocked through the cancelled task's own unsatisfied prereqs): ask whether a replacement exists and rewire, or re-scope dependents. Skipping propagation is how graphs go stale, and stale graphs make Piyaz useless.
+
+## Resume
+piyaz_activity project='PYZ' since='<last known instant>' — what changed while you were away, newest first. Then piyaz_get the tasks that moved.
+
+## Hints and errors are runtime instructions
+Tool responses carry _hints; errors carry the fix inline (candidate lists for ambiguous refs, the max existing ref on a near-miss, occurrence counts for failed str_replace, current item ids for missed collection targets, the fresh updatedAt on stale writes). They are server-side state you cannot see otherwise and they override your prior plan. Act on them before asking the user. 'Duplicate edge' means the edge exists: treat as success.
+
+## Iron Law of grounding
+Never write what you cannot cite or do not know. Applies to executionRecord, decisions, description, files. When uncertain, write less; a short true record beats a rich fabricated one.
+
+## Mutation safety
+piyaz_edit remove ops and op='set' full-field rewrites are destructive with no undo (the activity log records that a change happened, not the prior content). Prefer str_replace/append and by-id ops. delete_task previews by default; prefer status='cancelled' for abandoned scope — delete only noise. Confirm destructive intent with the user in direct mode.`;
+
+/**
+ * Register all 8 Piyaz tools on a server instance, bound to the caller's
+ * auth context. Each handler receives `ctx` so authorization and team
+ * scoping happen inside the data layer; `wrapTool` adds the heavy-tier
+ * rate check, the sanitised catch-all, and the per-call log line.
  * @param server - Any object with a registerTool method (McpServer or mock).
  * @param ctx - Resolved auth context (user id only — team scope per call).
  */
 export function registerAllTools(server: McpServer, ctx: AuthContext): void {
   server.registerTool(
-    "piyaz_project",
+    "piyaz_workspace",
     {
-      description: DESCRIPTIONS.piyaz_project,
-      inputSchema: projectInputSchema,
+      description: DESCRIPTIONS.piyaz_workspace,
+      inputSchema: workspaceInputSchema,
       annotations: {
-        title: "Manage Project",
+        title: "Workspace",
         readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: false,
         openWorldHint: false,
       },
     },
-    async (params) => {
-      try {
-        if (params.action === "select") {
-          if (!params.projectId)
-            return err(
-              "projectId required for select. Call piyaz_project action='list' first to enumerate your projects.",
-            );
-          return json({
-            selected: params.projectId,
-            _hints: [
-              "Stateless mode. Pass this projectId explicitly on every subsequent call.",
-            ],
-          });
-        }
-        const { action, ...rest } = params;
-        const result = await handleProject(
-          { action: action as "list" | "teams" | "create" | "update", ...rest },
-          ctx,
-        );
-        return toMcp(result);
-      } catch (e) {
-        return mcpError("piyaz_project", e);
-      }
-    },
+    wrapTool(
+      "piyaz_workspace",
+      ctx,
+      {
+        disc: (p) => p.action,
+        heavy: (p) =>
+          p.action === "rename_category" || p.action === "delete_category",
+      },
+      handleWorkspace,
+    ),
   );
 
   server.registerTool(
-    "piyaz_task",
+    "piyaz_search",
     {
-      description: DESCRIPTIONS.piyaz_task,
-      inputSchema: taskInputSchema,
+      description: DESCRIPTIONS.piyaz_search,
+      inputSchema: searchInputSchema,
       annotations: {
-        title: "Manage Task",
+        title: "Search Tasks",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    wrapTool("piyaz_search", ctx, {}, handleSearch),
+  );
+
+  server.registerTool(
+    "piyaz_get",
+    {
+      description: DESCRIPTIONS.piyaz_get,
+      inputSchema: getInputSchema,
+      annotations: {
+        title: "Get Task or Project",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    wrapTool(
+      "piyaz_get",
+      ctx,
+      {
+        disc: (p) => (p.task ? (p.lens ?? "working") : (p.view ?? "meta")),
+        heavy: (p) =>
+          (Boolean(p.task) &&
+            !p.fields?.length &&
+            (DEEP_LENSES as readonly string[]).includes(p.lens ?? "working")) ||
+          (Boolean(p.project) && p.view === "overview"),
+      },
+      handleGet,
+    ),
+  );
+
+  server.registerTool(
+    "piyaz_create",
+    {
+      description: DESCRIPTIONS.piyaz_create,
+      inputSchema: createInputSchema,
+      annotations: {
+        title: "Create Tasks",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    wrapTool(
+      "piyaz_create",
+      ctx,
+      { heavy: (p) => p.tasks.length > 5 || (p.edges?.length ?? 0) > 5 },
+      handleCreate,
+    ),
+  );
+
+  server.registerTool(
+    "piyaz_edit",
+    {
+      description: DESCRIPTIONS.piyaz_edit,
+      inputSchema: editInputSchema,
+      annotations: {
+        title: "Edit Task",
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: false,
       },
     },
-    async (params) => {
-      try {
-        const result = await handleTask(params, ctx);
-        return toMcp(result);
-      } catch (e) {
-        return mcpError("piyaz_task", e);
-      }
-    },
+    wrapTool(
+      "piyaz_edit",
+      ctx,
+      { disc: (p) => p.operations.map((o) => o.op).join(",") },
+      handleEdit,
+    ),
   );
 
   server.registerTool(
-    "piyaz_edge",
+    "piyaz_link",
     {
-      description: DESCRIPTIONS.piyaz_edge,
-      inputSchema: edgeInputSchema,
+      description: DESCRIPTIONS.piyaz_link,
+      inputSchema: linkInputSchema,
       annotations: {
         title: "Manage Edge",
         readOnlyHint: false,
@@ -267,94 +311,58 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         openWorldHint: false,
       },
     },
-    async (params) => {
-      try {
-        const result = await handleEdge(params, ctx);
-        return toMcp(result);
-      } catch (e) {
-        return mcpError("piyaz_edge", e);
-      }
-    },
+    wrapTool("piyaz_link", ctx, { disc: (p) => p.action }, handleLink),
   );
 
   server.registerTool(
-    "piyaz_query",
+    "piyaz_map",
     {
-      description: DESCRIPTIONS.piyaz_query,
-      inputSchema: queryInputSchema,
+      description: DESCRIPTIONS.piyaz_map,
+      inputSchema: mapInputSchema,
       annotations: {
-        title: "Query Tasks",
+        title: "Map Graph",
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
       },
     },
-    async (params) => {
-      try {
-        const result = await handleQuery(params, ctx);
-        return toMcp(result);
-      } catch (e) {
-        return mcpError("piyaz_query", e);
-      }
-    },
+    wrapTool(
+      "piyaz_map",
+      ctx,
+      {
+        disc: (p) => p.view,
+        heavy: (p) =>
+          p.view === "critical_path" ||
+          (p.view === "neighbors" && p.hops === 2),
+      },
+      handleMap,
+    ),
   );
 
   server.registerTool(
-    "piyaz_context",
+    "piyaz_activity",
     {
-      description: DESCRIPTIONS.piyaz_context,
-      inputSchema: contextInputSchema,
+      description: DESCRIPTIONS.piyaz_activity,
+      inputSchema: activityInputSchema,
       annotations: {
-        title: "Get Task Context",
+        title: "Activity Feed",
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
       },
     },
-    async (params) => {
-      try {
-        const result = await handleContext(params, ctx);
-        return toMcp(result);
-      } catch (e) {
-        return mcpError("piyaz_context", e);
-      }
-    },
-  );
-
-  server.registerTool(
-    "piyaz_analyze",
-    {
-      description: DESCRIPTIONS.piyaz_analyze,
-      inputSchema: analyzeInputSchema,
-      annotations: {
-        title: "Analyze Graph",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async (params) => {
-      try {
-        const result = await handleAnalyze(params, ctx);
-        return toMcp(result);
-      } catch (e) {
-        return mcpError("piyaz_analyze", e);
-      }
-    },
+    wrapTool("piyaz_activity", ctx, {}, handleActivity),
   );
 }
 
 /**
  * Create a stateless MCP server bound to the caller's auth context.
  *
- * Read tools (`list`, queries, context) span every team the caller is a
- * member of. Writes either name an explicit `organizationId` (membership-
- * checked) or auto-resolve when the caller belongs to exactly one team.
- * Multi-team callers must pass `organizationId` on `piyaz_project create`;
- * the server returns a hard error with the team list inline otherwise.
+ * Read tools span every team the caller is a member of. Writes either name
+ * an explicit `organizationId` (membership-checked) or auto-resolve when
+ * the caller belongs to exactly one team.
  *
  * @param ctx - Resolved auth context derived from the OAuth JWT.
  * @returns Configured McpServer instance.

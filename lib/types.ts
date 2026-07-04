@@ -8,14 +8,34 @@ export type ProjectStatus =
   | "active"
   | "archived";
 
+/**
+ * Project lifecycle phases in progression order. Shared by the MCP
+ * workspace transition hints and the phase-gating checks so the order
+ * lives in one place.
+ */
+export const PROJECT_STATUS_ORDER = [
+  "brainstorming",
+  "decomposing",
+  "active",
+  "archived",
+] as const satisfies readonly ProjectStatus[];
+
+/**
+ * Task lifecycle statuses in progression order (`cancelled` is terminal
+ * from any phase). Shared by the MCP status schema, the edit-op validator,
+ * and the status-jump hints so the lifecycle list lives in one place.
+ */
+export const TASK_STATUSES = [
+  "draft",
+  "planned",
+  "in_progress",
+  "in_review",
+  "done",
+  "cancelled",
+] as const;
+
 /** Task lifecycle status. */
-export type TaskStatus =
-  | "draft"
-  | "planned"
-  | "in_progress"
-  | "in_review"
-  | "done"
-  | "cancelled";
+export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 /**
  * Terminal task statuses — work that will never resume. Shared by the

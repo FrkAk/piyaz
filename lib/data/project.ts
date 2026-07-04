@@ -25,7 +25,7 @@ import {
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
 import { insertActivityEvents } from "@/lib/data/activity";
-import type { TaskStatus } from "@/lib/types";
+import type { ProjectStatus, TaskStatus } from "@/lib/types";
 import { STATUS_BUCKET } from "@/lib/data/views";
 import {
   asIdentifier,
@@ -517,6 +517,39 @@ export async function getProjectTags(
 }
 
 /**
+ * Read a project's category vocabulary, lifecycle status, and identifier
+ * in one RLS-scoped read. Status and identifier ride along so the category
+ * mutations can gate on the archived phase without a second query.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @returns The vocabulary array (possibly empty), project status, and identifier.
+ * @throws ForbiddenError when the project is not visible to the caller.
+ */
+export async function getProjectCategories(
+  ctx: AuthContext,
+  projectId: string,
+): Promise<{
+  categories: string[];
+  status: ProjectStatus;
+  identifier: string;
+}> {
+  const [rows] = await withUserContextRead(ctx.userId, (read) => [
+    read
+      .select({
+        categories: projects.categories,
+        status: projects.status,
+        identifier: projects.identifier,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId)),
+  ]);
+  const row = rows[0];
+  if (!row) throw new ForbiddenError("Forbidden", "project", projectId);
+  return row;
+}
+
+/**
  * {@link getProjectTags} on a caller-supplied tx.
  *
  * @param tx - Active RLS transaction handle.
@@ -618,7 +651,7 @@ export async function getProjectMeta(
 
 /** Team entry returned by {@link listUserTeams}. */
 export type UserTeamEntry = {
-  /** Team UUID — pass to `piyaz_project create organizationId='...'`. */
+  /** Team UUID — pass to `piyaz_workspace action='create' organizationId='...'`. */
   id: string;
   /** Display name shown in the home grid and settings. */
   name: string;
@@ -859,13 +892,13 @@ export async function listProjectIndex(
 }
 
 /**
- * Lean project list for the MCP `piyaz_project action='list'` tool. Selects
+ * Lean project list for the MCP `piyaz_workspace action='projects'` tool. Selects
  * only the columns the agent skill consumes (id, organizationId, title,
  * identifier, status) plus the team chip and rolled-up task counts, and
  * skips the heavy `description`, `categories`, and timestamp
  * columns at the SQL projection so wire bytes are saved off the Postgres
  * round-trip — not just trimmed in JS. Agents fetch description and tag
- * vocabulary on demand via `piyaz_query type='meta'`.
+ * vocabulary on demand via `piyaz_get project view='meta'`.
  *
  * No pagination; returns every project the caller can see, ordered by
  * `updatedAt DESC, id DESC` to match `listProjectsSlim`.
@@ -1184,7 +1217,8 @@ const PROTECTED_PROJECT_FIELDS = [
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
  * @param changes - Typed subset of project fields to update.
- * @returns The updated project row.
+ * @returns The updated project row plus `priorStatus`, the lifecycle phase
+ *   before this update (for the MCP transition hints).
  * @throws {InsufficientRoleError} If `changes.identifier` is set.
  */
 export async function updateProject(
@@ -1206,13 +1240,13 @@ export async function updateProject(
     safe.description = formatted ?? safe.description;
   }
   const updated = await withUserContext(ctx.userId, async (tx) => {
-    await assertProjectAccessTx(tx, projectId);
+    const access = await assertProjectAccessTx(tx, projectId);
     const [row] = await tx
       .update(projects)
       .set({ ...safe, updatedAt: new Date() })
       .where(eq(projects.id, projectId))
       .returning();
-    return row;
+    return { ...row, priorStatus: access.project.status };
   });
   emitProjectEvent(projectId);
   return updated;

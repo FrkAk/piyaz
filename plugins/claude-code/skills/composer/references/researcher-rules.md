@@ -29,7 +29,7 @@ When uncertain, write less. A short, true record is more valuable than a rich, f
 
 ## conventions §4 — taskRef format
 
-Tool responses include a `taskRef` like `MYMR-83`: uppercase project prefix, dash, integer. Use the ref in user-facing output. **Always pass the UUID `taskId` to tool calls. Never the ref.**
+Tool responses include a `taskRef` like `WHL-214`: uppercase project prefix, dash, integer. **Refs are first-class everywhere: use them in user-facing output AND in tool calls** (`task='WHL-214'`, `project='WHL'`). UUIDs also work and are the fallback when a ref is ambiguous across teams (the error lists the candidates with their UUIDs). Chain the refs that responses emit; never invent one — a miss returns the highest existing ref for the prefix.
 
 ---
 
@@ -50,7 +50,7 @@ Cover, depending on task type:
 - **Solution sketch:** if you have one, include it. "Use Drizzle, mirror the patterns in `lib/data/task.ts`" is more useful than "Define the database tables".
 - **No speculation:** do not pad with implementation guesses when the approach is uncertain. The implementation plan is for that.
 
-Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are rejected.
+Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are never acceptable: the server flags them in `_hints`; rewrite before moving on.
 
 ```
 GOOD (feature, web SaaS):
@@ -100,7 +100,7 @@ BAD:
 - "Performance is good"
 ```
 
-Single-AC tasks are rejected. Tasks with vague ACs ("works correctly", "is complete", "performs well") are rejected.
+Single-AC tasks are flagged by the server in `_hints`; rewrite them. Tasks with vague ACs ("works correctly", "is complete", "performs well") must be rewritten before planning.
 
 ### `decisions`
 
@@ -124,7 +124,7 @@ Never invent. If a decision is not grounded in conversation, code, or the artifa
 
 ## artifacts §2 — Tag dimensions and first-class fields
 
-Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `piyaz_query type='meta'` before coining new ones.
+Every task, in every status, must carry tags across the three tag dimensions below. Reuse existing tags from `piyaz_get view='meta'` before coining new ones.
 
 | Dimension | Count | Vocabulary |
 |---|---|---|
@@ -134,7 +134,7 @@ Every task, in every status, must carry tags across the three tag dimensions bel
 
 ### First-class fields (priority, estimate, assignees)
 
-These are top-level columns on every task, set via `piyaz_task` parameters of the same name. They are NOT tags.
+These are top-level columns on every task, set at creation (`piyaz_create` item fields) or via `piyaz_edit` (`set field='priority'` etc.). They are NOT tags.
 
 - **`priority`** (one of `urgent`, `core`, `normal`, `backlog`). Required-on-create-by-convention: pick deliberately. Defaults: onboarding (shipped features) lands at `core`; decompose picks per task and avoids `core` everywhere or `urgent` everywhere (the dimension carries no signal then). A 30-task project usually has 3 to 6 `urgent` tasks and the rest split between `core`, `normal`, and `backlog`.
 - **`estimate`** (Fibonacci story points: `1`, `2`, `3`, `5`, `8`, `13`). Optional. `1` is trivial, `2` and `3` are routine, `5` is nontrivial, `8` and `13` are risky or multi-day. If a task feels larger than `13`, split it (§5).

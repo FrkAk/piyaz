@@ -1,7 +1,9 @@
 import "server-only";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
 import { authDb } from "@/lib/db/connection";
+import { normalizeExecuteResult } from "@/lib/db/raw";
+import { withUserContextRead } from "@/lib/db/rls";
 import {
   account,
   oauthAccessToken,
@@ -10,6 +12,37 @@ import {
   session,
 } from "@/lib/db/auth-schema";
 import { projects, tasks, taskAssignees } from "@/lib/db/schema";
+import type { AuthContext } from "@/lib/auth/context";
+
+/** The caller's own profile, resolved for the MCP whoami surface. */
+export type Whoami = { userId: string; name: string; email: string };
+
+/**
+ * Read the caller's own user profile (id, name, email) in one RLS-scoped read.
+ * `app_user` has no grant on `piyaz_auth."user"`, so the row is resolved via
+ * the `current_user_profile` SECURITY DEFINER function, which binds to the
+ * session's `app.user_id` GUC and can never disclose another user's row.
+ *
+ * @param ctx - Caller auth context.
+ * @returns The caller's user id, name, and email.
+ * @throws Error when no profile row resolves for the caller.
+ */
+export async function getWhoami(ctx: AuthContext): Promise<Whoami> {
+  const [raw] = await withUserContextRead(ctx.userId, (read) => [
+    read.execute(
+      sql`SELECT user_id, name, email FROM public.current_user_profile()`,
+    ),
+  ]);
+  const [row] = normalizeExecuteResult<{
+    user_id: string;
+    name: string;
+    email: string;
+  }>(raw);
+  if (!row) {
+    throw new Error(`getWhoami: no profile row for caller ${ctx.userId}`);
+  }
+  return { userId: row.user_id, name: row.name, email: row.email };
+}
 
 /**
  * Read when the user's credential (email/password) account row last

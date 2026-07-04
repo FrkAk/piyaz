@@ -59,17 +59,22 @@ const SUMMARY_MAX_CHARS = 160;
  * @param taskId - Task whose events to read.
  * @param cur - Decoded keyset cursor, or null for the first page.
  * @param limit - Row cap (already includes the +1 look-ahead).
+ * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
  * @returns Parameterized read-only SQL.
  */
 function activityPageSql(
   taskId: string,
   cur: ActivityCursor | null,
   limit: number,
+  since: string | null,
 ): SQL {
   const keyset = cur
     ? sql`AND (ae.created_at < ${cur.createdAt}::timestamptz
         OR (ae.created_at = ${cur.createdAt}::timestamptz
             AND ae.id < ${cur.id}::uuid))`
+    : sql``;
+  const sinceClause = since
+    ? sql`AND ae.created_at > ${since}::timestamptz`
     : sql``;
   return sql`
     WITH page AS (
@@ -82,6 +87,7 @@ function activityPageSql(
         ae.target_ref, ae.metadata
       FROM public.activity_events ae
       WHERE ae.task_id = ${taskId}::uuid
+      ${sinceClause}
       ${keyset}
       ORDER BY ae.created_at DESC, ae.id DESC
       LIMIT ${limit}
@@ -118,6 +124,7 @@ function activityPageSql(
  * @param taskId - Task whose events to read.
  * @param cur - Decoded keyset cursor, or null for the first page.
  * @param limit - Row cap (already includes the +1 look-ahead).
+ * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
  * @returns Lazy raw-SQL read statement.
  */
 export function taskActivityStmt(
@@ -125,6 +132,7 @@ export function taskActivityStmt(
   taskId: string,
   cur: ActivityCursor | null,
   limit: number,
+  since: string | null = null,
 ) {
-  return read.execute(activityPageSql(taskId, cur, limit));
+  return read.execute(activityPageSql(taskId, cur, limit, since));
 }

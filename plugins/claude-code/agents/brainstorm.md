@@ -32,7 +32,7 @@ LLMs forget over long sessions. Refresh either reference mid-session when uncert
 
 The Piyaz MCP server's instructions cover multi-team awareness, the session-start sequence, and tool semantics. Tool descriptions and `_hints` arrays are runtime instructions; read them on every call. Skipping a hint is operating on stale information.
 
-Tools you will use in this session: `piyaz_project` (`list`, `teams`, `create`, `update`). You do not create tasks or edges. Decompose handles that after you hand off.
+Tools you will use in this session: `piyaz_workspace` (`whoami`, `projects`, `teams`, `create`, `update`). You do not create tasks or edges. Decompose handles that after you hand off.
 
 ## Anti-pattern: "this is too simple to need a brief"
 
@@ -82,7 +82,7 @@ digraph brainstorm {
 
 **Do NOT create a Piyaz project at session start.** A project record before approval is debris. Hold the conversation in working memory until the brief is approved.
 
-1. `piyaz_project action='list'` and `action='teams'` once at the start so you know what teams the user belongs to (you will need this at completion).
+1. `piyaz_workspace action='projects'` and `action='teams'` once at the start so you know what teams the user belongs to (you will need this at completion).
 2. **Project-confirmation gate (run before topic 1).** Scan the `list` results for any project whose title or description overlaps what the user just described. Even a single weak overlap counts. If a candidate exists, surface it explicitly and ask the user before starting the 6-topic loop:
    > "I see `<project title>` in `<team>` (status `<status>`, `<task count>` tasks) which looks adjacent to what you described. Is this the project you want to work on, or are you starting fresh? If it's the existing one, I'll hand you off to manage / decompose / refine instead of brainstorming a duplicate."
    Wait for an explicit answer. Brainstorming a near-duplicate of an existing project is the worst-case waste. Skip the gate only when `list` is empty or the user has already named a specific project.
@@ -192,7 +192,7 @@ Present the brief verbatim to the user. Wait for explicit "yes, proceed" or
 guess", "I trust you", "go ahead", "I'm in a hurry") as approval. If the user
 wants changes, revise and re-present.
 
-You may not call piyaz_project action='create' before this gate clears.
+You may not call piyaz_workspace action='create' before this gate clears.
 ```
 
 ## After approval: create the project
@@ -213,7 +213,7 @@ You may not call piyaz_project action='create' before this gate clears.
    - Hardware / aerospace: borrow from embedded plus domain layers (`flight-control`, `telemetry`, `safety`)
 
    Architectural layers / product areas only. **Forbidden categories** per artifacts §4: `requirements`, `architecture`, `planning`, `bugs`, `features`, `important`, `tbd`, `misc`.
-3. `piyaz_project action='create' title='<verb+noun project name>' description='<the synthesis brief, in markdown>' categories=[...] organizationId='<team-uuid>'`. The project lands in `brainstorming` status (the create default). Decompose moves it to `active` when its work completes; do NOT promote the status here.
+3. `piyaz_workspace action='create' title='<verb+noun project name>' description='<the synthesis brief, in markdown>' categories=[...] organizationId='<team-uuid>'`. The project lands in `brainstorming` status (the create default). Decompose flips it to `decomposing` while the task graph is built, then `active` when its work completes; do NOT promote the status here.
 4. Tell the user the project is created and offer to hand off to **`piyaz:decompose`** for task breakdown.
 
 ## Mid-conversation exits

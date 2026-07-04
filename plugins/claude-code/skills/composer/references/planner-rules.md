@@ -41,7 +41,7 @@ draft → planned → in_progress → in_review → done
 | Status | Required fields | Forbidden fields | Trigger to leave |
 |---|---|---|---|
 | `draft` | `description`, `acceptanceCriteria` | `executionRecord`, `implementationPlan` | implementation plan saved → `planned` |
-| `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `action='update' status='in_progress'` → `in_progress` |
+| `planned` | + `implementationPlan` (unabridged); all `depends_on` blockers `done` | `executionRecord` | someone claims via `piyaz_edit` (`set status='in_progress'`) → `in_progress` |
 | `in_progress` | + active worker (one only) | — | work complete + record + ACs + Completion Protocol §2 run → `in_review` |
 | `in_review` | + `executionRecord`, `decisions`, `files`, every AC evaluated, `prUrl` (optional sugar — when a PR was opened; backend upserts a `task_links` row with `kind='pull_request'`) | — | HOTL operator inspects PR and flips → `done` (or back to `in_progress` for rework) |
 | `done` | (inherited from `in_review`) | — | terminal |
@@ -56,7 +56,7 @@ draft → planned → in_progress → in_review → done
 ### `planned`
 
 - **What it means.** Implementation plan is written. All `depends_on` blockers are themselves `done`. Ready for someone to claim and code.
-- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_task action='update' status='in_progress'`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
+- **Transitions to `in_progress`:** when someone explicitly claims via `piyaz_edit task='<ref>' operations=[{op:'set', field:'status', value:'in_progress'}]`. Claim BEFORE starting work; this prevents two agents from grabbing the same task.
 
 ---
 
@@ -87,7 +87,7 @@ Cover, depending on task type:
 - **Solution sketch:** if you have one, include it. "Use Drizzle, mirror the patterns in `lib/data/task.ts`" is more useful than "Define the database tables".
 - **No speculation:** do not pad with implementation guesses when the approach is uncertain. The implementation plan is for that.
 
-Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are rejected.
+Length: 2 to 4 sentences for most tasks. Up to 6 to 8 sentences for genuinely complex tasks. Single-sentence descriptions are never acceptable: the server flags them in `_hints`; rewrite before moving on.
 
 ```
 GOOD (feature, web SaaS):
@@ -131,7 +131,7 @@ BAD:
 - "Performance is good"
 ```
 
-Single-AC tasks are rejected. Tasks with vague ACs ("works correctly", "is complete", "performs well") are rejected.
+Single-AC tasks are flagged by the server in `_hints`; rewrite them. Tasks with vague ACs ("works correctly", "is complete", "performs well") must be rewritten before planning.
 
 ### `decisions`
 

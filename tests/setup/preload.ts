@@ -19,7 +19,7 @@ process.env.BETTER_AUTH_URL ??= "https://example.test";
  * tests therefore exercise the same gate the deployed app will see.
  *
  * Consumers that branch on NODE_ENV (`lib/api/error.ts`,
- * `lib/graph/tool-handlers.ts`, `lib/mcp/create-server.ts`) all gate
+ * `lib/graph/tools/shared.ts`, `lib/mcp/create-server.ts`) all gate
  * verbose output on `=== "development"`, so production is the
  * fail-safe default. `tests/api/error.test.ts` mutates per-test via
  * `Object.defineProperty` and restores in `afterEach`.
