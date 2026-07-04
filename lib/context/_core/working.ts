@@ -178,6 +178,7 @@ export async function formatWorkingContext(
  *
  * @param node - Raw task row.
  * @param assignees - Resolved assignee projection.
+ * @param links - Task links projection; the pull-request link drives the PR line.
  * @returns Formatted meta section or empty string.
  */
 function formatMetaSection(

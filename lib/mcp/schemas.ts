@@ -78,6 +78,7 @@ export const TASK_FIELD_ENUM = [
   "assignees",
 ] as const;
 
+/** Task lifecycle statuses, in progression order. */
 const TASK_STATUS_ENUM = [
   "draft",
   "planned",
@@ -87,8 +88,10 @@ const TASK_STATUS_ENUM = [
   "cancelled",
 ] as const;
 
+/** Task priority levels, most to least urgent. */
 const PRIORITY_ENUM = ["urgent", "core", "normal", "backlog"] as const;
 
+/** Fibonacci story-point estimate. */
 const estimateSchema = z.union([
   z.literal(1),
   z.literal(2),

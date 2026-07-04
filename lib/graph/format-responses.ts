@@ -228,14 +228,6 @@ export function formatProjectMeta(meta: ProjectMeta): string {
   return parts.join("\n");
 }
 
-/**
- * Format project overview with progress, tasks by status, and edges.
- * Prefixed with the untrusted-content notice — the project description
- * and edge notes are user-authored free text served straight into agent
- * context, the same exposure the per-task bundles carry.
- * @param overview - ProjectOverview from buildProjectOverview.
- * @returns Formatted markdown overview.
- */
 /** Options for {@link formatOverview}: per-status task cap and detail knob. */
 export type OverviewFormatOpts = {
   /** Per-status task-group cap; groups over it truncate with guidance. */
@@ -250,6 +242,16 @@ export type FormattedOverview = { text: string; truncated: boolean };
 /** Default per-status task cap for the overview. */
 const OVERVIEW_GROUP_LIMIT = 30;
 
+/**
+ * Format project overview with progress, tasks by status, and edges.
+ * Prefixed with the untrusted-content notice — the project description
+ * and edge notes are user-authored free text served straight into agent
+ * context, the same exposure the per-task bundles carry.
+ *
+ * @param overview - ProjectOverview from buildProjectOverview.
+ * @param opts - Per-status task cap and detail knob.
+ * @returns Rendered markdown plus whether any status group was truncated.
+ */
 export function formatOverview(
   overview: ProjectOverview,
   opts: OverviewFormatOpts = {},

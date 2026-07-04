@@ -89,8 +89,9 @@ type DepthProjection = {
  * `"active-only"` because terminal tasks dispatch to the record bundle,
  * which never reads the plan — the conditional keeps the dominant active
  * path one fetch while sparing terminal rows the egress of the (often
- * largest) column. `planning` and `agent` select `executionRecord` so
- * work-in-progress renders as "work so far" before `in_review`. `record`
+ * largest) column. `planning`, `agent`, and `review` select `executionRecord`
+ * so work-in-progress renders as "work so far" before `in_review` and the full
+ * record renders at review time. `record`
  * serves the retrospective bundle for done/cancelled tasks: it keeps
  * executionRecord, links, decisions, and criteria, and drops
  * `implementationPlan` because the record bundle never renders it. `agent`

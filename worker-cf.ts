@@ -91,9 +91,9 @@ let _rateLimitInitialized = false;
  *
  * The AUTH binding is wired `failOpen: false` so a binding outage cannot
  * silently disable brute-force throttling on `/api/auth/sign-in/*` and
- * `/api/auth/sign-up/*`. The API and MCP bindings stay `failOpen: true`
- * (default) — a rate-limit subsystem hiccup must not take the whole app or
- * every agent session offline.
+ * `/api/auth/sign-up/*`. The API, MCP, and MCP-heavy bindings stay
+ * `failOpen: true` (default) — a rate-limit subsystem hiccup must not take the
+ * whole app or every agent session offline.
  *
  * Missing bindings are tolerated (the slot stays on `MemoryRateLimitBackend`),
  * which keeps `wrangler dev --no-bundle` and one-off scripts that don't bind

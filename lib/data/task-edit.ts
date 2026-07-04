@@ -1534,6 +1534,7 @@ async function applyPrUrl(
  * @throws DuplicateLinkUrlError when a link update collides with another URL.
  * @throws ForbiddenError when access or an assignee is rejected.
  * @throws InvalidLinkUrlError when a link/prUrl URL is malformed.
+ * @throws UnknownCategoryError when a category set is outside the vocabulary.
  */
 export async function applyTaskEdit(
   ctx: AuthContext,

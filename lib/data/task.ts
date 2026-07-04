@@ -1950,6 +1950,8 @@ async function searchMcpCrossProject(
  * @param opts - Search options (already criterion-checked by the caller).
  * @returns A page of items (with `state`) plus the next cursor.
  * @throws ForbiddenError on missing or cross-team project.
+ * @throws UnknownCategoryError when `opts.category` is not one of the project's
+ *   known categories.
  */
 async function searchMcpProjectScoped(
   ctx: AuthContext,
@@ -2044,6 +2046,8 @@ async function searchMcpProjectScoped(
  * @returns A page of items plus the next cursor (null on the last page).
  * @throws SearchCriteriaRequiredError when no criterion is supplied.
  * @throws ForbiddenError on a missing or cross-team `projectId`.
+ * @throws UnknownCategoryError when `category` is not one of the project's
+ *   known categories.
  */
 export async function searchTasksForMcp(
   ctx: AuthContext,
@@ -2587,19 +2591,6 @@ export async function setTaskAssignees(
     .onConflictDoNothing();
 }
 
-/**
- * Insert a new task under a project the caller has access to. The
- * project's team scope is verified by `assertProjectAccess` and inherited
- * by the new task — task team scope is never derived from the session.
- *
- * Uses a transaction-scoped PostgreSQL advisory lock keyed on the project UUID
- * to serialize concurrent task creation and prevent sequence_number collisions.
- * Computes order (append-to-end when unset) and sequenceNumber inside the lock.
- *
- * @param ctx - Resolved auth context.
- * @param data - Task fields. sequenceNumber assigned internally.
- * @returns Task summary with composed taskRef.
- */
 /** A caller-computed sequence/order/identifier allocation for one task row. */
 export type TaskAllocation = {
   sequenceNumber: number;
@@ -2674,6 +2665,7 @@ export async function prepareCreateTaskInput(
  *   returned unwritten so the caller can batch the insert; otherwise it is
  *   written here.
  * @returns The created-task summary and the constructed `task_created` events.
+ * @throws ForbiddenError when an assigneeId is not a member of the task's team.
  */
 export async function createTaskTx(
   tx: Tx,
@@ -2763,6 +2755,22 @@ export async function createTaskTx(
   };
 }
 
+/**
+ * Insert a new task under a project the caller has access to. The
+ * project's team scope is verified by `assertProjectAccessTx` and inherited
+ * by the new task — task team scope is never derived from the session.
+ *
+ * Uses a transaction-scoped PostgreSQL advisory lock keyed on the project UUID
+ * to serialize concurrent task creation and prevent sequence_number collisions.
+ * Computes order (append-to-end when unset) and sequenceNumber inside the lock.
+ *
+ * @param ctx - Resolved auth context.
+ * @param data - Task fields. sequenceNumber assigned internally.
+ * @returns Task summary with composed taskRef.
+ * @throws ForbiddenError when the caller cannot access the project.
+ * @throws ProjectNotFoundError when the project does not exist.
+ * @throws TaskLimitError when the project's task cap is reached.
+ */
 export async function createTask(
   ctx: AuthContext,
   data: CreateTaskInput,

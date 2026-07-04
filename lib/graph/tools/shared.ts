@@ -72,7 +72,10 @@ export function ok(data: unknown, meta?: ToolResultMeta): ToolResult {
   return meta ? { ok: true, data, meta } : { ok: true, data };
 }
 
-/** @returns Failure result with actionable message. */
+/**
+ * @param msg - Actionable failure message returned to the caller.
+ * @returns Failure result carrying the message.
+ */
 export function fail(msg: string): ToolResult {
   return { ok: false, error: msg };
 }
@@ -574,6 +577,8 @@ export function stateHint(state: TaskState): string {
  * a silent env change can't start leaking driver internals.
  *
  * @param e - Caught error.
+ * @returns Failure result with a corrective hint, or the generic internal-error
+ *   fallback for unrecognized errors.
  */
 export function translateError(e: unknown): ToolResult {
   if (e instanceof InsufficientRoleError) {

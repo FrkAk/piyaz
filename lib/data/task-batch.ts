@@ -219,7 +219,10 @@ function detectCycle(adj: Map<string, string[]>): string[] | null {
  * @throws TaskLimitError when the create count would exceed the project cap.
  * @throws SelfEdgeError / CrossProjectEdgeError / EdgeCycleError on an
  *   invalid edge.
- * @throws ForbiddenError when a UUID endpoint is not a task the caller can access.
+ * @throws UnknownCategoryError when an item's category is outside the project's
+ *   vocabulary.
+ * @throws ForbiddenError when the caller cannot access the project, an item's
+ *   prUrl is malformed, or a UUID edge endpoint is not an accessible task.
  */
 export async function createTasksBatch(
   ctx: AuthContext,

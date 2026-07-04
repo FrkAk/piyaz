@@ -404,18 +404,9 @@ export async function listDependsOnEdges(sourceTaskIds: string[], conn: Conn) {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an edge between two tasks and emit `activity_events` for both.
- * Validates against self-edges, duplicates, and circular depends_on.
- * @param ctx - Resolved auth context.
- * @param data - Edge fields to insert.
- * @returns The created edge.
- * @throws Error if validation fails.
- */
-/**
- * Every `depends_on` edge inside a project, in one join. The batch cycle
- * check's input without materializing the project's task-id list into an
- * IN clause; edges are intra-project, so joining the source endpoint
- * suffices.
+ * Every `depends_on` edge inside a project, in one join. Feeds the batch
+ * cycle check without materializing the project's task-id list into an IN
+ * clause; edges are intra-project, so joining the source endpoint suffices.
  *
  * @param conn - Connection or transaction handle.
  * @param projectId - Owning project id.
@@ -497,6 +488,18 @@ async function composeCycleLoopRefs(
   return loopIds.map((id) => refs.get(id) ?? id);
 }
 
+/**
+ * Create an edge between two tasks and emit `activity_events` for both.
+ * Validates against self-edges, duplicates, and circular depends_on.
+ *
+ * @param ctx - Resolved auth context.
+ * @param data - Edge fields to insert.
+ * @returns The created edge.
+ * @throws SelfEdgeError when source and target are the same task.
+ * @throws ForbiddenError when either endpoint is not an accessible task.
+ * @throws DuplicateEdgeError when an identical edge already exists.
+ * @throws EdgeCycleError when a `depends_on` edge would close a cycle.
+ */
 export async function createEdge(
   ctx: AuthContext,
   data: Omit<NewTaskEdge, "id">,
@@ -630,7 +633,9 @@ async function loadAuthorizedEdgeTx(tx: Tx, edgeId: string) {
  * @param edgeId - UUID of the edge to update.
  * @param updates - Fields to update.
  * @returns The updated edge.
- * @throws Error if edge not found or validation fails.
+ * @throws ForbiddenError when the edge is not found or outside the caller's team.
+ * @throws DuplicateEdgeError when the type change collides with an existing edge.
+ * @throws EdgeCycleError when the type change would close a `depends_on` cycle.
  */
 export async function updateEdge(
   ctx: AuthContext,
