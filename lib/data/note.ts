@@ -642,14 +642,19 @@ function summaryTitle(title: string): string {
 }
 
 /**
- * Compose a {@link NoteSummary} from an access-gate row. The gate already
- * carries every summary column, so no-op paths return it without a
- * redundant select.
+ * Compose a {@link NoteSummary} from any row carrying the summary
+ * columns (access-gate rows, locked baseline reads), so no-op paths
+ * return it without a redundant select.
  *
- * @param gate - Note access-gate row.
+ * @param gate - Row carrying the summary columns.
  * @returns Slim summary of the note.
  */
-function gateSummary(gate: NoteAccessGate): NoteSummary {
+function gateSummary(
+  gate: Pick<
+    NoteAccessGate,
+    "id" | "slug" | "title" | "projectId" | "folder" | "version" | "updatedAt"
+  >,
+): NoteSummary {
   return {
     id: gate.id,
     slug: gate.slug,
@@ -928,15 +933,24 @@ export function noteMentionsStmt(read: ReadConn, noteId: string) {
 }
 
 /**
- * Build the outgoing note-links read as a lazy batch statement: live
- * notes this note links to, slim projection. Batch alongside
- * `noteAccessGateStmt` and evaluate the gate rows first.
+ * Shared core of the linked-note reads: live notes on the far end of a
+ * `note_links` row, slim projection.
  *
  * @param read - Read statement-building handle.
- * @param noteId - UUID of the source note.
+ * @param noteId - UUID of the near-end note.
+ * @param direction - `out` joins targets and filters by source;
+ *   `in` joins sources and filters by target (backlinks).
  * @returns Lazy select statement yielding {@link LinkedNoteSlim}s.
  */
-export function noteLinksOutStmt(read: ReadConn, noteId: string) {
+function linkedNotesStmt(
+  read: ReadConn,
+  noteId: string,
+  direction: "out" | "in",
+) {
+  const farColumn =
+    direction === "out" ? noteLinks.targetNoteId : noteLinks.sourceNoteId;
+  const nearColumn =
+    direction === "out" ? noteLinks.sourceNoteId : noteLinks.targetNoteId;
   return read
     .select({
       id: notes.id,
@@ -947,8 +961,21 @@ export function noteLinksOutStmt(read: ReadConn, noteId: string) {
       updatedAt: notes.updatedAt,
     })
     .from(noteLinks)
-    .innerJoin(notes, eq(notes.id, noteLinks.targetNoteId))
-    .where(and(eq(noteLinks.sourceNoteId, noteId), isNull(notes.deletedAt)));
+    .innerJoin(notes, eq(notes.id, farColumn))
+    .where(and(eq(nearColumn, noteId), isNull(notes.deletedAt)));
+}
+
+/**
+ * Build the outgoing note-links read as a lazy batch statement: live
+ * notes this note links to, slim projection. Batch alongside
+ * `noteAccessGateStmt` and evaluate the gate rows first.
+ *
+ * @param read - Read statement-building handle.
+ * @param noteId - UUID of the source note.
+ * @returns Lazy select statement yielding {@link LinkedNoteSlim}s.
+ */
+export function noteLinksOutStmt(read: ReadConn, noteId: string) {
+  return linkedNotesStmt(read, noteId, "out");
 }
 
 /**
@@ -961,18 +988,7 @@ export function noteLinksOutStmt(read: ReadConn, noteId: string) {
  * @returns Lazy select statement yielding {@link LinkedNoteSlim}s.
  */
 export function noteLinksInStmt(read: ReadConn, noteId: string) {
-  return read
-    .select({
-      id: notes.id,
-      slug: notes.slug,
-      title: notes.title,
-      type: notes.type,
-      folder: notes.folder,
-      updatedAt: notes.updatedAt,
-    })
-    .from(noteLinks)
-    .innerJoin(notes, eq(notes.id, noteLinks.sourceNoteId))
-    .where(and(eq(noteLinks.targetNoteId, noteId), isNull(notes.deletedAt)));
+  return linkedNotesStmt(read, noteId, "in");
 }
 
 // ---------------------------------------------------------------------------
@@ -1373,15 +1389,7 @@ export async function updateNote(
     ) {
       throw new NoteStaleWriteError(current.updatedAt, current.version);
     }
-    const currentSummary: NoteSummary = {
-      id: current.id,
-      slug: current.slug,
-      title: current.title,
-      projectId: current.projectId,
-      folder: current.folder,
-      version: current.version,
-      updatedAt: current.updatedAt,
-    };
+    const currentSummary = gateSummary(current);
     if (Object.keys(applied).length === 0) {
       return {
         summary: currentSummary,

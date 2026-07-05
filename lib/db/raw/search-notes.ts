@@ -17,7 +17,7 @@ import { notes } from "@/lib/db/schema";
 import { type ReadConn } from "@/lib/db/raw";
 
 /** Maximum hits one search returns. */
-export const NOTE_SEARCH_LIMIT = 20;
+const NOTE_SEARCH_LIMIT = 20;
 
 /** Chars of `body` handed to `ts_headline` per hit; bounds detoast cost. */
 const SNIPPET_SOURCE_CHARS = 4096;
