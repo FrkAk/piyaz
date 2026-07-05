@@ -15,29 +15,29 @@
   <img src="assets/piyaz-demo.gif" alt="Piyaz demo" width="900" />
 </p>
 
-Piyaz is an agentic workspace for building software. People and AI agents work the same project across harnesses, and Piyaz holds that work to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
+Piyaz is an agentic workspace for building software. People and AI agents work on the same project across various harnesses, and Piyaz holds that work consistent to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
 
-Because everyone meets on the same project, several agents can build at the same time, each in its own harness and with no API keys to wire up, while engineers steer through their own agents. One agent implements a task while you refine another or add a new feature.
+Using Piyaz, several agents can build at the same time; each in its own harness and with no API keys to wire up, while engineers are free to steer them as needed. One agent can implement a task while you refine another or add a new feature.
 
-That project is one shared graph of tasks and their dependencies. Drop in an idea or an existing codebase and Piyaz breaks it into small, concrete tasks. When an agent picks one up, it already has the plan, the standards, and the decisions behind the work. Nothing starts from a cold read.
+Projects are represented as a shared graph of tasks and their dependencies. Drop in an idea or an existing codebase, and Piyaz will break it into small, concrete tasks. When an agent picks up a task, it already has the plan, the standards, and the decisions behind the work. No agents starts from a raw read of a task description.
 
-Full setup, guides, and reference live at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
+Full setup, guides, and reference can be found at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
 
 ---
 
 ## Hosted (closed beta)
 
-Piyaz is in a closed beta, and new accounts open in batches. Join the waitlist at **[app.piyaz.ai/sign-up](https://app.piyaz.ai/sign-up)**.
+Piyaz is in a closed beta, and new accounts open in batches. Feel free to join the waitlist at **[app.piyaz.ai/sign-up](https://app.piyaz.ai/sign-up)**.
 
-Once you're in, install the plugin for your agent (Claude Code, Codex, Cursor, or Antigravity) and sign in once at the user level. It then works in every project you open, no clone required. Per-agent setup is in the **[docs](https://docs.piyaz.ai)**.
+Once you're in, install the plugin for your agent (Claude Code, Codex, Cursor, or Antigravity) and sign in once. Piyaz is then available in every project you open. Per-harness setup instructions can be found at **[docs](https://docs.piyaz.ai)**.
 
 ## Self-host
 
-Self-hosting is free under AGPL-3.0. You run the Piyaz server yourself and point the plugin's `piyaz-local` server at it. You need [Bun](https://bun.sh) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Full setup and upgrade steps are in the [self-host guide](https://docs.piyaz.ai/docs/self-hosting/run-locally).
+Self-hosting is free under AGPL-3.0. You can run the Piyaz server yourself and point the plugin's `piyaz-local` server at it. You need [Bun](https://bun.sh) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Full setup and upgrade steps are in the [self-host guide](https://docs.piyaz.ai/docs/self-hosting/run-locally).
 
 ---
 
-## What it changes for you
+## What Piyaz changes for you
 
 **Stop re-briefing your agents.** Every task carries its own context: the plan, the decisions behind it, and how it connects to the rest of the project. Your next session picks up where the last one left off instead of asking you to explain the project again.
 
@@ -47,9 +47,9 @@ Self-hosting is free under AGPL-3.0. You run the Piyaz server yourself and point
 
 **Start from an idea or from code you already have.** Describe something new and Piyaz plans it out, or point it at an existing codebase and it maps the work you've already shipped into a tracked project.
 
-**Talk, don't configure.** You say what you want in plain language. Piyaz plans the work, tracks it, and keeps the record current. No tool wrangling, no "here's what you need to know" prompts.
+**Talk, don't configure.** You say what you want in plain language. Piyaz plans the work, tracks it, and keeps the record current. No need for informing your agent with the necessary context manually.
 
-On Claude Code, **Composer** can take a task the whole way on its own: it researches the task against your codebase, writes the plan, implements it, opens a pull request, reviews it and fixes what review flags, then moves to the next ready task. You decide what merges.
+On Claude Code, **Composer** can take a task the whole way on its own: it researches the task against your codebase, writes the plan, implements it, opens up a pull request, reviews it and fixes what review flags, then moves to the next ready task. You decide what merges.
 
 ---
 
@@ -63,27 +63,27 @@ Piyaz keeps a live map of your project, the context network: every task, the dep
 /piyaz I want a cli that generates changelogs from conventional commits, with monorepo support
 ```
 
-**Pick up the right work.** Ask what is next and Piyaz names the top ready task on the critical path. It claims the task, pulls the context it needs, and records what it built when it is done, so the next session starts from ground truth instead of a cold read.
+**Pick up the right work.** Ask what is next and Piyaz names the top ready task on the critical path. It claims the task, pulls the context it needs, and records what it built when it is done, so the next session starts from ground truth instead of a raw task description.
 
 ```text
 what should I work on next?
 ```
 
-**Review before it merges.** An agent's work stops at `in_review`, never `done`. A review agent reads the diff and returns a verdict across security, performance, reliability, observability, and codebase standards, with a file and line for every finding. You approve or send it back. This is the gate that keeps low-quality code from landing.
+**Review before it merges.** An agent's work stops at `in_review`, never `done`. A review agent reads the diff and returns a verdict across security, performance, reliability, observability, and codebase standards, with a file and line for every finding. You approve or send it back. This is the mechanism that keeps low-quality code from landing.
 
 ```text
 review MET-1. File-cited, do not rubber-stamp. Read the diff first.
 ```
 
-**Or hand over the whole loop (Claude Code).** Composer takes a task from research to an open PR on its own: research, plan, implement, review, and a bounded fix loop, then it picks up the next ready task. You decide what merges.
+**Or hand over the whole loop (Claude Code).** Composer takes a task from research to an open PR all on its own: research, plan, implement, review, and a bounded fix loop, then it picks up the next ready task. You decide what merges.
 
 ```text
 /piyaz:composer
 ```
 
-We build Piyaz using Piyaz, so everything here is something we run day to day.
+We build Piyaz using Piyaz, so every feature here is something we use day to day.
 
-For the full detail, see the docs:
+For more details, see the docs:
 
 - [Plan a project](https://docs.piyaz.ai/docs/using-piyaz/plan-a-project) and [decompose into tasks](https://docs.piyaz.ai/docs/using-piyaz/decompose-into-tasks)
 - [Track execution](https://docs.piyaz.ai/docs/using-piyaz/track-execution)
