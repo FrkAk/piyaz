@@ -457,3 +457,27 @@ export function IconUndo(props: IconProps) {
     </IconBase>
   );
 }
+
+/** Folder with a plus — create-folder action. */
+export function IconFolderPlus(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2 4.2a1 1 0 0 1 1-1h2.6L7 4.6h6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
+      <path d="M8 7.4v3M6.5 8.9h3" />
+    </IconBase>
+  );
+}
+
+/** Six-dot drag grip — row drag affordance shown on hover. */
+export function IconGrip(props: IconProps) {
+  return (
+    <IconBase fill="currentColor" stroke="none" {...props}>
+      <circle cx="6" cy="4" r="1" />
+      <circle cx="10" cy="4" r="1" />
+      <circle cx="6" cy="8" r="1" />
+      <circle cx="10" cy="8" r="1" />
+      <circle cx="6" cy="12" r="1" />
+      <circle cx="10" cy="12" r="1" />
+    </IconBase>
+  );
+}
