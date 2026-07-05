@@ -2,6 +2,7 @@ import "server-only";
 
 import { headers } from "next/headers";
 import { getBackend, type RateLimitResult } from "@/lib/api/rate-limit";
+import { getAuthContext, type AuthContext } from "@/lib/auth/context";
 
 /**
  * Per-key throttle config for a server action. The action consults two
@@ -145,6 +146,30 @@ export async function checkActionRateLimit(
   }
   const results = await Promise.all(checks);
   return results.find((r) => !r.ok) ?? { ok: true };
+}
+
+/**
+ * Enforce a write budget and resolve the caller's auth context, in
+ * flood-safe order: the per-IP limb runs BEFORE the session lookup so an
+ * unauthenticated flood is counted and blocked by IP instead of farming
+ * a free DB session lookup per request; the per-user limb runs after
+ * auth, once the user id is trustworthy. Each limb is counted exactly
+ * once, so a legitimate caller costs the same two in-memory checks as
+ * the previous combined check.
+ *
+ * @param config - Rate-limit policy for this write action.
+ * @returns The caller's auth context.
+ * @throws RateLimitError when either limb's budget is exceeded.
+ */
+export async function authorizeWrite(
+  config: ActionRateLimitConfig,
+): Promise<AuthContext> {
+  const ipOutcome = await checkActionIpRateLimit(config);
+  if (!ipOutcome.ok) throw new RateLimitError(ipOutcome.retryAfter);
+  const ctx = await getAuthContext();
+  const userOutcome = await checkActionUserRateLimit(config, ctx.userId);
+  if (!userOutcome.ok) throw new RateLimitError(userOutcome.retryAfter);
+  return ctx;
 }
 
 /**
