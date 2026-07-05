@@ -45,3 +45,20 @@ export const myTasksKeys = {
   all: () => ["my-tasks"] as const,
   list: () => ["my-tasks", "list"] as const,
 } as const;
+
+/** Note-scoped query keys (tree list, detail, search, task backlinks). */
+export const noteKeys = {
+  /** All note queries for a project — the invalidation prefix. */
+  all: (projectId: string) => ["notes", projectId] as const,
+  /** Slim tree list for the notes pane. */
+  list: (projectId: string) => ["notes", projectId, "list"] as const,
+  /** Full note (body + link context) for the editor. */
+  detail: (projectId: string, noteId: string) =>
+    ["notes", projectId, "detail", noteId] as const,
+  /** Ranked full-text search hits for a query string. */
+  search: (projectId: string, q: string) =>
+    ["notes", projectId, "search", q] as const,
+  /** Notes linked to a task (backlinks panel). */
+  backlinks: (projectId: string, taskId: string) =>
+    ["notes", projectId, "backlinks", taskId] as const,
+} as const;
