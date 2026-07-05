@@ -110,7 +110,8 @@ function treePatchFrom(patch: NotePatch): NoteTreePatch {
  * Optimistic note creation: inserts a temp row into the cached tree list,
  * swaps it for the authoritative summary on success (then revalidates the
  * list, reconciling server-side slug dedupe), and restores the pre-mutation
- * snapshot on failure.
+ * snapshot on failure, returned or thrown (a rejected action call means the
+ * transport failed, so the write's outcome is unknown).
  *
  * @param projectId - Owning project id.
  * @returns Mutation whose result is the typed `NoteActionResult`.
@@ -138,7 +139,13 @@ export function useCreateNote(projectId: string) {
       if (prevList !== undefined) {
         qc.setQueryData(listKey, upsertNoteInTree(prevList, tempRow));
       }
-      const result = await createNoteAction({ ...input, projectId });
+      let result: NoteActionResult<NoteSummary>;
+      try {
+        result = await createNoteAction({ ...input, projectId });
+      } catch (err) {
+        if (prevList !== undefined) qc.setQueryData(listKey, prevList);
+        throw err;
+      }
       if (result.ok) {
         qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
           upsertNoteInTree(removeNoteFromTree(rows, tempRow.id), {
@@ -166,7 +173,7 @@ export function useCreateNote(projectId: string) {
  * save's token is fresh. On `stale_write` the optimistic content is kept
  * (the server applied no write, so nothing was clobbered) and the failure
  * carries the live `updatedAt`/`version` for the conflict banner; every
- * other failure restores both snapshots.
+ * other failure, returned or thrown, restores both snapshots.
  *
  * @param projectId - Owning project id.
  * @returns Mutation taking `{ noteId, patch }`.
@@ -194,7 +201,14 @@ export function useUpdateNote(projectId: string) {
         patchNoteInTree(rows, noteId, treePatchFrom(patch)),
       );
 
-      const result = await updateNoteAction(noteId, patch, token);
+      let result: NoteActionResult<NoteSummary>;
+      try {
+        result = await updateNoteAction(noteId, patch, token);
+      } catch (err) {
+        if (prevDetail !== undefined) qc.setQueryData(detailKey, prevDetail);
+        if (prevList !== undefined) qc.setQueryData(listKey, prevList);
+        throw err;
+      }
       if (result.ok) {
         qc.setQueryData<NoteFullResult>(detailKey, (detail) =>
           mergeSummaryIntoDetail(detail, result.data),
@@ -212,7 +226,8 @@ export function useUpdateNote(projectId: string) {
 
 /**
  * Optimistic note move: patches the cached tree row's folder up front,
- * folds the summary into the detail cache on success, restores on failure.
+ * folds the summary into the detail cache on success, restores on any
+ * failure, returned or thrown.
  *
  * @param projectId - Owning project id.
  * @returns Mutation taking `{ noteId, folder }`.
@@ -229,7 +244,13 @@ export function useMoveNote(projectId: string) {
       qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
         patchNoteInTree(rows, vars.noteId, { folder: vars.folder }),
       );
-      const result = await moveNoteAction(vars.noteId, vars.folder);
+      let result: NoteActionResult<NoteSummary>;
+      try {
+        result = await moveNoteAction(vars.noteId, vars.folder);
+      } catch (err) {
+        if (prevList !== undefined) qc.setQueryData(listKey, prevList);
+        throw err;
+      }
       if (result.ok) {
         qc.setQueryData<NoteFullResult>(
           noteKeys.detail(projectId, vars.noteId),
@@ -246,8 +267,8 @@ export function useMoveNote(projectId: string) {
 
 /**
  * Optimistic note delete: drops the cached tree row up front; on success
- * revalidates the list and removes the detail entry, on failure restores
- * both snapshots.
+ * revalidates the list and removes the detail entry, on any failure,
+ * returned or thrown, restores both snapshots.
  *
  * @param projectId - Owning project id.
  * @returns Mutation taking the note id.
@@ -265,7 +286,14 @@ export function useDeleteNote(projectId: string) {
       qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
         removeNoteFromTree(rows, noteId),
       );
-      const result = await deleteNoteAction(noteId);
+      let result: NoteActionResult<{ id: string; deletedAt: Date }>;
+      try {
+        result = await deleteNoteAction(noteId);
+      } catch (err) {
+        if (prevList !== undefined) qc.setQueryData(listKey, prevList);
+        if (prevDetail !== undefined) qc.setQueryData(detailKey, prevDetail);
+        throw err;
+      }
       if (result.ok) {
         qc.invalidateQueries({ queryKey: listKey });
         qc.removeQueries({ queryKey: detailKey });
@@ -409,7 +437,39 @@ function finalizeSettingsWrite(
 }
 
 /** Body/title content buffered between block commits and the next flush. */
-type PendingSave = { noteId: string; body?: string; title?: string };
+type PendingPatch = { body?: string; title?: string };
+
+/**
+ * Add an id to a pending-id set without mutating the original.
+ * @param ids - Current set.
+ * @param id - Id to add.
+ * @returns Same set when already present, otherwise a new set.
+ */
+function addPendingId(
+  ids: ReadonlySet<string>,
+  id: string,
+): ReadonlySet<string> {
+  if (ids.has(id)) return ids;
+  const next = new Set(ids);
+  next.add(id);
+  return next;
+}
+
+/**
+ * Remove an id from a pending-id set without mutating the original.
+ * @param ids - Current set.
+ * @param id - Id to remove.
+ * @returns Same set when absent, otherwise a new set.
+ */
+function removePendingId(
+  ids: ReadonlySet<string>,
+  id: string,
+): ReadonlySet<string> {
+  if (!ids.has(id)) return ids;
+  const next = new Set(ids);
+  next.delete(id);
+  return next;
+}
 
 /** Live conflict payload surfaced after a `stale_write` autosave failure. */
 export type NoteAutosaveConflict = {
@@ -425,16 +485,23 @@ export type NoteAutosaveConflict = {
  * re-render from cache) and flush ~600ms after the last commit, on note
  * switch, and on unmount.
  *
+ * Buffers are keyed by note id, so a commit on one note never displaces
+ * another note's unsaved content: switching notes mid-flight leaves the
+ * previous note's buffer in place until a flush drains it. `flush` drains
+ * every buffered note one write at a time under a single-flight guard;
+ * entries buffered or re-buffered while a drain runs wait for the next
+ * flush, which the drain re-arms itself.
+ *
  * Failure semantics: on `stale_write` the optimistic cache content is kept
  * (the server applied no write; rollback would fake data loss) and
  * `conflict` carries the live `updatedAt`/`version` until the next
- * successful save. On every other failure `useUpdateNote` restores its
- * pre-mutation snapshot and the failed patch returns to the pending buffer
- * so the next commit or flush retries it. Callers must gate `commit` on
- * `isPlaceholderData` from {@link useNoteDetail} — a placeholder's empty
- * body must never be autosaved. An SSE invalidation may refetch over
- * kept-optimistic conflict content; resolving that is the conflict
- * banner's contract (PYZ-262).
+ * successful save. On every other failure, a typed result or a thrown
+ * transport error, `useUpdateNote` restores its pre-mutation snapshot and
+ * the failed patch returns to the pending buffer so the next flush retries
+ * it. Callers must gate `commit` on `isPlaceholderData` from
+ * {@link useNoteDetail} — a placeholder's empty body must never be
+ * autosaved. An SSE invalidation may refetch over kept-optimistic conflict
+ * content; resolving that is the conflict banner's contract (PYZ-262).
  *
  * @param projectId - Owning project id.
  * @param noteId - Note being edited.
@@ -445,11 +512,13 @@ export type NoteAutosaveConflict = {
 export function useNoteAutosave(projectId: string, noteId: string) {
   const qc = useQueryClient();
   const { mutateAsync } = useUpdateNote(projectId);
-  const bufferRef = useRef<PendingSave | null>(null);
+  const buffersRef = useRef<Map<string, PendingPatch>>(new Map());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlightRef = useRef(false);
   const flushRef = useRef<() => Promise<void>>(async () => {});
-  const [pendingNoteId, setPendingNoteId] = useState<string | null>(null);
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [conflictState, setConflictState] = useState<
     (NoteAutosaveConflict & { noteId: string }) | null
   >(null);
@@ -460,34 +529,38 @@ export function useNoteAutosave(projectId: string, noteId: string) {
       timerRef.current = null;
     }
     if (inFlightRef.current) return;
-    const buffered = bufferRef.current;
-    if (!buffered) return;
-    bufferRef.current = null;
-    setPendingNoteId(null);
+    const buffers = buffersRef.current;
+    if (buffers.size === 0) return;
     inFlightRef.current = true;
-    const { noteId: target, ...patch } = buffered;
     try {
-      const result = await mutateAsync({ noteId: target, patch });
-      if (result.ok) {
-        setConflictState((c) => (c?.noteId === target ? null : c));
-      } else if (result.code === "stale_write") {
-        setConflictState({
-          noteId: target,
-          currentUpdatedAt: result.currentUpdatedAt,
-          currentVersion: result.currentVersion,
-        });
-      } else {
-        const newer = bufferRef.current as PendingSave | null;
-        if (!newer) {
-          bufferRef.current = buffered;
-          setPendingNoteId(target);
-        } else if (newer.noteId === target) {
-          bufferRef.current = { ...buffered, ...newer };
+      for (const target of [...buffers.keys()]) {
+        const patch = buffers.get(target);
+        if (!patch) continue;
+        buffers.delete(target);
+        setPendingIds((ids) => removePendingId(ids, target));
+        let result: NoteActionResult<NoteSummary> | null = null;
+        try {
+          result = await mutateAsync({ noteId: target, patch });
+        } catch {
+          result = null;
+        }
+        if (result?.ok) {
+          setConflictState((c) => (c?.noteId === target ? null : c));
+        } else if (result?.code === "stale_write") {
+          setConflictState({
+            noteId: target,
+            currentUpdatedAt: result.currentUpdatedAt,
+            currentVersion: result.currentVersion,
+          });
+        } else {
+          const newer = buffers.get(target);
+          buffers.set(target, newer ? { ...patch, ...newer } : patch);
+          setPendingIds((ids) => addPendingId(ids, target));
         }
       }
     } finally {
       inFlightRef.current = false;
-      if (bufferRef.current !== null && timerRef.current === null) {
+      if (buffersRef.current.size > 0 && timerRef.current === null) {
         timerRef.current = setTimeout(
           () => void flushRef.current(),
           AUTOSAVE_DEBOUNCE_MS,
@@ -503,17 +576,13 @@ export function useNoteAutosave(projectId: string, noteId: string) {
   const commit = useCallback(
     (next: { body?: string; title?: string }) => {
       if (next.body === undefined && next.title === undefined) return;
-      if (bufferRef.current && bufferRef.current.noteId !== noteId) {
-        void flush();
-      }
-      const base =
-        bufferRef.current?.noteId === noteId ? bufferRef.current : { noteId };
-      bufferRef.current = {
+      const base = buffersRef.current.get(noteId) ?? {};
+      buffersRef.current.set(noteId, {
         ...base,
         ...(next.body !== undefined ? { body: next.body } : {}),
         ...(next.title !== undefined ? { title: next.title } : {}),
-      };
-      setPendingNoteId(noteId);
+      });
+      setPendingIds((ids) => addPendingId(ids, noteId));
       qc.setQueryData<NoteFullResult>(
         noteKeys.detail(projectId, noteId),
         (detail) => (detail ? applyPatchToDetail(detail, next) : detail),
@@ -524,7 +593,7 @@ export function useNoteAutosave(projectId: string, noteId: string) {
         AUTOSAVE_DEBOUNCE_MS,
       );
     },
-    [noteId, projectId, qc, flush],
+    [noteId, projectId, qc],
   );
 
   useEffect(() => {
@@ -536,7 +605,7 @@ export function useNoteAutosave(projectId: string, noteId: string) {
   return {
     commit,
     flush,
-    pending: pendingNoteId === noteId,
+    pending: pendingIds.has(noteId),
     conflict:
       conflictState?.noteId === noteId
         ? {

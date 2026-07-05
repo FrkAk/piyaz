@@ -173,11 +173,12 @@ export async function authorizeWrite(
 }
 
 /**
- * Thrown by the mutation wrappers (`lib/graph/mutations.ts`) when a caller
- * exceeds an action's budget. The wrappers already throw typed errors
- * (`ForbiddenError`, `ProjectNotFoundError`) that their callers catch, so
- * throwing here keeps the same contract instead of forcing every wrapper
- * to a discriminated-union return type.
+ * Thrown by `authorizeWrite` when a caller exceeds an action's budget.
+ * Both consumers handle it at their own boundary: the graph mutation
+ * wrappers (`lib/graph/mutations.ts`) let it propagate like their other
+ * typed errors (`ForbiddenError`, `ProjectNotFoundError`), and the note
+ * actions (`lib/actions/note.ts`) map it to the `rate_limited` result
+ * code.
  */
 export class RateLimitError extends Error {
   /** @param retryAfter - Seconds until the caller may retry. */
