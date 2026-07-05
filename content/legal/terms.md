@@ -45,7 +45,7 @@ after a fee takes effect means you agree to that fee.
 
 You are responsible for safeguarding your account credentials and for activity under your
 account. Notify us at **legal@piyaz.ai** if you suspect unauthorized use. We process your
-account data as described in the [Privacy Policy](./privacy-policy.md).
+account data as described in the [Privacy Policy](/privacy).
 
 ## 5. Acceptable use
 
@@ -119,4 +119,4 @@ and where required we will ask you to re-accept before you continue using the Se
 ## 14. Contact
 
 Questions about these Terms: **legal@piyaz.ai**. Provider identity and address: see the
-[Impressum](./impressum.md).
+[Impressum](/impressum).
