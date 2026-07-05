@@ -121,9 +121,7 @@ export async function assertProjectAccess(
   ctx: AuthContext,
   required?: { project: readonly ProjectAction[] },
 ): Promise<ProjectAccess> {
-  if (!isUuid(projectId)) {
-    throw new ForbiddenError("Forbidden", "project", projectId);
-  }
+  assertValidProjectId(projectId);
   const access = await findProjectAccess(ctx.userId, projectId);
   if (!access) throw new ForbiddenError("Forbidden", "project", projectId);
   if (
@@ -151,9 +149,7 @@ export async function assertProjectAccess(
  */
 export const loadProjectAccess = cache(
   async (userId: string, projectId: string): Promise<ProjectAccess> => {
-    if (!isUuid(projectId)) {
-      throw new ForbiddenError("Forbidden", "project", projectId);
-    }
+    assertValidProjectId(projectId);
     const access = await findProjectAccess(userId, projectId);
     if (!access) throw new ForbiddenError("Forbidden", "project", projectId);
     return access;
@@ -176,9 +172,7 @@ export async function assertProjectAccessTx(
   projectId: string,
   required?: { project: readonly ProjectAction[] },
 ): Promise<ProjectAccess> {
-  if (!isUuid(projectId)) {
-    throw new ForbiddenError("Forbidden", "project", projectId);
-  }
+  assertValidProjectId(projectId);
   const access = await findProjectAccessTx(tx, projectId);
   if (!access) throw new ForbiddenError("Forbidden", "project", projectId);
   if (
@@ -205,9 +199,7 @@ export async function assertTaskAccess(
   taskId: string,
   ctx: AuthContext,
 ): Promise<TaskAccessGate> {
-  if (!isUuid(taskId)) {
-    throw new ForbiddenError("Forbidden", "task", taskId);
-  }
+  assertValidTaskId(taskId);
   const task = await findTaskAccess(ctx.userId, taskId);
   if (!task) throw new ForbiddenError("Forbidden", "task", taskId);
   return task;
@@ -225,9 +217,7 @@ export async function assertTaskAccessTx(
   tx: Tx,
   taskId: string,
 ): Promise<TaskAccessGate> {
-  if (!isUuid(taskId)) {
-    throw new ForbiddenError("Forbidden", "task", taskId);
-  }
+  assertValidTaskId(taskId);
   const task = await findTaskAccessTx(tx, taskId);
   if (!task) throw new ForbiddenError("Forbidden", "task", taskId);
   return task;
@@ -251,19 +241,17 @@ export async function assertNoteAccessTx(
   tx: Tx,
   noteId: string,
 ): Promise<NoteAccessGate> {
-  if (!isUuid(noteId)) {
-    throw new ForbiddenError("Forbidden", "note", noteId);
-  }
+  assertValidNoteId(noteId);
   const note = await findNoteAccessTx(tx, noteId);
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
   return note;
 }
 
 /**
- * Reject a malformed task id before any statement is built. The batch read
- * path counterpart of the `isUuid` pre-check inside
- * {@link assertTaskAccessTx}: a non-UUID id must surface as a 404-shaped
- * ForbiddenError, not as a Postgres `22P02` cast failure mid-batch.
+ * Reject a malformed task id before any statement is built: a non-UUID id
+ * must surface as a 404-shaped ForbiddenError, not as a Postgres `22P02`
+ * cast failure. The single malformed-id guard shared by the access gates
+ * above and the batch read paths.
  *
  * @param taskId - Candidate task id from the caller.
  * @throws ForbiddenError when the id is not UUID-shaped.
