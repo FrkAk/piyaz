@@ -1,273 +1,101 @@
 ![Piyaz](assets/piyaz-logo.png)
-> The agentic workspace where people and AI coding agents work together on every project.
+> The agentic workspace where people and AI coding agents work on the same project.
 
 <p align="center">
-  <a href="#claude-code"><img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-D97757?style=flat-square&logo=anthropic&logoColor=white" /></a>
+  <a href="https://docs.piyaz.ai/docs/get-started/connect-your-editor/claude-code"><img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-D97757?style=flat-square&logo=anthropic&logoColor=white" /></a>
   &nbsp;&nbsp;
-  <a href="#codex"><img alt="Codex" src="https://img.shields.io/badge/Codex-000000?style=flat-square&logo=openai&logoColor=white" /></a>
+  <a href="https://docs.piyaz.ai/docs/get-started/connect-your-editor/codex"><img alt="Codex" src="https://img.shields.io/badge/Codex-000000?style=flat-square&logo=openai&logoColor=white" /></a>
   &nbsp;&nbsp;
-  <a href="#cursor"><img alt="Cursor" src="https://img.shields.io/badge/Cursor-000000?style=flat-square&logo=cursor&logoColor=white" /></a>
+  <a href="https://docs.piyaz.ai/docs/get-started/connect-your-editor/cursor"><img alt="Cursor" src="https://img.shields.io/badge/Cursor-000000?style=flat-square&logo=cursor&logoColor=white" /></a>
   &nbsp;&nbsp;
-  <a href="#antigravity"><img alt="Antigravity" src="https://img.shields.io/badge/Antigravity-4285F4?style=flat-square&logo=google&logoColor=white" /></a>
+  <a href="https://docs.piyaz.ai/docs/get-started/connect-your-editor/antigravity"><img alt="Antigravity" src="https://img.shields.io/badge/Antigravity-4285F4?style=flat-square&logo=google&logoColor=white" /></a>
 </p>
 
 <p align="center">
   <img src="assets/piyaz-demo.gif" alt="Piyaz demo" width="900" />
 </p>
 
-Most of us aren't really writing code anymore, we're directing agents that do. But those agents have no memory. Every session starts from zero, and engineers end up spending their time re-explaining what was built, why decisions were made, and what still needs to happen. That's not engineering, that's babysitting.
+Piyaz is an agentic workspace for building software. People and AI agents work on the same project across various harnesses, and Piyaz holds that work consistent to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
 
-Piyaz replaces that cycle. It's not just a context layer your agents read from, it's an agentic workspace where people and AI agents work together on the same project: project management, agent collaboration, and a shared context network in one place. Piyaz creates tasks, refines them, plans implementations, provides the right context at the right stage, and tracks everything that happens. Your agent harness doesn't need a briefing. It walks into every session knowing exactly what to do next and why.
+Using Piyaz, several agents can build at the same time; each in its own harness and with no API keys to wire up, while engineers are free to steer them as needed. One agent can implement a task while you refine another or add a new feature.
 
-Full setup, guides, and reference live at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
+Projects are represented as a shared graph of tasks and their dependencies. Drop in an idea or an existing codebase, and Piyaz will break it into small, concrete tasks. When an agent picks up a task, it already has the plan, the standards, and the decisions behind the work. No agents starts from a raw read of a task description.
 
----
-
-## Use the hosted version (no clone)
-
-Piyaz is hosted at [app.piyaz.ai](https://app.piyaz.ai). The plugin installs into your coding agent once, at the user level, and works in every project you open, no clone required. Run the one-time install for your agent and sign in when prompted (OAuth, once per machine).
-
-### Claude Code
-
-```bash
-claude plugin marketplace add FrkAk/piyaz
-claude plugin install piyaz@piyaz
-```
-
-Then run `/mcp`, select **piyaz**, and complete the browser sign-in.
-
-### Codex
-
-```bash
-codex plugin marketplace add FrkAk/piyaz
-```
-
-Open Codex, run `/plugin`, install **Piyaz**, restart, and authenticate when prompted. Invoke the main skill with `$piyaz`. (If your Codex build can't resolve the root marketplace, append `--sparse plugins`.)
-
-### Cursor
-
-- **MCP only, any plan (quick start):** open the install deeplink, then sign in on the first tool call:
-
-  ```text
-  cursor://anysphere.cursor-deeplink/mcp/install?name=piyaz&config=eyJ1cmwiOiJodHRwczovL2FwcC5waXlhei5haS9hcGkvbWNwIn0=
-  ```
-
-- **Team/Enterprise (skills + MCP):** *Dashboard → Settings → Plugins → Team Marketplaces → Add Marketplace → Import from Repo*, paste `https://github.com/FrkAk/piyaz`. Team Marketplaces is a Teams/Enterprise feature.
-- **Public Marketplace:** listing in the [Cursor Marketplace](https://cursor.com/marketplace) requires submission and manual review. Search-and-install lands once Piyaz is published.
-
-### Antigravity
-
-Add the Piyaz MCP server to your global config and authenticate (Antigravity handles OAuth automatically). The IDE and the CLI share one config at `~/.gemini/config/mcp_config.json` (in the IDE: MCP Store → Manage MCP Servers → View raw config):
-
-```json
-{
-  "mcpServers": {
-    "piyaz": { "serverUrl": "https://app.piyaz.ai/api/mcp" }
-  }
-}
-```
-
-Then run `/mcp` (CLI) or open the MCP manager (IDE) and Authenticate. The workflow skills ship as a bundled plugin: clone this repo and copy `plugins/antigravity/` into `~/.gemini/config/plugins/` (global) or `.agents/plugins/` at your workspace root. The bundled `mcp_config.json` also includes a `piyaz-local` server for self-host.
-
-> **Gemini CLI users:** Antigravity replaces Gemini CLI (consumer access ends 2026-06-18). Run `agy plugin import gemini` to migrate, then use the Antigravity setup above.
+Full setup, guides, and reference can be found at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
 
 ---
 
-## Self-host / contribute
+## Hosted (closed beta)
 
-Self-hosting is free under AGPL-3.0. You run the Piyaz server yourself and point the plugin's **`piyaz-local`** server at it, no env vars required.
+Piyaz is in a closed beta, and new accounts open in batches. Feel free to join the waitlist at **[app.piyaz.ai/sign-up](https://app.piyaz.ai/sign-up)**.
 
-You need [Bun](https://bun.sh) (v1.0+) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Linux, macOS, or Windows with WSL2.
+Once you're in, install the plugin for your agent (Claude Code, Codex, Cursor, or Antigravity) and sign in once. Piyaz is then available in every project you open. Per-harness setup instructions can be found at **[docs](https://docs.piyaz.ai)**.
 
-```bash
-git clone git@github.com:FrkAk/piyaz.git
-cd piyaz
-bun install --production
-cp .env.local.example .env.local
-```
+## Self-host
 
-Fill in `.env.local` by following the numbered steps at the top of `.env.local.example`. Then bring up Postgres, build, start, and open [localhost:3000](http://localhost:3000):
-
-```bash
-bun run db:setup
-bun run build
-bun run start
-```
-
-Install the plugin for your agent as above, but select the **`piyaz-local`** server (it points at `http://localhost:3000/api/mcp`). Advanced self-hosters on a custom domain can set `PIYAZ_URL` to repoint the default `piyaz` server in Claude Code; Codex and Cursor read a hardcoded hosted URL, so edit their `mcp.json` directly if you need a custom domain.
-
-### Upgrading
-
-Your database holds real data, so schema changes apply as versioned migrations, never `db:push` (it force-syncs and can drop columns). To upgrade:
-
-```bash
-git pull
-bun install --production
-bun run db:migrate
-bun run db:rls
-bun run build
-bun run start
-```
-
-`db:rls` re-applies the canonical grants, SECURITY DEFINER functions, and RLS policies from `docker/*.sql`. It is idempotent (safe to run when nothing changed) and required whenever a release adds an RLS-protected table: the migration creates the table and enables RLS, but its grant and policy live in the hand-written `docker/*.sql` files that `db:migrate` does not apply.
-
-> **Upgrading from a pre-migrations install:** instances first set up before versioned migrations existed have an empty migration journal, so `db:migrate` tries to recreate existing tables and fails. Run `bun run db:baseline` once to mark the current schema as the baseline, then run `bun run db:migrate`. Running `db:baseline` on a newer install is a safe no-op.
-
-Contributors install from the local checkout: `claude plugin marketplace add ./plugins/claude-code` (Claude Code), `codex plugin marketplace add ./plugins` (Codex), or copy `plugins/cursor` into `~/.cursor/plugins/local/`. Shared skills live in `plugins/claude-code/` (canonical); after editing them run `bun run sync:plugins` to regenerate every brand's copy (`bun run check:plugins` is CI-enforced).
+Self-hosting is free under AGPL-3.0. You can run the Piyaz server yourself and point the plugin's `piyaz-local` server at it. You need [Bun](https://bun.sh) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Full setup and upgrade steps are in the [self-host guide](https://docs.piyaz.ai/docs/self-hosting/run-locally).
 
 ---
 
-## What gets installed
+## What Piyaz changes for you
 
-All four plugins bundle the shared components:
+**Stop re-briefing your agents.** Every task carries its own context: the plan, the decisions behind it, and how it connects to the rest of the project. Your next session picks up where the last one left off instead of asking you to explain the project again.
 
-| Component | What it does |
-| --- | --- |
-| **6 MCP tools** | `piyaz_project`, `piyaz_task`, `piyaz_edge`, `piyaz_query`, `piyaz_context`, `piyaz_analyze` |
-| **`/piyaz` skill** | Auto-invokes when conversation matches project planning; routes to inline workflows or hands off to a deep-mode workflow when needed |
-| **Brainstorm workflow** | Explore and shape a project idea through structured conversation |
-| **Onboarding workflow** | Reverse-engineer an existing codebase into a task graph with shipped work recorded as `done` |
-| **Decompose workflow** | Break a project brief into a dependency graph |
-| **Manage workflow** | Strategic CTO-mode review: rebalance the graph, audit dependencies, prune orphans, consolidate categories |
+**Ship a big project without the quality falling off.** Piyaz breaks large work into small tasks with clear dependencies and hands each one exactly the context it needs, so the tenth task lands as cleanly as the first.
 
-In Codex, Cursor, and Antigravity each workflow is a skill invoked by slash command. In Claude Code each is also available as a dispatchable agent (via the Task tool) so the main `/piyaz` skill can hand off work in a clean per-agent context.
+**Put more than one agent on the same project.** People and agents across Claude Code, Codex, Cursor, and Antigravity share one view of what's done, what's ready, and what's blocked, so their work doesn't collide or drift.
 
-**Claude Code additionally bundles:**
+**Start from an idea or from code you already have.** Describe something new and Piyaz plans it out, or point it at an existing codebase and it maps the work you've already shipped into a tracked project.
 
-| Component | What it does |
-| --- | --- |
-| **`/piyaz:composer` skill** | End-to-end task orchestrator. Picks the highest-value ready task (or one named ref), drives it through research → plan → implement → review → propagate via a per-task workflow that dispatches phase subagents in clean per-phase contexts, merges the PR and continues when the user authorizes it, and loops until queue empty or user stops. Requires `/goal` harness for backlog mode (composer emits it on first turn; user pastes). |
-| **Composer subagents** | `piyaz:composer-researcher` gathers grounded context and refines the task; `piyaz:composer-planner` writes the unabridged implementation plan; `piyaz:composer-implementer` ships the code, opens a PR, and marks the task `in_review`; `piyaz:review` returns the verdict that drives the bounded fix loop. |
-| **`piyaz:decompose-task` agent** | Splits an existing oversize task in an active project into 2 to N children, rewires every dependency edge touching the parent, cancels the parent with rationale citing the children. Composer's oversize handler routes here. |
-| **`piyaz:decompose-feature` agent** | Adds a new feature or capability cluster to an active project. Reuses existing categories and tag vocabulary; creates 5 to 20 tasks plus internal and integration edges. |
+**Talk, don't configure.** You say what you want in plain language. Piyaz plans the work, tracks it, and keeps the record current. No need for informing your agent with the necessary context manually.
 
-(Composer depends on a subagent dispatch primitive for clean per-phase contexts and tool-restriction enforcement. Codex, Cursor, and Antigravity do not yet have an equivalent, so composer is Claude Code only for now.)
-
----
-
-## How it runs
-
-Piyaz ships as a Next.js web app plus vendor-native plugins for Claude Code, Codex, Cursor, and Antigravity. Each plugin bundles 6 MCP tools, the four core workflows (brainstorm, onboarding, decompose, manage), and a `/piyaz` skill that auto-invokes when you talk about projects, tasks, or planning. Claude Code adds end-to-end task orchestration via `/piyaz:composer` plus `decompose-task` and `decompose-feature` for surgical decomposition within active projects. You don't call tools manually, you just talk.
-
-**Three entry paths, one graph.**
-
-*No project yet.* The brainstorm agent shapes the idea with you, then decompose breaks it into a task graph:
-
-```text
-❯ I want to build a real-time dashboard for server metrics
-```
-
-*Existing codebase, no tracking yet.* Onboarding reverse-engineers a graph from the code and git history, gated on your approval before anything is written:
-
-```text
-❯ Onboard this existing codebase
-```
-
-*Ongoing project.* The `/piyaz` skill detects the repo and picks up where you left off:
-
-```text
-❯ What's the status of the project?
-```
-
-**Skip the context briefing.** Name a task or ask what's next. Piyaz delivers the right bundle for that task's state, so you don't write "here's what you need to know" prompts yourself:
-
-```text
-❯ What should I work on next?
-❯ Plan and implement PYZ-101
-```
-
-**Add and refine mid-flow.** Spot something missing, describe it, and push back until it's right:
-
-```text
-❯ Add a task for an onboarding agent that records shipped work as done tasks. Relate it to the codex/antigravity support task.
-```
-
-```text
-❯ Priority is urgent, draft ACs are enough, and monorepo detection should ask the user.
-```
-
-**Drive end-to-end (Claude Code).** Once a project is active and tasks are ready, composer can take over. Pick the next task off the critical path, research it in context, plan it, implement it, open the PR, review and fix until it is ready, propagate the result (and merge when you authorize it), and loop:
-
-```text
-❯ /piyaz:composer
-```
-
-Or take one specific task all the way to a PR:
-
-```text
-❯ /piyaz:composer PYZ-101
-```
-
-Composer runs a per-task workflow that dispatches phase subagents in clean per-phase contexts (researcher → planner → implementer → review), with a bounded fix loop until the PR is ready. The orchestrator stays out of the work itself: it picks tasks, resolves gates, merges when authorized, and propagates.
-
-**Tune in the UI.** Inspect edges, read execution records, and edit descriptions, ACs, tags, or dependencies directly. The agent loop and the UI write to the same store, so edits land by the next tool call.
+On Claude Code, **Composer** can take a task the whole way on its own: it researches the task against your codebase, writes the plan, implements it, opens up a pull request, reviews it and fixes what review flags, then moves to the next ready task. You decide what merges.
 
 ---
 
 ## How it works
 
-Instead of docs, wikis, or messy markdown files, Piyaz treats project context as a live knowledge base agents can reason from.
+Piyaz keeps a live map of your project, the context network: every task, the dependencies between them, and the decisions behind each one. You work in plain language from your agent, and Piyaz keeps that map current as the work moves. Here is the loop.
 
-We built Piyaz around two core concepts:
+**Plan a project.** Describe an idea and Piyaz brainstorms it into a brief, then decomposes it into a task graph with dependencies, asking one focused question at a time and pushing back on weak choices.
 
-**Context network.** A living map of your project that captures not just what was built, but why decisions were made, what was tried and abandoned, and how different parts of the codebase relate to each other.
+```text
+/piyaz I want a cli that generates changelogs from conventional commits, with monorepo support
+```
 
-**Context retrieval interface.** Four context shapes, one per job. Each is arranged by U-shaped attention (highest-recall content at the start and end) so what matters most lands where LLMs read best:
+**Pick up the right work.** Ask what is next and Piyaz names the top ready task on the critical path. It claims the task, pulls the context it needs, and records what it built when it is done, so the next session starts from ground truth instead of a raw task description.
 
-| Shape | For | What's in it |
-| --- | --- | --- |
-| `summary` | Quick lookup | Title, status, edge counts |
-| `working` | Refining or reviewing a task | Criteria, decisions, 1-hop neighbors |
-| `planning` | Writing an implementation plan | Project brief, prerequisites, upstream execution records, downstream specs |
-| `agent` | Coding the task | Implementation plan, multi-hop upstream execution records, file paths, acceptance criteria |
+```text
+what should I work on next?
+```
 
-Together, they don't just inform your agent, they drive it. Piyaz manages the full lifecycle: **Brainstorm > Decompose > Refine > Plan > Execute > Track**.
+**Review before it merges.** An agent's work stops at `in_review`, never `done`. A review agent reads the diff and returns a verdict across security, performance, reliability, observability, and codebase standards, with a file and line for every finding. You approve or send it back. This is the mechanism that keeps low-quality code from landing.
 
-Describe your idea and Piyaz decomposes it into tasks with dependency edges, determines what's ready to plan or implement, and hands your agent the exact context it needs for that stage. When a task is plannable, your agent gets the spec, prerequisites, and related work. When it's ready to implement, your agent gets the full execution context: upstream decisions, file paths, and acceptance criteria.
+```text
+review MET-1. File-cited, do not rubber-stamp. Read the diff first.
+```
 
-The agent moves from task to task with the right context at every step, no manual handoff required.
+**Or hand over the whole loop (Claude Code).** Composer takes a task from research to an open PR all on its own: research, plan, implement, review, and a bounded fix loop, then it picks up the next ready task. You decide what merges.
 
-*We're building Piyaz using Piyaz, so everything described here is something we're living in real time.*
+```text
+/piyaz:composer
+```
 
----
+We build Piyaz using Piyaz, so every feature here is something we use day to day.
 
-## How it looks
+For more details, see the docs:
 
-The web UI has two modes: **Structure** and **Graph**.
-
-Structure mode puts your task list on the left and a detail panel on the right. You refine specs, track progress, and review execution records without switching views.
-
-![Structure view](assets/projectview.png)
-
-Graph mode overlays the context network so you can see how tasks, decisions, and dependencies connect while still working in the detail panel.
-
-![Graph view](assets/graphview.png)
-
-Zoom out and the full graph renders your entire context network. Clusters, bottlenecks, and orphaned work become obvious at a glance.
-
-![Full graph](assets/graphonlyview_light.png)
-
----
-
-## What's coming
-
-We're working on a hosted version for those who want the full experience without the setup. Run from anywhere, access your team's projects, collaborate across sessions. Privacy is a core value, which is why it's taking longer than usual to get right.
-
-The hosted version will be a paid service. We can't bear the infrastructure costs on our own, and we'd rather be upfront about that than pretend otherwise. Self-hosted remains free and always will.
-
----
-
-## Why open source
-
-We believe everyone should have access to tools that help them build better things. Open source is how we make that real.
-
-It also means we ship faster. Community contributions, bug reports, and ideas make Piyaz better for everyone. If you care about better infrastructure for agent-driven development, come build with us.
+- [Plan a project](https://docs.piyaz.ai/docs/using-piyaz/plan-a-project) and [decompose into tasks](https://docs.piyaz.ai/docs/using-piyaz/decompose-into-tasks)
+- [Track execution](https://docs.piyaz.ai/docs/using-piyaz/track-execution)
+- [Review before merge](https://docs.piyaz.ai/docs/using-piyaz/review)
+- [The composer pipeline](https://docs.piyaz.ai/docs/using-piyaz/composer)
+- [End-to-end walkthrough](https://docs.piyaz.ai/docs/using-piyaz/walkthrough)
 
 ---
 
 ## Stack
 
-Next.js 16, TypeScript 6, React 19, PostgreSQL, Drizzle ORM, Tailwind CSS v4, Motion
+Next.js 16, TypeScript 6, React 19, PostgreSQL, Drizzle ORM, Better-Auth, Tailwind CSS v4, Motion
 
 ---
 
