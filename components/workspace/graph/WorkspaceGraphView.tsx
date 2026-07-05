@@ -3,8 +3,6 @@
 import dynamic from "next/dynamic";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { ViewTabs } from "@/components/shared/ViewTabs";
-import { IconGraph, IconList } from "@/components/shared/icons";
 import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
 import { MiniTaskRail } from "./MiniTaskRail";
 import { GraphHoverCard } from "./GraphHoverCard";
@@ -42,8 +40,6 @@ interface WorkspaceGraphViewProps {
   onSelectNode: (id: string) => void;
   /** @param onDeselect - Click empty canvas → clear selection. */
   onDeselect: () => void;
-  /** @param onSwitchToStructure - Click the Structure tab in the canvas overlay. */
-  onSwitchToStructure: () => void;
   /**
    * @param detailSlot - When set, rendered inside the slide-over panel
    *   alongside `propRailSlot`. Typically the project's `<DetailPanel />`.
@@ -63,8 +59,8 @@ interface WorkspaceGraphViewProps {
 
 /**
  * Workspace graph view — left rail of every node + force-directed canvas with
- * floating chrome (view tabs, edge filter pills, status legend, zoom controls,
- * hover card). Detail and property rail are rendered as a motion slide-over
+ * floating chrome (edge filter pills, status legend, zoom controls, hover
+ * card). Detail and property rail are rendered as a motion slide-over
  * pinned to the right edge so the canvas keeps its full layout — selection
  * just adds a layer instead of reflowing the page.
  *
@@ -85,7 +81,6 @@ export function WorkspaceGraphView({
   selectedNodeId,
   onSelectNode,
   onDeselect,
-  onSwitchToStructure,
   detailSlot,
   propRailSlot,
   propRailOpen = true,
@@ -179,27 +174,6 @@ export function WorkspaceGraphView({
           stageMap={stageMap}
           onHoverNode={setHoveredOnCanvas}
         />
-
-        {/* Top-left: Structure ↔ Graph view tabs.
-            The graph already has its own minirail collapse toggle, so we
-            don't double up with another panel toggle here — the structure
-            mode owns the navigator-fold affordance via the detail header. */}
-        <div className="absolute left-3 top-3 z-10">
-          <ViewTabs
-            activeId="graph"
-            onChange={(id) => {
-              if (id === "structure") onSwitchToStructure();
-            }}
-            tabs={[
-              {
-                id: "structure",
-                label: "Structure",
-                icon: <IconList size={11} />,
-              },
-              { id: "graph", label: "Graph", icon: <IconGraph size={11} /> },
-            ]}
-          />
-        </div>
 
         {/* Top-right chrome — rides the overlay edge instead of getting eaten
             by it. Hover card stays suppressed while a task is selected (the

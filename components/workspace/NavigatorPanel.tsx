@@ -2,12 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
-import {
-  FilterBar,
-  type GroupKey,
-  type SortKey,
-  type WorkspaceView,
-} from "./structure/FilterBar";
+import { FilterBar, type GroupKey, type SortKey } from "./structure/FilterBar";
 import { StructureView, type DeletedTask } from "./structure/StructureView";
 import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
 
@@ -58,18 +53,6 @@ function readFilterCount(searchParams: URLSearchParams): number {
 }
 
 /**
- * Resolve the active view from the URL — defaults to `structure` when the
- * key is missing or unrecognised.
- *
- * @param raw - Raw `view` query param.
- * @returns Workspace view identifier.
- */
-function readView(raw: string | null): WorkspaceView {
-  if (raw === "graph") return "graph";
-  return "structure";
-}
-
-/**
  * Read the active sort key from the URL — defaults to `status`.
  *
  * @param raw - Raw `sort` query param.
@@ -94,9 +77,9 @@ function readGroup(raw: string | null): GroupKey {
 }
 
 /**
- * Workspace navigator — top-aligned filter bar with view tabs, then the
- * active view body. Persists view + sort to the URL so the workspace is
- * shareable; filter chips and the search query live in the URL too via
+ * Workspace navigator — top-aligned filter bar, then the structure view
+ * body. Persists sort + group to the URL so the workspace is shareable;
+ * filter chips and the search query live in the URL too via
  * StructureView's own sync.
  *
  * @param props - Navigator panel configuration.
@@ -121,7 +104,6 @@ export function NavigatorPanel({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const view = readView(searchParams.get("view"));
   const sort = readSort(searchParams.get("sort"));
   const group = readGroup(searchParams.get("group"));
   const filterCount = useMemo(
@@ -148,14 +130,6 @@ export function NavigatorPanel({
     [router, pathname, searchParams],
   );
 
-  const handleViewChange = useCallback(
-    (next: WorkspaceView) => {
-      updateParam("view", next === "structure" ? null : next);
-      if (next !== "structure") setFilterOpen(false);
-    },
-    [updateParam],
-  );
-
   const handleSortChange = useCallback(
     (next: SortKey) => {
       updateParam("sort", next === "status" ? null : next);
@@ -173,8 +147,6 @@ export function NavigatorPanel({
   return (
     <div className={`flex h-full flex-col ${className}`} data-panel="navigator">
       <FilterBar
-        view={view}
-        onViewChange={handleViewChange}
         sort={sort}
         onSortChange={handleSortChange}
         group={group}

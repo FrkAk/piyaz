@@ -1,17 +1,8 @@
 "use client";
 
 import { ChipButton, ChipTrigger } from "@/components/shared/FilterChip";
-import { ViewTabs } from "@/components/shared/ViewTabs";
 import { Dropdown } from "@/components/shared/Dropdown";
-import {
-  IconFilter,
-  IconGraph,
-  IconList,
-  IconSort,
-} from "@/components/shared/icons";
-
-/** Identifier for the active workspace view. */
-export type WorkspaceView = "structure" | "graph";
+import { IconFilter, IconList, IconSort } from "@/components/shared/icons";
 
 /** Identifier for the active sort key. */
 export type SortKey = "status" | "updated" | "identifier" | "priority";
@@ -20,10 +11,6 @@ export type SortKey = "status" | "updated" | "identifier" | "priority";
 export type GroupKey = "status" | "category" | "none";
 
 interface FilterBarProps {
-  /** Active view tab. */
-  view: WorkspaceView;
-  /** Switch view tabs. */
-  onViewChange: (next: WorkspaceView) => void;
   /** Active sort key. */
   sort: SortKey;
   /** Update the sort key. */
@@ -70,17 +57,15 @@ function labelFor<V extends string>(
 }
 
 /**
- * Top filter bar above the structure list — owns view tab switching, the
- * filter sheet toggle, and the sort/group dropdowns. New-task creation
- * lives on each `TaskGroup` (the per-status "+") so the bar stays compact
- * regardless of viewport width.
+ * Top filter bar above the structure list — owns the filter sheet toggle
+ * and the sort/group dropdowns. New-task creation lives on each
+ * `TaskGroup` (the per-status "+") so the bar stays compact regardless of
+ * viewport width.
  *
  * @param props - Filter bar configuration.
- * @returns 44px-tall header row.
+ * @returns 40px-tall header row.
  */
 export function FilterBar({
-  view,
-  onViewChange,
   sort,
   onSortChange,
   group,
@@ -90,18 +75,7 @@ export function FilterBar({
   onToggleFilter,
 }: FilterBarProps) {
   return (
-    <div className="flex h-11 items-center gap-1 border-b border-border bg-base px-3">
-      <ViewTabs
-        activeId={view}
-        onChange={(id) => onViewChange(id as WorkspaceView)}
-        tabs={[
-          { id: "structure", label: "Structure", icon: <IconList size={11} /> },
-          { id: "graph", label: "Graph", icon: <IconGraph size={11} /> },
-        ]}
-      />
-
-      <span className="flex-1" />
-
+    <div className="flex h-10 items-center gap-1 border-b border-border bg-base px-3">
       <ChipButton
         active={filterOpen}
         onClick={onToggleFilter}
@@ -125,7 +99,8 @@ export function FilterBar({
         title={`Group: ${labelFor(GROUP_OPTIONS, group)}`}
         renderTrigger={(_active, open) => (
           <ChipTrigger icon={<IconList size={11} />} open={open}>
-            <span className="text-text-primary">
+            <span className="text-text-faint">Group</span>
+            <span className="ml-1 text-text-primary">
               {labelFor(GROUP_OPTIONS, group)}
             </span>
           </ChipTrigger>
@@ -141,7 +116,8 @@ export function FilterBar({
         title={`Sort: ${labelFor(SORT_OPTIONS, sort)}`}
         renderTrigger={(_active, open) => (
           <ChipTrigger icon={<IconSort size={11} />} open={open}>
-            <span className="text-text-primary">
+            <span className="text-text-faint">Sort</span>
+            <span className="ml-1 text-text-primary">
               {labelFor(SORT_OPTIONS, sort)}
             </span>
           </ChipTrigger>

@@ -1,10 +1,12 @@
 "use client";
 
+import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import { useTheme } from "@/components/layout/ThemeProvider";
 import { ProjectBreadcrumb } from "@/components/layout/ProjectBreadcrumb";
 import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
 import { useMobileNav } from "@/components/layout/MobileNav";
+import { WorkspaceViewSwitcher } from "@/components/workspace/ViewSwitcher";
 import { Kbd } from "@/components/shared/Kbd";
 import {
   IconDoc,
@@ -33,10 +35,11 @@ interface TopBarProps {
 
 /**
  * In-flow top bar that sits at the head of the main column inside
- * {@link AppShell}. Renders a hamburger that opens the mobile nav drawer
- * (below `lg` only), the workspace breadcrumb (when available), an optional
- * page or project crumb, and the right-side action cluster (Jump, theme
- * toggle, avatar).
+ * {@link AppShell}. A three-zone grid: the leading cluster (hamburger below
+ * `lg`, workspace breadcrumb, optional page or project crumb), the workspace
+ * view switcher (project workspace route only — centered from `sm` up, and on
+ * mobile pulled beside the actions so the breadcrumb keeps its width), and the
+ * trailing action cluster (Jump, theme toggle, avatar).
  *
  * @param props - TopBar configuration.
  * @returns Sticky header element styled per the design spec.
@@ -59,6 +62,9 @@ export function TopBar({
     pageLabel,
     pathname,
   });
+  const showViewSwitcher = Boolean(
+    projectId && pathname === `/project/${projectId}`,
+  );
 
   /** Toggle between light and dark theme and persist the choice. */
   const toggleTheme = () => {
@@ -67,43 +73,53 @@ export function TopBar({
 
   return (
     <header
-      className="flex flex-shrink-0 items-center gap-2 border-b border-border bg-base/80 px-3 backdrop-blur-md"
+      className="grid flex-shrink-0 grid-cols-[1fr_auto_auto] items-center gap-2 border-b border-border bg-base/80 px-3 backdrop-blur-md sm:grid-cols-[1fr_auto_1fr]"
       style={{ height: "var(--topbar-h)" }}
     >
-      <button
-        type="button"
-        onClick={openNav}
-        aria-label="Open navigation"
-        title="Open navigation"
-        className="inline-flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary lg:hidden"
-      >
-        <IconMenu size={14} />
-      </button>
-      <nav
-        aria-label="Breadcrumb"
-        className="flex min-w-0 flex-1 items-center gap-1.5"
-      >
-        {projectName &&
-          (projectId && onOpenProjectSettings ? (
-            <ProjectBreadcrumb
-              projectName={projectName}
-              projectStatus={projectStatus}
-              team={team}
-              onOpenSettings={onOpenProjectSettings}
-            />
-          ) : (
+      <div className="flex min-w-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={openNav}
+          aria-label="Open navigation"
+          title="Open navigation"
+          className="inline-flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary lg:hidden"
+        >
+          <IconMenu size={14} />
+        </button>
+        <nav
+          aria-label="Breadcrumb"
+          className="flex min-w-0 items-center gap-1.5"
+        >
+          {projectName &&
+            (projectId && onOpenProjectSettings ? (
+              <ProjectBreadcrumb
+                projectName={projectName}
+                projectStatus={projectStatus}
+                team={team}
+                onOpenSettings={onOpenProjectSettings}
+              />
+            ) : (
+              <span className="truncate text-[13px] font-semibold text-text-primary">
+                {projectName}
+              </span>
+            ))}
+          {!projectName && derivedPageLabel && (
             <span className="truncate text-[13px] font-semibold text-text-primary">
-              {projectName}
+              {derivedPageLabel}
             </span>
-          ))}
-        {!projectName && derivedPageLabel && (
-          <span className="truncate text-[13px] font-semibold text-text-primary">
-            {derivedPageLabel}
-          </span>
-        )}
-      </nav>
+          )}
+        </nav>
+      </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex justify-center">
+        {showViewSwitcher && (
+          <Suspense fallback={null}>
+            <WorkspaceViewSwitcher />
+          </Suspense>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-1">
         <button
           type="button"
           onClick={openPalette}
@@ -113,7 +129,9 @@ export function TopBar({
         >
           <IconSearch size={12} />
           <span className="hidden sm:inline">Jump</span>
-          <Kbd dim>⌘K</Kbd>
+          <span className="hidden sm:inline-flex">
+            <Kbd dim>⌘K</Kbd>
+          </span>
         </button>
         <span
           aria-hidden="true"
