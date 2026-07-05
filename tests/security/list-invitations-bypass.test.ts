@@ -198,13 +198,13 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
 
     const attackerEmail = "mymr155-nonadmin-member@test.local";
     const attackerPassword = "test-password-12345";
-    await auth.api.signUpEmail({
-      body: {
-        email: attackerEmail,
-        name: "MYMR-155 Non-admin Member",
-        password: attackerPassword,
-      },
-    });
+    const attackerSignUpBody = {
+      email: attackerEmail,
+      name: "MYMR-155 Non-admin Member",
+      password: attackerPassword,
+      termsAccepted: true,
+    };
+    await auth.api.signUpEmail({ body: attackerSignUpBody });
     const su = superuserPool();
     const [attacker] = await su<{ id: string }[]>`
       SELECT id FROM piyaz_auth."user" WHERE email = ${attackerEmail}

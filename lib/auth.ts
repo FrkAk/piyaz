@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { organization, jwt } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
@@ -13,6 +14,8 @@ import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
 import { signupsDisabled } from "@/lib/config/env";
+import { recordAcceptance } from "@/lib/data/legal";
+import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -226,6 +229,63 @@ export const auth = betterAuth({
     nextCookies(),
   ],
   databaseHooks: {
+    user: {
+      create: {
+        // Gate every account-creation path on affirmative Terms consent.
+        // Runs for `auth.api.signUpEmail` and a raw POST to
+        // `/api/auth/sign-up/email` alike, so the gate cannot be bypassed by
+        // skipping the client checkbox. `termsAccepted` is a transient consent
+        // signal read off the request body; the durable evidence is the
+        // `legal_acceptances` rows written in `after`.
+        before: async (_user, ctx) => {
+          const body = ctx?.body as { termsAccepted?: unknown } | undefined;
+          if (body?.termsAccepted !== true) {
+            throw new APIError("BAD_REQUEST", {
+              message:
+                "You must accept the Terms of Service to create an account.",
+              code: "TERMS_NOT_ACCEPTED",
+            });
+          }
+        },
+        // Persist compliance evidence: one `terms` and one `privacy` row, each
+        // carrying the current LEGAL_VERSIONS version, timestamp, resolved IP,
+        // and user-agent. Must be `after` (not `before`): the rows FK to the
+        // user, which does not exist until creation commits. On write failure,
+        // compensate by deleting the just-created user so no account survives
+        // without its acceptance evidence — a throw here does NOT roll the user
+        // back (the row is already committed when `after` runs).
+        after: async (user, ctx) => {
+          const requestHeaders = ctx?.headers;
+          const ipAddress = requestHeaders
+            ? clientIpFromHeaders(requestHeaders)
+            : null;
+          const userAgent = requestHeaders?.get("user-agent") ?? null;
+          try {
+            await recordAcceptance(user.id, "terms", { ipAddress, userAgent });
+            await recordAcceptance(user.id, "privacy", {
+              ipAddress,
+              userAgent,
+            });
+          } catch (err) {
+            console.error("user.create.after acceptance-write failure", {
+              userId: user.id,
+              err,
+            });
+            try {
+              await ctx?.context.internalAdapter.deleteUser(user.id);
+            } catch (cleanupErr) {
+              console.error("user.create.after compensating delete failed", {
+                userId: user.id,
+                err: cleanupErr,
+              });
+            }
+            throw new APIError("INTERNAL_SERVER_ERROR", {
+              message: "Could not record your acceptance. Please try again.",
+            });
+          }
+        },
+      },
+    },
     account: {
       update: {
         after: async (account) => {
