@@ -11,6 +11,7 @@ import {
   updateNote,
   FEED_CHAR_BUDGET,
   FEED_NOTE_CAP,
+  FEED_POINTER_CAP,
   type FeedTask,
   type NoteFeedRow,
   type NotePatch,
@@ -68,7 +69,7 @@ function makeRow(i: number, summaryChars: number): NoteFeedRow {
   };
 }
 
-test("§7 truth table: mode arms expose only matching tasks", async () => {
+test("Notes spec (PYZ-264) §7 truth table: mode arms expose only matching tasks", async () => {
   const f = await seedUserOrgProject("feed1");
   const ctx = makeAuthContext(f.userId);
   const backendTask: FeedTask = {
@@ -120,6 +121,36 @@ test("§7 truth table: mode arms expose only matching tasks", async () => {
 
   const forBare = await resolveExposedNotes(ctx, f.projectId, bareTask);
   expect(forBare.notes.map((n) => n.title)).toEqual(["All"]);
+});
+
+test("case-canonical matching: mixed-case labels and uppercase feed task ids still match", async () => {
+  const f = await seedUserOrgProject("feed7");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = {
+    id: crypto.randomUUID(),
+    category: "Backend",
+    tags: ["RLS"],
+  };
+
+  await seedTeamNote(ctx, f.projectId, "MixedCats", {
+    feedMode: "categories",
+    feedCategories: [" BACKEND "],
+  });
+  await seedTeamNote(ctx, f.projectId, "MixedTags", {
+    feedMode: "tags",
+    feedTags: ["Rls"],
+  });
+  await seedTeamNote(ctx, f.projectId, "UpperTaskId", {
+    feedMode: "tasks",
+    feedTaskIds: [task.id.toUpperCase()],
+  });
+
+  const res = await resolveExposedNotes(ctx, f.projectId, task);
+  expect(res.notes.map((n) => n.title).sort()).toEqual([
+    "MixedCats",
+    "MixedTags",
+    "UpperTaskId",
+  ]);
 });
 
 test("private note with feed_mode='all' stays hidden from its own creator's agent", async () => {
@@ -226,6 +257,59 @@ test("applyFeedBudget: strict prefix semantics on the char budget", () => {
   expect(bothBinding.overflow.map((p) => p.slug)).toEqual(["row-3"]);
 });
 
+test("applyFeedBudget clamps caller budgets to [1, default]", () => {
+  const rows = [makeRow(1, 10), makeRow(2, 10)];
+
+  const floorNotes = applyFeedBudget(rows, { maxNotes: 0 });
+  expect(floorNotes.notes.length).toBe(1);
+  expect(floorNotes.overflow.length).toBe(1);
+
+  const floorChars = applyFeedBudget(rows, { maxChars: -1 });
+  expect(floorChars.notes).toEqual([]);
+  expect(floorChars.overflow.length).toBe(2);
+
+  const ceiling = applyFeedBudget(
+    Array.from({ length: FEED_NOTE_CAP + 4 }, (_, i) => makeRow(i, 10)),
+    { maxNotes: 100 },
+  );
+  expect(ceiling.notes.length).toBe(FEED_NOTE_CAP);
+});
+
+test("overflow pointers cap at FEED_POINTER_CAP with truncation flagged", () => {
+  const rows = Array.from(
+    { length: FEED_NOTE_CAP + FEED_POINTER_CAP + 5 },
+    (_, i) => makeRow(i, 10),
+  );
+
+  const res = applyFeedBudget(rows);
+  expect(res.notes.length).toBe(FEED_NOTE_CAP);
+  expect(res.overflow.length).toBe(FEED_POINTER_CAP);
+  expect(res.truncated).toBe(true);
+
+  const small = applyFeedBudget(rows.slice(0, 3));
+  expect(small.notes.length).toBe(3);
+  expect(small.truncated).toBe(false);
+});
+
+test("SQL fetch bound: resolution truncates past maxNotes + FEED_POINTER_CAP", async () => {
+  const f = await seedUserOrgProject("feed8");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+  const su = superuserPool();
+  await su`
+    INSERT INTO notes (project_id, title, slug, visibility, feed_mode)
+    SELECT ${f.projectId}, 'Bulk ' || g, 'bulk-' || g, 'team', 'all'
+    FROM generate_series(1, ${1 + FEED_POINTER_CAP + 1}) g
+  `;
+
+  const res = await resolveExposedNotes(ctx, f.projectId, task, {
+    maxNotes: 1,
+  });
+  expect(res.notes.length).toBe(1);
+  expect(res.overflow.length).toBe(FEED_POINTER_CAP);
+  expect(res.truncated).toBe(true);
+});
+
 test("char budget cuts a DB-backed resolution mid-list", async () => {
   const f = await seedUserOrgProject("feed5");
   const ctx = makeAuthContext(f.userId);
@@ -265,9 +349,12 @@ test("exposure query is index-backed via notes_feed_idx and stays slim", async (
   `;
   await su`ANALYZE notes`;
 
-  const q = new PgDialect().sqlToQuery(notesFeedSql(f.projectId, task));
+  const q = new PgDialect().sqlToQuery(
+    notesFeedSql(f.projectId, task, FEED_NOTE_CAP + FEED_POINTER_CAP),
+  );
   expect(q.sql).toContain("feed_mode <> 'none'");
   expect(q.sql).toContain("visibility = 'team'");
+  expect(q.sql).toContain("LIMIT");
   expect(q.sql).not.toContain("body");
   expect(q.sql).not.toContain("search_tsv");
 

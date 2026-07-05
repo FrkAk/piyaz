@@ -1,5 +1,6 @@
 /**
- * The §7 agent-exposure query: which notes an agent may see for a task.
+ * The agent-exposure query, Notes spec (PYZ-264 decisions) §7: which
+ * notes an agent may see for a task.
  *
  * A note is exposed iff `visibility = 'team'` AND `feed_mode <> 'none'`
  * AND its feed mode targets the task (`all` matches every task;
@@ -12,10 +13,12 @@
  * jsonb-to-`text[]` unfold for `?|`, which the type-safe builder cannot
  * express. Every parameter binds as a plain string (`JSON.stringify`
  * + server-side `::jsonb` casts) so the fragment behaves identically on
- * postgres-js and neon-http. `project_id` + `feed_mode <> 'none'` lead
- * the WHERE to match the partial `notes_feed_idx`; the jsonb arms are
- * post-filters over the exposed subset only. Never selects `body` or
- * `search_tsv`.
+ * postgres-js and neon-http. Task-side match values bind lowercased,
+ * meeting the canonical lowercase form the write path stores for feed
+ * labels and task ids. `project_id` + `feed_mode <> 'none'` lead the
+ * WHERE to match the partial `notes_feed_idx`; the jsonb arms are
+ * post-filters over the exposed subset only. A bound `LIMIT` caps the
+ * fetch. Never selects `body` or `search_tsv`.
  */
 
 import { sql, type SQL } from "drizzle-orm";
@@ -42,7 +45,8 @@ export type NoteFeedRawRow = {
 
 /**
  * The categories arm: matches `feed_mode = 'categories'` notes whose
- * `feed_categories` contains the task's category. Collapses to `false`
+ * `feed_categories` contains the task's category. The category binds
+ * lowercased to meet the stored canonical form. Collapses to `false`
  * for a category-less task.
  *
  * @param category - The task's category, or null.
@@ -50,21 +54,21 @@ export type NoteFeedRawRow = {
  */
 function categoriesArmSql(category: string | null): SQL {
   if (category === null) return sql`false`;
-  return sql`(n.feed_mode = 'categories' AND n.feed_categories @> ${JSON.stringify([category])}::jsonb)`;
+  return sql`(n.feed_mode = 'categories' AND n.feed_categories @> ${JSON.stringify([category.toLowerCase()])}::jsonb)`;
 }
 
 /**
  * The tags arm: matches `feed_mode = 'tags'` notes whose `feed_tags`
- * overlaps the task's tags. The task tags bind as one jsonb string and
- * unfold server-side into the `text[]` that `?|` requires. Collapses to
- * `false` for an untagged task.
+ * overlaps the task's tags. The task tags bind lowercased as one jsonb
+ * string and unfold server-side into the `text[]` that `?|` requires.
+ * Collapses to `false` for an untagged task.
  *
  * @param tags - The task's tags.
  * @returns SQL boolean fragment.
  */
 function tagsArmSql(tags: string[]): SQL {
   if (tags.length === 0) return sql`false`;
-  return sql`(n.feed_mode = 'tags' AND n.feed_tags ?| ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(tags)}::jsonb)))`;
+  return sql`(n.feed_mode = 'tags' AND n.feed_tags ?| ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(tags.map((tag) => tag.toLowerCase()))}::jsonb)))`;
 }
 
 /**
@@ -73,10 +77,15 @@ function tagsArmSql(tags: string[]): SQL {
  *
  * @param projectId - UUID of the project whose notes are resolved.
  * @param task - The task the feed targets.
+ * @param limit - Row bound; callers pass note cap + pointer cap.
  * @returns SQL yielding {@link NoteFeedRawRow}s, most recently updated
  *   first (ties broken by id ascending).
  */
-export function notesFeedSql(projectId: string, task: FeedTask): SQL {
+export function notesFeedSql(
+  projectId: string,
+  task: FeedTask,
+  limit: number,
+): SQL {
   return sql`
     SELECT n.id, n.slug, n.title, n.type, n.folder, n.summary, n.updated_at
     FROM ${notes} n
@@ -88,9 +97,10 @@ export function notesFeedSql(projectId: string, task: FeedTask): SQL {
         n.feed_mode = 'all'
         OR ${categoriesArmSql(task.category)}
         OR ${tagsArmSql(task.tags)}
-        OR (n.feed_mode = 'tasks' AND n.feed_task_ids @> ${JSON.stringify([task.id])}::jsonb)
+        OR (n.feed_mode = 'tasks' AND n.feed_task_ids @> ${JSON.stringify([task.id.toLowerCase()])}::jsonb)
       )
     ORDER BY n.updated_at DESC, n.id ASC
+    LIMIT ${limit}
   `;
 }
 
@@ -101,12 +111,14 @@ export function notesFeedSql(projectId: string, task: FeedTask): SQL {
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project whose notes are resolved.
  * @param task - The task the feed targets.
+ * @param limit - Row bound; callers pass note cap + pointer cap.
  * @returns Lazy raw statement yielding {@link NoteFeedRawRow}s.
  */
 export function notesFeedStmt(
   read: ReadConn,
   projectId: string,
   task: FeedTask,
+  limit: number,
 ) {
-  return read.execute(notesFeedSql(projectId, task));
+  return read.execute(notesFeedSql(projectId, task, limit));
 }
