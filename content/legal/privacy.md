@@ -79,7 +79,7 @@ Your data is stored in the **European Union**. We use the following sub-processo
 - **Amazon Web Services (AWS)**: underlying cloud infrastructure for the Neon database, Frankfurt region (EU).
 - **Cloudflare, Inc.**: application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging across its global edge network.
 
-A current sub-processor list is maintained at `[SUB-PROCESSOR LIST URL]`.
+A current sub-processor list is maintained at `https://app.piyaz.ai/subprocessors`.
 
 ### International transfers
 
