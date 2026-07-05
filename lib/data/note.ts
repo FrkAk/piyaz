@@ -24,6 +24,7 @@ import {
   assertValidNoteId,
   assertValidProjectId,
   ForbiddenError,
+  isUuid,
 } from "@/lib/auth/authorization";
 import {
   noteAccessGateStmt,
@@ -43,7 +44,11 @@ import {
   tasks,
   type Note,
 } from "@/lib/db/schema";
-import { normalizeExecuteResult, type ReadConn } from "@/lib/db/raw";
+import {
+  executeRaw,
+  normalizeExecuteResult,
+  type ReadConn,
+} from "@/lib/db/raw";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
 import {
   notesTreeVersionStmt,
@@ -75,6 +80,18 @@ const FOLDER_MAX_CHARS = 512;
 
 /** Char cap for a search query string. */
 const SEARCH_QUERY_MAX_CHARS = 256;
+
+/** Char cap for `summary`; it is projected on every tree-list row. */
+const SUMMARY_MAX_CHARS = 1000;
+
+/** Char cap for `category` and each tag / feed label. */
+const LABEL_MAX_CHARS = 200;
+
+/** Item cap for `tags`, `feedCategories`, and `feedTags`. */
+const LABEL_LIST_MAX_ITEMS = 500;
+
+/** Item cap for `feedTaskIds`. */
+const FEED_TASK_IDS_MAX_ITEMS = 1000;
 
 /** Chars of a note title rendered into activity summaries. */
 const SUMMARY_TITLE_MAX = 120;
@@ -110,7 +127,13 @@ export type NoteValidationField =
   | "body"
   | "folder"
   | "query"
-  | "ifUpdatedAt";
+  | "ifUpdatedAt"
+  | "summary"
+  | "category"
+  | "tags"
+  | "feedCategories"
+  | "feedTags"
+  | "feedTaskIds";
 
 /**
  * Thrown when caller input fails a cheap pre-write check, so callers get
@@ -488,6 +511,73 @@ function assertBodyWithinCap(body: string): void {
   }
 }
 
+/** The slim metadata fields {@link assertMetadataWithinCaps} validates. */
+type NoteMetadataFields = Pick<
+  NotePatch,
+  | "summary"
+  | "category"
+  | "tags"
+  | "feedCategories"
+  | "feedTags"
+  | "feedTaskIds"
+>;
+
+/**
+ * Validate the slim metadata fields against their caps. `summary` rides
+ * every tree-list row and search hit, and the label arrays are indexed,
+ * so unbounded values inflate every downstream read.
+ *
+ * @param fields - Candidate metadata fields; absent fields are skipped.
+ * @throws NoteValidationError on any cap violation or non-UUID feed task id.
+ */
+function assertMetadataWithinCaps(fields: NoteMetadataFields): void {
+  if (
+    fields.summary !== undefined &&
+    fields.summary.length > SUMMARY_MAX_CHARS
+  ) {
+    throw new NoteValidationError(
+      "summary",
+      `summary exceeds ${SUMMARY_MAX_CHARS} characters`,
+    );
+  }
+  if (fields.category != null && fields.category.length > LABEL_MAX_CHARS) {
+    throw new NoteValidationError(
+      "category",
+      `category exceeds ${LABEL_MAX_CHARS} characters`,
+    );
+  }
+  for (const field of ["tags", "feedCategories", "feedTags"] as const) {
+    const values = fields[field];
+    if (values === undefined) continue;
+    if (values.length > LABEL_LIST_MAX_ITEMS) {
+      throw new NoteValidationError(
+        field,
+        `${field} exceeds ${LABEL_LIST_MAX_ITEMS} items`,
+      );
+    }
+    if (values.some((value) => value.length > LABEL_MAX_CHARS)) {
+      throw new NoteValidationError(
+        field,
+        `${field} items exceed ${LABEL_MAX_CHARS} characters`,
+      );
+    }
+  }
+  if (fields.feedTaskIds !== undefined) {
+    if (fields.feedTaskIds.length > FEED_TASK_IDS_MAX_ITEMS) {
+      throw new NoteValidationError(
+        "feedTaskIds",
+        `feedTaskIds exceeds ${FEED_TASK_IDS_MAX_ITEMS} items`,
+      );
+    }
+    if (fields.feedTaskIds.some((id) => !isUuid(id))) {
+      throw new NoteValidationError(
+        "feedTaskIds",
+        "feedTaskIds items must be UUIDs",
+      );
+    }
+  }
+}
+
 /**
  * Parse an `ifUpdatedAt` precondition into epoch milliseconds.
  *
@@ -609,9 +699,13 @@ function dropUnchangedFields(
 // ---------------------------------------------------------------------------
 
 /**
- * Query the live slugs occupying a base's namespace. Must run while the
- * caller holds `acquireProjectLock` — the advisory lock is what makes the
- * subsequent check-then-insert race-free.
+ * Query the live slugs occupying a base's namespace. Goes through the
+ * `note_slugs_in_namespace` SECURITY DEFINER read: the namespace spans
+ * every visibility (the partial unique index does too), so an RLS-scoped
+ * read blind to other members' private notes would allocate a colliding
+ * slug and abort with a raw 23505. Must run while the caller holds
+ * `acquireProjectLock` — the advisory lock is what makes the subsequent
+ * check-then-write race-free.
  *
  * @param tx - Active RLS transaction handle.
  * @param projectId - Owning project id.
@@ -627,20 +721,10 @@ async function loadSlugNamespace(
   base: string,
   extraSlug?: string,
 ): Promise<Set<string>> {
-  const rows = await tx
-    .select({ slug: notes.slug })
-    .from(notes)
-    .where(
-      and(
-        eq(notes.projectId, projectId),
-        isNull(notes.deletedAt),
-        or(
-          eq(notes.slug, base),
-          like(notes.slug, `${escapeLike(base)}-%`),
-          ...(extraSlug === undefined ? [] : [eq(notes.slug, extraSlug)]),
-        ),
-      ),
-    );
+  const rows = await executeRaw<{ slug: string }>(
+    tx,
+    sql`SELECT slug FROM public.note_slugs_in_namespace(${projectId}, ${base}, ${`${escapeLike(base)}-%`}, ${extraSlug ?? null})`,
+  );
   return new Set(rows.map((row) => row.slug));
 }
 
@@ -1110,7 +1194,7 @@ export async function deleteNotePreview(
  * @returns Slim summary of the created note.
  * @throws ForbiddenError when the caller cannot access the project.
  * @throws ProjectArchivedError when the project is archived.
- * @throws NoteValidationError on title/body/folder cap violations.
+ * @throws NoteValidationError on any field cap violation.
  */
 export async function createNote(
   ctx: AuthContext,
@@ -1120,6 +1204,7 @@ export async function createNote(
   assertTitleWithinCap(input.title);
   const body = input.body ?? "";
   assertBodyWithinCap(body);
+  assertMetadataWithinCaps(input);
   const folder = normalizeFolder(input.folder ?? "");
 
   const created = await withUserContext(ctx.userId, async (tx) => {
@@ -1193,8 +1278,9 @@ export async function createNote(
  * snapshots a revision (pruned to the retention cap), re-derives links,
  * and flips `embedding_status` to `stale` when the note is already in the
  * embedding pipeline. `slug` is never touched — slugs are stable once
- * assigned. The locked re-read selects `body` only when the patch carries
- * one and re-asserts the note is live after acquiring the row lock.
+ * assigned. One locked read serves as both the access gate and the CAS
+ * baseline (`FOR UPDATE OF notes` through the projects join); it selects
+ * `body` only when the patch carries one.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -1223,6 +1309,7 @@ export async function updateNote(
   }
   if (applied.title !== undefined) assertTitleWithinCap(applied.title);
   if (applied.body !== undefined) assertBodyWithinCap(applied.body);
+  assertMetadataWithinCaps(applied);
   if (applied.folder !== undefined) {
     applied.folder = normalizeFolder(applied.folder);
   }
@@ -1230,24 +1317,12 @@ export async function updateNote(
     ifUpdatedAt === undefined ? undefined : parseIfUpdatedAt(ifUpdatedAt);
 
   const result = await withUserContext(ctx.userId, async (tx) => {
-    const gate = await assertNoteAccessTx(tx, noteId);
-    assertNoteLive(gate);
-    assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
-
-    const appliedFields = Object.keys(applied);
-    if (appliedFields.length === 0) {
-      if (
-        ifUpdatedAtMs !== undefined &&
-        ifUpdatedAtMs !== gate.updatedAt.getTime()
-      ) {
-        throw new NoteStaleWriteError(gate.updatedAt, gate.version);
-      }
-      return { summary: gateSummary(gate), wasNoOp: true };
-    }
-
     const needsBody = applied.body !== undefined;
     const [current] = await tx
       .select({
+        id: notes.id,
+        projectId: notes.projectId,
+        slug: notes.slug,
         title: notes.title,
         folder: notes.folder,
         tags: notes.tags,
@@ -1265,36 +1340,42 @@ export async function updateNote(
         updatedAt: notes.updatedAt,
         embeddingStatus: notes.embeddingStatus,
         deletedAt: notes.deletedAt,
+        projectStatus: projects.status,
+        projectIdentifier: projects.identifier,
         body: needsBody ? notes.body : sql<string>`''`,
       })
       .from(notes)
+      .innerJoin(projects, eq(projects.id, notes.projectId))
       .where(eq(notes.id, noteId))
-      .for("update");
+      .limit(1)
+      .for("update", { of: notes });
     if (!current || current.deletedAt !== null) {
       throw new ForbiddenError("Forbidden", "note", noteId);
     }
+    assertProjectWritable(current.projectStatus, current.projectIdentifier);
     if (
       ifUpdatedAtMs !== undefined &&
       ifUpdatedAtMs !== current.updatedAt.getTime()
     ) {
       throw new NoteStaleWriteError(current.updatedAt, current.version);
     }
+    const currentSummary: NoteSummary = {
+      id: current.id,
+      slug: current.slug,
+      title: current.title,
+      projectId: current.projectId,
+      folder: current.folder,
+      version: current.version,
+      updatedAt: current.updatedAt,
+    };
+    if (Object.keys(applied).length === 0) {
+      return { summary: currentSummary, wasNoOp: true };
+    }
 
     const bodyChanged = needsBody && applied.body !== current.body;
     const changedFields = dropUnchangedFields(applied, current, bodyChanged);
     if (changedFields.length === 0) {
-      return {
-        summary: {
-          id: gate.id,
-          slug: gate.slug,
-          title: current.title,
-          projectId: gate.projectId,
-          folder: current.folder,
-          version: current.version,
-          updatedAt: current.updatedAt,
-        },
-        wasNoOp: true,
-      };
+      return { summary: currentSummary, wasNoOp: true };
     }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
     const changes: Record<string, unknown> = {
@@ -1329,15 +1410,15 @@ export async function updateNote(
       await replaceDerivedLinks(
         tx,
         noteId,
-        gate.projectId,
-        gate.projectIdentifier,
+        current.projectId,
+        current.projectIdentifier,
         newBody,
         false,
       );
     }
     await insertActivityEvents(tx, ctx.actor, [
       {
-        projectId: gate.projectId,
+        projectId: current.projectId,
         taskId: null,
         type: "note_updated",
         targetRef: summary.slug,
@@ -1437,7 +1518,6 @@ export async function moveFolder(
   }
   const leaf = srcPath.split("/").at(-1) ?? srcPath;
   const dest = destParentPath === "" ? leaf : `${destParentPath}/${leaf}`;
-  if (dest === srcPath) return { dest, movedCount: 0 };
   if (dest.length > FOLDER_MAX_CHARS) {
     throw new NoteValidationError(
       "folder",
@@ -1449,6 +1529,7 @@ export async function moveFolder(
   const moved = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
     assertProjectWritable(access.project.status, access.project.identifier);
+    if (dest === srcPath) return 0;
     await acquireProjectLock(tx, projectId);
     const subtreeFilter = and(
       eq(notes.projectId, projectId),
@@ -1703,34 +1784,6 @@ export async function approveShareRequest(
       throw new NoteShareStateError("no_pending_request");
     }
     return applyVisibilityTx(tx, ctx, gate, "team");
-  });
-
-  emitNoteEvent(summary.projectId, summary.id);
-  return summary;
-}
-
-/**
- * Set a note's visibility directly. Human-path function: flipping to
- * `team` also clears any pending share request (the request is moot).
- *
- * @param ctx - Resolved auth context.
- * @param noteId - UUID of the note.
- * @param visibility - Target visibility.
- * @returns Slim summary of the note.
- * @throws ForbiddenError on inaccessible or trashed notes.
- * @throws ProjectArchivedError when the project is archived.
- */
-export async function setNoteVisibility(
-  ctx: AuthContext,
-  noteId: string,
-  visibility: Visibility,
-): Promise<NoteSummary> {
-  assertValidNoteId(noteId);
-  const summary = await withUserContext(ctx.userId, async (tx) => {
-    const gate = await assertNoteAccessTx(tx, noteId);
-    assertNoteLive(gate);
-    assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
-    return applyVisibilityTx(tx, ctx, gate, visibility);
   });
 
   emitNoteEvent(summary.projectId, summary.id);

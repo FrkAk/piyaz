@@ -20,12 +20,38 @@ import {
   NoteValidationError,
 } from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
-import { assertNoteAccess, ForbiddenError } from "@/lib/auth/authorization";
+import { ForbiddenError } from "@/lib/auth/authorization";
+import { ProjectArchivedError } from "@/lib/graph/errors";
 import { NOTE_TITLE_MAX_BYTES } from "@/lib/db/schema";
+import { superuserPool } from "@/tests/setup/global";
 
 afterEach(async () => {
   await truncateAll();
 });
+
+/**
+ * Insert a second user as a member of an existing organization.
+ *
+ * @param organizationId - Target organization id.
+ * @param suffix - Suffix added to name/email so fixtures don't collide.
+ * @returns The new user's id.
+ */
+async function seedTeammate(
+  organizationId: string,
+  suffix: string,
+): Promise<string> {
+  const sql = superuserPool();
+  const [u] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
+    RETURNING id
+  `;
+  await sql`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${organizationId}, ${u.id}, 'member', now())
+  `;
+  return u.id;
+}
 
 test("concurrent createNote calls dedupe slugs under the project lock", async () => {
   const f = await seedUserOrgProject("noteslug");
@@ -260,7 +286,7 @@ test("moveNote relocates a single note", async () => {
   expect(moved.folder).toBe("Architecture/Auth");
 });
 
-test("assertNoteAccess is 404-shaped for foreign and malformed ids", async () => {
+test("note reads are 404-shaped for foreign and malformed ids", async () => {
   const mine = await seedUserOrgProject("noteacc1");
   const theirs = await seedUserOrgProject("noteacc2");
   const theirNote = await createNote(makeAuthContext(theirs.userId), {
@@ -271,15 +297,13 @@ test("assertNoteAccess is 404-shaped for foreign and malformed ids", async () =>
   const ctx = makeAuthContext(mine.userId);
   let foreignErr: unknown;
   try {
-    await assertNoteAccess(theirNote.id, ctx);
+    await getNoteFull(ctx, theirNote.id);
   } catch (e) {
     foreignErr = e;
   }
   expect(foreignErr).toBeInstanceOf(ForbiddenError);
   expect((foreignErr as ForbiddenError).resource).toBe("note");
 
-  const malformed = assertNoteAccess("not-a-uuid", ctx);
-  await expect(malformed).rejects.toBeInstanceOf(ForbiddenError);
   await expect(getNoteFull(ctx, "not-a-uuid")).rejects.toBeInstanceOf(
     ForbiddenError,
   );
@@ -405,6 +429,93 @@ test("share request lifecycle: request, approve, reject invalid states", async (
   await expect(requestShare(ctx, note.id)).rejects.toBeInstanceOf(
     NoteShareStateError,
   );
+});
+
+test("slug allocation dedupes past a teammate's private note", async () => {
+  const f = await seedUserOrgProject("noteprv");
+  const mateId = await seedTeammate(f.organizationId, "noteprv2");
+
+  const mine = await createNote(makeAuthContext(f.userId), {
+    projectId: f.projectId,
+    title: "Roadmap",
+  });
+  expect(mine.slug).toBe("roadmap");
+
+  const theirs = await createNote(makeAuthContext(mateId), {
+    projectId: f.projectId,
+    title: "Roadmap",
+  });
+  expect(theirs.slug).toBe("roadmap-2");
+});
+
+test("restore auto-suffixes past a teammate's private slug holder", async () => {
+  const f = await seedUserOrgProject("noteprvr");
+  const mateId = await seedTeammate(f.organizationId, "noteprvr2");
+  const ctx = makeAuthContext(f.userId);
+
+  const mine = await createNote(ctx, { projectId: f.projectId, title: "Plan" });
+  await deleteNote(ctx, mine.id);
+  const squatter = await createNote(makeAuthContext(mateId), {
+    projectId: f.projectId,
+    title: "Plan",
+  });
+  expect(squatter.slug).toBe("plan");
+
+  const restored = await restoreNote(ctx, mine.id);
+  expect(restored.slug).toBe("plan-2");
+});
+
+test("moveFolder no-op still gates project access and archived status", async () => {
+  const mine = await seedUserOrgProject("notemvg1");
+  const theirs = await seedUserOrgProject("notemvg2");
+  const ctx = makeAuthContext(mine.userId);
+
+  await expect(
+    moveFolder(ctx, theirs.projectId, "docs/api", "docs"),
+  ).rejects.toBeInstanceOf(ForbiddenError);
+
+  const sql = superuserPool();
+  await sql`UPDATE projects SET status = 'archived' WHERE id = ${mine.projectId}`;
+  await expect(
+    moveFolder(ctx, mine.projectId, "docs/api", "docs"),
+  ).rejects.toBeInstanceOf(ProjectArchivedError);
+});
+
+test("metadata caps reject oversized summary, labels, and feed ids", async () => {
+  const f = await seedUserOrgProject("notecaps");
+  const ctx = makeAuthContext(f.userId);
+
+  await expect(
+    createNote(ctx, {
+      projectId: f.projectId,
+      title: "N",
+      summary: "s".repeat(1001),
+    }),
+  ).rejects.toBeInstanceOf(NoteValidationError);
+  await expect(
+    createNote(ctx, {
+      projectId: f.projectId,
+      title: "N",
+      tags: ["t".repeat(201)],
+    }),
+  ).rejects.toBeInstanceOf(NoteValidationError);
+  await expect(
+    createNote(ctx, {
+      projectId: f.projectId,
+      title: "N",
+      category: "c".repeat(201),
+    }),
+  ).rejects.toBeInstanceOf(NoteValidationError);
+
+  const note = await createNote(ctx, { projectId: f.projectId, title: "N" });
+  await expect(
+    updateNote(ctx, note.id, {
+      tags: Array.from({ length: 501 }, (_, i) => `t${i}`),
+    }),
+  ).rejects.toBeInstanceOf(NoteValidationError);
+  await expect(
+    updateNote(ctx, note.id, { feedTaskIds: ["not-a-uuid"] }),
+  ).rejects.toBeInstanceOf(NoteValidationError);
 });
 
 test("note writes record project-scoped activity events", async () => {

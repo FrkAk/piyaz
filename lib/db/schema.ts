@@ -441,6 +441,12 @@ export const notes = pgTable(
     index("notes_project_title_idx")
       .on(t.projectId, t.title)
       .where(sql`deleted_at IS NULL`),
+    // Serves the wiki-link title resolution on every body write, which
+    // filters on LOWER(title) and would otherwise scan the project's notes
+    // inside the locked write transaction.
+    index("notes_project_title_lower_idx")
+      .on(t.projectId, sql`lower(${t.title})`)
+      .where(sql`deleted_at IS NULL`),
     index("notes_search_idx").using("gin", t.searchTsv),
     index("notes_tags_idx").using("gin", t.tags),
     index("notes_feed_idx")

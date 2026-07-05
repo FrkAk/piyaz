@@ -29,6 +29,26 @@ test("extractNoteRefs skips fenced code blocks", () => {
   expect(refs.titles).toEqual([]);
 });
 
+test("extractNoteRefs follows CommonMark fence rules", () => {
+  const nested = "````\n```\nPRJ1-9\n```\n````\nafter PRJ1-2";
+  expect(extractNoteRefs(nested, "PRJ1").taskSeqs).toEqual([2]);
+
+  const unterminated = "``` PRJ1-5\nPRJ1-6 swallowed";
+  expect(extractNoteRefs(unterminated, "PRJ1").taskSeqs).toEqual([]);
+
+  const tilde = "~~~\nPRJ1-7\n~~~\nafter PRJ1-8";
+  expect(extractNoteRefs(tilde, "PRJ1").taskSeqs).toEqual([8]);
+
+  const indented = "  ```\nPRJ1-4\n```\nafter PRJ1-1";
+  expect(extractNoteRefs(indented, "PRJ1").taskSeqs).toEqual([1]);
+
+  const shortCloser = "````\nPRJ1-3\n```\nPRJ1-5\n````\nout PRJ1-6";
+  expect(extractNoteRefs(shortCloser, "PRJ1").taskSeqs).toEqual([6]);
+
+  const backtickInfo = "```code`span`\nPRJ1-12 after";
+  expect(extractNoteRefs(backtickInfo, "PRJ1").taskSeqs).toEqual([12]);
+});
+
 test("extractNoteRefs matches case-insensitively and dedupes", () => {
   const refs = extractNoteRefs("prj1-12 PRJ1-12 [[Model]] [[model]]", "PRJ1");
   expect(refs.taskSeqs).toEqual([12]);

@@ -4,7 +4,6 @@ import { cache } from "react";
 import type { AuthContext } from "@/lib/auth/context";
 import type { Tx } from "@/lib/db/rls";
 import {
-  findNoteAccess,
   findNoteAccessTx,
   findProjectAccess,
   findProjectAccessTx,
@@ -242,31 +241,11 @@ export async function assertTaskAccessTx(
  * `deletedAt`) — restore is the one caller that needs them, and every
  * other caller rejects or filters on `deletedAt` itself.
  *
- * @param noteId - UUID of the note to authorize.
- * @param ctx - Resolved auth context.
- * @returns The slim gate row for the note.
- * @throws ForbiddenError on malformed id, missing note, cross-team access,
- *   or another member's private note.
- */
-export async function assertNoteAccess(
-  noteId: string,
-  ctx: AuthContext,
-): Promise<NoteAccessGate> {
-  if (!isUuid(noteId)) {
-    throw new ForbiddenError("Forbidden", "note", noteId);
-  }
-  const note = await findNoteAccess(ctx.userId, noteId);
-  if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
-  return note;
-}
-
-/**
- * {@link assertNoteAccess} on a caller-supplied tx.
- *
  * @param tx - Active RLS transaction handle.
  * @param noteId - UUID of the note to authorize.
  * @returns The slim gate row for the note.
- * @throws ForbiddenError on malformed id, missing note, or invisible note.
+ * @throws ForbiddenError on malformed id, missing note, cross-team access,
+ *   or another member's private note.
  */
 export async function assertNoteAccessTx(
   tx: Tx,
