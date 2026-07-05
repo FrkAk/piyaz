@@ -1,0 +1,285 @@
+import { test, expect, afterEach } from "bun:test";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { truncateAll } from "@/tests/setup/schema";
+import { seedUserOrgProject } from "@/tests/setup/seed";
+import { appUserPool, superuserPool } from "@/tests/setup/global";
+import {
+  applyFeedBudget,
+  createNote,
+  deleteNote,
+  resolveExposedNotes,
+  updateNote,
+  FEED_CHAR_BUDGET,
+  FEED_NOTE_CAP,
+  type FeedTask,
+  type NoteFeedRow,
+  type NotePatch,
+} from "@/lib/data/note";
+import { notesFeedSql } from "@/lib/db/raw/notes-feed";
+import { ForbiddenError } from "@/lib/auth/authorization";
+import { makeAuthContext } from "@/lib/auth/context";
+
+afterEach(async () => {
+  await truncateAll();
+});
+
+/**
+ * Create a team-visible note and patch its feed fields in one step.
+ *
+ * @param ctx - Auth context of the creator.
+ * @param projectId - Target project.
+ * @param title - Note title.
+ * @param feed - Feed-field patch applied after creation.
+ * @returns The updated note summary.
+ */
+async function seedTeamNote(
+  ctx: ReturnType<typeof makeAuthContext>,
+  projectId: string,
+  title: string,
+  feed: Pick<
+    NotePatch,
+    "feedMode" | "feedCategories" | "feedTags" | "feedTaskIds"
+  >,
+) {
+  const note = await createNote(ctx, {
+    projectId,
+    title,
+    visibility: "team",
+  });
+  return updateNote(ctx, note.id, feed);
+}
+
+/**
+ * Build a synthetic feed row for pure budget tests.
+ *
+ * @param i - Index folded into id/slug/title.
+ * @param summaryChars - Length of the generated summary.
+ * @returns A feed row whose char cost is `title.length + summaryChars`.
+ */
+function makeRow(i: number, summaryChars: number): NoteFeedRow {
+  return {
+    id: `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+    slug: `row-${i}`,
+    title: `T${i}`,
+    type: "guidance",
+    folder: "",
+    summary: "s".repeat(summaryChars),
+    updatedAt: new Date(Date.now() - i * 1000),
+  };
+}
+
+test("§7 truth table: mode arms expose only matching tasks", async () => {
+  const f = await seedUserOrgProject("feed1");
+  const ctx = makeAuthContext(f.userId);
+  const backendTask: FeedTask = {
+    id: crypto.randomUUID(),
+    category: "Backend",
+    tags: ["auth", "rls"],
+  };
+  const frontendTask: FeedTask = {
+    id: crypto.randomUUID(),
+    category: "Frontend",
+    tags: ["ui"],
+  };
+  const bareTask: FeedTask = {
+    id: crypto.randomUUID(),
+    category: null,
+    tags: [],
+  };
+
+  await seedTeamNote(ctx, f.projectId, "None", { feedMode: "none" });
+  await seedTeamNote(ctx, f.projectId, "All", { feedMode: "all" });
+  await seedTeamNote(ctx, f.projectId, "Cats", {
+    feedMode: "categories",
+    feedCategories: ["Backend"],
+  });
+  await seedTeamNote(ctx, f.projectId, "Tags", {
+    feedMode: "tags",
+    feedTags: ["rls", "x"],
+  });
+  await seedTeamNote(ctx, f.projectId, "Tasks", {
+    feedMode: "tasks",
+    feedTaskIds: [backendTask.id],
+  });
+  await seedTeamNote(ctx, f.projectId, "EmptyCats", {
+    feedMode: "categories",
+    feedCategories: [],
+  });
+
+  const forBackend = await resolveExposedNotes(ctx, f.projectId, backendTask);
+  expect(forBackend.notes.map((n) => n.title).sort()).toEqual([
+    "All",
+    "Cats",
+    "Tags",
+    "Tasks",
+  ]);
+  expect(forBackend.overflow).toEqual([]);
+
+  const forFrontend = await resolveExposedNotes(ctx, f.projectId, frontendTask);
+  expect(forFrontend.notes.map((n) => n.title)).toEqual(["All"]);
+
+  const forBare = await resolveExposedNotes(ctx, f.projectId, bareTask);
+  expect(forBare.notes.map((n) => n.title)).toEqual(["All"]);
+});
+
+test("private note with feed_mode='all' stays hidden from its own creator's agent", async () => {
+  const f = await seedUserOrgProject("feed2");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Private guidance",
+    visibility: "private",
+  });
+  await updateNote(ctx, note.id, { feedMode: "all" });
+
+  const res = await resolveExposedNotes(ctx, f.projectId, task);
+  expect(res.notes).toEqual([]);
+  expect(res.overflow).toEqual([]);
+});
+
+test("trashed notes and foreign projects never resolve", async () => {
+  const f1 = await seedUserOrgProject("feed3a");
+  const f2 = await seedUserOrgProject("feed3b");
+  const ctx1 = makeAuthContext(f1.userId);
+  const ctx2 = makeAuthContext(f2.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+
+  const mine = await seedTeamNote(ctx1, f1.projectId, "Mine", {
+    feedMode: "all",
+  });
+  await seedTeamNote(ctx2, f2.projectId, "Elsewhere", { feedMode: "all" });
+
+  const before = await resolveExposedNotes(ctx1, f1.projectId, task);
+  expect(before.notes.map((n) => n.title)).toEqual(["Mine"]);
+
+  await deleteNote(ctx1, mine.id);
+  const after = await resolveExposedNotes(ctx1, f1.projectId, task);
+  expect(after.notes).toEqual([]);
+
+  await expect(
+    resolveExposedNotes(ctx1, f2.projectId, task),
+  ).rejects.toBeInstanceOf(ForbiddenError);
+});
+
+test("note cap: first 8 by updatedAt DESC admit, remainder degrade to pointers", async () => {
+  const f = await seedUserOrgProject("feed4");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+
+  const summaries = [];
+  for (let i = 0; i < 10; i++) {
+    summaries.push(
+      await seedTeamNote(ctx, f.projectId, `Doc ${i}`, { feedMode: "all" }),
+    );
+  }
+  const expectedOrder = [...summaries]
+    .sort(
+      (a, b) =>
+        b.updatedAt.getTime() - a.updatedAt.getTime() ||
+        a.id.localeCompare(b.id),
+    )
+    .map((s) => s.id);
+
+  const res = await resolveExposedNotes(ctx, f.projectId, task);
+  expect(res.notes.length).toBe(FEED_NOTE_CAP);
+  expect(res.overflow.length).toBe(2);
+  expect([
+    ...res.notes.map((n) => n.id),
+    ...res.overflow.map((p) => p.id),
+  ]).toEqual(expectedOrder);
+  for (const pointer of res.overflow) {
+    expect(Object.keys(pointer).sort()).toEqual([
+      "id",
+      "slug",
+      "title",
+      "type",
+    ]);
+  }
+});
+
+test("applyFeedBudget: strict prefix semantics on the char budget", () => {
+  const exactFit = applyFeedBudget([makeRow(1, 3998), makeRow(2, 3998)], {
+    maxChars: FEED_CHAR_BUDGET,
+  });
+  expect(exactFit.notes.length).toBe(2);
+  expect(exactFit.overflow.length).toBe(0);
+
+  const prefixStops = applyFeedBudget(
+    [makeRow(1, 5000), makeRow(2, 5000), makeRow(3, 10)],
+    { maxChars: 8000 },
+  );
+  expect(prefixStops.notes.map((n) => n.slug)).toEqual(["row-1"]);
+  expect(prefixStops.overflow.map((p) => p.slug)).toEqual(["row-2", "row-3"]);
+
+  const firstTooBig = applyFeedBudget([makeRow(1, 9000), makeRow(2, 10)], {
+    maxChars: 8000,
+  });
+  expect(firstTooBig.notes).toEqual([]);
+  expect(firstTooBig.overflow.length).toBe(2);
+
+  const bothBinding = applyFeedBudget(
+    [makeRow(1, 10), makeRow(2, 10), makeRow(3, 10)],
+    { maxNotes: 2, maxChars: 8000 },
+  );
+  expect(bothBinding.notes.length).toBe(2);
+  expect(bothBinding.overflow.map((p) => p.slug)).toEqual(["row-3"]);
+});
+
+test("char budget cuts a DB-backed resolution mid-list", async () => {
+  const f = await seedUserOrgProject("feed5");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+
+  for (let i = 0; i < 4; i++) {
+    const note = await createNote(ctx, {
+      projectId: f.projectId,
+      title: `N${i}`,
+      visibility: "team",
+      summary: "x".repeat(200),
+    });
+    await updateNote(ctx, note.id, { feedMode: "all" });
+  }
+
+  const res = await resolveExposedNotes(ctx, f.projectId, task, {
+    maxChars: 450,
+  });
+  expect(res.notes.length).toBe(2);
+  expect(res.overflow.length).toBe(2);
+});
+
+test("exposure query is index-backed via notes_feed_idx and stays slim", async () => {
+  const f = await seedUserOrgProject("feed6");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = {
+    id: crypto.randomUUID(),
+    category: "Backend",
+    tags: ["rls"],
+  };
+  await seedTeamNote(ctx, f.projectId, "Indexed", { feedMode: "all" });
+  const su = superuserPool();
+  await su`
+    INSERT INTO notes (project_id, title, slug, visibility, feed_mode)
+    SELECT ${f.projectId}, 'Filler ' || g, 'filler-' || g, 'team', 'none'
+    FROM generate_series(1, 400) g
+  `;
+  await su`ANALYZE notes`;
+
+  const q = new PgDialect().sqlToQuery(notesFeedSql(f.projectId, task));
+  expect(q.sql).toContain("feed_mode <> 'none'");
+  expect(q.sql).toContain("visibility = 'team'");
+  expect(q.sql).not.toContain("body");
+  expect(q.sql).not.toContain("search_tsv");
+
+  const pool = appUserPool();
+  const planText = await pool.begin(async (tx) => {
+    await tx`SELECT set_config('app.user_id', ${f.userId}, true)`;
+    await tx.unsafe("SET LOCAL enable_seqscan = off");
+    const rows = await tx.unsafe(
+      "EXPLAIN (FORMAT TEXT) " + q.sql,
+      q.params as string[],
+    );
+    return rows.map((r) => Object.values(r)[0]).join("\n");
+  });
+  expect(planText).toMatch(/notes_feed_idx/);
+});
