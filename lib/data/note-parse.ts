@@ -21,13 +21,13 @@ export type ExtractedRefs = {
 };
 
 /**
- * Escape a project identifier for embedding in a RegExp source.
+ * Escape RegExp metacharacters in a literal string.
  *
- * @param identifier - Project identifier (e.g. `PYZ`).
- * @returns The identifier with RegExp metacharacters escaped.
+ * @param value - Literal string destined for a RegExp source.
+ * @returns The escaped string.
  */
-function escapeRegExp(identifier: string): string {
-  return identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

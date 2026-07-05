@@ -84,6 +84,19 @@ test("searchNotes handles quoted phrases and stopword-only queries", async () =>
   ).rejects.toBeInstanceOf(NoteValidationError);
 });
 
+test("pure-negation queries match nothing", async () => {
+  const f = await seedUserOrgProject("srch6");
+  const ctx = makeAuthContext(f.userId);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Doc",
+    body: "walrus content",
+  });
+
+  expect(await searchNotes(ctx, f.projectId, "-draft")).toEqual([]);
+  expect((await searchNotes(ctx, f.projectId, "walrus -draft")).length).toBe(1);
+});
+
 test("search caps hits at 20", async () => {
   const f = await seedUserOrgProject("srch4");
   const ctx = makeAuthContext(f.userId);

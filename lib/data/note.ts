@@ -31,7 +31,7 @@ import {
   type NoteAccessGate,
 } from "@/lib/data/access";
 import { insertActivityEvents } from "@/lib/data/activity";
-import { extractNoteRefs } from "@/lib/data/note-parse";
+import { escapeRegExp, extractNoteRefs } from "@/lib/data/note-parse";
 import {
   NOTE_BODY_MAX_CHARS,
   NOTE_TITLE_MAX_BYTES,
@@ -415,16 +415,6 @@ function escapeLike(value: string): string {
 }
 
 /**
- * Escape RegExp metacharacters in a literal string.
- *
- * @param value - Literal string destined for a RegExp source.
- * @returns The escaped string.
- */
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
  * Pick the next free slug in a base's namespace: the base itself when
  * free, else `base-<n+1>` past the highest taken suffix (first duplicate
  * gets `-2`).
@@ -577,6 +567,43 @@ function gateSummary(gate: NoteAccessGate): NoteSummary {
   };
 }
 
+/** Patch fields compared by JSON value rather than identity. */
+const JSON_PATCH_FIELDS = new Set<keyof NotePatch>([
+  "tags",
+  "feedCategories",
+  "feedTags",
+  "feedTaskIds",
+]);
+
+/**
+ * Remove patch fields whose value equals the note's current value, so a
+ * value-equal patch takes the no-op path (no UPDATE, no activity event,
+ * no emit) and `updatedAt` stays a faithful change marker. Mutates
+ * `applied` in place.
+ *
+ * @param applied - Sanitized patch (mutated in place).
+ * @param current - Current column values from the locked re-read.
+ * @param bodyChanged - Whether the patch body differs from the current body.
+ * @returns The effectively changed field names.
+ */
+function dropUnchangedFields(
+  applied: NotePatch,
+  current: Pick<Note, Exclude<keyof NotePatch, "body">>,
+  bodyChanged: boolean,
+): string[] {
+  for (const field of Object.keys(applied) as (keyof NotePatch)[]) {
+    if (field === "body") {
+      if (!bodyChanged) delete applied.body;
+      continue;
+    }
+    const unchanged = JSON_PATCH_FIELDS.has(field)
+      ? JSON.stringify(applied[field]) === JSON.stringify(current[field])
+      : applied[field] === current[field];
+    if (unchanged) delete applied[field];
+  }
+  return Object.keys(applied);
+}
+
 // ---------------------------------------------------------------------------
 // In-transaction helpers
 // ---------------------------------------------------------------------------
@@ -589,12 +616,16 @@ function gateSummary(gate: NoteAccessGate): NoteSummary {
  * @param tx - Active RLS transaction handle.
  * @param projectId - Owning project id.
  * @param base - Slug base whose namespace to load.
- * @returns The set of live slugs matching `base` or `base-%`.
+ * @param extraSlug - Additional slug to include in the availability check
+ *   even when it falls outside the base's namespace (restore after a
+ *   title rename).
+ * @returns The set of live slugs matching `base`, `base-%`, or `extraSlug`.
  */
 async function loadSlugNamespace(
   tx: Tx,
   projectId: string,
   base: string,
+  extraSlug?: string,
 ): Promise<Set<string>> {
   const rows = await tx
     .select({ slug: notes.slug })
@@ -603,7 +634,11 @@ async function loadSlugNamespace(
       and(
         eq(notes.projectId, projectId),
         isNull(notes.deletedAt),
-        or(eq(notes.slug, base), like(notes.slug, `${escapeLike(base)}-%`)),
+        or(
+          eq(notes.slug, base),
+          like(notes.slug, `${escapeLike(base)}-%`),
+          ...(extraSlug === undefined ? [] : [eq(notes.slug, extraSlug)]),
+        ),
       ),
     );
   return new Set(rows.map((row) => row.slug));
@@ -1151,12 +1186,15 @@ export async function createNote(
 
 /**
  * Update a note's scalar fields and/or body under the `ifUpdatedAt`
- * compare-and-swap. A body change bumps `version`, snapshots a revision
- * (pruned to the retention cap), re-derives links, and flips
- * `embedding_status` to `stale` when the note is already in the embedding
- * pipeline. `slug` is never touched — slugs are stable once assigned. The
- * locked re-read selects `body` only when the patch carries one and
- * re-asserts the note is live after acquiring the row lock.
+ * compare-and-swap. Fields equal to their current values are dropped
+ * after the locked re-read; a patch with no effective change is a no-op
+ * (no `updatedAt` bump, activity event, or emit), keeping `updatedAt` a
+ * faithful CAS token and tree-ETag source. A body change bumps `version`,
+ * snapshots a revision (pruned to the retention cap), re-derives links,
+ * and flips `embedding_status` to `stale` when the note is already in the
+ * embedding pipeline. `slug` is never touched — slugs are stable once
+ * assigned. The locked re-read selects `body` only when the patch carries
+ * one and re-asserts the note is live after acquiring the row lock.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -1208,25 +1246,30 @@ export async function updateNote(
     }
 
     const needsBody = applied.body !== undefined;
-    const lockColumns = {
-      title: notes.title,
-      version: notes.version,
-      updatedAt: notes.updatedAt,
-      embeddingStatus: notes.embeddingStatus,
-      visibility: notes.visibility,
-      deletedAt: notes.deletedAt,
-    } as const;
-    const [current] = needsBody
-      ? await tx
-          .select({ ...lockColumns, body: notes.body })
-          .from(notes)
-          .where(eq(notes.id, noteId))
-          .for("update")
-      : await tx
-          .select({ ...lockColumns, body: sql<string>`''` })
-          .from(notes)
-          .where(eq(notes.id, noteId))
-          .for("update");
+    const [current] = await tx
+      .select({
+        title: notes.title,
+        folder: notes.folder,
+        tags: notes.tags,
+        type: notes.type,
+        category: notes.category,
+        summary: notes.summary,
+        feedMode: notes.feedMode,
+        feedCategories: notes.feedCategories,
+        feedTags: notes.feedTags,
+        feedTaskIds: notes.feedTaskIds,
+        agentWritable: notes.agentWritable,
+        locked: notes.locked,
+        visibility: notes.visibility,
+        version: notes.version,
+        updatedAt: notes.updatedAt,
+        embeddingStatus: notes.embeddingStatus,
+        deletedAt: notes.deletedAt,
+        body: needsBody ? notes.body : sql<string>`''`,
+      })
+      .from(notes)
+      .where(eq(notes.id, noteId))
+      .for("update");
     if (!current || current.deletedAt !== null) {
       throw new ForbiddenError("Forbidden", "note", noteId);
     }
@@ -1238,6 +1281,21 @@ export async function updateNote(
     }
 
     const bodyChanged = needsBody && applied.body !== current.body;
+    const changedFields = dropUnchangedFields(applied, current, bodyChanged);
+    if (changedFields.length === 0) {
+      return {
+        summary: {
+          id: gate.id,
+          slug: gate.slug,
+          title: current.title,
+          projectId: gate.projectId,
+          folder: current.folder,
+          version: current.version,
+          updatedAt: current.updatedAt,
+        },
+        wasNoOp: true,
+      };
+    }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
     const changes: Record<string, unknown> = {
       ...applied,
@@ -1284,7 +1342,7 @@ export async function updateNote(
         type: "note_updated",
         targetRef: summary.slug,
         summary: `updated note "${summaryTitle(summary.title)}"`,
-        metadata: { fields: appliedFields, version: newVersion },
+        metadata: { fields: changedFields, version: newVersion },
       },
     ]);
     return { summary, wasNoOp: false };
@@ -1391,6 +1449,7 @@ export async function moveFolder(
   const moved = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
     assertProjectWritable(access.project.status, access.project.identifier);
+    await acquireProjectLock(tx, projectId);
     const subtreeFilter = and(
       eq(notes.projectId, projectId),
       isNull(notes.deletedAt),
@@ -1529,8 +1588,13 @@ export async function restoreNote(
       const { deletedAt: _live, ...summary } = current;
       return { summary, wasNoOp: true };
     }
-    const base = current.slug.replace(/-\d+$/, "") || current.slug;
-    const taken = await loadSlugNamespace(tx, gate.projectId, base);
+    const base = slugifyTitle(current.title);
+    const taken = await loadSlugNamespace(
+      tx,
+      gate.projectId,
+      base,
+      current.slug,
+    );
     const slug = taken.has(current.slug)
       ? nextFreeSlug(base, taken)
       : current.slug;

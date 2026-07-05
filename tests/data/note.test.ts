@@ -119,6 +119,40 @@ test("updateNote enforces the ifUpdatedAt compare-and-swap", async () => {
   expect(fresh.version).toBe(3);
 });
 
+test("updateNote drops unchanged fields and no-ops equal-value patches", async () => {
+  const f = await seedUserOrgProject("notenoop");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "N",
+    body: "same",
+    tags: ["a"],
+  });
+
+  const noop = await updateNote(ctx, note.id, {
+    title: "N",
+    body: "same",
+    tags: ["a"],
+  });
+  expect(noop.updatedAt.getTime()).toBe(note.updatedAt.getTime());
+  expect(noop.version).toBe(note.version);
+
+  const mixed = await updateNote(ctx, note.id, {
+    title: "Renamed",
+    locked: false,
+  });
+  expect(mixed.updatedAt.getTime()).toBeGreaterThan(note.updatedAt.getTime());
+
+  const sr = serviceRoleConnect();
+  const rows = await sr<
+    { type: string; metadata: { fields?: string[] } | null }[]
+  >`
+    SELECT type, metadata FROM activity_events
+    WHERE project_id = ${f.projectId} ORDER BY created_at`;
+  expect(rows.map((r) => r.type)).toEqual(["note_created", "note_updated"]);
+  expect(rows[1].metadata?.fields).toEqual(["title"]);
+});
+
 test("body writes snapshot revisions and prune past the retention cap", async () => {
   const f = await seedUserOrgProject("noterev");
   const ctx = makeAuthContext(f.userId);
@@ -281,6 +315,45 @@ test("soft delete hides the note and restore resolves slug collisions", async ()
   await deleteNote(ctx, restored.id);
   const kept = await restoreNote(ctx, restored.id);
   expect(kept.slug).toBe("auth-2");
+});
+
+test("restore keeps a numeric-title slug base intact", async () => {
+  const f = await seedUserOrgProject("noterel");
+  const ctx = makeAuthContext(f.userId);
+  const original = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Release 2",
+  });
+  expect(original.slug).toBe("release-2");
+
+  await deleteNote(ctx, original.id);
+  const squatter = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Release 2",
+  });
+  expect(squatter.slug).toBe("release-2");
+
+  const restored = await restoreNote(ctx, original.id);
+  expect(restored.slug).toBe("release-2-2");
+});
+
+test("restore after a title rename still detects a live slug holder", async () => {
+  const f = await seedUserOrgProject("noteren");
+  const ctx = makeAuthContext(f.userId);
+  const original = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Alpha",
+  });
+  await updateNote(ctx, original.id, { title: "Beta" });
+  await deleteNote(ctx, original.id);
+  const squatter = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Alpha",
+  });
+  expect(squatter.slug).toBe("alpha");
+
+  const restored = await restoreNote(ctx, original.id);
+  expect(restored.slug).toBe("beta");
 });
 
 test("deleteNote is idempotent and preview counts linked rows", async () => {

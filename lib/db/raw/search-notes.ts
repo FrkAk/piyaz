@@ -3,7 +3,9 @@
  *
  * Query text goes through `websearch_to_tsquery` (never raw `to_tsquery`,
  * which throws on arbitrary user input), falling back to
- * `plainto_tsquery` when websearch parsing yields an empty query. The
+ * `plainto_tsquery` when websearch parsing yields an empty query.
+ * Pure-negation queries (`querytree` = `'T'`, e.g. `-draft`) match
+ * nothing instead of every note lacking the term. The
  * inner LATERAL subquery ranks and limits on the GIN index before the
  * outer `ts_headline` runs, so snippet generation touches at most
  * `NOTE_SEARCH_LIMIT` rows over a `left(body, ...)` slice — the raw body
@@ -71,6 +73,7 @@ export function noteSearchStmt(
       FROM ${notes} n
       WHERE n.project_id = ${projectId}
         AND n.deleted_at IS NULL
+        AND querytree(q.tsq) <> 'T'
         AND n.search_tsv @@ q.tsq
       ORDER BY rank DESC, n.updated_at DESC
       LIMIT ${NOTE_SEARCH_LIMIT}
