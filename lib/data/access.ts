@@ -233,6 +233,23 @@ export type NoteAccessGate = Pick<
 
 /**
  * Membership-gated note lookup. RLS gates membership and per-note
+ * visibility (`team` or own-private); no piyaz_auth JOIN. Like
+ * {@link findNoteAccessTx}, trashed rows pass — callers decide the
+ * `deletedAt` policy.
+ *
+ * @param userId - Verified user id.
+ * @param noteId - UUID of the note.
+ * @returns Gate row with only the columns callers read, or null when inaccessible.
+ */
+export async function findNoteAccess(
+  userId: string,
+  noteId: string,
+): Promise<NoteAccessGate | null> {
+  return withUserContext(userId, (tx) => findNoteAccessTx(tx, noteId));
+}
+
+/**
+ * Membership-gated note lookup. RLS gates membership and per-note
  * visibility (`team` or own-private); no piyaz_auth JOIN.
  *
  * @param tx - Active RLS transaction handle.

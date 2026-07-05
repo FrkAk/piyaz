@@ -25,14 +25,17 @@ import {
   assertNoteGateRows,
   assertProjectAccessTx,
   assertProjectGateRows,
+  assertTaskGateRows,
   assertValidNoteId,
   assertValidProjectId,
+  assertValidTaskId,
   ForbiddenError,
   isUuid,
 } from "@/lib/auth/authorization";
 import {
   noteAccessGateStmt,
   projectAccessGateStmt,
+  taskAccessGateStmt,
   type NoteAccessGate,
 } from "@/lib/data/access";
 import { insertActivityEvents } from "@/lib/data/activity";
@@ -245,6 +248,9 @@ export type LinkedNoteSlim = {
   folder: string;
   updatedAt: Date;
 };
+
+/** Slim backlink row for a task's linked notes; never carries `body`. */
+export type TaskNoteBacklink = NoteTreeRow & { kind: NoteTaskLinkKind };
 
 /** Full note row minus the server-side `search_tsv` column. */
 export type NoteFull = Omit<Note, "searchTsv">;
@@ -1005,6 +1011,26 @@ export function noteMentionsStmt(read: ReadConn, noteId: string) {
 }
 
 /**
+ * Build the task-backlinks read as a lazy batch statement: live notes
+ * linked to the task via `note_task_links`, slim tree projection plus the
+ * link `kind`; never selects `body`/`search_tsv`. Served by
+ * `note_task_links_task_id_idx`. Batch alongside `taskAccessGateStmt`
+ * and evaluate the gate rows first.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task.
+ * @returns Lazy select statement yielding {@link TaskNoteBacklink}s.
+ */
+export function taskNoteBacklinksStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({ ...noteTreeColumns, kind: noteTaskLinks.kind })
+    .from(noteTaskLinks)
+    .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
+    .where(and(eq(noteTaskLinks.taskId, taskId), isNull(notes.deletedAt)))
+    .orderBy(notes.title, noteTaskLinks.kind);
+}
+
+/**
  * Shared core of the linked-note reads: live notes on the far end of a
  * `note_links` row, slim projection.
  *
@@ -1211,6 +1237,48 @@ export async function searchNotes(
     rank: Number(row.rank),
     snippet: row.snippet,
   }));
+}
+
+/** Specificity rank per backlink kind; higher wins the per-note dedupe. */
+const BACKLINK_KIND_RANK: Record<NoteTaskLinkKind, number> = {
+  spec_of: 2,
+  reference: 1,
+  mention: 0,
+};
+
+/**
+ * List the live notes linked to a task via `note_task_links` as the slim
+ * tree projection plus the link `kind`. One read batch: task gate +
+ * backlinks. A note linked under several kinds (unique on note, task,
+ * kind) collapses to one row carrying the most specific kind
+ * (`spec_of` > `reference` > `mention`).
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @returns Backlink rows ordered by note title.
+ * @throws ForbiddenError on malformed id, missing task, or cross-team access.
+ */
+export async function getTaskNoteBacklinks(
+  ctx: AuthContext,
+  taskId: string,
+): Promise<TaskNoteBacklink[]> {
+  assertValidTaskId(taskId);
+  const [gateRows, linkRows] = await withUserContextRead(ctx.userId, (read) => [
+    taskAccessGateStmt(read, taskId),
+    taskNoteBacklinksStmt(read, taskId),
+  ]);
+  assertTaskGateRows(taskId, gateRows);
+  const byNote = new Map<string, TaskNoteBacklink>();
+  for (const row of linkRows) {
+    const existing = byNote.get(row.id);
+    if (
+      !existing ||
+      BACKLINK_KIND_RANK[row.kind] > BACKLINK_KIND_RANK[existing.kind]
+    ) {
+      byNote.set(row.id, row);
+    }
+  }
+  return [...byNote.values()];
 }
 
 /**

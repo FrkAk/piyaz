@@ -1,15 +1,18 @@
 /**
- * Build a strong ETag from a millisecond-precision timestamp. ETag uses
- * exact-string comparison so the same-second mutation window that
- * `Last-Modified`/`If-Modified-Since` collapses (HTTP-date is 1-second
- * resolution) is preserved end-to-end. Format: a quoted base-10 ms count
- * — opaque to clients, deterministic per resource state.
+ * Build a strong ETag from a resource validator. A `Date` renders as its
+ * base-10 millisecond count — exact-string comparison preserves the
+ * same-second mutation window that `Last-Modified`/`If-Modified-Since`
+ * collapses (HTTP-date is 1-second resolution). A `string` is an opaque
+ * pre-formatted token for composite validators (e.g. the notes tree's
+ * `${maxUpdatedAt}-${liveCount}` pair) and is quoted verbatim. Either way
+ * the value is opaque to clients and deterministic per resource state.
  *
- * @param updatedAt - Server-side max `updatedAt` for the resource.
+ * @param validator - Server-side max `updatedAt` or an opaque token.
  * @returns Quoted ETag value suitable for the `ETag` response header.
  */
-export function makeEtag(updatedAt: Date): string {
-  return `"${updatedAt.getTime()}"`;
+export function makeEtag(validator: Date | string): string {
+  const token = typeof validator === "string" ? validator : validator.getTime();
+  return `"${token}"`;
 }
 
 /**
@@ -20,15 +23,15 @@ export function makeEtag(updatedAt: Date): string {
  * `*` are both supported.
  *
  * @param req - Incoming request (Web Request or NextRequest).
- * @param updatedAt - Server-side max `updatedAt` for the resource.
+ * @param validator - Server-side max `updatedAt` or an opaque token.
  * @returns True when any client-supplied validator matches the resource's
  *   current ETag (i.e. the response can be a 304); false otherwise.
  */
-export function etagMatches(req: Request, updatedAt: Date): boolean {
+export function etagMatches(req: Request, validator: Date | string): boolean {
   const inm = req.headers.get("if-none-match");
   if (!inm) return false;
   if (inm.trim() === "*") return true;
-  const etag = makeEtag(updatedAt);
+  const etag = makeEtag(validator);
   return inm.split(",").some((part) => part.trim() === etag);
 }
 
@@ -48,7 +51,7 @@ const CACHE_HEADERS = { "Cache-Control": "private, no-cache" } as const;
  *
  * @param req - Incoming request (Web Request or NextRequest).
  * @param body - Response body for the 200 path. Pass `null` for HEAD.
- * @param updatedAt - Server-side max `updatedAt` for the resource.
+ * @param validator - Server-side max `updatedAt` or an opaque token.
  * @returns 304 with no body when {@link etagMatches} is true; otherwise
  *   200 with the body. HEAD always returns a null body regardless of the
  *   200/304 branch.
@@ -56,12 +59,12 @@ const CACHE_HEADERS = { "Cache-Control": "private, no-cache" } as const;
 export function conditionalRespond<T>(
   req: Request,
   body: T,
-  updatedAt: Date,
+  validator: Date | string,
 ): Response {
-  const etag = makeEtag(updatedAt);
+  const etag = makeEtag(validator);
   const baseHeaders = { ETag: etag, ...CACHE_HEADERS };
 
-  if (etagMatches(req, updatedAt)) {
+  if (etagMatches(req, validator)) {
     return new Response(null, { status: 304, headers: baseHeaders });
   }
 
