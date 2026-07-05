@@ -23,23 +23,6 @@ afterEach(async () => {
 });
 
 /**
- * Run raw SQL against the test DB as superuser and close the pool.
- *
- * @param fn - Callback receiving the pooled sql tag.
- * @returns The callback's result.
- */
-async function su<T>(
-  fn: (sql: ReturnType<typeof superuserPool>) => Promise<T>,
-): Promise<T> {
-  const sql = superuserPool();
-  try {
-    return await fn(sql);
-  } finally {
-    await sql.end({ timeout: 5 });
-  }
-}
-
-/**
  * Insert a task into a seeded project.
  *
  * @param projectId - Target project id.
@@ -47,14 +30,13 @@ async function su<T>(
  * @returns The new task's id.
  */
 async function addTask(projectId: string, suffix: string): Promise<string> {
-  return su(async (sql) => {
-    const [t] = await sql<{ id: string }[]>`
-      INSERT INTO tasks ("project_id", "title", "sequence_number")
-      VALUES (${projectId}, ${"Task " + suffix}, 1)
-      RETURNING id
-    `;
-    return t.id;
-  });
+  const sql = superuserPool();
+  const [t] = await sql<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${projectId}, ${"Task " + suffix}, 1)
+    RETURNING id
+  `;
+  return t.id;
 }
 
 /**
@@ -69,12 +51,11 @@ async function linkNoteTask(
   taskId: string,
   kind: string,
 ): Promise<void> {
-  await su(async (sql) => {
-    await sql`
-      INSERT INTO note_task_links ("note_id", "task_id", "kind")
-      VALUES (${noteId}, ${taskId}, ${kind})
-    `;
-  });
+  const sql = superuserPool();
+  await sql`
+    INSERT INTO note_task_links ("note_id", "task_id", "kind")
+    VALUES (${noteId}, ${taskId}, ${kind})
+  `;
 }
 
 /**
@@ -83,9 +64,8 @@ async function linkNoteTask(
  * @param noteId - Note to trash.
  */
 async function trashNote(noteId: string): Promise<void> {
-  await su(async (sql) => {
-    await sql`UPDATE notes SET deleted_at = now() WHERE id = ${noteId}`;
-  });
+  const sql = superuserPool();
+  await sql`UPDATE notes SET deleted_at = now() WHERE id = ${noteId}`;
 }
 
 /**
@@ -150,9 +130,8 @@ test("GET /api/project/[id]/notes — soft delete below MAX still invalidates th
     title: "Older",
   });
   await createNote(ctx, { projectId: f.projectId, title: "Newer" });
-  await su(async (sql) => {
-    await sql`UPDATE notes SET updated_at = now() - interval '1 hour' WHERE id = ${older.id}`;
-  });
+  const sql = superuserPool();
+  await sql`UPDATE notes SET updated_at = now() - interval '1 hour' WHERE id = ${older.id}`;
   setSession({ user: { id: f.userId } });
 
   const first = await listGET(get(`/api/project/${f.projectId}/notes`), {
@@ -223,12 +202,11 @@ test("GET /api/note/[id] — full composition with body, mentions, links; ETag o
   });
   const taskId = await addTask(f.projectId, "note-full");
   await linkNoteTask(note.id, taskId, "reference");
-  await su(async (sql) => {
-    await sql`
-      INSERT INTO note_links ("source_note_id", "target_note_id")
-      VALUES (${note.id}, ${outTarget.id}), (${inSource.id}, ${note.id})
-    `;
-  });
+  const sql = superuserPool();
+  await sql`
+    INSERT INTO note_links ("source_note_id", "target_note_id")
+    VALUES (${note.id}, ${outTarget.id}), (${inSource.id}, ${note.id})
+  `;
   setSession({ user: { id: f.userId } });
 
   const res = await noteGET(get(`/api/note/${note.id}`), {
@@ -373,12 +351,11 @@ test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, tr
   );
   expect(replay.status).toBe(304);
 
-  await su(async (sql) => {
-    await sql`
-      UPDATE note_task_links SET kind = 'spec_of'
-      WHERE note_id = ${linked.id} AND task_id = ${taskId}
-    `;
-  });
+  const sql = superuserPool();
+  await sql`
+    UPDATE note_task_links SET kind = 'spec_of'
+    WHERE note_id = ${linked.id} AND task_id = ${taskId}
+  `;
 
   const changed = await backlinksGET(
     get(`/api/task/${taskId}/notes`, { "if-none-match": etag! }),
@@ -386,6 +363,49 @@ test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, tr
   );
   expect(changed.status).toBe(200);
   expect(changed.headers.get("etag")).not.toBe(etag);
+});
+
+test("GET /api/task/[id]/notes — same-ms note swap invalidates the ETag", async () => {
+  const f = await seedUserOrgProject("task-notes-swap");
+  const ctx = makeAuthContext(f.userId);
+  const taskId = await addTask(f.projectId, "swap");
+  const first = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "First",
+  });
+  const second = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Second",
+  });
+  const sql = superuserPool();
+  await sql`
+    UPDATE notes SET updated_at = now() - interval '1 hour'
+    WHERE id IN (${first.id}, ${second.id})
+  `;
+  await linkNoteTask(first.id, taskId, "reference");
+  setSession({ user: { id: f.userId } });
+
+  const res = await backlinksGET(get(`/api/task/${taskId}/notes`), {
+    params: Promise.resolve({ taskId }),
+  });
+  const etag = res.headers.get("etag");
+
+  await sql`
+    DELETE FROM note_task_links
+    WHERE note_id = ${first.id} AND task_id = ${taskId}
+  `;
+  await sql`
+    INSERT INTO note_task_links ("note_id", "task_id", "kind")
+    VALUES (${second.id}, ${taskId}, 'reference')
+  `;
+
+  const swapped = await backlinksGET(
+    get(`/api/task/${taskId}/notes`, { "if-none-match": etag! }),
+    { params: Promise.resolve({ taskId }) },
+  );
+  expect(swapped.status).toBe(200);
+  const rows = (await swapped.json()) as { id: string }[];
+  expect(rows.map((r) => r.id)).toEqual([second.id]);
 });
 
 test("GET /api/task/[id]/notes — non-uuid and cross-team task 404; unauthenticated 401 sweep", async () => {

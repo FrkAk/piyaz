@@ -1,9 +1,31 @@
-import { getTaskNoteBacklinks } from "@/lib/data/note";
+import { getTaskNoteBacklinks, type TaskNoteBacklink } from "@/lib/data/note";
 import { getAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import { conditionalRespond } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
+
+/**
+ * 32-bit FNV-1a hash over the sorted `id:kind` pairs, base-36 encoded.
+ * Folds the linked-note set identity and each link's kind into the
+ * validator: link mutations bump no note `updated_at`, so without it a
+ * swap between notes sharing an `updated_at` millisecond would 304 stale.
+ *
+ * @param rows - Deduped backlink rows.
+ * @returns Fingerprint within the `[A-Za-z0-9._-]` ETag token alphabet.
+ */
+function linkSetFingerprint(rows: TaskNoteBacklink[]): string {
+  const input = rows
+    .map((r) => `${r.id}:${r.kind}`)
+    .sort()
+    .join(",");
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
+}
 
 /**
  * Conditional handler for `GET` and `HEAD` on a task's linked-note
@@ -13,10 +35,10 @@ import { error } from "@/lib/api/response";
  * already the cheap slim read (one batch: task gate + slim join), so no
  * dedicated version probe precedes it; a 304 here saves response egress,
  * not DB compute. The token folds in max `updated_at` ms, row count, and
- * each row's kind initial, so a link kind change (which bumps no note
- * `updated_at`) still invalidates the validator. Rows are the slim tree
- * projection plus the link `kind`; `body`/`search_tsv` are never
- * selected.
+ * the {@link linkSetFingerprint} of the rows, so link mutations (which
+ * bump no note `updated_at`) still invalidate the validator. Rows are
+ * the slim tree projection plus the link `kind`; `body`/`search_tsv`
+ * are never selected.
  *
  * @param req - Incoming request.
  * @param taskId - Task UUID from the route params.
@@ -33,8 +55,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   try {
     const rows = await getTaskNoteBacklinks(ctx, taskId);
     const maxMs = rows.reduce((m, r) => Math.max(m, r.updatedAt.getTime()), 0);
-    const kinds = rows.map((r) => r.kind.charAt(0)).join("");
-    const token = `${maxMs}-${rows.length}-${kinds}`;
+    const token = `${maxMs}-${rows.length}-${linkSetFingerprint(rows)}`;
     return conditionalRespond(req, rows, token);
   } catch (err) {
     if (err instanceof ForbiddenError) {
