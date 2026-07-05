@@ -49,6 +49,26 @@ export default function SignUpPage() {
           )}
 
           <p className="mt-3.5 text-center text-[12px] text-text-muted">
+            By creating an account you agree to our{" "}
+            <Link
+              href="/terms"
+              className="hover:underline"
+              style={{ color: "var(--color-accent-light)" }}
+            >
+              Terms
+            </Link>{" "}
+            and{" "}
+            <Link
+              href="/privacy"
+              className="hover:underline"
+              style={{ color: "var(--color-accent-light)" }}
+            >
+              Privacy Policy
+            </Link>
+            .
+          </p>
+
+          <p className="mt-3.5 text-center text-[12px] text-text-muted">
             {SIGNUPS_DISABLED ? "Already invited?" : "Already have an account?"}{" "}
             <Link
               href="/sign-in"
