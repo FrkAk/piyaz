@@ -3,7 +3,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { activityEvents, projects, tasks } from "@/lib/db/schema";
 import { withUserContextRead, type Tx } from "@/lib/db/rls";
-import { normalizeExecuteResult } from "@/lib/db/raw";
+import { normalizeExecuteResult, toDate } from "@/lib/db/raw";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import {
   taskActivityStmt,
@@ -282,16 +282,6 @@ function decodeCursor(cursor: string): ActivityCursor | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Coerce a driver timestamp (Date or ISO string) to a Date.
- *
- * @param value - Driver-returned timestamp, already a `Date` or an ISO string.
- * @returns The value as a `Date`.
- */
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
 }
 
 /**

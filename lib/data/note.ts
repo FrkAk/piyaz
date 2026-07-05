@@ -51,6 +51,7 @@ import {
 import {
   executeRaw,
   normalizeExecuteResult,
+  toDate,
   type ReadConn,
 } from "@/lib/db/raw";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
@@ -445,25 +446,22 @@ function byteLength(value: string): number {
 }
 
 /**
- * Coerce a driver-provided timestamp to a Date (drivers return a string
- * or a Date depending on runtime).
+ * Canonicalize feed match values to trimmed lowercase with empties
+ * dropped and duplicates collapsed, the single form the §7 exposure
+ * arms compare on both sides. Applied to labels and feed task ids
+ * alike (trim is a no-op on well-formed UUIDs).
  *
- * @param value - Driver-provided timestamp.
- * @returns The timestamp as a Date.
- */
-function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
-}
-
-/**
- * Canonicalize feed match labels to trimmed lowercase, the single form
- * the §7 exposure arms compare on both sides.
- *
- * @param values - Raw label list.
- * @returns Trimmed, lowercased labels.
+ * @param values - Raw value list.
+ * @returns Deduplicated, trimmed, lowercased values.
  */
 function canonicalizeFeedLabels(values: string[]): string[] {
-  return values.map((value) => value.trim().toLowerCase());
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0),
+    ),
+  ];
 }
 
 /**
@@ -1304,9 +1302,9 @@ function mapNoteFeedRow(row: NoteFeedRawRow): NoteFeedRow {
  * context-injection (PYZ-253) call sites. A note is exposed iff
  * `visibility = 'team'` AND `feed_mode <> 'none'` AND its feed mode
  * targets the task; the budget then degrades overflow to pointers. The
- * fetch is bounded to note cap + {@link FEED_POINTER_CAP} rows;
- * `truncated` is true when the exposure set exceeded that bound or the
- * pointer cap. Zero matches resolve to empty lists, never an error.
+ * fetch is bounded to note cap + {@link FEED_POINTER_CAP} rows plus one
+ * sentinel row, so `truncated` is true only when exposed notes were
+ * actually dropped. Zero matches resolve to empty lists, never an error.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project whose notes are resolved.
@@ -1323,18 +1321,21 @@ export async function resolveExposedNotes(
   budget?: FeedBudget,
 ): Promise<NoteFeedResolution> {
   assertValidProjectId(projectId);
-  const fetchLimit = clampFeedBudget(budget).maxNotes + FEED_POINTER_CAP;
+  const { maxNotes } = clampFeedBudget(budget);
+  const fetchLimit = maxNotes + FEED_POINTER_CAP;
   const [gateRows, rowsRaw] = await withUserContextRead(ctx.userId, (read) => [
     projectAccessGateStmt(read, projectId),
-    notesFeedStmt(read, projectId, task, fetchLimit),
+    notesFeedStmt(read, projectId, task, maxNotes, fetchLimit + 1),
   ]);
   assertProjectGateRows(projectId, gateRows);
-  const rows =
+  const fetched =
     normalizeExecuteResult<NoteFeedRawRow>(rowsRaw).map(mapNoteFeedRow);
+  const rows = fetched.slice(0, fetchLimit);
   const resolution = applyFeedBudget(rows, budget);
-  return rows.length < fetchLimit
-    ? resolution
-    : { ...resolution, truncated: true };
+  return {
+    ...resolution,
+    truncated: resolution.truncated || fetched.length > fetchLimit,
+  };
 }
 
 /**
@@ -1493,9 +1494,10 @@ export async function createNote(
  * snapshots a revision (pruned to the retention cap), re-derives links,
  * and flips `embedding_status` to `stale` when the note is already in the
  * embedding pipeline. `slug` is never touched — slugs are stable once
- * assigned. Feed labels store trimmed lowercase and feed task ids store
- * lowercase, the canonical form the §7 exposure arms match against. One
- * locked read serves as both the access gate and the CAS baseline
+ * assigned. Feed labels and feed task ids store deduplicated trimmed
+ * lowercase with empties dropped, the canonical form the §7 exposure
+ * arms match against. One locked read serves as both the access gate
+ * and the CAS baseline
  * (`FOR UPDATE OF notes` through the projects join); it selects `body`
  * only when the patch carries one.
  *
@@ -1527,14 +1529,9 @@ export async function updateNote(
       (applied as Record<string, unknown>)[field] = patch[field];
     }
   }
-  if (applied.feedCategories !== undefined) {
-    applied.feedCategories = canonicalizeFeedLabels(applied.feedCategories);
-  }
-  if (applied.feedTags !== undefined) {
-    applied.feedTags = canonicalizeFeedLabels(applied.feedTags);
-  }
-  if (applied.feedTaskIds !== undefined) {
-    applied.feedTaskIds = applied.feedTaskIds.map((id) => id.toLowerCase());
+  for (const field of ["feedCategories", "feedTags", "feedTaskIds"] as const) {
+    const values = applied[field];
+    if (values !== undefined) applied[field] = canonicalizeFeedLabels(values);
   }
   if (applied.title !== undefined) assertTitleWithinCap(applied.title);
   if (applied.body !== undefined) assertBodyWithinCap(applied.body);
