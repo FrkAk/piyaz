@@ -1091,3 +1091,47 @@ describe("AsAdmin functions — org-scoped correctness", () => {
     expect(bRows.map((r) => r.id)).not.toContain(a.projectId);
   });
 });
+
+describe("note_slugs_in_namespace SECURITY DEFINER function", () => {
+  test("spans teammates' private slugs for members, empty for non-members", async () => {
+    const mine = await seedUserOrgProject("noteslugfn-a");
+    const foreign = await seedUserOrgProject("noteslugfn-b");
+    const sql = superuserPool();
+    const [mate] = await sql<{ id: string }[]>`
+      INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+      VALUES ('User noteslugfn-c', 'usernoteslugfn-c@test.local', true, now())
+      RETURNING id
+    `;
+    await sql`
+      INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+      VALUES (${mine.organizationId}, ${mate.id}, 'member', now())
+    `;
+    await sql`
+      INSERT INTO notes (project_id, title, slug, visibility, created_by)
+      VALUES (${mine.projectId}, 'Roadmap', 'roadmap', 'private', ${mine.userId})
+    `;
+
+    const c = appUserConnect();
+    try {
+      const mateRows = await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${mate.id}, true)`;
+        return await tx<Array<{ slug: string }>>`
+          SELECT slug FROM public.note_slugs_in_namespace(
+            ${mine.projectId}::uuid, ${"roadmap"}, ${"roadmap-%"}, ${null})
+        `;
+      });
+      expect(mateRows.map((r) => r.slug)).toEqual(["roadmap"]);
+
+      const foreignRows = await c.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${foreign.userId}, true)`;
+        return await tx<Array<{ slug: string }>>`
+          SELECT slug FROM public.note_slugs_in_namespace(
+            ${mine.projectId}::uuid, ${"roadmap"}, ${"roadmap-%"}, ${null})
+        `;
+      });
+      expect(foreignRows.length).toBe(0);
+    } finally {
+      await c.end({ timeout: 5 });
+    }
+  });
+});
