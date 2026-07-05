@@ -585,6 +585,49 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.task_assignees_for_project_visible(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.task_assignees_for_project_visible(uuid) TO app_user;
 
+-- Slug-namespace read for note slug allocation. The notes RLS policy hides
+-- other members' private notes, but the partial unique index
+-- notes_project_slug_unique spans every visibility — an RLS-scoped namespace
+-- read would pick a slug a hidden note already holds and abort the write
+-- with a raw 23505. This DEFINER read spans all visibilities and returns
+-- only slug strings; a suffixed allocation implying a hidden holder is
+-- inherent to the shared namespace. Membership is re-checked internally;
+-- probing a foreign project UUID returns the empty set. `p_pattern` is the
+-- caller-escaped LIKE pattern for the `<base>-%` suffix namespace; callers
+-- must hold the project advisory lock for the check-then-write to be
+-- race-free.
+CREATE OR REPLACE FUNCTION public.note_slugs_in_namespace(
+  p_project_id uuid,
+  p_base text,
+  p_pattern text,
+  p_extra_slug text DEFAULT NULL
+)
+RETURNS TABLE (slug text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT n.slug
+  FROM public.notes n
+  WHERE n.project_id = p_project_id
+    AND n.deleted_at IS NULL
+    AND (n.slug = p_base OR n.slug LIKE p_pattern OR n.slug = p_extra_slug)
+    AND EXISTS (
+      SELECT 1
+      FROM public.projects pj
+      INNER JOIN piyaz_auth."member" caller
+        ON caller."organizationId" = pj.organization_id
+      WHERE pj.id = p_project_id
+        AND caller."userId" = NULLIF(current_setting('app.user_id', TRUE), '')::uuid
+    );
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.note_slugs_in_namespace(uuid, text, text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.note_slugs_in_namespace(uuid, text, text, text) TO app_user;
+
 -- Validates that every supplied user id is a member of the given org.
 -- Returns the subset that ARE members; the TS caller derives the missing
 -- set. Used by assignee writes to fail-fast before inserting orphan rows.

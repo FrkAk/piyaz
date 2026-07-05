@@ -129,12 +129,13 @@ test("tryAttach — scoped per user (filling user A does not affect user B)", ()
   expect(broker.tryAttach("ub", fakeConn())).toBe(true);
 });
 
-test("clearTaskSubs — drops every task:* entry, leaves project:* and project-list:* untouched", () => {
+test("clearTaskSubs — drops every task:* and note:* entry, leaves project:* and project-list:* untouched", () => {
   broker.register("u1", "project:p1");
   broker.register("u1", "project:p2");
   broker.register("u1", "project-list:u1");
   broker.register("u1", "task:t1", 60_000);
   broker.register("u1", "task:t2", 60_000);
+  broker.register("u1", "note:n1", 60_000);
 
   broker.clearTaskSubs("u1");
 
@@ -143,6 +144,7 @@ test("clearTaskSubs — drops every task:* entry, leaves project:* and project-l
   expect([...broker.subscribers("project-list:u1")]).toEqual(["u1"]);
   expect([...broker.subscribers("task:t1")]).toEqual([]);
   expect([...broker.subscribers("task:t2")]).toEqual([]);
+  expect([...broker.subscribers("note:n1")]).toEqual([]);
 });
 
 test("clearTaskSubs — no-op when user has no submap", () => {

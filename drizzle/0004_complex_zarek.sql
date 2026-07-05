@@ -1,0 +1,1 @@
+CREATE INDEX "notes_project_title_lower_idx" ON "notes" USING btree ("project_id",lower("title")) WHERE deleted_at IS NULL;

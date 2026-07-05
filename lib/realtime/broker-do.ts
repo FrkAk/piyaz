@@ -301,9 +301,10 @@ export class PiyazBroker extends DurableObject<BrokerEnv> {
   }
 
   /**
-   * Drop every `task:*` subscription for the user. Mirrors the self-host
-   * `clearTaskSubs` used by `revokeOrgAccess` to ensure a removed member
-   * stops receiving task events for their former org's tasks immediately.
+   * Drop every `task:*` and `note:*` subscription for the user. Mirrors
+   * the self-host `clearTaskSubs` used by `revokeOrgAccess` to ensure a
+   * removed member stops receiving task or note events for their former
+   * org immediately.
    *
    * Snapshots keys before mutation so deletions during iteration cannot
    * skip entries due to V8/workerd's implementation-defined behavior on
@@ -314,11 +315,13 @@ export class PiyazBroker extends DurableObject<BrokerEnv> {
   private clearTaskSubs(userId: string): void {
     const userMap = this.subs.get(userId);
     if (!userMap) return;
-    const taskKeys: ResourceKey[] = [];
+    const resourceKeys: ResourceKey[] = [];
     for (const key of userMap.keys()) {
-      if (key.startsWith("task:")) taskKeys.push(key);
+      if (key.startsWith("task:") || key.startsWith("note:")) {
+        resourceKeys.push(key);
+      }
     }
-    for (const key of taskKeys) userMap.delete(key);
+    for (const key of resourceKeys) userMap.delete(key);
     this.persistUser(userId);
   }
 
