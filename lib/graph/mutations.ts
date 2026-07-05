@@ -1,6 +1,5 @@
 "use server";
 
-import { getAuthContext } from "@/lib/auth/context";
 import {
   updateProject as coreUpdateProject,
   renameProjectIdentifier as coreRenameProjectIdentifier,
@@ -24,12 +23,9 @@ import {
 import type { Identifier } from "@/lib/graph/identifier";
 import type { NewTaskEdge } from "@/lib/db/schema";
 import {
-  checkActionIpRateLimit,
-  checkActionUserRateLimit,
-  RateLimitError,
+  authorizeWrite,
   type ActionRateLimitConfig,
 } from "@/lib/actions/rate-limit-action";
-import type { AuthContext } from "@/lib/auth/context";
 
 export type { CreateProjectInput, ProjectUpdate } from "@/lib/data/project";
 export type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
@@ -67,30 +63,6 @@ const WRITE_BUDGETS = {
   projectUpdate: { ...DEFAULT_WRITE_BUDGET, action: "project.update" },
   categoryWrite: { ...DEFAULT_WRITE_BUDGET, action: "category.write" },
 } satisfies Record<string, ActionRateLimitConfig>;
-
-/**
- * Enforce a write budget and resolve the caller's auth context, in
- * flood-safe order: the per-IP limb runs BEFORE the session lookup so an
- * unauthenticated flood is counted and blocked by IP instead of farming
- * a free DB session lookup per request; the per-user limb runs after
- * auth, once the user id is trustworthy. Each limb is counted exactly
- * once, so a legitimate caller costs the same two in-memory checks as
- * the previous combined check.
- *
- * @param config - Rate-limit policy for this write action.
- * @returns The caller's auth context.
- * @throws RateLimitError when either limb's budget is exceeded.
- */
-async function authorizeWrite(
-  config: ActionRateLimitConfig,
-): Promise<AuthContext> {
-  const ipOutcome = await checkActionIpRateLimit(config);
-  if (!ipOutcome.ok) throw new RateLimitError(ipOutcome.retryAfter);
-  const ctx = await getAuthContext();
-  const userOutcome = await checkActionUserRateLimit(config, ctx.userId);
-  if (!userOutcome.ok) throw new RateLimitError(userOutcome.retryAfter);
-  return ctx;
-}
 
 /**
  * Server action wrapper — update a project's fields.
