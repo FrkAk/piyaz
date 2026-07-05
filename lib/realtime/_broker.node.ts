@@ -71,12 +71,12 @@ class Broker {
   }
 
   /**
-   * Drop every `task:*` subscription for the user. Used by
+   * Drop every `task:*` and `note:*` subscription for the user. Used by
    * {@link revokeOrgAccess} to ensure a member removed mid-session cannot
-   * continue receiving task events for the revoked org's tasks until the
+   * continue receiving task or note events for the revoked org until the
    * 10-minute TTL expires. Bulk drop (rather than a precise filter on the
-   * revoked org's task ids) is correct because re-registering on the next
-   * task fetch is free.
+   * revoked org's resource ids) is correct because re-registering on the
+   * next fetch is free.
    *
    * Snapshots keys before mutation so deletions during iteration cannot
    * skip entries due to V8's implementation-defined behavior on
@@ -87,11 +87,13 @@ class Broker {
   clearTaskSubs(userId: string): void {
     const userMap = this.subs.get(userId);
     if (!userMap) return;
-    const taskKeys: ResourceKey[] = [];
+    const resourceKeys: ResourceKey[] = [];
     for (const key of userMap.keys()) {
-      if (key.startsWith("task:")) taskKeys.push(key);
+      if (key.startsWith("task:") || key.startsWith("note:")) {
+        resourceKeys.push(key);
+      }
     }
-    for (const key of taskKeys) userMap.delete(key);
+    for (const key of resourceKeys) userMap.delete(key);
   }
 
   /**

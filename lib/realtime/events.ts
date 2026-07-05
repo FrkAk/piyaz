@@ -2,6 +2,7 @@ import "server-only";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { broker } from "@/lib/realtime/broker";
 import type { RealtimeEvent } from "@/lib/realtime/types";
+import type { Visibility } from "@/lib/types";
 
 export type { RealtimeEvent };
 
@@ -40,25 +41,35 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
 }
 
 /**
- * Emit a note-affecting event. Always paired with the project event since
- * the notes tree list is project-scoped — any note change is also a tree
- * change. Batched via `dispatchMany` so the Workers backend costs one DO
- * sub-request instead of two.
+ * Emit a note-affecting event. The `note:<id>` key always fires; the
+ * project key fires only for team-visible notes — a project dispatch fans
+ * out to every member's tree list, and a private note's changes are
+ * invisible to everyone else, so the fan-out would be guaranteed-empty
+ * refetch egress and a timing signal of private activity. Batched via
+ * `dispatchMany` so the Workers backend costs one DO sub-request.
  *
  * @param projectId - Owning project id.
  * @param noteId - Note that changed.
+ * @param visibility - The note's post-mutation visibility.
  */
-export function emitNoteEvent(projectId: string, noteId: string): void {
-  broker.dispatchMany([
+export function emitNoteEvent(
+  projectId: string,
+  noteId: string,
+  visibility: Visibility,
+): void {
+  const dispatches: Parameters<typeof broker.dispatchMany>[0] = [
     {
       key: `note:${noteId}`,
       payload: { kind: "note", projectId, noteId } satisfies RealtimeEvent,
     },
-    {
+  ];
+  if (visibility === "team") {
+    dispatches.push({
       key: `project:${projectId}`,
       payload: { kind: "project", projectId } satisfies RealtimeEvent,
-    },
-  ]);
+    });
+  }
+  broker.dispatchMany(dispatches);
 }
 
 /**

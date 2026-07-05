@@ -288,7 +288,7 @@ class WorkersBroker {
   }
 
   /**
-   * Drop every `task:*` subscription for the user.
+   * Drop every `task:*` and `note:*` subscription for the user.
    *
    * @param userId - Caller user id.
    */

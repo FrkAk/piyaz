@@ -153,6 +153,7 @@ test("updateNote drops unchanged fields and no-ops equal-value patches", async (
     title: "N",
     body: "same",
     tags: ["a"],
+    visibility: "team",
   });
 
   const noop = await updateNote(ctx, note.id, {
@@ -518,16 +519,104 @@ test("metadata caps reject oversized summary, labels, and feed ids", async () =>
   ).rejects.toBeInstanceOf(NoteValidationError);
 });
 
-test("note writes record project-scoped activity events", async () => {
+test("only team-visible note writes record activity events", async () => {
   const f = await seedUserOrgProject("noteact");
   const ctx = makeAuthContext(f.userId);
-  const note = await createNote(ctx, { projectId: f.projectId, title: "N" });
-  await updateNote(ctx, note.id, { body: "hello" });
-
   const sr = serviceRoleConnect();
+
+  const hidden = await createNote(ctx, { projectId: f.projectId, title: "P" });
+  await updateNote(ctx, hidden.id, { body: "secret" });
+  await moveNote(ctx, hidden.id, "drafts");
+  await requestShare(ctx, hidden.id);
+  await deleteNote(ctx, hidden.id);
+  await restoreNote(ctx, hidden.id);
+  const privateRows = await sr<{ type: string }[]>`
+    SELECT type FROM activity_events WHERE project_id = ${f.projectId}`;
+  expect(privateRows.length).toBe(0);
+
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "N",
+    visibility: "team",
+  });
+  await updateNote(ctx, note.id, { body: "hello" });
   const rows = await sr<{ type: string; task_id: string | null }[]>`
     SELECT type, task_id FROM activity_events
     WHERE project_id = ${f.projectId} ORDER BY created_at`;
   expect(rows.map((r) => r.type)).toEqual(["note_created", "note_updated"]);
   expect(rows.every((r) => r.task_id === null)).toBe(true);
+});
+
+test("flipping a note to team via updateNote clears the share request", async () => {
+  const f = await seedUserOrgProject("noteflip");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "N" });
+  await requestShare(ctx, note.id);
+
+  await updateNote(ctx, note.id, { visibility: "team" });
+
+  const sr = serviceRoleConnect();
+  const [row] = await sr<
+    { visibility: string; share_requested_by: string | null }[]
+  >`SELECT visibility, share_requested_by FROM notes WHERE id = ${note.id}`;
+  expect(row.visibility).toBe("team");
+  expect(row.share_requested_by).toBeNull();
+});
+
+test("only the creator can flip a team note to private", async () => {
+  const f = await seedUserOrgProject("noteflip2");
+  const mateId = await seedTeammate(f.organizationId, "noteflip2b");
+  const note = await createNote(makeAuthContext(f.userId), {
+    projectId: f.projectId,
+    title: "Shared",
+    visibility: "team",
+  });
+
+  await expect(
+    updateNote(makeAuthContext(mateId), note.id, { visibility: "private" }),
+  ).rejects.toBeInstanceOf(ForbiddenError);
+  const back = await updateNote(makeAuthContext(f.userId), note.id, {
+    visibility: "private",
+  });
+  expect(back.id).toBe(note.id);
+});
+
+test("delete and restore no-op paths still reject archived projects", async () => {
+  const f = await seedUserOrgProject("notearch");
+  const ctx = makeAuthContext(f.userId);
+  const trashed = await createNote(ctx, { projectId: f.projectId, title: "T" });
+  await deleteNote(ctx, trashed.id);
+  const live = await createNote(ctx, { projectId: f.projectId, title: "L" });
+
+  const sql = superuserPool();
+  await sql`UPDATE projects SET status = 'archived' WHERE id = ${f.projectId}`;
+
+  await expect(deleteNote(ctx, trashed.id)).rejects.toBeInstanceOf(
+    ProjectArchivedError,
+  );
+  await expect(restoreNote(ctx, live.id)).rejects.toBeInstanceOf(
+    ProjectArchivedError,
+  );
+});
+
+test("body writes flip embedding_status to stale only when in the pipeline", async () => {
+  const f = await seedUserOrgProject("noteemb");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "N",
+    body: "v1",
+  });
+  const sr = serviceRoleConnect();
+
+  await updateNote(ctx, note.id, { body: "v2" });
+  const [untouched] = await sr<{ embedding_status: string }[]>`
+    SELECT embedding_status FROM notes WHERE id = ${note.id}`;
+  expect(untouched.embedding_status).toBe("none");
+
+  await sr`UPDATE notes SET embedding_status = 'pending' WHERE id = ${note.id}`;
+  await updateNote(ctx, note.id, { body: "v3" });
+  const [flipped] = await sr<{ embedding_status: string }[]>`
+    SELECT embedding_status FROM notes WHERE id = ${note.id}`;
+  expect(flipped.embedding_status).toBe("stale");
 });

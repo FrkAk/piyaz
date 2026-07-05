@@ -7,6 +7,10 @@
  * only {@link getNoteFull} selects `body`, nothing ever selects
  * `search_tsv`, and list/search projections stay slim.
  *
+ * Activity events and the project-wide realtime dispatch fire only for
+ * team-visible notes: the feed and the tree fan out to every member, so
+ * a private note's title, slug, and folder must never land there.
+ *
  * Agent-facing policy (`agent_writable`, `locked`, the agent ban on
  * setting `visibility='team'`) is deliberately NOT enforced here — the
  * MCP handler layers it on (PYZ-252). Human server actions call these
@@ -1206,6 +1210,7 @@ export async function createNote(
   assertBodyWithinCap(body);
   assertMetadataWithinCaps(input);
   const folder = normalizeFolder(input.folder ?? "");
+  const visibility = input.visibility ?? "private";
 
   const created = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, input.projectId);
@@ -1224,7 +1229,7 @@ export async function createNote(
         body,
         folder,
         type: input.type ?? "reference",
-        visibility: input.visibility ?? "private",
+        visibility,
         summary: input.summary ?? "",
         tags: input.tags ?? [],
         category: input.category ?? null,
@@ -1253,19 +1258,21 @@ export async function createNote(
         ctx.userId,
       );
     }
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: input.projectId,
-        taskId: null,
-        type: "note_created",
-        targetRef: slug,
-        summary: `created note "${summaryTitle(input.title)}"`,
-      },
-    ]);
+    if (visibility === "team") {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: input.projectId,
+          taskId: null,
+          type: "note_created",
+          targetRef: slug,
+          summary: `created note "${summaryTitle(input.title)}"`,
+        },
+      ]);
+    }
     return note;
   });
 
-  emitNoteEvent(created.projectId, created.id);
+  emitNoteEvent(created.projectId, created.id, visibility);
   return created;
 }
 
@@ -1287,7 +1294,10 @@ export async function createNote(
  * @param patch - Fields to change; unknown/protected keys are stripped.
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
  * @returns Slim summary of the updated note.
- * @throws ForbiddenError on inaccessible or trashed notes.
+ * @throws ForbiddenError on inaccessible or trashed notes, or when a
+ *   non-creator sets `visibility='private'` (the RLS WITH CHECK pins
+ *   private rows to their creator; this pre-check keeps the rejection
+ *   typed instead of a raw 42501).
  * @throws ProjectArchivedError when the project is archived.
  * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches, carrying the
  *   live `updatedAt` and `version`.
@@ -1340,6 +1350,7 @@ export async function updateNote(
         updatedAt: notes.updatedAt,
         embeddingStatus: notes.embeddingStatus,
         deletedAt: notes.deletedAt,
+        createdBy: notes.createdBy,
         projectStatus: projects.status,
         projectIdentifier: projects.identifier,
         body: needsBody ? notes.body : sql<string>`''`,
@@ -1353,6 +1364,9 @@ export async function updateNote(
       throw new ForbiddenError("Forbidden", "note", noteId);
     }
     assertProjectWritable(current.projectStatus, current.projectIdentifier);
+    if (applied.visibility === "private" && current.createdBy !== ctx.userId) {
+      throw new ForbiddenError("Forbidden", "note", noteId);
+    }
     if (
       ifUpdatedAtMs !== undefined &&
       ifUpdatedAtMs !== current.updatedAt.getTime()
@@ -1369,13 +1383,21 @@ export async function updateNote(
       updatedAt: current.updatedAt,
     };
     if (Object.keys(applied).length === 0) {
-      return { summary: currentSummary, wasNoOp: true };
+      return {
+        summary: currentSummary,
+        wasNoOp: true,
+        visibility: current.visibility,
+      };
     }
 
     const bodyChanged = needsBody && applied.body !== current.body;
     const changedFields = dropUnchangedFields(applied, current, bodyChanged);
     if (changedFields.length === 0) {
-      return { summary: currentSummary, wasNoOp: true };
+      return {
+        summary: currentSummary,
+        wasNoOp: true,
+        visibility: current.visibility,
+      };
     }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
     const changes: Record<string, unknown> = {
@@ -1390,6 +1412,8 @@ export async function updateNote(
     if (applied.visibility === "team" && current.visibility !== "team") {
       changes.shareRequestedBy = null;
     }
+
+    const nextVisibility = applied.visibility ?? current.visibility;
 
     const [summary] = await tx
       .update(notes)
@@ -1416,21 +1440,27 @@ export async function updateNote(
         false,
       );
     }
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: current.projectId,
-        taskId: null,
-        type: "note_updated",
-        targetRef: summary.slug,
-        summary: `updated note "${summaryTitle(summary.title)}"`,
-        metadata: { fields: changedFields, version: newVersion },
-      },
-    ]);
-    return { summary, wasNoOp: false };
+    if (nextVisibility === "team") {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: current.projectId,
+          taskId: null,
+          type: "note_updated",
+          targetRef: summary.slug,
+          summary: `updated note "${summaryTitle(summary.title)}"`,
+          metadata: { fields: changedFields, version: newVersion },
+        },
+      ]);
+    }
+    return { summary, wasNoOp: false, visibility: nextVisibility };
   });
 
   if (!result.wasNoOp) {
-    emitNoteEvent(result.summary.projectId, result.summary.id);
+    emitNoteEvent(
+      result.summary.projectId,
+      result.summary.id,
+      result.visibility,
+    );
   }
   return result.summary;
 }
@@ -1459,28 +1489,38 @@ export async function moveNote(
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     if (gate.folder === dest) {
-      return { summary: gateSummary(gate), wasNoOp: true };
+      return {
+        summary: gateSummary(gate),
+        wasNoOp: true,
+        visibility: gate.visibility,
+      };
     }
     const [summary] = await tx
       .update(notes)
       .set({ folder: dest, updatedBy: ctx.userId, updatedAt: new Date() })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: gate.projectId,
-        taskId: null,
-        type: "note_moved",
-        targetRef: summary.slug,
-        summary: `moved note "${summaryTitle(summary.title)}"`,
-        metadata: { from: gate.folder, to: dest },
-      },
-    ]);
-    return { summary, wasNoOp: false };
+    if (gate.visibility === "team") {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: gate.projectId,
+          taskId: null,
+          type: "note_moved",
+          targetRef: summary.slug,
+          summary: `moved note "${summaryTitle(summary.title)}"`,
+          metadata: { from: gate.folder, to: dest },
+        },
+      ]);
+    }
+    return { summary, wasNoOp: false, visibility: gate.visibility };
   });
 
   if (!result.wasNoOp) {
-    emitNoteEvent(result.summary.projectId, result.summary.id);
+    emitNoteEvent(
+      result.summary.projectId,
+      result.summary.id,
+      result.visibility,
+    );
   }
   return result.summary;
 }
@@ -1488,7 +1528,12 @@ export async function moveNote(
 /**
  * Re-parent a folder and its whole subtree. Folders are not rows: one
  * UPDATE rewrites the `folder` prefix on every live descendant note.
- * Moving a folder into itself or a descendant is rejected.
+ * Moving a folder into itself or a descendant is rejected. The UPDATE
+ * runs under the caller's RLS scope, so teammates' private notes in the
+ * subtree are untouched and keep their old paths — a definer-privileged
+ * bulk write would let members rewrite paths of notes they cannot see.
+ * The activity event and project dispatch fire only when a team-visible
+ * note actually moved.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -1529,7 +1574,7 @@ export async function moveFolder(
   const moved = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
     assertProjectWritable(access.project.status, access.project.identifier);
-    if (dest === srcPath) return 0;
+    if (dest === srcPath) return { movedCount: 0, teamMoved: false };
     await acquireProjectLock(tx, projectId);
     const subtreeFilter = and(
       eq(notes.projectId, projectId),
@@ -1561,8 +1606,9 @@ export async function moveFolder(
         updatedAt: new Date(),
       })
       .where(subtreeFilter)
-      .returning({ id: notes.id });
-    if (rows.length > 0) {
+      .returning({ id: notes.id, visibility: notes.visibility });
+    const teamMoved = rows.some((row) => row.visibility === "team");
+    if (teamMoved) {
       await insertActivityEvents(tx, ctx.actor, [
         {
           projectId,
@@ -1574,11 +1620,11 @@ export async function moveFolder(
         },
       ]);
     }
-    return rows.length;
+    return { movedCount: rows.length, teamMoved };
   });
 
-  if (moved > 0) emitProjectEvent(projectId);
-  return { dest, movedCount: moved };
+  if (moved.teamMoved) emitProjectEvent(projectId);
+  return { dest, movedCount: moved.movedCount };
 }
 
 /**
@@ -1599,10 +1645,10 @@ export async function deleteNote(
   assertValidNoteId(noteId);
   const result = await withUserContext(ctx.userId, async (tx) => {
     const gate = await assertNoteAccessTx(tx, noteId);
+    assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     if (gate.deletedAt !== null) {
       return { id: gate.id, deletedAt: gate.deletedAt, wasNoOp: true as const };
     }
-    assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     const [row] = await tx
       .update(notes)
       .set({
@@ -1612,25 +1658,28 @@ export async function deleteNote(
       })
       .where(eq(notes.id, noteId))
       .returning({ id: notes.id, deletedAt: notes.deletedAt });
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: gate.projectId,
-        taskId: null,
-        type: "note_deleted",
-        targetRef: gate.slug,
-        summary: `trashed note "${summaryTitle(gate.title)}"`,
-      },
-    ]);
+    if (gate.visibility === "team") {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: gate.projectId,
+          taskId: null,
+          type: "note_deleted",
+          targetRef: gate.slug,
+          summary: `trashed note "${summaryTitle(gate.title)}"`,
+        },
+      ]);
+    }
     return {
       id: row.id,
       deletedAt: row.deletedAt as Date,
       wasNoOp: false as const,
       projectId: gate.projectId,
+      visibility: gate.visibility,
     };
   });
 
   if (!result.wasNoOp && "projectId" in result) {
-    emitNoteEvent(result.projectId, result.id);
+    emitNoteEvent(result.projectId, result.id, result.visibility);
   }
   return { id: result.id, deletedAt: result.deletedAt };
 }
@@ -1654,10 +1703,14 @@ export async function restoreNote(
   assertValidNoteId(noteId);
   const result = await withUserContext(ctx.userId, async (tx) => {
     const gate = await assertNoteAccessTx(tx, noteId);
-    if (gate.deletedAt === null) {
-      return { summary: gateSummary(gate), wasNoOp: true };
-    }
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.deletedAt === null) {
+      return {
+        summary: gateSummary(gate),
+        wasNoOp: true,
+        visibility: gate.visibility,
+      };
+    }
     await acquireProjectLock(tx, gate.projectId);
     const [current] = await tx
       .select({ ...noteSummaryColumns, deletedAt: notes.deletedAt })
@@ -1667,7 +1720,7 @@ export async function restoreNote(
     if (!current) throw new ForbiddenError("Forbidden", "note", noteId);
     if (current.deletedAt === null) {
       const { deletedAt: _live, ...summary } = current;
-      return { summary, wasNoOp: true };
+      return { summary, wasNoOp: true, visibility: gate.visibility };
     }
     const base = slugifyTitle(current.title);
     const taken = await loadSlugNamespace(
@@ -1690,21 +1743,28 @@ export async function restoreNote(
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: gate.projectId,
-        taskId: null,
-        type: "note_restored",
-        targetRef: slug,
-        summary: `restored note "${summaryTitle(summary.title)}"`,
-        metadata: slug === current.slug ? null : { previousSlug: current.slug },
-      },
-    ]);
-    return { summary, wasNoOp: false };
+    if (gate.visibility === "team") {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: gate.projectId,
+          taskId: null,
+          type: "note_restored",
+          targetRef: slug,
+          summary: `restored note "${summaryTitle(summary.title)}"`,
+          metadata:
+            slug === current.slug ? null : { previousSlug: current.slug },
+        },
+      ]);
+    }
+    return { summary, wasNoOp: false, visibility: gate.visibility };
   });
 
   if (!result.wasNoOp) {
-    emitNoteEvent(result.summary.projectId, result.summary.id);
+    emitNoteEvent(
+      result.summary.projectId,
+      result.summary.id,
+      result.visibility,
+    );
   }
   return result.summary;
 }
@@ -1713,7 +1773,8 @@ export async function restoreNote(
  * Record the acting user's request to share a private note with the
  * team. A pending request IS `share_requested_by` being non-null; there
  * is no separate boolean. The visibility flip itself is human-only
- * ({@link approveShareRequest}).
+ * ({@link approveShareRequest}). No activity event is recorded: the note
+ * is still private and the project-scoped feed would leak its title.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -1743,19 +1804,10 @@ export async function requestShare(
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: gate.projectId,
-        taskId: null,
-        type: "note_share_requested",
-        targetRef: row.slug,
-        summary: `requested team share for note "${summaryTitle(row.title)}"`,
-      },
-    ]);
     return row;
   });
 
-  emitNoteEvent(summary.projectId, summary.id);
+  emitNoteEvent(summary.projectId, summary.id, "private");
   return summary;
 }
 
@@ -1786,7 +1838,7 @@ export async function approveShareRequest(
     return applyVisibilityTx(tx, ctx, gate, "team");
   });
 
-  emitNoteEvent(summary.projectId, summary.id);
+  emitNoteEvent(summary.projectId, summary.id, "team");
   return summary;
 }
 

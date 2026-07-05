@@ -107,8 +107,7 @@ export type ActivityEventType =
   | "note_updated"
   | "note_moved"
   | "note_deleted"
-  | "note_restored"
-  | "note_share_requested";
+  | "note_restored";
 
 /** Origin of an activity event. */
 export type ActivitySource = "web" | "mcp" | "system";
