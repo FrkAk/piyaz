@@ -51,6 +51,7 @@ import {
 import {
   executeRaw,
   normalizeExecuteResult,
+  toDate,
   type ReadConn,
 } from "@/lib/db/raw";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
@@ -58,6 +59,11 @@ import {
   notesTreeVersionStmt,
   type NotesTreeVersionRow,
 } from "@/lib/db/raw/get-notes-max-updated-at";
+import {
+  notesFeedStmt,
+  type FeedTask,
+  type NoteFeedRawRow,
+} from "@/lib/db/raw/notes-feed";
 import {
   noteSearchStmt,
   type NoteSearchRawRow,
@@ -99,6 +105,15 @@ const FEED_TASK_IDS_MAX_ITEMS = 1000;
 
 /** Chars of a note title rendered into activity summaries. */
 const SUMMARY_TITLE_MAX = 120;
+
+/** Default note cap per feed resolution; Notes spec (PYZ-264 decisions) §7/§10 bundle bound. */
+export const FEED_NOTE_CAP = 8;
+
+/** Default char budget (title + summary lengths) per feed resolution. */
+export const FEED_CHAR_BUDGET = 8000;
+
+/** Cap on overflow pointers per feed resolution; also bounds the SQL fetch. */
+export const FEED_POINTER_CAP = 32;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -245,6 +260,44 @@ export type NoteFullResult = {
 /** One ranked search hit; `snippet` replaces the body, never joins it. */
 export type NoteSearchHit = NoteTreeRow & { rank: number; snippet: string };
 
+export type { FeedTask };
+
+/** Slim agent-exposed note row; never carries `body` or `search_tsv`. */
+export type NoteFeedRow = {
+  id: string;
+  slug: string;
+  title: string;
+  type: NoteType;
+  folder: string;
+  summary: string;
+  updatedAt: Date;
+};
+
+/** Pointer to an exposed note that overflowed the feed budget. */
+export type NoteFeedPointer = {
+  id: string;
+  slug: string;
+  title: string;
+  type: NoteType;
+};
+
+/**
+ * Budgeted feed resolution: admitted rows plus overflow pointers.
+ * `truncated` is true when exposed notes beyond the fetch or pointer
+ * bound were dropped, so the pointer list may be incomplete.
+ */
+export type NoteFeedResolution = {
+  notes: NoteFeedRow[];
+  overflow: NoteFeedPointer[];
+  truncated: boolean;
+};
+
+/** Caps for {@link applyFeedBudget}; each clamps to [1, its default]. */
+export type FeedBudget = {
+  maxNotes?: number;
+  maxChars?: number;
+};
+
 /** Cache validator for the tree list (see PYZ-254 ETag contract). */
 export type NotesTreeVersion = {
   maxUpdatedAt: Date | null;
@@ -390,6 +443,25 @@ const noteFullColumns = {
  */
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
+}
+
+/**
+ * Canonicalize feed match values to trimmed lowercase with empties
+ * dropped and duplicates collapsed, the single form the §7 exposure
+ * arms compare on both sides. Applied to labels and feed task ids
+ * alike (trim is a no-op on well-formed UUIDs).
+ *
+ * @param values - Raw value list.
+ * @returns Deduplicated, trimmed, lowercased values.
+ */
+function canonicalizeFeedLabels(values: string[]): string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0),
+    ),
+  ];
 }
 
 /**
@@ -1042,8 +1114,7 @@ export async function getNotesTreeVersion(
   const [row] = normalizeExecuteResult<NotesTreeVersionRow>(versionRaw);
   const max = row?.max_updated_at ?? null;
   return {
-    maxUpdatedAt:
-      max === null ? null : max instanceof Date ? max : new Date(max),
+    maxUpdatedAt: max === null ? null : toDate(max),
     liveCount: Number(row?.live_count ?? 0),
   };
 }
@@ -1136,13 +1207,135 @@ export async function searchNotes(
     visibility: row.visibility as Visibility,
     agentWritable: row.agent_writable,
     locked: row.locked,
-    updatedAt:
-      row.updated_at instanceof Date
-        ? row.updated_at
-        : new Date(row.updated_at),
+    updatedAt: toDate(row.updated_at),
     rank: Number(row.rank),
     snippet: row.snippet,
   }));
+}
+
+/**
+ * Resolve a caller budget to effective caps: each value clamps to
+ * [1, its default], so budgets can only tighten the defaults.
+ *
+ * @param budget - Optional caller caps.
+ * @returns Effective note and char caps.
+ */
+function clampFeedBudget(budget?: FeedBudget): {
+  maxNotes: number;
+  maxChars: number;
+} {
+  return {
+    maxNotes: Math.min(
+      Math.max(budget?.maxNotes ?? FEED_NOTE_CAP, 1),
+      FEED_NOTE_CAP,
+    ),
+    maxChars: Math.min(
+      Math.max(budget?.maxChars ?? FEED_CHAR_BUDGET, 1),
+      FEED_CHAR_BUDGET,
+    ),
+  };
+}
+
+/**
+ * Apply the §7/§10 bundle budget to exposure-ordered feed rows: admit a
+ * strict prefix while both the note cap and the running char budget
+ * (per-row `title.length + summary.length`) hold; the first row failing
+ * either bound stops admission and remaining rows degrade to pointers,
+ * capped at {@link FEED_POINTER_CAP} with `truncated` flagging any drop.
+ * Pure; PYZ-253 consumes the feed through {@link resolveExposedNotes},
+ * never the raw statement.
+ *
+ * @param rows - Exposed rows, already ordered `updatedAt DESC, id ASC`.
+ * @param budget - Optional caps; each clamps to [1, its default]
+ *   ({@link FEED_NOTE_CAP} / {@link FEED_CHAR_BUDGET}).
+ * @returns Admitted rows, pointer-only overflow, and a truncation flag.
+ */
+export function applyFeedBudget(
+  rows: NoteFeedRow[],
+  budget?: FeedBudget,
+): NoteFeedResolution {
+  const { maxNotes, maxChars } = clampFeedBudget(budget);
+  const admitted: NoteFeedRow[] = [];
+  let runningChars = 0;
+  let cut = rows.length;
+  for (let i = 0; i < rows.length; i++) {
+    const rowChars = rows[i].title.length + rows[i].summary.length;
+    if (admitted.length >= maxNotes || runningChars + rowChars > maxChars) {
+      cut = i;
+      break;
+    }
+    admitted.push(rows[i]);
+    runningChars += rowChars;
+  }
+  const pointerEnd = Math.min(cut + FEED_POINTER_CAP, rows.length);
+  const overflow = rows.slice(cut, pointerEnd).map((row) => ({
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    type: row.type,
+  }));
+  return { notes: admitted, overflow, truncated: pointerEnd < rows.length };
+}
+
+/**
+ * Coerce a raw feed row to its typed shape (`updated_at` arrives as a
+ * string or a Date depending on the driver).
+ *
+ * @param row - Raw driver row.
+ * @returns Typed feed row.
+ */
+function mapNoteFeedRow(row: NoteFeedRawRow): NoteFeedRow {
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    type: row.type as NoteType,
+    folder: row.folder,
+    summary: row.summary,
+    updatedAt: toDate(row.updated_at),
+  };
+}
+
+/**
+ * Resolve the notes an agent may see for one task: the single §7
+ * exposure authority for the planned note-search (PYZ-251) and
+ * context-injection (PYZ-253) call sites. A note is exposed iff
+ * `visibility = 'team'` AND `feed_mode <> 'none'` AND its feed mode
+ * targets the task; the budget then degrades overflow to pointers. The
+ * fetch is bounded to note cap + {@link FEED_POINTER_CAP} rows plus one
+ * sentinel row, so `truncated` is true only when exposed notes were
+ * actually dropped. Zero matches resolve to empty lists, never an error.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project whose notes are resolved.
+ * @param task - The task the feed targets.
+ * @param budget - Optional caps; each clamps to [1, its default].
+ * @returns Admitted rows and pointer-only overflow, most recently
+ *   updated first, plus the truncation flag.
+ * @throws ForbiddenError when the caller cannot access the project.
+ */
+export async function resolveExposedNotes(
+  ctx: AuthContext,
+  projectId: string,
+  task: FeedTask,
+  budget?: FeedBudget,
+): Promise<NoteFeedResolution> {
+  assertValidProjectId(projectId);
+  const { maxNotes } = clampFeedBudget(budget);
+  const fetchLimit = maxNotes + FEED_POINTER_CAP;
+  const [gateRows, rowsRaw] = await withUserContextRead(ctx.userId, (read) => [
+    projectAccessGateStmt(read, projectId),
+    notesFeedStmt(read, projectId, task, maxNotes, fetchLimit + 1),
+  ]);
+  assertProjectGateRows(projectId, gateRows);
+  const fetched =
+    normalizeExecuteResult<NoteFeedRawRow>(rowsRaw).map(mapNoteFeedRow);
+  const rows = fetched.slice(0, fetchLimit);
+  const resolution = applyFeedBudget(rows, budget);
+  return {
+    ...resolution,
+    truncated: resolution.truncated || fetched.length > fetchLimit,
+  };
 }
 
 /**
@@ -1301,9 +1494,12 @@ export async function createNote(
  * snapshots a revision (pruned to the retention cap), re-derives links,
  * and flips `embedding_status` to `stale` when the note is already in the
  * embedding pipeline. `slug` is never touched — slugs are stable once
- * assigned. One locked read serves as both the access gate and the CAS
- * baseline (`FOR UPDATE OF notes` through the projects join); it selects
- * `body` only when the patch carries one.
+ * assigned. Feed labels and feed task ids store deduplicated trimmed
+ * lowercase with empties dropped, the canonical form the §7 exposure
+ * arms match against. One locked read serves as both the access gate
+ * and the CAS baseline
+ * (`FOR UPDATE OF notes` through the projects join); it selects `body`
+ * only when the patch carries one.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -1332,6 +1528,10 @@ export async function updateNote(
     if (patch[field] !== undefined) {
       (applied as Record<string, unknown>)[field] = patch[field];
     }
+  }
+  for (const field of ["feedCategories", "feedTags", "feedTaskIds"] as const) {
+    const values = applied[field];
+    if (values !== undefined) applied[field] = canonicalizeFeedLabels(values);
   }
   if (applied.title !== undefined) assertTitleWithinCap(applied.title);
   if (applied.body !== undefined) assertBodyWithinCap(applied.body);

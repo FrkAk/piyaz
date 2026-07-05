@@ -103,6 +103,17 @@ export function normalizeExecuteResult<T>(result: unknown): T[] {
 }
 
 /**
+ * Coerce a driver-provided timestamp to a Date (postgres-js returns a
+ * Date, neon-http returns an ISO string).
+ *
+ * @param value - Driver-provided timestamp.
+ * @returns The timestamp as a Date.
+ */
+export function toDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
+}
+
+/**
  * Run a raw SQL query against either the application client or an active
  * transaction handle and return rows as `T[]`. The single supported escape
  * hatch for SQL the type-safe builder cannot express (recursive CTEs,
