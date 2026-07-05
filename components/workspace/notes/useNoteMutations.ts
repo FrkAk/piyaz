@@ -38,6 +38,9 @@ import type { Visibility } from "@/lib/types";
 /** Debounce window between a block commit and the autosave flush. */
 const AUTOSAVE_DEBOUNCE_MS = 600;
 
+/** Ceiling for the exponential transport-failure retry backoff. */
+const AUTOSAVE_RETRY_MAX_MS = 30_000;
+
 /**
  * Serialize a cached `updatedAt` into the CAS token `updateNote` expects.
  * Route payloads carry ISO strings at runtime (JSON serialization) while
@@ -172,8 +175,13 @@ export function useCreateNote(projectId: string) {
 /**
  * Optimistic note patch with optimistic concurrency. Threads the cached
  * `updatedAt` as the CAS token, applies the patch to the detail and tree
- * caches up front, and on success folds the summary back in so the NEXT
- * save's token is fresh. On `stale_write` the optimistic content is kept
+ * caches up front, and on success folds the summary into both caches so
+ * the NEXT save's token is fresh. No list revalidation on success: the
+ * optimistic patch already applied every tree-visible field verbatim and
+ * the summary carries the only fields the server derives (`folder`
+ * normalization, `updatedAt`), so a per-save refetch would re-download
+ * the whole tree at autosave cadence for nothing. On `stale_write` the
+ * optimistic content is kept
  * (the server applied no write, so nothing was clobbered) and the failure
  * carries the live `updatedAt`/`version` for the conflict banner; every
  * other failure, returned or thrown, restores both snapshots.
@@ -216,7 +224,14 @@ export function useUpdateNote(projectId: string) {
         qc.setQueryData<NoteFullResult>(detailKey, (detail) =>
           mergeSummaryIntoDetail(detail, result.data),
         );
-        qc.invalidateQueries({ queryKey: listKey });
+        qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
+          patchNoteInTree(rows, noteId, {
+            slug: result.data.slug,
+            title: result.data.title,
+            folder: result.data.folder,
+            updatedAt: result.data.updatedAt,
+          }),
+        );
         return result;
       }
       if (result.code === "stale_write") return result;
@@ -508,9 +523,14 @@ export type NoteAutosaveError = {
  * Failure semantics: on `stale_write` the optimistic cache content is kept
  * (the server applied no write; rollback would fake data loss) and
  * `conflict` carries the live `updatedAt`/`version` until the next
- * successful save. A thrown transport error (write outcome unknown) and
- * `rate_limited` re-buffer the patch for retry, the latter re-arming the
- * timer with the server's `retryAfter`. Every other typed failure is
+ * successful save. A thrown transport error (write outcome unknown)
+ * re-buffers the patch and retries with exponential backoff capped at
+ * {@link AUTOSAVE_RETRY_MAX_MS}; `rate_limited` re-buffers and re-arms
+ * with the server's `retryAfter`. Retries stop when the hook unmounts,
+ * with the unmount flush as the final attempt: a surviving background
+ * loop would read its CAS token from the live cache and could clobber a
+ * newer session's save with stale buffered content. Every other typed
+ * failure is
  * deterministic — retrying it loops write traffic without recovery — so
  * the buffer is dropped and the failure surfaces as `saveError` until the
  * note's next successful save; the committed content stays in the detail
@@ -535,6 +555,8 @@ export function useNoteAutosave(projectId: string, noteId: string) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlightRef = useRef(false);
   const flushRef = useRef<() => Promise<void>>(async () => {});
+  const mountedRef = useRef(true);
+  const transportFailuresRef = useRef(0);
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -572,7 +594,16 @@ export function useNoteAutosave(projectId: string, noteId: string) {
             const newer = buffers.get(target);
             buffers.set(target, newer ? { ...patch, ...newer } : patch);
             setPendingIds((ids) => addPendingId(ids, target));
-            if (result !== null) {
+            if (result === null) {
+              transportFailuresRef.current += 1;
+              retryDelayMs = Math.max(
+                retryDelayMs,
+                Math.min(
+                  AUTOSAVE_DEBOUNCE_MS * 2 ** transportFailuresRef.current,
+                  AUTOSAVE_RETRY_MAX_MS,
+                ),
+              );
+            } else {
               retryDelayMs = Math.max(retryDelayMs, result.retryAfter * 1000);
             }
             continue;
@@ -592,12 +623,17 @@ export function useNoteAutosave(projectId: string, noteId: string) {
           });
           continue;
         }
+        transportFailuresRef.current = 0;
         setConflictState((c) => (c?.noteId === target ? null : c));
         setSaveErrorState((e) => (e?.noteId === target ? null : e));
       }
     } finally {
       inFlightRef.current = false;
-      if (buffersRef.current.size > 0 && timerRef.current === null) {
+      if (
+        mountedRef.current &&
+        buffersRef.current.size > 0 &&
+        timerRef.current === null
+      ) {
         timerRef.current = setTimeout(
           () => void flushRef.current(),
           retryDelayMs,
@@ -609,6 +645,13 @@ export function useNoteAutosave(projectId: string, noteId: string) {
   useEffect(() => {
     flushRef.current = flush;
   }, [flush]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const commit = useCallback(
     (next: { body?: string; title?: string }) => {
