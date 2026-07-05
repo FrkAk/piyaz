@@ -29,6 +29,7 @@ import type {
   FeedMode,
   NoteTaskLinkKind,
   EmbeddingStatus,
+  LegalDocumentType,
 } from "@/lib/types";
 
 /**
@@ -639,6 +640,36 @@ export const noteRevisions = pgTable(
 
 export type NoteRevision = typeof noteRevisions.$inferSelect;
 export type NewNoteRevision = typeof noteRevisions.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Legal Acceptances
+// ---------------------------------------------------------------------------
+
+export const legalAcceptances = pgTable(
+  "legal_acceptances",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    documentType: text("document_type").$type<LegalDocumentType>().notNull(),
+    documentVersion: text("document_version").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+  },
+  (t) => [
+    check(
+      "legal_acceptances_document_type_check",
+      sql`${t.documentType} IN ('terms', 'privacy', 'dpa')`,
+    ),
+  ],
+).enableRLS();
+
+export type LegalAcceptance = typeof legalAcceptances.$inferSelect;
+export type NewLegalAcceptance = typeof legalAcceptances.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Team Invite Codes (separate file, re-exported here for drizzle-kit)
