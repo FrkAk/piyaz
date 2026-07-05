@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
-import type { NoteActionResult } from "@/lib/actions/note-errors";
+import type {
+  NoteActionFailure,
+  NoteActionResult,
+} from "@/lib/actions/note-errors";
 import {
   approveShareRequestAction,
   createNoteAction,
@@ -478,6 +481,16 @@ export type NoteAutosaveConflict = {
 };
 
 /**
+ * Terminal autosave failure surfaced after the buffer is dropped. Covers
+ * every failure code the flush does not retry (`stale_write` surfaces as
+ * `conflict`, `rate_limited` and thrown transport errors re-buffer).
+ */
+export type NoteAutosaveError = {
+  code: Exclude<NoteActionFailure["code"], "stale_write" | "rate_limited">;
+  message: string;
+};
+
+/**
  * Debounced autosave for the note editor. Each block commit carries the
  * FULL body (per the editor contract), so N commits inside one debounce
  * window collapse into ONE `updateNote` patch holding the latest body and
@@ -495,19 +508,25 @@ export type NoteAutosaveConflict = {
  * Failure semantics: on `stale_write` the optimistic cache content is kept
  * (the server applied no write; rollback would fake data loss) and
  * `conflict` carries the live `updatedAt`/`version` until the next
- * successful save. On every other failure, a typed result or a thrown
- * transport error, `useUpdateNote` restores its pre-mutation snapshot and
- * the failed patch returns to the pending buffer so the next flush retries
- * it. Callers must gate `commit` on `isPlaceholderData` from
- * {@link useNoteDetail} — a placeholder's empty body must never be
- * autosaved. An SSE invalidation may refetch over kept-optimistic conflict
- * content; resolving that is the conflict banner's contract (PYZ-262).
+ * successful save. A thrown transport error (write outcome unknown) and
+ * `rate_limited` re-buffer the patch for retry, the latter re-arming the
+ * timer with the server's `retryAfter`. Every other typed failure is
+ * deterministic — retrying it loops write traffic without recovery — so
+ * the buffer is dropped and the failure surfaces as `saveError` until the
+ * note's next successful save; the committed content stays in the detail
+ * cache (the commit-time optimistic patch is the flush-time snapshot), so
+ * the next commit re-buffers it. Callers must gate `commit` on
+ * `isPlaceholderData` from {@link useNoteDetail} — a placeholder's empty
+ * body must never be autosaved. An SSE invalidation may refetch over
+ * kept-optimistic conflict content; resolving that is the conflict
+ * banner's contract (PYZ-262).
  *
  * @param projectId - Owning project id.
  * @param noteId - Note being edited.
  * @returns `commit` (buffer a block commit), `flush` (save now), `pending`
  *   (unsaved buffered content exists for this note), `conflict` (live
- *   conflict payload, or `null`).
+ *   conflict payload, or `null`), `saveError` (terminal failure for this
+ *   note's last dropped save, or `null`).
  */
 export function useNoteAutosave(projectId: string, noteId: string) {
   const qc = useQueryClient();
@@ -522,6 +541,9 @@ export function useNoteAutosave(projectId: string, noteId: string) {
   const [conflictState, setConflictState] = useState<
     (NoteAutosaveConflict & { noteId: string }) | null
   >(null);
+  const [saveErrorState, setSaveErrorState] = useState<
+    (NoteAutosaveError & { noteId: string }) | null
+  >(null);
 
   const flush = useCallback(async () => {
     if (timerRef.current !== null) {
@@ -532,6 +554,7 @@ export function useNoteAutosave(projectId: string, noteId: string) {
     const buffers = buffersRef.current;
     if (buffers.size === 0) return;
     inFlightRef.current = true;
+    let retryDelayMs = AUTOSAVE_DEBOUNCE_MS;
     try {
       for (const target of [...buffers.keys()]) {
         const patch = buffers.get(target);
@@ -544,26 +567,40 @@ export function useNoteAutosave(projectId: string, noteId: string) {
         } catch {
           result = null;
         }
-        if (result?.ok) {
-          setConflictState((c) => (c?.noteId === target ? null : c));
-        } else if (result?.code === "stale_write") {
-          setConflictState({
+        if (result === null || result.ok === false) {
+          if (result === null || result.code === "rate_limited") {
+            const newer = buffers.get(target);
+            buffers.set(target, newer ? { ...patch, ...newer } : patch);
+            setPendingIds((ids) => addPendingId(ids, target));
+            if (result !== null) {
+              retryDelayMs = Math.max(retryDelayMs, result.retryAfter * 1000);
+            }
+            continue;
+          }
+          if (result.code === "stale_write") {
+            setConflictState({
+              noteId: target,
+              currentUpdatedAt: result.currentUpdatedAt,
+              currentVersion: result.currentVersion,
+            });
+            continue;
+          }
+          setSaveErrorState({
             noteId: target,
-            currentUpdatedAt: result.currentUpdatedAt,
-            currentVersion: result.currentVersion,
+            code: result.code,
+            message: result.message,
           });
-        } else {
-          const newer = buffers.get(target);
-          buffers.set(target, newer ? { ...patch, ...newer } : patch);
-          setPendingIds((ids) => addPendingId(ids, target));
+          continue;
         }
+        setConflictState((c) => (c?.noteId === target ? null : c));
+        setSaveErrorState((e) => (e?.noteId === target ? null : e));
       }
     } finally {
       inFlightRef.current = false;
       if (buffersRef.current.size > 0 && timerRef.current === null) {
         timerRef.current = setTimeout(
           () => void flushRef.current(),
-          AUTOSAVE_DEBOUNCE_MS,
+          retryDelayMs,
         );
       }
     }
@@ -612,6 +649,10 @@ export function useNoteAutosave(projectId: string, noteId: string) {
             currentUpdatedAt: conflictState.currentUpdatedAt,
             currentVersion: conflictState.currentVersion,
           }
+        : null,
+    saveError:
+      saveErrorState?.noteId === noteId
+        ? { code: saveErrorState.code, message: saveErrorState.message }
         : null,
   };
 }

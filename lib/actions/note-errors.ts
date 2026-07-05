@@ -17,9 +17,11 @@ export type { NoteValidationField };
  * Failure half of a note action result. `stale_write` carries the note's
  * live optimistic-concurrency payload: `currentUpdatedAt` is the retry
  * token to send as the next `ifUpdatedAt`, `currentVersion` renders in the
- * conflict banner. `invalid_input` carries the offending field. Plain
- * fields (not error subclasses) because Next.js redacts thrown error
- * properties across the server-action boundary in production.
+ * conflict banner. `invalid_input` carries the offending field.
+ * `rate_limited` carries the server's `retryAfter` seconds so retrying
+ * callers wait out the budget window. Plain fields (not error subclasses)
+ * because Next.js redacts thrown error properties across the server-action
+ * boundary in production.
  */
 export type NoteActionFailure =
   | {
@@ -29,7 +31,6 @@ export type NoteActionFailure =
         | "not_found"
         | "invalid_folder_move"
         | "share_state"
-        | "rate_limited"
         | "archived"
         | "unknown";
       message: string;
@@ -39,6 +40,12 @@ export type NoteActionFailure =
       code: "invalid_input";
       field: NoteValidationField;
       message: string;
+    }
+  | {
+      ok: false;
+      code: "rate_limited";
+      message: string;
+      retryAfter: number;
     }
   | {
       ok: false;
@@ -98,7 +105,12 @@ export function noteFailureFrom(err: unknown): NoteActionFailure {
     return { ok: false, code: "archived", message: ARCHIVED_MESSAGE };
   }
   if (err instanceof RateLimitError) {
-    return { ok: false, code: "rate_limited", message: RATE_LIMITED_MESSAGE };
+    return {
+      ok: false,
+      code: "rate_limited",
+      message: RATE_LIMITED_MESSAGE,
+      retryAfter: err.retryAfter,
+    };
   }
   if (err instanceof Error && err.message === "Unauthorized") {
     return { ok: false, code: "unauthorized", message: UNAUTHORIZED_MESSAGE };

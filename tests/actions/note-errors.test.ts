@@ -70,8 +70,11 @@ describe("noteFailureFrom", () => {
     );
   });
 
-  test("RateLimitError → rate_limited", () => {
-    expect(noteFailureFrom(new RateLimitError(30)).code).toBe("rate_limited");
+  test("RateLimitError → rate_limited carrying retryAfter", () => {
+    const out = noteFailureFrom(new RateLimitError(30));
+    expect(out.code).toBe("rate_limited");
+    if (out.code !== "rate_limited") throw new Error("unreachable");
+    expect(out.retryAfter).toBe(30);
   });
 
   test("bare Unauthorized error → unauthorized", () => {

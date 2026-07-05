@@ -77,7 +77,8 @@ const changePasswordSchema = z
  * (`app/api/auth/[...all]/route.ts`), so brute-force throttling lives in
  * the two rate-limit limbs below, counted against the per-PoP `auth`
  * binding in flood-safe order (per-IP before the session lookup, per-user
- * after auth — the `authorizeWrite` pattern in `lib/graph/mutations.ts`).
+ * after auth — the `authorizeWrite` pattern in
+ * `lib/actions/rate-limit-action.ts`).
  *
  * @param input - `{ currentPassword, newPassword }` from the password form.
  * @returns Discriminated `TeamActionResult`; `invalid_password` when the
