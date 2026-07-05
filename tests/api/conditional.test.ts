@@ -104,3 +104,10 @@ test("HEAD with matching If-None-Match returns 304 with no body", async () => {
   expect(res.status).toBe(304);
   expect(await res.text()).toBe("");
 });
+
+test("makeEtag rejects string validators outside the token alphabet", () => {
+  expect(makeEtag("0-0")).toBe('"0-0"');
+  expect(() => makeEtag('a"b')).toThrow(TypeError);
+  expect(() => makeEtag("a,b")).toThrow(TypeError);
+  expect(() => makeEtag("")).toThrow(TypeError);
+});

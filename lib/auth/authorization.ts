@@ -4,6 +4,7 @@ import { cache } from "react";
 import type { AuthContext } from "@/lib/auth/context";
 import type { Tx } from "@/lib/db/rls";
 import {
+  findNoteAccess,
   findNoteAccessTx,
   findProjectAccess,
   findProjectAccessTx,
@@ -221,6 +222,31 @@ export async function assertTaskAccessTx(
   const task = await findTaskAccessTx(tx, taskId);
   if (!task) throw new ForbiddenError("Forbidden", "task", taskId);
   return task;
+}
+
+/**
+ * Verify the caller can access the note and return its gate row. Joins
+ * through the parent project; RLS additionally hides other members'
+ * private notes, so those surface as the same 404-shaped error as a
+ * missing note. Stricter than {@link assertNoteAccessTx}: a missing row
+ * or a set `deletedAt` throws, so trashed notes 404-shape here.
+ *
+ * @param noteId - UUID of the note to authorize.
+ * @param ctx - Resolved auth context.
+ * @returns The slim gate row for the note.
+ * @throws ForbiddenError on malformed id, missing, trashed, cross-team,
+ *   or another member's private note.
+ */
+export async function assertNoteAccess(
+  noteId: string,
+  ctx: AuthContext,
+): Promise<NoteAccessGate> {
+  assertValidNoteId(noteId);
+  const note = await findNoteAccess(ctx.userId, noteId);
+  if (!note || note.deletedAt !== null) {
+    throw new ForbiddenError("Forbidden", "note", noteId);
+  }
+  return note;
 }
 
 /**

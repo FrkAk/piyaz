@@ -17,7 +17,7 @@ import {
   type Task,
 } from "@/lib/db/schema";
 import { executeRaw, type ReadConn } from "@/lib/db/raw";
-import { withUserContext, type Tx } from "@/lib/db/rls";
+import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import type { ProjectListOrganization } from "@/lib/data/views";
 import type { ProjectStatus } from "@/lib/types";
 
@@ -230,6 +230,27 @@ export type NoteAccessGate = Pick<
   | "updatedAt"
   | "deletedAt"
 > & { projectStatus: ProjectStatus; projectIdentifier: string };
+
+/**
+ * Membership-gated note lookup as one stateless read batch over
+ * {@link noteAccessGateStmt}. RLS gates membership and per-note
+ * visibility (`team` or own-private); no piyaz_auth JOIN. Like
+ * {@link findNoteAccessTx}, trashed rows pass; callers decide the
+ * `deletedAt` policy.
+ *
+ * @param userId - Verified user id.
+ * @param noteId - UUID of the note.
+ * @returns Gate row with only the columns callers read, or null when inaccessible.
+ */
+export async function findNoteAccess(
+  userId: string,
+  noteId: string,
+): Promise<NoteAccessGate | null> {
+  const [rows] = await withUserContextRead(userId, (read) => [
+    noteAccessGateStmt(read, noteId),
+  ]);
+  return rows[0] ?? null;
+}
 
 /**
  * Membership-gated note lookup. RLS gates membership and per-note
