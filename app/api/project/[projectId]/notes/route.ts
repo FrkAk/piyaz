@@ -8,13 +8,15 @@ import { error } from "@/lib/api/response";
 /**
  * Conditional handler for `GET` and `HEAD` on the project notes tree list.
  *
- * Resolves the composite `{maxUpdatedAt, liveCount}` validator first via
- * a single probe so a 304 short-circuit (or a HEAD) avoids the heavier
- * tree-list fetch. The `liveCount` arm invalidates on soft deletes that
- * lower no MAX; an empty project yields the stable token `0-0`.
+ * The validator is the composite token `${maxLiveUpdatedAtMs}-${liveCount}`;
+ * the count arm invalidates on soft deletes that lower no MAX, and an
+ * empty project yields the stable token `0-0`. HEAD and
+ * `If-None-Match` requests resolve it via the `getNotesTreeVersion`
+ * probe so a 304 avoids the heavier tree-list fetch; cold GETs skip the
+ * probe and derive the same token from the fetched rows.
  *
  * The payload is the slim {@link import("@/lib/data/note").NoteTreeRow}
- * projection — `body`/`search_tsv` are never selected. Fetch bodies
+ * projection; `body`/`search_tsv` are never selected. Fetch bodies
  * per-note via `GET /api/note/[id]`.
  *
  * @param req - Incoming request.
@@ -30,15 +32,21 @@ async function handle(req: Request, projectId: string): Promise<Response> {
   }
 
   try {
-    const version = await getNotesTreeVersion(ctx, projectId);
-    const token = `${version.maxUpdatedAt?.getTime() ?? 0}-${version.liveCount}`;
+    if (req.method === "HEAD" || req.headers.has("if-none-match")) {
+      const version = await getNotesTreeVersion(ctx, projectId);
+      const token = `${version.maxUpdatedAt?.getTime() ?? 0}-${version.liveCount}`;
 
-    if (req.method === "HEAD" || etagMatches(req, token)) {
-      return conditionalRespond(req, null, token);
+      if (req.method === "HEAD" || etagMatches(req, token)) {
+        return conditionalRespond(req, null, token);
+      }
+
+      const rows = await getNoteTreeList(ctx, projectId);
+      return conditionalRespond(req, rows, token);
     }
 
     const rows = await getNoteTreeList(ctx, projectId);
-    return conditionalRespond(req, rows, token);
+    const maxMs = rows.reduce((m, r) => Math.max(m, r.updatedAt.getTime()), 0);
+    return conditionalRespond(req, rows, `${maxMs}-${rows.length}`);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return error("Project not found", 404);
@@ -48,7 +56,7 @@ async function handle(req: Request, projectId: string): Promise<Response> {
 }
 
 /**
- * GET handler — returns the slim notes tree list.
+ * GET handler: returns the slim notes tree list.
  * @param req - Incoming request.
  * @param params - Route params with projectId.
  * @returns JSON or conditional response.
@@ -62,7 +70,7 @@ export async function GET(
 }
 
 /**
- * HEAD handler — same auth + 304 logic as GET, never returns a body.
+ * HEAD handler: same auth + 304 logic as GET, never returns a body.
  * @param req - Incoming request.
  * @param params - Route params with projectId.
  * @returns Empty response with `ETag` header.

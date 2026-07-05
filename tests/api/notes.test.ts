@@ -88,7 +88,13 @@ async function trashNote(noteId: string): Promise<void> {
   });
 }
 
-/** GET request against a route path. */
+/**
+ * Build a GET request against a route path.
+ *
+ * @param path - Route path with a leading slash.
+ * @param headers - Optional request headers.
+ * @returns Request targeting the route handler.
+ */
 function get(path: string, headers?: Record<string, string>): Request {
   return new Request(`http://test${path}`, { headers });
 }
@@ -272,7 +278,7 @@ test("GET /api/note/[id] — cross-team note and non-uuid id 404", async () => {
   expect(bad.status).toBe(404);
 });
 
-test("GET /api/note/[id] — trashed note 404s even with a matching stale ETag", async () => {
+test("GET /api/note/[id] — trashed note 404s on cold GET and with a matching stale ETag", async () => {
   const f = await seedUserOrgProject("note-trash");
   const note = await createNote(makeAuthContext(f.userId), {
     projectId: f.projectId,
@@ -292,6 +298,11 @@ test("GET /api/note/[id] — trashed note 404s even with a matching stale ETag",
     { params: Promise.resolve({ noteId: note.id }) },
   );
   expect(stale.status).toBe(404);
+
+  const cold = await noteGET(get(`/api/note/${note.id}`), {
+    params: Promise.resolve({ noteId: note.id }),
+  });
+  expect(cold.status).toBe(404);
 });
 
 test("GET /api/project/[id]/notes/search — ranked snippet hits without body; over-length q 400", async () => {
@@ -323,7 +334,7 @@ test("GET /api/project/[id]/notes/search — ranked snippet hits without body; o
   expect(long.status).toBe(400);
 });
 
-test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, trashed excluded", async () => {
+test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, trashed excluded; kind change invalidates the ETag", async () => {
   const f = await seedUserOrgProject("task-notes");
   const ctx = makeAuthContext(f.userId);
   const taskId = await addTask(f.projectId, "backlinks");
@@ -354,6 +365,27 @@ test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, tr
   expect(byId.get(linked.id)?.kind).toBe("reference");
   expect(byId.get(dual.id)?.kind).toBe("spec_of");
   for (const row of rows) expect(row).not.toHaveProperty("body");
+
+  const etag = res.headers.get("etag");
+  const replay = await backlinksGET(
+    get(`/api/task/${taskId}/notes`, { "if-none-match": etag! }),
+    { params: Promise.resolve({ taskId }) },
+  );
+  expect(replay.status).toBe(304);
+
+  await su(async (sql) => {
+    await sql`
+      UPDATE note_task_links SET kind = 'spec_of'
+      WHERE note_id = ${linked.id} AND task_id = ${taskId}
+    `;
+  });
+
+  const changed = await backlinksGET(
+    get(`/api/task/${taskId}/notes`, { "if-none-match": etag! }),
+    { params: Promise.resolve({ taskId }) },
+  );
+  expect(changed.status).toBe(200);
+  expect(changed.headers.get("etag")).not.toBe(etag);
 });
 
 test("GET /api/task/[id]/notes — non-uuid and cross-team task 404; unauthenticated 401 sweep", async () => {

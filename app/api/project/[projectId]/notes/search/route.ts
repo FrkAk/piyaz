@@ -8,7 +8,7 @@ import { error, ok } from "@/lib/api/response";
  * GET handler for full-text note search within a project.
  *
  * Returns up to 20 ranked hits, each the slim tree projection plus a
- * `ts_headline` snippet — the body column is never selected. Responses
+ * `ts_headline` snippet; the body column is never selected. Responses
  * are query-parameterized with low revalidation value, so this route
  * ships plain 200s without conditional-GET. A blank or missing `q`
  * returns `[]` after the project access gate; an over-length `q`

@@ -1,18 +1,32 @@
+/** Alphabet allowed in string validators so the quoted ETag stays well-formed. */
+const ETAG_TOKEN_RE = /^[A-Za-z0-9._-]+$/;
+
 /**
  * Build a strong ETag from a resource validator. A `Date` renders as its
- * base-10 millisecond count — exact-string comparison preserves the
+ * base-10 millisecond count; exact-string comparison preserves the
  * same-second mutation window that `Last-Modified`/`If-Modified-Since`
  * collapses (HTTP-date is 1-second resolution). A `string` is an opaque
  * pre-formatted token for composite validators (e.g. the notes tree's
  * `${maxUpdatedAt}-${liveCount}` pair) and is quoted verbatim. Either way
  * the value is opaque to clients and deterministic per resource state.
  *
- * @param validator - Server-side max `updatedAt` or an opaque token.
+ * @param validator - Server-side max `updatedAt`, or an opaque token
+ *   restricted to `[A-Za-z0-9._-]` (a quote or comma would break
+ *   `If-None-Match` list matching).
  * @returns Quoted ETag value suitable for the `ETag` response header.
+ * @throws {TypeError} When a string validator contains characters outside
+ *   the token alphabet.
  */
 export function makeEtag(validator: Date | string): string {
-  const token = typeof validator === "string" ? validator : validator.getTime();
-  return `"${token}"`;
+  if (typeof validator === "string") {
+    if (!ETAG_TOKEN_RE.test(validator)) {
+      throw new TypeError(
+        "makeEtag: string validator must match [A-Za-z0-9._-]+",
+      );
+    }
+    return `"${validator}"`;
+  }
+  return `"${validator.getTime()}"`;
 }
 
 /**

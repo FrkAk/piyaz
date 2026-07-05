@@ -12,13 +12,13 @@ import { error } from "@/lib/api/response";
  * composed with its task mentions (kind + taskRef) and linked notes in
  * both directions. ETag is the note's `updated_at`.
  *
- * Auth + validator (`assertNoteAccess`) runs first so a 304 short-circuit
- * skips the five-statement batch that `getNoteFull` pays. The probe
- * 404-shapes trashed notes BEFORE the ETag compare, so a matching stale
- * validator cannot 304 a trashed note. The 200 fall-through goes through
- * the ctx-taking `getNoteFull` (which re-asserts) so the route stays on
- * the canonical pattern: every public data-layer call authorizes itself.
- * Broker `note:<id>` subscription registration lands with PYZ-262.
+ * Requests that can 304 (HEAD, or GET with `If-None-Match`) run the
+ * `assertNoteAccess` probe first so a match skips the five-statement
+ * batch that `getNoteFull` pays; the probe 404-shapes trashed notes
+ * before the ETag compare, so a matching stale validator cannot 304 a
+ * trashed note. Cold GETs skip the probe and authorize through
+ * `getNoteFull`, which 404-shapes missing, trashed, and cross-team notes
+ * itself.
  *
  * @param req - Incoming request.
  * @param noteId - Note UUID from the route params.
@@ -33,10 +33,11 @@ async function handle(req: Request, noteId: string): Promise<Response> {
   }
 
   try {
-    const access = await assertNoteAccess(noteId, ctx);
-
-    if (req.method === "HEAD" || etagMatches(req, access.updatedAt)) {
-      return conditionalRespond(req, null, access.updatedAt);
+    if (req.method === "HEAD" || req.headers.has("if-none-match")) {
+      const access = await assertNoteAccess(noteId, ctx);
+      if (req.method === "HEAD" || etagMatches(req, access.updatedAt)) {
+        return conditionalRespond(req, null, access.updatedAt);
+      }
     }
 
     const result = await getNoteFull(ctx, noteId);
@@ -50,7 +51,7 @@ async function handle(req: Request, noteId: string): Promise<Response> {
 }
 
 /**
- * GET handler — returns the full note with derived link context.
+ * GET handler: returns the full note with derived link context.
  * @param req - Incoming request.
  * @param params - Route params with noteId.
  * @returns JSON or conditional response.
@@ -64,7 +65,7 @@ export async function GET(
 }
 
 /**
- * HEAD handler — same auth + 304 logic as GET, never returns a body.
+ * HEAD handler: same auth + 304 logic as GET, never returns a body.
  * @param req - Incoming request.
  * @param params - Route params with noteId.
  * @returns Empty response with `ETag` header.

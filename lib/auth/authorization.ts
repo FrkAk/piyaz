@@ -228,11 +228,8 @@ export async function assertTaskAccessTx(
  * Verify the caller can access the note and return its gate row. Joins
  * through the parent project; RLS additionally hides other members'
  * private notes, so those surface as the same 404-shaped error as a
- * missing note. Read-path probe for web routes: trashed notes
- * (`deletedAt !== null`) 404-shape here, deliberately stricter than
- * {@link assertNoteAccessTx}, which passes trashed rows for restore.
- * Centralizing the trashed-equals-missing rule prevents a stale client
- * ETag from 304-ing a trashed note.
+ * missing note. Stricter than {@link assertNoteAccessTx}: a missing row
+ * or a set `deletedAt` throws, so trashed notes 404-shape here.
  *
  * @param noteId - UUID of the note to authorize.
  * @param ctx - Resolved auth context.

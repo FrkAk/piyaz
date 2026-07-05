@@ -6,14 +6,17 @@ import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 
 /**
- * Conditional handler for `GET` and `HEAD` on a task's linked notes
- * (the DetailView "Linked notes" backlinks).
+ * Conditional handler for `GET` and `HEAD` on a task's linked-note
+ * backlinks.
  *
- * The payload rows are the validator source: the backlinks read IS the
- * cheap slim read (one batch: task gate + slim join), so no dedicated
- * version probe precedes it — a 304 here saves response egress, not DB
- * compute. Rows are the slim tree projection plus the link `kind`;
- * `body`/`search_tsv` are never selected.
+ * The payload rows are the validator source: the backlinks read is
+ * already the cheap slim read (one batch: task gate + slim join), so no
+ * dedicated version probe precedes it; a 304 here saves response egress,
+ * not DB compute. The token folds in max `updated_at` ms, row count, and
+ * each row's kind initial, so a link kind change (which bumps no note
+ * `updated_at`) still invalidates the validator. Rows are the slim tree
+ * projection plus the link `kind`; `body`/`search_tsv` are never
+ * selected.
  *
  * @param req - Incoming request.
  * @param taskId - Task UUID from the route params.
@@ -30,7 +33,8 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   try {
     const rows = await getTaskNoteBacklinks(ctx, taskId);
     const maxMs = rows.reduce((m, r) => Math.max(m, r.updatedAt.getTime()), 0);
-    const token = `${maxMs}-${rows.length}`;
+    const kinds = rows.map((r) => r.kind.charAt(0)).join("");
+    const token = `${maxMs}-${rows.length}-${kinds}`;
     return conditionalRespond(req, rows, token);
   } catch (err) {
     if (err instanceof ForbiddenError) {
@@ -41,7 +45,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
 }
 
 /**
- * GET handler — returns the task's linked notes, slim + kind.
+ * GET handler: returns the task's linked notes, slim + kind.
  * @param req - Incoming request.
  * @param params - Route params with taskId.
  * @returns JSON or conditional response.
@@ -55,7 +59,7 @@ export async function GET(
 }
 
 /**
- * HEAD handler — same auth + 304 logic as GET, never returns a body.
+ * HEAD handler: same auth + 304 logic as GET, never returns a body.
  * @param req - Incoming request.
  * @param params - Route params with taskId.
  * @returns Empty response with `ETag` header.
