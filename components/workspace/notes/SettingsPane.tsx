@@ -199,7 +199,7 @@ export function SettingsPane({
     async <T,>(
       control: ControlKey,
       action: () => Promise<NoteActionResult<T>>,
-      onSettled?: () => void,
+      onRevert?: () => void,
     ): Promise<void> => {
       setPending(control);
       setError((e) => (e?.control === control ? null : e));
@@ -210,12 +210,13 @@ export function SettingsPane({
         result = null;
       }
       setPending((p) => (p === control ? null : p));
-      onSettled?.();
       if (result === null) {
+        onRevert?.();
         setError({ control, message: "save failed" });
         return;
       }
       if (!result.ok) {
+        onRevert?.();
         if (result.code === "rate_limited") {
           setRateLimited({
             control,
@@ -231,6 +232,25 @@ export function SettingsPane({
   );
 
   const note = data?.note;
+
+  // Hold the optimistic access/visibility value until the refetched detail
+  // reflects it. On success the one-shot hooks fold only the slim summary
+  // into the detail cache, which omits the settings columns, so those land on
+  // the finalizeSettingsWrite refetch. Clearing the pending on mutation-settle
+  // would flash the thumb/segment back to the stale value for one round-trip;
+  // reconciling here (React re-renders in place) defers to the note only once
+  // it catches up and never overrides a later external change. Failures revert
+  // the pending through run's onRevert.
+  if (note && pendingAccess !== null && accessLevel(note) === pendingAccess) {
+    setPendingAccess(null);
+  }
+  if (
+    note &&
+    pendingVisibility !== null &&
+    note.visibility === pendingVisibility
+  ) {
+    setPendingVisibility(null);
+  }
 
   if (data === undefined || note === undefined) {
     return (
@@ -359,7 +379,7 @@ export function SettingsPane({
               <div className="flex gap-1.5">
                 <button
                   type="button"
-                  disabled={loading || busy}
+                  disabled={writeBlocked || isRate("share")}
                   onClick={() => {
                     setPendingVisibility("team");
                     void run(
@@ -375,7 +395,7 @@ export function SettingsPane({
                 </button>
                 <button
                   type="button"
-                  disabled={loading || busy}
+                  disabled={writeBlocked || isRate("share")}
                   onClick={() =>
                     void run("share", () => declineShare.mutateAsync(noteId))
                   }
