@@ -9,6 +9,10 @@ import {
   getOrCreateTeamInviteCodeAction,
   type InviteCodeMetadata,
 } from "@/lib/actions/team-invite-code";
+import {
+  getDpaAcceptanceAction,
+  type DpaAcceptanceState,
+} from "@/lib/actions/legal";
 import type { MemberView } from "@/lib/actions/team-members-map";
 import type { InvitationView } from "@/lib/actions/team-invitations-map";
 import type { TeamView } from "@/lib/actions/team-list";
@@ -23,6 +27,7 @@ import { MembersSection } from "./team-manage/MembersSection";
 import { InviteSection } from "./team-manage/InviteSection";
 import { IdentitySection } from "./team-manage/IdentitySection";
 import { DangerZone } from "./team-manage/DangerZone";
+import { DpaSection } from "./team-manage/DpaSection";
 
 import {
   invalidateTeamManageCache,
@@ -78,7 +83,7 @@ async function fetchTeamManagePayload(
   | { kind: "error"; message: string }
 > {
   const isAdminOrOwner = team.role === "owner" || team.role === "admin";
-  const [membersResult, invitationsResult, inviteCodeResult] =
+  const [membersResult, invitationsResult, inviteCodeResult, dpaResult] =
     await Promise.all([
       listTeamMembersAction({ organizationId: team.id }),
       isAdminOrOwner
@@ -87,6 +92,7 @@ async function fetchTeamManagePayload(
       isAdminOrOwner
         ? getOrCreateTeamInviteCodeAction({ organizationId: team.id })
         : Promise.resolve(null),
+      team.role === "owner" ? getDpaAcceptanceAction() : Promise.resolve(null),
     ]);
 
   if (!membersResult.ok) {
@@ -107,6 +113,7 @@ async function fetchTeamManagePayload(
       inviteCode: inviteCodeResult?.ok ? inviteCodeResult.data : null,
       teamName: team.name,
       teamSlug: team.slug,
+      dpaAcceptance: dpaResult?.ok ? dpaResult.data : null,
     },
   };
 }
@@ -181,6 +188,9 @@ function ModalInner({ team, currentUserId, onClose }: ModalInnerProps) {
   const [teamSlug, setTeamSlug] = useState(
     cached?.payload.teamSlug ?? team.slug,
   );
+  const [dpaAcceptance, setDpaAcceptance] = useState<DpaAcceptanceState | null>(
+    cached?.payload.dpaAcceptance ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [glowMemberId, setGlowMemberId] = useState<string | null>(null);
@@ -200,6 +210,7 @@ function ModalInner({ team, currentUserId, onClose }: ModalInnerProps) {
           setInviteCode(result.payload.inviteCode);
           setTeamName(result.payload.teamName);
           setTeamSlug(result.payload.teamSlug);
+          setDpaAcceptance(result.payload.dpaAcceptance);
           setPhase("ready");
           writeTeamManageCache(team.id, result.payload);
         } else if (result.kind === "forbidden") {
@@ -307,6 +318,14 @@ function ModalInner({ team, currentUserId, onClose }: ModalInnerProps) {
     [team.id],
   );
 
+  const handleDpaAccepted = useCallback(
+    (next: DpaAcceptanceState) => {
+      setDpaAcceptance(next);
+      updateTeamManageCache(team.id, { dpaAcceptance: next });
+    },
+    [team.id],
+  );
+
   return (
     <motion.div
       key="backdrop"
@@ -363,6 +382,7 @@ function ModalInner({ team, currentUserId, onClose }: ModalInnerProps) {
               members={members}
               invitations={invitations}
               inviteCode={inviteCode}
+              dpaAcceptance={dpaAcceptance}
               currentUserId={currentUserId}
               isAdminOrOwner={isAdminOrOwner}
               isOwner={isOwner}
@@ -376,6 +396,7 @@ function ModalInner({ team, currentUserId, onClose }: ModalInnerProps) {
               onMemberRemoved={handleMemberRemoved}
               onRenamed={handleRenamed}
               onInviteCodeChanged={handleInviteCodeChanged}
+              onDpaAccepted={handleDpaAccepted}
             />
           )}
         </div>
@@ -454,6 +475,7 @@ interface ModalBodyProps {
   members: MemberView[];
   invitations: InvitationView[];
   inviteCode: InviteCodeMetadata | null;
+  dpaAcceptance: DpaAcceptanceState | null;
   currentUserId: string;
   isAdminOrOwner: boolean;
   isOwner: boolean;
@@ -470,6 +492,7 @@ interface ModalBodyProps {
   onMemberRemoved: (memberId: string) => void;
   onRenamed: (next: { name?: string; slug?: string }) => void;
   onInviteCodeChanged: (next: InviteCodeMetadata) => void;
+  onDpaAccepted: (next: DpaAcceptanceState) => void;
 }
 
 /**
@@ -487,6 +510,7 @@ function ModalBody({
   members,
   invitations,
   inviteCode,
+  dpaAcceptance,
   currentUserId,
   isAdminOrOwner,
   isOwner,
@@ -500,6 +524,7 @@ function ModalBody({
   onMemberRemoved,
   onRenamed,
   onInviteCodeChanged,
+  onDpaAccepted,
 }: ModalBodyProps) {
   return (
     <div className="space-y-7">
@@ -542,6 +567,15 @@ function ModalBody({
           currentName={teamName}
           currentSlug={teamSlug}
           onRenamed={onRenamed}
+          onError={setError}
+        />
+      ) : null}
+
+      {isOwner ? (
+        <DpaSection
+          organizationId={team.id}
+          acceptance={dpaAcceptance}
+          onAccepted={onDpaAccepted}
           onError={setError}
         />
       ) : null}

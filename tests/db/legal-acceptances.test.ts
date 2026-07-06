@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { LEGAL_USER_AGENT_MAX_CHARS, legalAcceptances } from "@/lib/db/schema";
 import { withUserContext } from "@/lib/db/rls";
 import { LEGAL_VERSIONS } from "@/lib/legal/versions";
-import { recordAcceptance } from "@/lib/data/legal";
+import { getDpaAcceptance, recordAcceptance } from "@/lib/data/legal";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { captureAppUserError } from "@/tests/setup/expect-query";
@@ -99,5 +99,52 @@ describe("legal_acceptances RLS isolation", () => {
       tx.select().from(legalAcceptances),
     );
     expect(rows.length).toBe(0);
+  });
+});
+
+describe("getDpaAcceptance", () => {
+  afterEach(async () => {
+    await truncateAll();
+  });
+
+  test("returns the current-version acceptance for the same user", async () => {
+    const userA = await seedUserOrgProject("dpa-a");
+
+    await recordAcceptance(userA.userId, "dpa", {
+      ipAddress: null,
+      userAgent: null,
+    });
+
+    const result = await getDpaAcceptance(userA.userId);
+
+    expect(result).not.toBeNull();
+    expect(result?.version).toBe(LEGAL_VERSIONS.dpa);
+    expect(result?.acceptedAt).toBeInstanceOf(Date);
+  });
+
+  test("returns null for a user who never accepted (RLS isolation)", async () => {
+    const userA = await seedUserOrgProject("dpa-a");
+    const userB = await seedUserOrgProject("dpa-b");
+
+    await recordAcceptance(userA.userId, "dpa", {
+      ipAddress: null,
+      userAgent: null,
+    });
+
+    expect(await getDpaAcceptance(userB.userId)).toBeNull();
+  });
+
+  test("returns null when only a superseded version was accepted", async () => {
+    const userA = await seedUserOrgProject("dpa-a");
+
+    await withUserContext(userA.userId, async (tx) => {
+      await tx.insert(legalAcceptances).values({
+        userId: userA.userId,
+        documentType: "dpa",
+        documentVersion: "draft-superseded",
+      });
+    });
+
+    expect(await getDpaAcceptance(userA.userId)).toBeNull();
   });
 });

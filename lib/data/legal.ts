@@ -1,5 +1,5 @@
-import { eq } from "drizzle-orm";
-import { withUserContext } from "@/lib/db/rls";
+import { and, desc, eq } from "drizzle-orm";
+import { withUserContext, withUserContextRead } from "@/lib/db/rls";
 import {
   LEGAL_IP_MAX_CHARS,
   LEGAL_USER_AGENT_MAX_CHARS,
@@ -82,4 +82,40 @@ export async function removeAcceptances(userId: string): Promise<void> {
       .delete(legalAcceptances)
       .where(eq(legalAcceptances.userId, userId));
   });
+}
+
+/**
+ * Read the caller's latest `dpa` acceptance pinned to the current
+ * `LEGAL_VERSIONS.dpa`. Returns `null` when the caller has never accepted the
+ * current version, so a version bump re-offers the DPA to owners who only
+ * accepted a superseded version. Routes through `withUserContextRead(userId)`,
+ * so RLS scopes the read to the caller's own rows.
+ *
+ * @param userId - The caller's id; the RLS scope for the read.
+ * @returns The pinned-version acceptance (`version` + `acceptedAt`), or `null`.
+ */
+export async function getDpaAcceptance(
+  userId: string,
+): Promise<{ version: string; acceptedAt: Date } | null> {
+  const version = LEGAL_VERSIONS.dpa;
+  const [rows] = await withUserContextRead(userId, (read) => [
+    read
+      .select({
+        documentVersion: legalAcceptances.documentVersion,
+        acceptedAt: legalAcceptances.acceptedAt,
+      })
+      .from(legalAcceptances)
+      .where(
+        and(
+          eq(legalAcceptances.documentType, "dpa"),
+          eq(legalAcceptances.documentVersion, version),
+        ),
+      )
+      .orderBy(desc(legalAcceptances.acceptedAt))
+      .limit(1),
+  ]);
+  const row = rows[0];
+  return row
+    ? { version: row.documentVersion, acceptedAt: row.acceptedAt }
+    : null;
 }

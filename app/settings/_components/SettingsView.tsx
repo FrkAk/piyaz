@@ -23,6 +23,7 @@ import type { TeamView } from "@/lib/actions/team-list";
 import { listTeamMembersAction } from "@/lib/actions/team-members";
 import { listPendingInvitationsAction } from "@/lib/actions/team-invitations";
 import { getOrCreateTeamInviteCodeAction } from "@/lib/actions/team-invite-code";
+import { getDpaAcceptanceAction } from "@/lib/actions/legal";
 import { AccountTab } from "./AccountTab";
 import { AgentsTab } from "./AgentsTab";
 import { PlaceholderTab } from "./PlaceholderTab";
@@ -183,17 +184,23 @@ export function SettingsView({
         isAdmin
           ? getOrCreateTeamInviteCodeAction({ organizationId: teamId })
           : Promise.resolve(null),
+        team.role === "owner"
+          ? getDpaAcceptanceAction()
+          : Promise.resolve(null),
       ])
-        .then(([membersResult, invitationsResult, inviteCodeResult]) => {
-          if (!membersResult.ok) return;
-          writeTeamManageCache(teamId, {
-            members: membersResult.data,
-            invitations: invitationsResult?.ok ? invitationsResult.data : [],
-            inviteCode: inviteCodeResult?.ok ? inviteCodeResult.data : null,
-            teamName: team.name,
-            teamSlug: team.slug,
-          });
-        })
+        .then(
+          ([membersResult, invitationsResult, inviteCodeResult, dpaResult]) => {
+            if (!membersResult.ok) return;
+            writeTeamManageCache(teamId, {
+              members: membersResult.data,
+              invitations: invitationsResult?.ok ? invitationsResult.data : [],
+              inviteCode: inviteCodeResult?.ok ? inviteCodeResult.data : null,
+              teamName: team.name,
+              teamSlug: team.slug,
+              dpaAcceptance: dpaResult?.ok ? dpaResult.data : null,
+            });
+          },
+        )
         .catch(() => {
           // Prefetch is best-effort — if the network fails, the panel's
           // own fetch on click will surface the error in-context. Silent
