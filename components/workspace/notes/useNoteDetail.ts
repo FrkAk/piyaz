@@ -15,12 +15,12 @@ import { fetchNoteDetail } from "@/lib/query/queries";
  *
  * @param projectId - Owning project id.
  * @param noteId - Selected note id.
- * @returns The detail result and its placeholder flag.
+ * @returns The detail result, its placeholder flag, and the fetch error flag.
  */
 export function useNoteDetail(projectId: string, noteId: string) {
   const qc = useQueryClient();
 
-  const { data, isPlaceholderData } = useQuery({
+  const { data, isPlaceholderData, isError } = useQuery({
     queryKey: noteKeys.detail(projectId, noteId),
     queryFn: fetchNoteDetail(qc, projectId, noteId),
     placeholderData: (): NoteFullResult | undefined => {
@@ -30,5 +30,5 @@ export function useNoteDetail(projectId: string, noteId: string) {
     },
   });
 
-  return { data, isPlaceholderData };
+  return { data, isPlaceholderData, isError };
 }

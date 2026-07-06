@@ -1,6 +1,13 @@
 "use client";
 
+import { useCallback, useState } from "react";
+import { EditorPane } from "./EditorPane";
+import { TreePane } from "./TreePane";
+import { useCreateNote } from "./useNoteMutations";
+
 interface NotesViewProps {
+  /** @param projectId - Owning project id. */
+  projectId: string;
   /** @param noteId - Selected note id from the `?note` query param, or null. */
   noteId: string | null;
   /** @param onSelectNote - Write `?note=<id>` (null clears) — the selection contract the notes panes call. */
@@ -8,32 +15,60 @@ interface NotesViewProps {
 }
 
 /**
- * Notes workspace view. Currently a placeholder proving the `?view=notes`
- * routing and `?note=<id>` selection wiring; the three-pane notes layout
- * replaces this body while keeping the same prop contract.
+ * Notes workspace view — the tree pane beside the editor pane. Owns the
+ * no-modal create flow: New note persists immediately, selects the created
+ * note, and focuses its title. The settings column mounts here later.
  *
- * @param props - Selected note id and selection writer.
- * @returns Full-height placeholder pane.
+ * @param props - Project scope, selected note id, and selection writer.
+ * @returns Full-height notes shell.
  */
-export function NotesView({ noteId, onSelectNote }: NotesViewProps) {
+export function NotesView({ projectId, noteId, onSelectNote }: NotesViewProps) {
+  const createNote = useCreateNote(projectId);
+  const [focusTitle, setFocusTitle] = useState<string | null>(null);
+
+  /**
+   * Create a persisted note in a folder, then select it and request
+   * title focus. Selection only moves on the authoritative server id;
+   * on failure the hook restores the tree and selection stays put.
+   *
+   * @param folder - Target folder path.
+   */
+  async function createAndSelect(folder: string) {
+    let result: Awaited<ReturnType<typeof createNote.mutateAsync>>;
+    try {
+      result = await createNote.mutateAsync({
+        title: "",
+        body: "## Overview\n",
+        folder,
+        type: "reference",
+        visibility: "private",
+      });
+    } catch {
+      return;
+    }
+    if (result.ok) {
+      onSelectNote(result.data.id);
+      setFocusTitle(result.data.id);
+    }
+  }
+
+  const handleFocusedTitle = useCallback(() => setFocusTitle(null), []);
+
   return (
-    <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-      <p className="text-sm text-text-secondary">Notes</p>
-      <p className="mt-1 max-w-sm text-xs text-text-muted">
-        The notes workspace lands here next.
-      </p>
-      {noteId ? (
-        <>
-          <p className="mt-3 font-mono text-[11px] text-text-muted">{noteId}</p>
-          <button
-            type="button"
-            onClick={() => onSelectNote(null)}
-            className="mt-1 cursor-pointer text-[11px] text-text-muted underline-offset-2 hover:text-text-primary hover:underline"
-          >
-            Clear selection
-          </button>
-        </>
-      ) : null}
+    <div className="flex h-full w-full">
+      <TreePane
+        projectId={projectId}
+        selectedId={noteId}
+        onSelect={onSelectNote}
+        onNewNote={(folder) => void createAndSelect(folder)}
+        createPending={createNote.isPending}
+      />
+      <EditorPane
+        projectId={projectId}
+        noteId={noteId}
+        focusTitle={focusTitle}
+        onFocusedTitle={handleFocusedTitle}
+      />
     </div>
   );
 }
