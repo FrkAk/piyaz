@@ -263,8 +263,8 @@ export type NoteFullResult = {
   linksIn: LinkedNoteSlim[];
 };
 
-/** One ranked search hit; `snippet` replaces the body, never joins it. */
-export type NoteSearchHit = NoteTreeRow & { rank: number; snippet: string };
+/** One ranked search hit: the slim tree row, never the body. */
+export type NoteSearchHit = NoteTreeRow;
 
 export type { FeedTask };
 
@@ -1190,7 +1190,7 @@ export async function getNoteFull(
  * Rank-search a project's live notes over the generated `search_tsv`.
  * User text goes through `websearch_to_tsquery` (plainto fallback), never
  * raw `to_tsquery`; the last term also matches as a sanitized prefix
- * lexeme for type-ahead. Hits carry `ts_headline` snippets, never the
+ * lexeme for type-ahead. Hits are the slim tree projection, never the
  * body.
  *
  * @param ctx - Resolved auth context.
@@ -1236,8 +1236,6 @@ export async function searchNotes(
     agentWritable: row.agent_writable,
     locked: row.locked,
     updatedAt: toDate(row.updated_at),
-    rank: Number(row.rank),
-    snippet: row.snippet,
   }));
 }
 

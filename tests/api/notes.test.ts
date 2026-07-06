@@ -283,7 +283,7 @@ test("GET /api/note/[id] — trashed note 404s on cold GET and with a matching s
   expect(cold.status).toBe(404);
 });
 
-test("GET /api/project/[id]/notes/search — ranked snippet hits without body; over-length q 400", async () => {
+test("GET /api/project/[id]/notes/search — ranked slim hits without body; over-length q 400", async () => {
   const f = await seedUserOrgProject("notes-search");
   const ctx = makeAuthContext(f.userId);
   await createNote(ctx, {
@@ -301,9 +301,10 @@ test("GET /api/project/[id]/notes/search — ranked snippet hits without body; o
   expect(res.status).toBe(200);
   const hits = (await res.json()) as Record<string, unknown>[];
   expect(hits.length).toBe(1);
-  expect(hits[0].snippet).toContain("zeppelin");
-  expect(typeof hits[0].rank).toBe("number");
+  expect(hits[0].title).toBe("Airships");
   expect(hits[0]).not.toHaveProperty("body");
+  expect(hits[0]).not.toHaveProperty("snippet");
+  expect(hits[0]).not.toHaveProperty("rank");
 
   const long = await searchGET(
     get(`/api/project/${f.projectId}/notes/search?q=${"x".repeat(257)}`),

@@ -14,7 +14,7 @@ afterEach(async () => {
   await truncateAll();
 });
 
-test("searchNotes matches body and title words with ranked snippets", async () => {
+test("searchNotes matches body and title words with ranked hits", async () => {
   const f = await seedUserOrgProject("srch1");
   const ctx = makeAuthContext(f.userId);
   await createNote(ctx, {
@@ -31,8 +31,6 @@ test("searchNotes matches body and title words with ranked snippets", async () =
   const byBody = await searchNotes(ctx, f.projectId, "refresh tokens");
   expect(byBody.length).toBe(1);
   expect(byBody[0].title).toBe("Session rotation");
-  expect(byBody[0].snippet.length).toBeGreaterThan(0);
-  expect(byBody[0].snippet).not.toContain("Nothing");
 
   const byTitle = await searchNotes(ctx, f.projectId, "rotation");
   expect(byTitle.length).toBe(1);
@@ -210,5 +208,6 @@ test("tree list and search hits stay slim: no body, no search_tsv", async () => 
   const [hit] = await searchNotes(ctx, f.projectId, "egress");
   expect("body" in hit).toBe(false);
   expect("searchTsv" in hit).toBe(false);
-  expect(hit.snippet).not.toBe("egress discipline");
+  expect("snippet" in hit).toBe(false);
+  expect("rank" in hit).toBe(false);
 });

@@ -23,6 +23,7 @@ import {
   IconPlus,
   IconSearch,
   IconUser,
+  IconX,
 } from "@/components/shared/icons";
 import type { NoteTreeRow } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
@@ -67,6 +68,7 @@ interface NoteRowProps {
   indent: number;
   active: boolean;
   dragging: boolean;
+  dropTarget?: boolean;
   onSelect: () => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
@@ -86,6 +88,7 @@ function NoteRow({
   indent,
   active,
   dragging,
+  dropTarget = false,
   onSelect,
   onDragStart,
   onDragEnd,
@@ -93,10 +96,12 @@ function NoteRow({
   onDrop,
 }: NoteRowProps) {
   const color = NOTE_TYPE_META[row.type].color;
+  const draggable = onDragStart !== undefined;
   return (
     <button
       type="button"
-      draggable={onDragStart !== undefined}
+      draggable={draggable}
+      aria-roledescription={draggable ? "Draggable note" : undefined}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
@@ -107,7 +112,12 @@ function NoteRow({
         height: 30,
         paddingLeft: indent + 16,
         opacity: dragging ? 0.45 : 1,
-        background: active ? tint("var(--color-accent)", 7) : "transparent",
+        background: dropTarget
+          ? tint("var(--color-accent)", 14)
+          : active
+            ? tint("var(--color-accent)", 7)
+            : "transparent",
+        outline: dropTarget ? "1px solid var(--color-accent)" : undefined,
       }}
     >
       {active && (
@@ -205,7 +215,7 @@ function FolderRenameInput({
 }
 
 /**
- * Left pane: searchable nested folder tree with drag-and-drop and inline
+ * Left pane, searchable nested folder tree with drag-and-drop and inline
  * actions, backed by the notes tree list and the server search route.
  * Folders are path prefixes on note rows; empty folders created here are
  * client-local and persist only once a note lands in them. Folder rows
@@ -227,6 +237,7 @@ export function TreePane({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [drag, setDrag] = useState<DragItem | null>(null);
   const [dropFolder, setDropFolder] = useState<string | null>(null);
+  const [dropRowId, setDropRowId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [rawQuery, setRawQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -244,17 +255,17 @@ export function TreePane({
   const rows = list.data;
 
   useEffect(() => {
-    const id = setTimeout(
-      () => setDebouncedQuery(rawQuery.trim()),
-      SEARCH_DEBOUNCE_MS,
-    );
+    const trimmed = rawQuery.trim();
+    if (trimmed === "") return;
+    const id = setTimeout(() => setDebouncedQuery(trimmed), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(id);
   }, [rawQuery]);
 
-  const searching = debouncedQuery !== "";
+  const query = rawQuery.trim() === "" ? "" : debouncedQuery;
+  const searching = query !== "";
   const search = useQuery({
-    queryKey: noteKeys.search(projectId, debouncedQuery),
-    queryFn: fetchNoteSearch(projectId, debouncedQuery),
+    queryKey: noteKeys.search(projectId, query),
+    queryFn: fetchNoteSearch(projectId, query),
     enabled: searching,
     placeholderData: keepPreviousData,
   });
@@ -316,6 +327,7 @@ export function TreePane({
   function clearDrag() {
     setDrag(null);
     setDropFolder(null);
+    setDropRowId(null);
   }
 
   /** Create a uniquely-named empty root folder (client-local). */
@@ -476,6 +488,7 @@ export function TreePane({
           <button
             type="button"
             draggable
+            aria-roledescription="Draggable folder"
             onClick={() => toggle(path)}
             onDoubleClick={() => beginRename(path)}
             onKeyDown={(e) => {
@@ -492,6 +505,7 @@ export function TreePane({
             onDragOver={(e) => {
               e.preventDefault();
               setDropFolder(path);
+              setDropRowId(null);
             }}
             onDrop={(e) => {
               e.preventDefault();
@@ -531,12 +545,14 @@ export function TreePane({
                 indent={indent}
                 active={n.id === selectedId}
                 dragging={drag?.kind === "note" && drag.id === n.id}
+                dropTarget={drag !== null && dropRowId === n.id}
                 onSelect={() => onSelect(n.id)}
                 onDragStart={() => setDrag({ kind: "note", id: n.id })}
                 onDragEnd={clearDrag}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDropFolder(n.folder);
+                  setDropRowId(n.id);
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
@@ -594,21 +610,37 @@ export function TreePane({
 
       <div className="px-3 pb-2">
         <div
-          className="flex items-center gap-1.5 rounded-md px-2"
+          className="flex items-center gap-1.5 rounded-md px-2 focus-within:ring-1 focus-within:ring-[color:var(--color-accent)]"
           style={{
             height: 28,
             border: "1px solid var(--color-border)",
             background: "var(--color-surface)",
           }}
         >
-          <IconSearch size={12} className="text-text-faint" />
+          <IconSearch size={12} className="shrink-0 text-text-faint" />
           <input
+            type="search"
+            aria-label="Search notes"
             value={rawQuery}
             onChange={(e) => setRawQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setRawQuery("");
+            }}
             placeholder="Search notes…"
-            className="w-full bg-transparent font-mono text-[11.5px] outline-none placeholder:text-text-faint"
+            className="w-full bg-transparent font-mono text-[11.5px] outline-none placeholder:text-text-faint [&::-webkit-search-cancel-button]:appearance-none"
             style={{ color: "var(--color-text-secondary)" }}
           />
+          {rawQuery !== "" && (
+            <button
+              type="button"
+              onClick={() => setRawQuery("")}
+              aria-label="Clear search"
+              title="Clear search"
+              className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-text-faint hover:text-text-primary"
+            >
+              <IconX size={11} />
+            </button>
+          )}
         </div>
         <p className="mt-1 px-0.5 font-mono text-[9.5px] text-text-faint">
           Same index agents query via piyaz_note search
@@ -626,6 +658,7 @@ export function TreePane({
             <button
               key={c}
               type="button"
+              aria-pressed={active}
               onClick={() => setTypeFilter(c)}
               className="inline-flex cursor-pointer items-center rounded-full px-2 py-0.5 font-mono text-[10px] uppercase"
               style={{
@@ -666,11 +699,27 @@ export function TreePane({
                 onSelect={() => onSelect(h.id)}
               />
             ))
-          ) : search.isPending ? null : (
+          ) : search.isPending ? (
+            <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
+              Searching…
+            </p>
+          ) : (
             <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
               No matches
             </p>
           )
+        ) : list.isError ? (
+          <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
+            Failed to load notes
+          </p>
+        ) : list.isPending ? (
+          <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
+            Loading…
+          </p>
+        ) : roots.length === 0 && rootNotes.length === 0 ? (
+          <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
+            No notes yet
+          </p>
         ) : (
           <>
             {roots.map((r) => renderFolder(r, 0))}
@@ -681,12 +730,14 @@ export function TreePane({
                 indent={8}
                 active={n.id === selectedId}
                 dragging={drag?.kind === "note" && drag.id === n.id}
+                dropTarget={drag !== null && dropRowId === n.id}
                 onSelect={() => onSelect(n.id)}
                 onDragStart={() => setDrag({ kind: "note", id: n.id })}
                 onDragEnd={clearDrag}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDropFolder(n.folder);
+                  setDropRowId(n.id);
                 }}
                 onDrop={(e) => {
                   e.preventDefault();

@@ -17,7 +17,8 @@ interface EditorPaneProps {
 
 /**
  * Center pane, the editor column. Renders the empty state without a
- * selection, otherwise the editable note title.
+ * selection, otherwise the editable note title; the block editor grows
+ * this pane in place.
  *
  * @param props - Project scope, selection, and title-focus wiring.
  * @returns The flexible editor column.
@@ -60,7 +61,9 @@ interface EditorBodyProps {
 /**
  * Loaded-note body: the editable H1 title over the note detail query.
  * Mounted only with a live selection so the detail query is never keyed
- * on an empty id; remounted per note via `key`.
+ * on an empty id; remounted per note via `key`. An uncommitted title is
+ * flushed on unmount so a selection change without a blur (history
+ * navigation, programmatic `?note`) never drops the edit.
  *
  * @param props - Selected note and title-focus wiring.
  * @returns The note content column, a not-found line, or null while loading.
@@ -90,6 +93,16 @@ function EditorBody({
     onFocusedTitle();
   }, [shouldFocusTitle, ready, onFocusedTitle]);
 
+  const commitRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    commitRef.current = () => {
+      if (note === undefined || note.locked) return;
+      if (title === null || title === note.title) return;
+      updateNote.mutate({ noteId, patch: { title } });
+    };
+  });
+  useEffect(() => () => commitRef.current(), []);
+
   if (note === undefined) {
     if (!isError) return null;
     return (
@@ -97,13 +110,6 @@ function EditorBody({
         <p className="text-[12px] text-text-muted">Note not found</p>
       </div>
     );
-  }
-
-  /** Persist the title draft when it differs from the saved title. */
-  function commitTitle() {
-    if (note === undefined || note.locked) return;
-    if (title === null || title === note.title) return;
-    updateNote.mutate({ noteId, patch: { title } });
   }
 
   return (
@@ -115,9 +121,9 @@ function EditorBody({
         ref={inputRef}
         value={title ?? ""}
         onChange={(e) => setTitle(e.target.value)}
-        onBlur={commitTitle}
+        onBlur={() => commitRef.current()}
         onKeyDown={(e) => {
-          if (e.key === "Enter") commitTitle();
+          if (e.key === "Enter") commitRef.current();
         }}
         readOnly={note.locked}
         placeholder="Untitled note"
