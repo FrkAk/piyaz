@@ -49,8 +49,7 @@ export function InlineText({ text }: InlineTextProps) {
         const key = `${idx}-${token.text}`;
         if (token.kind === "task") return <TaskChip key={key} token={token} />;
         if (token.kind === "wiki") return <DocLink key={key} token={token} />;
-        if (token.kind === "code")
-          return <code key={key}>{token.text}</code>;
+        if (token.kind === "code") return <code key={key}>{token.text}</code>;
         if (token.kind === "bold")
           return (
             <strong
