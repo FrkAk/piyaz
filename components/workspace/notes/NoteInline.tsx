@@ -100,10 +100,7 @@ function TaskChip({ token }: TaskChipProps) {
     <button
       type="button"
       title={`${STATUS_META[mention.status].label} · ${mention.title}`}
-      onClick={(e) => {
-        e.stopPropagation();
-        ctx.onTask(mention.taskId);
-      }}
+      onClick={() => ctx.onTask(mention.taskId)}
       className={`${CHIP_CLASS} cursor-pointer`}
       style={{
         color,
@@ -143,10 +140,7 @@ function DocLink({ token }: DocLinkProps) {
     <button
       type="button"
       title={`${meta.label} · ${target.title}`}
-      onClick={(e) => {
-        e.stopPropagation();
-        ctx.onNote(target.id);
-      }}
+      onClick={() => ctx.onNote(target.id)}
       className="cursor-pointer bg-transparent p-0 align-baseline"
       style={{
         color: meta.color,

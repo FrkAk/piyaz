@@ -59,6 +59,10 @@ interface TreePaneProps {
   createPending: boolean;
   /** @param createError - Failure message from the last note create, or null. */
   createError: string | null;
+  /** @param fill - Fill the parent instead of the fixed 266px rail (drawer mode). */
+  fill?: boolean;
+  /** @param onClose - When set, renders a close button in the header (drawer mode). */
+  onClose?: () => void;
 }
 
 type DragItem = { kind: "note" | "folder"; id: string };
@@ -134,7 +138,7 @@ function NoteRow({
           }}
         />
       )}
-      <span className="text-text-faint opacity-0 group-hover:opacity-100">
+      <span className="text-text-faint opacity-0 pointer-fine:group-hover:opacity-100">
         <IconGrip size={11} />
       </span>
       <IconDoc size={13} style={{ color }} />
@@ -259,11 +263,12 @@ function TreeSkeleton() {
  * Folders are path prefixes on note rows; empty folders created here are
  * client-local and persist only once a note lands in them. Folder rows
  * rename inline (double-click or F2); tree mutation failures surface in
- * a strip above the list. Note moves are pointer-only native drag-and-drop;
- * a keyboard-accessible move affordance is deferred to a follow-up.
+ * a strip above the list. Note moves are pointer-only native drag-and-drop
+ * (never fires on touch, where the grip stays hidden); keyboard- and
+ * touch-accessible move affordances are deferred to a follow-up.
  *
- * @param props - Project scope, selection state, and create wiring.
- * @returns The 266px tree column.
+ * @param props - Project scope, selection state, create wiring, and drawer-mode flags.
+ * @returns The 266px tree column, or a parent-filling column in drawer mode.
  */
 export function TreePane({
   projectId,
@@ -272,6 +277,8 @@ export function TreePane({
   onNewNote,
   createPending,
   createError,
+  fill = false,
+  onClose,
 }: TreePaneProps) {
   const qc = useQueryClient();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -613,11 +620,13 @@ export function TreePane({
 
   return (
     <div
-      className="flex shrink-0 flex-col"
+      className={
+        fill ? "flex h-full w-full flex-col" : "flex shrink-0 flex-col"
+      }
       style={{
-        width: 266,
+        width: fill ? undefined : 266,
         background: "var(--color-base-2)",
-        borderRight: "1px solid var(--color-border)",
+        borderRight: fill ? undefined : "1px solid var(--color-border)",
       }}
     >
       <div
@@ -647,6 +656,17 @@ export function TreePane({
           >
             <IconPlus size={13} />
           </button>
+          {onClose !== undefined && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close notes tree"
+              title="Close notes tree"
+              className="ml-0.5 inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary"
+            >
+              <IconX size={13} />
+            </button>
+          )}
         </div>
       </div>
 

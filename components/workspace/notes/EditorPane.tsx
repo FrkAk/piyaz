@@ -37,7 +37,8 @@ interface EditorPaneProps {
 /**
  * Center pane, the editor column. Renders the empty state without a
  * selection, otherwise the note header, editable title, and the live
- * block editor.
+ * block editor. The content column caps at 760px with side padding that
+ * narrows below `sm` so phone widths never overflow horizontally.
  *
  * @param props - Project scope, selection, navigation, and title-focus wiring.
  * @returns The flexible editor column.
@@ -194,10 +195,7 @@ function EditorBody({
   const editable = !note.locked && !isPlaceholderData;
 
   return (
-    <div
-      className="mx-auto"
-      style={{ maxWidth: 760, padding: "28px 34px 64px" }}
-    >
+    <div className="mx-auto max-w-[760px] px-4 pb-16 pt-6 sm:px-[34px] sm:pt-7">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <MonoId id={note.slug.toUpperCase()} copyable={false} />
         <span
