@@ -258,6 +258,22 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
   }, []);
 
   /**
+   * Select a task from an inline chip inside the notes editor. The notes
+   * layout renders no task-detail slot, so opening the detail switches to
+   * the structure view; the persistent `?note` param restores the Notes
+   * selection on return.
+   *
+   * @param taskId - Task to select.
+   */
+  const handleSelectTaskFromNote = useCallback(
+    (taskId: string) => {
+      setSelectedTaskId(taskId);
+      startViewTransition(() => updateParam("view", null));
+    },
+    [updateParam],
+  );
+
+  /**
    * Select a note (writes `?note=<id>`) or clear the selection with `null`.
    *
    * @param nextNoteId - Note to select, or null to clear.
@@ -332,6 +348,7 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     handleClose,
     noteId,
     handleSelectNote,
+    handleSelectTaskFromNote,
     refreshAll,
     taskMap,
     projectTags,
@@ -395,6 +412,8 @@ interface SharedLayoutProps {
   noteId: string | null;
   /** Select a note (writes `?note=<id>`) or clear with null. */
   handleSelectNote: (noteId: string | null) => void;
+  /** Select a task from a notes-editor chip and switch to the structure view. */
+  handleSelectTaskFromNote: (taskId: string) => void;
   refreshAll: () => void;
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   projectTags: string[];
@@ -632,6 +651,7 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     handleClose,
     noteId,
     handleSelectNote,
+    handleSelectTaskFromNote,
     refreshAll,
     taskSlim,
     detail,
@@ -700,8 +720,10 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
       <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
         <NotesView
           projectId={projectId}
+          projectIdentifier={graph.project.identifier}
           noteId={noteId}
           onSelectNote={handleSelectNote}
+          onSelectTask={handleSelectTaskFromNote}
         />
       </div>
     );
