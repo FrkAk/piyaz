@@ -628,6 +628,48 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.note_slugs_in_namespace(uuid, text, text, text) FROM public;
 GRANT EXECUTE ON FUNCTION public.note_slugs_in_namespace(uuid, text, text, text) TO app_user;
 
+-- Assign a note's per-project sequence_number on insert when the writer
+-- leaves it NULL. SECURITY DEFINER so the MAX spans every visibility: an
+-- RLS-scoped MAX blind to a teammate's private note would undercount into
+-- a 23505 collision on notes_project_sequence_unique. Spans deleted rows
+-- too (sequences are permanent, never reused). createNote holds the
+-- project advisory lock across the insert, so the MAX-then-write is
+-- race-free; a caller that sets the value explicitly keeps it.
+CREATE OR REPLACE FUNCTION public.notes_assign_sequence()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NEW.sequence_number IS NULL OR NEW.sequence_number = 0 THEN
+    SELECT COALESCE(MAX(n.sequence_number), 0) + 1
+    INTO NEW.sequence_number
+    FROM public.notes n
+    WHERE n.project_id = NEW.project_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.notes_assign_sequence() FROM public;
+GRANT EXECUTE ON FUNCTION public.notes_assign_sequence() TO app_user;
+
+-- Guarded on table existence (mirror the notes hardening triggers below):
+-- db:rls:owner must be runnable before the notes migration exists, and a bare
+-- DROP TRIGGER ... ON public.notes errors on the missing table, not just a
+-- missing trigger.
+DO $$
+BEGIN
+  IF to_regclass('public.notes') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS notes_assign_sequence_trg ON public.notes';
+    EXECUTE 'CREATE TRIGGER notes_assign_sequence_trg
+      BEFORE INSERT ON public.notes
+      FOR EACH ROW
+      EXECUTE FUNCTION public.notes_assign_sequence()';
+  END IF;
+END $$;
+
 -- Validates that every supplied user id is a member of the given org.
 -- Returns the subset that ARE members; the TS caller derives the missing
 -- set. Used by assignee writes to fail-fast before inserting orphan rows.

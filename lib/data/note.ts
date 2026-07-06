@@ -412,6 +412,7 @@ const noteTreeColumns = {
 const noteFullColumns = {
   id: notes.id,
   projectId: notes.projectId,
+  sequenceNumber: notes.sequenceNumber,
   type: notes.type,
   folder: notes.folder,
   title: notes.title,

@@ -14,6 +14,7 @@ import {
   deleteNote as coreDeleteNote,
   moveFolder as coreMoveFolder,
   moveNote as coreMoveNote,
+  restoreNote as coreRestoreNote,
   updateNote as coreUpdateNote,
   type CreateNoteInput,
   type NotePatch,
@@ -116,6 +117,28 @@ export async function deleteNoteAction(
     const failure = noteFailureFrom(err);
     if (failure.code === "unknown") {
       console.error("deleteNoteAction failed", { noteId, err });
+    }
+    return failure;
+  }
+}
+
+/**
+ * Server action — restore a soft-deleted note (undo of a delete). The
+ * slug may differ from before the delete when its namespace was taken.
+ *
+ * @param noteId - Note id.
+ * @returns Slim summary of the restored note, or a typed failure.
+ */
+export async function restoreNoteAction(
+  noteId: string,
+): Promise<NoteActionResult<NoteSummary>> {
+  try {
+    const ctx = await authorizeWrite(NOTE_BUDGETS.noteDelete);
+    return { ok: true, data: await coreRestoreNote(ctx, noteId) };
+  } catch (err) {
+    const failure = noteFailureFrom(err);
+    if (failure.code === "unknown") {
+      console.error("restoreNoteAction failed", { noteId, err });
     }
     return failure;
   }

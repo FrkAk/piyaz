@@ -104,6 +104,21 @@ export function composeTaskRef(
   return `${identifier}-${sequenceNumber}` as TaskRef;
 }
 
+/**
+ * Compose a human-readable note reference from its parts. The `N` segment
+ * distinguishes notes from tasks in the same project namespace.
+ *
+ * @param identifier - Branded project prefix.
+ * @param sequenceNumber - Per-project note sequence number.
+ * @returns Composed noteRef (e.g. "MYM-N23").
+ */
+export function composeNoteRef(
+  identifier: Identifier,
+  sequenceNumber: number,
+): string {
+  return `${identifier}-N${sequenceNumber}`;
+}
+
 /** A task enriched with its composed taskRef. */
 export type TaskWithRef<T = { sequenceNumber: number }> = T & {
   taskRef: TaskRef;

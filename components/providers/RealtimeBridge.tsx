@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
-import { myTasksKeys, projectKeys, taskKeys } from "@/lib/query/keys";
+import { myTasksKeys, noteKeys, projectKeys, taskKeys } from "@/lib/query/keys";
 import type { RealtimeEvent } from "@/lib/realtime/types";
 
 const INITIAL_BACKOFF_MS = 1_000;
@@ -31,6 +31,12 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   `lib/realtime/events.ts` is paired with a `project` dispatch that already
  *   invalidates the graph. If `emitTaskEvent` ever stops emitting the paired
  *   project event, restore the graph invalidation here.
+ * - `note` events ride the `project:<projectId>` subscription (team notes
+ *   only) and invalidate the project's note tree list and task-backlink panels,
+ *   so renames, creates, deletes, and link changes from other sessions land live
+ *   on both transports. The open note's `detail` is intentionally NOT
+ *   invalidated: refetching would clobber the active editor's optimistic
+ *   autosave buffer, which the conflict surface (PYZ-262) owns.
  * - `project-list` events invalidate the home grid.
  * - `project-deleted` events invalidate the home grid and drop the
  *   workspace's slim-graph cache entry.
@@ -61,6 +67,10 @@ function applyRealtimeEvent(qc: QueryClient, raw: string): void {
       qc.invalidateQueries({
         queryKey: taskKeys.activity(ev.projectId, ev.taskId),
       });
+      break;
+    case "note":
+      qc.invalidateQueries({ queryKey: noteKeys.list(ev.projectId) });
+      qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(ev.projectId) });
       break;
     case "project-list":
       qc.invalidateQueries({ queryKey: projectKeys.list() });

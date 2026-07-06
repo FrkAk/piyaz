@@ -13,6 +13,7 @@ import {
   deleteNoteAction,
   moveFolderAction,
   moveNoteAction,
+  restoreNoteAction,
   setNoteAccessAction,
   setNoteVisibilityAction,
   updateNoteAction,
@@ -325,6 +326,29 @@ export function useDeleteNote(projectId: string) {
 }
 
 /**
+ * Restore a soft-deleted note (delete undo). No optimistic surgery: the
+ * restored row revalidates into the tree list on success, and the detail
+ * cache was dropped at delete time so nothing local needs folding.
+ *
+ * @param projectId - Owning project id.
+ * @returns Mutation taking the note id.
+ */
+export function useRestoreNote(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      noteId: string,
+    ): Promise<NoteActionResult<NoteSummary>> => {
+      const result = await restoreNoteAction(noteId);
+      if (result.ok) {
+        qc.invalidateQueries({ queryKey: noteKeys.list(projectId) });
+      }
+      return result;
+    },
+  });
+}
+
+/**
  * Folder subtree re-parent (tree drag-and-drop and rename). No optimistic
  * surgery: the move touches an unbounded set of rows, so on success the
  * whole note prefix revalidates (tree, details, search, backlinks all
@@ -511,7 +535,10 @@ export type NoteAutosaveError = {
  * Debounced autosave for the note editor. Each block commit carries the
  * FULL body (per the editor contract), so N commits inside one debounce
  * window collapse into ONE `updateNote` patch holding the latest body and
- * latest title. Commits apply to the detail cache immediately (blocks
+ * latest title. A diff/patch body protocol to cut per-write egress is a
+ * deferred optimization; the debounce already folds a typing burst into a
+ * single write, and chip/link rendering resolves client-side (no detail
+ * refetch), so typing triggers no extra round-trips. Commits apply to the detail cache immediately (blocks
  * re-render from cache) and flush ~600ms after the last commit, on note
  * switch, and on unmount.
  *
