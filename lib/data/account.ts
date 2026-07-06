@@ -1,8 +1,8 @@
 import "server-only";
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
 import { authDb } from "@/lib/db/connection";
-import { normalizeExecuteResult } from "@/lib/db/raw";
+import { executeRaw, normalizeExecuteResult, toDate } from "@/lib/db/raw";
 import { withUserContextRead } from "@/lib/db/rls";
 import {
   account,
@@ -11,7 +11,13 @@ import {
   oauthRefreshToken,
   session,
 } from "@/lib/db/auth-schema";
-import { projects, tasks, taskAssignees } from "@/lib/db/schema";
+import {
+  legalAcceptances,
+  projects,
+  tasks,
+  taskAssignees,
+} from "@/lib/db/schema";
+import { parseMemberRoles } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/context";
 
 /** The caller's own profile, resolved for the MCP whoami surface. */
@@ -156,4 +162,230 @@ export async function clearOrgMembershipArtifacts(
         ),
       );
   });
+}
+
+/** One org the caller owns, with its member and owner counts. */
+export type OwnedOrgForDeletion = {
+  /** Organization UUID. */
+  orgId: string;
+  /** Total members in the org. */
+  memberCount: number;
+  /** Members whose role includes `owner`. */
+  ownerCount: number;
+};
+
+/**
+ * Enumerate every org the user owns, with per-org member and owner counts.
+ * Routes through the `find_user_org_memberships_as_admin` SECURITY DEFINER
+ * function because the account-delete `beforeDelete` hook runs with no
+ * `app.user_id` GUC. Owner detection reuses the canonical
+ * `parseMemberRoles`, so it matches the last-owner guard in
+ * `lib/actions/team.ts` exactly and cannot drift from a SQL reimplementation.
+ *
+ * @param userId - Verified user id from the delete hook.
+ * @returns One entry per owned org; empty when the user owns none.
+ */
+export async function enumerateOwnedOrgsForDeletion(
+  userId: string,
+): Promise<OwnedOrgForDeletion[]> {
+  const rows = await executeRaw<{
+    org_id: string;
+    member_user_id: string;
+    member_role: string;
+  }>(
+    serviceRoleDb,
+    sql`SELECT org_id, member_user_id, member_role FROM public.find_user_org_memberships_as_admin(${userId}::uuid)`,
+  );
+  const byOrg = new Map<string, Array<{ userId: string; role: string }>>();
+  for (const row of rows) {
+    const members = byOrg.get(row.org_id) ?? [];
+    members.push({ userId: row.member_user_id, role: row.member_role });
+    byOrg.set(row.org_id, members);
+  }
+  const owned: OwnedOrgForDeletion[] = [];
+  for (const [orgId, members] of byOrg) {
+    const caller = members.find((m) => m.userId === userId);
+    if (!caller || !parseMemberRoles(caller.role).includes("owner")) continue;
+    const ownerCount = members.filter((m) =>
+      parseMemberRoles(m.role).includes("owner"),
+    ).length;
+    owned.push({ orgId, memberCount: members.length, ownerCount });
+  }
+  return owned;
+}
+
+/** Decision for the account-delete cascade over the caller's owned orgs. */
+export type OwnedOrgDeletionPlan =
+  | { kind: "blocked"; orgId: string }
+  | { kind: "ok"; orgIdsToDelete: string[] };
+
+/**
+ * Classify the caller's owned orgs for account deletion. An org the caller
+ * solely owns that still has other members blocks the delete — the caller
+ * must transfer ownership or delete the team first. An org the caller is
+ * the only member of is deleted as part of the cascade so it is never
+ * orphaned. A co-owned org needs no action: the caller's membership row
+ * cascades on user deletion and the remaining owners keep the team.
+ *
+ * @param owned - Owned orgs with member and owner counts.
+ * @returns `blocked` naming the first offending org, or `ok` with the org
+ *          ids to delete.
+ */
+export function planOwnedOrgDeletion(
+  owned: OwnedOrgForDeletion[],
+): OwnedOrgDeletionPlan {
+  const blocker = owned.find((o) => o.ownerCount === 1 && o.memberCount > 1);
+  if (blocker) return { kind: "blocked", orgId: blocker.orgId };
+  const orgIdsToDelete = owned
+    .filter((o) => o.memberCount === 1)
+    .map((o) => o.orgId);
+  return { kind: "ok", orgIdsToDelete };
+}
+
+/**
+ * Anonymize the caller's `legal_acceptances` rows in place: null
+ * `ip_address` and `user_agent` while retaining `document_type`,
+ * `document_version`, and `accepted_at` as contract evidence. `user_id`
+ * is nulled by the FK `ON DELETE SET NULL` when the user row is removed,
+ * so this scrub must run in `beforeDelete` while `user_id` is still
+ * populated. Verifies the write landed and retries once; a persistent
+ * failure throws so the account is never deleted with a compliance gap.
+ * Zero acceptance rows is a valid success.
+ *
+ * @param userId - Verified user id from the delete hook.
+ * @throws Error when rows still carry ip/user-agent after one retry.
+ */
+export async function scrubLegalAcceptances(userId: string): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await serviceRoleDb
+      .update(legalAcceptances)
+      .set({ ipAddress: null, userAgent: null })
+      .where(eq(legalAcceptances.userId, userId));
+    const remaining = await serviceRoleDb
+      .select({ id: legalAcceptances.id })
+      .from(legalAcceptances)
+      .where(
+        and(
+          eq(legalAcceptances.userId, userId),
+          or(
+            isNotNull(legalAcceptances.ipAddress),
+            isNotNull(legalAcceptances.userAgent),
+          ),
+        ),
+      );
+    if (remaining.length === 0) return;
+  }
+  throw new Error(
+    `scrubLegalAcceptances: rows for user ${userId} still carry ip/user-agent after retry`,
+  );
+}
+
+/** A single team membership in the account export. */
+export type AccountExportMembership = {
+  /** Organization UUID. */
+  organizationId: string;
+  /** The caller's role string in the org. */
+  role: string;
+  /** ISO timestamp the caller joined. */
+  createdAt: string;
+};
+
+/** A single legal acceptance in the account export. */
+export type AccountExportAcceptance = {
+  /** Document type (`terms`, `privacy`, `dpa`). */
+  documentType: string;
+  /** Accepted document version. */
+  documentVersion: string;
+  /** ISO timestamp of acceptance. */
+  acceptedAt: string;
+  /** Caller's own recorded IP, or null. */
+  ipAddress: string | null;
+  /** Caller's own recorded user-agent, or null. */
+  userAgent: string | null;
+};
+
+/** Machine-readable account export payload (GDPR Art. 15/20). */
+export type AccountExport = {
+  /** Caller identity (id, name, email). */
+  profile: Whoami;
+  /** Team memberships (no shared project/task content). */
+  memberships: AccountExportMembership[];
+  /** The caller's own legal acceptance evidence. */
+  legalAcceptances: AccountExportAcceptance[];
+  /** ISO timestamp the export was produced. */
+  exportedAt: string;
+};
+
+/**
+ * Assemble the caller's own account data for a machine-readable export.
+ * Scoped to profile, team memberships, and the caller's own legal
+ * acceptances — every read runs under the caller's RLS GUC and is outer-
+ * scoped to `userId`. Shared project/task/note content held in common with
+ * other members is deliberately excluded so the export never discloses
+ * another tenant's data.
+ *
+ * @param userId - Verified caller user id from the session.
+ * @returns The caller's export payload.
+ * @throws Error when no profile row resolves for the caller.
+ */
+export async function exportAccountData(
+  userId: string,
+): Promise<AccountExport> {
+  const [profileRaw, orgsRaw, acceptancesRaw] = await withUserContextRead(
+    userId,
+    (read) => [
+      read.execute(
+        sql`SELECT user_id, name, email FROM public.current_user_profile()`,
+      ),
+      read.execute(
+        sql`SELECT org_id, member_role, member_created_at FROM public.current_user_orgs()`,
+      ),
+      read.execute(
+        sql`SELECT document_type, document_version, accepted_at, ip_address, user_agent
+            FROM public.legal_acceptances
+            WHERE user_id = ${userId}::uuid
+            ORDER BY accepted_at ASC`,
+      ),
+    ],
+  );
+  const [profileRow] = normalizeExecuteResult<{
+    user_id: string;
+    name: string;
+    email: string;
+  }>(profileRaw);
+  if (!profileRow) {
+    throw new Error(`exportAccountData: no profile row for caller ${userId}`);
+  }
+  const orgs = normalizeExecuteResult<{
+    org_id: string;
+    member_role: string;
+    member_created_at: Date | string;
+  }>(orgsRaw);
+  const acceptances = normalizeExecuteResult<{
+    document_type: string;
+    document_version: string;
+    accepted_at: Date | string;
+    ip_address: string | null;
+    user_agent: string | null;
+  }>(acceptancesRaw);
+  return {
+    profile: {
+      userId: profileRow.user_id,
+      name: profileRow.name,
+      email: profileRow.email,
+    },
+    memberships: orgs.map((o) => ({
+      organizationId: o.org_id,
+      role: o.member_role,
+      createdAt: toDate(o.member_created_at).toISOString(),
+    })),
+    legalAcceptances: acceptances.map((a) => ({
+      documentType: a.document_type,
+      documentVersion: a.document_version,
+      acceptedAt: toDate(a.accepted_at).toISOString(),
+      ipAddress: a.ip_address,
+      userAgent: a.user_agent,
+    })),
+    exportedAt: new Date().toISOString(),
+  };
 }

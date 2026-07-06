@@ -1091,6 +1091,33 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.find_org_member_user_ids_as_admin(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.find_org_member_user_ids_as_admin(uuid) TO service_role;
 
+-- service_role only. Enumerates every membership row of every org the
+-- target user belongs to, so the account-delete hook (which runs with no
+-- app.user_id GUC) can compute per-org member and owner counts. Role
+-- interpretation stays in one place (lib/auth/permissions.ts:parseMemberRoles):
+-- this function returns raw roles and never parses them, so there is no
+-- second owner-detection implementation in SQL to drift.
+CREATE OR REPLACE FUNCTION public.find_user_org_memberships_as_admin(p_user_id uuid)
+RETURNS TABLE (org_id uuid, member_user_id uuid, member_role text)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = piyaz_auth, pg_catalog, pg_temp
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT m."organizationId", m."userId", m.role
+  FROM piyaz_auth."member" m
+  WHERE m."organizationId" IN (
+    SELECT mm."organizationId"
+    FROM piyaz_auth."member" mm
+    WHERE mm."userId" = p_user_id
+  );
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.find_user_org_memberships_as_admin(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.find_user_org_memberships_as_admin(uuid) TO service_role;
+
 -- ---------------------------------------------------------------------------
 -- Activity propagation — bump projects.updated_at when tasks/edges change.
 --

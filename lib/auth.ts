@@ -6,7 +6,13 @@ import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as authSchema from "@/lib/db/auth-schema";
 import { authDb } from "@/lib/db/connection";
-import { clearOrgMembershipArtifacts } from "@/lib/data/account";
+import {
+  clearOrgMembershipArtifacts,
+  enumerateOwnedOrgsForDeletion,
+  planOwnedOrgDeletion,
+  scrubLegalAcceptances,
+} from "@/lib/data/account";
+import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
@@ -73,6 +79,19 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
+    // deleteUser runs a manual freshness check when called without a
+    // password (account.ts:deleteUser handler): it throws SESSION_EXPIRED
+    // when the session is older than `freshAge`. The resolved deletion
+    // model is typed-confirmation (email or DELETE) with no password and
+    // immediate erase, so a session older than a day would fail that gate
+    // and break "erase immediately". Setting `freshAge: 0` disables the
+    // manual check — the only lever better-auth exposes (there is no
+    // per-operation override). The verified active session plus the
+    // typed-confirmation dialog are the intentionality gate. The only
+    // other freshness-gated built-in is unlinkAccount, which piyaz does
+    // not expose (email/password plus the OAuth AS, no account-linking
+    // surface), so the practical blast radius is the deletion path itself.
+    freshAge: 0,
     // BA writes every session to Drizzle AND KV. Required for oauthProvider
     // (which throws at boot without DB-backed sessions). KV is the per-POP
     // read cache; Drizzle is the durable store. NOTE: BA's `findSession`
@@ -228,6 +247,73 @@ export const auth = betterAuth({
     // the dev server (MYMR-235).
     nextCookies(),
   ],
+  user: {
+    deleteUser: {
+      enabled: true,
+      // Runs while `user.id` is still populated (before the row is
+      // removed), which the legal-acceptance scrub requires. Ordered:
+      // (1) block deletion when the caller solely owns a team that still
+      // has other members — they must transfer or delete it first;
+      // (2) cascade-delete teams the caller is the only member of so none
+      // is orphaned; (3) anonymize retained legal-acceptance evidence.
+      // Unlike beforeDeleteOrganization (which allSettles and logs), the
+      // sole-owner guard and the scrub THROW to abort the whole delete so
+      // a failure never leaves an ownerless team or a compliance gap.
+      beforeDelete: async (user, request) => {
+        const plan = planOwnedOrgDeletion(
+          await enumerateOwnedOrgsForDeletion(user.id),
+        );
+        if (plan.kind === "blocked") {
+          throw new APIError("BAD_REQUEST", {
+            message: TEAM_ACTION_MESSAGES.cannot_delete_sole_owner,
+            code: "CANNOT_DELETE_SOLE_OWNER",
+          });
+        }
+        if (plan.orgIdsToDelete.length > 0) {
+          if (!request) {
+            console.error("deleteUser.beforeDelete cleanup failure", {
+              userId: user.id,
+              step: "deleteOwnedOrg",
+              err: "no request to authorize owned-team cascade",
+            });
+            throw new APIError("INTERNAL_SERVER_ERROR", {
+              message: "Could not delete your account. Please try again.",
+            });
+          }
+          // Reuse the audited org-delete path so its own
+          // beforeDeleteOrganization hook clears each member's OAuth
+          // artifacts and revokes realtime access, and the FK cascade
+          // wipes projects, tasks, edges, invitations, and the member row.
+          for (const organizationId of plan.orgIdsToDelete) {
+            try {
+              await auth.api.deleteOrganization({
+                body: { organizationId },
+                headers: request.headers,
+              });
+            } catch (err) {
+              console.error("deleteUser.beforeDelete cleanup failure", {
+                userId: user.id,
+                orgId: organizationId,
+                step: "deleteOwnedOrg",
+                err,
+              });
+              throw err;
+            }
+          }
+        }
+        try {
+          await scrubLegalAcceptances(user.id);
+        } catch (err) {
+          console.error("deleteUser.beforeDelete cleanup failure", {
+            userId: user.id,
+            step: "scrubLegalAcceptances",
+            err,
+          });
+          throw err;
+        }
+      },
+    },
+  },
   databaseHooks: {
     user: {
       create: {

@@ -21,6 +21,7 @@ export type TeamActionFailureCode =
   | "email_verification_required"
   | "membership_limit_reached"
   | "cannot_leave_only_owner"
+  | "cannot_delete_sole_owner"
   | "slug_taken"
   | "invalid_password"
   | "rate_limited"
@@ -52,6 +53,8 @@ export const TEAM_ACTION_MESSAGES: Record<TeamActionFailureCode, string> = {
     "This team has reached its member limit. Contact the owner.",
   cannot_leave_only_owner:
     "You're the only owner — promote another member first, then leave.",
+  cannot_delete_sole_owner:
+    "You solely own a team that still has other members. Transfer ownership or delete that team first, then delete your account.",
   slug_taken: "That URL slug is already in use. Try a different one.",
   invalid_password: "Current password is incorrect.",
   rate_limited: "Too many attempts. Please wait a moment and try again.",
@@ -128,6 +131,8 @@ export function mapBetterAuthError(err: unknown): TeamActionFailureCode {
     case "YOU_CANNOT_LEAVE_THE_ORGANIZATION_AS_THE_ONLY_OWNER":
     case "YOU_CANNOT_LEAVE_THE_ORGANIZATION_WITHOUT_AN_OWNER":
       return "cannot_leave_only_owner";
+    case "CANNOT_DELETE_SOLE_OWNER":
+      return "cannot_delete_sole_owner";
     case "ORGANIZATION_ALREADY_EXISTS":
     case "ORGANIZATION_SLUG_ALREADY_TAKEN":
       return "slug_taken";
