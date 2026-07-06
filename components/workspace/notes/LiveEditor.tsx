@@ -107,7 +107,7 @@ export function LiveEditor({ body, editable, onCommitBody }: LiveEditorProps) {
               if (e.key === "Enter" && e.target === e.currentTarget)
                 startEdit(i);
             }}
-            className="block w-full cursor-text"
+            className="block w-full cursor-text rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
           >
             {blocks.map((b, bi) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: stable block order
@@ -245,22 +245,8 @@ function BlockView({ block }: BlockViewProps) {
     );
   if (block.kind === "code")
     return (
-      <pre
-        style={{
-          background: "rgba(0,0,0,0.35)",
-          border: "1px solid var(--color-border)",
-          borderRadius: 8,
-          padding: "10px 12px",
-          margin: "10px 0",
-          overflowX: "auto",
-        }}
-      >
-        <code
-          className="font-mono text-[12px]"
-          style={{ color: "var(--color-text-secondary)" }}
-        >
-          {block.text}
-        </code>
+      <pre style={{ margin: "10px 0" }}>
+        <code>{block.text}</code>
       </pre>
     );
   return (

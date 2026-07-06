@@ -50,18 +50,7 @@ export function InlineText({ text }: InlineTextProps) {
         if (token.kind === "task") return <TaskChip key={key} token={token} />;
         if (token.kind === "wiki") return <DocLink key={key} token={token} />;
         if (token.kind === "code")
-          return (
-            <code
-              key={key}
-              className="rounded px-1 py-0.5 font-mono text-[0.84em]"
-              style={{
-                background: "rgba(255,255,255,0.06)",
-                color: "var(--color-accent-light)",
-              }}
-            >
-              {token.text}
-            </code>
-          );
+          return <code key={key}>{token.text}</code>;
         if (token.kind === "bold")
           return (
             <strong
