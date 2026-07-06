@@ -35,6 +35,65 @@ export function escapeRegExp(value: string): string {
 /** Candidate fence line: up to 3 spaces of indent, then 3+ ` or ~. */
 const FENCE_LINE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
+/** Open fence state: the marker character and the opener's run length. */
+export type FenceState = { char: string; length: number };
+
+/**
+ * Match a line as a CommonMark fence opener: a run of 3+ backticks or
+ * tildes after at most 3 spaces of indentation, where a backtick fence's
+ * info string may not contain a backtick.
+ *
+ * @param line - One body line.
+ * @returns The fence state when the line opens a fence, else `null`.
+ */
+export function fenceOpen(line: string): FenceState | null {
+  const match = FENCE_LINE_RE.exec(line);
+  if (match === null) return null;
+  const [, marker = "", infoString = ""] = match;
+  if (marker.charAt(0) === "~" || !infoString.includes("`")) {
+    return { char: marker.charAt(0), length: marker.length };
+  }
+  return null;
+}
+
+/**
+ * Whether a line closes an open fence: a run of the same character at
+ * least as long as the opener with only trailing whitespace.
+ *
+ * @param line - One body line.
+ * @param fence - The open fence state.
+ * @returns `true` when the line closes the fence.
+ */
+export function fenceCloses(line: string, fence: FenceState): boolean {
+  const match = FENCE_LINE_RE.exec(line);
+  if (match === null) return false;
+  const [, marker = "", rest = ""] = match;
+  return (
+    marker.charAt(0) === fence.char &&
+    marker.length >= fence.length &&
+    rest.trim() === ""
+  );
+}
+
+/**
+ * Build the inline alternation used to match refs, wiki links, bold runs,
+ * and inline code spans on a single source line, case-insensitively. Bold
+ * and code are captured (groups 3 and 4) so the renderer can slice them;
+ * the extractor reads only the ref (1) and title (2) groups. Leftmost-
+ * match-wins lets a span consume refs inside it.
+ *
+ * @param projectIdentifier - The owning project's identifier.
+ * @returns A fresh `gi` RegExp; reset `lastIndex` before reuse.
+ */
+export function buildInlineRe(projectIdentifier: string): RegExp {
+  const identifier = escapeRegExp(projectIdentifier);
+  return new RegExp(
+    String.raw`\b${identifier}-(\d+)\b|\[\[([^\]]+)\]\]|(\*\*[^*]+\*\*)|` +
+      "(`[^`]+`)",
+    "gi",
+  );
+}
+
 /**
  * Extract task and note references from a markdown body.
  *
@@ -63,34 +122,16 @@ export function extractNoteRefs(
   const taskSeqs = new Set<number>();
   const titles = new Set<string>();
   const seenTitleKeys = new Set<string>();
-  const identifier = escapeRegExp(projectIdentifier);
-  const inlineRe = new RegExp(
-    String.raw`\b${identifier}-(\d+)\b|\[\[([^\]]+)\]\]|\*\*[^*]+\*\*|` +
-      "`[^`]+`",
-    "gi",
-  );
+  const inlineRe = buildInlineRe(projectIdentifier);
 
-  let fence: { char: string; length: number } | null = null;
+  let fence: FenceState | null = null;
   for (const line of body.split("\n")) {
-    const fenceMatch = FENCE_LINE_RE.exec(line);
     if (fence !== null) {
-      const [, marker = "", rest = ""] = fenceMatch ?? [];
-      if (
-        marker.charAt(0) === fence.char &&
-        marker.length >= fence.length &&
-        rest.trim() === ""
-      ) {
-        fence = null;
-      }
+      if (fenceCloses(line, fence)) fence = null;
       continue;
     }
-    if (fenceMatch !== null) {
-      const [, marker = "", infoString = ""] = fenceMatch;
-      if (marker.charAt(0) === "~" || !infoString.includes("`")) {
-        fence = { char: marker.charAt(0), length: marker.length };
-        continue;
-      }
-    }
+    fence = fenceOpen(line);
+    if (fence !== null) continue;
     inlineRe.lastIndex = 0;
     for (
       let match = inlineRe.exec(line);

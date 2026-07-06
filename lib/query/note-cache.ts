@@ -23,6 +23,7 @@ export function notePlaceholderFromRow(
     note: {
       id: row.id,
       projectId,
+      sequenceNumber: 0,
       type: row.type,
       folder: row.folder,
       title: row.title,

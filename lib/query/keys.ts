@@ -61,4 +61,7 @@ export const noteKeys = {
   /** Notes linked to a task (backlinks panel). */
   backlinks: (projectId: string, taskId: string) =>
     ["notes", projectId, "backlinks", taskId] as const,
+  /** All backlink queries for a project — the invalidation prefix. */
+  backlinksAll: (projectId: string) =>
+    ["notes", projectId, "backlinks"] as const,
 } as const;

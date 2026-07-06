@@ -94,6 +94,23 @@ test("slugifyTitle shapes titles into stable kebab slugs", async () => {
   ).rejects.toBeInstanceOf(NoteValidationError);
 });
 
+test("createNote assigns a stable per-project note sequence number", async () => {
+  const f = await seedUserOrgProject("noteseq");
+  const ctx = makeAuthContext(f.userId);
+
+  const a = await createNote(ctx, { projectId: f.projectId, title: "A" });
+  const b = await createNote(ctx, { projectId: f.projectId, title: "B" });
+  const fullA = await getNoteFull(ctx, a.id);
+  const fullB = await getNoteFull(ctx, b.id);
+
+  expect(fullA.note.sequenceNumber).toBe(1);
+  expect(fullB.note.sequenceNumber).toBe(2);
+
+  await updateNote(ctx, a.id, { title: "Renamed A" });
+  const renamedA = await getNoteFull(ctx, a.id);
+  expect(renamedA.note.sequenceNumber).toBe(1);
+});
+
 test("createNote defaults access to open despite the DB column default", async () => {
   const f = await seedUserOrgProject("noteopen");
   const ctx = makeAuthContext(f.userId);
