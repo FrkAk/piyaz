@@ -214,6 +214,45 @@ function FolderRenameInput({
   );
 }
 
+/** Tree-shaped skeleton rows: two folders with nested and root files. */
+const SKELETON_ROWS: { height: number; indent: number; bar: number }[] = [
+  { height: 26, indent: 8, bar: 96 },
+  { height: 30, indent: 24, bar: 124 },
+  { height: 30, indent: 24, bar: 88 },
+  { height: 26, indent: 8, bar: 72 },
+  { height: 30, indent: 24, bar: 108 },
+  { height: 30, indent: 8, bar: 136 },
+];
+
+/**
+ * Pulsing placeholder mirroring the folder tree while the list loads,
+ * matching the locked folder (26) and note (30) row heights so the real
+ * rows swap in without a layout shift.
+ *
+ * @returns The decorative skeleton column.
+ */
+function TreeSkeleton() {
+  return (
+    <div className="pt-1">
+      <span className="sr-only">Loading notes</span>
+      {SKELETON_ROWS.map((row, i) => (
+        <div
+          key={i}
+          aria-hidden="true"
+          className="flex items-center gap-2"
+          style={{ height: row.height, paddingLeft: row.indent }}
+        >
+          <span className="h-3 w-3 shrink-0 animate-pulse rounded bg-surface-hover" />
+          <span
+            className="h-2 animate-pulse rounded bg-surface-hover"
+            style={{ width: row.bar }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Left pane, searchable nested folder tree with drag-and-drop and inline
  * actions, backed by the notes tree list and the server search route.
@@ -713,9 +752,7 @@ export function TreePane({
             Failed to load notes
           </p>
         ) : list.isPending ? (
-          <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
-            Loading…
-          </p>
+          <TreeSkeleton />
         ) : roots.length === 0 && rootNotes.length === 0 ? (
           <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
             No notes yet
