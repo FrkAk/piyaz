@@ -1,0 +1,2 @@
+ALTER TABLE "notes" ADD COLUMN "sequence_number" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "notes" ADD CONSTRAINT "notes_project_sequence_unique" UNIQUE("project_id","sequence_number");

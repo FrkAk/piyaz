@@ -378,6 +378,10 @@ export const notes = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    // Per-project note ref sequence. `0` is the "unassigned" sentinel the
+    // notes_assign_sequence BEFORE INSERT trigger replaces with the next
+    // per-project value (docker/rls-functions.sql); writers never set it.
+    sequenceNumber: integer("sequence_number").notNull().default(0),
     type: text("type").$type<NoteType>().notNull().default("reference"),
     folder: text("folder").notNull().default(""),
     title: text("title").notNull(),
@@ -435,6 +439,7 @@ export const notes = pgTable(
   },
   (t) => [
     index("notes_project_id_idx").on(t.projectId),
+    unique("notes_project_sequence_unique").on(t.projectId, t.sequenceNumber),
     uniqueIndex("notes_project_slug_unique")
       .on(t.projectId, t.slug)
       .where(sql`deleted_at IS NULL`),
