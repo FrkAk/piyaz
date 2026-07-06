@@ -144,22 +144,25 @@ export async function moveNoteAction(
 }
 
 /**
- * Server action — re-parent a folder subtree (tree drag-and-drop path).
+ * Server action — re-parent a folder subtree (tree drag-and-drop and
+ * rename paths).
  * @param projectId - Owning project id.
  * @param src - Folder path being moved.
  * @param destParent - New parent folder path (empty string for root).
+ * @param leaf - Replacement folder name; omit to keep `src`'s leaf.
  * @returns The destination path and moved-note count, or a typed failure.
  */
 export async function moveFolderAction(
   projectId: string,
   src: string,
   destParent: string,
+  leaf?: string,
 ): Promise<NoteActionResult<{ dest: string; movedCount: number }>> {
   try {
     const ctx = await authorizeWrite(NOTE_BUDGETS.noteMove);
     return {
       ok: true,
-      data: await coreMoveFolder(ctx, projectId, src, destParent),
+      data: await coreMoveFolder(ctx, projectId, src, destParent, leaf),
     };
   } catch (err) {
     const failure = noteFailureFrom(err);

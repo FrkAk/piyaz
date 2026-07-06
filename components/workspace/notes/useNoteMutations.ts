@@ -325,13 +325,13 @@ export function useDeleteNote(projectId: string) {
 }
 
 /**
- * Folder subtree re-parent (tree drag-and-drop). No optimistic surgery:
- * the move touches an unbounded set of rows, so on success the whole note
- * prefix revalidates (tree, details, search, backlinks all render folder
- * paths; unchanged entries cost a bodiless 304).
+ * Folder subtree re-parent (tree drag-and-drop and rename). No optimistic
+ * surgery: the move touches an unbounded set of rows, so on success the
+ * whole note prefix revalidates (tree, details, search, backlinks all
+ * render folder paths; unchanged entries cost a bodiless 304).
  *
  * @param projectId - Owning project id.
- * @returns Mutation taking `{ src, destParent }`.
+ * @returns Mutation taking `{ src, destParent, leaf? }`.
  */
 export function useMoveFolder(projectId: string) {
   const qc = useQueryClient();
@@ -339,11 +339,13 @@ export function useMoveFolder(projectId: string) {
     mutationFn: async (vars: {
       src: string;
       destParent: string;
+      leaf?: string;
     }): Promise<NoteActionResult<{ dest: string; movedCount: number }>> => {
       const result = await moveFolderAction(
         projectId,
         vars.src,
         vars.destParent,
+        vars.leaf,
       );
       if (result.ok) {
         qc.invalidateQueries({ queryKey: noteKeys.all(projectId) });

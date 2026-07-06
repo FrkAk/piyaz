@@ -73,3 +73,66 @@ export function leafOf(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx === -1 ? path : path.slice(idx + 1);
 }
+
+/**
+ * Outcome of a folder mutation (inline rename or drag re-parent):
+ * nothing to do, a sibling collision that would silently merge two
+ * folders, or the dispatchable move.
+ */
+export type FolderMovePlan =
+  | { kind: "noop" }
+  | { kind: "collision"; dest: string }
+  | { kind: "move"; destParent: string; leaf: string; dest: string };
+
+/**
+ * Plan an inline folder rename. Normalizes the entered name with the
+ * server's folder segment rules (split on `/`, trim, drop empties) so
+ * the computed destination matches what `moveFolder` will return.
+ *
+ * @param path - Folder path being renamed.
+ * @param rawName - User-entered replacement name.
+ * @param allFolders - Every visible folder path, server and client-local.
+ * @returns No-op for an empty or unchanged name, collision when the
+ *   destination folder already exists, otherwise the move parameters.
+ */
+export function planFolderRename(
+  path: string,
+  rawName: string,
+  allFolders: readonly string[],
+): FolderMovePlan {
+  const leaf = rawName
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment !== "")
+    .join("/");
+  if (leaf === "" || leaf === leafOf(path)) return { kind: "noop" };
+  const destParent = parentOf(path);
+  const dest = destParent === "" ? leaf : `${destParent}/${leaf}`;
+  if (allFolders.includes(dest)) return { kind: "collision", dest };
+  return { kind: "move", destParent, leaf, dest };
+}
+
+/**
+ * Plan a folder drag re-parent. Self, descendant, and same-parent drops
+ * are no-ops; a destination that already holds a same-named sibling is
+ * a collision (dispatching it would silently merge the two folders).
+ *
+ * @param src - Folder path being moved.
+ * @param destParent - Target parent path (`""` = root).
+ * @param allFolders - Every visible folder path, server and client-local.
+ * @returns No-op, collision, or the move parameters.
+ */
+export function planFolderMove(
+  src: string,
+  destParent: string,
+  allFolders: readonly string[],
+): FolderMovePlan {
+  if (destParent === src || destParent.startsWith(`${src}/`)) {
+    return { kind: "noop" };
+  }
+  if (parentOf(src) === destParent) return { kind: "noop" };
+  const leaf = leafOf(src);
+  const dest = destParent === "" ? leaf : `${destParent}/${leaf}`;
+  if (allFolders.includes(dest)) return { kind: "collision", dest };
+  return { kind: "move", destParent, leaf, dest };
+}

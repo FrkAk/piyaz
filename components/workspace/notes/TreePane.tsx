@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -27,9 +28,12 @@ import type { NoteTreeRow } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
 import { fetchNoteSearch, fetchNotesTree } from "@/lib/query/queries";
 import {
+  type FolderMovePlan,
   leafOf,
   NOTE_TYPE_META,
   parentOf,
+  planFolderMove,
+  planFolderRename,
   tint,
   type TypeFilter,
 } from "./note-meta";
@@ -52,6 +56,8 @@ interface TreePaneProps {
   onNewNote: (folder: string) => void;
   /** @param createPending - Disables the New note button while a create is in flight. */
   createPending: boolean;
+  /** @param createError - Failure message from the last note create, or null. */
+  createError: string | null;
 }
 
 type DragItem = { kind: "note" | "folder"; id: string };
@@ -144,11 +150,67 @@ function NoteRow({
   );
 }
 
+interface FolderRenameInputProps {
+  /** @param value - Current draft name. */
+  value: string;
+  /** @param onChange - Draft name change. */
+  onChange: (value: string) => void;
+  /** @param onCommit - Commit the rename (Enter or blur). */
+  onCommit: () => void;
+  /** @param onCancel - Cancel the rename (Escape). */
+  onCancel: () => void;
+}
+
+/**
+ * Inline folder rename field, swapped in for the folder label. Focuses
+ * and selects its content on mount; Enter and blur commit, Escape
+ * cancels.
+ *
+ * @param props - Draft value and commit/cancel wiring.
+ * @returns The rename input.
+ */
+function FolderRenameInput({
+  value,
+  onChange,
+  onCommit,
+  onCancel,
+}: FolderRenameInputProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  return (
+    <input
+      ref={inputRef}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onCommit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onCommit();
+        else if (e.key === "Escape") onCancel();
+      }}
+      aria-label="Folder name"
+      className="min-w-0 flex-1 rounded px-1 text-[12px] font-semibold outline-none"
+      style={{
+        height: 20,
+        color: "var(--color-text-primary)",
+        border: "1px solid var(--color-accent)",
+        background: "var(--color-surface)",
+      }}
+    />
+  );
+}
+
 /**
  * Left pane: searchable nested folder tree with drag-and-drop and inline
  * actions, backed by the notes tree list and the server search route.
  * Folders are path prefixes on note rows; empty folders created here are
- * client-local and persist only once a note lands in them.
+ * client-local and persist only once a note lands in them. Folder rows
+ * rename inline (double-click or F2); tree mutation failures surface in
+ * a strip above the list.
  *
  * @param props - Project scope, selection state, and create wiring.
  * @returns The 266px tree column.
@@ -159,6 +221,7 @@ export function TreePane({
   onSelect,
   onNewNote,
   createPending,
+  createError,
 }: TreePaneProps) {
   const qc = useQueryClient();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -168,6 +231,11 @@ export function TreePane({
   const [rawQuery, setRawQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [extraFolders, setExtraFolders] = useState<string[]>([]);
+  const [renaming, setRenaming] = useState<{
+    path: string;
+    value: string;
+  } | null>(null);
+  const [treeError, setTreeError] = useState<string | null>(null);
 
   const list = useQuery({
     queryKey: noteKeys.list(projectId),
@@ -268,22 +336,67 @@ export function TreePane({
   }
 
   /**
-   * Rewrite client-local folder paths under a moved prefix.
+   * Rewrite client-local state keyed by folder path (empty extra folders
+   * and collapsed entries) under a moved prefix.
    *
    * @param src - Source folder path.
    * @param dest - Destination folder path.
    */
-  function rewriteExtraFolders(src: string, dest: string) {
-    setExtraFolders((fs) =>
-      fs.map((f) =>
-        f === src || f.startsWith(`${src}/`) ? dest + f.slice(src.length) : f,
-      ),
+  function rewriteLocalPaths(src: string, dest: string) {
+    const rewrite = (f: string) =>
+      f === src || f.startsWith(`${src}/`) ? dest + f.slice(src.length) : f;
+    setExtraFolders((fs) => fs.map(rewrite));
+    setCollapsed((c) => new Set([...c].map(rewrite)));
+  }
+
+  /**
+   * Whether any server note lives in a folder or its subtree.
+   *
+   * @param path - Folder path.
+   * @returns True when at least one note row is under the path.
+   */
+  function folderHasNotes(path: string): boolean {
+    return (rows ?? []).some(
+      (r) => r.folder === path || r.folder.startsWith(`${path}/`),
+    );
+  }
+
+  /**
+   * Dispatch a folder mutation plan from rename or drag re-parent.
+   * Collisions surface in the error strip without dispatching (no
+   * silent merge). Folders without server notes move as a pure
+   * client-local path rewrite; otherwise the whole subtree re-parents
+   * server-side via `moveFolder`.
+   *
+   * @param src - Folder path being moved or renamed.
+   * @param plan - Plan from {@link planFolderRename} or {@link planFolderMove}.
+   */
+  function applyFolderPlan(src: string, plan: FolderMovePlan) {
+    if (plan.kind === "noop") return;
+    if (plan.kind === "collision") {
+      setTreeError(`Folder "${plan.dest}" already exists`);
+      return;
+    }
+    if (!folderHasNotes(src)) {
+      rewriteLocalPaths(src, plan.dest);
+      return;
+    }
+    moveFolder.mutate(
+      { src, destParent: plan.destParent, leaf: plan.leaf },
+      {
+        onSuccess: (result) => {
+          if (result.ok) rewriteLocalPaths(src, result.data.dest);
+          else setTreeError(result.message);
+        },
+        onError: () => setTreeError("Folder move failed"),
+      },
     );
   }
 
   /**
    * Complete a drop onto a folder, moving the dragged note or folder.
-   * Self/descendant folder drops and no-op moves never dispatch.
+   * Self/descendant folder drops and no-op moves never dispatch;
+   * collisions and failures surface in the tree error strip.
    *
    * @param path - Target folder path.
    */
@@ -291,30 +404,40 @@ export function TreePane({
     const item = drag;
     clearDrag();
     if (!item) return;
+    setTreeError(null);
     if (item.kind === "note") {
       const row = (rows ?? []).find((r) => r.id === item.id);
       if (!row || row.folder === path) return;
-      moveNote.mutate({ noteId: item.id, folder: path });
-      return;
-    }
-    const src = item.id;
-    if (path === src || path.startsWith(`${src}/`)) return;
-    if (parentOf(src) === path) return;
-    const hasNotes = (rows ?? []).some(
-      (r) => r.folder === src || r.folder.startsWith(`${src}/`),
-    );
-    if (!hasNotes) {
-      rewriteExtraFolders(src, path ? `${path}/${leafOf(src)}` : leafOf(src));
-      return;
-    }
-    moveFolder.mutate(
-      { src, destParent: path },
-      {
-        onSuccess: (result) => {
-          if (result.ok) rewriteExtraFolders(src, result.data.dest);
+      moveNote.mutate(
+        { noteId: item.id, folder: path },
+        {
+          onSuccess: (result) => {
+            if (!result.ok) setTreeError(result.message);
+          },
+          onError: () => setTreeError("Move failed"),
         },
-      },
-    );
+      );
+      return;
+    }
+    applyFolderPlan(item.id, planFolderMove(item.id, path, allFolders));
+  }
+
+  /**
+   * Enter inline rename mode on a folder row.
+   *
+   * @param path - Folder path to rename.
+   */
+  function beginRename(path: string) {
+    setTreeError(null);
+    setRenaming({ path, value: leafOf(path) });
+  }
+
+  /** Commit the in-flight rename through {@link applyFolderPlan}. */
+  function commitRename() {
+    const r = renaming;
+    if (!r) return;
+    setRenaming(null);
+    applyFolderPlan(r.path, planFolderRename(r.path, r.value, allFolders));
   }
 
   /**
@@ -332,46 +455,72 @@ export function TreePane({
     const indent = 8 + depth * 12;
     return (
       <div key={path}>
-        <button
-          type="button"
-          draggable
-          onClick={() => toggle(path)}
-          onDragStart={(e) => {
-            e.stopPropagation();
-            setDrag({ kind: "folder", id: path });
-          }}
-          onDragEnd={clearDrag}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDropFolder(path);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            dropOnto(path);
-          }}
-          className="group flex w-full items-center gap-1 rounded-md pr-2 text-left text-text-secondary"
-          style={{
-            height: 26,
-            paddingLeft: indent,
-            opacity: drag?.kind === "folder" && drag.id === path ? 0.45 : 1,
-            background: isDropTarget
-              ? tint("var(--color-accent)", 14)
-              : "transparent",
-            outline: isDropTarget
-              ? "1px solid var(--color-accent)"
-              : "1px solid transparent",
-          }}
-        >
-          {isCollapsed ? (
-            <IconChevronRight size={11} className="text-text-muted" />
-          ) : (
-            <IconChevronDown size={11} className="text-text-muted" />
-          )}
-          <span className="text-[12px] font-semibold">{leafOf(path)}</span>
-          <span className="ml-auto font-mono text-[10px] text-text-faint">
-            {folderNotes.length}
-          </span>
-        </button>
+        {renaming?.path === path ? (
+          <div
+            className="flex w-full items-center gap-1 rounded-md pr-2 text-text-secondary"
+            style={{ height: 26, paddingLeft: indent }}
+          >
+            {isCollapsed ? (
+              <IconChevronRight size={11} className="text-text-muted" />
+            ) : (
+              <IconChevronDown size={11} className="text-text-muted" />
+            )}
+            <FolderRenameInput
+              value={renaming.value}
+              onChange={(value) => setRenaming({ path, value })}
+              onCommit={commitRename}
+              onCancel={() => setRenaming(null)}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            draggable
+            onClick={() => toggle(path)}
+            onDoubleClick={() => beginRename(path)}
+            onKeyDown={(e) => {
+              if (e.key === "F2") {
+                e.preventDefault();
+                beginRename(path);
+              }
+            }}
+            onDragStart={(e) => {
+              e.stopPropagation();
+              setDrag({ kind: "folder", id: path });
+            }}
+            onDragEnd={clearDrag}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDropFolder(path);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              dropOnto(path);
+            }}
+            className="group flex w-full items-center gap-1 rounded-md pr-2 text-left text-text-secondary"
+            style={{
+              height: 26,
+              paddingLeft: indent,
+              opacity: drag?.kind === "folder" && drag.id === path ? 0.45 : 1,
+              background: isDropTarget
+                ? tint("var(--color-accent)", 14)
+                : "transparent",
+              outline: isDropTarget
+                ? "1px solid var(--color-accent)"
+                : "1px solid transparent",
+            }}
+          >
+            {isCollapsed ? (
+              <IconChevronRight size={11} className="text-text-muted" />
+            ) : (
+              <IconChevronDown size={11} className="text-text-muted" />
+            )}
+            <span className="text-[12px] font-semibold">{leafOf(path)}</span>
+            <span className="ml-auto font-mono text-[10px] text-text-faint">
+              {folderNotes.length}
+            </span>
+          </button>
+        )}
         {!isCollapsed && (
           <>
             {subFolders.map((s) => renderFolder(s, depth + 1))}
@@ -490,6 +639,15 @@ export function TreePane({
           );
         })}
       </div>
+
+      {(treeError ?? createError) !== null && (
+        <p
+          className="px-3 pb-1.5 font-mono text-[10.5px]"
+          style={{ color: "var(--color-danger)" }}
+        >
+          {treeError ?? createError}
+        </p>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {searching ? (

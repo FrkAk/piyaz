@@ -25,15 +25,18 @@ interface NotesViewProps {
 export function NotesView({ projectId, noteId, onSelectNote }: NotesViewProps) {
   const createNote = useCreateNote(projectId);
   const [focusTitle, setFocusTitle] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   /**
    * Create a persisted note in a folder, then select it and request
    * title focus. Selection only moves on the authoritative server id;
-   * on failure the hook restores the tree and selection stays put.
+   * on failure the hook restores the tree, selection stays put, and the
+   * failure surfaces in the tree pane's error strip.
    *
    * @param folder - Target folder path.
    */
   async function createAndSelect(folder: string) {
+    setCreateError(null);
     let result: Awaited<ReturnType<typeof createNote.mutateAsync>>;
     try {
       result = await createNote.mutateAsync({
@@ -44,11 +47,14 @@ export function NotesView({ projectId, noteId, onSelectNote }: NotesViewProps) {
         visibility: "private",
       });
     } catch {
+      setCreateError("Create failed");
       return;
     }
     if (result.ok) {
       onSelectNote(result.data.id);
       setFocusTitle(result.data.id);
+    } else {
+      setCreateError(result.message);
     }
   }
 
@@ -62,6 +68,7 @@ export function NotesView({ projectId, noteId, onSelectNote }: NotesViewProps) {
         onSelect={onSelectNote}
         onNewNote={(folder) => void createAndSelect(folder)}
         createPending={createNote.isPending}
+        createError={createError}
       />
       <EditorPane
         projectId={projectId}

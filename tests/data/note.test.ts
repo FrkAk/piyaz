@@ -260,6 +260,36 @@ test("moveFolder rewrites paths containing non-BMP characters correctly", async 
   expect(folders.get(child.id)).toBe("x/📁a/child");
 });
 
+test("moveFolder with a new leaf renames the subtree in place", async () => {
+  const f = await seedUserOrgProject("noterename");
+  const ctx = makeAuthContext(f.userId);
+  const inB = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "In a/b",
+    folder: "a/b",
+  });
+  const deep = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "In a/b/c",
+    folder: "a/b/c",
+  });
+
+  const renamed = await moveFolder(ctx, f.projectId, "a/b", "a", "renamed");
+  expect(renamed).toEqual({ dest: "a/renamed", movedCount: 2 });
+
+  const tree = await getNoteTreeList(ctx, f.projectId);
+  const folders = new Map(tree.map((n) => [n.id, n.folder]));
+  expect(folders.get(inB.id)).toBe("a/renamed");
+  expect(folders.get(deep.id)).toBe("a/renamed/c");
+
+  const noOp = await moveFolder(ctx, f.projectId, "a/renamed", "a", "renamed");
+  expect(noOp).toEqual({ dest: "a/renamed", movedCount: 0 });
+
+  await expect(
+    moveFolder(ctx, f.projectId, "a/renamed", "a", "  /  "),
+  ).rejects.toBeInstanceOf(NoteValidationError);
+});
+
 test("moveFolder rejects moves that push a path past the folder cap", async () => {
   const f = await seedUserOrgProject("notecap");
   const ctx = makeAuthContext(f.userId);
