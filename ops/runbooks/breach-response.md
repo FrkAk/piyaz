@@ -118,8 +118,7 @@ the controller's place of establishment**, via its online breach-notification po
 contact path. The establishment address is not yet finalized (see PYZ-298), so the
 authority and its portal remain `[PLACEHOLDER]` until confirmed.
 
-Mirroring the framing in `docs/legal/privacy-policy.md` ("How to contact the supervisory
-authority"):
+The competent supervisory authority is framed as follows:
 
 > In Germany this is the data protection authority of the relevant federal state
 > (`[LANDESDATENSCHUTZBEHÖRDE]`) or the Federal Commissioner for Data Protection and
