@@ -52,15 +52,15 @@ describe("splitChunks", () => {
 });
 
 describe("parseBlocks", () => {
-  test("parses h2, callout, ul, and p kinds", () => {
+  test("parses h2, callout, ul, and p kinds keeping line boundaries", () => {
     const blocks = parseBlocks(
       "## Title\n> quoted\n> more\n- one\n- two\npara line\nsecond line",
     );
     expect(blocks).toEqual([
       { kind: "h2", text: "Title" },
-      { kind: "callout", text: "quoted more" },
+      { kind: "callout", text: "quoted\nmore" },
       { kind: "ul", items: ["one", "two"] },
-      { kind: "p", text: "para line second line" },
+      { kind: "p", text: "para line\nsecond line" },
     ] satisfies Block[]);
   });
 
@@ -135,6 +135,34 @@ describe("tokenizeInline", () => {
       { kind: "text", text: "PYZ-99999999999999999999" },
     ]);
   });
+
+  test("joins multi-line text with a single space text token", () => {
+    const tokens = tokenizeInline("para line\nsecond line", "PYZ");
+    expect(tokens).toEqual([{ kind: "text", text: "para line second line" }]);
+  });
+
+  test("spans never pair across a line boundary", () => {
+    const tokens = tokenizeInline("a `x` b `y\nz` PYZ-2 `w`", "PYZ");
+    expect(taskTokens(tokens)).toEqual([]);
+    expect(tokens).toEqual([
+      { kind: "text", text: "a " },
+      { kind: "code", text: "x" },
+      { kind: "text", text: " b `y z" },
+      { kind: "code", text: " PYZ-2 " },
+      { kind: "text", text: "w`" },
+    ]);
+  });
+
+  test("a ref after an unbalanced backtick line stays a task token", () => {
+    const tokens = tokenizeInline("`code\nPYZ-1` after", "PYZ");
+    expect(taskTokens(tokens)).toEqual([1]);
+  });
+
+  test("a ref after an unbalanced bold line stays a task token", () => {
+    const tokens = tokenizeInline("**bold\nPYZ-3** [[T]]", "PYZ");
+    expect(taskTokens(tokens)).toEqual([3]);
+    expect(wikiTokens(tokens)).toEqual(["T"]);
+  });
 });
 
 describe("renderer/extractor lockstep", () => {
@@ -184,6 +212,11 @@ describe("renderer/extractor lockstep", () => {
     "~~~\nPYZ-12\nunterminated [[Six]]",
     "``` info`tick\nnot fenced PYZ-13 [[Seven]]",
     "dupes [[Same]] [[same]] [[SAME]] PYZ-14 PYZ-14",
+    "a `x` b `y\nz` PYZ-2 `w`",
+    "`code\nPYZ-1` after",
+    "> `q\n> PYZ-4` tail",
+    "**bold\nPYZ-3** [[T]]",
+    "one [[A\nB]] wiki never spans lines PYZ-15",
   ];
 
   test.each(corpus)("renderer refs match extractNoteRefs: %s", (body) => {
