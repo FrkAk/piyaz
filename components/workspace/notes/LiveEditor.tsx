@@ -104,7 +104,8 @@ export function LiveEditor({ body, editable, onCommitBody }: LiveEditorProps) {
             tabIndex={0}
             onClick={() => startEdit(i)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") startEdit(i);
+              if (e.key === "Enter" && e.target === e.currentTarget)
+                startEdit(i);
             }}
             className="block w-full cursor-text"
           >

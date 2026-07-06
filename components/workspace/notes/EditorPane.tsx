@@ -15,7 +15,7 @@ import { LiveEditor } from "./LiveEditor";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import { NoteLinkContext, type NoteLinkContextValue } from "./NoteInline";
 import { useNoteDetail } from "./useNoteDetail";
-import { useNoteAutosave, useUpdateNote } from "./useNoteMutations";
+import { useNoteAutosave } from "./useNoteMutations";
 
 interface EditorPaneProps {
   /** @param projectId - Owning project id. */
@@ -96,8 +96,9 @@ const PILL_CLASS =
  * a live selection so the detail query is never keyed on an empty id;
  * remounted per note via `key`. An uncommitted title is flushed on
  * unmount so a selection change without a blur never drops the edit; the
- * title commit awaits a body flush first so a blur-driven title write
- * cannot interleave with a buffered body write's CAS token. Body edits
+ * title commit shares the autosave buffer with body edits, so a title and
+ * a buffered body write fold into one CAS-serialized patch and can never
+ * race each other's `updatedAt` token. Body edits
  * stay gated on `isPlaceholderData`: while the placeholder (empty body)
  * is live, a skeleton renders instead of the editor so no block commit
  * can reach autosave.
@@ -115,7 +116,6 @@ function EditorBody({
   onSelectNote,
 }: EditorBodyProps) {
   const { data, isPlaceholderData, isError } = useNoteDetail(projectId, noteId);
-  const updateNote = useUpdateNote(projectId);
   const autosave = useNoteAutosave(projectId, noteId);
   const note = data?.note;
   const [title, setTitle] = useState<string | null>(null);
@@ -139,9 +139,8 @@ function EditorBody({
     commitRef.current = () => {
       if (note === undefined || note.locked) return;
       if (title === null || title === note.title) return;
-      void autosave
-        .flush()
-        .then(() => updateNote.mutate({ noteId, patch: { title } }));
+      autosave.commit({ title });
+      void autosave.flush();
     };
   });
   useEffect(() => () => commitRef.current(), []);
