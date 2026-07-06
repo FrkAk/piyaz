@@ -259,7 +259,8 @@ function TreeSkeleton() {
  * Folders are path prefixes on note rows; empty folders created here are
  * client-local and persist only once a note lands in them. Folder rows
  * rename inline (double-click or F2); tree mutation failures surface in
- * a strip above the list.
+ * a strip above the list. Note moves are pointer-only native drag-and-drop;
+ * a keyboard-accessible move affordance is deferred to a follow-up.
  *
  * @param props - Project scope, selection state, and create wiring.
  * @returns The 266px tree column.
@@ -295,8 +296,10 @@ export function TreePane({
 
   useEffect(() => {
     const trimmed = rawQuery.trim();
-    if (trimmed === "") return;
-    const id = setTimeout(() => setDebouncedQuery(trimmed), SEARCH_DEBOUNCE_MS);
+    const id = setTimeout(
+      () => setDebouncedQuery(trimmed),
+      trimmed === "" ? 0 : SEARCH_DEBOUNCE_MS,
+    );
     return () => clearTimeout(id);
   }, [rawQuery]);
 
