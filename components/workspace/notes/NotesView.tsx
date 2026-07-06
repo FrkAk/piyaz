@@ -2,11 +2,13 @@
 
 import { useCallback, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { IconPanelLeft } from "@/components/shared/icons";
+import { IconPanelLeft, IconSettings } from "@/components/shared/icons";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useModalChrome } from "@/hooks/useModalChrome";
 import { useNotesRailCollapse } from "@/hooks/useNotesRailCollapse";
+import { useNotesSettingsCollapse } from "@/hooks/useNotesSettingsCollapse";
 import { EditorPane, type TaskSlimMap } from "./EditorPane";
+import { SettingsPane } from "./SettingsPane";
 import { TreePane } from "./TreePane";
 import { useCreateNote } from "./useNoteMutations";
 
@@ -23,6 +25,10 @@ interface NotesViewProps {
   onSelectTask: (taskId: string) => void;
   /** @param taskMap - Project task slim map for inline chip resolution. */
   taskMap: TaskSlimMap;
+  /** @param categories - Project category vocabulary for the settings ribbon. */
+  categories: string[];
+  /** @param projectTags - Deduped project tag vocabulary for the ribbon. */
+  projectTags: string[];
 }
 
 /**
@@ -45,11 +51,16 @@ export function NotesView({
   onSelectNote,
   onSelectTask,
   taskMap,
+  categories,
+  projectTags,
 }: NotesViewProps) {
   const isLg = useMediaQuery("(min-width: 1024px)", true);
   const createNote = useCreateNote(projectId);
   const { collapsed, toggle: toggleRail } = useNotesRailCollapse();
+  const { collapsed: settingsCollapsed, toggle: toggleSettings } =
+    useNotesSettingsCollapse();
   const [treeOpen, setTreeOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusTitle, setFocusTitle] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -96,6 +107,7 @@ export function NotesView({
   );
 
   const closeTree = useCallback(() => setTreeOpen(false), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   const editor = (
     <EditorPane
@@ -124,7 +136,7 @@ export function NotesView({
             onCollapse={toggleRail}
           />
         )}
-        <div className="relative flex min-h-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {collapsed && (
             <button
               type="button"
@@ -136,8 +148,30 @@ export function NotesView({
               <IconPanelLeft size={13} />
             </button>
           )}
+          {noteId !== null && settingsCollapsed && (
+            <button
+              type="button"
+              onClick={toggleSettings}
+              aria-label="Show settings"
+              title="Show settings"
+              className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border-strong bg-base text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            >
+              <IconSettings size={13} />
+            </button>
+          )}
           {editor}
         </div>
+        {noteId !== null && !settingsCollapsed && (
+          <SettingsPane
+            projectId={projectId}
+            noteId={noteId}
+            categories={categories}
+            projectTags={projectTags}
+            taskMap={taskMap}
+            onSelectNote={onSelectNote}
+            onCollapse={toggleSettings}
+          />
+        )}
       </div>
     );
   }
@@ -160,6 +194,17 @@ export function NotesView({
         <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-text-muted">
           Notes
         </span>
+        {noteId !== null && (
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Note settings"
+            title="Note settings"
+            className="ml-auto inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+          >
+            <IconSettings size={15} />
+          </button>
+        )}
       </div>
       {editor}
       <TreeDrawer open={treeOpen} onClose={closeTree}>
@@ -174,6 +219,23 @@ export function NotesView({
           onClose={closeTree}
         />
       </TreeDrawer>
+      <SettingsDrawer
+        open={noteId !== null && settingsOpen}
+        onClose={closeSettings}
+      >
+        {noteId !== null && (
+          <SettingsPane
+            fill
+            projectId={projectId}
+            noteId={noteId}
+            categories={categories}
+            projectTags={projectTags}
+            taskMap={taskMap}
+            onSelectNote={onSelectNote}
+            onClose={closeSettings}
+          />
+        )}
+      </SettingsDrawer>
     </div>
   );
 }
@@ -225,6 +287,63 @@ function TreeDrawer({ open, onClose, children }: TreeDrawerProps) {
             className="fixed left-0 top-[var(--topbar-h)] z-50 flex h-[calc(var(--viewport-height)-var(--topbar-h))] w-[300px] max-w-[85vw] flex-col border-r border-border shadow-[var(--shadow-float)]"
             role="dialog"
             aria-label="Notes tree"
+          >
+            {children}
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
+interface SettingsDrawerProps {
+  /** @param open - Whether the drawer is open. */
+  open: boolean;
+  /** @param onClose - Close the drawer. */
+  onClose: () => void;
+  /** @param children - Drawer body, the fill-mode settings ribbon. */
+  children: React.ReactNode;
+}
+
+/**
+ * Slide-out drawer wrapping the settings ribbon for viewports below `lg`,
+ * anchored to the right to mirror the ribbon's desktop column. Closes on
+ * backdrop click and on Esc. Dialog chrome (Escape via the shared modal
+ * stack, Tab focus trap, focus seed and restore) comes from
+ * {@link useModalChrome}; the global `MotionConfig` disables the slide under
+ * a reduced-motion preference.
+ *
+ * @param props - Drawer configuration.
+ * @returns Backdrop + sliding panel.
+ */
+function SettingsDrawer({ open, onClose, children }: SettingsDrawerProps) {
+  const panelRef = useRef<HTMLElement | null>(null);
+  useModalChrome(open, onClose, panelRef);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-40 bg-black/45"
+            onClick={onClose}
+            aria-hidden="true"
+          />
+          <motion.aside
+            key="panel"
+            ref={panelRef}
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="fixed right-0 top-[var(--topbar-h)] z-50 flex h-[calc(var(--viewport-height)-var(--topbar-h))] w-[320px] max-w-[85vw] flex-col border-l border-border shadow-[var(--shadow-float)]"
+            role="dialog"
+            aria-label="Note settings"
           >
             {children}
           </motion.aside>

@@ -2131,6 +2131,48 @@ export async function approveShareRequest(
 }
 
 /**
+ * Decline a pending share request: clears the `shareRequestedBy` marker
+ * while the note stays private. The counterpart to
+ * {@link approveShareRequest} for the ribbon's "Keep private" action; no
+ * other shipped path clears the marker without a visibility flip
+ * ({@link NotePatch} omits the field). Human-path function; the MCP layer
+ * never routes agents here. No activity event and no realtime emit: the
+ * note stays private, so a project-scoped event would leak its title (the
+ * same reason {@link requestShare} records none).
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @returns Slim summary of the note.
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteShareStateError when no request is pending.
+ */
+export async function declineShareRequest(
+  ctx: AuthContext,
+  noteId: string,
+): Promise<NoteSummary> {
+  assertValidNoteId(noteId);
+  return withUserContext(ctx.userId, async (tx) => {
+    const gate = await assertNoteAccessTx(tx, noteId);
+    assertNoteLive(gate);
+    assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.shareRequestedBy === null) {
+      throw new NoteShareStateError("no_pending_request");
+    }
+    const [row] = await tx
+      .update(notes)
+      .set({
+        shareRequestedBy: null,
+        updatedBy: ctx.userId,
+        updatedAt: new Date(),
+      })
+      .where(eq(notes.id, gate.id))
+      .returning(noteSummaryColumns);
+    return row;
+  });
+}
+
+/**
  * Shared visibility write: updates the column, clears the share-request
  * marker when flipping to `team`, and records the activity event.
  *

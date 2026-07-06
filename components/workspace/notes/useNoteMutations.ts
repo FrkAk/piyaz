@@ -10,6 +10,7 @@ import type {
 import {
   approveShareRequestAction,
   createNoteAction,
+  declineShareRequestAction,
   deleteNoteAction,
   moveFolderAction,
   moveNoteAction,
@@ -449,6 +450,28 @@ export function useApproveShareRequest(projectId: string) {
       noteId: string,
     ): Promise<NoteActionResult<NoteSummary>> => {
       const result = await approveShareRequestAction(noteId);
+      if (result.ok) {
+        finalizeSettingsWrite(qc, projectId, noteId, result.data);
+      }
+      return result;
+    },
+  });
+}
+
+/**
+ * One-shot share-request decline (clears `shareRequestedBy`, note stays
+ * private) for the ribbon's "Keep private". No optimistic surgery.
+ *
+ * @param projectId - Owning project id.
+ * @returns Mutation taking the note id.
+ */
+export function useDeclineShareRequest(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      noteId: string,
+    ): Promise<NoteActionResult<NoteSummary>> => {
+      const result = await declineShareRequestAction(noteId);
       if (result.ok) {
         finalizeSettingsWrite(qc, projectId, noteId, result.data);
       }

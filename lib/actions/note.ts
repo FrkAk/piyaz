@@ -11,6 +11,7 @@ import {
 import {
   approveShareRequest as coreApproveShareRequest,
   createNote as coreCreateNote,
+  declineShareRequest as coreDeclineShareRequest,
   deleteNote as coreDeleteNote,
   moveFolder as coreMoveFolder,
   moveNote as coreMoveNote,
@@ -252,6 +253,30 @@ export async function approveShareRequestAction(
     const failure = noteFailureFrom(err);
     if (failure.code === "unknown") {
       console.error("approveShareRequestAction failed", { noteId, err });
+    }
+    return failure;
+  }
+}
+
+/**
+ * Server action — decline a pending share request, clearing
+ * `shareRequestedBy` while the note stays private. Human-only by
+ * construction: agents are confined to `/api/mcp`, which never routes here.
+ *
+ * @param noteId - Note id.
+ * @returns Slim summary, or a typed failure (`share_state` when no request
+ *   is pending).
+ */
+export async function declineShareRequestAction(
+  noteId: string,
+): Promise<NoteActionResult<NoteSummary>> {
+  try {
+    const ctx = await authorizeWrite(NOTE_BUDGETS.noteShare);
+    return { ok: true, data: await coreDeclineShareRequest(ctx, noteId) };
+  } catch (err) {
+    const failure = noteFailureFrom(err);
+    if (failure.code === "unknown") {
+      console.error("declineShareRequestAction failed", { noteId, err });
     }
     return failure;
   }

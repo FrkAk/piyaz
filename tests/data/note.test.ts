@@ -4,6 +4,7 @@ import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import {
   approveShareRequest,
   createNote,
+  declineShareRequest,
   deleteNote,
   deleteNotePreview,
   getNoteFull,
@@ -519,6 +520,41 @@ test("share request lifecycle: request, approve, reject invalid states", async (
   await expect(requestShare(ctx, note.id)).rejects.toBeInstanceOf(
     NoteShareStateError,
   );
+});
+
+test("declineShareRequest clears the marker without leaving private", async () => {
+  const f = await seedUserOrgProject("notedecline");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "N" });
+
+  await expect(declineShareRequest(ctx, note.id)).rejects.toBeInstanceOf(
+    NoteShareStateError,
+  );
+
+  await requestShare(ctx, note.id);
+  await declineShareRequest(ctx, note.id);
+
+  const sr = serviceRoleConnect();
+  const [row] = await sr<
+    { share_requested_by: string | null; visibility: string }[]
+  >`SELECT share_requested_by, visibility FROM notes WHERE id = ${note.id}`;
+  expect(row.share_requested_by).toBeNull();
+  expect(row.visibility).toBe("private");
+});
+
+test("declineShareRequest is gated to note access", async () => {
+  const f = await seedUserOrgProject("notedeclineg");
+  const mateId = await seedTeammate(f.organizationId, "notedeclineg2");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Hidden",
+  });
+  await requestShare(ctx, note.id);
+
+  await expect(
+    declineShareRequest(makeAuthContext(mateId), note.id),
+  ).rejects.toBeInstanceOf(ForbiddenError);
 });
 
 test("slug allocation dedupes past a teammate's private note", async () => {
