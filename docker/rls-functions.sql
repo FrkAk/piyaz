@@ -655,11 +655,20 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.notes_assign_sequence() FROM public;
 GRANT EXECUTE ON FUNCTION public.notes_assign_sequence() TO app_user;
 
-DROP TRIGGER IF EXISTS notes_assign_sequence_trg ON public.notes;
-CREATE TRIGGER notes_assign_sequence_trg
-  BEFORE INSERT ON public.notes
-  FOR EACH ROW
-  EXECUTE FUNCTION public.notes_assign_sequence();
+-- Guarded on table existence (mirror the notes hardening triggers below):
+-- db:rls:owner must be runnable before the notes migration exists, and a bare
+-- DROP TRIGGER ... ON public.notes errors on the missing table, not just a
+-- missing trigger.
+DO $$
+BEGIN
+  IF to_regclass('public.notes') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS notes_assign_sequence_trg ON public.notes';
+    EXECUTE 'CREATE TRIGGER notes_assign_sequence_trg
+      BEFORE INSERT ON public.notes
+      FOR EACH ROW
+      EXECUTE FUNCTION public.notes_assign_sequence()';
+  END IF;
+END $$;
 
 -- Validates that every supplied user id is a member of the given org.
 -- Returns the subset that ARE members; the TS caller derives the missing

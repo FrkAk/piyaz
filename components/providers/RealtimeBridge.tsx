@@ -31,9 +31,10 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   `lib/realtime/events.ts` is paired with a `project` dispatch that already
  *   invalidates the graph. If `emitTaskEvent` ever stops emitting the paired
  *   project event, restore the graph invalidation here.
- * - `note` events invalidate the project's note tree list and task-backlink
- *   panels, so renames, creates, deletes, and link changes from other sessions
- *   land live on both transports. The open note's `detail` is intentionally NOT
+ * - `note` events ride the `project:<projectId>` subscription (team notes
+ *   only) and invalidate the project's note tree list and task-backlink panels,
+ *   so renames, creates, deletes, and link changes from other sessions land live
+ *   on both transports. The open note's `detail` is intentionally NOT
  *   invalidated: refetching would clobber the active editor's optimistic
  *   autosave buffer, which the conflict surface (PYZ-262) owns.
  * - `project-list` events invalidate the home grid.

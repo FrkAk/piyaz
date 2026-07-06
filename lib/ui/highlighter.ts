@@ -125,6 +125,7 @@ async function ensureLang(hl: HighlighterCore, lang: string): Promise<boolean> {
         loadedLangs.add(lang);
         return true;
       } catch {
+        langLoads.delete(lang);
         return false;
       }
     })();

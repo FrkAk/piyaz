@@ -522,6 +522,10 @@ function BlockEditor({
     return out;
   }, [ctx, query, dismissed]);
   const open = matches.length > 0;
+  // `active` only resets on query change, but `matches` also recomputes when
+  // the workspace note/task maps update; clamp so a shrunk list never indexes
+  // out of range on pick.
+  const activeIdx = Math.min(active, matches.length - 1);
 
   const [prevQuery, setPrevQuery] = useState(query);
   if (query !== prevQuery) {
@@ -584,7 +588,7 @@ function BlockEditor({
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        insert(matches[active].insert);
+        insert(matches[activeIdx].insert);
         return;
       }
       if (event.key === "Escape") {
@@ -688,7 +692,7 @@ function BlockEditor({
       {open && (
         <WikiSuggestions
           matches={matches}
-          active={active}
+          active={activeIdx}
           flipUp={flipUp}
           onPick={(text) => insert(text)}
         />

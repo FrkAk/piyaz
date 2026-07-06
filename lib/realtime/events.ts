@@ -41,12 +41,13 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
 }
 
 /**
- * Emit a note-affecting event. The `note:<id>` key always fires; the
- * project key fires only for team-visible notes — a project dispatch fans
- * out to every member's tree list, and a private note's changes are
- * invisible to everyone else, so the fan-out would be guaranteed-empty
- * refetch egress and a timing signal of private activity. Batched via
- * `dispatchMany` so the Workers backend costs one DO sub-request.
+ * Emit a note-affecting event. The `note` payload rides the
+ * `project:<projectId>` channel — the only channel every project member
+ * subscribes to on connect — so a team note's tree-list and task-backlink
+ * changes fan out to every member. It fires only for team-visible notes: a
+ * private note's changes are invisible to everyone else, so a fan-out would be
+ * guaranteed-empty refetch egress and a timing signal of private activity, and
+ * the author's own session already reflects the write optimistically.
  *
  * @param projectId - Owning project id.
  * @param noteId - Note that changed.
@@ -57,19 +58,12 @@ export function emitNoteEvent(
   noteId: string,
   visibility: Visibility,
 ): void {
-  const dispatches: Parameters<typeof broker.dispatchMany>[0] = [
-    {
-      key: `note:${noteId}`,
-      payload: { kind: "note", projectId, noteId } satisfies RealtimeEvent,
-    },
-  ];
-  if (visibility === "team") {
-    dispatches.push({
-      key: `project:${projectId}`,
-      payload: { kind: "project", projectId } satisfies RealtimeEvent,
-    });
-  }
-  broker.dispatchMany(dispatches);
+  if (visibility !== "team") return;
+  broker.dispatch(`project:${projectId}`, {
+    kind: "note",
+    projectId,
+    noteId,
+  } satisfies RealtimeEvent);
 }
 
 /**

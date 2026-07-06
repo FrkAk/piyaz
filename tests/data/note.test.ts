@@ -111,6 +111,48 @@ test("createNote assigns a stable per-project note sequence number", async () =>
   expect(renamedA.note.sequenceNumber).toBe(1);
 });
 
+test("concurrent createNote calls get distinct sequence numbers", async () => {
+  const f = await seedUserOrgProject("noteseqrace");
+  const ctx = makeAuthContext(f.userId);
+
+  const [a, b] = await Promise.all([
+    createNote(ctx, { projectId: f.projectId, title: "A" }),
+    createNote(ctx, { projectId: f.projectId, title: "B" }),
+  ]);
+  const fullA = await getNoteFull(ctx, a.id);
+  const fullB = await getNoteFull(ctx, b.id);
+
+  expect(
+    new Set([fullA.note.sequenceNumber, fullB.note.sequenceNumber]),
+  ).toEqual(new Set([1, 2]));
+});
+
+test("sequence allocation spans a teammate's hidden private note", async () => {
+  const f = await seedUserOrgProject("noteseqprivate");
+  const ownerCtx = makeAuthContext(f.userId);
+  const teammateId = await seedTeammate(f.organizationId, "seqmate");
+  const teammateCtx = makeAuthContext(teammateId);
+
+  const theirs = await createNote(teammateCtx, {
+    projectId: f.projectId,
+    title: "Their private note",
+    visibility: "private",
+  });
+  const theirsFull = await getNoteFull(teammateCtx, theirs.id);
+  expect(theirsFull.note.sequenceNumber).toBe(1);
+
+  const mine = await createNote(ownerCtx, {
+    projectId: f.projectId,
+    title: "My note",
+  });
+  const mineFull = await getNoteFull(ownerCtx, mine.id);
+  expect(mineFull.note.sequenceNumber).toBe(2);
+
+  await expect(getNoteFull(ownerCtx, theirs.id)).rejects.toBeInstanceOf(
+    ForbiddenError,
+  );
+});
+
 test("createNote defaults access to open despite the DB column default", async () => {
   const f = await seedUserOrgProject("noteopen");
   const ctx = makeAuthContext(f.userId);

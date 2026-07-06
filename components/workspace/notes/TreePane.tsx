@@ -794,21 +794,22 @@ export function TreePane({
    * Confirm a non-empty folder delete: soft-delete every note under the
    * folder and push one undo entry that restores the whole folder.
    */
-  function confirmFolderDelete() {
+  async function confirmFolderDelete() {
     const pending = pendingFolderDelete;
     setPendingFolderDelete(null);
     if (pending === null) return;
-    for (const id of pending.noteIds) {
-      deleteNote.mutate(id, {
-        onSuccess: (result) => {
-          if (!result.ok) setTreeError(result.message);
-        },
-        onError: () => setTreeError("Delete failed"),
-      });
-    }
     setExtraFolders((fs) =>
       fs.filter((f) => f !== pending.path && !f.startsWith(`${pending.path}/`)),
     );
+    // Await every delete before arming undo so a fast Undo cannot restore a
+    // note that has not yet been soft-deleted.
+    const results = await Promise.all(
+      pending.noteIds.map((id) => deleteNote.mutateAsync(id).catch(() => null)),
+    );
+    for (const result of results) {
+      if (result === null) setTreeError("Delete failed");
+      else if (!result.ok) setTreeError(result.message);
+    }
     pushUndo({ noteIds: pending.noteIds, label: leafOf(pending.path) });
   }
 
