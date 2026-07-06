@@ -41,6 +41,8 @@ interface DropdownProps<V extends string> {
   title?: string;
   /** Aria label for the trigger button. */
   ariaLabel?: string;
+  /** When true, the trigger is inert and the panel cannot open. */
+  disabled?: boolean;
 }
 
 /** Worst-case panel height — `max-h-[280px]` list + `py-1` chrome (~8px). */
@@ -67,6 +69,7 @@ export function Dropdown<V extends string>({
   minWidth = 160,
   title,
   ariaLabel,
+  disabled = false,
 }: DropdownProps<V>) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -107,12 +110,17 @@ export function Dropdown<V extends string>({
   // two setStates inside the same event handler, so there's no extra
   // render before paint.
   const handleToggle = useCallback(() => {
+    if (disabled) return;
     setOpen((wasOpen) => {
       if (!wasOpen) measureNow();
       return !wasOpen;
     });
-  }, [measureNow]);
+  }, [disabled, measureNow]);
 
+  // The panel never renders over an inert trigger: if the control is
+  // disabled while open (e.g. a sibling write goes in flight), gating on
+  // `disabled` here closes it without an effect-driven setState.
+  const panelOpen = open && !disabled;
   const active = options.find((o) => o.value === value);
   const flipped = anchor?.vertical === "above";
 
@@ -130,12 +138,15 @@ export function Dropdown<V extends string>({
         ref={triggerRef}
         type="button"
         onClick={handleToggle}
+        disabled={disabled}
         title={title}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
         aria-label={ariaLabel}
-        className="inline-flex cursor-pointer outline-none"
+        className={`inline-flex outline-none ${
+          disabled ? "cursor-not-allowed opacity-55" : "cursor-pointer"
+        }`}
       >
         {renderTrigger(active, open)}
       </button>
@@ -143,7 +154,7 @@ export function Dropdown<V extends string>({
       {typeof document !== "undefined" &&
         createPortal(
           <AnimatePresence>
-            {open && panelStyle && (
+            {panelOpen && panelStyle && (
               <motion.div
                 ref={popoverRef}
                 id={listId}

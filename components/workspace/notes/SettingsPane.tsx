@@ -425,6 +425,7 @@ export function SettingsPane({
               onChange={(v) =>
                 patch("category", { category: v === "" ? null : v })
               }
+              disabled={writeBlocked || isRate("category")}
               ariaLabel="Category"
               renderTrigger={(opt, open) => (
                 <ChipTrigger icon={<IconTag size={11} />} open={open}>
