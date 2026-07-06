@@ -61,6 +61,9 @@ const SEARCH_DEBOUNCE_MS = 250;
 /** Type-filter chip order. */
 const CHIPS: TypeFilter[] = ["all", "reference", "guidance", "knowledge"];
 
+/** Fixed tree-rail width in px at `lg`. */
+const RAIL_WIDTH = 320;
+
 interface TreePaneProps {
   /** @param projectId - Owning project id. */
   projectId: string;
@@ -74,7 +77,7 @@ interface TreePaneProps {
   createPending: boolean;
   /** @param createError - Failure message from the last note create, or null. */
   createError: string | null;
-  /** @param fill - Fill the parent instead of the fixed 266px rail (drawer mode). */
+  /** @param fill - Fill the parent instead of the fixed-width rail (drawer mode). */
   fill?: boolean;
   /** @param onClose - When set, renders a close button in the header (drawer mode). */
   onClose?: () => void;
@@ -440,7 +443,7 @@ function TreeSkeleton() {
  * affordance is still deferred to a follow-up.
  *
  * @param props - Project scope, selection state, create wiring, and drawer-mode flags.
- * @returns The 266px tree column, or a parent-filling column in drawer mode.
+ * @returns The fixed-width tree column, or a parent-filling column in drawer mode.
  */
 export function TreePane({
   projectId,
@@ -796,8 +799,9 @@ export function TreePane({
   }
 
   /**
-   * Confirm a non-empty folder delete: soft-delete every note under the
-   * folder and push one undo entry that restores the whole folder.
+   * Confirm a non-empty folder delete: clear the selection when the open
+   * note is inside, await the soft-delete of every note under the folder,
+   * then push one undo entry that restores the whole folder.
    */
   async function confirmFolderDelete() {
     const pending = pendingFolderDelete;
@@ -809,8 +813,6 @@ export function TreePane({
     setExtraFolders((fs) =>
       fs.filter((f) => f !== pending.path && !f.startsWith(`${pending.path}/`)),
     );
-    // Await every delete before arming undo so a fast Undo cannot restore a
-    // note that has not yet been soft-deleted.
     const results = await Promise.all(
       pending.noteIds.map((id) => deleteNote.mutateAsync(id).catch(() => null)),
     );
@@ -1033,7 +1035,7 @@ export function TreePane({
         fill ? "flex h-full w-full flex-col" : "flex shrink-0 flex-col"
       }
       style={{
-        width: fill ? undefined : 266,
+        width: fill ? undefined : RAIL_WIDTH,
         background: "var(--color-base-2)",
         borderRight: fill ? undefined : "1px solid var(--color-border)",
       }}

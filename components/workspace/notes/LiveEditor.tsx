@@ -522,9 +522,6 @@ function BlockEditor({
     return out;
   }, [ctx, query, dismissed]);
   const open = matches.length > 0;
-  // `active` only resets on query change, but `matches` also recomputes when
-  // the workspace note/task maps update; clamp so a shrunk list never indexes
-  // out of range on pick.
   const activeIdx = Math.min(active, matches.length - 1);
 
   const [prevQuery, setPrevQuery] = useState(query);
