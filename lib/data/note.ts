@@ -263,8 +263,8 @@ export type NoteFullResult = {
   linksIn: LinkedNoteSlim[];
 };
 
-/** One ranked search hit; `snippet` replaces the body, never joins it. */
-export type NoteSearchHit = NoteTreeRow & { rank: number; snippet: string };
+/** One ranked search hit: the slim tree row, never the body. */
+export type NoteSearchHit = NoteTreeRow;
 
 export type { FeedTask };
 
@@ -1189,7 +1189,9 @@ export async function getNoteFull(
 /**
  * Rank-search a project's live notes over the generated `search_tsv`.
  * User text goes through `websearch_to_tsquery` (plainto fallback), never
- * raw `to_tsquery`; hits carry `ts_headline` snippets, never the body.
+ * raw `to_tsquery`; the last term also matches as a sanitized prefix
+ * lexeme for type-ahead. Hits are the slim tree projection, never the
+ * body.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
@@ -1234,8 +1236,6 @@ export async function searchNotes(
     agentWritable: row.agent_writable,
     locked: row.locked,
     updatedAt: toDate(row.updated_at),
-    rank: Number(row.rank),
-    snippet: row.snippet,
   }));
 }
 
@@ -1804,7 +1804,9 @@ export async function moveNote(
 /**
  * Re-parent a folder and its whole subtree. Folders are not rows: one
  * UPDATE rewrites the `folder` prefix on every live descendant note.
- * Moving a folder into itself or a descendant is rejected. The UPDATE
+ * Moving a folder into itself or a descendant is rejected. Passing
+ * `newLeaf` replaces the folder's own name at the destination, so a
+ * rename is a move to the same parent with a new leaf. The UPDATE
  * runs under the caller's RLS scope, so teammates' private notes in the
  * subtree are untouched and keep their old paths — a definer-privileged
  * bulk write would let members rewrite paths of notes they cannot see.
@@ -1815,18 +1817,21 @@ export async function moveNote(
  * @param projectId - UUID of the project.
  * @param src - Folder path being moved (must be non-root).
  * @param destParent - New parent path (`""` = root).
+ * @param newLeaf - Replacement folder name; defaults to `src`'s leaf.
  * @returns The destination path and how many notes moved.
  * @throws ForbiddenError when the caller cannot access the project.
  * @throws ProjectArchivedError when the project is archived.
  * @throws FolderCycleError when `destParent` is `src` or a descendant.
- * @throws NoteValidationError when a path fails normalization or the move
- *   would push any resulting path past the folder cap.
+ * @throws NoteValidationError when a path fails normalization, `newLeaf`
+ *   normalizes to empty, or the move would push any resulting path past
+ *   the folder cap.
  */
 export async function moveFolder(
   ctx: AuthContext,
   projectId: string,
   src: string,
   destParent: string,
+  newLeaf?: string,
 ): Promise<{ dest: string; movedCount: number }> {
   assertValidProjectId(projectId);
   const srcPath = normalizeFolder(src);
@@ -1837,7 +1842,13 @@ export async function moveFolder(
   if (destParentPath === srcPath || destParentPath.startsWith(`${srcPath}/`)) {
     throw new FolderCycleError(srcPath, destParentPath);
   }
-  const leaf = srcPath.split("/").at(-1) ?? srcPath;
+  const leaf =
+    newLeaf === undefined
+      ? (srcPath.split("/").at(-1) ?? srcPath)
+      : normalizeFolder(newLeaf);
+  if (leaf === "") {
+    throw new NoteValidationError("folder", "folder name cannot be empty");
+  }
   const dest = destParentPath === "" ? leaf : `${destParentPath}/${leaf}`;
   if (dest.length > FOLDER_MAX_CHARS) {
     throw new NoteValidationError(

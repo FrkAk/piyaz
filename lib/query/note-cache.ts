@@ -109,8 +109,10 @@ export function patchNoteInTree(
     (key) => patch[key] !== undefined,
   );
   if (entries.every((key) => existing[key] === patch[key])) return rows;
+  const patched = { ...existing } as Record<string, unknown>;
+  for (const key of entries) patched[key] = patch[key];
   const next = [...rows];
-  next[idx] = { ...existing, ...patch };
+  next[idx] = patched as NoteTreeRow;
   return next;
 }
 

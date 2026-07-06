@@ -698,7 +698,11 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
   } else if (layoutShape === "notes") {
     layoutBody = (
       <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
-        <NotesView noteId={noteId} onSelectNote={handleSelectNote} />
+        <NotesView
+          projectId={projectId}
+          noteId={noteId}
+          onSelectNote={handleSelectNote}
+        />
       </div>
     );
   } else if (layoutShape === "xl") {

@@ -18,7 +18,9 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconDoc,
+  IconFolderPlus,
   IconGraph,
+  IconGrip,
   IconList,
   IconLock,
   IconMoon,
@@ -613,46 +615,6 @@ function DocLink({ title }: DocLinkProps) {
     <span style={{ ...style, cursor: "pointer" }} title={tip}>
       {title}
     </span>
-  );
-}
-
-/** Folder-plus glyph matching the 16-unit stroke icon set. */
-function IconFolderPlus({ size = 13 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M2 4.2a1 1 0 0 1 1-1h2.6L7 4.6h6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
-      <path d="M8 7.4v3M6.5 8.9h3" />
-    </svg>
-  );
-}
-
-/** Drag-affordance grip glyph shown on tree-row hover. */
-function IconGrip({ size = 12 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <circle cx="6" cy="4" r="1" />
-      <circle cx="10" cy="4" r="1" />
-      <circle cx="6" cy="8" r="1" />
-      <circle cx="10" cy="8" r="1" />
-      <circle cx="6" cy="12" r="1" />
-      <circle cx="10" cy="12" r="1" />
-    </svg>
   );
 }
 

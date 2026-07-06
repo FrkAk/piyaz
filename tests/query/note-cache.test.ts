@@ -125,6 +125,18 @@ describe("patchNoteInTree", () => {
     expect(patchNoteInTree(rows, "a", { folder: undefined })).toBe(rows);
   });
 
+  test("keeps existing fields when a mixed patch carries undefined values", () => {
+    const rows = [row("a", { type: "guidance", locked: true })];
+    const out = patchNoteInTree(rows, "a", {
+      title: "Renamed",
+      type: undefined,
+      locked: undefined,
+    });
+    expect(out?.[0]?.title).toBe("Renamed");
+    expect(out?.[0]?.type).toBe("guidance");
+    expect(out?.[0]?.locked).toBe(true);
+  });
+
   test("passes undefined through", () => {
     expect(patchNoteInTree(undefined, "a", { folder: "x" })).toBeUndefined();
   });
