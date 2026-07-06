@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { IconPanelLeft } from "@/components/shared/icons";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useModalChrome } from "@/hooks/useModalChrome";
+import { useNotesRailCollapse } from "@/hooks/useNotesRailCollapse";
 import { EditorPane, type TaskSlimMap } from "./EditorPane";
 import { TreePane } from "./TreePane";
 import { useCreateNote } from "./useNoteMutations";
@@ -26,10 +27,12 @@ interface NotesViewProps {
 
 /**
  * Notes workspace view. At `lg` and up the tree pane sits beside the
- * editor pane; below `lg` the editor takes the full width and the tree
- * becomes a slide-over drawer opened from the pane header, closed by
- * selecting a note, the close button, backdrop, or Escape. Owns the
- * no-modal create flow: New note persists immediately, selects the
+ * editor pane and can be collapsed to give the editor full width via the
+ * tree header toggle (persisted per {@link useNotesRailCollapse}), with a
+ * reopen button over the editor; below `lg` the editor takes the full width
+ * and the tree becomes a slide-over drawer opened from the pane header,
+ * closed by selecting a note, the close button, backdrop, or Escape. Owns
+ * the no-modal create flow: New note persists immediately, selects the
  * created note, and focuses its title.
  *
  * @param props - Project scope, selected note id, and selection writer.
@@ -45,6 +48,7 @@ export function NotesView({
 }: NotesViewProps) {
   const isLg = useMediaQuery("(min-width: 1024px)", true);
   const createNote = useCreateNote(projectId);
+  const { collapsed, toggle: toggleRail } = useNotesRailCollapse();
   const [treeOpen, setTreeOpen] = useState(false);
   const [focusTitle, setFocusTitle] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -84,7 +88,7 @@ export function NotesView({
   const handleFocusedTitle = useCallback(() => setFocusTitle(null), []);
 
   const handleSelect = useCallback(
-    (nextNoteId: string) => {
+    (nextNoteId: string | null) => {
       onSelectNote(nextNoteId);
       setTreeOpen(false);
     },
@@ -109,15 +113,31 @@ export function NotesView({
   if (isLg) {
     return (
       <div className="flex h-full w-full">
-        <TreePane
-          projectId={projectId}
-          selectedId={noteId}
-          onSelect={handleSelect}
-          onNewNote={(folder) => void createAndSelect(folder)}
-          createPending={createNote.isPending}
-          createError={createError}
-        />
-        {editor}
+        {!collapsed && (
+          <TreePane
+            projectId={projectId}
+            selectedId={noteId}
+            onSelect={handleSelect}
+            onNewNote={(folder) => void createAndSelect(folder)}
+            createPending={createNote.isPending}
+            createError={createError}
+            onCollapse={toggleRail}
+          />
+        )}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {collapsed && (
+            <button
+              type="button"
+              onClick={toggleRail}
+              aria-label="Show notes list"
+              title="Show notes list"
+              className="absolute left-2 top-2 z-10 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border-strong bg-base text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            >
+              <IconPanelLeft size={13} />
+            </button>
+          )}
+          {editor}
+        </div>
       </div>
     );
   }

@@ -21,6 +21,7 @@ import {
   IconGrip,
   IconLock,
   IconMore,
+  IconPanelLeft,
   IconPlus,
   IconSearch,
   IconTrash,
@@ -65,8 +66,8 @@ interface TreePaneProps {
   projectId: string;
   /** @param selectedId - Selected note id, or null. */
   selectedId: string | null;
-  /** @param onSelect - Select a note (writes `?note=<id>`). */
-  onSelect: (noteId: string) => void;
+  /** @param onSelect - Select a note (writes `?note=<id>`); null clears the selection. */
+  onSelect: (noteId: string | null) => void;
   /** @param onNewNote - Create a note in the given folder. */
   onNewNote: (folder: string) => void;
   /** @param createPending - Disables the New note button while a create is in flight. */
@@ -77,6 +78,8 @@ interface TreePaneProps {
   fill?: boolean;
   /** @param onClose - When set, renders a close button in the header (drawer mode). */
   onClose?: () => void;
+  /** @param onCollapse - When set, renders a rail-collapse toggle in the header (`lg` rail mode). */
+  onCollapse?: () => void;
 }
 
 type DragItem = { kind: "note" | "folder"; id: string };
@@ -448,6 +451,7 @@ export function TreePane({
   createError,
   fill = false,
   onClose,
+  onCollapse,
 }: TreePaneProps) {
   const qc = useQueryClient();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -738,6 +742,7 @@ export function TreePane({
    */
   function handleDeleteNote(row: NoteTreeRow) {
     setTreeError(null);
+    if (row.id === selectedId) onSelect(null);
     deleteNote.mutate(row.id, {
       onSuccess: (result) => {
         if (result.ok) {
@@ -798,6 +803,9 @@ export function TreePane({
     const pending = pendingFolderDelete;
     setPendingFolderDelete(null);
     if (pending === null) return;
+    if (selectedId !== null && pending.noteIds.includes(selectedId)) {
+      onSelect(null);
+    }
     setExtraFolders((fs) =>
       fs.filter((f) => f !== pending.path && !f.startsWith(`${pending.path}/`)),
     );
@@ -1058,6 +1066,17 @@ export function TreePane({
           >
             <IconPlus size={13} />
           </button>
+          {onCollapse !== undefined && (
+            <button
+              type="button"
+              onClick={onCollapse}
+              aria-label="Hide notes list"
+              title="Hide notes list"
+              className="ml-0.5 inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary"
+            >
+              <IconPanelLeft size={13} />
+            </button>
+          )}
           {onClose !== undefined && (
             <button
               type="button"
@@ -1111,7 +1130,7 @@ export function TreePane({
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+      <div className="flex gap-1.5 overflow-x-auto px-3 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {CHIPS.map((c) => {
           const active = typeFilter === c;
           const color =
@@ -1124,7 +1143,7 @@ export function TreePane({
               type="button"
               aria-pressed={active}
               onClick={() => setTypeFilter(c)}
-              className="inline-flex cursor-pointer items-center rounded-full px-2 py-0.5 font-mono text-[10px] uppercase"
+              className="inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-[10px] uppercase"
               style={{
                 color: labelColor,
                 background: active ? tint(color, 13) : "transparent",

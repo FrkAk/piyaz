@@ -8,6 +8,7 @@ import {
   IconLock,
   IconUser,
   IconUsers,
+  IconX,
 } from "@/components/shared/icons";
 import { MonoId } from "@/components/shared/MonoId";
 import type { NoteFull } from "@/lib/data/note";
@@ -46,8 +47,8 @@ interface EditorPaneProps {
   onFocusedTitle: () => void;
   /** @param onSelectTask - Opens a task's detail from an inline chip. */
   onSelectTask: (taskId: string) => void;
-  /** @param onSelectNote - Selects another note from an inline link. */
-  onSelectNote: (noteId: string) => void;
+  /** @param onSelectNote - Selects another note from an inline link; null closes the open note. */
+  onSelectNote: (noteId: string | null) => void;
   /** @param taskMap - Project task slim map for inline chip resolution. */
   taskMap: TaskSlimMap;
 }
@@ -106,7 +107,7 @@ interface EditorBodyProps {
   shouldFocusTitle: boolean;
   onFocusedTitle: () => void;
   onSelectTask: (taskId: string) => void;
-  onSelectNote: (noteId: string) => void;
+  onSelectNote: (noteId: string | null) => void;
   taskMap: TaskSlimMap;
 }
 
@@ -291,11 +292,22 @@ function EditorBody({
             <IconAgent size={10} /> agent read-only
           </span>
         )}
-        {note.locked && (
-          <span className="ml-auto font-mono text-[10px] text-text-faint">
-            locked — unlock to edit
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {note.locked && (
+            <span className="font-mono text-[10px] text-text-faint">
+              locked — unlock to edit
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => onSelectNote(null)}
+            aria-label="Close note"
+            title="Close note"
+            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+          >
+            <IconX size={12} />
+          </button>
+        </div>
       </div>
 
       <input
