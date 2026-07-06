@@ -15,9 +15,9 @@ interface NotesViewProps {
 }
 
 /**
- * Notes workspace view — the tree pane beside the editor pane. Owns the
+ * Notes workspace view: the tree pane beside the editor pane. Owns the
  * no-modal create flow: New note persists immediately, selects the created
- * note, and focuses its title. The settings column mounts here later.
+ * note, and focuses its title.
  *
  * @param props - Project scope, selected note id, and selection writer.
  * @returns Full-height notes shell.

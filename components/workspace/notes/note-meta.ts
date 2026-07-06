@@ -38,7 +38,7 @@ export const NOTE_TYPE_META: Record<NoteType, NoteTypeMeta> = {
   },
 };
 
-/** Tree type-filter value — one note type or all. */
+/** Tree type-filter value: one note type or all. */
 export type TypeFilter = "all" | NoteType;
 
 /**
@@ -64,7 +64,7 @@ export function parentOf(path: string): string {
 }
 
 /**
- * Last path segment — the folder's display name.
+ * Last path segment, the folder's display name.
  *
  * @param path - Folder path.
  * @returns Final segment of the path.

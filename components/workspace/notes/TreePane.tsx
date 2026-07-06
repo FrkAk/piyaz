@@ -69,7 +69,7 @@ interface NoteRowProps {
 }
 
 /**
- * One note row — shared between the folder tree and the flat search-hit
+ * One note row, shared between the folder tree and the flat search-hit
  * list. Draggable only when drag handlers are wired (tree mode).
  *
  * @param props - Row data, indentation, selection state, and handlers.
@@ -145,7 +145,7 @@ function NoteRow({
 }
 
 /**
- * Left pane — searchable nested folder tree with drag-and-drop and inline
+ * Left pane: searchable nested folder tree with drag-and-drop and inline
  * actions, backed by the notes tree list and the server search route.
  * Folders are path prefixes on note rows; empty folders created here are
  * client-local and persist only once a note lands in them.

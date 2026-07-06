@@ -16,9 +16,8 @@ interface EditorPaneProps {
 }
 
 /**
- * Center pane — the editor column. Renders the empty state without a
- * selection, otherwise the editable note title; the block editor grows
- * this pane in place.
+ * Center pane, the editor column. Renders the empty state without a
+ * selection, otherwise the editable note title.
  *
  * @param props - Project scope, selection, and title-focus wiring.
  * @returns The flexible editor column.
