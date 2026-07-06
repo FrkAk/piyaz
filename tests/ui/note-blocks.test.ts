@@ -67,7 +67,7 @@ describe("parseBlocks", () => {
   test("parses a fenced code block with blank lines as one block", () => {
     const blocks = parseBlocks("```ts\nconst a = 1;\n\nconst b = 2;\n```");
     expect(blocks).toEqual([
-      { kind: "code", text: "const a = 1;\n\nconst b = 2;" },
+      { kind: "code", text: "const a = 1;\n\nconst b = 2;", lang: "ts" },
     ]);
   });
 

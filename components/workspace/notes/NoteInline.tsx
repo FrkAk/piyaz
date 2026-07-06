@@ -2,21 +2,32 @@
 
 import { createContext, Fragment, useContext } from "react";
 import { STATUS_META } from "@/components/shared/StatusGlyph";
-import type { LinkedNoteSlim, NoteMention } from "@/lib/data/note";
+import type { NoteType, TaskStatus } from "@/lib/types";
 import { type InlineToken, tokenizeInline } from "./note-blocks";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 
+/** Resolved inline task-chip target. */
+export type NoteTaskTarget = {
+  taskId: string;
+  title: string;
+  status: TaskStatus;
+};
+
+/** Resolved inline `[[wiki]]` link target. */
+export type NoteLinkTarget = { id: string; title: string; type: NoteType };
+
 /**
- * Inline link resolution for the live editor: chip data and navigation,
- * resolved from the selected note's detail payload, never from global
- * maps. `mentionsBySeq` keys on the numeric suffix of `mention.taskRef`;
- * `notesByTitle` keys on the lowercased title (the extractor dedupes
- * titles case-insensitively).
+ * Inline link resolution for the live editor: chip data and navigation.
+ * Resolved from data already loaded in the workspace, not the note's
+ * server-derived payload, so a just-typed ref renders live without a
+ * refetch. `tasksBySeq` keys on the numeric ref suffix (from the workspace
+ * task map); `notesByTitle` keys on the lowercased title (from the note
+ * tree list), deduped case-insensitively like the extractor.
  */
 export interface NoteLinkContextValue {
   identifier: string;
-  mentionsBySeq: ReadonlyMap<number, NoteMention>;
-  notesByTitle: ReadonlyMap<string, LinkedNoteSlim>;
+  tasksBySeq: ReadonlyMap<number, NoteTaskTarget>;
+  notesByTitle: ReadonlyMap<string, NoteLinkTarget>;
   onTask: (taskId: string) => void;
   onNote: (noteId: string) => void;
 }
@@ -45,22 +56,34 @@ export function InlineText({ text }: InlineTextProps) {
   if (ctx === null) return <Fragment>{text}</Fragment>;
   return (
     <Fragment>
-      {tokenizeInline(text, ctx.identifier).map((token, idx) => {
-        const key = `${idx}-${token.text}`;
-        if (token.kind === "task") return <TaskChip key={key} token={token} />;
-        if (token.kind === "wiki") return <DocLink key={key} token={token} />;
-        if (token.kind === "code") return <code key={key}>{token.text}</code>;
-        if (token.kind === "bold")
-          return (
-            <strong
-              key={key}
-              style={{ color: "var(--color-text-primary)", fontWeight: 600 }}
-            >
-              {token.text}
-            </strong>
-          );
-        return <Fragment key={key}>{token.text}</Fragment>;
-      })}
+      {text.split("\n").map((line, li) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: stable line order
+        <Fragment key={li}>
+          {li > 0 && <br />}
+          {tokenizeInline(line, ctx.identifier).map((token, idx) => {
+            const key = `${li}-${idx}-${token.text}`;
+            if (token.kind === "task")
+              return <TaskChip key={key} token={token} />;
+            if (token.kind === "wiki")
+              return <DocLink key={key} token={token} />;
+            if (token.kind === "code")
+              return <code key={key}>{token.text}</code>;
+            if (token.kind === "bold")
+              return (
+                <strong
+                  key={key}
+                  style={{
+                    color: "var(--color-text-primary)",
+                    fontWeight: 600,
+                  }}
+                >
+                  {token.text}
+                </strong>
+              );
+            return <Fragment key={key}>{token.text}</Fragment>;
+          })}
+        </Fragment>
+      ))}
     </Fragment>
   );
 }
@@ -79,8 +102,8 @@ interface TaskChipProps {
  */
 function TaskChip({ token }: TaskChipProps) {
   const ctx = useContext(NoteLinkContext);
-  const mention = ctx?.mentionsBySeq.get(token.seq);
-  if (ctx === null || mention === undefined) {
+  const task = ctx?.tasksBySeq.get(token.seq);
+  if (ctx === null || task === undefined) {
     return (
       <span
         title="Unknown task"
@@ -95,12 +118,12 @@ function TaskChip({ token }: TaskChipProps) {
       </span>
     );
   }
-  const color = STATUS_META[mention.status].cssVar;
+  const color = STATUS_META[task.status].cssVar;
   return (
     <button
       type="button"
-      title={`${STATUS_META[mention.status].label} · ${mention.title}`}
-      onClick={() => ctx.onTask(mention.taskId)}
+      title={`${STATUS_META[task.status].label} · ${task.title}`}
+      onClick={() => ctx.onTask(task.taskId)}
       className={`${CHIP_CLASS} cursor-pointer`}
       style={{
         color,

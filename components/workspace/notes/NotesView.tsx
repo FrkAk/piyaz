@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { IconPanelLeft } from "@/components/shared/icons";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useModalChrome } from "@/hooks/useModalChrome";
-import { EditorPane } from "./EditorPane";
+import { EditorPane, type TaskSlimMap } from "./EditorPane";
 import { TreePane } from "./TreePane";
 import { useCreateNote } from "./useNoteMutations";
 
@@ -20,6 +20,8 @@ interface NotesViewProps {
   onSelectNote: (noteId: string | null) => void;
   /** @param onSelectTask - Open a task's detail from an inline editor chip. */
   onSelectTask: (taskId: string) => void;
+  /** @param taskMap - Project task slim map for inline chip resolution. */
+  taskMap: TaskSlimMap;
 }
 
 /**
@@ -39,6 +41,7 @@ export function NotesView({
   noteId,
   onSelectNote,
   onSelectTask,
+  taskMap,
 }: NotesViewProps) {
   const isLg = useMediaQuery("(min-width: 1024px)", true);
   const createNote = useCreateNote(projectId);
@@ -99,6 +102,7 @@ export function NotesView({
       onFocusedTitle={handleFocusedTitle}
       onSelectTask={onSelectTask}
       onSelectNote={onSelectNote}
+      taskMap={taskMap}
     />
   );
 

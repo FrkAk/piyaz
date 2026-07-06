@@ -6,13 +6,19 @@
  * did not link. No React, no DB access; unit-testable in isolation.
  */
 
-import { escapeRegExp } from "@/lib/data/note-parse";
+import {
+  buildInlineRe,
+  type FenceState,
+  fenceCloses,
+  fenceOpen,
+} from "@/lib/data/note-parse";
 
 /** One rendered markdown block inside a chunk. */
 export type Block = {
   kind: "h2" | "p" | "ul" | "callout" | "code";
   text?: string;
   items?: string[];
+  lang?: string;
 };
 
 /** One inline token produced by {@link tokenizeInline}. */
@@ -20,47 +26,6 @@ export type InlineToken =
   | { kind: "text" | "code" | "bold"; text: string }
   | { kind: "task"; text: string; seq: number }
   | { kind: "wiki"; text: string; title: string };
-
-/** Candidate fence line: up to 3 spaces of indent, then 3+ ` or ~. */
-const FENCE_LINE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-
-/** Open fence state: the marker character and the opener's run length. */
-type FenceState = { char: string; length: number };
-
-/**
- * Match a line as a CommonMark fence opener.
- *
- * @param line - One body line.
- * @returns The fence state when the line opens a fence, else `null`.
- */
-function fenceOpen(line: string): FenceState | null {
-  const match = FENCE_LINE_RE.exec(line);
-  if (match === null) return null;
-  const [, marker = "", infoString = ""] = match;
-  if (marker.charAt(0) === "~" || !infoString.includes("`")) {
-    return { char: marker.charAt(0), length: marker.length };
-  }
-  return null;
-}
-
-/**
- * Whether a line closes an open fence: a run of the same character at
- * least as long as the opener with only trailing whitespace.
- *
- * @param line - One body line.
- * @param fence - The open fence state.
- * @returns `true` when the line closes the fence.
- */
-function fenceCloses(line: string, fence: FenceState): boolean {
-  const match = FENCE_LINE_RE.exec(line);
-  if (match === null) return false;
-  const [, marker = "", rest = ""] = match;
-  return (
-    marker.charAt(0) === fence.char &&
-    marker.length >= fence.length &&
-    rest.trim() === ""
-  );
-}
 
 /**
  * Split a note body into editable chunks on blank-line runs, keeping
@@ -133,6 +98,11 @@ export function parseBlocks(chunk: string): Block[] {
     }
     const fence = fenceOpen(line);
     if (fence !== null) {
+      const lang =
+        line
+          .replace(/^\s*(`{3,}|~{3,})/, "")
+          .trim()
+          .split(/\s+/)[0] || undefined;
       i++;
       const buf: string[] = [];
       while (i < lines.length && !fenceCloses(lines[i], fence)) {
@@ -140,7 +110,7 @@ export function parseBlocks(chunk: string): Block[] {
         i++;
       }
       i++;
-      blocks.push({ kind: "code", text: buf.join("\n") });
+      blocks.push({ kind: "code", text: buf.join("\n"), lang });
       continue;
     }
     if (line.startsWith("- ")) {
@@ -188,12 +158,7 @@ export function tokenizeInline(
   text: string,
   projectIdentifier: string,
 ): InlineToken[] {
-  const identifier = escapeRegExp(projectIdentifier);
-  const inlineRe = new RegExp(
-    String.raw`\b${identifier}-(\d+)\b|\[\[([^\]]+)\]\]|(\*\*[^*]+\*\*)|` +
-      "(`[^`]+`)",
-    "gi",
-  );
+  const inlineRe = buildInlineRe(projectIdentifier);
   const tokens: InlineToken[] = [];
   const pushText = (value: string) => {
     if (value === "") return;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconAgent,
   IconBundle,
@@ -9,13 +10,28 @@ import {
   IconUsers,
 } from "@/components/shared/icons";
 import { MonoId } from "@/components/shared/MonoId";
-import type { LinkedNoteSlim, NoteFull, NoteMention } from "@/lib/data/note";
+import type { NoteFull } from "@/lib/data/note";
+import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
+import { noteKeys } from "@/lib/query/keys";
+import { fetchNotesTree } from "@/lib/query/queries";
+import type { TaskStatus } from "@/lib/types";
 import { formatRelative } from "@/lib/ui/relative-time";
 import { LiveEditor } from "./LiveEditor";
 import { NOTE_TYPE_META, tint } from "./note-meta";
-import { NoteLinkContext, type NoteLinkContextValue } from "./NoteInline";
+import {
+  NoteLinkContext,
+  type NoteLinkContextValue,
+  type NoteLinkTarget,
+  type NoteTaskTarget,
+} from "./NoteInline";
 import { useNoteDetail } from "./useNoteDetail";
 import { useNoteAutosave } from "./useNoteMutations";
+
+/** Slim project task map keyed by task id, threaded from the workspace. */
+export type TaskSlimMap = ReadonlyMap<
+  string,
+  { title: string; status: string; taskRef: string }
+>;
 
 interface EditorPaneProps {
   /** @param projectId - Owning project id. */
@@ -32,13 +48,17 @@ interface EditorPaneProps {
   onSelectTask: (taskId: string) => void;
   /** @param onSelectNote - Selects another note from an inline link. */
   onSelectNote: (noteId: string) => void;
+  /** @param taskMap - Project task slim map for inline chip resolution. */
+  taskMap: TaskSlimMap;
 }
 
 /**
  * Center pane, the editor column. Renders the empty state without a
  * selection, otherwise the note header, editable title, and the live
- * block editor. The content column caps at 760px with side padding that
- * narrows below `sm` so phone widths never overflow horizontally.
+ * block editor as a flush document column filling the pane, with a
+ * hairline divider under the header masthead. The column caps at 760px
+ * with side padding that narrows below `sm` so phone widths never
+ * overflow horizontally.
  *
  * @param props - Project scope, selection, navigation, and title-focus wiring.
  * @returns The flexible editor column.
@@ -51,6 +71,7 @@ export function EditorPane({
   onFocusedTitle,
   onSelectTask,
   onSelectNote,
+  taskMap,
 }: EditorPaneProps) {
   return (
     <div
@@ -71,6 +92,7 @@ export function EditorPane({
           onFocusedTitle={onFocusedTitle}
           onSelectTask={onSelectTask}
           onSelectNote={onSelectNote}
+          taskMap={taskMap}
         />
       )}
     </div>
@@ -85,6 +107,7 @@ interface EditorBodyProps {
   onFocusedTitle: () => void;
   onSelectTask: (taskId: string) => void;
   onSelectNote: (noteId: string) => void;
+  taskMap: TaskSlimMap;
 }
 
 /** Shared pill chip classes for the header row. */
@@ -115,8 +138,14 @@ function EditorBody({
   onFocusedTitle,
   onSelectTask,
   onSelectNote,
+  taskMap,
 }: EditorBodyProps) {
+  const qc = useQueryClient();
   const { data, isPlaceholderData, isError } = useNoteDetail(projectId, noteId);
+  const noteList = useQuery({
+    queryKey: noteKeys.list(projectId),
+    queryFn: fetchNotesTree(qc, projectId),
+  });
   const autosave = useNoteAutosave(projectId, noteId);
   const note = data?.note;
   const [title, setTitle] = useState<string | null>(null);
@@ -146,40 +175,41 @@ function EditorBody({
   });
   useEffect(() => () => commitRef.current(), []);
 
-  const mentionsBySeq = useMemo(() => {
-    const map = new Map<number, NoteMention>();
-    for (const mention of data?.mentions ?? []) {
-      const seq = Number(
-        mention.taskRef.slice(mention.taskRef.lastIndexOf("-") + 1),
-      );
-      if (Number.isSafeInteger(seq)) map.set(seq, mention);
+  const tasksBySeq = useMemo(() => {
+    const map = new Map<number, NoteTaskTarget>();
+    for (const [taskId, task] of taskMap) {
+      const seq = Number(task.taskRef.slice(task.taskRef.lastIndexOf("-") + 1));
+      if (Number.isSafeInteger(seq)) {
+        map.set(seq, {
+          taskId,
+          title: task.title,
+          status: task.status as TaskStatus,
+        });
+      }
     }
     return map;
-  }, [data?.mentions]);
+  }, [taskMap]);
 
   const notesByTitle = useMemo(() => {
-    const map = new Map<string, LinkedNoteSlim>();
-    for (const linked of data?.linksOut ?? []) {
-      map.set(linked.title.toLowerCase(), linked);
+    const map = new Map<string, NoteLinkTarget>();
+    for (const row of noteList.data ?? []) {
+      const key = row.title.trim().toLowerCase();
+      if (key !== "" && !map.has(key)) {
+        map.set(key, { id: row.id, title: row.title, type: row.type });
+      }
     }
     return map;
-  }, [data?.linksOut]);
+  }, [noteList.data]);
 
   const linkContext = useMemo<NoteLinkContextValue>(
     () => ({
       identifier: projectIdentifier,
-      mentionsBySeq,
+      tasksBySeq,
       notesByTitle,
       onTask: onSelectTask,
       onNote: onSelectNote,
     }),
-    [
-      projectIdentifier,
-      mentionsBySeq,
-      notesByTitle,
-      onSelectTask,
-      onSelectNote,
-    ],
+    [projectIdentifier, tasksBySeq, notesByTitle, onSelectTask, onSelectNote],
   );
 
   if (note === undefined) {
@@ -195,9 +225,17 @@ function EditorBody({
   const editable = !note.locked && !isPlaceholderData;
 
   return (
-    <div className="mx-auto max-w-[760px] px-4 pb-16 pt-6 sm:px-[34px] sm:pt-7">
+    <div className="mx-auto max-w-[760px] px-4 pb-16 pt-6 sm:px-[34px] sm:pt-8">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <MonoId id={note.slug.toUpperCase()} copyable={false} />
+        {!isPlaceholderData && (
+          <MonoId
+            id={composeNoteRef(
+              asIdentifier(projectIdentifier),
+              note.sequenceNumber,
+            )}
+            copyable={false}
+          />
+        )}
         <span
           className="inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] uppercase"
           style={{
@@ -279,7 +317,7 @@ function EditorBody({
         }}
       />
 
-      <div className="mb-5 flex flex-wrap items-center gap-1.5 text-[11px] text-text-muted">
+      <div className="mb-6 flex flex-wrap items-center gap-1.5 border-b border-border pb-4 text-[11px] text-text-muted">
         <span>updated {formatRelative(note.updatedAt)}</span>
         {autosave.pending ? (
           <span className="ml-auto font-mono text-[10px] text-text-faint">

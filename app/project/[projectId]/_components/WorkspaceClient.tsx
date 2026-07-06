@@ -661,6 +661,7 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     undo,
     pushUndo,
     undoError,
+    taskMap,
   } = props;
 
   const navigator = (
@@ -724,6 +725,7 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
           noteId={noteId}
           onSelectNote={handleSelectNote}
           onSelectTask={handleSelectTaskFromNote}
+          taskMap={taskMap}
         />
       </div>
     );

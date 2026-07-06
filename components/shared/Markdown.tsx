@@ -3,6 +3,7 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { CodeBlock } from "@/components/shared/CodeBlock";
 
 const schema = {
   ...defaultSchema,
@@ -32,6 +33,15 @@ const components: Components = {
       </a>
     );
   },
+  pre({ children }) {
+    return <>{children}</>;
+  },
+  code({ className, children }) {
+    const lang = /language-(\w+)/.exec(className ?? "")?.[1];
+    if (lang === undefined)
+      return <code className={className}>{children}</code>;
+    return <CodeBlock code={String(children).replace(/\n$/, "")} lang={lang} />;
+  },
 };
 
 export interface MarkdownProps {
@@ -42,7 +52,9 @@ export interface MarkdownProps {
 }
 
 /**
- * Shared markdown renderer with GFM support and XSS sanitization.
+ * Shared markdown renderer with GFM support and XSS sanitization. Fenced
+ * code blocks render through {@link CodeBlock} with lazy Shiki syntax
+ * highlighting; inline code stays plain.
  * @param props - Markdown configuration.
  * @returns A prose-styled div wrapping sanitized, GFM-enabled markdown.
  */
