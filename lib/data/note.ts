@@ -21,7 +21,19 @@
  */
 import "server-only";
 
-import { and, eq, inArray, isNull, like, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNull,
+  like,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   assertNoteAccessTx,
@@ -76,6 +88,7 @@ import {
 } from "@/lib/db/raw/search-notes";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { ProjectArchivedError } from "@/lib/graph/errors";
+import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { emitNoteEvent, emitProjectEvent } from "@/lib/realtime/events";
 import type {
   FeedMode,
@@ -1292,6 +1305,125 @@ export async function searchNotes(
     locked: row.locked,
     updatedAt: toDate(row.updated_at),
   }));
+}
+
+/** A cross-project note search result for the global ⌘K palette. */
+export type CrossProjectNoteSearchResult = {
+  /** Note UUID — drives the deep link. */
+  id: string;
+  /** Composed note ref, e.g. `RSC-N4`. */
+  noteRef: string;
+  /** Note title. */
+  title: string;
+  /** Note type (reference/guidance/knowledge). */
+  type: NoteType;
+  /** Owning project UUID — drives the deep link. */
+  projectId: string;
+  /** Owning project identifier (prefix shown in the note ref). */
+  projectIdentifier: string;
+  /** Owning project title — the palette project crumb. */
+  projectTitle: string;
+  /** Owning team UUID. */
+  organizationId: string;
+};
+
+/**
+ * Cross-project note search for the ⌘K palette. Bounded by
+ * `current_user_orgs()` (defense-in-depth over RLS); note visibility
+ * (private rows confined to their creator, team rows org-wide) is enforced
+ * by the `notes` RLS policy under `withUserContext`, so private notes never
+ * leak cross-tenant.
+ *
+ * Per-token OR match: `notes.title`, `projects.title`, `projects.identifier`
+ * (case-insensitive substring). Tokens AND-join. Ranked exact → prefix →
+ * substring on title, then `updated_at` desc. Live notes only; `body` is
+ * never selected.
+ *
+ * @param ctx - Resolved auth context.
+ * @param query - Search string.
+ * @param opts - Optional limit (1-25, default 10).
+ * @returns Up to `opts.limit` matching notes with project crumb metadata.
+ * @throws NoteValidationError When the query exceeds the length cap.
+ */
+export async function searchNotesAcrossProjects(
+  ctx: AuthContext,
+  query: string,
+  opts: { limit?: number } = {},
+): Promise<CrossProjectNoteSearchResult[]> {
+  const trimmed = query.trim();
+  if (trimmed.length === 0) return [];
+  if (trimmed.length > SEARCH_QUERY_MAX_CHARS) {
+    throw new NoteValidationError(
+      "query",
+      `query exceeds ${SEARCH_QUERY_MAX_CHARS} characters`,
+    );
+  }
+
+  const limit = Math.min(Math.max(opts.limit ?? 10, 1), 25);
+  const lower = trimmed.toLowerCase();
+  const rankExpr = sql<number>`CASE
+      WHEN LOWER(${notes.title}) = ${lower} THEN 0
+      WHEN LOWER(${notes.title}) LIKE ${lower + "%"} THEN 1
+      WHEN LOWER(${notes.title}) LIKE ${"%" + lower + "%"} THEN 2
+      ELSE 3
+    END`;
+
+  return withUserContext(ctx.userId, async (tx) => {
+    const orgRows = await executeRaw<{ org_id: string }>(
+      tx,
+      sql`SELECT org_id FROM public.current_user_orgs()`,
+    );
+    const orgIds = orgRows.map((r) => r.org_id);
+    if (orgIds.length === 0) return [];
+
+    const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
+    if (tokens.length === 0) return [];
+
+    const clauses = [
+      inArray(projects.organizationId, orgIds),
+      isNull(notes.deletedAt),
+    ];
+    for (const token of tokens) {
+      const pattern = `%${token}%`;
+      const tokenClause = or(
+        ilike(notes.title, pattern),
+        ilike(projects.title, pattern),
+        ilike(projects.identifier, pattern),
+      );
+      if (tokenClause) clauses.push(tokenClause);
+    }
+
+    const rows = await tx
+      .select({
+        id: notes.id,
+        title: notes.title,
+        type: notes.type,
+        sequenceNumber: notes.sequenceNumber,
+        projectId: notes.projectId,
+        projectIdentifier: projects.identifier,
+        projectTitle: projects.title,
+        organizationId: projects.organizationId,
+      })
+      .from(notes)
+      .innerJoin(projects, eq(projects.id, notes.projectId))
+      .where(and(...clauses))
+      .orderBy(rankExpr, desc(notes.updatedAt), asc(notes.id))
+      .limit(limit);
+
+    return rows.map((row) => ({
+      id: row.id,
+      noteRef: composeNoteRef(
+        asIdentifier(row.projectIdentifier),
+        row.sequenceNumber,
+      ),
+      title: row.title,
+      type: row.type as NoteType,
+      projectId: row.projectId,
+      projectIdentifier: row.projectIdentifier,
+      projectTitle: row.projectTitle,
+      organizationId: row.organizationId,
+    }));
+  });
 }
 
 /** Specificity rank per backlink kind; higher wins the per-note dedupe. */

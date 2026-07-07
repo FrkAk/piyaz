@@ -14,6 +14,10 @@ import {
   listMyTasks as coreListMyTasks,
   type CrossProjectSearchResult,
 } from "@/lib/data/task";
+import {
+  searchNotesAcrossProjects as coreSearchNotesAcrossProjects,
+  type CrossProjectNoteSearchResult,
+} from "@/lib/data/note";
 import { loadProjectAccess } from "@/lib/auth/authorization";
 import type { MyTask, ProjectIndexEntry } from "@/lib/data/views";
 
@@ -24,6 +28,7 @@ export type {
   CrossProjectSearchResult,
 } from "@/lib/data/task";
 export type { MyTask } from "@/lib/data/views";
+export type { CrossProjectNoteSearchResult } from "@/lib/data/note";
 export type { DetailedEdge } from "@/lib/data/edge";
 export type { ProjectTag } from "@/lib/data/project";
 export type {
@@ -43,6 +48,11 @@ export type CrossProjectSearchFailureCode =
 /** Discriminated result for the command-palette server action. */
 export type CrossProjectSearchResultPayload =
   | { ok: true; rows: CrossProjectSearchResult[] }
+  | { ok: false; code: CrossProjectSearchFailureCode };
+
+/** Discriminated result for the note command-palette server action. */
+export type CrossProjectNoteSearchResultPayload =
+  | { ok: true; rows: CrossProjectNoteSearchResult[] }
   | { ok: false; code: CrossProjectSearchFailureCode };
 
 export type MyTasksListFailureCode =
@@ -140,6 +150,43 @@ export async function searchTasksAcrossProjects(
     return { ok: true, rows };
   } catch (err) {
     console.error("searchTasksAcrossProjects failed", err);
+    return { ok: false, code: "unknown" };
+  }
+}
+
+/**
+ * Server action wrapper — cross-project note search for the global ⌘K
+ * palette. Shares the `search.cross-project` rate-limit slot with the task
+ * search; unauth callers throttle by IP only.
+ *
+ * @param query - Search string (note title, project title, or identifier).
+ * @returns `{ ok: true, rows }` or a typed failure.
+ */
+export async function searchNotesAcrossProjects(
+  query: string,
+): Promise<CrossProjectNoteSearchResultPayload> {
+  const session = await getSession();
+  const userId = session?.user.id ?? null;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "search.cross-project",
+      windowSeconds: 60,
+      perUserMax: 60,
+      perIpMax: 90,
+    },
+    userId,
+  );
+  if (!limit.ok) return { ok: false, code: "rate_limited" };
+
+  if (!userId) return { ok: false, code: "unauthorized" };
+
+  try {
+    const ctx = await getAuthContext();
+    const rows = await coreSearchNotesAcrossProjects(ctx, query);
+    return { ok: true, rows };
+  } catch (err) {
+    console.error("searchNotesAcrossProjects failed", err);
     return { ok: false, code: "unknown" };
   }
 }
