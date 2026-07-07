@@ -15,7 +15,8 @@ function refsIn(md: string) {
   remarkNoteRefs({ identifier: "RSC" })(tree);
   const out: { name: string; props: Record<string, unknown> }[] = [];
   visit(tree, (n: unknown) => {
-    const data = (n as { data?: { hName?: string; hProperties?: object } }).data;
+    const data = (n as { data?: { hName?: string; hProperties?: object } })
+      .data;
     if (data?.hName === "noteref-task" || data?.hName === "noteref-wiki")
       out.push({
         name: data.hName,

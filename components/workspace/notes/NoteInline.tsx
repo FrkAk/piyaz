@@ -3,7 +3,7 @@
 import { createContext, Fragment, useContext } from "react";
 import { STATUS_META } from "@/components/shared/StatusGlyph";
 import type { NoteType, TaskStatus } from "@/lib/types";
-import { type InlineToken, tokenizeInline } from "./note-blocks";
+import { tokenizeInline } from "./note-blocks";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 
 /** Resolved inline task-chip target. */
@@ -63,9 +63,9 @@ export function InlineText({ text }: InlineTextProps) {
           {tokenizeInline(line, ctx.identifier).map((token, idx) => {
             const key = `${li}-${idx}-${token.text}`;
             if (token.kind === "task")
-              return <TaskChip key={key} token={token} />;
+              return <TaskChip key={key} seq={token.seq} />;
             if (token.kind === "wiki")
-              return <DocLink key={key} token={token} />;
+              return <DocLink key={key} title={token.title} />;
             if (token.kind === "code")
               return <code key={key}>{token.text}</code>;
             if (token.kind === "bold")
@@ -89,20 +89,22 @@ export function InlineText({ text }: InlineTextProps) {
 }
 
 interface TaskChipProps {
-  /** @param token - The matched task-ref token. */
-  token: Extract<InlineToken, { kind: "task" }>;
+  /** @param seq - The task sequence number from the ref (e.g. 3 in `RSC-3`). */
+  seq: number;
 }
 
 /**
  * Inline task-ref chip, status conveyed by chip color and clickable to
  * open the task. An unknown ref renders a non-interactive danger chip.
+ * Resolution and navigation come from the surrounding {@link NoteLinkContext}.
  *
- * @param props - The task token.
+ * @param props - The task sequence number.
  * @returns The chip button, or an inert danger chip for an unknown ref.
  */
-function TaskChip({ token }: TaskChipProps) {
+export function TaskChip({ seq }: TaskChipProps) {
   const ctx = useContext(NoteLinkContext);
-  const task = ctx?.tasksBySeq.get(token.seq);
+  const task = ctx?.tasksBySeq.get(seq);
+  const label = ctx === null ? `-${seq}` : `${ctx.identifier}-${seq}`;
   if (ctx === null || task === undefined) {
     return (
       <span
@@ -114,7 +116,7 @@ function TaskChip({ token }: TaskChipProps) {
           border: `1px solid ${tint("var(--color-danger)", 30)}`,
         }}
       >
-        {token.text}
+        {label}
       </span>
     );
   }
@@ -131,30 +133,31 @@ function TaskChip({ token }: TaskChipProps) {
         border: `1px solid ${tint(color, 30)}`,
       }}
     >
-      {token.text}
+      {label}
     </button>
   );
 }
 
 interface DocLinkProps {
-  /** @param token - The matched wiki-link token. */
-  token: Extract<InlineToken, { kind: "wiki" }>;
+  /** @param title - The `[[wiki]]` link title. */
+  title: string;
 }
 
 /**
  * Inline `[[note]]` link, colored by the target note's type and clickable
  * to open it. An unresolved title renders danger text, never a crash.
+ * Resolution and navigation come from the surrounding {@link NoteLinkContext}.
  *
- * @param props - The wiki token.
+ * @param props - The wiki-link title.
  * @returns The link button, or danger text for an unresolved title.
  */
-function DocLink({ token }: DocLinkProps) {
+export function DocLink({ title }: DocLinkProps) {
   const ctx = useContext(NoteLinkContext);
-  const target = ctx?.notesByTitle.get(token.title.toLowerCase());
+  const target = ctx?.notesByTitle.get(title.toLowerCase());
   if (ctx === null || target === undefined) {
     return (
       <span style={{ color: "var(--color-danger)" }} title="Unresolved link">
-        [[{token.title}]]
+        [[{title}]]
       </span>
     );
   }
@@ -170,7 +173,7 @@ function DocLink({ token }: DocLinkProps) {
         borderBottom: `1px solid ${tint(meta.color, 42)}`,
       }}
     >
-      {token.title}
+      {title}
     </button>
   );
 }

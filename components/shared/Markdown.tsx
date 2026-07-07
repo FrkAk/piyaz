@@ -1,9 +1,6 @@
 "use client";
 
-import ReactMarkdown, {
-  type Components,
-  type Options,
-} from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { CodeBlock } from "@/components/shared/CodeBlock";
