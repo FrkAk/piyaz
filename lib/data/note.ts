@@ -267,7 +267,10 @@ export type LinkedNoteSlim = {
 };
 
 /** Slim backlink row for a task's linked notes; never carries `body`. */
-export type TaskNoteBacklink = NoteTreeRow & { kind: NoteTaskLinkKind };
+export type TaskNoteBacklink = NoteTreeRow & {
+  kind: NoteTaskLinkKind;
+  sequenceNumber: number;
+};
 
 /** Full note row minus the server-side `search_tsv` column. */
 export type NoteFull = Omit<Note, "searchTsv">;
@@ -1066,7 +1069,8 @@ function toNoteMention(row: {
 /**
  * Build the task-backlinks read as a lazy batch statement: live notes
  * linked to the task via `note_task_links`, slim tree projection plus the
- * link `kind`; never selects `body`/`search_tsv`. Served by
+ * link `kind` and the note `sequenceNumber` (for the ref chip); never
+ * selects `body`/`search_tsv`. Served by
  * `note_task_links_task_id_idx`. Batch alongside `taskAccessGateStmt`
  * and evaluate the gate rows first.
  *
@@ -1076,7 +1080,11 @@ function toNoteMention(row: {
  */
 export function taskNoteBacklinksStmt(read: ReadConn, taskId: string) {
   return read
-    .select({ ...noteTreeColumns, kind: noteTaskLinks.kind })
+    .select({
+      ...noteTreeColumns,
+      kind: noteTaskLinks.kind,
+      sequenceNumber: notes.sequenceNumber,
+    })
     .from(noteTaskLinks)
     .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
     .where(and(eq(noteTaskLinks.taskId, taskId), isNull(notes.deletedAt)))

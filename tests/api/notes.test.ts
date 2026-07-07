@@ -368,12 +368,21 @@ test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, tr
   });
   expect(res.status).toBe(200);
   expect(res.headers.get("etag")).toBeTruthy();
-  const rows = (await res.json()) as { id: string; kind: string }[];
+  const rows = (await res.json()) as {
+    id: string;
+    kind: string;
+    sequenceNumber: number;
+  }[];
   expect(rows.length).toBe(2);
   const byId = new Map(rows.map((r) => [r.id, r]));
   expect(byId.get(linked.id)?.kind).toBe("reference");
   expect(byId.get(dual.id)?.kind).toBe("spec_of");
-  for (const row of rows) expect(row).not.toHaveProperty("body");
+  for (const row of rows) {
+    expect(row).not.toHaveProperty("body");
+    expect(row).not.toHaveProperty("search_tsv");
+    expect(Number.isInteger(row.sequenceNumber)).toBe(true);
+    expect(row.sequenceNumber).toBeGreaterThan(0);
+  }
 
   const etag = res.headers.get("etag");
   const replay = await backlinksGET(

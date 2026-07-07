@@ -285,6 +285,30 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     [updateParam],
   );
 
+  /**
+   * Open a note from a task's linked-notes card: switch to the Notes view
+   * and select the note in one `router.replace`. Both params are written
+   * together (not via two chained `updateParam` calls) because each
+   * `updateParam` rebuilds the query string from the same stale
+   * `searchParams` closure, so the second replace would drop the first.
+   *
+   * @param nextNoteId - Note to open on the Notes surface.
+   */
+  const handleOpenNoteFromTask = useCallback(
+    (nextNoteId: string) => {
+      const next = new URLSearchParams(searchParams.toString());
+      next.set("view", "notes");
+      next.set("note", nextNoteId);
+      const nextQs = next.toString();
+      startViewTransition(() => {
+        router.replace(nextQs ? `${pathname}?${nextQs}` : pathname, {
+          scroll: false,
+        });
+      });
+    },
+    [router, pathname, searchParams],
+  );
+
   const [prevSelectedTaskId, setPrevSelectedTaskId] = useState<string | null>(
     null,
   );
@@ -349,6 +373,7 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     noteId,
     handleSelectNote,
     handleSelectTaskFromNote,
+    handleOpenNoteFromTask,
     refreshAll,
     taskMap,
     projectTags,
@@ -414,6 +439,8 @@ interface SharedLayoutProps {
   handleSelectNote: (noteId: string | null) => void;
   /** Select a task from a notes-editor chip and switch to the structure view. */
   handleSelectTaskFromNote: (taskId: string) => void;
+  /** Open a note from a task's linked-notes card: switch to Notes and select it. */
+  handleOpenNoteFromTask: (noteId: string) => void;
   refreshAll: () => void;
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   projectTags: string[];
@@ -526,6 +553,7 @@ function WorkspaceDetailSlot(props: SelectedTaskSlotProps) {
     refreshAll,
     handleSelectNode,
     handleClose,
+    handleOpenNoteFromTask,
     drawerOpen,
     setDrawerOpen,
     navigatorClosed,
@@ -555,6 +583,8 @@ function WorkspaceDetailSlot(props: SelectedTaskSlotProps) {
       allEdges={graph.edges}
       allTasks={graph.tasks}
       taskMap={taskMap}
+      projectIdentifier={graph.project.identifier}
+      onOpenNote={handleOpenNoteFromTask}
       drawerOpen={drawerOpen}
       onToggleDrawer={() => setDrawerOpen((v) => !v)}
       onClose={handleClose}

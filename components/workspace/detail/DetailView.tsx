@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import { useMemo } from "react";
 import type {
   TaskEdgeRef,
   TaskFull,
@@ -31,10 +31,12 @@ import { DescriptionSection } from "./DescriptionSection";
 import { CriteriaSection } from "./CriteriaSection";
 import { DecisionsSection } from "./DecisionsSection";
 import { LinksSection } from "./LinksSection";
+import { LinkedNotesSection } from "./LinkedNotesSection";
 import { RelationshipsSection } from "./RelationshipsSection";
 import { ExecutionSection } from "./ExecutionSection";
 import { ActivitySection } from "./ActivitySection";
 import { SectionHeader } from "@/components/shared/SectionHeader";
+import { skeletonVars } from "@/components/shared/skeleton";
 
 interface DetailViewProps {
   /** Task UUID. */
@@ -61,6 +63,10 @@ interface DetailViewProps {
   allTasks: TaskGraphSlim[];
   /** Map of task IDs to title/status/taskRef. */
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
+  /** Project prefix (e.g. `MYM`) for the linked-note ref chip. */
+  projectIdentifier: string;
+  /** Open a linked note on the Notes surface. */
+  onOpenNote: (noteId: string) => void;
   /** Whether the property rail drawer is open (1024–1279px / mobile). */
   drawerOpen: boolean;
   /** Toggle the drawer. */
@@ -112,6 +118,8 @@ export function DetailView({
   edges,
   allTasks,
   taskMap,
+  projectIdentifier,
+  onOpenNote,
   drawerOpen,
   onToggleDrawer,
   onClose,
@@ -248,6 +256,14 @@ export function DetailView({
               taskId={taskId}
               links={(task.links as TaskLinkRef[] | undefined) ?? []}
               onGraphChange={onGraphChange}
+            />
+
+            <LinkedNotesSection
+              projectId={projectId}
+              taskId={taskId}
+              taskRef={task.taskRef}
+              projectIdentifier={projectIdentifier}
+              onOpenNote={onOpenNote}
             />
 
             <ExecutionSection record={task.executionRecord} />
@@ -456,19 +472,6 @@ function buildDownstream(
     });
   }
   return out;
-}
-
-/**
- * Build an inline style from skeleton CSS custom properties
- * (`--skeleton-delay`, `--skeleton-radius`, `--skeleton-base`).
- *
- * @param vars - Custom-property map applied to a skeleton element.
- * @returns The map typed as a React inline style.
- */
-function skeletonVars(
-  vars: Record<`--skeleton-${string}`, string>,
-): CSSProperties {
-  return vars as CSSProperties;
 }
 
 /**
