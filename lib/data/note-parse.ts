@@ -201,3 +201,93 @@ export function extractNoteRefs(
     titles: [...titles].slice(0, MAX_REFS_PER_KIND),
   };
 }
+
+/** One ATX heading found outside fenced code. */
+export type BodySection = {
+  /** Heading level, 1-6. */
+  level: number;
+  /** Heading text, trimmed, without the `#` marker run. */
+  text: string;
+};
+
+/** ATX heading shape: 1-6 `#`s after at most 3 spaces, then a space and text. */
+const ATX_HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
+
+/**
+ * Match a line as an ATX heading, honoring the running fence state.
+ *
+ * @param line - One body line.
+ * @returns The heading, or null when the line is not one.
+ */
+function matchHeading(line: string): BodySection | null {
+  const match = line.match(ATX_HEADING_RE);
+  if (!match || match[2] === "") return null;
+  return { level: match[1].length, text: match[2] };
+}
+
+/**
+ * List the ATX headings of a markdown body, fence-aware. Headings inside
+ * fenced code blocks never match, in lockstep with {@link extractNoteRefs}.
+ *
+ * @param body - Markdown note body.
+ * @returns Headings in document order.
+ */
+export function listSections(body: string): BodySection[] {
+  const sections: BodySection[] = [];
+  let fence: FenceState | null = null;
+  for (const line of body.split("\n")) {
+    if (fence !== null) {
+      if (fenceCloses(line, fence)) fence = null;
+      continue;
+    }
+    fence = fenceOpen(line);
+    if (fence !== null) continue;
+    const heading = matchHeading(line);
+    if (heading !== null) sections.push(heading);
+  }
+  return sections;
+}
+
+/**
+ * Slice one heading's section out of a markdown body: from the matched
+ * heading line to the line before the next heading of the same or a
+ * shallower level, or to the end of the body. The heading text matches
+ * case-insensitively after trimming; fenced code is ignored for both the
+ * match and the terminator, in lockstep with {@link extractNoteRefs}.
+ *
+ * @param body - Markdown note body.
+ * @param heading - Heading text to match (without `#` markers).
+ * @returns The section text including its heading line, or null when no
+ *   heading matches.
+ */
+export function extractSection(body: string, heading: string): string | null {
+  const wanted = heading.trim().toLowerCase();
+  if (wanted === "") return null;
+  const lines = body.split("\n");
+  let fence: FenceState | null = null;
+  let start = -1;
+  let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (fence !== null) {
+      if (fenceCloses(line, fence)) fence = null;
+      continue;
+    }
+    fence = fenceOpen(line);
+    if (fence !== null) continue;
+    const match = matchHeading(line);
+    if (match === null) continue;
+    if (start === -1) {
+      if (match.text.toLowerCase() === wanted) {
+        start = i;
+        level = match.level;
+      }
+      continue;
+    }
+    if (match.level <= level) {
+      return lines.slice(start, i).join("\n").trimEnd();
+    }
+  }
+  if (start === -1) return null;
+  return lines.slice(start).join("\n").trimEnd();
+}

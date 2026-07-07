@@ -27,12 +27,22 @@ import {
   UnknownCategoryError,
 } from "@/lib/graph/errors";
 import {
+  resolveNoteRef,
   resolveProjectRef,
   resolveTaskRef,
   RefAmbiguityError,
   MalformedRefError,
   RefNotFoundError,
 } from "@/lib/data/resolve-ref";
+import {
+  CrossProjectNoteLinkError,
+  DuplicateNoteTitleError,
+  FolderCycleError,
+  NoteLockedError,
+  NoteShareStateError,
+  NoteStaleWriteError,
+  NoteValidationError,
+} from "@/lib/data/note";
 import {
   StaleWriteError,
   StrReplaceNoMatchError,
@@ -118,6 +128,23 @@ export async function requireProjectId(
   projectParam: string,
 ): Promise<string> {
   return (await resolveProjectRef(ctx, projectParam)).projectId;
+}
+
+/**
+ * Resolve a note param (noteRef, slug, or UUID) to a note UUID. Slug
+ * resolution requires the project param for scope.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteParam - noteRef ('PYZ-N12'), slug, or note UUID.
+ * @param projectId - Project UUID scoping a slug lookup.
+ * @returns The note UUID.
+ */
+export async function requireNoteId(
+  ctx: AuthContext,
+  noteParam: string,
+  projectId?: string,
+): Promise<string> {
+  return (await resolveNoteRef(ctx, noteParam, projectId)).noteId;
 }
 
 // ---------------------------------------------------------------------------
@@ -727,6 +754,11 @@ export function translateError(e: unknown): ToolResult {
     return fail(`${e.message}${chain}`);
   }
   if (e instanceof MalformedRefError) {
+    if (e.entity === "note") {
+      return fail(
+        `'${e.input}' is not a valid note reference. Pass a noteRef like 'PYZ-N12', a note UUID, or a slug together with project='PYZ'.`,
+      );
+    }
     return fail(
       `'${e.input}' is not a valid reference. Pass a taskRef like 'PYZ-42' or a UUID (from piyaz_search).`,
     );
@@ -737,7 +769,7 @@ export function translateError(e: unknown): ToolResult {
         (c) =>
           `${c.projectTitle} (${c.teamName}, projectId=${c.projectId}${
             c.taskId ? `, taskId=${c.taskId}` : ""
-          })`,
+          }${c.noteId ? `, noteId=${c.noteId}` : ""})`,
       )
       .join("; ");
     return fail(
@@ -745,32 +777,39 @@ export function translateError(e: unknown): ToolResult {
     );
   }
   if (e instanceof RefNotFoundError) {
+    const noun = e.entity === "note" ? "note" : "task";
+    const seqRef = (identifier: string, seq: number) =>
+      e.entity === "note" ? `${identifier}-N${seq}` : `${identifier}-${seq}`;
+    const findHint =
+      e.entity === "note"
+        ? "Run piyaz_note action='search' or action='list' with the project to find the right note."
+        : "Run piyaz_search to find the right task.";
     if (e.nearMisses.length > 1) {
       const perTeam = e.nearMisses
         .map(
           (p) =>
             `${p.teamName}: ${
               p.maxSequenceNumber !== null
-                ? `tasks up to ${p.identifier}-${p.maxSequenceNumber}`
-                : "no tasks yet"
+                ? `${noun}s up to ${seqRef(p.identifier, p.maxSequenceNumber)}`
+                : `no ${noun}s yet`
             }`,
         )
         .join("; ");
       return fail(
-        `Ref '${e.ref}' not found. ${e.nearMisses.length} of your teams have a project '${e.projectIdentifier}' (${perTeam}). Run piyaz_search to find the right task.`,
+        `Ref '${e.ref}' not found. ${e.nearMisses.length} of your teams have a project '${e.projectIdentifier}' (${perTeam}). ${findHint}`,
       );
     }
     if (e.projectIdentifier) {
       const upTo =
         e.maxSequenceNumber !== undefined
-          ? ` Project ${e.projectIdentifier} has tasks up to ${e.projectIdentifier}-${e.maxSequenceNumber}.`
-          : ` Project ${e.projectIdentifier} has no tasks yet.`;
-      return fail(
-        `Ref '${e.ref}' not found.${upTo} Run piyaz_search to find the right task.`,
-      );
+          ? ` Project ${e.projectIdentifier} has ${noun}s up to ${seqRef(e.projectIdentifier, e.maxSequenceNumber)}.`
+          : ` Project ${e.projectIdentifier} has no ${noun}s yet.`;
+      return fail(`Ref '${e.ref}' not found.${upTo} ${findHint}`);
     }
     return fail(
-      `Ref '${e.ref}' not found in any team you belong to. Run piyaz_search to find the right task, or piyaz_workspace action='projects' for project identifiers.`,
+      e.entity === "note"
+        ? `Ref '${e.ref}' not found in any team you belong to. Run piyaz_note action='search' with a project to find the right note, or piyaz_workspace action='projects' for project identifiers.`
+        : `Ref '${e.ref}' not found in any team you belong to. Run piyaz_search to find the right task, or piyaz_workspace action='projects' for project identifiers.`,
     );
   }
   if (e instanceof RecordNotTerminalError) {
@@ -781,6 +820,43 @@ export function translateError(e: unknown): ToolResult {
   if (e instanceof StaleWriteError) {
     return fail(
       `Task changed since you last read it (updatedAt ${e.currentUpdatedAt.toISOString()}). Re-run piyaz_get, then retry with the fresh ifUpdatedAt.`,
+    );
+  }
+  if (e instanceof NoteStaleWriteError) {
+    return fail(
+      `Note changed since you last read it (updatedAt ${e.currentUpdatedAt.toISOString()}, version ${e.currentVersion}). Re-run piyaz_note action='read' fields=['body'], then retry with the fresh ifUpdatedAt.`,
+    );
+  }
+  if (e instanceof NoteValidationError) {
+    return fail(
+      `${e.message}. Fix the ${e.field} input and retry; no writes happened.`,
+    );
+  }
+  if (e instanceof FolderCycleError) {
+    return fail(
+      `${e.message}. Pick a destination outside the moved subtree, or rename in place with newLeaf.`,
+    );
+  }
+  if (e instanceof NoteLockedError) {
+    return fail(
+      "Note is locked (read-only for humans and agents). Ask the user to unlock it in the web UI, then retry.",
+    );
+  }
+  if (e instanceof NoteShareStateError) {
+    return fail(
+      e.reason === "already_team"
+        ? "Note is already visible to the team. Treat as success; no share request is needed."
+        : "Note has no pending share request. Nothing to approve or decline.",
+    );
+  }
+  if (e instanceof DuplicateNoteTitleError) {
+    return fail(
+      `Batch rejected with no writes: note title(s) already exist in their folder: ${e.titles.join(", ")}. Retry with onDuplicate='skip' to reuse the existing notes for an idempotent re-run.`,
+    );
+  }
+  if (e instanceof CrossProjectNoteLinkError) {
+    return fail(
+      `${e.message} Notes link only to tasks in their own project; move the note or pick a task from the same project.`,
     );
   }
   if (e instanceof StrReplaceNoMatchError) {
@@ -834,6 +910,10 @@ export function translateError(e: unknown): ToolResult {
       case "edge":
         return fail(
           `Edge '${id}' not found. Run piyaz_map view='neighbors' with a task to see its current edges.`,
+        );
+      case "note":
+        return fail(
+          `Note '${id}' not found in any team you belong to. Run piyaz_note action='list' or action='search' with the project to see available notes.`,
         );
       case "team":
         return fail(

@@ -29,9 +29,11 @@ function row(updatedAt: Date): NoteTreeRow {
   return {
     id: NOTE,
     slug: "slug-n1",
+    sequenceNumber: 1,
     title: "Title",
     type: "reference",
     folder: "",
+    feedMode: "none",
     summary: "",
     visibility: "team",
     agentWritable: true,

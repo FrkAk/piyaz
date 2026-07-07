@@ -7,6 +7,7 @@ import { handleEdit } from "@/lib/graph/tools/edit";
 import { handleLink } from "@/lib/graph/tools/link";
 import { handleMap } from "@/lib/graph/tools/map";
 import { handleActivity } from "@/lib/graph/tools/activity";
+import { handleNote } from "@/lib/graph/tools/note";
 import type { ToolResult } from "@/lib/graph/tools/shared";
 import {
   DESCRIPTIONS,
@@ -18,6 +19,7 @@ import {
   linkInputSchema,
   mapInputSchema,
   activityInputSchema,
+  noteInputSchema,
   DEEP_LENSES,
 } from "@/lib/mcp/schemas";
 import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
@@ -139,7 +141,7 @@ function wrapTool<P>(
   };
 }
 
-const INSTRUCTIONS = `Piyaz tracks tasks, dependencies, decisions, and execution records for software projects, so agents and engineers hand work across sessions. 8 tools: piyaz_workspace (identity, projects), piyaz_search (find tasks), piyaz_get (read task/project), piyaz_create (batch create), piyaz_edit (operation edits), piyaz_link (edges), piyaz_map (graph views), piyaz_activity (what changed). Refs are first-class: pass 'PYZ-42' / 'PYZ' anywhere a task/project is named (UUIDs also work); responses emit refs. Stateless server: name the project or task on every call.
+const INSTRUCTIONS = `Piyaz tracks tasks, dependencies, decisions, execution records, and notes for software projects, so agents and engineers hand work across sessions. 9 tools: piyaz_workspace (identity, projects), piyaz_search (find tasks), piyaz_get (read task/project), piyaz_create (batch create), piyaz_edit (operation edits), piyaz_link (edges), piyaz_map (graph views), piyaz_activity (what changed), piyaz_note (project knowledge base). Refs are first-class: pass 'PYZ-42' / 'PYZ' / 'PYZ-N12' anywhere a task/project/note is named (UUIDs also work); responses emit refs. Stateless server: name the project or task on every call.
 
 Doctrine (persona, tag taxonomy, category vocabulary, full lifecycle table, orchestration) lives in the \`piyaz\` skill on your platform and its references (conventions.md, artifacts.md, lifecycle.md, resilience.md). The skill is ground truth; this server steers.
 
@@ -166,6 +168,9 @@ Run before setting status to in_review, done, or cancelled. The implementer's te
 ## Link & propagate
 depends_on = source needs target's output (litmus: removing the target makes source impossible; merely harder = relates_to). Notes are REQUIRED and substantive — a brief to the developer starting the source task; placeholders rejected. After any status change or significant refinement: piyaz_map view='downstream' task='<ref>', then update edge notes, retire stale edges, add newly revealed ones, and update downstream descriptions. Cancellation is transparent (dependents stay blocked through the cancelled task's own unsatisfied prereqs): ask whether a replacement exists and rewire, or re-scope dependents. Skipping propagation is how graphs go stale, and stale graphs make Piyaz useless.
 
+## Notes (the write-back loop)
+Durable knowledge belongs in notes, not in chat history: constraints an implementer must honor (type=guidance), specs and docs (type=reference), and what you learned building (type=knowledge). Write one when you discover a gotcha, settle a convention, or finish work the next agent will build on. Agent-created notes land visibility=team, feed_mode=none: searchable by teammates' agents immediately, auto-injected into matching task bundles only after feedMode is deliberately set (all/categories/tags/tasks). Agents never flip visibility; request_share asks a human to share a private note. Keep the folder tree organized for humans (list first, reuse folders, move to tidy). Read cost discipline: search → read (meta lists sections) → heading='...'; fields=['body'] is the last resort. [[PYZ-42]] and [[Note Title]] in bodies derive live relations; link kind='spec_of' marks a note as a task's spec. note_* events ride piyaz_activity, so resume covers notes.
+
 ## Resume
 piyaz_activity project='PYZ' since='<last known instant>' — what changed while you were away, newest first. Then piyaz_get the tasks that moved.
 
@@ -179,7 +184,7 @@ Never write what you cannot cite or do not know. Applies to executionRecord, dec
 piyaz_edit remove ops and op='set' full-field rewrites are destructive with no undo (the activity log records that a change happened, not the prior content). Prefer str_replace/append and by-id ops. delete_task previews by default; prefer status='cancelled' for abandoned scope — delete only noise. Confirm destructive intent with the user in direct mode.`;
 
 /**
- * Register all 8 Piyaz tools on a server instance, bound to the caller's
+ * Register all 9 Piyaz tools on a server instance, bound to the caller's
  * auth context. Each handler receives `ctx` so authorization and team
  * scoping happen inside the data layer; `wrapTool` adds the heavy-tier
  * rate check, the sanitised catch-all, and the per-call log line.
@@ -354,6 +359,34 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
       },
     },
     wrapTool("piyaz_activity", ctx, {}, handleActivity),
+  );
+
+  server.registerTool(
+    "piyaz_note",
+    {
+      description: DESCRIPTIONS.piyaz_note,
+      inputSchema: noteInputSchema,
+      annotations: {
+        title: "Project Notes",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    wrapTool(
+      "piyaz_note",
+      ctx,
+      {
+        disc: (p) => p.action,
+        heavy: (p) =>
+          p.action === "search" ||
+          (p.action === "read" &&
+            (p.revision !== undefined ||
+              (p.fields?.includes("body") ?? false))),
+      },
+      handleNote,
+    ),
   );
 }
 

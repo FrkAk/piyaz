@@ -245,11 +245,13 @@ export function useCreateNote(projectId: string) {
       const tempRow: NoteTreeRow = {
         id: crypto.randomUUID(),
         slug: "",
+        sequenceNumber: 0,
         title: input.title,
         type: input.type ?? "reference",
         folder: input.folder ?? "",
         summary: input.summary ?? "",
         visibility: input.visibility ?? "private",
+        feedMode: input.feedMode ?? "none",
         agentWritable: true,
         locked: false,
         updatedAt: new Date(),

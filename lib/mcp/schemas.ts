@@ -1,5 +1,5 @@
 /**
- * MCP tool input schemas, descriptions, and metadata for the 8 Piyaz tools.
+ * MCP tool input schemas, descriptions, and metadata for the 9 Piyaz tools.
  *
  * Standalone module with no data-layer imports so it can be consumed by
  * both the MCP server (lib/mcp/create-server.ts) and the docs generator
@@ -48,6 +48,14 @@ export const LIMITS = {
   url: 4_000,
   isoTimestamp: 64,
   cursor: 512,
+  noteTitle: 2_000,
+  noteBody: 200_000,
+  noteFolder: 512,
+  noteSummary: 1_000,
+  noteHeading: 512,
+  noteBatch: 10,
+  noteQuery: 256,
+  noteFeedTaskIds: 1_000,
 } as const;
 
 /** A task handle: taskRef (`PYZ-42`) or task UUID. */
@@ -55,6 +63,9 @@ const taskRefParam = z.string().max(LIMITS.ref);
 
 /** A project handle: project identifier (`PYZ`) or project UUID. */
 const projectRefParam = z.string().max(LIMITS.ref);
+
+/** A note handle: noteRef (`PYZ-N12`), note UUID, or slug (with project). */
+const noteRefParam = z.string().max(LIMITS.noteFolder);
 
 /** The literal `me` or a user UUID; shared by assignee-bearing params. */
 const ME_OR_UUID_RE =
@@ -175,6 +186,15 @@ export const DESCRIPTIONS = {
     "What changed, newest first, keyset-paginated. Pass exactly one of project ('PYZ' or UUID) or task ('PYZ-42' or UUID). " +
     "since (ISO timestamp) answers 'what changed since I left' — the resume-after-compaction primitive: piyaz_activity project='PYZ' since='<last known instant>'. " +
     "Events carry actor, type, summary, and target ref. Follow up on a specific task with piyaz_get.",
+  piyaz_note:
+    "Project notes: the team's shared knowledge base, in the same folder tree humans see in the web UI. Note params accept a noteRef ('PYZ-N12'), a note UUID, or a slug together with project; responses emit refs. Types: guidance=constraints auto-injected into matching task bundles; reference=specs and docs, read on demand by heading; knowledge=agent-maintained wiki and memory. Write back what you learn — durable constraints, gotchas, and decisions belong in notes so the next agent starts smarter. " +
+    "create=1-10 notes (title required; body, folder, type, summary, tags, category, feed params). Agent-created notes land visibility=team, feed_mode=none: teammates' agents can search them immediately, nothing auto-injects until feedMode is deliberately set (all/categories/tags/tasks; feedTaskIds accept taskRefs). Idempotent by exact (folder, title): dupes return as deduped. " +
+    "read=meta header by default; fields=[...] for exact values plus updatedAt (the ifUpdatedAt token); heading='...' for one section; fields=['revisions'] for the snapshot list; revision=N for one snapshot. The full body only via fields=['body'] — prefer heading reads. " +
+    "edit=1-20 ordered ops, atomic: str_replace/append/set on body (oldStr must match exactly once; the error names the count), set for title/summary/folder/type/category/tags/feedMode/feedCategories/feedTags/feedTaskIds. visibility, locked, and agent_writable are not editable here — request_share is the agent's only path toward team visibility for a private note. " +
+    "list=the project's folder tree (refs, titles, folders, types, feed modes). move=one note into a folder, or folder+destParent (+newLeaf) to re-parent or rename a whole folder subtree — keep the tree organized for humans. " +
+    "delete=preview by default, re-call preview=false; restore recovers a trashed note (use the UUID from the delete response). An overwritten body is recoverable: fields=['revisions'], then revision=N, then set body. " +
+    "link/unlink=deliberate note-task relations (kind reference|spec_of); mention rows derive from [[refs]] in the body — write the ref into the body instead. " +
+    "search=ranked full text within one project: team notes plus your own private notes, any feed mode. Next: read heading='...' for the matching section instead of the full body.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -741,6 +761,277 @@ export const activityInputSchema = z.object({
     .describe("Opaque cursor from a previous page's nextCursor."),
 });
 
+/** Note fields addressable by `piyaz_note read fields=[...]`. `links`
+ * bundles mentions plus both note-link directions; `revisions` lists the
+ * snapshot descriptors. */
+export const NOTE_FIELD_ENUM = [
+  "title",
+  "body",
+  "summary",
+  "folder",
+  "type",
+  "visibility",
+  "feedMode",
+  "feedCategories",
+  "feedTags",
+  "feedTaskIds",
+  "tags",
+  "category",
+  "agentWritable",
+  "locked",
+  "links",
+  "revisions",
+] as const;
+
+/** A feed-scoping label list (categories or tags). */
+const noteFeedLabelsSchema = z
+  .array(z.string().max(LIMITS.tag))
+  .max(LIMITS.tags);
+
+/** One note in a `piyaz_note create` batch. */
+const noteCreateItemSchema = z.object({
+  title: z
+    .string()
+    .min(1)
+    .max(LIMITS.noteTitle)
+    .describe("Note title. Also the [[wiki-link]] handle other notes use."),
+  body: z
+    .string()
+    .max(LIMITS.noteBody)
+    .optional()
+    .describe(
+      "Markdown body. [[PYZ-42]] links a task, [[Title]] links a note; both derive live relations on every save.",
+    ),
+  folder: z
+    .string()
+    .max(LIMITS.noteFolder)
+    .optional()
+    .describe(
+      "'/'-delimited folder path ('' = root), the same tree humans see. Check list first and reuse existing folders before coining new ones.",
+    ),
+  type: z
+    .enum(["reference", "guidance", "knowledge"])
+    .optional()
+    .describe(
+      "guidance=short constraints block auto-injected into matching task bundles (keep it tight). reference=specs and docs, read on demand. knowledge=agent-maintained wiki and memory. Default reference.",
+    ),
+  summary: z
+    .string()
+    .max(LIMITS.noteSummary)
+    .optional()
+    .describe(
+      "One-line summary rendered in trees, search hits, and feed pointers. Cheap to write now, paid back on every downstream read.",
+    ),
+  tags: noteFeedLabelsSchema
+    .optional()
+    .describe("Note tags; reuse the project's task tag vocabulary."),
+  category: z
+    .string()
+    .max(LIMITS.category)
+    .optional()
+    .describe("Project category label; reuse the project's vocabulary."),
+  feedMode: z
+    .enum(["none", "all", "categories", "tags", "tasks"])
+    .optional()
+    .describe(
+      "When this note auto-injects into task bundles: none (default; searchable only), all, categories/tags (match via feedCategories/feedTags), tasks (match via feedTaskIds).",
+    ),
+  feedCategories: noteFeedLabelsSchema
+    .optional()
+    .describe("feedMode='categories': task categories this note feeds into."),
+  feedTags: noteFeedLabelsSchema
+    .optional()
+    .describe("feedMode='tags': task tags this note feeds into."),
+  feedTaskIds: z
+    .array(taskRefParam)
+    .max(LIMITS.noteFeedTaskIds)
+    .optional()
+    .describe(
+      "feedMode='tasks': the specific tasks this note feeds into. taskRefs ('PYZ-42') or UUIDs.",
+    ),
+});
+
+/** One operation in a `piyaz_note edit` call. Flat shape (no unions) for
+ * client compatibility; the server validates coherence and returns per-op
+ * corrective errors. */
+const noteOpSchema = z.object({
+  op: z
+    .enum(["str_replace", "append", "set"])
+    .describe(
+      "str_replace/append target body only. set targets body or a scalar field with value.",
+    ),
+  field: z
+    .enum([
+      "body",
+      "title",
+      "summary",
+      "folder",
+      "type",
+      "category",
+      "tags",
+      "feedMode",
+      "feedCategories",
+      "feedTags",
+      "feedTaskIds",
+    ])
+    .describe(
+      "Target field. visibility, locked, and agent_writable are not editable via MCP; use request_share for visibility.",
+    ),
+  oldStr: z
+    .string()
+    .max(LIMITS.noteBody)
+    .optional()
+    .describe(
+      "str_replace only: exact existing text, must match exactly once. Copy it from read fields=['body'] including whitespace.",
+    ),
+  newStr: z
+    .string()
+    .max(LIMITS.noteBody)
+    .optional()
+    .describe("str_replace only: replacement text."),
+  text: z
+    .string()
+    .max(LIMITS.noteBody)
+    .optional()
+    .describe("append: paragraph to add. set on body: the full new text."),
+  value: z
+    .union([
+      z.string().max(LIMITS.noteBody),
+      z.array(z.string().max(LIMITS.tag)).max(LIMITS.noteFeedTaskIds),
+      z.null(),
+    ])
+    .optional()
+    .describe(
+      "set on a scalar field: the new value (tags/feedCategories/feedTags/feedTaskIds take arrays; category takes a string or null).",
+    ),
+});
+
+export const noteInputSchema = z.object({
+  action: z
+    .enum([
+      "create",
+      "read",
+      "edit",
+      "list",
+      "move",
+      "delete",
+      "restore",
+      "request_share",
+      "link",
+      "unlink",
+      "search",
+    ])
+    .describe(
+      "create=1-10 notes, idempotent by (folder, title). read=meta / fields / heading section / revision snapshot. edit=ordered ops. list=the folder tree. move=note to folder, or folder subtree re-parent/rename. delete=preview by default; restore=recover a trashed note. request_share=ask a human to make a private note team-visible. link/unlink=note-task relation (reference|spec_of). search=ranked full text in one project.",
+    ),
+  project: projectRefParam
+    .optional()
+    .describe(
+      "Project identifier ('PYZ') or UUID. Required for create, list, and search; also scopes a slug-form note param.",
+    ),
+  note: noteRefParam
+    .optional()
+    .describe(
+      "noteRef ('PYZ-N12'), note UUID, or slug (slug needs project). Required for read, edit, move (note form), delete, restore, request_share, link, unlink.",
+    ),
+  notes: z
+    .array(noteCreateItemSchema)
+    .min(1)
+    .max(LIMITS.noteBatch)
+    .optional()
+    .describe("create only: 1-10 notes to create in one atomic call."),
+  onDuplicate: z
+    .enum(["skip", "error"])
+    .optional()
+    .describe(
+      "create only. skip (default): items whose (folder, title) already exists create nothing and return as 'deduped'. error: reject the whole batch before any write.",
+    ),
+  fields: z
+    .array(z.enum(NOTE_FIELD_ENUM))
+    .min(1)
+    .max(NOTE_FIELD_ENUM.length)
+    .optional()
+    .describe(
+      "read only: exact raw values for the named fields plus updatedAt (the ifUpdatedAt token). fields=['body'] is the only full-body read; prefer heading.",
+    ),
+  heading: z
+    .string()
+    .max(LIMITS.noteHeading)
+    .optional()
+    .describe(
+      "read only: one markdown section by its heading text (case-insensitive, fence-aware). A miss lists the available headings.",
+    ),
+  revision: z
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      "read only: one revision snapshot by version number (see fields=['revisions']). The recovery read for an overwritten body.",
+    ),
+  operations: z
+    .array(noteOpSchema)
+    .min(1)
+    .max(LIMITS.editOps)
+    .optional()
+    .describe(
+      "edit only: 1-20 operations applied in order, atomically; one failure rolls back all.",
+    ),
+  ifUpdatedAt: z
+    .string()
+    .max(LIMITS.isoTimestamp)
+    .optional()
+    .describe(
+      "edit only: optimistic-concurrency precondition from a prior read. On mismatch the call fails with the fresh updatedAt and version — re-read, then retry.",
+    ),
+  folder: z
+    .string()
+    .max(LIMITS.noteFolder)
+    .optional()
+    .describe(
+      "move: the destination folder for a note ('' = root), or the source folder path when moving a folder subtree.",
+    ),
+  destParent: z
+    .string()
+    .max(LIMITS.noteFolder)
+    .optional()
+    .describe(
+      "move (folder form): new parent path ('' = root). Present destParent switches move to folder-subtree mode.",
+    ),
+  newLeaf: z
+    .string()
+    .max(LIMITS.noteFolder)
+    .optional()
+    .describe(
+      "move (folder form): replacement folder name; a rename is a move to the same parent with a new leaf.",
+    ),
+  preview: z
+    .boolean()
+    .optional()
+    .describe(
+      "delete only. true (default)=impact summary (links, revisions). false=execute the soft delete; restore undoes it.",
+    ),
+  task: taskRefParam
+    .optional()
+    .describe("link/unlink: the task endpoint, taskRef ('PYZ-42') or UUID."),
+  kind: z
+    .enum(["reference", "spec_of"])
+    .optional()
+    .describe(
+      "link/unlink: relation kind. spec_of=this note is the task's spec. reference=supporting material. mention rows derive from [[refs]] in the body and are not managed here.",
+    ),
+  query: z
+    .string()
+    .max(LIMITS.noteQuery)
+    .optional()
+    .describe("search only: full-text query; the last term prefix-matches."),
+  limit: z
+    .int()
+    .min(1)
+    .max(20)
+    .optional()
+    .describe("search only: hit cap (default and max 20)."),
+});
+
 /** One tool's docs-relevant surface. */
 export interface ToolDefinition {
   name: string;
@@ -752,7 +1043,7 @@ export interface ToolDefinition {
   discriminator: string | null;
 }
 
-/** All 8 tools in registration order. Titles match the MCP annotations. */
+/** All 9 tools in registration order. Titles match the MCP annotations. */
 export const TOOLS: readonly ToolDefinition[] = [
   {
     name: "piyaz_workspace",
@@ -809,5 +1100,12 @@ export const TOOLS: readonly ToolDefinition[] = [
     description: DESCRIPTIONS.piyaz_activity,
     inputSchema: activityInputSchema,
     discriminator: null,
+  },
+  {
+    name: "piyaz_note",
+    title: "Project Notes",
+    description: DESCRIPTIONS.piyaz_note,
+    inputSchema: noteInputSchema,
+    discriminator: "action",
   },
 ] as const;

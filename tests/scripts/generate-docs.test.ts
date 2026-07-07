@@ -11,7 +11,7 @@ import {
 import { TOOLS } from "../../lib/mcp/schemas";
 
 describe("TOOLS", () => {
-  test("exposes all eight tools", () => {
+  test("exposes all nine tools", () => {
     expect(TOOLS.map((t) => t.name)).toEqual([
       "piyaz_workspace",
       "piyaz_search",
@@ -21,6 +21,7 @@ describe("TOOLS", () => {
       "piyaz_link",
       "piyaz_map",
       "piyaz_activity",
+      "piyaz_note",
     ]);
   });
 });

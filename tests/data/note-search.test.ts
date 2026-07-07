@@ -193,9 +193,11 @@ test("tree list and search hits stay slim: no body, no search_tsv", async () => 
   expect(Object.keys(treeRow).sort()).toEqual(
     [
       "agentWritable",
+      "feedMode",
       "folder",
       "id",
       "locked",
+      "sequenceNumber",
       "slug",
       "summary",
       "title",

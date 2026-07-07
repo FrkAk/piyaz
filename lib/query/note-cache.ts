@@ -125,7 +125,7 @@ export function notePlaceholderFromRow(
     note: {
       id: row.id,
       projectId,
-      sequenceNumber: 0,
+      sequenceNumber: row.sequenceNumber,
       type: row.type,
       folder: row.folder,
       title: row.title,
@@ -150,6 +150,7 @@ export function notePlaceholderFromRow(
       updatedAt: row.updatedAt,
       deletedAt: null,
     },
+    projectIdentifier: "",
     mentions: [],
     linksOut: [],
     linksIn: [],

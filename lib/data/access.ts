@@ -191,6 +191,7 @@ export function taskAccessGateStmt(read: ReadConn, taskId: string) {
 const noteGateColumns = {
   id: notes.id,
   projectId: notes.projectId,
+  sequenceNumber: notes.sequenceNumber,
   title: notes.title,
   slug: notes.slug,
   folder: notes.folder,
@@ -217,6 +218,7 @@ export type NoteAccessGate = Pick<
   Note,
   | "id"
   | "projectId"
+  | "sequenceNumber"
   | "title"
   | "slug"
   | "folder"
