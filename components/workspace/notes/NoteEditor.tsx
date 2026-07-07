@@ -1,10 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { EditButton } from "@/components/shared/EditButton";
 import { EditHint } from "@/components/shared/EditHint";
-import { useInlineEdit } from "@/hooks/useInlineEdit";
 import { NoteMarkdown } from "./NoteMarkdown";
 import { useWikiAutocomplete } from "./useWikiAutocomplete";
 
@@ -22,10 +21,10 @@ interface NoteEditorProps {
 /**
  * Notes editor: renders the body as full markdown (shared renderer + task /
  * `[[wiki]]` refs); double-click (mouse) or the pencil (touch) enters edit,
- * swapping the whole note to one raw-markdown textarea. Escape or blur
- * commits and returns to the rendered view. Read-only notes never enter
- * edit. Follows the shared inline-edit convention (hover hint + touch
- * pencil). The `[[` picker resolves from data already loaded.
+ * swapping the whole note to one raw-markdown textarea with the caret at the
+ * clicked block's source line. Escape or blur commits and returns to the
+ * rendered view. Read-only notes never enter edit. The `[[` picker resolves
+ * from data already loaded.
  *
  * @param props - Body, editability, identifier, and the commit sink.
  * @returns The rendered note, or the raw editor while editing.
@@ -40,11 +39,34 @@ export function NoteEditor({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(body);
   const [caret, setCaret] = useState(0);
+  const [entryCaret, setEntryCaret] = useState(0);
 
-  const inlineEdit = useInlineEdit(() => {
+  /** Character offset of the start of a 1-based source line. */
+  const offsetForLine = (line: number) =>
+    body
+      .split("\n")
+      .slice(0, Math.max(0, line - 1))
+      .reduce((n, l) => n + l.length + 1, 0);
+
+  const beginEdit = (offset: number) => {
     setDraft(body);
+    setEntryCaret(offset);
     setEditing(true);
-  });
+  };
+
+  useEffect(() => {
+    if (!editing) return;
+    requestAnimationFrame(() => {
+      const el = containerRef.current?.querySelector("textarea");
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(entryCaret, entryCaret);
+      setCaret(entryCaret);
+    });
+    // Seed the caret once on entering edit; later caret updates must not
+    // re-run this or they would fight the user's selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
 
   const wiki = useWikiAutocomplete(draft, caret, (next, nextCaret) => {
     setDraft(next);
@@ -68,7 +90,6 @@ export function NoteEditor({
         <AutoGrowTextarea
           autoFocus
           value={draft}
-          onFocus={inlineEdit.onEditorFocus}
           onChange={(e) => {
             setDraft(e.target.value);
             setCaret(e.target.selectionStart ?? 0);
@@ -111,12 +132,29 @@ export function NoteEditor({
 
   return (
     <div
-      {...inlineEdit.triggerProps}
-      className="group/edit relative cursor-text select-text"
+      tabIndex={0}
+      title="Double-click to edit"
+      onDoubleClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest("button, a")) return;
+        const line = Number(
+          target.closest("[data-src-line]")?.getAttribute("data-src-line") ??
+            "1",
+        );
+        beginEdit(offsetForLine(line));
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          beginEdit(body.length);
+        }
+      }}
+      className="group/edit relative cursor-text select-text outline-none"
     >
       <EditHint />
       <EditButton
-        onClick={inlineEdit.onActivate}
+        onClick={() => beginEdit(body.length)}
         label="Edit note"
         className="absolute right-0 top-0 z-10 bg-base/80"
       />
