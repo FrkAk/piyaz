@@ -1,10 +1,10 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { MonoId } from "@/components/shared/MonoId";
 import { IconDoc } from "@/components/shared/icons";
+import { skeletonVars } from "@/components/shared/skeleton";
 import { noteKeys } from "@/lib/query/keys";
 import { fetchNoteBacklinks } from "@/lib/query/queries";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
@@ -22,20 +22,6 @@ interface LinkedNotesSectionProps {
   projectIdentifier: string;
   /** Open a linked note on the Notes surface. */
   onOpenNote: (noteId: string) => void;
-}
-
-/**
- * Build an inline style from skeleton CSS custom properties, mirroring the
- * `skeletonVars` helper in {@link DetailView} so the loading rows speak the
- * surrounding skeleton vocabulary.
- *
- * @param vars - Custom-property map applied to a skeleton element.
- * @returns The map typed as a React inline style.
- */
-function skeletonVars(
-  vars: Record<`--skeleton-${string}`, string>,
-): CSSProperties {
-  return vars as CSSProperties;
 }
 
 /**
@@ -58,7 +44,7 @@ export function LinkedNotesSection({
   onOpenNote,
 }: LinkedNotesSectionProps) {
   const qc = useQueryClient();
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: noteKeys.backlinks(projectId, taskId),
     queryFn: fetchNoteBacklinks(qc, projectId, taskId),
   });
@@ -74,8 +60,15 @@ export function LinkedNotesSection({
       {isLoading ? (
         <LinkedNotesSkeleton />
       ) : isError ? (
-        <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-1.5 font-mono text-[10px] text-danger">
-          Could not load linked notes.
+        <div className="flex items-center gap-2 py-2 text-[12.5px] text-text-secondary">
+          <span>Couldn’t load linked notes.</span>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="text-text-faint underline hover:text-text-secondary"
+          >
+            Retry
+          </button>
         </div>
       ) : rows.length === 0 ? (
         <div className="flex items-center justify-center rounded-lg border border-dashed border-border/70 bg-surface-raised/10 px-4 py-3.5">
@@ -111,8 +104,9 @@ interface LinkedNoteCardProps {
 /**
  * Single linked-note card: type-colored {@link IconDoc}, note ref chip,
  * title, type chip, and a clamped summary. The whole card is a button that
- * opens the note. Chips wrap under the title at narrow widths so the card
- * never overflows on mobile.
+ * opens the note. The header row stays on one line: the title truncates
+ * while the icon, ref, and type chip hold their width, so it never reflows
+ * or overflows at narrow widths.
  *
  * @param props - Card configuration.
  * @returns Card button element.
@@ -122,14 +116,14 @@ function LinkedNoteCard({
   projectIdentifier,
   onOpen,
 }: LinkedNoteCardProps) {
-  const meta = NOTE_TYPE_META[row.type];
+  const meta = NOTE_TYPE_META[row.type] ?? NOTE_TYPE_META.reference;
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="group/note flex w-full flex-col gap-1.5 rounded-md border border-border/40 bg-transparent px-2.5 py-2 text-left transition-colors hover:border-border-strong hover:bg-surface-raised/40"
+      className="group/note flex w-full cursor-pointer flex-col gap-1.5 rounded-md border border-border/40 bg-transparent px-2.5 py-2 text-left transition-colors hover:border-border-strong hover:bg-surface-raised/40"
     >
-      <div className="flex w-full flex-wrap items-center gap-2">
+      <div className="flex w-full items-center gap-2">
         <IconDoc size={14} className="shrink-0" style={{ color: meta.color }} />
         <MonoId
           id={composeNoteRef(
@@ -137,6 +131,7 @@ function LinkedNoteCard({
             row.sequenceNumber,
           )}
           copyable={false}
+          className="shrink-0"
         />
         <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary transition-colors group-hover/note:text-accent-light">
           {row.title}

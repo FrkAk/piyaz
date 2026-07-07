@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import { useMemo } from "react";
 import type {
   TaskEdgeRef,
   TaskFull,
@@ -36,6 +36,7 @@ import { RelationshipsSection } from "./RelationshipsSection";
 import { ExecutionSection } from "./ExecutionSection";
 import { ActivitySection } from "./ActivitySection";
 import { SectionHeader } from "@/components/shared/SectionHeader";
+import { skeletonVars } from "@/components/shared/skeleton";
 
 interface DetailViewProps {
   /** Task UUID. */
@@ -471,19 +472,6 @@ function buildDownstream(
     });
   }
   return out;
-}
-
-/**
- * Build an inline style from skeleton CSS custom properties
- * (`--skeleton-delay`, `--skeleton-radius`, `--skeleton-base`).
- *
- * @param vars - Custom-property map applied to a skeleton element.
- * @returns The map typed as a React inline style.
- */
-function skeletonVars(
-  vars: Record<`--skeleton-${string}`, string>,
-): CSSProperties {
-  return vars as CSSProperties;
 }
 
 /**

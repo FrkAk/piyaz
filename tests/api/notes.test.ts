@@ -380,7 +380,8 @@ test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, tr
   for (const row of rows) {
     expect(row).not.toHaveProperty("body");
     expect(row).not.toHaveProperty("search_tsv");
-    expect(typeof row.sequenceNumber).toBe("number");
+    expect(Number.isInteger(row.sequenceNumber)).toBe(true);
+    expect(row.sequenceNumber).toBeGreaterThan(0);
   }
 
   const etag = res.headers.get("etag");
