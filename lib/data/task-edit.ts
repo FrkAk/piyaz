@@ -54,6 +54,7 @@ import {
   type TaskStatus,
 } from "@/lib/types";
 import type { AuthContext } from "@/lib/auth/context";
+import { foldTextOp } from "@/lib/data/text-ops";
 
 // ---------------------------------------------------------------------------
 // Typed errors
@@ -72,31 +73,10 @@ export class StaleWriteError extends Error {
   }
 }
 
-/** Thrown when a `str_replace` `oldStr` matches zero places in the field. */
-export class StrReplaceNoMatchError extends Error {
-  /**
-   * @param field - The text field searched.
-   */
-  constructor(public readonly field: string) {
-    super(`str_replace matched 0 places in ${field}`);
-    this.name = "StrReplaceNoMatchError";
-  }
-}
-
-/** Thrown when a `str_replace` `oldStr` matches more than one place. */
-export class StrReplaceMultipleMatchError extends Error {
-  /**
-   * @param field - The text field searched.
-   * @param count - Number of matches found.
-   */
-  constructor(
-    public readonly field: string,
-    public readonly count: number,
-  ) {
-    super(`str_replace matched ${count} places in ${field}`);
-    this.name = "StrReplaceMultipleMatchError";
-  }
-}
+export {
+  StrReplaceNoMatchError,
+  StrReplaceMultipleMatchError,
+} from "@/lib/data/text-ops";
 
 /** Thrown when a by-id collection op references an item the task does not have. */
 export class CollectionItemNotFoundError extends Error {
@@ -1414,40 +1394,15 @@ type EditAccumulator = {
 };
 
 /**
- * Compute the new text value for a `str_replace` op against the running state.
- *
- * @param current - The field's current text.
- * @param op - The prepared `str_replace` op.
- * @returns The replaced text.
- * @throws StrReplaceNoMatchError when `oldStr` matches zero places.
- * @throws StrReplaceMultipleMatchError when `oldStr` matches more than once.
- */
-function replaceOnce(
-  current: string,
-  op: { field: TextField; oldStr: string; newStr: string },
-): string {
-  const parts = current.split(op.oldStr);
-  const count = parts.length - 1;
-  if (count === 0) throw new StrReplaceNoMatchError(op.field);
-  if (count >= 2) throw new StrReplaceMultipleMatchError(op.field, count);
-  return parts.join(op.newStr);
-}
-
-/**
- * Fold a prepared text op into the running text state.
+ * Fold a prepared text op into the running text state via the shared
+ * engine (`lib/data/text-ops.ts`), keeping task and note editors on one
+ * set of semantics and error copy.
  *
  * @param acc - Edit accumulator.
  * @param op - Prepared text op.
  */
 function applyTextOp(acc: EditAccumulator, op: PreparedText): void {
-  const current = acc.textState[op.field];
-  if (op.t === "str_replace") {
-    acc.textState[op.field] = replaceOnce(current ?? "", op);
-  } else if (op.t === "append") {
-    acc.textState[op.field] = current ? `${current}\n\n${op.text}` : op.text;
-  } else {
-    acc.textState[op.field] = op.value;
-  }
+  acc.textState[op.field] = foldTextOp(acc.textState[op.field], op);
   acc.dirtyText.add(op.field);
 }
 

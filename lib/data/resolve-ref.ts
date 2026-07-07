@@ -2,10 +2,14 @@ import "server-only";
 
 import { normalizeExecuteResult } from "@/lib/db/raw";
 import {
+  noteRefLookupStmt,
+  noteRefNearMissStmt,
+  noteSlugLookupStmt,
   projectRefLookupStmt,
   taskRefLookupStmt,
   taskRefNearMissStmt,
   type NearMissRow,
+  type NoteRefRow,
   type ProjectRefRow,
   type TaskRefRow,
 } from "@/lib/db/raw/resolve-ref-lookup";
@@ -13,7 +17,9 @@ import { withUserContextRead } from "@/lib/db/rls";
 import { isUuid } from "@/lib/auth/authorization";
 import {
   asIdentifier,
+  composeNoteRef,
   composeTaskRef,
+  NOTE_REF_PATTERN,
   parseIdentifier,
 } from "@/lib/graph/identifier";
 import { TASK_REF_PATTERN } from "@/lib/data/task";
@@ -22,10 +28,15 @@ import type { AuthContext } from "@/lib/auth/context";
 /** Largest value the `tasks.sequence_number` int4 column can hold. */
 const INT4_MAX = 2_147_483_647;
 
+/** The entity kind a ref names; picks the corrective error copy. */
+export type RefEntity = "task" | "note";
+
 /** A resolvable ref matched in more than one of the caller's teams. */
 export type RefCandidate = {
-  /** Task id — set for task-ref candidates, undefined for project refs. */
+  /** Task id — set for task-ref candidates, undefined otherwise. */
   taskId?: string;
+  /** Note id — set for note-ref candidates, undefined otherwise. */
+  noteId?: string;
   /** Owning project id. */
   projectId: string;
   /** Owning project title. */
@@ -59,10 +70,12 @@ export class RefAmbiguityError extends Error {
   /**
    * @param ref - The ambiguous ref, normalized.
    * @param candidates - One entry per matching team.
+   * @param entity - The entity kind the ref names; picks the error copy.
    */
   constructor(
     public readonly ref: string,
     public readonly candidates: RefCandidate[],
+    public readonly entity: RefEntity = "task",
   ) {
     super(`Ref '${ref}' matches ${candidates.length} teams`);
     this.name = "RefAmbiguityError";
@@ -73,9 +86,13 @@ export class RefAmbiguityError extends Error {
 export class MalformedRefError extends Error {
   /**
    * @param input - The rejected input string.
+   * @param entity - The entity kind the input should have named.
    */
-  constructor(public readonly input: string) {
-    super(`'${input}' is not a taskRef or UUID`);
+  constructor(
+    public readonly input: string,
+    public readonly entity: RefEntity = "task",
+  ) {
+    super(`'${input}' is not a ${entity}Ref or UUID`);
     this.name = "MalformedRefError";
   }
 }
@@ -110,6 +127,7 @@ export class RefNotFoundError extends Error {
     public readonly projectIdentifier?: string,
     public readonly maxSequenceNumber?: number,
     public readonly nearMisses: NearMissProject[] = [],
+    public readonly entity: RefEntity = "task",
   ) {
     super(`Ref '${ref}' not found`);
     this.name = "RefNotFoundError";
@@ -353,4 +371,114 @@ export async function resolveProjectRef(
     throw new RefAmbiguityError(parsed.value, rows.map(toProjectCandidate));
   }
   throw new RefNotFoundError(parsed.value);
+}
+
+/** A resolved note ref, slug, or passed-through note UUID. */
+export type ResolvedNoteRef = {
+  /** Note UUID. */
+  noteId: string;
+  /** Owning project id — set only when a ref or slug was resolved. */
+  projectId?: string;
+  /** Composed noteRef — set only when a ref or slug was resolved. */
+  noteRef?: string;
+};
+
+/**
+ * Project a note-ref row to a resolved result.
+ *
+ * @param row - Lookup row.
+ * @returns Resolved note ref.
+ */
+function toResolvedNote(row: NoteRefRow): ResolvedNoteRef {
+  return {
+    noteId: row.note_id,
+    projectId: row.project_id,
+    noteRef: composeNoteRef(asIdentifier(row.identifier), row.sequence_number),
+  };
+}
+
+/**
+ * Project a note-ref row to an ambiguity candidate.
+ *
+ * @param row - Lookup row.
+ * @returns Candidate with noteId set.
+ */
+function toNoteCandidate(row: NoteRefRow): RefCandidate {
+  return {
+    noteId: row.note_id,
+    projectId: row.project_id,
+    projectTitle: row.project_title,
+    teamName: row.team_name,
+  };
+}
+
+/**
+ * Resolve a note ref (`PYZ-N12`), a project-scoped slug, or a note UUID to
+ * a note id, org-bounded and read-only. A UUID passes through WITHOUT any
+ * query — the downstream access assertion happens at the call site. A ref
+ * is matched case-insensitively against visible projects; live notes only
+ * (a trashed note's ref does not resolve — restore addresses it by UUID).
+ * A non-ref, non-UUID input is treated as a slug, which requires
+ * `projectId` for scope.
+ *
+ * @param ctx - Resolved auth context.
+ * @param refOrId - A noteRef like `PYZ-N12`, a slug, or a note UUID.
+ * @param projectId - Project UUID scoping a slug lookup; ignored for refs
+ *   and UUIDs.
+ * @returns The note id, plus projectId and noteRef when a ref was resolved.
+ * @throws MalformedRefError when the input is a slug shape but no
+ *   projectId was supplied.
+ * @throws RefAmbiguityError when the ref matches two of the caller's teams.
+ * @throws RefNotFoundError when the ref or slug does not resolve.
+ */
+export async function resolveNoteRef(
+  ctx: AuthContext,
+  refOrId: string,
+  projectId?: string,
+): Promise<ResolvedNoteRef> {
+  if (isUuid(refOrId)) return { noteId: refOrId };
+
+  const match = refOrId.match(NOTE_REF_PATTERN);
+  if (!match) {
+    if (projectId === undefined) throw new MalformedRefError(refOrId, "note");
+    const [rowsRaw] = await withUserContextRead(ctx.userId, (read) => [
+      noteSlugLookupStmt(read, projectId, refOrId),
+    ]);
+    const rows = normalizeExecuteResult<NoteRefRow>(rowsRaw);
+    if (rows.length === 1) return toResolvedNote(rows[0]);
+    throw new RefNotFoundError(refOrId, undefined, undefined, [], "note");
+  }
+
+  const prefix = match[1].toUpperCase();
+  const seq = seqInRange(match[2]);
+  if (seq !== null) {
+    const [rowsRaw] = await withUserContextRead(ctx.userId, (read) => [
+      noteRefLookupStmt(read, prefix, seq),
+    ]);
+    const rows = normalizeExecuteResult<NoteRefRow>(rowsRaw);
+    if (rows.length === 1) return toResolvedNote(rows[0]);
+    if (rows.length > 1) {
+      throw new RefAmbiguityError(refOrId, rows.map(toNoteCandidate), "note");
+    }
+  }
+
+  const [nearMissRaw] = await withUserContextRead(ctx.userId, (read) => [
+    noteRefNearMissStmt(read, prefix),
+  ]);
+  const nearMissRows = normalizeExecuteResult<NearMissRow>(nearMissRaw);
+  if (nearMissRows.length > 0) {
+    const [first] = nearMissRows;
+    throw new RefNotFoundError(
+      refOrId,
+      first.identifier,
+      first.max_sequence_number ?? undefined,
+      nearMissRows.map((r) => ({
+        identifier: r.identifier,
+        teamName: r.team_name,
+        maxSequenceNumber: r.max_sequence_number,
+      })),
+      "note",
+    );
+  }
+  throw new RefNotFoundError(refOrId, undefined, undefined, [], "note");
 }

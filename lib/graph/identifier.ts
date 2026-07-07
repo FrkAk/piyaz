@@ -119,6 +119,13 @@ export function composeNoteRef(
   return `${identifier}-N${sequenceNumber}`;
 }
 
+/**
+ * Shape rule for a composed note reference (e.g. "MYM-N23"). The `N`
+ * segment keeps note refs disjoint from task refs (`MYM-23`), so one
+ * string parses as exactly one entity kind.
+ */
+export const NOTE_REF_PATTERN = /^([A-Z0-9]{2,12})-N(\d+)$/i;
+
 /** A task enriched with its composed taskRef. */
 export type TaskWithRef<T = { sequenceNumber: number }> = T & {
   taskRef: TaskRef;
