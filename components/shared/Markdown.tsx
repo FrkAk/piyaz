@@ -1,6 +1,6 @@
 "use client";
 
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { CodeBlock } from "@/components/shared/CodeBlock";
@@ -49,23 +49,37 @@ export interface MarkdownProps {
   children: string;
   /** @param className - Additional classes appended to the prose wrapper. */
   className?: string;
+  /** @param remarkPlugins - Extra remark plugins appended after GFM. */
+  remarkPlugins?: Options["remarkPlugins"];
+  /** @param components - Component overrides merged over the defaults. */
+  components?: Components;
+  /** @param sanitizeSchema - Replacement sanitize schema (defaults to built-in). */
+  sanitizeSchema?: object;
 }
 
 /**
  * Shared markdown renderer with GFM support and XSS sanitization. Fenced
  * code blocks render through {@link CodeBlock} with lazy Shiki syntax
- * highlighting; inline code stays plain.
+ * highlighting; inline code stays plain. Callers may append remark plugins,
+ * override components, or replace the sanitize schema to add inline
+ * affordances (e.g. note task-ref chips and `[[wiki]]` links).
  * @param props - Markdown configuration.
  * @returns A prose-styled div wrapping sanitized, GFM-enabled markdown.
  */
-export function Markdown({ children, className = "" }: MarkdownProps) {
+export function Markdown({
+  children,
+  className = "",
+  remarkPlugins,
+  components: extraComponents,
+  sanitizeSchema,
+}: MarkdownProps) {
   const wrapperClass = className ? `prose-spec ${className}` : "prose-spec";
   return (
     <div className={wrapperClass}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeSanitize, schema]]}
-        components={components}
+        remarkPlugins={[remarkGfm, ...(remarkPlugins ?? [])]}
+        rehypePlugins={[[rehypeSanitize, sanitizeSchema ?? schema]]}
+        components={{ ...components, ...extraComponents }}
       >
         {children}
       </ReactMarkdown>
