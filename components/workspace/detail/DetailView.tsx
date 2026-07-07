@@ -31,6 +31,7 @@ import { DescriptionSection } from "./DescriptionSection";
 import { CriteriaSection } from "./CriteriaSection";
 import { DecisionsSection } from "./DecisionsSection";
 import { LinksSection } from "./LinksSection";
+import { LinkedNotesSection } from "./LinkedNotesSection";
 import { RelationshipsSection } from "./RelationshipsSection";
 import { ExecutionSection } from "./ExecutionSection";
 import { ActivitySection } from "./ActivitySection";
@@ -61,6 +62,10 @@ interface DetailViewProps {
   allTasks: TaskGraphSlim[];
   /** Map of task IDs to title/status/taskRef. */
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
+  /** Project prefix (e.g. `MYM`) for the linked-note ref chip. */
+  projectIdentifier: string;
+  /** Open a linked note on the Notes surface. */
+  onOpenNote: (noteId: string) => void;
   /** Whether the property rail drawer is open (1024–1279px / mobile). */
   drawerOpen: boolean;
   /** Toggle the drawer. */
@@ -112,6 +117,8 @@ export function DetailView({
   edges,
   allTasks,
   taskMap,
+  projectIdentifier,
+  onOpenNote,
   drawerOpen,
   onToggleDrawer,
   onClose,
@@ -248,6 +255,14 @@ export function DetailView({
               taskId={taskId}
               links={(task.links as TaskLinkRef[] | undefined) ?? []}
               onGraphChange={onGraphChange}
+            />
+
+            <LinkedNotesSection
+              projectId={projectId}
+              taskId={taskId}
+              taskRef={task.taskRef}
+              projectIdentifier={projectIdentifier}
+              onOpenNote={onOpenNote}
             />
 
             <ExecutionSection record={task.executionRecord} />

@@ -27,6 +27,10 @@ interface DetailPanelProps {
   allTasks: TaskGraphSlim[];
   /** Map of task IDs to title/status/taskRef. */
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
+  /** Project prefix (e.g. `MYM`) for the linked-note ref chip. */
+  projectIdentifier: string;
+  /** Open a linked note on the Notes surface. */
+  onOpenNote: (noteId: string) => void;
   /** Whether the property rail drawer is open. */
   drawerOpen: boolean;
   /** Toggle the drawer. */
@@ -78,6 +82,8 @@ export function DetailPanel({
   allEdges,
   allTasks,
   taskMap,
+  projectIdentifier,
+  onOpenNote,
   drawerOpen,
   onToggleDrawer,
   onClose,
@@ -103,6 +109,8 @@ export function DetailPanel({
         edges={edges}
         allTasks={allTasks}
         taskMap={taskMap}
+        projectIdentifier={projectIdentifier}
+        onOpenNote={onOpenNote}
         drawerOpen={drawerOpen}
         onToggleDrawer={onToggleDrawer}
         onClose={onClose}
