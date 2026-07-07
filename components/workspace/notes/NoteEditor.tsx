@@ -7,6 +7,29 @@ import { EditHint } from "@/components/shared/EditHint";
 import { NoteMarkdown } from "./NoteMarkdown";
 import { useWikiAutocomplete } from "./useWikiAutocomplete";
 
+/** Approx editor line height (px), for aligning the caret to the click. */
+const EDITOR_LINE_HEIGHT = 20;
+
+/**
+ * Nearest scrollable ancestor of an element, or null.
+ *
+ * @param el - Starting element.
+ * @returns The first ancestor that scrolls vertically, or null.
+ */
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  let node = el.parentElement;
+  while (node) {
+    const oy = getComputedStyle(node).overflowY;
+    if (
+      (oy === "auto" || oy === "scroll") &&
+      node.scrollHeight > node.clientHeight
+    )
+      return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
 interface NoteEditorProps {
   /** @param body - Raw markdown body, the single source of truth. */
   body: string;
@@ -36,6 +59,7 @@ export function NoteEditor({
   onCommitBody,
 }: NoteEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const clickYRef = useRef<number | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(body);
   const [caret, setCaret] = useState(0);
@@ -59,9 +83,21 @@ export function NoteEditor({
     requestAnimationFrame(() => {
       const el = containerRef.current?.querySelector("textarea");
       if (!el) return;
-      el.focus();
+      // Focus without the browser scrolling the tall textarea's top into
+      // view (which would jump the page to the note's beginning).
+      el.focus({ preventScroll: true });
       el.setSelectionRange(entryCaret, entryCaret);
       setCaret(entryCaret);
+      // Keep the clicked line where the user clicked it: scroll the pane so
+      // the caret line sits at the double-click's viewport Y.
+      const clickY = clickYRef.current;
+      clickYRef.current = null;
+      if (clickY === null) return;
+      const lineIdx = body.slice(0, entryCaret).split("\n").length - 1;
+      const caretY =
+        el.getBoundingClientRect().top + lineIdx * EDITOR_LINE_HEIGHT;
+      const pane = scrollParent(el);
+      if (pane) pane.scrollTop += caretY - clickY;
     });
     // Seed the caret once on entering edit; later caret updates must not
     // re-run this or they would fight the user's selection.
@@ -88,7 +124,6 @@ export function NoteEditor({
     return (
       <div ref={containerRef} className="prose-spec relative">
         <AutoGrowTextarea
-          autoFocus
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value);
@@ -141,6 +176,7 @@ export function NoteEditor({
           target.closest("[data-src-line]")?.getAttribute("data-src-line") ??
             "1",
         );
+        clickYRef.current = e.clientY;
         beginEdit(offsetForLine(line));
       }}
       onKeyDown={(e) => {
