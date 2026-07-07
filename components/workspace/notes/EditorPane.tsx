@@ -20,6 +20,11 @@ import { formatRelative } from "@/lib/ui/relative-time";
 import { NoteEditor } from "./NoteEditor";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import {
+  shouldAdoptServerTitle,
+  shouldClearDirty,
+  shouldCommitTitle,
+} from "./title-reconcile";
+import {
   NoteLinkContext,
   type NoteLinkContextValue,
   type NoteLinkTarget,
@@ -150,9 +155,19 @@ function EditorBody({
   const autosave = useNoteAutosave(projectId, noteId);
   const note = data?.note;
   const [title, setTitle] = useState<string | null>(null);
+  const [seenServerTitle, setSeenServerTitle] = useState<string | null>(null);
+  const [focused, setFocused] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  if (title === null && note !== undefined) setTitle(note.title);
+  if (
+    note !== undefined &&
+    note.title !== seenServerTitle &&
+    shouldAdoptServerTitle({ dirty, focused })
+  ) {
+    setSeenServerTitle(note.title);
+    setTitle(note.title);
+  }
 
   const ready = note !== undefined;
   useEffect(() => {
@@ -168,10 +183,24 @@ function EditorBody({
   const commitRef = useRef<() => void>(() => {});
   useEffect(() => {
     commitRef.current = () => {
-      if (note === undefined || note.locked) return;
-      if (title === null || title === note.title) return;
-      autosave.commit({ title });
-      void autosave.flush();
+      if (note === undefined || title === null) return;
+      if (
+        shouldCommitTitle({
+          dirty,
+          localTitle: title,
+          serverTitle: note.title,
+          locked: note.locked,
+        })
+      ) {
+        autosave.commit({ title });
+        void autosave.flush();
+        setDirty(false);
+        return;
+      }
+      if (
+        shouldClearDirty({ dirty, localTitle: title, serverTitle: note.title })
+      )
+        setDirty(false);
     };
   });
   useEffect(() => () => commitRef.current(), []);
@@ -313,8 +342,15 @@ function EditorBody({
       <input
         ref={inputRef}
         value={title ?? ""}
-        onChange={(e) => setTitle(e.target.value)}
-        onBlur={() => commitRef.current()}
+        onChange={(e) => {
+          setTitle(e.target.value);
+          setDirty(true);
+        }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          commitRef.current();
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") commitRef.current();
         }}
