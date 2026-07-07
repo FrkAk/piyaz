@@ -5,19 +5,17 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { usePathname } from "next/navigation";
-import { AnimatePresence, motion } from "motion/react";
 import {
   SidebarPanel,
   type SidebarTeam,
   type SidebarUser,
 } from "@/components/layout/Sidebar";
 import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
-import { useModalChrome } from "@/hooks/useModalChrome";
+import { Drawer } from "@/components/shared/Drawer";
 import { IconX } from "@/components/shared/icons";
 
 interface MobileNavValue {
@@ -97,8 +95,6 @@ export function MobileNavDrawer({
   const { open, closeNav } = useMobileNav();
   const { openPalette } = useCommandPalette();
   const pathname = usePathname();
-  const panelRef = useRef<HTMLElement | null>(null);
-  useModalChrome(open, closeNav, panelRef);
 
   useEffect(() => {
     closeNav();
@@ -111,45 +107,27 @@ export function MobileNavDrawer({
   }, [closeNav, openPalette]);
 
   return (
-    <AnimatePresence>
-      {open && (
-        <div className="lg:hidden">
-          <motion.div
-            key="mobile-nav-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-40 bg-black/45"
-            onClick={closeNav}
-            aria-hidden="true"
-          />
-          <motion.aside
-            key="mobile-nav-panel"
-            ref={panelRef}
-            initial={{ x: "-100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "-100%" }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed left-0 top-0 z-50 flex h-[var(--viewport-height)] w-[var(--sidebar-w)] max-w-[85vw] flex-col border-r border-border shadow-[var(--shadow-float)]"
-            style={{ background: "var(--color-base-2)" }}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Navigation"
-          >
-            <SidebarPanel
-              user={user}
-              workspaceLabel={workspaceLabel}
-              teams={teams}
-              dismissLabel="Close navigation"
-              dismissIcon={<IconX size={13} />}
-              onDismiss={closeNav}
-              onOpenPalette={handleOpenPalette}
-            />
-          </motion.aside>
-        </div>
-      )}
-    </AnimatePresence>
+    <Drawer
+      open={open}
+      onClose={closeNav}
+      side="left"
+      width="var(--sidebar-w)"
+      label="Navigation"
+      modal
+      fullHeight
+      wrapperClassName="lg:hidden"
+      panelClassName="bg-[var(--color-base-2)]"
+    >
+      <SidebarPanel
+        user={user}
+        workspaceLabel={workspaceLabel}
+        teams={teams}
+        dismissLabel="Close navigation"
+        dismissIcon={<IconX size={13} />}
+        onDismiss={closeNav}
+        onOpenPalette={handleOpenPalette}
+      />
+    </Drawer>
   );
 }
 
