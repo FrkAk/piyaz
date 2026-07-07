@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   shouldAdoptServerTitle,
+  shouldClearDirty,
   shouldCommitTitle,
 } from "@/components/workspace/notes/title-reconcile";
 
@@ -71,5 +72,26 @@ test("shouldCommitTitle skips a null local title", () => {
       serverTitle: "old",
       locked: false,
     }),
+  ).toBe(false);
+});
+
+test("shouldClearDirty clears a dirty edit that reverted to the server value", () => {
+  expect(
+    shouldClearDirty({ dirty: true, localTitle: "same", serverTitle: "same" }),
+  ).toBe(true);
+});
+
+test("shouldClearDirty leaves a dirty diverged edit alone", () => {
+  expect(
+    shouldClearDirty({ dirty: true, localTitle: "new", serverTitle: "old" }),
+  ).toBe(false);
+});
+
+test("shouldClearDirty is a no-op when not dirty or unseeded", () => {
+  expect(
+    shouldClearDirty({ dirty: false, localTitle: "same", serverTitle: "same" }),
+  ).toBe(false);
+  expect(
+    shouldClearDirty({ dirty: true, localTitle: null, serverTitle: "old" }),
   ).toBe(false);
 });

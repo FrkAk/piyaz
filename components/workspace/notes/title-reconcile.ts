@@ -28,6 +28,16 @@ export interface CommitTitleInput {
   locked: boolean;
 }
 
+/** Provenance inputs for {@link shouldClearDirty}. */
+export interface ClearDirtyInput {
+  /** @param dirty - The input holds user edits not yet committed. */
+  dirty: boolean;
+  /** @param localTitle - The editor's local title, or null before seeding. */
+  localTitle: string | null;
+  /** @param serverTitle - The note's current cached title. */
+  serverTitle: string;
+}
+
 /**
  * Decide whether the editor should adopt the server title into local state.
  * Adoption is safe only when the input is idle: no uncommitted edits and no
@@ -61,4 +71,23 @@ export function shouldCommitTitle({
   locked,
 }: CommitTitleInput): boolean {
   return dirty && !locked && localTitle !== null && localTitle !== serverTitle;
+}
+
+/**
+ * Decide whether a dirty flag should be cleared without a commit. A dirty edit
+ * that has converged back to the server value (the user typed then reverted to
+ * the same text) has nothing to write, yet leaving it dirty wedges the flag
+ * true for the session: it blocks {@link shouldAdoptServerTitle} from adopting
+ * a later external rename, then lets the blur/unmount commit write the stale
+ * local title over that rename (PYZ-301).
+ *
+ * @param input - Dirty, local title, and server title provenance.
+ * @returns True when the flag should be cleared because the edit netted to no change.
+ */
+export function shouldClearDirty({
+  dirty,
+  localTitle,
+  serverTitle,
+}: ClearDirtyInput): boolean {
+  return dirty && localTitle !== null && localTitle === serverTitle;
 }

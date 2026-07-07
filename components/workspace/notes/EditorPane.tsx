@@ -19,7 +19,11 @@ import type { TaskStatus } from "@/lib/types";
 import { formatRelative } from "@/lib/ui/relative-time";
 import { NoteEditor } from "./NoteEditor";
 import { NOTE_TYPE_META, tint } from "./note-meta";
-import { shouldAdoptServerTitle, shouldCommitTitle } from "./title-reconcile";
+import {
+  shouldAdoptServerTitle,
+  shouldClearDirty,
+  shouldCommitTitle,
+} from "./title-reconcile";
 import {
   NoteLinkContext,
   type NoteLinkContextValue,
@@ -181,17 +185,22 @@ function EditorBody({
     commitRef.current = () => {
       if (note === undefined || title === null) return;
       if (
-        !shouldCommitTitle({
+        shouldCommitTitle({
           dirty,
           localTitle: title,
           serverTitle: note.title,
           locked: note.locked,
         })
-      )
+      ) {
+        autosave.commit({ title });
+        void autosave.flush();
+        setDirty(false);
         return;
-      autosave.commit({ title });
-      void autosave.flush();
-      setDirty(false);
+      }
+      if (
+        shouldClearDirty({ dirty, localTitle: title, serverTitle: note.title })
+      )
+        setDirty(false);
     };
   });
   useEffect(() => () => commitRef.current(), []);

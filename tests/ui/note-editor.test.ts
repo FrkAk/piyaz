@@ -25,6 +25,7 @@ test("EditorPane reconciles the title through the pure predicates and a dirty re
   ).text();
   expect(src).toContain("shouldAdoptServerTitle");
   expect(src).toContain("shouldCommitTitle");
+  expect(src).toContain("shouldClearDirty");
   expect(src).toMatch(/const \[dirty, setDirty\] = useState/);
   expect(src).toContain("setDirty(true)");
   expect(src).not.toContain("if (title === null && note !== undefined)");
