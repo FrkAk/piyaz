@@ -5,7 +5,7 @@ import { test, expect } from "bun:test";
  * these would let untrusted note content reach the DOM as markup.
  */
 const RENDER_PATH_FILES = [
-  ...new Bun.Glob("components/workspace/notes/*.tsx").scanSync("."),
+  ...new Bun.Glob("components/workspace/notes/**/*.tsx").scanSync("."),
   "components/shared/Markdown.tsx",
   "components/shared/CodeBlock.tsx",
   "lib/ui/highlighter.ts",
