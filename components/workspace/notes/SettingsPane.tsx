@@ -159,7 +159,11 @@ function pruneExpired(
   return live.length === limits.size ? limits : new Map(live);
 }
 
-/** A short, human-facing line for a typed action failure. */
+/**
+ * A short, human-facing line for a typed action failure.
+ * @param failure - The typed failure from a note action.
+ * @returns One-line copy for the control's inline error slot.
+ */
 function failureCopy(failure: NoteActionFailure): string {
   switch (failure.code) {
     case "stale_write":
@@ -724,7 +728,7 @@ function AccessSlider({
         style={{
           background: "var(--color-surface)",
           border: "1px solid var(--color-border)",
-          opacity: pending ? 0.7 : 1,
+          opacity: disabled ? 0.55 : pending ? 0.7 : 1,
         }}
       >
         <span
@@ -1079,7 +1083,9 @@ function FeedTaskPicker({
           disabled={disabled}
           onChange={(e) => {
             setQuery(e.target.value);
-            setHighlightIdx(e.target.value.trim() === "" ? -1 : 0);
+            setHighlightIdx(
+              e.target.value.trim() === "" ? -1 : selectedIds.length,
+            );
           }}
           onKeyDown={onSearchKeyDown}
           role="combobox"

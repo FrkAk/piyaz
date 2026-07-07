@@ -218,8 +218,9 @@ export class NoteShareStateError extends Error {
 /**
  * Thrown when a write targets a locked note. `locked` is a universal
  * write gate: every client (web actions and MCP alike) is read-only on a
- * locked note, and the only write {@link updateNote} accepts is the
- * unlock patch itself (`locked: false`).
+ * locked note, and {@link updateNote} accepts a write only when it
+ * unlocks the note (`locked: false`), which may bundle other field
+ * changes in the same patch.
  */
 export class NoteLockedError extends Error {
   constructor() {
@@ -1627,8 +1628,8 @@ export async function createNote(
  *   typed instead of a raw 42501).
  * @throws ProjectArchivedError when the project is archived.
  * @throws NoteLockedError when the note is locked and the patch does not
- *   carry `locked: false`; the unlock is the only write a locked note
- *   accepts.
+ *   carry `locked: false`; a locked note accepts a write only when it
+ *   unlocks, though that unlock patch may bundle other field changes.
  * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches, carrying the
  *   live `updatedAt` and `version`.
  * @throws NoteValidationError on cap violations or a malformed

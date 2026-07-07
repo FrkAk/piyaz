@@ -175,6 +175,7 @@ export function NotesView({
         </div>
         {isXl && noteId !== null && !settingsCollapsed && (
           <SettingsPane
+            key={noteId}
             projectId={projectId}
             noteId={noteId}
             categories={categories}
@@ -192,6 +193,7 @@ export function NotesView({
           >
             {noteId !== null && (
               <SettingsPane
+                key={noteId}
                 fill
                 projectId={projectId}
                 noteId={noteId}
@@ -258,6 +260,7 @@ export function NotesView({
       >
         {noteId !== null && (
           <SettingsPane
+            key={noteId}
             fill
             projectId={projectId}
             noteId={noteId}

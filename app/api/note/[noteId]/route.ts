@@ -6,7 +6,7 @@ import { broker } from "@/lib/realtime/broker";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 
-/** TTL for fetch-implicit note subscriptions — 10 minutes. */
+/** TTL for fetch-implicit note subscriptions: 10 minutes. */
 const NOTE_SUBSCRIPTION_TTL_MS = 10 * 60_000;
 
 /**

@@ -5,6 +5,7 @@ import type { NoteTreeRow } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
 import {
   clearNoteDirty,
+  enqueueNoteWrite,
   markNoteDirty,
   notePlaceholderFromRow,
 } from "@/lib/query/note-cache";
@@ -111,9 +112,35 @@ describe("applyRealtimeEvent note case", () => {
     expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
   });
 
-  test("an event without updatedAt (delete) invalidates the list", async () => {
+  test("an event without updatedAt (delete) invalidates the list and detail", async () => {
     const qc = seededClient(when);
     await applyRealtimeEvent(qc, noteEvent());
     expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(true);
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(true);
+  });
+
+  test("waits for an in-flight write to merge before judging freshness", async () => {
+    const qc = seededClient(when);
+    const later = new Date("2026-07-01T11:00:00.000Z");
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const write = enqueueNoteWrite(NOTE, async () => {
+      await gate;
+      qc.setQueryData(noteKeys.list(PROJECT), [row(later)]);
+      qc.setQueryData(
+        noteKeys.detail(PROJECT, NOTE),
+        notePlaceholderFromRow(PROJECT, row(later)),
+      );
+    });
+
+    const applied = applyRealtimeEvent(qc, noteEvent(later));
+    release?.();
+    await write;
+    await applied;
+
+    expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
   });
 });

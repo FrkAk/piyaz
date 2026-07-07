@@ -36,10 +36,12 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   `lib/realtime/events.ts` is paired with a `project` dispatch that already
  *   invalidates the graph. If `emitTaskEvent` ever stops emitting the paired
  *   project event, restore the graph invalidation here.
- * - `note` events ride the `project:<projectId>` subscription (team notes
- *   only) and are judged by {@link handleNoteEvent} after any in-flight
- *   local write for that note settles, so the actor's own event, which can
- *   outrun the mutation response, never triggers a redundant refetch.
+ * - `note` events ride the `project:<projectId>` subscription for team notes
+ *   and the `note:<noteId>` subscription for private notes (see
+ *   `lib/realtime/events.ts`), and are judged by {@link handleNoteEvent}
+ *   after any in-flight local write for that note settles, so the actor's
+ *   own event, which can outrun the mutation response, never triggers a
+ *   redundant refetch.
  * - `project-list` events invalidate the home grid.
  * - `project-deleted` events invalidate the home grid and drop the
  *   workspace's slim-graph cache entry.
