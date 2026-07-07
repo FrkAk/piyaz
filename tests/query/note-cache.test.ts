@@ -227,6 +227,7 @@ describe("mergeLinksIntoDetail", () => {
       {
         id: "n2",
         slug: "slug-n2",
+        sequenceNumber: 2,
         title: "Other note",
         type: "reference",
         folder: "",

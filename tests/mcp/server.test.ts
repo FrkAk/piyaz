@@ -39,7 +39,7 @@ async function connectedClient(userId: string): Promise<Client> {
   return client;
 }
 
-test("listTools returns exactly the 8 tools with titles", async () => {
+test("listTools returns exactly the 9 tools with titles", async () => {
   const fx = await seedUserOrgProject("MCPLIST");
   const client = await connectedClient(fx.userId);
 
@@ -51,6 +51,7 @@ test("listTools returns exactly the 8 tools with titles", async () => {
     "piyaz_get",
     "piyaz_link",
     "piyaz_map",
+    "piyaz_note",
     "piyaz_search",
     "piyaz_workspace",
   ]);

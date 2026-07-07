@@ -1,0 +1,864 @@
+/**
+ * `piyaz_note` handler: the agent write-back surface over the Notes data
+ * ring. The data layer (`lib/data/note.ts`) owns validation, access
+ * gating, and application; this layer resolves refs, validates action
+ * coherence, renders slim ref-first responses, and steers the write-back
+ * flywheel through `_hints`. Governance fields (`visibility`, `locked`,
+ * `agent_writable`) are absent from the schema by design; PYZ-252 layers
+ * the runtime rejections.
+ */
+
+import {
+  applyNoteEditOps,
+  createNotesBatch,
+  createNoteTaskLink,
+  deleteNote,
+  deleteNotePreview,
+  getNoteFull,
+  getNoteRevision,
+  getNoteTreeForAgent,
+  listNoteRevisions,
+  moveFolder,
+  moveNote,
+  removeNoteTaskLink,
+  requestShare,
+  restoreNote,
+  searchNotesForMcp,
+  type CreateNoteBatchItem,
+  type DeliberateNoteTaskLinkKind,
+  type LinkedNoteSlim,
+  type NoteEditOp,
+  type NoteFullResult,
+  type NoteSummary,
+  type NoteTreeRow,
+} from "@/lib/data/note";
+import { extractSection, listSections } from "@/lib/data/note-parse";
+import { resolveTaskRefs } from "@/lib/data/resolve-ref";
+import { isUuid } from "@/lib/auth/authorization";
+import { untrustedContentNotice } from "@/lib/context/format";
+import { budgetLines } from "@/lib/mcp/budget";
+import { NOTE_FIELD_ENUM } from "@/lib/mcp/schemas";
+import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
+import type { AuthContext } from "@/lib/auth/context";
+import {
+  ok,
+  fail,
+  requireNoteId,
+  requireProjectId,
+  requireTaskId,
+  translateError,
+  type ToolResult,
+} from "@/lib/graph/tools/shared";
+
+/** A note field addressable by `read fields=[...]`. */
+export type NoteFieldName = (typeof NOTE_FIELD_ENUM)[number];
+
+/** One note in a `piyaz_note create` batch, feed task ids as refs. */
+export type NoteCreateParam = Omit<CreateNoteBatchItem, "feedTaskIds"> & {
+  feedTaskIds?: string[];
+};
+
+/** Params for piyaz_note. */
+export type NoteParams = {
+  action:
+    | "create"
+    | "read"
+    | "edit"
+    | "list"
+    | "move"
+    | "delete"
+    | "restore"
+    | "request_share"
+    | "link"
+    | "unlink"
+    | "search";
+  project?: string;
+  note?: string;
+  notes?: NoteCreateParam[];
+  onDuplicate?: "skip" | "error";
+  fields?: NoteFieldName[];
+  heading?: string;
+  revision?: number;
+  operations?: NoteEditOp[];
+  ifUpdatedAt?: string;
+  folder?: string;
+  destParent?: string;
+  newLeaf?: string;
+  preview?: boolean;
+  task?: string;
+  kind?: DeliberateNoteTaskLinkKind;
+  query?: string;
+  limit?: number;
+};
+
+/** Row cap for the `list` tree rendering. */
+const LIST_LINE_CAP = 100;
+
+/** Hits `search` returns at most, matching the data-layer LIMIT. */
+const SEARCH_HIT_CAP = 20;
+
+/**
+ * Compose the noteRef for any summary-shaped row.
+ *
+ * @param row - Row carrying the ref parts.
+ * @returns Composed noteRef (e.g. `PYZ-N12`).
+ */
+function refOf(row: {
+  projectIdentifier: string;
+  sequenceNumber: number;
+}): string {
+  return composeNoteRef(asIdentifier(row.projectIdentifier), row.sequenceNumber);
+}
+
+/**
+ * Resolve the `note` param, scoping slug lookups by the `project` param.
+ *
+ * @param ctx - Resolved auth context.
+ * @param p - Note params.
+ * @returns The note UUID.
+ */
+async function resolveNoteParam(
+  ctx: AuthContext,
+  p: NoteParams,
+): Promise<string> {
+  const projectId =
+    p.project === undefined
+      ? undefined
+      : await requireProjectId(ctx, p.project);
+  return requireNoteId(ctx, p.note as string, projectId);
+}
+
+/**
+ * Resolve feed task refs (`PYZ-42`) to UUIDs across create items or edit
+ * op values. UUIDs pass through; an unresolved ref fails the whole call.
+ *
+ * @param ctx - Resolved auth context.
+ * @param refs - Mixed refs and UUIDs.
+ * @returns UUIDs in input order, or the corrective failure message.
+ */
+async function resolveFeedTaskRefs(
+  ctx: AuthContext,
+  refs: string[],
+): Promise<{ ids: string[] } | { error: string }> {
+  const resolved = await resolveTaskRefs(ctx, refs);
+  const ids: string[] = [];
+  const missing: string[] = [];
+  for (const ref of refs) {
+    const hit = resolved.get(ref);
+    if (hit) ids.push(hit.taskId);
+    else missing.push(ref);
+  }
+  if (missing.length > 0) {
+    return {
+      error: `feedTaskIds contains unresolved task ref(s): ${missing.join(", ")}. Fix or drop them and retry; no writes happened.`,
+    };
+  }
+  return { ids };
+}
+
+/**
+ * Render one tree/search row as a dense ref-first line.
+ *
+ * @param row - Slim tree row.
+ * @param identifier - Owning project identifier.
+ * @returns One markdown list line.
+ */
+function noteLine(row: NoteTreeRow, identifier: string): string {
+  const ref = composeNoteRef(asIdentifier(identifier), row.sequenceNumber);
+  const flags = [
+    row.type,
+    row.visibility === "private" ? "private" : `feed=${""}`,
+  ];
+  void flags;
+  const governance = [
+    row.visibility === "private" ? "private" : null,
+    row.locked ? "locked" : null,
+    row.agentWritable ? null : "agent-read-only",
+  ].filter(Boolean);
+  const suffix = governance.length > 0 ? ` (${governance.join(", ")})` : "";
+  const summary = row.summary === "" ? "" : ` — ${row.summary}`;
+  return `- \`${ref}\` "${row.title}" [${row.type}]${suffix}${summary}`;
+}
+
+/**
+ * Render linked notes as ref-first lines.
+ *
+ * @param rows - Linked-note rows.
+ * @param identifier - Owning project identifier.
+ * @returns Markdown list lines.
+ */
+function linkedNoteLines(
+  rows: LinkedNoteSlim[],
+  identifier: string,
+): string[] {
+  return rows.map(
+    (row) =>
+      `- \`${composeNoteRef(asIdentifier(identifier), row.sequenceNumber)}\` "${row.title}" [${row.type}]`,
+  );
+}
+
+/**
+ * Render the raw value of one addressable field.
+ *
+ * @param field - Requested field.
+ * @param full - Full note read.
+ * @returns Markdown lines for the field.
+ */
+function renderNoteField(field: NoteFieldName, full: NoteFullResult): string[] {
+  const { note, projectIdentifier } = full;
+  switch (field) {
+    case "body":
+      return ["## body", "", note.body];
+    case "links":
+      return [
+        "## links",
+        `mentions (${full.mentions.length}):`,
+        ...full.mentions.map(
+          (m) => `- \`${m.taskRef}\` "${m.title}" [${m.kind}|${m.status}]`,
+        ),
+        `linksOut (${full.linksOut.length}):`,
+        ...linkedNoteLines(full.linksOut, projectIdentifier),
+        `linksIn (${full.linksIn.length}):`,
+        ...linkedNoteLines(full.linksIn, projectIdentifier),
+      ];
+    case "title":
+    case "summary":
+    case "folder":
+    case "type":
+    case "visibility":
+    case "feedMode":
+    case "category":
+      return [`${field}: ${JSON.stringify(note[field])}`];
+    case "feedCategories":
+    case "feedTags":
+    case "feedTaskIds":
+    case "tags":
+      return [`${field}: ${JSON.stringify(note[field])}`];
+    case "agentWritable":
+      return [`agentWritable: ${note.agentWritable}`];
+    case "locked":
+      return [`locked: ${note.locked}`];
+    case "revisions":
+      return [];
+  }
+}
+
+/**
+ * Render the default meta header for one note.
+ *
+ * @param full - Full note read.
+ * @returns Markdown text.
+ */
+function renderNoteMeta(full: NoteFullResult): string {
+  const { note, projectIdentifier } = full;
+  const ref = composeNoteRef(
+    asIdentifier(projectIdentifier),
+    note.sequenceNumber,
+  );
+  const feed =
+    note.feedMode === "none"
+      ? "none (searchable, never auto-injected)"
+      : note.feedMode === "categories"
+        ? `categories [${note.feedCategories.join(", ")}]`
+        : note.feedMode === "tags"
+          ? `tags [${note.feedTags.join(", ")}]`
+          : note.feedMode === "tasks"
+            ? `tasks (${note.feedTaskIds.length})`
+            : "all";
+  const sections = listSections(note.body);
+  const lines = [
+    untrustedContentNotice("working"),
+    "",
+    `# \`${ref}\` "${note.title}" [${note.type}]`,
+    `slug: ${note.slug} | folder: ${note.folder === "" ? "(root)" : note.folder} | visibility: ${note.visibility} | feed: ${feed}`,
+    `version: ${note.version} | locked: ${note.locked} | agentWritable: ${note.agentWritable}${note.shareRequestedBy ? " | share request pending" : ""}`,
+    `updatedAt: ${note.updatedAt.toISOString()} (pass as ifUpdatedAt on piyaz_note edit for a compare-and-swap)`,
+  ];
+  if (note.summary !== "") lines.push("", note.summary);
+  if (sections.length > 0) {
+    lines.push(
+      "",
+      `Sections (read one via heading='...'): ${sections.map((s) => s.text).join(" | ")}`,
+    );
+  }
+  if (full.mentions.length > 0) {
+    lines.push(
+      "",
+      `Mentions (${full.mentions.length}):`,
+      ...full.mentions.map(
+        (m) => `- \`${m.taskRef}\` "${m.title}" [${m.kind}|${m.status}]`,
+      ),
+    );
+  }
+  if (full.linksOut.length > 0) {
+    lines.push(
+      "",
+      `Links out (${full.linksOut.length}):`,
+      ...linkedNoteLines(full.linksOut, projectIdentifier),
+    );
+  }
+  if (full.linksIn.length > 0) {
+    lines.push(
+      "",
+      `Backlinks (${full.linksIn.length}):`,
+      ...linkedNoteLines(full.linksIn, projectIdentifier),
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Handle the `create` action: 1-10 notes, idempotent by (folder, title).
+ *
+ * @param p - Note params.
+ * @param ctx - Resolved auth context.
+ * @returns Tool result with refs for created and deduped notes.
+ */
+async function handleCreate(
+  p: NoteParams,
+  ctx: AuthContext,
+): Promise<ToolResult> {
+  if (!p.project || !p.notes || p.notes.length === 0) {
+    return fail(
+      "create requires project ('PYZ' or UUID) and notes=[...] (1-10 items with at least a title).",
+    );
+  }
+  const projectId = await requireProjectId(ctx, p.project);
+
+  const allFeedRefs = p.notes.flatMap((n) => n.feedTaskIds ?? []);
+  const pendingRefs = allFeedRefs.filter((r) => !isUuid(r));
+  let refMap = new Map<string, string>();
+  if (pendingRefs.length > 0) {
+    const resolved = await resolveFeedTaskRefs(ctx, allFeedRefs);
+    if ("error" in resolved) return fail(resolved.error);
+    refMap = new Map(allFeedRefs.map((r, i) => [r, resolved.ids[i]]));
+  }
+  const items: CreateNoteBatchItem[] = p.notes.map((n) => ({
+    ...n,
+    feedTaskIds: n.feedTaskIds?.map((r) => refMap.get(r) ?? r),
+  }));
+
+  const result = await createNotesBatch(ctx, projectId, items, {
+    visibility: "team",
+    onDuplicate: p.onDuplicate,
+  });
+
+  const hints: string[] = [];
+  const fedItems = p.notes.filter(
+    (n) => n.feedMode !== undefined && n.feedMode !== "none",
+  ).length;
+  if (result.created.length > 0 && fedItems === 0) {
+    hints.push(
+      "Created team-visible: teammates' agents can search these now. Nothing auto-injects into task bundles until feedMode is set (edit set feedMode='categories'/'tags'/'tasks'/'all').",
+    );
+  }
+  const missingSummaries = p.notes.filter(
+    (n) => n.summary === undefined || n.summary === "",
+  ).length;
+  if (result.created.length > 0 && missingSummaries > 0) {
+    hints.push(
+      `${missingSummaries} note(s) have no summary; summaries ride tree lists, search hits, and feed pointers — set them via edit.`,
+    );
+  }
+  if (result.deduped.length > 0) {
+    hints.push(
+      `${result.deduped.length} item(s) deduped by exact (folder, title); the returned refs point at the existing notes. Use edit to change them.`,
+    );
+  }
+
+  const slim = (s: NoteSummary) => ({
+    ref: refOf(s),
+    title: s.title,
+    folder: s.folder,
+    slug: s.slug,
+  });
+  return ok({
+    created: result.created.map(slim),
+    deduped: result.deduped.map(slim),
+    ...(hints.length > 0 && { _hints: hints }),
+  });
+}
+
+/**
+ * Handle the `read` action across its shapes: meta, fields, heading
+ * section, revision list, and revision snapshot.
+ *
+ * @param p - Note params.
+ * @param ctx - Resolved auth context.
+ * @returns Tool result.
+ */
+async function handleRead(
+  p: NoteParams,
+  ctx: AuthContext,
+): Promise<ToolResult> {
+  const noteId = await resolveNoteParam(ctx, p);
+
+  if (p.revision !== undefined) {
+    const result = await getNoteRevision(ctx, noteId, p.revision);
+    const ref = refOf(result);
+    if (result.snapshot === null) {
+      return fail(
+        `\`${ref}\` has no revision ${p.revision}. Available versions: ${
+          result.availableVersions.length > 0
+            ? result.availableVersions.join(", ")
+            : "none (revisions snapshot on body changes)"
+        }.`,
+      );
+    }
+    return ok(
+      [
+        untrustedContentNotice("working"),
+        "",
+        `# \`${ref}\` revision ${result.snapshot.version}`,
+        `title: ${JSON.stringify(result.snapshot.title)} | createdAt: ${result.snapshot.createdAt.toISOString()}`,
+        "",
+        result.snapshot.body,
+        "",
+        "_To restore this body: piyaz_note edit with one op {op:'set', field:'body', text:<this body>}._",
+      ].join("\n"),
+    );
+  }
+
+  const wantsRevisions = p.fields?.includes("revisions") ?? false;
+  const revisions = wantsRevisions
+    ? await listNoteRevisions(ctx, noteId)
+    : null;
+  const otherFields = (p.fields ?? []).filter((f) => f !== "revisions");
+  if (wantsRevisions && otherFields.length === 0 && p.heading === undefined) {
+    const rev = revisions as NonNullable<typeof revisions>;
+    return ok(
+      [
+        `# \`${refOf(rev)}\` revisions (live version ${rev.currentVersion})`,
+        ...rev.revisions.map(
+          (r) =>
+            `- v${r.version} "${r.title}" ${r.createdAt.toISOString()}`,
+        ),
+        "Read one via revision=<version>.",
+      ].join("\n"),
+    );
+  }
+
+  const full = await getNoteFull(ctx, noteId);
+  const ref = refOf({
+    projectIdentifier: full.projectIdentifier,
+    sequenceNumber: full.note.sequenceNumber,
+  });
+
+  if (p.heading !== undefined) {
+    const section = extractSection(full.note.body, p.heading);
+    if (section === null) {
+      const available = listSections(full.note.body);
+      return fail(
+        available.length > 0
+          ? `No heading "${p.heading}" in \`${ref}\`. Available: ${available.map((s) => s.text).join(" | ")}.`
+          : `\`${ref}\` has no markdown headings; read fields=['body'] instead.`,
+      );
+    }
+    return ok(
+      [
+        untrustedContentNotice("working"),
+        "",
+        `# \`${ref}\` section "${p.heading}"`,
+        `updatedAt: ${full.note.updatedAt.toISOString()} (pass as ifUpdatedAt on piyaz_note edit)`,
+        "",
+        section,
+      ].join("\n"),
+    );
+  }
+
+  if (otherFields.length > 0) {
+    const parts: string[] = [
+      untrustedContentNotice("working"),
+      "",
+      `# \`${ref}\` fields`,
+      `updatedAt: ${full.note.updatedAt.toISOString()} (pass as ifUpdatedAt on piyaz_note edit for a compare-and-swap)`,
+    ];
+    for (const field of otherFields) {
+      parts.push("", ...renderNoteField(field, full));
+    }
+    if (wantsRevisions && revisions) {
+      parts.push(
+        "",
+        "## revisions",
+        ...revisions.revisions.map(
+          (r) => `- v${r.version} "${r.title}" ${r.createdAt.toISOString()}`,
+        ),
+      );
+    }
+    const hints: string[] = [];
+    if (otherFields.includes("body")) {
+      const sections = listSections(full.note.body);
+      if (sections.length > 1) {
+        hints.push(
+          `This body has ${sections.length} sections; next time read heading='...' for just the one you need.`,
+        );
+      }
+    }
+    return ok(
+      hints.length > 0
+        ? { text: parts.join("\n"), _hints: hints }
+        : parts.join("\n"),
+    );
+  }
+
+  return ok(renderNoteMeta(full));
+}
+
+/**
+ * Handle the `edit` action: ordered atomic ops via the shared engine.
+ *
+ * @param p - Note params.
+ * @param ctx - Resolved auth context.
+ * @returns Tool result with applied labels and the fresh CAS token.
+ */
+async function handleEditAction(
+  p: NoteParams,
+  ctx: AuthContext,
+): Promise<ToolResult> {
+  if (!p.operations || p.operations.length === 0) {
+    return fail("edit requires operations=[...] (1-20 ordered ops).");
+  }
+  const noteId = await resolveNoteParam(ctx, p);
+
+  const ops: NoteEditOp[] = [];
+  for (const op of p.operations) {
+    if (op.field === "feedTaskIds" && Array.isArray(op.value)) {
+      const values = op.value as string[];
+      if (values.some((v) => typeof v === "string" && !isUuid(v))) {
+        const resolved = await resolveFeedTaskRefs(ctx, values);
+        if ("error" in resolved) return fail(resolved.error);
+        ops.push({ ...op, value: resolved.ids });
+        continue;
+      }
+    }
+    ops.push(op);
+  }
+
+  const result = await applyNoteEditOps(ctx, noteId, ops, p.ifUpdatedAt);
+
+  const hints: string[] = [];
+  if (result.links) {
+    hints.push(
+      `Body links re-derived: ${result.links.mentions.length} task mention(s), ${result.links.linksOut.length} note link(s).`,
+    );
+  }
+  const feedModeOp = [...ops]
+    .reverse()
+    .find((op) => op.field === "feedMode" && op.op === "set");
+  if (feedModeOp) {
+    const mode = feedModeOp.value ?? feedModeOp.text;
+    const armField =
+      mode === "categories"
+        ? "feedCategories"
+        : mode === "tags"
+          ? "feedTags"
+          : mode === "tasks"
+            ? "feedTaskIds"
+            : null;
+    if (armField && !ops.some((op) => op.field === armField)) {
+      hints.push(
+        `feedMode='${String(mode)}' matches via ${armField}; if that list is empty the note never injects. Set it in the same edit next time.`,
+      );
+    }
+  }
+
+  return ok({
+    ref: refOf(result),
+    applied: ops.map((op) => `${op.op} ${op.field}`),
+    version: result.version,
+    updatedAt: result.updatedAt.toISOString(),
+    ...(hints.length > 0 && { _hints: hints }),
+  });
+}
+
+/**
+ * Handle the `list` action: the folder tree agents and humans share.
+ *
+ * @param p - Note params.
+ * @param ctx - Resolved auth context.
+ * @returns Tool result with the grouped tree.
+ */
+async function handleList(
+  p: NoteParams,
+  ctx: AuthContext,
+): Promise<ToolResult> {
+  if (!p.project) return fail("list requires project ('PYZ' or UUID).");
+  const projectId = await requireProjectId(ctx, p.project);
+  const { projectIdentifier, rows } = await getNoteTreeForAgent(
+    ctx,
+    projectId,
+  );
+  if (rows.length === 0) {
+    return ok(
+      `Project ${projectIdentifier} has no notes yet. Record durable knowledge with piyaz_note create.`,
+    );
+  }
+  const lines: string[] = [];
+  let currentFolder: string | null = null;
+  for (const row of rows) {
+    if (row.folder !== currentFolder) {
+      currentFolder = row.folder;
+      lines.push(currentFolder === "" ? "(root)/" : `${currentFolder}/`);
+    }
+    lines.push(`  ${noteLine(row, projectIdentifier)}`);
+  }
+  const budgeted = budgetLines(
+    lines,
+    LIST_LINE_CAP,
+    "narrow with piyaz_note action='search' query='...'",
+  );
+  return ok(
+    [`# ${projectIdentifier} notes (${rows.length})`, ...budgeted.lines].join(
+      "\n",
+    ),
+    budgeted.truncated ? { truncated: true } : undefined,
+  );
+}
+
+/**
+ * Handle the `move` action: one note into a folder, or a folder subtree
+ * re-parent/rename when destParent is present.
+ *
+ * @param p - Note params.
+ * @param ctx - Resolved auth context.
+ * @returns Tool result.
+ */
+async function handleMove(
+  p: NoteParams,
+  ctx: AuthContext,
+): Promise<ToolResult> {
+  if (p.destParent !== undefined) {
+    if (!p.project || p.folder === undefined) {
+      return fail(
+        "Folder move requires project, folder (the source path), and destParent ('' = root); newLeaf renames.",
+      );
+    }
+    const projectId = await requireProjectId(ctx, p.project);
+    const result = await moveFolder(
+      ctx,
+      projectId,
+      p.folder,
+      p.destParent,
+      p.newLeaf,
+    );
+    return ok({
+      dest: result.dest,
+      movedCount: result.movedCount,
+      ...(result.movedCount === 0 && {
+        _hints: [
+          "No live notes matched the source folder; the tree derives from note paths, so an empty folder does not exist.",
+        ],
+      }),
+    });
+  }
+  if (!p.note || p.folder === undefined) {
+    return fail(
+      "move requires note plus folder (the destination path, '' = root), or folder+destParent for a folder-subtree move.",
+    );
+  }
+  const noteId = await resolveNoteParam(ctx, p);
+  const summary = await moveNote(ctx, noteId, p.folder);
+  return ok({
+    ref: refOf(summary),
+    folder: summary.folder,
+    updatedAt: summary.updatedAt.toISOString(),
+  });
+}
+
+/**
+ * Handle the `delete` action: preview by default, then soft delete.
+ *
+ * @param p - Note params.
+ * @param ctx - Resolved auth context.
+ * @returns Tool result.
+ */
+async function handleDelete(
+  p: NoteParams,
+  ctx: AuthContext,
+): Promise<ToolResult> {
+  const noteId = await resolveNoteParam(ctx, p);
+  if (p.preview !== false) {
+    const preview = await deleteNotePreview(ctx, noteId);
+    return ok({
+      preview,
+      _hints: [
+        "Preview only. Deleting trashes the note (restore recovers it), drops it from every tree, search, and feed, and frees its slug. Re-run with preview=false to execute.",
+      ],
+    });
+  }
+  const result = await deleteNote(ctx, noteId);
+  return ok({
+    id: result.id,
+    ref: refOf(result),
+    deletedAt: result.deletedAt.toISOString(),
+    _hints: [
+      `Soft-deleted. A trashed note's ref no longer resolves; to recover it call piyaz_note action='restore' note='${result.id}' (the UUID).`,
+    ],
+  });
+}
+
+/**
+ * Handle the `link`/`unlink` actions: deliberate note-task relations.
+ *
+ * @param p - Note params.
+ * @param ctx - Resolved auth context.
+ * @param direction - Which mutation to run.
+ * @returns Tool result.
+ */
+async function handleLink(
+  p: NoteParams,
+  ctx: AuthContext,
+  direction: "link" | "unlink",
+): Promise<ToolResult> {
+  if (!p.note || !p.task || !p.kind) {
+    return fail(
+      `${direction} requires note, task ('PYZ-42' or UUID), and kind ('reference' or 'spec_of'). mention rows derive from [[refs]] in the body.`,
+    );
+  }
+  const noteId = await resolveNoteParam(ctx, p);
+  const taskId = await requireTaskId(ctx, p.task);
+  if (direction === "link") {
+    const result = await createNoteTaskLink(ctx, noteId, taskId, p.kind);
+    return ok({
+      ref: refOf(result),
+      task: p.task,
+      kind: p.kind,
+      created: result.created,
+      ...(!result.created && {
+        _hints: ["The link already exists. Treat as success."],
+      }),
+      ...(result.created &&
+        p.kind === "spec_of" && {
+          _hints: [
+            "spec_of recorded: this note is the task's spec. Keep the note current as the task evolves; agents reading the task will be pointed at it.",
+          ],
+        }),
+    });
+  }
+  const result = await removeNoteTaskLink(ctx, noteId, taskId, p.kind);
+  return ok({
+    ref: refOf(result),
+    task: p.task,
+    kind: p.kind,
+    removed: result.removed,
+    ...(!result.removed && {
+      _hints: [
+        "No such link existed; nothing removed. mention rows derive from the body and clear when the [[ref]] is edited out.",
+      ],
+    }),
+  });
+}
+
+/**
+ * Handle the `search` action: RLS-scoped ranked full text in one project.
+ *
+ * @param p - Note params.
+ * @param ctx - Resolved auth context.
+ * @returns Tool result.
+ */
+async function handleSearch(
+  p: NoteParams,
+  ctx: AuthContext,
+): Promise<ToolResult> {
+  if (!p.project || p.query === undefined) {
+    return fail("search requires project ('PYZ' or UUID) and query.");
+  }
+  const projectId = await requireProjectId(ctx, p.project);
+  const { projectIdentifier, hits } = await searchNotesForMcp(
+    ctx,
+    projectId,
+    p.query,
+  );
+  const limited = hits.slice(0, Math.min(p.limit ?? SEARCH_HIT_CAP, SEARCH_HIT_CAP));
+  if (limited.length === 0) {
+    return ok(
+      `No notes match "${p.query}" in ${projectIdentifier}. Team notes and your own private notes are searchable regardless of feed mode; try action='list' for the full tree.`,
+    );
+  }
+  const lines = limited.map((row) => {
+    const folder = row.folder === "" ? "" : ` (${row.folder}/)`;
+    return `${noteLine(row, projectIdentifier)}${folder}`;
+  });
+  return ok({
+    text: [
+      `# ${projectIdentifier} note search: "${p.query}" (${limited.length} hit${limited.length === 1 ? "" : "s"})`,
+      ...lines,
+    ].join("\n"),
+    _hints: [
+      "Chain a ref into piyaz_note action='read' (meta lists the sections; heading='...' reads one) instead of pulling full bodies.",
+    ],
+  });
+}
+
+/**
+ * Handle piyaz_note.
+ *
+ * @param p - Validated note params.
+ * @param ctx - Resolved auth context.
+ * @returns Tool result.
+ */
+export async function handleNote(
+  p: NoteParams,
+  ctx: AuthContext,
+): Promise<ToolResult> {
+  try {
+    switch (p.action) {
+      case "create":
+        return await handleCreate(p, ctx);
+      case "read":
+        if (!p.note) {
+          return fail(
+            "read requires note ('PYZ-N12', UUID, or slug with project).",
+          );
+        }
+        return await handleRead(p, ctx);
+      case "edit":
+        if (!p.note) {
+          return fail(
+            "edit requires note ('PYZ-N12', UUID, or slug with project).",
+          );
+        }
+        return await handleEditAction(p, ctx);
+      case "list":
+        return await handleList(p, ctx);
+      case "move":
+        return await handleMove(p, ctx);
+      case "delete":
+        if (!p.note) return fail("delete requires note.");
+        return await handleDelete(p, ctx);
+      case "restore": {
+        if (!p.note) {
+          return fail(
+            "restore requires note (the UUID from the delete response; a trashed note's ref does not resolve).",
+          );
+        }
+        const noteId = await resolveNoteParam(ctx, p);
+        const summary = await restoreNote(ctx, noteId);
+        return ok({
+          ref: refOf(summary),
+          slug: summary.slug,
+          folder: summary.folder,
+          updatedAt: summary.updatedAt.toISOString(),
+        });
+      }
+      case "request_share": {
+        if (!p.note) return fail("request_share requires note.");
+        const noteId = await resolveNoteParam(ctx, p);
+        const summary = await requestShare(ctx, noteId);
+        return ok({
+          ref: refOf(summary),
+          _hints: [
+            "Share request recorded; a human approves or declines in the web UI. The note stays private (invisible to teammates and their agents) until approved.",
+          ],
+        });
+      }
+      case "link":
+      case "unlink":
+        return await handleLink(p, ctx, p.action);
+      case "search":
+        return await handleSearch(p, ctx);
+    }
+  } catch (e) {
+    return translateError(e);
+  }
+}

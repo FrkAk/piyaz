@@ -304,6 +304,7 @@ export type NoteMention = {
 export type LinkedNoteSlim = {
   id: string;
   slug: string;
+  sequenceNumber: number;
   title: string;
   type: NoteType;
   folder: string;
@@ -1184,6 +1185,7 @@ function linkedNotesStmt(
     .select({
       id: notes.id,
       slug: notes.slug,
+      sequenceNumber: notes.sequenceNumber,
       title: notes.title,
       type: notes.type,
       folder: notes.folder,
@@ -2385,6 +2387,7 @@ async function updateNoteCore(
         .select({
           id: notes.id,
           slug: notes.slug,
+          sequenceNumber: notes.sequenceNumber,
           title: notes.title,
           type: notes.type,
           folder: notes.folder,
