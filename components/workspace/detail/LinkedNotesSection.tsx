@@ -12,9 +12,9 @@ import { NOTE_TYPE_META, tint } from "@/components/workspace/notes/note-meta";
 import type { TaskNoteBacklink } from "@/lib/data/note";
 
 interface LinkedNotesSectionProps {
-  /** Project UUID — query key + fetcher argument. */
+  /** Project UUID: query key + fetcher argument. */
   projectId: string;
-  /** Task UUID — query key + fetcher argument. */
+  /** Task UUID: query key + fetcher argument. */
   taskId: string;
   /** Composed task reference (e.g. `MYM-12`) for the empty-state copy. */
   taskRef: string;
