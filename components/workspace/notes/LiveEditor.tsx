@@ -1,6 +1,13 @@
 "use client";
 
-import { Fragment, useContext, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { FocusEvent, KeyboardEvent } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { CodeBlock } from "@/components/shared/CodeBlock";
@@ -10,6 +17,7 @@ import { STATUS_META } from "@/components/shared/StatusGlyph";
 import { useInlineEdit } from "@/hooks/useInlineEdit";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { type Block, parseBlocks, splitChunks } from "./note-blocks";
+import { type LinkSuggestion, rankLinkSuggestions } from "./link-suggestions";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import { InlineText, NoteLinkContext } from "./NoteInline";
 
@@ -422,18 +430,6 @@ interface BlockEditorProps {
   onNewBlock?: (before: string, after: string) => void;
 }
 
-/** Max `[[` autocomplete suggestions rendered at once. */
-const WIKI_SUGGESTION_CAP = 8;
-
-/** One `[[` link-picker suggestion (a note or a task). */
-type LinkSuggestion = {
-  id: string;
-  title: string;
-  insert: string;
-  color: string;
-  hint: string;
-};
-
 /**
  * Active `[[wiki` query at the caret: the text after the nearest unclosed
  * `[[` on the current line, or `null` when the caret is not inside one.
@@ -492,34 +488,26 @@ function BlockEditor({
 
   const matches = useMemo<LinkSuggestion[]>(() => {
     if (ctx === null || query === null || dismissed) return [];
-    const q = query.trim().toLowerCase();
-    const hit = (title: string) => q === "" || title.toLowerCase().includes(q);
-    const out: LinkSuggestion[] = [];
+    const candidates: LinkSuggestion[] = [];
     for (const note of ctx.notesByTitle.values()) {
-      if (out.length >= WIKI_SUGGESTION_CAP) break;
-      if (hit(note.title)) {
-        out.push({
-          id: `note-${note.id}`,
-          title: note.title,
-          insert: `[[${note.title}]]`,
-          color: NOTE_TYPE_META[note.type].color,
-          hint: NOTE_TYPE_META[note.type].label,
-        });
-      }
+      candidates.push({
+        id: `note-${note.id}`,
+        title: note.title,
+        insert: `[[${note.title}]]`,
+        color: NOTE_TYPE_META[note.type].color,
+        hint: NOTE_TYPE_META[note.type].label,
+      });
     }
     for (const [seq, task] of ctx.tasksBySeq) {
-      if (out.length >= WIKI_SUGGESTION_CAP) break;
-      if (hit(task.title)) {
-        out.push({
-          id: `task-${task.taskId}`,
-          title: task.title,
-          insert: `${ctx.identifier}-${seq}`,
-          color: STATUS_META[task.status].cssVar,
-          hint: `${ctx.identifier}-${seq}`,
-        });
-      }
+      candidates.push({
+        id: `task-${task.taskId}`,
+        title: task.title,
+        insert: `${ctx.identifier}-${seq}`,
+        color: STATUS_META[task.status].cssVar,
+        hint: `${ctx.identifier}-${seq}`,
+      });
     }
-    return out;
+    return rankLinkSuggestions(query, candidates);
   }, [ctx, query, dismissed]);
   const open = matches.length > 0;
   const activeIdx = Math.min(active, matches.length - 1);
@@ -725,6 +713,10 @@ function WikiSuggestions({
   flipUp,
   onPick,
 }: WikiSuggestionsProps) {
+  const activeRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest" });
+  }, [active, matches]);
   return (
     <div
       className={`absolute left-0 z-20 max-h-56 w-64 overflow-y-auto rounded-md border border-border py-1 shadow-[var(--shadow-float)] ${
@@ -735,6 +727,7 @@ function WikiSuggestions({
       {matches.map((match, i) => (
         <button
           key={match.id}
+          ref={i === active ? activeRef : null}
           type="button"
           onMouseDown={(e) => {
             e.preventDefault();
