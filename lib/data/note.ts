@@ -11,13 +11,16 @@
  * team-visible notes: the feed and the tree fan out to every member, so
  * a private note's title, slug, and folder must never land there.
  *
- * Agent-facing policy (`agent_writable`, the agent ban on setting
- * `visibility='team'`) is deliberately NOT enforced here — the MCP
- * handler layers it on (PYZ-252). `locked` is the exception: it gates
- * every writer in {@link updateNote} and the share transitions, so a
- * locked note is read-only for humans and agents alike until an unlock
- * patch (`locked: false`) lands. Human server actions call these
- * functions directly.
+ * Agent-facing policy: `locked` gates every writer ({@link updateNote},
+ * move, delete, deliberate links, and the share transitions), so a locked
+ * note is read-only for humans and agents alike until an unlock patch
+ * (`locked: false`) lands.
+ * `agent_writable` gates every mutation for MCP actors only
+ * (`ctx.actor.source === 'mcp'` throws {@link NoteAgentReadOnlyError});
+ * web and system actors are untouched. The agent ban on setting
+ * `visibility='team'` is structural — the MCP tool schema carries no
+ * visibility field and `request_share` is the sanctioned agent path.
+ * Human server actions call these functions directly.
  */
 import "server-only";
 
@@ -247,6 +250,18 @@ export class NoteLockedError extends Error {
   constructor() {
     super("Note is locked. Unlock it to edit.");
     this.name = "NoteLockedError";
+  }
+}
+
+/**
+ * Thrown when an MCP actor writes to a note with `agent_writable=false`.
+ * Reads stay allowed; a human grants agent access in the note's ribbon.
+ * Web and system actors never hit this gate.
+ */
+export class NoteAgentReadOnlyError extends Error {
+  constructor() {
+    super("Note is read-only to agents.");
+    this.name = "NoteAgentReadOnlyError";
   }
 }
 
@@ -811,6 +826,22 @@ function assertProjectWritable(
 function assertNoteLive(gate: NoteAccessGate): void {
   if (gate.deletedAt !== null) {
     throw new ForbiddenError("Forbidden", "note", gate.id);
+  }
+}
+
+/**
+ * Reject MCP-actor writes against an agent-read-only note. Spec §9.2:
+ * `agent_writable` is an actor rule, not a tenant rule, so it lives here
+ * (one choke point per write, zero extra reads) rather than in RLS or
+ * per-handler gate fetches. Creation and `requestShare` are exempt.
+ *
+ * @param ctx - Resolved auth context.
+ * @param agentWritable - The note's `agent_writable` column value.
+ * @throws NoteAgentReadOnlyError when an MCP actor writes a read-only note.
+ */
+function assertAgentWritable(ctx: AuthContext, agentWritable: boolean): void {
+  if (ctx.actor.source === "mcp" && !agentWritable) {
+    throw new NoteAgentReadOnlyError();
   }
 }
 
@@ -2255,8 +2286,20 @@ function prepareNoteEditOps(ops: NoteEditOp[]): {
         }
         patch.feedMode = value as FeedMode;
         return;
-      default:
-        bad(`field '${op.field as string}' is not editable via ops`);
+      default: {
+        const field = op.field as string;
+        if (field === "visibility") {
+          bad(
+            "agents never set visibility; a private note becomes team-visible only through action='request_share' and human approval",
+          );
+        }
+        if (field === "locked" || field === "agentWritable") {
+          bad(
+            `${field} is a human governance control in the note's ribbon; ask the user to change it`,
+          );
+        }
+        bad(`field '${field}' is not editable via ops`);
+      }
     }
   });
   return { patch, bodyOps };
@@ -2380,6 +2423,7 @@ async function updateNoteCore(
     if (current.locked && applied.locked !== false) {
       throw new NoteLockedError();
     }
+    assertAgentWritable(ctx, current.agentWritable);
     if (
       ifUpdatedAtMs !== undefined &&
       ifUpdatedAtMs !== current.updatedAt.getTime()
@@ -2540,6 +2584,8 @@ export async function moveNote(
     const gate = await assertNoteAccessTx(tx, noteId);
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.locked) throw new NoteLockedError();
+    assertAgentWritable(ctx, gate.agentWritable);
     if (gate.folder === dest) {
       return {
         summary: gateSummary(gate),
@@ -2652,6 +2698,18 @@ export async function moveFolder(
         like(notes.folder, `${escapeLike(srcPath)}/%`),
       ),
     );
+    if (ctx.actor.source === "mcp") {
+      const [guarded] = await tx
+        .select({ count: sql<number>`count(*)` })
+        .from(notes)
+        .where(
+          and(
+            subtreeFilter,
+            or(eq(notes.agentWritable, false), eq(notes.locked, true)),
+          ),
+        );
+      if (Number(guarded?.count ?? 0) > 0) throw new NoteAgentReadOnlyError();
+    }
     if (growth > 0) {
       const [row] = await tx
         .select({
@@ -2719,6 +2777,8 @@ export async function deleteNote(
   const result = await withUserContext(ctx.userId, async (tx) => {
     const gate = await assertNoteAccessTx(tx, noteId);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.locked) throw new NoteLockedError();
+    assertAgentWritable(ctx, gate.agentWritable);
     if (gate.deletedAt !== null) {
       return {
         id: gate.id,
@@ -2790,6 +2850,7 @@ export async function restoreNote(
   const result = await withUserContext(ctx.userId, async (tx) => {
     const gate = await assertNoteAccessTx(tx, noteId);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    assertAgentWritable(ctx, gate.agentWritable);
     if (gate.deletedAt === null) {
       return {
         summary: gateSummary(gate),
@@ -3134,6 +3195,8 @@ export async function createNoteTaskLink(
     const gate = await assertNoteAccessTx(tx, noteId);
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.locked) throw new NoteLockedError();
+    assertAgentWritable(ctx, gate.agentWritable);
     const task = await assertTaskAccessTx(tx, taskId);
     if (task.projectId !== gate.projectId) {
       throw new CrossProjectNoteLinkError();
@@ -3198,6 +3261,8 @@ export async function removeNoteTaskLink(
     const gate = await assertNoteAccessTx(tx, noteId);
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.locked) throw new NoteLockedError();
+    assertAgentWritable(ctx, gate.agentWritable);
     const rows = await tx
       .delete(noteTaskLinks)
       .where(

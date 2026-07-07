@@ -38,6 +38,7 @@ import {
   CrossProjectNoteLinkError,
   DuplicateNoteTitleError,
   FolderCycleError,
+  NoteAgentReadOnlyError,
   NoteLockedError,
   NoteShareStateError,
   NoteStaleWriteError,
@@ -840,6 +841,11 @@ export function translateError(e: unknown): ToolResult {
   if (e instanceof NoteLockedError) {
     return fail(
       "Note is locked (read-only for humans and agents). Ask the user to unlock it in the web UI, then retry.",
+    );
+  }
+  if (e instanceof NoteAgentReadOnlyError) {
+    return fail(
+      "Note is read-only to agents (agent_writable=false). Reads and search still work. Ask the user to enable agent edits in the note's ribbon, then retry.",
     );
   }
   if (e instanceof NoteShareStateError) {
