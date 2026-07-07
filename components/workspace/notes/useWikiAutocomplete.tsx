@@ -15,7 +15,7 @@ import { NOTE_TYPE_META, tint } from "./note-meta";
 import { NoteLinkContext } from "./NoteInline";
 
 /** Approx line height (px) of the editor textarea, for caret-line placement. */
-const LINE_HEIGHT_PX = 20;
+export const EDITOR_LINE_HEIGHT_PX = 20;
 
 /**
  * The active `[[wiki` query at the caret: the text after the nearest
@@ -76,12 +76,12 @@ export function useWikiAutocomplete(
 
   const query = ctx === null ? null : wikiQuery(value, caret);
 
-  const matches = useMemo<LinkSuggestion[]>(() => {
-    if (ctx === null || query === null || dismissed) return [];
-    const candidates: LinkSuggestion[] = [];
+  const candidates = useMemo<LinkSuggestion[]>(() => {
+    if (ctx === null) return [];
+    const list: LinkSuggestion[] = [];
     for (const note of ctx.notesByTitle.values()) {
       if (note.title.trim() === "") continue;
-      candidates.push({
+      list.push({
         id: `note-${note.id}`,
         title: note.title,
         insert: `[[${note.title}]]`,
@@ -90,16 +90,21 @@ export function useWikiAutocomplete(
       });
     }
     for (const [seq, task] of ctx.tasksBySeq) {
-      candidates.push({
+      list.push({
         id: `task-${task.taskId}`,
         title: task.title,
-        insert: `${ctx.identifier}-${seq}`,
+        insert: `[[${ctx.identifier}-${seq}]]`,
         color: STATUS_META[task.status].cssVar,
         hint: `${ctx.identifier}-${seq}`,
       });
     }
+    return list;
+  }, [ctx]);
+
+  const matches = useMemo<LinkSuggestion[]>(() => {
+    if (query === null || dismissed) return [];
     return rankLinkSuggestions(query, candidates);
-  }, [ctx, query, dismissed]);
+  }, [candidates, query, dismissed]);
 
   const open = matches.length > 0;
   const activeIdx = Math.min(active, matches.length - 1);
@@ -114,7 +119,8 @@ export function useWikiAutocomplete(
   const insert = (text: string) => {
     const openIdx = value.slice(0, caret).lastIndexOf("[[");
     if (openIdx === -1) return;
-    const next = `${value.slice(0, openIdx)}${text}${value.slice(caret)}`;
+    const tail = value.slice(caret).replace(/^\]\]/, "");
+    const next = `${value.slice(0, openIdx)}${text}${tail}`;
     setDismissed(true);
     onInsert(next, openIdx + text.length);
   };
@@ -145,7 +151,7 @@ export function useWikiAutocomplete(
   };
 
   const caretTop =
-    value.slice(0, caret).split("\n").length * LINE_HEIGHT_PX + 4;
+    value.slice(0, caret).split("\n").length * EDITOR_LINE_HEIGHT_PX + 4;
   const popover = open ? (
     <WikiSuggestions
       matches={matches}

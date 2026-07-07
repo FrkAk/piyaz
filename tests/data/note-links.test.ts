@@ -11,18 +11,20 @@ afterEach(async () => {
 });
 
 test("extractNoteRefs parses refs and wiki links outside code", () => {
-  const refs = extractNoteRefs("see PRJ1-12 and [[Data model]]", "PRJ1");
+  const refs = extractNoteRefs("see [[PRJ1-12]] and [[Data model]]", "PRJ1");
   expect(refs.taskSeqs).toEqual([12]);
   expect(refs.titles).toEqual(["Data model"]);
 });
 
 test("extractNoteRefs skips inline code spans", () => {
-  expect(extractNoteRefs("inline `PRJ1-12` here", "PRJ1").taskSeqs).toEqual([]);
+  expect(extractNoteRefs("inline `[[PRJ1-12]]` here", "PRJ1").taskSeqs).toEqual(
+    [],
+  );
   expect(extractNoteRefs("also `[[Nope]]` here", "PRJ1").titles).toEqual([]);
 });
 
 test("extractNoteRefs links refs inside bold runs", () => {
-  expect(extractNoteRefs("bold **PRJ1-12** run", "PRJ1").taskSeqs).toEqual([
+  expect(extractNoteRefs("bold **[[PRJ1-12]]** run", "PRJ1").taskSeqs).toEqual([
     12,
   ]);
   expect(extractNoteRefs("bold **[[Model]]** run", "PRJ1").titles).toEqual([
@@ -31,41 +33,44 @@ test("extractNoteRefs links refs inside bold runs", () => {
 });
 
 test("extractNoteRefs skips fenced code blocks", () => {
-  const body = "before\n```\nPRJ1-12 and [[Hidden]]\n```\nafter PRJ1-3";
+  const body = "before\n```\n[[PRJ1-12]] and [[Hidden]]\n```\nafter [[PRJ1-3]]";
   const refs = extractNoteRefs(body, "PRJ1");
   expect(refs.taskSeqs).toEqual([3]);
   expect(refs.titles).toEqual([]);
 });
 
 test("extractNoteRefs follows CommonMark fence rules", () => {
-  const nested = "````\n```\nPRJ1-9\n```\n````\nafter PRJ1-2";
+  const nested = "````\n```\n[[PRJ1-9]]\n```\n````\nafter [[PRJ1-2]]";
   expect(extractNoteRefs(nested, "PRJ1").taskSeqs).toEqual([2]);
 
-  const unterminated = "``` PRJ1-5\nPRJ1-6 swallowed";
+  const unterminated = "```[[PRJ1-5]]\n[[PRJ1-6]] swallowed";
   expect(extractNoteRefs(unterminated, "PRJ1").taskSeqs).toEqual([]);
 
-  const tilde = "~~~\nPRJ1-7\n~~~\nafter PRJ1-8";
+  const tilde = "~~~\n[[PRJ1-7]]\n~~~\nafter [[PRJ1-8]]";
   expect(extractNoteRefs(tilde, "PRJ1").taskSeqs).toEqual([8]);
 
-  const indented = "  ```\nPRJ1-4\n```\nafter PRJ1-1";
+  const indented = "  ```\n[[PRJ1-4]]\n```\nafter [[PRJ1-1]]";
   expect(extractNoteRefs(indented, "PRJ1").taskSeqs).toEqual([1]);
 
-  const shortCloser = "````\nPRJ1-3\n```\nPRJ1-5\n````\nout PRJ1-6";
+  const shortCloser = "````\n[[PRJ1-3]]\n```\n[[PRJ1-5]]\n````\nout [[PRJ1-6]]";
   expect(extractNoteRefs(shortCloser, "PRJ1").taskSeqs).toEqual([6]);
 
-  const backtickInfo = "```code`span`\nPRJ1-12 after";
+  const backtickInfo = "```code`span`\n[[PRJ1-12]] after";
   expect(extractNoteRefs(backtickInfo, "PRJ1").taskSeqs).toEqual([12]);
 });
 
 test("extractNoteRefs matches case-insensitively and dedupes", () => {
-  const refs = extractNoteRefs("prj1-12 PRJ1-12 [[Model]] [[model]]", "PRJ1");
+  const refs = extractNoteRefs(
+    "[[prj1-12]] [[PRJ1-12]] [[Model]] [[model]]",
+    "PRJ1",
+  );
   expect(refs.taskSeqs).toEqual([12]);
   expect(refs.titles).toEqual(["Model"]);
 });
 
 test("extractNoteRefs escapes identifier metacharacters", () => {
-  expect(extractNoteRefs("A.B-3", "A.B").taskSeqs).toEqual([3]);
-  expect(extractNoteRefs("AXB-3", "A.B").taskSeqs).toEqual([]);
+  expect(extractNoteRefs("[[A.B-3]]", "A.B").taskSeqs).toEqual([3]);
+  expect(extractNoteRefs("[[AXB-3]]", "A.B").taskSeqs).toEqual([]);
   expect(extractNoteRefs("[[  ]] [[real]]", "PRJ1").titles).toEqual(["real"]);
 });
 
@@ -78,7 +83,7 @@ test("body writes derive task mentions and note links", async () => {
   const source = await createNote(ctx, {
     projectId: f.projectId,
     title: "Source",
-    body: `see ${task.taskRef} and [[Data model]]`,
+    body: `see [[${task.taskRef}]] and [[Data model]]`,
   });
 
   const full = await getNoteFull(ctx, source.id);
@@ -100,7 +105,7 @@ test("body-changing updateNote returns re-derived links; metadata patches do not
   });
 
   const bodyWrite = await updateNote(ctx, source.id, {
-    body: `see ${task.taskRef} and [[Data model]]`,
+    body: `see [[${task.taskRef}]] and [[Data model]]`,
   });
   expect(bodyWrite.links).toBeDefined();
   expect(bodyWrite.links!.mentions.length).toBe(1);
@@ -121,7 +126,7 @@ test("re-derivation replaces mention rows but preserves user-managed kinds", asy
   const source = await createNote(ctx, {
     projectId: f.projectId,
     title: "Source",
-    body: `refs ${task.taskRef} and [[Target]]`,
+    body: `refs [[${task.taskRef}]] and [[Target]]`,
   });
 
   const sr = serviceRoleConnect();
@@ -145,7 +150,7 @@ test("broken refs and self links are never stored", async () => {
   const note = await createNote(ctx, {
     projectId: f.projectId,
     title: "Self",
-    body: "see PRJlnk3-999 and [[Nope]] and [[Self]]",
+    body: "see [[PRJlnk3-999]] and [[Nope]] and [[Self]]",
   });
 
   const sr = serviceRoleConnect();

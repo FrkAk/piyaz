@@ -38,7 +38,7 @@ const CHIP_CLASS =
   "inline-flex items-center rounded px-1.5 align-baseline font-mono text-[0.82em]";
 
 interface TaskChipProps {
-  /** @param seq - The task sequence number from the ref (e.g. 3 in `RSC-3`). */
+  /** @param seq - The task sequence number from the ref (e.g. 3 in `[[RSC-3]]`). */
   seq: number;
 }
 

@@ -1,12 +1,14 @@
 /**
  * Pure markdown-body reference extractor for the Notes link-derivation
- * engine. Task refs (`<IDENTIFIER>-12`) and wiki links (`[[Title]]`)
- * never match inside fenced code blocks (CommonMark fence rules) or
+ * engine. Task refs (`[[<IDENTIFIER>-12]]`) and note links (`[[Title]]`)
+ * share one `[[…]]` construct: the inner value is a task ref when it
+ * matches `<IDENTIFIER>-<seq>` (case-insensitive), else a note title.
+ * Refs never match inside fenced code blocks (CommonMark fence rules) or
  * inline code spans; refs inside bold runs are matched, so a reference
- * always reads and backlinks as one. The Notes renderer must stay in
- * lockstep with these semantics (PYZ-258). No DB access — unit-testable
- * in isolation;
- * `lib/data/note.ts` resolves the extracted refs in-tx.
+ * always reads and backlinks as one. The Notes renderer shares this
+ * module's matcher and classifier to stay in lockstep (PYZ-258). No DB
+ * access — unit-testable in isolation; `lib/data/note.ts` resolves the
+ * extracted refs in-tx.
  */
 
 /**
@@ -76,22 +78,63 @@ export function fenceCloses(line: string, fence: FenceState): boolean {
   );
 }
 
+/** Core `[[…]]` ref pattern; group 1 is the inner text (no newline). */
+const REF_PATTERN = String.raw`\[\[([^\]\n]+)\]\]`;
+
 /**
- * Build the inline alternation used to match refs, wiki links, and inline
- * code spans on a single source line, case-insensitively. Inline code is
- * captured (group 3) so leftmost-match-wins lets it consume refs inside
- * it; the extractor reads only the ref (1) and title (2) groups. Bold
- * runs are not excluded, so a ref inside `**bold**` is matched.
+ * Build the `[[…]]` ref matcher the renderer scans text nodes with.
+ *
+ * @returns A fresh `g` RegExp; group 1 is the inner text. Reset
+ *   `lastIndex` before reuse.
+ */
+export function buildRefRe(): RegExp {
+  return new RegExp(REF_PATTERN, "g");
+}
+
+/**
+ * Build the extractor alternation: a `[[…]]` ref (group 1) or an inline
+ * code span (group 2). Inline code is captured so leftmost-match-wins
+ * lets it consume refs inside it; the extractor reads only group 1.
+ *
+ * @returns A fresh `g` RegExp; reset `lastIndex` before reuse.
+ */
+export function buildInlineRe(): RegExp {
+  return new RegExp(REF_PATTERN + "|(`[^`]+`)", "g");
+}
+
+/**
+ * Build the case-insensitive `<IDENTIFIER>-<seq>` task-ref classifier.
  *
  * @param projectIdentifier - The owning project's identifier.
- * @returns A fresh `gi` RegExp; reset `lastIndex` before reuse.
+ * @returns A RegExp anchored to a full inner value; group 1 is the seq.
  */
-export function buildInlineRe(projectIdentifier: string): RegExp {
-  const identifier = escapeRegExp(projectIdentifier);
-  return new RegExp(
-    String.raw`\b${identifier}-(\d+)\b|\[\[([^\]]+)\]\]|` + "(`[^`]+`)",
-    "gi",
-  );
+export function buildTaskRefRe(projectIdentifier: string): RegExp {
+  return new RegExp(`^${escapeRegExp(projectIdentifier)}-(\\d+)$`, "i");
+}
+
+/** A classified `[[…]]` reference. */
+export type RefKind =
+  | { kind: "task"; seq: number }
+  | { kind: "wiki"; title: string };
+
+/**
+ * Classify a `[[…]]` inner value. A `<IDENTIFIER>-<seq>` inner with a
+ * positive safe-integer seq is a task ref; any other non-empty inner is a
+ * note title; a blank inner is not a reference.
+ *
+ * @param inner - The text between `[[` and `]]`.
+ * @param taskRe - The classifier from {@link buildTaskRefRe}.
+ * @returns The classified ref, or `null` when it is not a reference.
+ */
+export function classifyRef(inner: string, taskRe: RegExp): RefKind | null {
+  const trimmed = inner.trim();
+  if (trimmed === "") return null;
+  const match = taskRe.exec(trimmed);
+  if (match !== null) {
+    const seq = Number(match[1]);
+    return Number.isSafeInteger(seq) && seq > 0 ? { kind: "task", seq } : null;
+  }
+  return { kind: "wiki", title: trimmed };
 }
 
 /**
@@ -105,14 +148,14 @@ export function buildInlineRe(projectIdentifier: string): RegExp {
  * the body. Fence-delimiter lines and fenced content are skipped
  * entirely. Inline code spans are excluded by matching them in the same
  * alternation as the refs — leftmost-match-wins means a span consumes its
- * content before the ref patterns can see it. Bold runs are not excluded,
+ * content before the ref pattern can see it. Bold runs are not excluded,
  * so a ref inside `**bold**` is linked, in lockstep with the renderer.
- * Identifier matching is case-insensitive.
+ * Task-ref identifier matching is case-insensitive.
  *
  * @param body - Markdown note body.
  * @param projectIdentifier - The owning project's identifier.
- * @returns Deduped task sequence numbers and wiki-link titles, capped at
- *   200 per kind.
+ * @returns Deduped task sequence numbers and note titles, capped at 200
+ *   per kind.
  */
 export function extractNoteRefs(
   body: string,
@@ -121,7 +164,8 @@ export function extractNoteRefs(
   const taskSeqs = new Set<number>();
   const titles = new Set<string>();
   const seenTitleKeys = new Set<string>();
-  const inlineRe = buildInlineRe(projectIdentifier);
+  const inlineRe = buildInlineRe();
+  const taskRe = buildTaskRefRe(projectIdentifier);
 
   let fence: FenceState | null = null;
   for (const line of body.split("\n")) {
@@ -137,20 +181,18 @@ export function extractNoteRefs(
       match !== null;
       match = inlineRe.exec(line)
     ) {
-      const [, seqGroup, titleGroup] = match;
-      if (seqGroup !== undefined) {
-        const seq = Number(seqGroup);
-        if (Number.isSafeInteger(seq) && seq > 0) taskSeqs.add(seq);
+      const inner = match[1];
+      if (inner === undefined) continue;
+      const ref = classifyRef(inner, taskRe);
+      if (ref === null) continue;
+      if (ref.kind === "task") {
+        taskSeqs.add(ref.seq);
         continue;
       }
-      if (titleGroup !== undefined) {
-        const title = titleGroup.trim();
-        if (title === "") continue;
-        const key = title.toLowerCase();
-        if (seenTitleKeys.has(key)) continue;
-        seenTitleKeys.add(key);
-        titles.add(title);
-      }
+      const key = ref.title.toLowerCase();
+      if (seenTitleKeys.has(key)) continue;
+      seenTitleKeys.add(key);
+      titles.add(ref.title);
     }
   }
 

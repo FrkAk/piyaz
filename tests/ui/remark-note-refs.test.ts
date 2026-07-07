@@ -29,26 +29,32 @@ function refsIn(md: string) {
 }
 
 test("tags task refs and wiki links", () => {
-  expect(refsIn("see RSC-3 and [[My Note]]")).toEqual([
+  expect(refsIn("see [[RSC-3]] and [[My Note]]")).toEqual([
     { name: "noteref-task", props: { seq: 3 } },
     { name: "noteref-wiki", props: { title: "My Note" } },
   ]);
 });
 
 test("does not tag refs inside inline code", () => {
-  expect(refsIn("`RSC-3` literal")).toEqual([]);
+  expect(refsIn("`[[RSC-3]]` literal")).toEqual([]);
 });
 
-test("ignores a foreign-project ref", () => {
-  expect(refsIn("XXX-9 here")).toEqual([]);
+test("treats a foreign-project ref as a note title", () => {
+  expect(refsIn("[[XXX-9]] here")).toEqual([
+    { name: "noteref-wiki", props: { title: "XXX-9" } },
+  ]);
 });
 
 test("a blank wiki title degrades to text", () => {
   expect(refsIn("empty [[   ]] link")).toEqual([]);
 });
 
+test("drops an out-of-range task seq to text", () => {
+  expect(refsIn("bad [[RSC-0]] ref")).toEqual([]);
+});
+
 test("tags refs inside bold runs", () => {
-  expect(refsIn("**bold RSC-3 [[X]]** tail")).toEqual([
+  expect(refsIn("**bold [[RSC-3]] [[X]]** tail")).toEqual([
     { name: "noteref-task", props: { seq: 3 } },
     { name: "noteref-wiki", props: { title: "X" } },
   ]);
@@ -84,15 +90,16 @@ function rendererRefs(md: string) {
 }
 
 const lockstepCorpus = [
-  "plain RSC-1 and [[One]]",
-  "bold **RSC-2 [[Two]]** then RSC-3",
-  "italic *RSC-4* stays a ref",
-  "strike ~~RSC-5~~ stays a ref",
-  "inline `RSC-6 [[Hidden]]` skipped",
-  "link [RSC-7](https://x.com) text",
-  "```\nRSC-8 [[Fenced]]\n```\nafter RSC-9",
-  "dupes [[Same]] [[same]] RSC-10 RSC-10",
-  "foreign XXX-9 and blank [[   ]]",
+  "plain [[RSC-1]] and [[One]]",
+  "bold **[[RSC-2]] [[Two]]** then [[RSC-3]]",
+  "italic *[[RSC-4]]* stays a ref",
+  "strike ~~[[RSC-5]]~~ stays a ref",
+  "inline `[[RSC-6]] [[Hidden]]` skipped",
+  "link [text](https://x.com) and [[RSC-7]]",
+  "```\n[[RSC-8]] [[Fenced]]\n```\nafter [[RSC-9]]",
+  "dupes [[Same]] [[same]] [[RSC-10]] [[RSC-10]]",
+  "foreign [[XXX-9]] and blank [[   ]]",
+  "case [[rsc-11]] and out-of-range [[RSC-0]]",
 ];
 
 test.each(lockstepCorpus)("renderer refs match extractNoteRefs: %s", (md) => {

@@ -5,10 +5,10 @@ import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { EditButton } from "@/components/shared/EditButton";
 import { EditHint } from "@/components/shared/EditHint";
 import { NoteMarkdown } from "./NoteMarkdown";
-import { useWikiAutocomplete } from "./useWikiAutocomplete";
-
-/** Approx editor line height (px), for aligning the caret to the click. */
-const EDITOR_LINE_HEIGHT = 20;
+import {
+  EDITOR_LINE_HEIGHT_PX,
+  useWikiAutocomplete,
+} from "./useWikiAutocomplete";
 
 /**
  * Nearest scrollable ancestor of an element, or null.
@@ -95,7 +95,7 @@ export function NoteEditor({
       if (clickY === null) return;
       const lineIdx = body.slice(0, entryCaret).split("\n").length - 1;
       const caretY =
-        el.getBoundingClientRect().top + lineIdx * EDITOR_LINE_HEIGHT;
+        el.getBoundingClientRect().top + lineIdx * EDITOR_LINE_HEIGHT_PX;
       const pane = scrollParent(el);
       if (pane) pane.scrollTop += caretY - clickY;
     });
