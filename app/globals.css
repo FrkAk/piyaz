@@ -564,6 +564,14 @@ html.light .prose-spec pre {
   margin: 0.3em 0;
   padding-left: 0.75em;
 }
+/* Notes render blockquotes as a filled callout (no left bar). */
+.note-md blockquote {
+  border-left: none;
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--color-accent-grad-soft);
+}
 .prose-spec a:hover {
   text-decoration-color: rgba(129, 140, 248, 0.8);
 }
