@@ -815,7 +815,6 @@ test("agent gate covers restore, links, and folder subtree moves; humans pass", 
 
 test("governance edit ops steer to request_share and the ribbon", async () => {
   const fx = await seedUserOrgProject("NG3");
-  const ctx = makeAuthContext(fx.userId);
   const agent = agentCtx(fx.userId);
   const created = await createOne(agent, "PRJNG3", { title: "Steered" });
 
