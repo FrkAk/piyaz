@@ -19,7 +19,7 @@ test("NoteEditor renders NoteMarkdown with hint, pencil, and line-aware double-c
   expect(src).toContain("editable");
 });
 
-test("EditorPane reconciles the title through the pure predicates and a dirty ref", async () => {
+test("EditorPane reconciles the title through the pure predicates and dirty state", async () => {
   const src = await Bun.file(
     "components/workspace/notes/EditorPane.tsx",
   ).text();
