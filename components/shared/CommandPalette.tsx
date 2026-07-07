@@ -13,7 +13,7 @@ import {
 } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useRouter } from "next/navigation";
-import { IconSearch } from "@/components/shared/icons";
+import { IconDoc, IconSearch } from "@/components/shared/icons";
 import { Kbd } from "@/components/shared/Kbd";
 import { MonoId, type MonoIdTone } from "@/components/shared/MonoId";
 import { StatusGlyph } from "@/components/shared/StatusGlyph";
@@ -21,12 +21,13 @@ import { useModalChrome } from "@/hooks/useModalChrome";
 import { projectColor } from "@/lib/ui/project-color";
 import type { SidebarProject } from "@/components/layout/Sidebar";
 import {
-  searchTasksAcrossProjects,
+  searchPaletteAcrossProjects,
+  type CrossProjectNoteSearchResult,
   type CrossProjectSearchResult,
 } from "@/lib/graph/queries";
 
 /** Group label rendered above each result section. */
-type OptionGroup = "projects" | "tasks" | "settings";
+type OptionGroup = "projects" | "tasks" | "notes" | "settings";
 
 /** Flat option used by the keyboard model + click handlers. */
 type Option =
@@ -46,6 +47,14 @@ type Option =
       taskRef: string;
       projectTitle: string;
       projectIdentifier: string;
+      href: string;
+    }
+  | {
+      group: "notes";
+      id: string;
+      label: string;
+      noteRef: string;
+      projectTitle: string;
       href: string;
     }
   | {
@@ -81,7 +90,8 @@ function matches(haystack: string, needle: string): boolean {
 
 /**
  * Global ⌘K command palette — projects across the user's teams, tasks
- * across every project the user belongs to, and the `/settings` route.
+ * and notes across every project the user belongs to, and the `/settings`
+ * route.
  * Built from scratch (no `cmdk` dependency) on top of `motion` and
  * `useModalChrome` so the visual shell matches every other modal in the
  * codebase. Implements the WAI-ARIA combobox + listbox pattern with full
@@ -106,9 +116,12 @@ export function CommandPalette({
   const [taskResults, setTaskResults] = useState<CrossProjectSearchResult[]>(
     [],
   );
-  const [taskLoading, setTaskLoading] = useState(false);
-  /** Task-fetch failure code; `null` when no error. Maps to `ERROR_MESSAGES`. */
-  const [taskError, setTaskError] = useState<
+  const [noteResults, setNoteResults] = useState<
+    CrossProjectNoteSearchResult[]
+  >([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  /** Search failure code; `null` when no error. Maps to `ERROR_MESSAGES`. */
+  const [searchError, setSearchError] = useState<
     "rate_limited" | "unauthorized" | "unknown" | null
   >(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -125,8 +138,9 @@ export function CommandPalette({
       setQuery("");
       setDebouncedQuery("");
       setTaskResults([]);
-      setTaskError(null);
-      setTaskLoading(false);
+      setNoteResults([]);
+      setSearchError(null);
+      setSearchLoading(false);
       setActiveIndex(0);
     }
   }
@@ -144,48 +158,53 @@ export function CommandPalette({
   }, [open, query]);
 
   // Render-phase reset whenever the debounced query changes: clear stale
-  // results / error, and flip `taskLoading` on for the upcoming fetch (when
+  // results / error, and flip `searchLoading` on for the upcoming fetch (when
   // the new query is non-empty). Keeps the fetch effect below free of
   // synchronous setState calls — the effect only writes via the async
   // transition callback after the network round-trip resolves.
   const [prevDebouncedQuery, setPrevDebouncedQuery] = useState(debouncedQuery);
   if (debouncedQuery !== prevDebouncedQuery) {
     setPrevDebouncedQuery(debouncedQuery);
-    setTaskError(null);
+    setSearchError(null);
     if (debouncedQuery.length === 0) {
       setTaskResults([]);
-      setTaskLoading(false);
+      setNoteResults([]);
+      setSearchLoading(false);
     } else {
-      setTaskLoading(true);
+      setSearchLoading(true);
     }
   }
 
-  // Fetch tasks via the cross-project server action when the debounced
-  // query is non-empty. All synchronous state writes happen in the render
-  // phase reset above; this effect only triggers the transition and writes
-  // via its async callback. The `cancelled` flag handles latest-write-wins
-  // when rapid typing produces overlapping requests.
+  // Fetch tasks + notes via the combined cross-project server action when the
+  // debounced query is non-empty. One round-trip returns both groups under a
+  // single rate-limit charge. All synchronous state writes happen in the
+  // render phase reset above; this effect only triggers the transition and
+  // writes via its async callback. The `cancelled` flag handles
+  // latest-write-wins when rapid typing produces overlapping requests.
   useEffect(() => {
     if (!open) return;
     if (debouncedQuery.length === 0) return;
     let cancelled = false;
     startTransition(async () => {
       try {
-        const payload = await searchTasksAcrossProjects(debouncedQuery);
+        const payload = await searchPaletteAcrossProjects(debouncedQuery);
         if (cancelled) return;
         if (payload.ok) {
-          setTaskResults(payload.rows);
+          setTaskResults(payload.tasks);
+          setNoteResults(payload.notes);
         } else {
           setTaskResults([]);
-          setTaskError(payload.code);
+          setNoteResults([]);
+          setSearchError(payload.code);
         }
       } catch (err) {
         if (cancelled) return;
-        console.error("CommandPalette task search failed", err);
-        setTaskError("unknown");
+        console.error("CommandPalette search failed", err);
+        setSearchError("unknown");
         setTaskResults([]);
+        setNoteResults([]);
       } finally {
-        if (!cancelled) setTaskLoading(false);
+        if (!cancelled) setSearchLoading(false);
       }
     });
     return () => {
@@ -193,7 +212,7 @@ export function CommandPalette({
     };
   }, [open, debouncedQuery]);
 
-  // Build the projects/tasks/settings options in the order they're read.
+  // Build the projects/tasks/notes/settings options in the order they're read.
   const options = useMemo<Option[]>(() => {
     if (debouncedQuery.length === 0) return [];
     const out: Option[] = [];
@@ -230,6 +249,18 @@ export function CommandPalette({
       });
     }
 
+    for (const row of noteResults.slice(0, PER_GROUP_LIMIT)) {
+      out.push({
+        group: "notes",
+        id: row.id,
+        label: row.title,
+        noteRef: row.noteRef,
+        projectTitle: row.projectTitle,
+        // Opens the note on the Notes surface; `WorkspaceClient` reads both.
+        href: `/project/${row.projectId}?view=notes&note=${row.id}`,
+      });
+    }
+
     for (const s of SETTINGS_ENTRIES) {
       // Match both the visible label and the route — the row hints the
       // href on the right, so power users typing `/settings` directly
@@ -245,7 +276,7 @@ export function CommandPalette({
     }
 
     return out;
-  }, [projects, taskResults, debouncedQuery]);
+  }, [projects, taskResults, noteResults, debouncedQuery]);
 
   // Reset the highlight whenever the option list shape changes (new
   // results landed). Render-phase prev-tracker pattern, same as above.
@@ -340,8 +371,8 @@ export function CommandPalette({
 
   const hasQuery = debouncedQuery.length > 0;
   const showZeroResults =
-    hasQuery && options.length === 0 && !taskLoading && taskError === null;
-  const errorMessage = taskError ? ERROR_MESSAGES[taskError] : null;
+    hasQuery && options.length === 0 && !searchLoading && searchError === null;
+  const errorMessage = searchError ? ERROR_MESSAGES[searchError] : null;
 
   return (
     <AnimatePresence>
@@ -380,8 +411,8 @@ export function CommandPalette({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Search projects, tasks, settings…"
-                aria-label="Search projects, tasks, and settings"
+                placeholder="Search projects, tasks, notes, settings…"
+                aria-label="Search projects, tasks, notes, and settings"
                 role="combobox"
                 aria-controls={listboxId}
                 // The combobox popup is visible the moment the user has
@@ -404,14 +435,14 @@ export function CommandPalette({
             <div className="min-h-0 flex-1 overflow-y-auto py-2">
               {!hasQuery && (
                 <p className="px-4 py-6 text-center text-[12px] text-text-muted">
-                  Type to search projects, tasks, and settings…
+                  Type to search projects, tasks, notes, and settings…
                 </p>
               )}
               {hasQuery && errorMessage !== null && (
                 <p
                   role="alert"
                   className={`mx-4 mb-2 flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] ${
-                    taskError === "rate_limited"
+                    searchError === "rate_limited"
                       ? "border-progress/30 bg-progress/10 text-progress"
                       : "border-border bg-base/40 text-text-secondary"
                   }`}
@@ -419,7 +450,7 @@ export function CommandPalette({
                   <span
                     aria-hidden="true"
                     className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
-                      taskError === "rate_limited"
+                      searchError === "rate_limited"
                         ? "bg-progress"
                         : "bg-text-muted"
                     }`}
@@ -451,12 +482,15 @@ export function CommandPalette({
                       onMouseMove={setActiveIndex}
                       onMouseDown={onRowMouseDown}
                       onClick={activate}
-                      taskLoading={taskLoading && g.group === "tasks"}
+                      searchLoading={
+                        searchLoading &&
+                        (g.group === "tasks" || g.group === "notes")
+                      }
                     />
                   ))}
                 </ul>
               )}
-              {hasQuery && options.length === 0 && taskLoading && (
+              {hasQuery && options.length === 0 && searchLoading && (
                 <p className="px-4 py-6 text-center text-[12px] text-text-muted">
                   Searching…
                 </p>
@@ -491,7 +525,7 @@ interface ResultGroupProps {
   onMouseMove: (idx: number) => void;
   onMouseDown: (e: MouseEvent<HTMLLIElement>) => void;
   onClick: (idx: number) => void;
-  taskLoading: boolean;
+  searchLoading: boolean;
 }
 
 /** Section header + option rows for one group (projects / tasks / settings). */
@@ -505,7 +539,7 @@ function ResultGroup({
   onMouseMove,
   onMouseDown,
   onClick,
-  taskLoading,
+  searchLoading,
 }: ResultGroupProps) {
   return (
     <>
@@ -515,7 +549,7 @@ function ResultGroup({
         className="flex items-center gap-1.5 px-4 pt-2 pb-1 font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted"
       >
         <span>{GROUP_LABELS[group]}</span>
-        {taskLoading && (
+        {searchLoading && (
           <span className="font-sans normal-case tracking-normal text-text-faint">
             searching…
           </span>
@@ -563,17 +597,18 @@ function ResultGroup({
 const GROUP_LABELS: Record<OptionGroup, string> = {
   projects: "Projects",
   tasks: "Tasks",
+  notes: "Notes",
   settings: "Navigation",
 };
 
-/** Human copy for each task-fetch failure code. */
+/** Human copy for each search failure code. */
 const ERROR_MESSAGES: Record<
   "rate_limited" | "unauthorized" | "unknown",
   string
 > = {
   rate_limited: "Slow down — too many searches. Try again in a moment.",
-  unauthorized: "Sign in to search tasks across your projects.",
-  unknown: "Couldn't load tasks. Try again.",
+  unauthorized: "Sign in to search across your projects.",
+  unknown: "Couldn't load results. Try again.",
 };
 
 /** Visual content of one result row — varies by group. */
@@ -614,6 +649,24 @@ function ResultRow({ option }: { option: Option }) {
           />
         </span>
         <span className="flex-1 truncate">{option.label}</span>
+        <span className="truncate text-[11px] text-text-faint">
+          {option.projectTitle}
+        </span>
+      </>
+    );
+  }
+  if (option.group === "notes") {
+    return (
+      <>
+        <IconDoc
+          size={13}
+          className="flex-shrink-0 text-text-muted"
+          aria-hidden="true"
+        />
+        <span className="inline-flex w-24 flex-shrink-0 items-center">
+          <MonoId id={option.noteRef} copyable={false} />
+        </span>
+        <span className="flex-1 truncate">{option.label || "Untitled"}</span>
         <span className="truncate text-[11px] text-text-faint">
           {option.projectTitle}
         </span>

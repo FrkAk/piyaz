@@ -14,6 +14,10 @@ import {
   listMyTasks as coreListMyTasks,
   type CrossProjectSearchResult,
 } from "@/lib/data/task";
+import {
+  searchNotesAcrossProjects as coreSearchNotesAcrossProjects,
+  type CrossProjectNoteSearchResult,
+} from "@/lib/data/note";
 import { loadProjectAccess } from "@/lib/auth/authorization";
 import type { MyTask, ProjectIndexEntry } from "@/lib/data/views";
 
@@ -24,6 +28,7 @@ export type {
   CrossProjectSearchResult,
 } from "@/lib/data/task";
 export type { MyTask } from "@/lib/data/views";
+export type { CrossProjectNoteSearchResult } from "@/lib/data/note";
 export type { DetailedEdge } from "@/lib/data/edge";
 export type { ProjectTag } from "@/lib/data/project";
 export type {
@@ -34,15 +39,19 @@ export type {
   ProjectListOrganization,
 } from "@/lib/data/views";
 
-/** Closed set of failure codes for `searchTasksAcrossProjects`. */
+/** Closed set of failure codes for `searchPaletteAcrossProjects`. */
 export type CrossProjectSearchFailureCode =
   | "unauthorized"
   | "rate_limited"
   | "unknown";
 
-/** Discriminated result for the command-palette server action. */
-export type CrossProjectSearchResultPayload =
-  | { ok: true; rows: CrossProjectSearchResult[] }
+/** Discriminated result for the combined command-palette search action. */
+export type CrossProjectPaletteSearchPayload =
+  | {
+      ok: true;
+      tasks: CrossProjectSearchResult[];
+      notes: CrossProjectNoteSearchResult[];
+    }
   | { ok: false; code: CrossProjectSearchFailureCode };
 
 export type MyTasksListFailureCode =
@@ -106,16 +115,18 @@ export async function getProjectGraphSlim(projectId: string) {
 }
 
 /**
- * Server action wrapper — cross-project task search for the global ⌘K
- * palette. Throttled at 60/min per-user and 90/min per-IP via the shared
- * `actions` slot; unauth callers throttle by IP only.
+ * Server action wrapper — combined cross-project task + note search for the
+ * global ⌘K palette. One rate-limit charge against the `search.cross-project`
+ * slot and one auth resolution cover both searches, which run in parallel on
+ * the server. Throttled at 60/min per-user and 90/min per-IP; unauth callers
+ * throttle by IP only.
  *
- * @param query - Search string (full or partial taskRef, title / tag / project / sequence number).
- * @returns `{ ok: true, rows }` or a typed failure.
+ * @param query - Search string (taskRef, title, tag, project title / identifier).
+ * @returns `{ ok: true, tasks, notes }` or a typed failure.
  */
-export async function searchTasksAcrossProjects(
+export async function searchPaletteAcrossProjects(
   query: string,
-): Promise<CrossProjectSearchResultPayload> {
+): Promise<CrossProjectPaletteSearchPayload> {
   // Resolve user id before the rate-limit check so authed callers throttle
   // per-user, not per-IP (IP keys collide on shared NATs).
   const session = await getSession();
@@ -136,10 +147,13 @@ export async function searchTasksAcrossProjects(
 
   try {
     const ctx = await getAuthContext();
-    const rows = await coreSearchTasksAcrossProjects(ctx, query);
-    return { ok: true, rows };
+    const [tasks, notes] = await Promise.all([
+      coreSearchTasksAcrossProjects(ctx, query),
+      coreSearchNotesAcrossProjects(ctx, query),
+    ]);
+    return { ok: true, tasks, notes };
   } catch (err) {
-    console.error("searchTasksAcrossProjects failed", err);
+    console.error("searchPaletteAcrossProjects failed", err);
     return { ok: false, code: "unknown" };
   }
 }
