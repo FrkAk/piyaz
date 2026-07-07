@@ -2,9 +2,10 @@
  * Pure markdown-body reference extractor for the Notes link-derivation
  * engine. Task refs (`<IDENTIFIER>-12`) and wiki links (`[[Title]]`)
  * never match inside fenced code blocks (CommonMark fence rules) or
- * inline code spans and bold runs (the prototype's inline semantics).
- * The Notes renderer must stay in lockstep with these semantics
- * (PYZ-258). No DB access — unit-testable in isolation;
+ * inline code spans; refs inside bold runs are matched, so a reference
+ * always reads and backlinks as one. The Notes renderer must stay in
+ * lockstep with these semantics (PYZ-258). No DB access — unit-testable
+ * in isolation;
  * `lib/data/note.ts` resolves the extracted refs in-tx.
  */
 
@@ -76,11 +77,11 @@ export function fenceCloses(line: string, fence: FenceState): boolean {
 }
 
 /**
- * Build the inline alternation used to match refs, wiki links, bold runs,
- * and inline code spans on a single source line, case-insensitively. Bold
- * and code are captured (groups 3 and 4) so the renderer can slice them;
- * the extractor reads only the ref (1) and title (2) groups. Leftmost-
- * match-wins lets a span consume refs inside it.
+ * Build the inline alternation used to match refs, wiki links, and inline
+ * code spans on a single source line, case-insensitively. Inline code is
+ * captured (group 3) so leftmost-match-wins lets it consume refs inside
+ * it; the extractor reads only the ref (1) and title (2) groups. Bold
+ * runs are not excluded, so a ref inside `**bold**` is matched.
  *
  * @param projectIdentifier - The owning project's identifier.
  * @returns A fresh `gi` RegExp; reset `lastIndex` before reuse.
@@ -88,8 +89,7 @@ export function fenceCloses(line: string, fence: FenceState): boolean {
 export function buildInlineRe(projectIdentifier: string): RegExp {
   const identifier = escapeRegExp(projectIdentifier);
   return new RegExp(
-    String.raw`\b${identifier}-(\d+)\b|\[\[([^\]]+)\]\]|(\*\*[^*]+\*\*)|` +
-      "(`[^`]+`)",
+    String.raw`\b${identifier}-(\d+)\b|\[\[([^\]]+)\]\]|` + "(`[^`]+`)",
     "gi",
   );
 }
@@ -103,12 +103,11 @@ export function buildInlineRe(projectIdentifier: string): RegExp {
  * a run of the same character at least as long as the opener with only
  * whitespace after it, and an unterminated fence swallows the rest of
  * the body. Fence-delimiter lines and fenced content are skipped
- * entirely. Inline code spans and bold runs are excluded by matching
- * them in the same alternation as the refs — leftmost-match-wins means a
- * span consumes its content before the ref patterns can see it,
- * mirroring the prototype's `INLINE_RE` split (which renders neither
- * chips nor doc links inside backticks or bold). Identifier matching is
- * case-insensitive.
+ * entirely. Inline code spans are excluded by matching them in the same
+ * alternation as the refs — leftmost-match-wins means a span consumes its
+ * content before the ref patterns can see it. Bold runs are not excluded,
+ * so a ref inside `**bold**` is linked, in lockstep with the renderer.
+ * Identifier matching is case-insensitive.
  *
  * @param body - Markdown note body.
  * @param projectIdentifier - The owning project's identifier.

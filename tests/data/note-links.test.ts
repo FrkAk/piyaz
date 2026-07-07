@@ -16,10 +16,18 @@ test("extractNoteRefs parses refs and wiki links outside code", () => {
   expect(refs.titles).toEqual(["Data model"]);
 });
 
-test("extractNoteRefs skips inline code spans and bold runs", () => {
+test("extractNoteRefs skips inline code spans", () => {
   expect(extractNoteRefs("inline `PRJ1-12` here", "PRJ1").taskSeqs).toEqual([]);
   expect(extractNoteRefs("also `[[Nope]]` here", "PRJ1").titles).toEqual([]);
-  expect(extractNoteRefs("bold **PRJ1-12** run", "PRJ1").taskSeqs).toEqual([]);
+});
+
+test("extractNoteRefs links refs inside bold runs", () => {
+  expect(extractNoteRefs("bold **PRJ1-12** run", "PRJ1").taskSeqs).toEqual([
+    12,
+  ]);
+  expect(extractNoteRefs("bold **[[Model]]** run", "PRJ1").titles).toEqual([
+    "Model",
+  ]);
 });
 
 test("extractNoteRefs skips fenced code blocks", () => {

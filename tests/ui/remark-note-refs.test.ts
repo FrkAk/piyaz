@@ -47,8 +47,11 @@ test("a blank wiki title degrades to text", () => {
   expect(refsIn("empty [[   ]] link")).toEqual([]);
 });
 
-test("does not tag refs inside bold runs", () => {
-  expect(refsIn("**bold RSC-3 [[X]]** tail")).toEqual([]);
+test("tags refs inside bold runs", () => {
+  expect(refsIn("**bold RSC-3 [[X]]** tail")).toEqual([
+    { name: "noteref-task", props: { seq: 3 } },
+    { name: "noteref-wiki", props: { title: "X" } },
+  ]);
 });
 
 /**
