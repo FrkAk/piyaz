@@ -26,7 +26,7 @@ function remarkSrcLine() {
 }
 
 /** Sanitize schema that also permits the tagged ref elements + src line. */
-const noteSchema = {
+export const noteSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), "noteref-task", "noteref-wiki"],
   attributes: {
