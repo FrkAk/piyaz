@@ -21,8 +21,7 @@ import { useModalChrome } from "@/hooks/useModalChrome";
 import { projectColor } from "@/lib/ui/project-color";
 import type { SidebarProject } from "@/components/layout/Sidebar";
 import {
-  searchNotesAcrossProjects,
-  searchTasksAcrossProjects,
+  searchPaletteAcrossProjects,
   type CrossProjectNoteSearchResult,
   type CrossProjectSearchResult,
 } from "@/lib/graph/queries";
@@ -176,27 +175,28 @@ export function CommandPalette({
     }
   }
 
-  // Fetch tasks + notes via the cross-project server actions when the
-  // debounced query is non-empty. Both run in parallel and share the loading
-  // and error state. All synchronous state writes happen in the render phase
-  // reset above; this effect only triggers the transition and writes via its
-  // async callback. The `cancelled` flag handles latest-write-wins when rapid
-  // typing produces overlapping requests.
+  // Fetch tasks + notes via the combined cross-project server action when the
+  // debounced query is non-empty. One round-trip returns both groups under a
+  // single rate-limit charge. All synchronous state writes happen in the
+  // render phase reset above; this effect only triggers the transition and
+  // writes via its async callback. The `cancelled` flag handles
+  // latest-write-wins when rapid typing produces overlapping requests.
   useEffect(() => {
     if (!open) return;
     if (debouncedQuery.length === 0) return;
     let cancelled = false;
     startTransition(async () => {
       try {
-        const [tasks, notes] = await Promise.all([
-          searchTasksAcrossProjects(debouncedQuery),
-          searchNotesAcrossProjects(debouncedQuery),
-        ]);
+        const payload = await searchPaletteAcrossProjects(debouncedQuery);
         if (cancelled) return;
-        setTaskResults(tasks.ok ? tasks.rows : []);
-        setNoteResults(notes.ok ? notes.rows : []);
-        const failure = !tasks.ok ? tasks : !notes.ok ? notes : null;
-        if (failure) setSearchError(failure.code);
+        if (payload.ok) {
+          setTaskResults(payload.tasks);
+          setNoteResults(payload.notes);
+        } else {
+          setTaskResults([]);
+          setNoteResults([]);
+          setSearchError(payload.code);
+        }
       } catch (err) {
         if (cancelled) return;
         console.error("CommandPalette search failed", err);

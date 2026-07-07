@@ -1315,8 +1315,6 @@ export type CrossProjectNoteSearchResult = {
   noteRef: string;
   /** Note title. */
   title: string;
-  /** Note type (reference/guidance/knowledge). */
-  type: NoteType;
   /** Owning project UUID — drives the deep link. */
   projectId: string;
   /** Owning project identifier (prefix shown in the note ref). */
@@ -1397,7 +1395,6 @@ export async function searchNotesAcrossProjects(
       .select({
         id: notes.id,
         title: notes.title,
-        type: notes.type,
         sequenceNumber: notes.sequenceNumber,
         projectId: notes.projectId,
         projectIdentifier: projects.identifier,
@@ -1417,7 +1414,6 @@ export async function searchNotesAcrossProjects(
         row.sequenceNumber,
       ),
       title: row.title,
-      type: row.type as NoteType,
       projectId: row.projectId,
       projectIdentifier: row.projectIdentifier,
       projectTitle: row.projectTitle,

@@ -39,20 +39,19 @@ export type {
   ProjectListOrganization,
 } from "@/lib/data/views";
 
-/** Closed set of failure codes for `searchTasksAcrossProjects`. */
+/** Closed set of failure codes for `searchPaletteAcrossProjects`. */
 export type CrossProjectSearchFailureCode =
   | "unauthorized"
   | "rate_limited"
   | "unknown";
 
-/** Discriminated result for the command-palette server action. */
-export type CrossProjectSearchResultPayload =
-  | { ok: true; rows: CrossProjectSearchResult[] }
-  | { ok: false; code: CrossProjectSearchFailureCode };
-
-/** Discriminated result for the note command-palette server action. */
-export type CrossProjectNoteSearchResultPayload =
-  | { ok: true; rows: CrossProjectNoteSearchResult[] }
+/** Discriminated result for the combined command-palette search action. */
+export type CrossProjectPaletteSearchPayload =
+  | {
+      ok: true;
+      tasks: CrossProjectSearchResult[];
+      notes: CrossProjectNoteSearchResult[];
+    }
   | { ok: false; code: CrossProjectSearchFailureCode };
 
 export type MyTasksListFailureCode =
@@ -116,16 +115,18 @@ export async function getProjectGraphSlim(projectId: string) {
 }
 
 /**
- * Server action wrapper — cross-project task search for the global ⌘K
- * palette. Throttled at 60/min per-user and 90/min per-IP via the shared
- * `actions` slot; unauth callers throttle by IP only.
+ * Server action wrapper — combined cross-project task + note search for the
+ * global ⌘K palette. One rate-limit charge against the `search.cross-project`
+ * slot and one auth resolution cover both searches, which run in parallel on
+ * the server. Throttled at 60/min per-user and 90/min per-IP; unauth callers
+ * throttle by IP only.
  *
- * @param query - Search string (full or partial taskRef, title / tag / project / sequence number).
- * @returns `{ ok: true, rows }` or a typed failure.
+ * @param query - Search string (taskRef, title, tag, project title / identifier).
+ * @returns `{ ok: true, tasks, notes }` or a typed failure.
  */
-export async function searchTasksAcrossProjects(
+export async function searchPaletteAcrossProjects(
   query: string,
-): Promise<CrossProjectSearchResultPayload> {
+): Promise<CrossProjectPaletteSearchPayload> {
   // Resolve user id before the rate-limit check so authed callers throttle
   // per-user, not per-IP (IP keys collide on shared NATs).
   const session = await getSession();
@@ -146,47 +147,13 @@ export async function searchTasksAcrossProjects(
 
   try {
     const ctx = await getAuthContext();
-    const rows = await coreSearchTasksAcrossProjects(ctx, query);
-    return { ok: true, rows };
+    const [tasks, notes] = await Promise.all([
+      coreSearchTasksAcrossProjects(ctx, query),
+      coreSearchNotesAcrossProjects(ctx, query),
+    ]);
+    return { ok: true, tasks, notes };
   } catch (err) {
-    console.error("searchTasksAcrossProjects failed", err);
-    return { ok: false, code: "unknown" };
-  }
-}
-
-/**
- * Server action wrapper — cross-project note search for the global ⌘K
- * palette. Shares the `search.cross-project` rate-limit slot with the task
- * search; unauth callers throttle by IP only.
- *
- * @param query - Search string (note title, project title, or identifier).
- * @returns `{ ok: true, rows }` or a typed failure.
- */
-export async function searchNotesAcrossProjects(
-  query: string,
-): Promise<CrossProjectNoteSearchResultPayload> {
-  const session = await getSession();
-  const userId = session?.user.id ?? null;
-
-  const limit = await checkActionRateLimit(
-    {
-      action: "search.cross-project",
-      windowSeconds: 60,
-      perUserMax: 60,
-      perIpMax: 90,
-    },
-    userId,
-  );
-  if (!limit.ok) return { ok: false, code: "rate_limited" };
-
-  if (!userId) return { ok: false, code: "unauthorized" };
-
-  try {
-    const ctx = await getAuthContext();
-    const rows = await coreSearchNotesAcrossProjects(ctx, query);
-    return { ok: true, rows };
-  } catch (err) {
-    console.error("searchNotesAcrossProjects failed", err);
+    console.error("searchPaletteAcrossProjects failed", err);
     return { ok: false, code: "unknown" };
   }
 }
