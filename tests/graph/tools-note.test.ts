@@ -866,3 +866,28 @@ test("request_share stays open to agents on read-only private notes", async () =
   expect(after.note.visibility).toBe("private");
   expect(after.note.shareRequestedBy).toBe(fx.userId);
 });
+
+test("a locked note in a subtree blocks folder moves for humans and agents", async () => {
+  const fx = await seedUserOrgProject("NG5");
+  const ctx = makeAuthContext(fx.userId);
+  const agent = agentCtx(fx.userId);
+  const created = await createOne(agent, "PRJNG5", {
+    title: "Locked child",
+    folder: "kb",
+  });
+  const noteId = await resolveId(ctx, fx, created.ref);
+  await updateNote(ctx, noteId, { locked: true });
+
+  for (const actor of [ctx, agent]) {
+    const blocked = errText(
+      await handleNote(
+        { action: "move", project: "PRJNG5", folder: "kb", destParent: "docs" },
+        actor,
+      ),
+    );
+    expect(blocked).toContain("locked");
+    expect(blocked).toContain("unlock");
+  }
+
+  expect((await getNoteFull(ctx, noteId)).note.folder).toBe("kb");
+});

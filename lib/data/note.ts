@@ -2652,6 +2652,9 @@ export async function moveNote(
  * @throws NoteValidationError when a path fails normalization, `newLeaf`
  *   normalizes to empty, or the move would push any resulting path past
  *   the folder cap.
+ * @throws NoteLockedError when any note in the subtree is locked.
+ * @throws NoteAgentReadOnlyError when an MCP actor moves a subtree
+ *   containing an agent-read-only note.
  */
 export async function moveFolder(
   ctx: AuthContext,
@@ -2698,31 +2701,23 @@ export async function moveFolder(
         like(notes.folder, `${escapeLike(srcPath)}/%`),
       ),
     );
-    if (ctx.actor.source === "mcp") {
-      const [guarded] = await tx
-        .select({ count: sql<number>`count(*)` })
-        .from(notes)
-        .where(
-          and(
-            subtreeFilter,
-            or(eq(notes.agentWritable, false), eq(notes.locked, true)),
-          ),
-        );
-      if (Number(guarded?.count ?? 0) > 0) throw new NoteAgentReadOnlyError();
+    const [guard] = await tx
+      .select({
+        lockedCount: sql<number>`count(*) filter (where ${notes.locked})`,
+        readOnlyCount: sql<number>`count(*) filter (where not ${notes.agentWritable})`,
+        longest: sql<number | null>`max(char_length(${notes.folder}))`,
+      })
+      .from(notes)
+      .where(subtreeFilter);
+    if (Number(guard?.lockedCount ?? 0) > 0) throw new NoteLockedError();
+    if (ctx.actor.source === "mcp" && Number(guard?.readOnlyCount ?? 0) > 0) {
+      throw new NoteAgentReadOnlyError();
     }
-    if (growth > 0) {
-      const [row] = await tx
-        .select({
-          longest: sql<number | null>`MAX(char_length(${notes.folder}))`,
-        })
-        .from(notes)
-        .where(subtreeFilter);
-      if ((row?.longest ?? 0) + growth > FOLDER_MAX_CHARS) {
-        throw new NoteValidationError(
-          "folder",
-          `move would push a descendant past ${FOLDER_MAX_CHARS} characters`,
-        );
-      }
+    if (growth > 0 && (guard?.longest ?? 0) + growth > FOLDER_MAX_CHARS) {
+      throw new NoteValidationError(
+        "folder",
+        `move would push a descendant past ${FOLDER_MAX_CHARS} characters`,
+      );
     }
     const rows = await tx
       .update(notes)
