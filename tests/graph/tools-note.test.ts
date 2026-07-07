@@ -282,7 +282,7 @@ test("edit folds body ops with task-editor semantics and CAS", async () => {
       ctx,
     ),
   );
-  expect(governance).toContain("not editable via ops");
+  expect(governance).toContain("request_share");
 });
 
 test("read serves meta with sections, one heading, and no stray body", async () => {
@@ -678,4 +678,216 @@ test("read rejects heading combined with fields", async () => {
     ),
   );
   expect(conflict).toContain("either heading");
+});
+
+/**
+ * Mint an MCP-actor context, the shape the /api/mcp route produces. The
+ * default `makeAuthContext(userId)` system actor doubles as the
+ * non-agent control in the gate tests.
+ *
+ * @param userId - Verified user id.
+ * @returns Auth context with an mcp actor.
+ */
+function agentCtx(userId: string): AuthContext {
+  return makeAuthContext(userId, { source: "mcp", userId, clientId: null });
+}
+
+test("access-level matrix: agent writes follow §9.2, reads always work", async () => {
+  const fx = await seedUserOrgProject("NG1");
+  const ctx = makeAuthContext(fx.userId);
+  const agent = agentCtx(fx.userId);
+
+  const open = await createOne(agent, "PRJNG1", { title: "Open", body: "x" });
+  const readOnly = await createOne(agent, "PRJNG1", {
+    title: "Agent read only",
+    body: "y",
+  });
+  const locked = await createOne(agent, "PRJNG1", {
+    title: "Locked",
+    body: "z",
+  });
+  const readOnlyId = await resolveId(ctx, fx, readOnly.ref);
+  const lockedId = await resolveId(ctx, fx, locked.ref);
+  await updateNote(ctx, readOnlyId, { agentWritable: false });
+  await updateNote(ctx, lockedId, { locked: true });
+
+  const editOf = (ref: string) =>
+    handleNote(
+      {
+        action: "edit",
+        note: ref,
+        operations: [{ op: "append", field: "body", text: "more" }],
+      },
+      agent,
+    );
+  const moveOf = (ref: string) =>
+    handleNote({ action: "move", note: ref, folder: "archive" }, agent);
+  const deleteOf = (ref: string) =>
+    handleNote({ action: "delete", note: ref, preview: false }, agent);
+
+  expect((await editOf(open.ref)).ok).toBe(true);
+  expect((await moveOf(open.ref)).ok).toBe(true);
+
+  for (const op of [editOf, moveOf, deleteOf]) {
+    const rejected = errText(await op(readOnly.ref));
+    expect(rejected).toContain("read-only to agents");
+    expect(rejected).toContain("ribbon");
+    const lockedMsg = errText(await op(locked.ref));
+    expect(lockedMsg).toContain("locked");
+    expect(lockedMsg).toContain("unlock");
+  }
+
+  for (const ref of [readOnly.ref, locked.ref]) {
+    const meta = okData<string>(
+      await handleNote({ action: "read", note: ref }, agent),
+    );
+    expect(meta).toContain(ref);
+  }
+  const hits = okData<{ text: string }>(
+    await handleNote(
+      { action: "search", project: "PRJNG1", query: "agent" },
+      agent,
+    ),
+  );
+  expect(hits.text).toContain("Agent read only");
+
+  const untouched = await getNoteFull(ctx, readOnlyId);
+  expect(untouched.note.body).toBe("y");
+  expect(untouched.note.folder).toBe("");
+  expect((await getNoteFull(ctx, lockedId)).note.body).toBe("z");
+
+  expect((await deleteOf(open.ref)).ok).toBe(true);
+});
+
+test("agent gate covers restore, links, and folder subtree moves; humans pass", async () => {
+  const fx = await seedUserOrgProject("NG2");
+  const ctx = makeAuthContext(fx.userId);
+  const agent = agentCtx(fx.userId);
+  const task = await createTask(ctx, {
+    projectId: fx.projectId,
+    title: "Anchor task",
+    description: "Link target for the gate tests. Second sentence.",
+  });
+
+  const created = await createOne(agent, "PRJNG2", {
+    title: "Guarded",
+    folder: "kb",
+  });
+  const noteId = await resolveId(ctx, fx, created.ref);
+  await updateNote(ctx, noteId, { agentWritable: false });
+
+  const link = errText(
+    await handleNote(
+      { action: "link", note: created.ref, task: task.id, kind: "reference" },
+      agent,
+    ),
+  );
+  expect(link).toContain("read-only to agents");
+
+  const subtree = errText(
+    await handleNote(
+      { action: "move", project: "PRJNG2", folder: "kb", destParent: "docs" },
+      agent,
+    ),
+  );
+  expect(subtree).toContain("read-only to agents");
+
+  const humanMove = okData<{ dest: string; movedCount: number }>(
+    await handleNote(
+      { action: "move", project: "PRJNG2", folder: "kb", destParent: "docs" },
+      ctx,
+    ),
+  );
+  expect(humanMove.movedCount).toBe(1);
+
+  await handleNote(
+    { action: "delete", note: created.ref, preview: false },
+    ctx,
+  );
+  const restore = errText(
+    await handleNote({ action: "restore", note: noteId }, agent),
+  );
+  expect(restore).toContain("read-only to agents");
+  expect((await handleNote({ action: "restore", note: noteId }, ctx)).ok).toBe(
+    true,
+  );
+});
+
+test("governance edit ops steer to request_share and the ribbon", async () => {
+  const fx = await seedUserOrgProject("NG3");
+  const agent = agentCtx(fx.userId);
+  const created = await createOne(agent, "PRJNG3", { title: "Steered" });
+
+  const visibility = errText(
+    await handleNote(
+      {
+        action: "edit",
+        note: created.ref,
+        operations: [
+          { op: "set", field: "visibility" as never, value: "team" },
+        ],
+      },
+      agent,
+    ),
+  );
+  expect(visibility).toContain("request_share");
+  expect(visibility).toContain("human approval");
+
+  const lockedField = errText(
+    await handleNote(
+      {
+        action: "edit",
+        note: created.ref,
+        operations: [{ op: "set", field: "locked" as never, value: false }],
+      },
+      agent,
+    ),
+  );
+  expect(lockedField).toContain("governance control");
+});
+
+test("request_share stays open to agents on read-only private notes", async () => {
+  const fx = await seedUserOrgProject("NG4");
+  const ctx = makeAuthContext(fx.userId);
+  const agent = agentCtx(fx.userId);
+  const privateNote = await createNote(ctx, {
+    projectId: fx.projectId,
+    title: "Private findings",
+    visibility: "private",
+  });
+  await updateNote(ctx, privateNote.id, { agentWritable: false });
+
+  const requested = okData<{ ref: string }>(
+    await handleNote({ action: "request_share", note: privateNote.id }, agent),
+  );
+  expect(requested.ref).toBe(`PRJNG4-N${privateNote.sequenceNumber}`);
+
+  const after = await getNoteFull(ctx, privateNote.id);
+  expect(after.note.visibility).toBe("private");
+  expect(after.note.shareRequestedBy).toBe(fx.userId);
+});
+
+test("a locked note in a subtree blocks folder moves for humans and agents", async () => {
+  const fx = await seedUserOrgProject("NG5");
+  const ctx = makeAuthContext(fx.userId);
+  const agent = agentCtx(fx.userId);
+  const created = await createOne(agent, "PRJNG5", {
+    title: "Locked child",
+    folder: "kb",
+  });
+  const noteId = await resolveId(ctx, fx, created.ref);
+  await updateNote(ctx, noteId, { locked: true });
+
+  for (const actor of [ctx, agent]) {
+    const blocked = errText(
+      await handleNote(
+        { action: "move", project: "PRJNG5", folder: "kb", destParent: "docs" },
+        actor,
+      ),
+    );
+    expect(blocked).toContain("locked");
+    expect(blocked).toContain("unlock");
+  }
+
+  expect((await getNoteFull(ctx, noteId)).note.folder).toBe("kb");
 });

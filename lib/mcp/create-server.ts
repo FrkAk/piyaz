@@ -381,6 +381,7 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         disc: (p) => p.action,
         heavy: (p) =>
           p.action === "search" ||
+          (p.action === "create" && (p.notes?.length ?? 0) > 5) ||
           (p.action === "read" &&
             (p.revision !== undefined ||
               (p.fields?.includes("body") ?? false))),
