@@ -20,14 +20,16 @@ const RANK_NONE = 3;
 
 /**
  * Relevance rank of a title against a lowercased query: 0 exact, 1 prefix,
- * 2 substring, 3 no match. An empty query ranks every candidate equally so
- * the picker opens with a stable, complete list.
+ * 2 substring, 3 no match. Blank titles always rank as no match. An empty
+ * query ranks every remaining candidate equally so the picker opens with a
+ * stable, complete list.
  *
  * @param title - Candidate title.
  * @param query - Lowercased, trimmed query.
  * @returns Rank in `[0, 3]`.
  */
 function titleRank(title: string, query: string): number {
+  if (title.trim() === "") return RANK_NONE;
   if (query === "") return 2;
   const t = title.toLowerCase();
   if (t === query) return 0;

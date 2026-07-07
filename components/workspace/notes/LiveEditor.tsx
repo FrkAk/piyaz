@@ -490,7 +490,6 @@ function BlockEditor({
     if (ctx === null || query === null || dismissed) return [];
     const candidates: LinkSuggestion[] = [];
     for (const note of ctx.notesByTitle.values()) {
-      if (note.title.trim() === "") continue;
       candidates.push({
         id: `note-${note.id}`,
         title: note.title,
@@ -717,7 +716,7 @@ function WikiSuggestions({
   const activeRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+  }, [active, matches]);
   return (
     <div
       className={`absolute left-0 z-20 max-h-56 w-64 overflow-y-auto rounded-md border border-border py-1 shadow-[var(--shadow-float)] ${

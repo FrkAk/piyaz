@@ -41,6 +41,12 @@ test("notes and tasks rank in one merged pool", () => {
   expect(ranked.map((s) => s.id)).toEqual(["task-9"]);
 });
 
+test("blank titles are dropped even on empty query", () => {
+  const candidates = [make("blank", "   "), make("real", "Alpha")];
+  const ranked = rankLinkSuggestions("", candidates);
+  expect(ranked.map((s) => s.id)).toEqual(["real"]);
+});
+
 test("empty query returns all candidates alphabetically", () => {
   const candidates = [make("b", "Beta"), make("a", "Alpha")];
   const ranked = rankLinkSuggestions("", candidates);
