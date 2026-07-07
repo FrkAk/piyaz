@@ -296,6 +296,14 @@ describe("revertPatchOnDetail", () => {
       revertPatchOnDetail(undefined, { category: "x" }, { category: null }),
     ).toBeUndefined();
   });
+
+  test("skips fields with no captured previous value", () => {
+    const detail = notePlaceholderFromRow("p1", row("n1"));
+    const optimistic = { ...detail, note: { ...detail.note, category: "ui" } };
+    expect(revertPatchOnDetail(optimistic, { category: "ui" }, {})).toBe(
+      optimistic,
+    );
+  });
 });
 
 describe("revertPatchInTree", () => {
@@ -326,6 +334,13 @@ describe("revertPatchInTree", () => {
     expect(
       revertPatchInTree(rows, "missing", { title: "x" }, { title: "y" }),
     ).toBe(rows);
+  });
+
+  test("skips fields with no captured previous value", () => {
+    const rows = [row("n1", { title: "optimistic" })];
+    expect(revertPatchInTree(rows, "n1", { title: "optimistic" }, {})).toBe(
+      rows,
+    );
   });
 });
 

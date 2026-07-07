@@ -4,6 +4,7 @@ import { RateLimitError } from "@/lib/actions/rate-limit-action";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import {
   FolderCycleError,
+  NoteLockedError,
   NoteShareStateError,
   NoteStaleWriteError,
   NoteValidationError,
@@ -31,6 +32,7 @@ export type NoteActionFailure =
         | "not_found"
         | "invalid_folder_move"
         | "share_state"
+        | "locked"
         | "archived"
         | "unknown";
       message: string;
@@ -97,6 +99,9 @@ export function noteFailureFrom(err: unknown): NoteActionFailure {
   }
   if (err instanceof NoteShareStateError) {
     return { ok: false, code: "share_state", message: err.message };
+  }
+  if (err instanceof NoteLockedError) {
+    return { ok: false, code: "locked", message: err.message };
   }
   if (err instanceof ForbiddenError) {
     return { ok: false, code: "not_found", message: NOT_FOUND_MESSAGE };

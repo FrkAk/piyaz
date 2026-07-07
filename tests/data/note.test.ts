@@ -16,6 +16,7 @@ import {
   restoreNote,
   updateNote,
   FolderCycleError,
+  NoteLockedError,
   NoteShareStateError,
   NoteStaleWriteError,
   NoteValidationError,
@@ -24,9 +25,11 @@ import { makeAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import { ProjectArchivedError } from "@/lib/graph/errors";
 import { NOTE_TITLE_MAX_BYTES } from "@/lib/db/schema";
+import { broker } from "@/lib/realtime/broker";
 import { superuserPool } from "@/tests/setup/global";
 
 afterEach(async () => {
+  broker._resetForTests();
   await truncateAll();
 });
 
@@ -532,7 +535,17 @@ test("declineShareRequest clears the marker without leaving private", async () =
   );
 
   await requestShare(ctx, note.id);
+
+  const frames: string[] = [];
+  broker.attach(f.userId, {
+    send: (data: string) => {
+      frames.push(data);
+    },
+    close: () => {},
+  });
+  broker.register(f.userId, `note:${note.id}`);
   await declineShareRequest(ctx, note.id);
+  expect(frames.length).toBe(1);
 
   const sr = serviceRoleConnect();
   const [row] = await sr<
@@ -555,6 +568,78 @@ test("declineShareRequest is gated to note access", async () => {
   await expect(
     declineShareRequest(makeAuthContext(mateId), note.id),
   ).rejects.toBeInstanceOf(ForbiddenError);
+});
+
+test("a locked note rejects every write except the unlock patch", async () => {
+  const f = await seedUserOrgProject("notelockgate");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "L" });
+  await updateNote(ctx, note.id, { locked: true });
+
+  await expect(
+    updateNote(ctx, note.id, { title: "Renamed" }),
+  ).rejects.toBeInstanceOf(NoteLockedError);
+  await expect(
+    updateNote(ctx, note.id, { locked: true, category: "docs" }),
+  ).rejects.toBeInstanceOf(NoteLockedError);
+
+  await updateNote(ctx, note.id, { locked: false, agentWritable: true });
+  const after = await updateNote(ctx, note.id, { title: "Renamed" });
+  expect(after.title).toBe("Renamed");
+});
+
+test("share transitions are rejected on a locked note", async () => {
+  const f = await seedUserOrgProject("notelockshare");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "L" });
+  await requestShare(ctx, note.id);
+  await updateNote(ctx, note.id, { locked: true });
+
+  await expect(approveShareRequest(ctx, note.id)).rejects.toBeInstanceOf(
+    NoteLockedError,
+  );
+  await expect(declineShareRequest(ctx, note.id)).rejects.toBeInstanceOf(
+    NoteLockedError,
+  );
+
+  await updateNote(ctx, note.id, { locked: false });
+  await declineShareRequest(ctx, note.id);
+});
+
+test("note events dispatch on note:<id> while private and project:<id> once team", async () => {
+  const f = await seedUserOrgProject("noteemit");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "N" });
+
+  const frames: string[] = [];
+  broker.attach(f.userId, {
+    send: (data: string) => {
+      frames.push(data);
+    },
+    close: () => {},
+  });
+  broker.register(f.userId, `note:${note.id}`);
+
+  await updateNote(ctx, note.id, { category: "docs" });
+  expect(frames.length).toBe(1);
+  const privateEvent = JSON.parse(frames[0].slice("data: ".length)) as {
+    kind: string;
+    noteId: string;
+    updatedAt?: string;
+  };
+  expect(privateEvent.kind).toBe("note");
+  expect(privateEvent.noteId).toBe(note.id);
+  expect(privateEvent.updatedAt).toBeDefined();
+
+  await updateNote(ctx, note.id, { visibility: "team" });
+  expect(frames.length).toBe(1);
+
+  broker.register(f.userId, `project:${f.projectId}`);
+  await updateNote(ctx, note.id, { category: "eng" });
+  const teamEvents = frames
+    .slice(1)
+    .map((d) => JSON.parse(d.slice("data: ".length)) as { kind: string });
+  expect(teamEvents.some((e) => e.kind === "note")).toBe(true);
 });
 
 test("slug allocation dedupes past a teammate's private note", async () => {

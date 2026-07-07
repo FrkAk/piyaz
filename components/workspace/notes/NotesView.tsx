@@ -5,8 +5,10 @@ import { AnimatePresence, motion } from "motion/react";
 import { IconPanelLeft, IconSettings } from "@/components/shared/icons";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useModalChrome } from "@/hooks/useModalChrome";
-import { useNotesRailCollapse } from "@/hooks/useNotesRailCollapse";
-import { useNotesSettingsCollapse } from "@/hooks/useNotesSettingsCollapse";
+import {
+  useNotesRailCollapse,
+  useNotesSettingsCollapse,
+} from "@/hooks/useNotesCollapse";
 import { EditorPane, type TaskSlimMap } from "./EditorPane";
 import { SettingsPane } from "./SettingsPane";
 import { TreePane } from "./TreePane";
@@ -67,6 +69,12 @@ export function NotesView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusTitle, setFocusTitle] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // A cleared selection closes the drawer for real (render-time state
+  // adjustment, not an effect): the drawer only hides on `noteId === null`,
+  // and a surviving `settingsOpen` would silently reopen it on the next
+  // note selection.
+  if (noteId === null && settingsOpen) setSettingsOpen(false);
 
   /**
    * Create a persisted note in a folder, then select it and request

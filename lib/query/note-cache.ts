@@ -350,7 +350,9 @@ export function mergeLinksIntoDetail(
  * previous value ONLY for patch fields whose cached value still equals
  * this mutation's optimistic value, so an earlier failure never clobbers
  * a newer optimistic write to the same field. Arrays compare by
- * reference; each optimistic patch installs a fresh array.
+ * reference; each optimistic patch installs a fresh array. Fields with no
+ * captured previous value (`prev` lacks the key) are skipped: restoring
+ * `undefined` would corrupt the entry.
  *
  * @param detail - Cached detail result, or `undefined` when not cached.
  * @param patch - The optimistic values this mutation wrote.
@@ -368,7 +370,7 @@ export function revertPatchOnDetail(
   let changed = false;
   for (const key of Object.keys(patch) as (keyof NoteFull)[]) {
     const optimistic = patch[key];
-    if (optimistic === undefined) continue;
+    if (optimistic === undefined || !(key in prev)) continue;
     if (detail.note[key] === optimistic && prev[key] !== optimistic) {
       restored[key] = prev[key];
       changed = true;
@@ -403,7 +405,7 @@ export function revertPatchInTree(
   let changed = false;
   for (const key of Object.keys(patch) as (keyof NoteTreePatch)[]) {
     const optimistic = patch[key];
-    if (optimistic === undefined) continue;
+    if (optimistic === undefined || !(key in prev)) continue;
     if (existing[key] === optimistic && prev[key] !== optimistic) {
       restored[key] = prev[key];
       changed = true;

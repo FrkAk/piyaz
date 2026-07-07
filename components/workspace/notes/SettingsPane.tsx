@@ -145,6 +145,20 @@ function removeControl(
   return next;
 }
 
+/**
+ * Drop rate-limit entries whose window has elapsed.
+ * @param limits - Per-control expiry timestamps.
+ * @param now - Current epoch milliseconds.
+ * @returns Map without elapsed entries; the same map when none elapsed.
+ */
+function pruneExpired(
+  limits: ReadonlyMap<ControlKey, number>,
+  now: number,
+): ReadonlyMap<ControlKey, number> {
+  const live = [...limits].filter(([, until]) => until > now);
+  return live.length === limits.size ? limits : new Map(live);
+}
+
 /** A short, human-facing line for a typed action failure. */
 function failureCopy(failure: NoteActionFailure): string {
   switch (failure.code) {
@@ -156,6 +170,8 @@ function failureCopy(failure: NoteActionFailure): string {
       return "note not found";
     case "share_state":
       return "no pending request";
+    case "locked":
+      return "note is locked";
     case "archived":
       return "project archived";
     case "invalid_input":
@@ -227,15 +243,17 @@ export function SettingsPane({
     control: ControlKey;
     message: string;
   } | null>(null);
-  const [rateLimited, setRateLimited] = useState<{
-    control: ControlKey;
-    until: number;
-  } | null>(null);
+  const [rateLimited, setRateLimited] = useState<
+    ReadonlyMap<ControlKey, number>
+  >(() => new Map());
 
   useEffect(() => {
-    if (rateLimited === null) return;
-    const remaining = Math.max(0, rateLimited.until - Date.now());
-    const timer = window.setTimeout(() => setRateLimited(null), remaining);
+    if (rateLimited.size === 0) return;
+    const soonest = Math.min(...rateLimited.values());
+    const timer = window.setTimeout(
+      () => setRateLimited((m) => pruneExpired(m, Date.now())),
+      Math.max(0, soonest - Date.now()),
+    );
     return () => window.clearTimeout(timer);
   }, [rateLimited]);
 
@@ -249,7 +267,8 @@ export function SettingsPane({
       let result: NoteActionResult<T> | null = null;
       try {
         result = await action();
-      } catch {
+      } catch (err) {
+        console.error("note settings write failed", err);
         result = null;
       }
       setPending((p) => removeControl(p, control));
@@ -259,10 +278,8 @@ export function SettingsPane({
       }
       if (!result.ok) {
         if (result.code === "rate_limited") {
-          setRateLimited({
-            control,
-            until: Date.now() + result.retryAfter * 1000,
-          });
+          const until = Date.now() + result.retryAfter * 1000;
+          setRateLimited((m) => new Map(m).set(control, until));
         }
         setError({ control, message: failureCopy(result) });
         return;
@@ -296,9 +313,9 @@ export function SettingsPane({
   // do not block: values are optimistic and the per-note write chain
   // serializes the server calls.
   const writeBlocked = loading || note.locked;
-  const accessBlocked = loading || rateLimited?.control === "access";
+  const accessBlocked = loading || rateLimited.has("access");
 
-  const isRate = (control: ControlKey) => rateLimited?.control === control;
+  const isRate = (control: ControlKey) => rateLimited.has(control);
   const dimmed = (control: ControlKey) => (pending.has(control) ? 0.7 : 1);
 
   const patch = (control: ControlKey, fields: NotePatch) =>

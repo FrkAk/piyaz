@@ -11,9 +11,12 @@
  * team-visible notes: the feed and the tree fan out to every member, so
  * a private note's title, slug, and folder must never land there.
  *
- * Agent-facing policy (`agent_writable`, `locked`, the agent ban on
- * setting `visibility='team'`) is deliberately NOT enforced here — the
- * MCP handler layers it on (PYZ-252). Human server actions call these
+ * Agent-facing policy (`agent_writable`, the agent ban on setting
+ * `visibility='team'`) is deliberately NOT enforced here — the MCP
+ * handler layers it on (PYZ-252). `locked` is the exception: it gates
+ * every writer in {@link updateNote} and the share transitions, so a
+ * locked note is read-only for humans and agents alike until an unlock
+ * patch (`locked: false`) lands. Human server actions call these
  * functions directly.
  */
 import "server-only";
@@ -209,6 +212,19 @@ export class NoteShareStateError extends Error {
         : "Note has no pending share request",
     );
     this.name = "NoteShareStateError";
+  }
+}
+
+/**
+ * Thrown when a write targets a locked note. `locked` is a universal
+ * write gate: every client (web actions and MCP alike) is read-only on a
+ * locked note, and the only write {@link updateNote} accepts is the
+ * unlock patch itself (`locked: false`).
+ */
+export class NoteLockedError extends Error {
+  constructor() {
+    super("Note is locked. Unlock it to edit.");
+    this.name = "NoteLockedError";
   }
 }
 
@@ -1610,6 +1626,9 @@ export async function createNote(
  *   private rows to their creator; this pre-check keeps the rejection
  *   typed instead of a raw 42501).
  * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteLockedError when the note is locked and the patch does not
+ *   carry `locked: false`; the unlock is the only write a locked note
+ *   accepts.
  * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches, carrying the
  *   live `updatedAt` and `version`.
  * @throws NoteValidationError on cap violations or a malformed
@@ -1681,6 +1700,9 @@ export async function updateNote(
     assertProjectWritable(current.projectStatus, current.projectIdentifier);
     if (applied.visibility === "private" && current.createdBy !== ctx.userId) {
       throw new ForbiddenError("Forbidden", "note", noteId);
+    }
+    if (current.locked && applied.locked !== false) {
+      throw new NoteLockedError();
     }
     if (
       ifUpdatedAtMs !== undefined &&
@@ -2161,7 +2183,7 @@ export async function requestShare(
     return row;
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "private");
+  emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
   return summary;
 }
 
@@ -2175,6 +2197,7 @@ export async function requestShare(
  * @returns Slim summary of the note.
  * @throws ForbiddenError on inaccessible or trashed notes.
  * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteLockedError when the note is locked.
  * @throws NoteShareStateError when no request is pending.
  */
 export async function approveShareRequest(
@@ -2186,6 +2209,7 @@ export async function approveShareRequest(
     const gate = await assertNoteAccessTx(tx, noteId);
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.locked) throw new NoteLockedError();
     if (gate.shareRequestedBy === null) {
       throw new NoteShareStateError("no_pending_request");
     }
@@ -2202,15 +2226,18 @@ export async function approveShareRequest(
  * {@link approveShareRequest} for the ribbon's "Keep private" action; no
  * other shipped path clears the marker without a visibility flip
  * ({@link NotePatch} omits the field). Human-path function; the MCP layer
- * never routes agents here. No activity event and no realtime emit: the
- * note stays private, so a project-scoped event would leak its title (the
- * same reason {@link requestShare} records none).
+ * never routes agents here. No activity event: the note stays private, so
+ * a feed row would leak its title (the same reason {@link requestShare}
+ * records none). The realtime emit rides the creator-only `note:<id>`
+ * channel, so the banner clears in the creator's other sessions without
+ * a project-wide signal.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
  * @returns Slim summary of the note.
  * @throws ForbiddenError on inaccessible or trashed notes.
  * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteLockedError when the note is locked.
  * @throws NoteShareStateError when no request is pending.
  */
 export async function declineShareRequest(
@@ -2218,10 +2245,11 @@ export async function declineShareRequest(
   noteId: string,
 ): Promise<NoteSummary> {
   assertValidNoteId(noteId);
-  return withUserContext(ctx.userId, async (tx) => {
+  const summary = await withUserContext(ctx.userId, async (tx) => {
     const gate = await assertNoteAccessTx(tx, noteId);
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.locked) throw new NoteLockedError();
     if (gate.shareRequestedBy === null) {
       throw new NoteShareStateError("no_pending_request");
     }
@@ -2236,6 +2264,9 @@ export async function declineShareRequest(
       .returning(noteSummaryColumns);
     return row;
   });
+
+  emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
+  return summary;
 }
 
 /**

@@ -161,7 +161,7 @@ export function IconUsers(props: IconProps) {
   );
 }
 
-/** Person beside an agent bubble — humans and agents together. */
+/** Person beside an agent bubble: humans and agents together. */
 export function IconHumansAgents(props: IconProps) {
   return (
     <IconBase {...props}>
@@ -253,7 +253,7 @@ export function IconSpark(props: IconProps) {
   );
 }
 
-/** Gear — settings. Ring, hub, and eight stub teeth centered on (8,8). */
+/** Gear (settings): ring, hub, and eight stub teeth centered on (8,8). */
 export function IconSettings(props: IconProps) {
   return (
     <IconBase {...props}>
