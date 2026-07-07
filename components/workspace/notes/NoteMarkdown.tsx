@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { defaultSchema } from "rehype-sanitize";
 import { Markdown } from "@/components/shared/Markdown";
 import { remarkNoteRefs } from "./remark-note-refs";
@@ -23,6 +24,20 @@ const components = {
   ),
   "noteref-wiki": ({ title }: { title?: string }) => (
     <DocLink title={String(title ?? "")} />
+  ),
+  blockquote: ({ children }: { children?: ReactNode }) => (
+    <blockquote
+      style={{
+        borderLeft: "2px solid var(--color-accent)",
+        background: "var(--color-accent-grad-soft)",
+        padding: "8px 12px",
+        borderRadius: 6,
+        margin: "10px 0",
+        lineHeight: 1.6,
+      }}
+    >
+      {children}
+    </blockquote>
   ),
 };
 
