@@ -35,7 +35,7 @@ function writeCookie(next: boolean): void {
   try {
     document.cookie = `${COOKIE_NAME}=${next ? "1" : "0"}; path=/; max-age=${COOKIE_MAX_AGE}; samesite=lax`;
   } catch {
-    /* swallow cookie errors — preference is non-critical */
+    /* swallow cookie errors; preference is non-critical */
   }
 }
 

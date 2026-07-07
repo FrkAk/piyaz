@@ -18,15 +18,15 @@ import {
   restoreNote as coreRestoreNote,
   updateNote as coreUpdateNote,
   type CreateNoteInput,
+  type NoteLinksRefresh,
   type NotePatch,
   type NoteSummary,
 } from "@/lib/data/note";
-import type { Visibility } from "@/lib/types";
 
 /**
  * Per-action budgets for the note web write path, shaped like
  * `WRITE_BUDGETS` in `lib/graph/mutations.ts`: server actions POST to the
- * page route so the middleware limiter never sees them — these budgets are
+ * page route so the middleware limiter never sees them; these budgets are
  * the only throttle here. `noteUpdate` mirrors `task.update` because the
  * ~600ms autosave debounce commits at most ~100 writes/min of continuous
  * typing, and settings patches ride the same budget. Window is 60s.
@@ -51,7 +51,7 @@ const NOTE_BUDGETS = {
 } satisfies Record<string, ActionRateLimitConfig>;
 
 /**
- * Server action — create a note in a project.
+ * Server action: create a note in a project.
  * @param input - Note fields; slug is allocated internally.
  * @returns Slim summary of the created note, or a typed failure.
  */
@@ -74,20 +74,21 @@ export async function createNoteAction(
 }
 
 /**
- * Server action — patch a note's scalar fields with optimistic concurrency.
+ * Server action: patch a note's scalar fields with optimistic concurrency.
  * A stale `ifUpdatedAt` returns a `stale_write` failure carrying the live
  * `updatedAt` (next retry token) and `version`; the server applies no write.
  *
  * @param noteId - Note id.
  * @param patch - Fields to update.
  * @param ifUpdatedAt - The cached `updatedAt` as CAS token; omit to force.
- * @returns Slim summary with the fresh `updatedAt`, or a typed failure.
+ * @returns Slim summary with the fresh `updatedAt` (plus re-derived
+ *   `links` on a body change), or a typed failure.
  */
 export async function updateNoteAction(
   noteId: string,
   patch: NotePatch,
   ifUpdatedAt?: string,
-): Promise<NoteActionResult<NoteSummary>> {
+): Promise<NoteActionResult<NoteSummary & { links?: NoteLinksRefresh }>> {
   try {
     const ctx = await authorizeWrite(NOTE_BUDGETS.noteUpdate);
     return {
@@ -104,7 +105,7 @@ export async function updateNoteAction(
 }
 
 /**
- * Server action — soft-delete a note.
+ * Server action: soft-delete a note.
  * @param noteId - Note id.
  * @returns The id and deletion timestamp, or a typed failure.
  */
@@ -124,7 +125,7 @@ export async function deleteNoteAction(
 }
 
 /**
- * Server action — restore a soft-deleted note (undo of a delete). The
+ * Server action: restore a soft-deleted note (undo of a delete). The
  * slug may differ from before the delete when its namespace was taken.
  *
  * @param noteId - Note id.
@@ -146,7 +147,7 @@ export async function restoreNoteAction(
 }
 
 /**
- * Server action — move a note to another folder.
+ * Server action: move a note to another folder.
  * @param noteId - Note id.
  * @param folder - Destination folder path.
  * @returns Slim summary of the moved note, or a typed failure.
@@ -168,7 +169,7 @@ export async function moveNoteAction(
 }
 
 /**
- * Server action — re-parent a folder subtree (tree drag-and-drop and
+ * Server action: re-parent a folder subtree (tree drag-and-drop and
  * rename paths).
  * @param projectId - Owning project id.
  * @param src - Folder path being moved.
@@ -198,44 +199,7 @@ export async function moveFolderAction(
 }
 
 /**
- * Server action — set a note's agent access flags. Thin wrapper over the
- * `updateNote` patch path; the data layer exposes no dedicated setter.
- *
- * @param noteId - Note id.
- * @param access - Agent-writable and locked flags.
- * @param ifUpdatedAt - The cached `updatedAt` as CAS token; omit to force.
- * @returns Slim summary, or a typed failure.
- */
-export async function setNoteAccessAction(
-  noteId: string,
-  access: { agentWritable: boolean; locked: boolean },
-  ifUpdatedAt?: string,
-): Promise<NoteActionResult<NoteSummary>> {
-  return updateNoteAction(noteId, access, ifUpdatedAt);
-}
-
-/**
- * Server action — set a note's visibility. Thin wrapper over the
- * `updateNote` patch path: flipping to `team` clears `shareRequestedBy` in
- * the data layer, and setting `private` is creator-only (a non-creator gets
- * the 404-shaped `not_found` failure). Human-only by construction: agents
- * are confined to `/api/mcp`, which never routes here.
- *
- * @param noteId - Note id.
- * @param visibility - Target visibility.
- * @param ifUpdatedAt - The cached `updatedAt` as CAS token; omit to force.
- * @returns Slim summary, or a typed failure.
- */
-export async function setNoteVisibilityAction(
-  noteId: string,
-  visibility: Visibility,
-  ifUpdatedAt?: string,
-): Promise<NoteActionResult<NoteSummary>> {
-  return updateNoteAction(noteId, { visibility }, ifUpdatedAt);
-}
-
-/**
- * Server action — approve a pending share request, flipping the note to
+ * Server action: approve a pending share request, flipping the note to
  * `team` and clearing `shareRequestedBy`. Human-only by construction:
  * agents are confined to `/api/mcp`, which never routes here.
  *
@@ -259,7 +223,7 @@ export async function approveShareRequestAction(
 }
 
 /**
- * Server action — decline a pending share request, clearing
+ * Server action: decline a pending share request, clearing
  * `shareRequestedBy` while the note stays private. Human-only by
  * construction: agents are confined to `/api/mcp`, which never routes here.
  *

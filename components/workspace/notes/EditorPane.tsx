@@ -159,7 +159,7 @@ function EditorBody({
     if (!shouldFocusTitle || !ready) return;
     const input = inputRef.current;
     if (input) {
-      input.focus();
+      input.focus({ preventScroll: true });
       input.select();
     }
     onFocusedTitle();

@@ -161,6 +161,18 @@ export function IconUsers(props: IconProps) {
   );
 }
 
+/** Person beside an agent bubble — humans and agents together. */
+export function IconHumansAgents(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M5.5 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+      <path d="M2 13.5a3.5 3.5 0 0 1 7 0" />
+      <path d="M8 8a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 14 8v1a1.5 1.5 0 0 1-1.5 1.5h-1.25L9.5 12v-1.5A1.5 1.5 0 0 1 8 9z" />
+      <path d="M10.25 8.25h.01M12 8.25h.01" />
+    </IconBase>
+  );
+}
+
 /** Plus / add. */
 export function IconPlus(props: IconProps) {
   return (
@@ -241,12 +253,13 @@ export function IconSpark(props: IconProps) {
   );
 }
 
-/** Gear — settings. */
+/** Gear — settings. Ring, hub, and eight stub teeth centered on (8,8). */
 export function IconSettings(props: IconProps) {
   return (
     <IconBase {...props}>
+      <path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
       <path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
-      <path d="M13 8a5 5 0 0 0-.1-1l1.1-.85-1-1.7-1.3.5a5 5 0 0 0-1.7-1L9.7 2.5h-2L7.5 4a5 5 0 0 0-1.7 1l-1.3-.5-1 1.7L4.6 7a5 5 0 0 0 0 2l-1.1.85 1 1.7 1.3-.5a5 5 0 0 0 1.7 1l.3 1.5h2l.3-1.5a5 5 0 0 0 1.7-1l1.3.5 1-1.7-1.1-.85a5 5 0 0 0 .1-1z" />
+      <path d="M12 8h1.75M8 12v1.75M4 8H2.25M8 4V2.25M10.83 10.83l1.24 1.24M5.17 10.83l-1.24 1.24M5.17 5.17L3.93 3.93M10.83 5.17l1.24-1.24" />
     </IconBase>
   );
 }

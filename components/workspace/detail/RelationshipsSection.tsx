@@ -8,7 +8,7 @@ import { StatusGlyph } from "@/components/shared/StatusGlyph";
 import { IconPlus, IconX } from "@/components/shared/icons";
 import { createEdge, removeEdge } from "@/lib/graph/mutations";
 import type { TaskEdgeRef } from "@/lib/data/views";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 /** User-facing relationship modes — each maps to an edge type + direction. */
 type RelationMode = "blocked_by" | "blocks" | "related_to";

@@ -1,10 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import type { NoteSummary, NoteTreeRow } from "@/lib/data/note";
+import type {
+  NoteLinksRefresh,
+  NoteSummary,
+  NoteTreeRow,
+} from "@/lib/data/note";
 import {
+  clearNoteDirty,
+  hasUnsavedNoteEdits,
+  markNoteDirty,
+  mergeLinksIntoDetail,
   mergeSummaryIntoDetail,
   notePlaceholderFromRow,
   patchNoteInTree,
   removeNoteFromTree,
+  revertPatchInTree,
+  revertPatchOnDetail,
   upsertNoteInTree,
 } from "@/lib/query/note-cache";
 
@@ -196,5 +206,136 @@ describe("mergeSummaryIntoDetail", () => {
 
   test("passes undefined through", () => {
     expect(mergeSummaryIntoDetail(undefined, summary)).toBeUndefined();
+  });
+});
+
+describe("mergeLinksIntoDetail", () => {
+  const links: NoteLinksRefresh = {
+    mentions: [
+      {
+        taskId: "t1",
+        kind: "mention",
+        taskRef: "PRJ-1",
+        status: "planned",
+        title: "Task one",
+      },
+    ],
+    linksOut: [
+      {
+        id: "n2",
+        slug: "slug-n2",
+        title: "Other note",
+        type: "reference",
+        folder: "",
+        updatedAt: when,
+      },
+    ],
+  };
+
+  test("folds mentions and linksOut, leaves linksIn untouched", () => {
+    const detail = notePlaceholderFromRow("p1", row("n1"));
+    const out = mergeLinksIntoDetail(detail, links);
+    expect(out?.mentions).toBe(links.mentions);
+    expect(out?.linksOut).toBe(links.linksOut);
+    expect(out?.linksIn).toBe(detail.linksIn);
+  });
+
+  test("returns the same reference when the lists already match", () => {
+    const detail = mergeLinksIntoDetail(
+      notePlaceholderFromRow("p1", row("n1")),
+      links,
+    );
+    const again: NoteLinksRefresh = {
+      mentions: [{ ...links.mentions[0]! }],
+      linksOut: [{ ...links.linksOut[0]! }],
+    };
+    expect(mergeLinksIntoDetail(detail, again)).toBe(detail!);
+  });
+
+  test("passes undefined links and detail through", () => {
+    const detail = notePlaceholderFromRow("p1", row("n1"));
+    expect(mergeLinksIntoDetail(detail, undefined)).toBe(detail);
+    expect(mergeLinksIntoDetail(undefined, links)).toBeUndefined();
+  });
+});
+
+describe("revertPatchOnDetail", () => {
+  test("restores a field still holding the optimistic value", () => {
+    const detail = notePlaceholderFromRow("p1", row("n1"));
+    const optimistic = { ...detail, note: { ...detail.note, category: "ui" } };
+    const out = revertPatchOnDetail(
+      optimistic,
+      { category: "ui" },
+      { category: null },
+    );
+    expect(out?.note.category).toBeNull();
+  });
+
+  test("never clobbers a newer optimistic value on the same field", () => {
+    const detail = notePlaceholderFromRow("p1", row("n1"));
+    const newer = { ...detail, note: { ...detail.note, category: "newer" } };
+    const out = revertPatchOnDetail(
+      newer,
+      { category: "older" },
+      { category: null },
+    );
+    expect(out).toBe(newer);
+  });
+
+  test("compares arrays by reference", () => {
+    const tags = ["a", "b"];
+    const detail = notePlaceholderFromRow("p1", row("n1"));
+    const optimistic = { ...detail, note: { ...detail.note, tags } };
+    const prevTags = detail.note.tags;
+    const out = revertPatchOnDetail(optimistic, { tags }, { tags: prevTags });
+    expect(out?.note.tags).toBe(prevTags);
+  });
+
+  test("passes undefined through", () => {
+    expect(
+      revertPatchOnDetail(undefined, { category: "x" }, { category: null }),
+    ).toBeUndefined();
+  });
+});
+
+describe("revertPatchInTree", () => {
+  test("restores a row field still holding the optimistic value", () => {
+    const rows = [row("n1", { visibility: "team" })];
+    const out = revertPatchInTree(
+      rows,
+      "n1",
+      { visibility: "team" },
+      { visibility: "private" },
+    );
+    expect(out?.[0]?.visibility).toBe("private");
+  });
+
+  test("skips a field overwritten by a newer optimistic value", () => {
+    const rows = [row("n1", { title: "newest" })];
+    const out = revertPatchInTree(
+      rows,
+      "n1",
+      { title: "older-optimistic" },
+      { title: "original" },
+    );
+    expect(out).toBe(rows);
+  });
+
+  test("returns the same reference when the row is absent", () => {
+    const rows = [row("n1")];
+    expect(
+      revertPatchInTree(rows, "missing", { title: "x" }, { title: "y" }),
+    ).toBe(rows);
+  });
+});
+
+describe("dirty note registry", () => {
+  test("marks, reports, and clears unsaved-content ids", () => {
+    expect(hasUnsavedNoteEdits("d1")).toBe(false);
+    markNoteDirty("d1");
+    expect(hasUnsavedNoteEdits("d1")).toBe(true);
+    expect(hasUnsavedNoteEdits("d2")).toBe(false);
+    clearNoteDirty("d1");
+    expect(hasUnsavedNoteEdits("d1")).toBe(false);
   });
 });

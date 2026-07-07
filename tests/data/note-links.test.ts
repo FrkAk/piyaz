@@ -81,6 +81,30 @@ test("body writes derive task mentions and note links", async () => {
   expect(full.linksOut[0].title).toBe("Data model");
 });
 
+test("body-changing updateNote returns re-derived links; metadata patches do not", async () => {
+  const f = await seedUserOrgProject("lnk5");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  await createNote(ctx, { projectId: f.projectId, title: "Data model" });
+  const source = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Source",
+  });
+
+  const bodyWrite = await updateNote(ctx, source.id, {
+    body: `see ${task.taskRef} and [[Data model]]`,
+  });
+  expect(bodyWrite.links).toBeDefined();
+  expect(bodyWrite.links!.mentions.length).toBe(1);
+  expect(bodyWrite.links!.mentions[0].taskRef).toBe(task.taskRef);
+  expect(bodyWrite.links!.mentions[0].kind).toBe("mention");
+  expect(bodyWrite.links!.linksOut.length).toBe(1);
+  expect(bodyWrite.links!.linksOut[0].title).toBe("Data model");
+
+  const metaWrite = await updateNote(ctx, source.id, { category: "docs" });
+  expect(metaWrite.links).toBeUndefined();
+});
+
 test("re-derivation replaces mention rows but preserves user-managed kinds", async () => {
   const f = await seedUserOrgProject("lnk2");
   const ctx = makeAuthContext(f.userId);

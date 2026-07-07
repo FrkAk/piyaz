@@ -36,8 +36,8 @@ export function applyAccessLevel(level: AccessLevel): AccessFlags {
 /**
  * Whether a display-case feed target (a project category or tag) is present
  * in a note's stored feed list. Feed targets are canonicalized to trimmed
- * lowercase on write (PYZ-250), while the project vocabulary keeps display
- * case, so membership is compared case-insensitively.
+ * lowercase on write, while the project vocabulary keeps display case, so
+ * membership is compared case-insensitively.
  *
  * @param stored - The note's stored feed target list (lowercase).
  * @param option - A display-case vocabulary option.

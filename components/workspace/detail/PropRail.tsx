@@ -17,6 +17,8 @@ import { MonoId } from "@/components/shared/MonoId";
 import { PriorityIcon } from "@/components/shared/PriorityIcon";
 import { StatusGlyph, STATUS_META } from "@/components/shared/StatusGlyph";
 import { Dropdown } from "@/components/shared/Dropdown";
+import { CategoryPicker } from "@/components/shared/CategoryPicker";
+import { TagPicker } from "@/components/shared/TagPicker";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { popoverFixedStyle, usePopoverAnchor } from "@/hooks/usePopoverAnchor";
 import { updateTask } from "@/lib/graph/mutations";
@@ -33,7 +35,6 @@ import {
   IconSearch,
   IconTag,
   IconUser,
-  IconX,
 } from "@/components/shared/icons";
 import type { Priority, Estimate, TaskStatus } from "@/lib/types";
 import type {
@@ -500,11 +501,16 @@ export function PropRail({
           </RailRow>
 
           <RailRow icon={<IconTag size={11} />} label="Category">
-            <CategoryDropdown
+            <CategoryPicker
               category={category}
               categories={categories}
               onChange={handleCategoryChange}
               align="end"
+              emptyFallback={
+                <PlaceholderValue title="No project categories yet">
+                  <span>—</span>
+                </PlaceholderValue>
+              }
             />
           </RailRow>
 
@@ -535,7 +541,7 @@ export function PropRail({
           label="Tags"
           count={tags.length > 0 ? tags.length : undefined}
         >
-          <TagsEditor
+          <TagPicker
             tags={tags}
             vocabulary={projectTags}
             onChange={handleTagsChange}
@@ -657,325 +663,6 @@ function StatusDropdown({
         );
       }}
     />
-  );
-}
-
-interface CategoryDropdownProps {
-  /** Active category. */
-  category: string | null;
-  /** Project categories. */
-  categories: string[];
-  /** Update the category. */
-  onChange: (next: string | null) => void;
-  /** Panel anchor side — defaults to `start`. */
-  align?: "start" | "end";
-}
-
-/**
- * Category dropdown — chip-styled trigger that anchors a list of project
- * categories plus a "Clear" entry. Supersedes the prior horizontal-scroll
- * tray.
- *
- * @param props - Dropdown props.
- * @returns Anchored dropdown element.
- */
-function CategoryDropdown({
-  category,
-  categories,
-  onChange,
-  align = "start",
-}: CategoryDropdownProps) {
-  const options = useMemo(() => {
-    const items: { value: string; label: string }[] = [
-      { value: SENTINEL_CLEAR, label: "Uncategorized" },
-    ];
-    for (const cat of categories) items.push({ value: cat, label: cat });
-    return items;
-  }, [categories]);
-
-  if (categories.length === 0 && !category) {
-    return (
-      <PlaceholderValue title="No project categories yet">
-        <span>—</span>
-      </PlaceholderValue>
-    );
-  }
-
-  const selected = category ?? SENTINEL_CLEAR;
-
-  return (
-    <Dropdown
-      value={selected}
-      options={options}
-      onChange={(v) => onChange(v === SENTINEL_CLEAR ? null : v)}
-      align={align}
-      ariaLabel="Change category"
-      title="Change category"
-      minWidth={180}
-      renderTrigger={(_active, open) => (
-        <span
-          className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[11px] font-medium transition-colors ${
-            category
-              ? "bg-accent/10 text-accent-light"
-              : "border border-dashed border-border-strong text-text-muted/70"
-          }`}
-        >
-          {category ?? "Uncategorized"}
-          <span
-            aria-hidden="true"
-            className="opacity-70 transition-transform"
-            style={{ transform: open ? "rotate(180deg)" : "none" }}
-          >
-            <IconChevronDown size={9} />
-          </span>
-        </span>
-      )}
-    />
-  );
-}
-
-interface TagsEditorProps {
-  /** Tags currently attached to the task. */
-  tags: string[];
-  /** Project tag vocabulary. */
-  vocabulary: string[];
-  /** Update the tag list (replacement, not append). */
-  onChange: (next: string[]) => void;
-}
-
-/**
- * Multi-select tag editor — current tags render as removable chips, and a
- * trailing "+ Add" trigger opens a popover that lets the operator toggle
- * existing project tags or add a new one.
- *
- * @param props - Editor props.
- * @returns Wrap of chips plus the add control.
- */
-function TagsEditor({ tags, vocabulary, onChange }: TagsEditorProps) {
-  const tagSet = useMemo(() => new Set(tags), [tags]);
-
-  const removeTag = (tag: string) => {
-    onChange(tags.filter((t) => t !== tag));
-  };
-
-  const toggleTag = (tag: string) => {
-    if (tagSet.has(tag)) onChange(tags.filter((t) => t !== tag));
-    else onChange([...tags, tag]);
-  };
-
-  const addTag = (tag: string) => {
-    const trimmed = tag.trim();
-    if (!trimmed || tagSet.has(trimmed)) return;
-    onChange([...tags, trimmed]);
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {tags.map((tag) => (
-        <span
-          key={tag}
-          className="group inline-flex items-center gap-1 rounded-md border border-accent/25 bg-accent/10 py-px pl-2 pr-1 font-mono text-[11px] text-accent-light"
-        >
-          {tag}
-          <button
-            type="button"
-            onClick={() => removeTag(tag)}
-            aria-label={`Remove tag ${tag}`}
-            className="cursor-pointer rounded p-0.5 text-accent-light/70 transition-colors hover:bg-accent/15 hover:text-accent-light"
-          >
-            <IconX size={9} />
-          </button>
-        </span>
-      ))}
-      <TagAdd
-        vocabulary={vocabulary}
-        active={tagSet}
-        onToggle={toggleTag}
-        onCreate={addTag}
-      />
-    </div>
-  );
-}
-
-interface TagAddProps {
-  /** Project tag vocabulary. */
-  vocabulary: string[];
-  /** Tags currently attached to the task. */
-  active: Set<string>;
-  /** Toggle a tag on/off. */
-  onToggle: (tag: string) => void;
-  /** Create a new tag (also attaches it). */
-  onCreate: (tag: string) => void;
-}
-
-/**
- * "+ Add" trigger that opens a popover combining a search input with a
- * checklist of every tag in the project vocabulary. Pressing Enter on a
- * non-existing query creates the tag.
- *
- * @param props - Add control props.
- * @returns Inline-flex popover element.
- */
-function TagAdd({ vocabulary, active, onToggle, onCreate }: TagAddProps) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const wrapRef = useRef<HTMLSpanElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Close handler used by every dismissal path. Resets the search box so
-  // the next open starts clean — done at the call site instead of in an
-  // effect to keep setState out of the effect body.
-  const close = useCallback(() => {
-    setOpen(false);
-    setQuery("");
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node))
-        close();
-    };
-    const escape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("mousedown", handler);
-    document.addEventListener("keydown", escape);
-    const focusTimer = window.setTimeout(() => inputRef.current?.focus(), 30);
-    return () => {
-      document.removeEventListener("mousedown", handler);
-      document.removeEventListener("keydown", escape);
-      window.clearTimeout(focusTimer);
-    };
-  }, [open, close]);
-
-  const q = query.trim().toLowerCase();
-  const sorted = useMemo(
-    () => [...vocabulary].sort((a, b) => a.localeCompare(b)),
-    [vocabulary],
-  );
-  const filtered = q
-    ? sorted.filter((t) => t.toLowerCase().includes(q))
-    : sorted;
-  const exact = q && sorted.some((t) => t.toLowerCase() === q);
-  const canCreate = q && !exact;
-
-  return (
-    <span ref={wrapRef} className="relative inline-flex">
-      <button
-        type="button"
-        onClick={() => (open ? close() : setOpen(true))}
-        className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed border-border-strong px-1.5 py-px font-mono text-[10px] text-text-muted transition-colors hover:border-border-stronger hover:bg-surface-hover hover:text-text-secondary"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-      >
-        <IconPlus size={9} />
-        Add
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            role="listbox"
-            initial={{ opacity: 0, y: -4, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.97 }}
-            transition={{ duration: 0.11, ease: "easeOut" }}
-            className="absolute right-0 top-full z-30 mt-1 w-[200px] overflow-hidden rounded-md border border-border-strong bg-surface-raised shadow-float"
-          >
-            <div className="border-b border-border bg-base p-1.5">
-              <input
-                ref={inputRef}
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && canCreate) {
-                    onCreate(query);
-                    setQuery("");
-                  }
-                }}
-                placeholder={
-                  vocabulary.length > 0
-                    ? "Search or create tag…"
-                    : "Create a tag…"
-                }
-                className="w-full bg-transparent px-1 font-mono text-[11px] text-text-primary placeholder:text-text-muted/50 outline-none"
-              />
-            </div>
-            <div className="max-h-[220px] overflow-y-auto py-1">
-              {filtered.length === 0 && !canCreate && (
-                <p className="px-2.5 py-1.5 font-mono text-[11px] italic text-text-muted">
-                  No tags yet — type to create one.
-                </p>
-              )}
-              {filtered.map((tag) => {
-                const on = active.has(tag);
-                return (
-                  <button
-                    key={tag}
-                    type="button"
-                    role="option"
-                    aria-selected={on}
-                    onClick={() => onToggle(tag)}
-                    className={`flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-left font-mono text-[11px] transition-colors ${
-                      on
-                        ? "bg-accent/10 text-accent-light"
-                        : "text-text-secondary hover:bg-surface-hover hover:text-text-primary"
-                    }`}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="inline-flex h-3 w-3 shrink-0 items-center justify-center rounded-[3px] border"
-                      style={{
-                        background: on
-                          ? "var(--color-accent-grad)"
-                          : "transparent",
-                        borderColor: on
-                          ? "transparent"
-                          : "var(--color-border-strong)",
-                      }}
-                    >
-                      {on && (
-                        <svg
-                          width="8"
-                          height="8"
-                          viewBox="0 0 16 16"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M3 8.5L6.5 12 13 5"
-                            stroke="var(--color-base)"
-                            strokeWidth="2"
-                            fill="none"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </span>
-                    <span className="flex-1 truncate">{tag}</span>
-                  </button>
-                );
-              })}
-              {canCreate && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onCreate(query);
-                    setQuery("");
-                  }}
-                  className="flex w-full cursor-pointer items-center gap-2 border-t border-border px-2.5 py-1.5 text-left font-mono text-[11px] text-accent-light transition-colors hover:bg-accent/10"
-                >
-                  <IconPlus size={10} />
-                  <span>Create &ldquo;{query.trim()}&rdquo;</span>
-                </button>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </span>
   );
 }
 

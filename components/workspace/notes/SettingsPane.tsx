@@ -1,24 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IconAgent,
   IconDoc,
+  IconHumansAgents,
   IconLock,
   IconPanelRight,
-  IconTag,
+  IconSearch,
   IconUser,
   IconUsers,
   IconX,
 } from "@/components/shared/icons";
-import { ChipTrigger } from "@/components/shared/FilterChip";
-import { Dropdown } from "@/components/shared/Dropdown";
+import { CategoryPicker } from "@/components/shared/CategoryPicker";
 import { MonoId } from "@/components/shared/MonoId";
+import { SectionHeader } from "@/components/shared/SectionHeader";
+import { TagPicker } from "@/components/shared/TagPicker";
 import type {
   NoteActionFailure,
   NoteActionResult,
 } from "@/lib/actions/note-errors";
-import type { LinkedNoteSlim, NoteFull, NoteMention } from "@/lib/data/note";
+import type {
+  LinkedNoteSlim,
+  NoteFull,
+  NoteMention,
+  NotePatch,
+} from "@/lib/data/note";
 import type { FeedMode, Visibility } from "@/lib/types";
 import type { TaskSlimMap } from "./EditorPane";
 import { NOTE_TYPE_META, tint } from "./note-meta";
@@ -32,8 +39,6 @@ import { useNoteDetail } from "./useNoteDetail";
 import {
   useApproveShareRequest,
   useDeclineShareRequest,
-  useSetNoteAccess,
-  useSetNoteVisibility,
   useUpdateNote,
 } from "./useNoteMutations";
 
@@ -70,8 +75,8 @@ const ACCESS_STOPS: {
   {
     id: "open",
     label: "Open",
-    icon: <IconUsers size={12} />,
-    color: "var(--color-done)",
+    icon: <IconHumansAgents size={12} />,
+    color: "var(--color-glyph-planned)",
     hint: "Humans and agents can edit.",
   },
   {
@@ -86,11 +91,11 @@ const ACCESS_STOPS: {
     label: "Locked",
     icon: <IconLock size={12} />,
     color: "var(--color-danger)",
-    hint: "Locked — no one edits until unlocked.",
+    hint: "Locked. No one edits until unlocked.",
   },
 ];
 
-/** Which control most recently issued a mutation; scopes pending + errors. */
+/** Controls with their own pending and error scope. */
 type ControlKey =
   | "type"
   | "visibility"
@@ -100,13 +105,45 @@ type ControlKey =
   | "tags"
   | "feed";
 
+/**
+ * Add a control to a pending set without mutating the original.
+ * @param controls - Current set.
+ * @param control - Control to add.
+ * @returns Same set when already present, otherwise a new set.
+ */
+function addControl(
+  controls: ReadonlySet<ControlKey>,
+  control: ControlKey,
+): ReadonlySet<ControlKey> {
+  if (controls.has(control)) return controls;
+  const next = new Set(controls);
+  next.add(control);
+  return next;
+}
+
+/**
+ * Remove a control from a pending set without mutating the original.
+ * @param controls - Current set.
+ * @param control - Control to remove.
+ * @returns Same set when absent, otherwise a new set.
+ */
+function removeControl(
+  controls: ReadonlySet<ControlKey>,
+  control: ControlKey,
+): ReadonlySet<ControlKey> {
+  if (!controls.has(control)) return controls;
+  const next = new Set(controls);
+  next.delete(control);
+  return next;
+}
+
 /** A short, human-facing line for a typed action failure. */
 function failureCopy(failure: NoteActionFailure): string {
   switch (failure.code) {
     case "stale_write":
-      return "changed elsewhere — reopen to retry";
+      return "changed elsewhere, value restored";
     case "rate_limited":
-      return "too many changes — try again shortly";
+      return "too many changes, try again shortly";
     case "not_found":
       return "note not found";
     case "share_state":
@@ -145,13 +182,13 @@ interface SettingsPaneProps {
 
 /**
  * The right settings ribbon: the note's identity (type, visibility, agent
- * access), classification (category, tags), auto-feed targeting, and the
- * derived mentions and linked notes. Reads the selected note from the
- * shared `noteKeys.detail` cache (never refetches) and turns the editor's
- * display-only header pills into live write controls wired to the note
- * mutation hooks. Every write shows a per-control pending state and rolls
- * back with a visible error on failure; a locked note disables every write
- * control except the access slider's unlock path.
+ * access), classification (category, tags), auto-feed targeting, and a
+ * read-only References block (mentions, linked notes). Reads the selected
+ * note from the shared `noteKeys.detail` cache (never refetches); every
+ * control writes through the optimistic note mutations, so values update
+ * instantly and only the touched control shows its in-flight state. A
+ * locked note disables every write control except the access slider's
+ * unlock path.
  *
  * @param props - Project scope, selection, vocabularies, and chrome wiring.
  * @returns The settings ribbon column (or drawer body in `fill` mode).
@@ -169,12 +206,12 @@ export function SettingsPane({
 }: SettingsPaneProps) {
   const { data, isPlaceholderData, isError } = useNoteDetail(projectId, noteId);
   const updateNote = useUpdateNote(projectId);
-  const setAccess = useSetNoteAccess(projectId);
-  const setVisibility = useSetNoteVisibility(projectId);
   const approveShare = useApproveShareRequest(projectId);
   const declineShare = useDeclineShareRequest(projectId);
 
-  const [pending, setPending] = useState<ControlKey | null>(null);
+  const [pending, setPending] = useState<ReadonlySet<ControlKey>>(
+    () => new Set(),
+  );
   const [error, setError] = useState<{
     control: ControlKey;
     message: string;
@@ -183,10 +220,6 @@ export function SettingsPane({
     control: ControlKey;
     until: number;
   } | null>(null);
-  const [pendingAccess, setPendingAccess] = useState<AccessLevel | null>(null);
-  const [pendingVisibility, setPendingVisibility] = useState<Visibility | null>(
-    null,
-  );
 
   useEffect(() => {
     if (rateLimited === null) return;
@@ -199,9 +232,8 @@ export function SettingsPane({
     async <T,>(
       control: ControlKey,
       action: () => Promise<NoteActionResult<T>>,
-      onRevert?: () => void,
     ): Promise<void> => {
-      setPending(control);
+      setPending((p) => addControl(p, control));
       setError((e) => (e?.control === control ? null : e));
       let result: NoteActionResult<T> | null = null;
       try {
@@ -209,14 +241,12 @@ export function SettingsPane({
       } catch {
         result = null;
       }
-      setPending((p) => (p === control ? null : p));
+      setPending((p) => removeControl(p, control));
       if (result === null) {
-        onRevert?.();
         setError({ control, message: "save failed" });
         return;
       }
       if (!result.ok) {
-        onRevert?.();
         if (result.code === "rate_limited") {
           setRateLimited({
             control,
@@ -233,65 +263,47 @@ export function SettingsPane({
 
   const note = data?.note;
 
-  // Hold the optimistic access/visibility value until the refetched detail
-  // reflects it. On success the one-shot hooks fold only the slim summary
-  // into the detail cache, which omits the settings columns, so those land on
-  // the finalizeSettingsWrite refetch. Clearing the pending on mutation-settle
-  // would flash the thumb/segment back to the stale value for one round-trip;
-  // reconciling here (React re-renders in place) defers to the note only once
-  // it catches up and never overrides a later external change. Failures revert
-  // the pending through run's onRevert.
-  if (note && pendingAccess !== null && accessLevel(note) === pendingAccess) {
-    setPendingAccess(null);
-  }
-  if (
-    note &&
-    pendingVisibility !== null &&
-    note.visibility === pendingVisibility
-  ) {
-    setPendingVisibility(null);
-  }
-
   if (data === undefined || note === undefined) {
     return (
       <RibbonShell fill={fill} onCollapse={onCollapse} onClose={onClose}>
-        <div className="p-4 text-[12px] text-text-muted">
-          {isError ? "Note not found" : "Loading…"}
-        </div>
+        {isError ? (
+          <div className="p-4 text-[12px] text-text-muted">Note not found</div>
+        ) : (
+          <RibbonSkeleton />
+        )}
       </RibbonShell>
     );
   }
 
   const meta = NOTE_TYPE_META[note.type];
-  const level = pendingAccess ?? accessLevel(note);
-  const visibility = pendingVisibility ?? note.visibility;
-  const busy = pending !== null;
+  const level = accessLevel(note);
+  const visibility = note.visibility;
   const loading = isPlaceholderData;
   // Write controls are blocked while the placeholder detail is live (its CAS
-  // token is stale), while another control's write is in flight, and while
-  // the note is locked — except the access slider, whose unlock path must
-  // stay reachable on a locked note.
-  const writeBlocked = loading || busy || note.locked;
-  // The access slider stays focusable while its own write is in flight (a
-  // hard `disabled` would drop keyboard focus mid-commit); a concurrent write
-  // is instead rejected in the change handler via `busy`. It only hard-
-  // disables while the placeholder is live or the control is rate-limited.
+  // token is stale) and while the note is locked, except the access slider,
+  // whose unlock path must stay reachable on a locked note. In-flight writes
+  // do not block: values are optimistic and the per-note write chain
+  // serializes the server calls.
+  const writeBlocked = loading || note.locked;
   const accessBlocked = loading || rateLimited?.control === "access";
 
   const isRate = (control: ControlKey) => rateLimited?.control === control;
+  const dimmed = (control: ControlKey) => (pending.has(control) ? 0.7 : 1);
 
-  const patch = (
-    control: ControlKey,
-    fields: Parameters<typeof updateNote.mutateAsync>[0]["patch"],
-  ) =>
-    void run(control, () => updateNote.mutateAsync({ noteId, patch: fields }));
+  const patch = (control: ControlKey, fields: NotePatch) =>
+    void run(control, () =>
+      updateNote.mutateAsync({ noteId, patch: fields, rollbackOnStale: true }),
+    );
 
   return (
     <RibbonShell fill={fill} onCollapse={onCollapse} onClose={onClose}>
       <div className="p-4">
-        <Section label="Settings">
+        <div className="mb-5">
           <FieldLabel>Type</FieldLabel>
-          <div className="mb-3 grid grid-cols-3 gap-1.5">
+          <div
+            className="mb-3 grid grid-cols-3 gap-1.5"
+            style={{ opacity: dimmed("type") }}
+          >
             {TYPE_ORDER.map((t) => {
               const m = NOTE_TYPE_META[t];
               const active = note.type === t;
@@ -301,7 +313,9 @@ export function SettingsPane({
                   type="button"
                   disabled={writeBlocked || isRate("type")}
                   aria-pressed={active}
-                  onClick={() => patch("type", { type: t })}
+                  onClick={() => {
+                    if (t !== note.type) patch("type", { type: t });
+                  }}
                   title={m.blurb}
                   className="flex items-center justify-center rounded-md py-1.5 font-mono text-[10px] uppercase transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
                   style={{
@@ -321,7 +335,10 @@ export function SettingsPane({
           <ControlError control="type" error={error} pending={pending} />
 
           <FieldLabel className="mt-3">Visibility</FieldLabel>
-          <div className="mb-2 grid grid-cols-2 gap-1.5">
+          <div
+            className="mb-2 grid grid-cols-2 gap-1.5"
+            style={{ opacity: dimmed("visibility") }}
+          >
             {(["private", "team"] as Visibility[]).map((v) => {
               const active = visibility === v;
               const color =
@@ -333,14 +350,9 @@ export function SettingsPane({
                   disabled={writeBlocked || isRate("visibility")}
                   aria-pressed={active}
                   onClick={() => {
-                    if (v === note.visibility) return;
-                    setPendingVisibility(v);
-                    void run(
-                      "visibility",
-                      () =>
-                        setVisibility.mutateAsync({ noteId, visibility: v }),
-                      () => setPendingVisibility(null),
-                    );
+                    if (v !== note.visibility) {
+                      patch("visibility", { visibility: v });
+                    }
                   }}
                   className="flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] font-medium capitalize transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
                   style={{
@@ -367,6 +379,7 @@ export function SettingsPane({
               style={{
                 background: tint("var(--color-accent)", 8),
                 border: `1px solid ${tint("var(--color-accent)", 34)}`,
+                opacity: dimmed("share"),
               }}
             >
               <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-text-secondary">
@@ -380,18 +393,13 @@ export function SettingsPane({
                 <button
                   type="button"
                   disabled={writeBlocked || isRate("share")}
-                  onClick={() => {
-                    setPendingVisibility("team");
-                    void run(
-                      "share",
-                      () => approveShare.mutateAsync(noteId),
-                      () => setPendingVisibility(null),
-                    );
-                  }}
+                  onClick={() =>
+                    void run("share", () => approveShare.mutateAsync(noteId))
+                  }
                   className="rounded-md px-2.5 py-1 text-[11px] font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
                   style={{ background: "var(--color-accent)" }}
                 >
-                  {pending === "share" ? "Sharing…" : "Approve"}
+                  {pending.has("share") ? "Sharing…" : "Approve"}
                 </button>
                 <button
                   type="button"
@@ -412,59 +420,45 @@ export function SettingsPane({
           <AccessSlider
             level={level}
             disabled={accessBlocked}
-            pending={pending === "access"}
+            pending={pending.has("access")}
             onChange={(next) => {
-              if (busy || next === accessLevel(note)) return;
-              setPendingAccess(next);
-              void run(
-                "access",
-                () =>
-                  setAccess.mutateAsync({
-                    noteId,
-                    access: applyAccessLevel(next),
-                  }),
-                () => setPendingAccess(null),
-              );
+              if (next === accessLevel(note)) return;
+              patch("access", applyAccessLevel(next));
             }}
           />
           <ControlError control="access" error={error} pending={pending} />
-        </Section>
+        </div>
 
         <Section label="Classification">
           <p className="mb-2 text-[11px] leading-snug text-text-muted">
             What this note is. Shares the project&rsquo;s categories and tags.
           </p>
           <FieldLabel>Category</FieldLabel>
-          <div className="mb-1">
-            <Dropdown
-              value={note.category ?? ""}
-              options={[
-                { value: "", label: "Uncategorized" },
-                ...categories.map((c) => ({ value: c, label: c })),
-              ]}
-              onChange={(v) =>
-                patch("category", { category: v === "" ? null : v })
-              }
+          <div className="mb-1" style={{ opacity: dimmed("category") }}>
+            <CategoryPicker
+              category={note.category}
+              categories={categories}
+              onChange={(next) => patch("category", { category: next })}
               disabled={writeBlocked || isRate("category")}
-              ariaLabel="Category"
-              renderTrigger={(opt, open) => (
-                <ChipTrigger icon={<IconTag size={11} />} open={open}>
-                  {opt?.label ?? "Uncategorized"}
-                </ChipTrigger>
-              )}
+              emptyFallback={
+                <p className="text-[11px] text-text-faint">
+                  No categories in this project yet.
+                </p>
+              }
             />
           </div>
           <ControlError control="category" error={error} pending={pending} />
 
           <FieldLabel className="mt-3">Tags</FieldLabel>
-          <TagEditor
-            tags={note.tags}
-            disabled={writeBlocked || isRate("tags")}
-            onAdd={(t) => patch("tags", { tags: [...note.tags, t] })}
-            onRemove={(t) =>
-              patch("tags", { tags: note.tags.filter((x) => x !== t) })
-            }
-          />
+          <div style={{ opacity: dimmed("tags") }}>
+            <TagPicker
+              tags={note.tags}
+              vocabulary={projectTags}
+              onChange={(next) => patch("tags", { tags: next })}
+              align="start"
+              disabled={writeBlocked || isRate("tags")}
+            />
+          </div>
           <ControlError control="tags" error={error} pending={pending} />
         </Section>
 
@@ -474,23 +468,33 @@ export function SettingsPane({
             Any other option mentions it in the agent&rsquo;s MCP prompt for the
             chosen scope.
           </p>
-          <FeedEditor
-            note={note}
-            categories={categories}
-            projectTags={projectTags}
-            taskMap={taskMap}
-            disabled={writeBlocked || isRate("feed")}
-            onSetMode={(mode) => patch("feed", { feedMode: mode })}
-            onSetCategories={(next) => patch("feed", { feedCategories: next })}
-            onSetTags={(next) => patch("feed", { feedTags: next })}
-            onSetTaskIds={(next) => patch("feed", { feedTaskIds: next })}
-          />
+          <div style={{ opacity: dimmed("feed") }}>
+            <FeedEditor
+              note={note}
+              categories={categories}
+              projectTags={projectTags}
+              taskMap={taskMap}
+              disabled={writeBlocked || isRate("feed")}
+              onSetMode={(mode) => patch("feed", { feedMode: mode })}
+              onSetCategories={(next) =>
+                patch("feed", { feedCategories: next })
+              }
+              onSetTags={(next) => patch("feed", { feedTags: next })}
+              onSetTaskIds={(next) => patch("feed", { feedTaskIds: next })}
+            />
+          </div>
           <ControlError control="feed" error={error} pending={pending} />
         </Section>
 
-        <Section label="Mentions">
+        <div className="mt-6 border-t border-border pt-4">
+          <SectionHeader label="References" />
+          <p className="mb-3 text-[11px] leading-snug text-text-muted">
+            Read-only. Derived from the note body, not settings.
+          </p>
+
+          <FieldLabel>Mentions</FieldLabel>
           <p className="mb-1.5 text-[11px] leading-snug text-text-muted">
-            Tasks referenced in the body — backlinks, not targeting.
+            Tasks referenced in the body. Backlinks, not targeting.
           </p>
           {data.mentions.length === 0 ? (
             <div className="py-0.5 text-[12px] text-text-faint">None</div>
@@ -499,9 +503,8 @@ export function SettingsPane({
               <MentionRow key={mention.taskId} mention={mention} />
             ))
           )}
-        </Section>
 
-        <Section label="Linked notes">
+          <FieldLabel className="mt-4">Linked notes</FieldLabel>
           {data.linksOut.length === 0 && data.linksIn.length === 0 ? (
             <div className="py-0.5 text-[12px] text-text-faint">None</div>
           ) : (
@@ -524,9 +527,38 @@ export function SettingsPane({
               ))}
             </>
           )}
-        </Section>
+        </div>
       </div>
     </RibbonShell>
+  );
+}
+
+/**
+ * Skeleton body shown while the first detail fetch is in flight, following
+ * the shared `skeleton-bar` convention.
+ *
+ * @returns Placeholder rows shaped like the ribbon sections.
+ */
+function RibbonSkeleton() {
+  return (
+    <div className="space-y-4 p-4" role="status" aria-label="Loading settings">
+      <span className="skeleton-bar block h-3 w-16" />
+      <span className="skeleton-bar block h-8 w-full" />
+      <span
+        className="skeleton-bar block h-8 w-full"
+        style={{ "--skeleton-delay": "70ms" } as React.CSSProperties}
+      />
+      <span className="skeleton-bar block h-3 w-24" />
+      <span
+        className="skeleton-bar block h-6 w-2/3"
+        style={{ "--skeleton-delay": "140ms" } as React.CSSProperties}
+      />
+      <span className="skeleton-bar block h-3 w-20" />
+      <span
+        className="skeleton-bar block h-6 w-full"
+        style={{ "--skeleton-delay": "210ms" } as React.CSSProperties}
+      />
+    </div>
   );
 }
 
@@ -593,7 +625,7 @@ function RibbonShell({
 interface ControlErrorProps {
   control: ControlKey;
   error: { control: ControlKey; message: string } | null;
-  pending: ControlKey | null;
+  pending: ReadonlySet<ControlKey>;
 }
 
 /**
@@ -601,11 +633,11 @@ interface ControlErrorProps {
  * slot. Hidden while the same control is mid-write so a retry does not
  * flash the stale failure.
  *
- * @param props - The control key, current error, and in-flight control.
+ * @param props - The control key, current error, and in-flight controls.
  * @returns The danger-toned error line, or null.
  */
 function ControlError({ control, error, pending }: ControlErrorProps) {
-  if (error?.control !== control || pending === control) return null;
+  if (error?.control !== control || pending.has(control)) return null;
   return (
     <p
       role="status"
@@ -625,7 +657,7 @@ interface AccessSliderProps {
 }
 
 /**
- * Three-stop access slider — Open, Agent read-only, Locked — as an ARIA
+ * Three-stop access slider (Open, Agent read-only, Locked) as an ARIA
  * radiogroup with roving tabindex and Arrow-key traversal. The thumb slides
  * to the active stop and takes its color; the whole group dims while a write
  * is in flight but stays interactive on a locked note so the unlock path is
@@ -715,75 +747,6 @@ function AccessSlider({
   );
 }
 
-interface TagEditorProps {
-  tags: string[];
-  disabled: boolean;
-  onAdd: (tag: string) => void;
-  onRemove: (tag: string) => void;
-}
-
-/**
- * Tag chips with an inline add input — Enter commits the trimmed lowercase
- * value, the X removes a chip. Duplicate or empty commits are dropped.
- *
- * @param props - Current tags, disabled flag, and add/remove handlers.
- * @returns The wrapping chip row with its input.
- */
-function TagEditor({ tags, disabled, onAdd, onRemove }: TagEditorProps) {
-  const [val, setVal] = useState("");
-
-  const commit = () => {
-    const t = val.trim().toLowerCase();
-    if (t && !tags.includes(t)) onAdd(t);
-    setVal("");
-  };
-
-  return (
-    <div
-      className="flex flex-wrap items-center gap-1.5"
-      style={{ opacity: disabled ? 0.55 : 1 }}
-    >
-      {tags.map((t) => (
-        <span
-          key={t}
-          className="inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[11px]"
-          style={{
-            color: "var(--color-accent-light)",
-            background: tint("var(--color-accent)", 12),
-            border: `1px solid ${tint("var(--color-accent)", 26)}`,
-          }}
-        >
-          <span className="truncate">{t}</span>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onRemove(t)}
-            aria-label={`Remove ${t}`}
-            className="shrink-0 text-text-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed enabled:cursor-pointer"
-          >
-            <IconX size={10} />
-          </button>
-        </span>
-      ))}
-      <input
-        value={val}
-        disabled={disabled}
-        onChange={(e) => setVal(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commit();
-          }
-        }}
-        aria-label="Add tag"
-        placeholder="add tag…"
-        className="min-w-[64px] flex-1 bg-transparent text-[11px] outline-none placeholder:text-text-faint disabled:cursor-not-allowed"
-        style={{ color: "var(--color-text-secondary)" }}
-      />
-    </div>
-  );
-}
-
 interface FeedEditorProps {
   note: NoteFull;
   categories: string[];
@@ -797,7 +760,7 @@ interface FeedEditorProps {
 }
 
 /**
- * Auto-feed editor — the mode selector plus the matching target picker
+ * Auto-feed editor: the mode selector plus the matching target picker
  * (category / tag chips or status-colored task rows) and the per-mode hint.
  * Feed targets are stored canonicalized to lowercase, so category and tag
  * membership is compared case-insensitively against the display-case
@@ -907,53 +870,139 @@ function FeedEditor({
             No tasks in this project yet.
           </p>
         ) : (
-          <div className="flex flex-col gap-1">
-            {[...taskMap.entries()].map(([taskId, task]) => {
-              const active = note.feedTaskIds.includes(taskId);
-              return (
-                <button
-                  key={taskId}
-                  type="button"
-                  disabled={disabled}
-                  aria-pressed={active}
-                  onClick={() => {
-                    const next = active
-                      ? note.feedTaskIds.filter((id) => id !== taskId)
-                      : [...note.feedTaskIds, taskId];
-                    onSetTaskIds(next);
-                  }}
-                  className="flex items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
-                  style={{
-                    background: active
-                      ? tint("var(--color-accent)", 8)
-                      : "transparent",
-                  }}
-                >
-                  <MonoId
-                    id={task.taskRef}
-                    copyable={false}
-                    tone={task.status as never}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-[11px] text-text-muted">
-                    {task.title}
-                  </span>
-                  {active && (
-                    <span
-                      className="font-mono text-[9px] uppercase"
-                      style={{ color: "var(--color-accent-light)" }}
-                    >
-                      fed
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+          <FeedTaskPicker
+            taskMap={taskMap}
+            selectedIds={note.feedTaskIds}
+            disabled={disabled}
+            onChange={onSetTaskIds}
+          />
         ))}
 
       <p className="mt-2 text-[11px] leading-snug text-text-muted">
         {FEED_MODE_HINT[note.feedMode]}
       </p>
+    </div>
+  );
+}
+
+/** Result rows shown per query in the feed task search. */
+const FEED_TASK_RESULT_CAP = 20;
+
+interface FeedTaskPickerProps {
+  /** Project task slim map (the already-loaded graph). */
+  taskMap: TaskSlimMap;
+  /** Selected feed task ids. */
+  selectedIds: string[];
+  /** When true, rows are inert. */
+  disabled: boolean;
+  /** Replace the selected id list. */
+  onChange: (next: string[]) => void;
+}
+
+/**
+ * Searchable by-task feed picker. Selected tasks are always listed;
+ * matches for the current query (title or ref, over the already-loaded
+ * task map, capped) appear below them, so a large project never renders
+ * its whole task list.
+ *
+ * @param props - Task map, selection, disabled flag, and the setter.
+ * @returns The search input plus the bounded row list.
+ */
+function FeedTaskPicker({
+  taskMap,
+  selectedIds,
+  disabled,
+  onChange,
+}: FeedTaskPickerProps) {
+  const [query, setQuery] = useState("");
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  const needle = query.trim().toLowerCase();
+  const results = useMemo(() => {
+    if (!needle) return [];
+    const hits: string[] = [];
+    for (const [taskId, task] of taskMap) {
+      if (selectedSet.has(taskId)) continue;
+      if (
+        task.title.toLowerCase().includes(needle) ||
+        task.taskRef.toLowerCase().includes(needle)
+      ) {
+        hits.push(taskId);
+        if (hits.length >= FEED_TASK_RESULT_CAP) break;
+      }
+    }
+    return hits;
+  }, [needle, selectedSet, taskMap]);
+
+  const toggle = (taskId: string) => {
+    onChange(
+      selectedSet.has(taskId)
+        ? selectedIds.filter((id) => id !== taskId)
+        : [...selectedIds, taskId],
+    );
+  };
+
+  const row = (taskId: string, active: boolean) => {
+    const task = taskMap.get(taskId);
+    if (!task) return null;
+    return (
+      <button
+        key={taskId}
+        type="button"
+        disabled={disabled}
+        aria-pressed={active}
+        onClick={() => toggle(taskId)}
+        className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
+        style={{
+          background: active ? tint("var(--color-accent)", 8) : "transparent",
+        }}
+      >
+        <MonoId
+          id={task.taskRef}
+          copyable={false}
+          tone={task.status as never}
+        />
+        <span className="min-w-0 flex-1 truncate text-[11px] text-text-muted">
+          {task.title}
+        </span>
+        {active && (
+          <span
+            className="font-mono text-[9px] uppercase"
+            style={{ color: "var(--color-accent-light)" }}
+          >
+            fed
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
+        <IconSearch size={11} className="shrink-0 text-text-faint" />
+        <input
+          value={query}
+          disabled={disabled}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search tasks to feed"
+          placeholder="Search tasks by title or ref…"
+          className="w-full bg-transparent text-[11px] outline-none placeholder:text-text-faint disabled:cursor-not-allowed"
+          style={{ color: "var(--color-text-secondary)" }}
+        />
+      </div>
+      <div className="flex max-h-[240px] flex-col gap-1 overflow-y-auto">
+        {selectedIds.map((taskId) => row(taskId, true))}
+        {results.map((taskId) => row(taskId, false))}
+      </div>
+      {selectedIds.length === 0 && !needle && (
+        <p className="mt-1 text-[11px] text-text-faint">
+          No tasks selected. Search above to add some.
+        </p>
+      )}
+      {needle && results.length === 0 && (
+        <p className="mt-1 text-[11px] text-text-faint">No matching tasks.</p>
+      )}
     </div>
   );
 }

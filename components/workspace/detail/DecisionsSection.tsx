@@ -10,7 +10,7 @@ import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { updateTask } from "@/lib/graph/mutations";
 import { IconPlus, IconTrash } from "@/components/shared/icons";
 import type { Decision } from "@/lib/types";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 /** Map a decision source to a display author (`user` vs `agent`). */
 const SOURCE_AUTHOR: Record<

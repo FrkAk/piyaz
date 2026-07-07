@@ -321,6 +321,17 @@ export type NoteSummary = {
   updatedAt: Date;
 };
 
+/**
+ * Link context re-derived by a body-changing {@link updateNote}, read back
+ * inside the write transaction so the client folds it into its detail
+ * cache instead of refetching. `linksIn` is excluded: incoming rows belong
+ * to other notes' derivations and never change from this note's write.
+ */
+export type NoteLinksRefresh = {
+  mentions: NoteMention[];
+  linksOut: LinkedNoteSlim[];
+};
+
 /** Impact preview for {@link deleteNote}. */
 export type DeleteNotePreview = {
   note: { id: string; title: string; slug: string };
@@ -1012,6 +1023,30 @@ export function noteMentionsStmt(read: ReadConn, noteId: string) {
 }
 
 /**
+ * Map a raw mention row (task join with identifier and sequence) to the
+ * {@link NoteMention} shape with the composed task ref.
+ *
+ * @param row - Joined mention row.
+ * @returns Mention row for the UI chip.
+ */
+function toNoteMention(row: {
+  taskId: string;
+  kind: NoteTaskLinkKind;
+  sequenceNumber: number;
+  identifier: string;
+  status: TaskStatus;
+  title: string;
+}): NoteMention {
+  return {
+    taskId: row.taskId,
+    kind: row.kind,
+    taskRef: `${row.identifier}-${row.sequenceNumber}`,
+    status: row.status,
+    title: row.title,
+  };
+}
+
+/**
  * Build the task-backlinks read as a lazy batch statement: live notes
  * linked to the task via `note_task_links`, slim tree projection plus the
  * link `kind`; never selects `body`/`search_tsv`. Served by
@@ -1175,13 +1210,7 @@ export async function getNoteFull(
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
   return {
     note,
-    mentions: mentionRows.map((row) => ({
-      taskId: row.taskId,
-      kind: row.kind,
-      taskRef: `${row.identifier}-${row.sequenceNumber}`,
-      status: row.status,
-      title: row.title,
-    })),
+    mentions: mentionRows.map(toNoteMention),
     linksOut,
     linksIn,
   };
@@ -1550,7 +1579,7 @@ export async function createNote(
     return note;
   });
 
-  emitNoteEvent(created.projectId, created.id, visibility);
+  emitNoteEvent(created.projectId, created.id, visibility, created.updatedAt);
   return created;
 }
 
@@ -1574,7 +1603,8 @@ export async function createNote(
  * @param noteId - UUID of the note.
  * @param patch - Fields to change; unknown/protected keys are stripped.
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
- * @returns Slim summary of the updated note.
+ * @returns Slim summary of the updated note; a body change also carries
+ *   the re-derived link context as `links`.
  * @throws ForbiddenError on inaccessible or trashed notes, or when a
  *   non-creator sets `visibility='private'` (the RLS WITH CHECK pins
  *   private rows to their creator; this pre-check keeps the rejection
@@ -1590,7 +1620,7 @@ export async function updateNote(
   noteId: string,
   patch: NotePatch,
   ifUpdatedAt?: string,
-): Promise<NoteSummary> {
+): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
   assertValidNoteId(noteId);
   const applied: NotePatch = {};
   for (const field of PATCHABLE_NOTE_FIELDS) {
@@ -1664,6 +1694,7 @@ export async function updateNote(
         summary: currentSummary,
         wasNoOp: true,
         visibility: current.visibility,
+        links: undefined,
       };
     }
 
@@ -1674,6 +1705,7 @@ export async function updateNote(
         summary: currentSummary,
         wasNoOp: true,
         visibility: current.visibility,
+        links: undefined,
       };
     }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
@@ -1698,6 +1730,7 @@ export async function updateNote(
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
 
+    let links: NoteLinksRefresh | undefined;
     if (bodyChanged) {
       const newBody = applied.body ?? "";
       await insertRevisionWithPrune(
@@ -1716,6 +1749,34 @@ export async function updateNote(
         newBody,
         false,
       );
+      const mentionRows = await tx
+        .select({
+          taskId: noteTaskLinks.taskId,
+          kind: noteTaskLinks.kind,
+          sequenceNumber: tasks.sequenceNumber,
+          identifier: projects.identifier,
+          status: tasks.status,
+          title: tasks.title,
+        })
+        .from(noteTaskLinks)
+        .innerJoin(tasks, eq(tasks.id, noteTaskLinks.taskId))
+        .innerJoin(projects, eq(projects.id, tasks.projectId))
+        .where(eq(noteTaskLinks.noteId, noteId));
+      const linksOut = await tx
+        .select({
+          id: notes.id,
+          slug: notes.slug,
+          title: notes.title,
+          type: notes.type,
+          folder: notes.folder,
+          updatedAt: notes.updatedAt,
+        })
+        .from(noteLinks)
+        .innerJoin(notes, eq(notes.id, noteLinks.targetNoteId))
+        .where(
+          and(eq(noteLinks.sourceNoteId, noteId), isNull(notes.deletedAt)),
+        );
+      links = { mentions: mentionRows.map(toNoteMention), linksOut };
     }
     if (nextVisibility === "team") {
       await insertActivityEvents(tx, ctx.actor, [
@@ -1729,7 +1790,7 @@ export async function updateNote(
         },
       ]);
     }
-    return { summary, wasNoOp: false, visibility: nextVisibility };
+    return { summary, wasNoOp: false, visibility: nextVisibility, links };
   });
 
   if (!result.wasNoOp) {
@@ -1737,9 +1798,12 @@ export async function updateNote(
       result.summary.projectId,
       result.summary.id,
       result.visibility,
+      result.summary.updatedAt,
     );
   }
-  return result.summary;
+  return result.links
+    ? { ...result.summary, links: result.links }
+    : result.summary;
 }
 
 /**
@@ -1797,6 +1861,7 @@ export async function moveNote(
       result.summary.projectId,
       result.summary.id,
       result.visibility,
+      result.summary.updatedAt,
     );
   }
   return result.summary;
@@ -2052,6 +2117,7 @@ export async function restoreNote(
       result.summary.projectId,
       result.summary.id,
       result.visibility,
+      result.summary.updatedAt,
     );
   }
   return result.summary;
@@ -2126,7 +2192,7 @@ export async function approveShareRequest(
     return applyVisibilityTx(tx, ctx, gate, "team");
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "team");
+  emitNoteEvent(summary.projectId, summary.id, "team", summary.updatedAt);
   return summary;
 }
 

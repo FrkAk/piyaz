@@ -19,7 +19,7 @@ interface NotesViewProps {
   projectIdentifier: string;
   /** @param noteId - Selected note id from the `?note` query param, or null. */
   noteId: string | null;
-  /** @param onSelectNote - Write `?note=<id>` (null clears) — the selection contract the notes panes call. */
+  /** @param onSelectNote - Write `?note=<id>` (null clears); the selection contract the notes panes call. */
   onSelectNote: (noteId: string | null) => void;
   /** @param onSelectTask - Open a task's detail from an inline editor chip. */
   onSelectTask: (taskId: string) => void;
@@ -37,7 +37,10 @@ interface NotesViewProps {
  * tree header toggle (persisted per {@link useNotesRailCollapse}), with a
  * reopen button over the editor; below `lg` the editor takes the full width
  * and the tree becomes a slide-over drawer opened from the pane header,
- * closed by selecting a note, the close button, backdrop, or Escape. Owns
+ * closed by selecting a note, the close button, backdrop, or Escape. The
+ * settings ribbon is an inline column only at `xl` and up (collapse
+ * persisted per {@link useNotesSettingsCollapse}); below `xl` it always
+ * opens as the overlay drawer so the editor never gets squeezed. Owns
  * the no-modal create flow: New note persists immediately, selects the
  * created note, and focuses its title.
  *
@@ -55,6 +58,7 @@ export function NotesView({
   projectTags,
 }: NotesViewProps) {
   const isLg = useMediaQuery("(min-width: 1024px)", true);
+  const isXl = useMediaQuery("(min-width: 1280px)", true);
   const createNote = useCreateNote(projectId);
   const { collapsed, toggle: toggleRail } = useNotesRailCollapse();
   const { collapsed: settingsCollapsed, toggle: toggleSettings } =
@@ -148,10 +152,10 @@ export function NotesView({
               <IconPanelLeft size={13} />
             </button>
           )}
-          {noteId !== null && settingsCollapsed && (
+          {noteId !== null && (!isXl || settingsCollapsed) && (
             <button
               type="button"
-              onClick={toggleSettings}
+              onClick={isXl ? toggleSettings : () => setSettingsOpen(true)}
               aria-label="Show settings"
               title="Show settings"
               className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border-strong bg-base text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
@@ -161,7 +165,7 @@ export function NotesView({
           )}
           {editor}
         </div>
-        {noteId !== null && !settingsCollapsed && (
+        {isXl && noteId !== null && !settingsCollapsed && (
           <SettingsPane
             projectId={projectId}
             noteId={noteId}
@@ -171,6 +175,25 @@ export function NotesView({
             onSelectNote={onSelectNote}
             onCollapse={toggleSettings}
           />
+        )}
+        {!isXl && (
+          <SettingsDrawer
+            open={noteId !== null && settingsOpen}
+            onClose={closeSettings}
+          >
+            {noteId !== null && (
+              <SettingsPane
+                fill
+                projectId={projectId}
+                noteId={noteId}
+                categories={categories}
+                projectTags={projectTags}
+                taskMap={taskMap}
+                onSelectNote={onSelectNote}
+                onClose={closeSettings}
+              />
+            )}
+          </SettingsDrawer>
         )}
       </div>
     );
@@ -306,7 +329,7 @@ interface SettingsDrawerProps {
 }
 
 /**
- * Slide-out drawer wrapping the settings ribbon for viewports below `lg`,
+ * Slide-out drawer wrapping the settings ribbon for viewports below `xl`,
  * anchored to the right to mirror the ribbon's desktop column. Closes on
  * backdrop click and on Esc. Dialog chrome (Escape via the shared modal
  * stack, Tab focus trap, focus seed and restore) comes from

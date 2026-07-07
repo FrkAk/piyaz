@@ -10,7 +10,7 @@ import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { updateTask } from "@/lib/graph/mutations";
 import { IconPlus, IconTrash } from "@/components/shared/icons";
 import type { AcceptanceCriterion } from "@/lib/types";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 /**
  * Hash criteria into a stable string so reference-changing prop updates

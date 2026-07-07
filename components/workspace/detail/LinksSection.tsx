@@ -23,7 +23,7 @@ import {
   IconStackOverflow,
 } from "@/components/shared/host-icons";
 import type { TaskLinkRef } from "@/lib/data/views";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 /**
  * Host -> glyph map. Hosts in the classifier's recognised set get their own

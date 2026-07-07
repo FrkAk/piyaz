@@ -10,6 +10,6 @@
 export type RealtimeEvent =
   | { kind: "project"; projectId: string }
   | { kind: "task"; projectId: string; taskId: string }
-  | { kind: "note"; projectId: string; noteId: string }
+  | { kind: "note"; projectId: string; noteId: string; updatedAt?: string }
   | { kind: "project-list"; orgId: string }
   | { kind: "project-deleted"; projectId: string };

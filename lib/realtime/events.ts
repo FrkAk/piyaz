@@ -49,20 +49,27 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
  * guaranteed-empty refetch egress and a timing signal of private activity, and
  * the author's own session already reflects the write optimistically.
  *
+ * `updatedAt` lets the consumer skip refetches its caches already reflect
+ * (the actor's own write, merged from the mutation response).
+ *
  * @param projectId - Owning project id.
  * @param noteId - Note that changed.
  * @param visibility - The note's post-mutation visibility.
+ * @param updatedAt - The note's post-mutation `updatedAt`; omit when the
+ *   note no longer has one (delete).
  */
 export function emitNoteEvent(
   projectId: string,
   noteId: string,
   visibility: Visibility,
+  updatedAt?: Date,
 ): void {
   if (visibility !== "team") return;
   broker.dispatch(`project:${projectId}`, {
     kind: "note",
     projectId,
     noteId,
+    ...(updatedAt !== undefined ? { updatedAt: updatedAt.toISOString() } : {}),
   } satisfies RealtimeEvent);
 }
 

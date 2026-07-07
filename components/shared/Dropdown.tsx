@@ -7,7 +7,7 @@ import { IconCheck, IconChevronDown } from "@/components/shared/icons";
 import { popoverFixedStyle, usePopoverAnchor } from "@/hooks/usePopoverAnchor";
 
 export interface DropdownOption<V extends string = string> {
-  /** Option value — what gets passed to onChange. */
+  /** Option value passed to onChange. */
   value: V;
   /** Visible label. */
   label: string;
@@ -26,14 +26,14 @@ interface DropdownProps<V extends string> {
   options: ReadonlyArray<DropdownOption<V>>;
   /** Update the selected value. */
   onChange: (next: V) => void;
-  /** Trigger renderer — receives the currently selected option. */
+  /** Trigger renderer; receives the currently selected option. */
   renderTrigger: (
     option: DropdownOption<V> | undefined,
     open: boolean,
   ) => React.ReactNode;
   /** Match panel width to trigger when true; defaults to false (intrinsic). */
   matchTriggerWidth?: boolean;
-  /** Panel anchor — defaults to `start` (left edge of the trigger). */
+  /** Panel anchor; defaults to `start` (left edge of the trigger). */
   align?: "start" | "end";
   /** Optional minimum panel width in px. */
   minWidth?: number;
@@ -45,11 +45,11 @@ interface DropdownProps<V extends string> {
   disabled?: boolean;
 }
 
-/** Worst-case panel height — `max-h-[280px]` list + `py-1` chrome (~8px). */
+/** Worst-case panel height: `max-h-[280px]` list + `py-1` chrome (~8px). */
 const PANEL_MAX_HEIGHT_PX = 288;
 
 /**
- * Anchored dropdown — single-select. The trigger is fully owned by the
+ * Anchored single-select dropdown. The trigger is fully owned by the
  * caller via `renderTrigger`, so the same primitive serves status pills,
  * filter chips, and rail rows without forcing a single appearance. The
  * panel is portalled to `document.body` and positioned with `fixed`
