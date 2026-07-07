@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useState } from "react";
+import { CollapsibleRail } from "@/components/shared/CollapsibleRail";
+import { Drawer } from "@/components/shared/Drawer";
 import { IconPanelLeft, IconSettings } from "@/components/shared/icons";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { useModalChrome } from "@/hooks/useModalChrome";
 import {
   useNotesRailCollapse,
   useNotesSettingsCollapse,
@@ -13,6 +13,9 @@ import { EditorPane, type TaskSlimMap } from "./EditorPane";
 import { SettingsPane } from "./SettingsPane";
 import { TreePane } from "./TreePane";
 import { useCreateNote } from "./useNoteMutations";
+
+/** Width of the desktop tree rail and settings column, in pixels. */
+const RAIL_WIDTH = 320;
 
 interface NotesViewProps {
   /** @param projectId - Owning project id. */
@@ -137,7 +140,7 @@ export function NotesView({
   if (isLg) {
     return (
       <div className="flex h-full w-full">
-        {!collapsed && (
+        <CollapsibleRail open={!collapsed} width={RAIL_WIDTH}>
           <TreePane
             projectId={projectId}
             selectedId={noteId}
@@ -147,7 +150,7 @@ export function NotesView({
             createError={createError}
             onCollapse={toggleRail}
           />
-        )}
+        </CollapsibleRail>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {collapsed && (
             <button
@@ -173,18 +176,20 @@ export function NotesView({
           )}
           {editor}
         </div>
-        {isXl && noteId !== null && !settingsCollapsed && (
-          <SettingsPane
-            key={noteId}
-            projectId={projectId}
-            noteId={noteId}
-            categories={categories}
-            projectTags={projectTags}
-            taskMap={taskMap}
-            onSelectNote={onSelectNote}
-            onSelectTask={onSelectTask}
-            onCollapse={toggleSettings}
-          />
+        {isXl && noteId !== null && (
+          <CollapsibleRail open={!settingsCollapsed} width={RAIL_WIDTH}>
+            <SettingsPane
+              key={noteId}
+              projectId={projectId}
+              noteId={noteId}
+              categories={categories}
+              projectTags={projectTags}
+              taskMap={taskMap}
+              onSelectNote={onSelectNote}
+              onSelectTask={onSelectTask}
+              onCollapse={toggleSettings}
+            />
+          </CollapsibleRail>
         )}
         {!isXl && (
           <SettingsDrawer
@@ -287,49 +292,24 @@ interface TreeDrawerProps {
 }
 
 /**
- * Slide-out drawer wrapping the notes tree for viewports below `lg`.
- * Closes on backdrop click and on Esc. Dialog chrome (Escape via the
- * shared modal stack, Tab focus trap, focus seed and restore) comes from
- * {@link useModalChrome}; the global `MotionConfig` disables the slide
- * under a reduced-motion preference.
+ * Slide-out drawer wrapping the notes tree for viewports below `lg`,
+ * left-anchored. Backdrop, slide, and dialog chrome come from the shared
+ * {@link Drawer}.
  *
  * @param props - Drawer configuration.
- * @returns Backdrop + sliding panel.
+ * @returns The tree drawer.
  */
 function TreeDrawer({ open, onClose, children }: TreeDrawerProps) {
-  const panelRef = useRef<HTMLElement | null>(null);
-  useModalChrome(open, onClose, panelRef);
-
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            key="backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-40 bg-black/45"
-            onClick={onClose}
-            aria-hidden="true"
-          />
-          <motion.aside
-            key="panel"
-            ref={panelRef}
-            initial={{ x: "-100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "-100%" }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed left-0 top-[var(--topbar-h)] z-50 flex h-[calc(var(--viewport-height)-var(--topbar-h))] w-[300px] max-w-[85vw] flex-col border-r border-border shadow-[var(--shadow-float)]"
-            role="dialog"
-            aria-label="Notes tree"
-          >
-            {children}
-          </motion.aside>
-        </>
-      )}
-    </AnimatePresence>
+    <Drawer
+      open={open}
+      onClose={onClose}
+      side="left"
+      width="300px"
+      label="Notes tree"
+    >
+      {children}
+    </Drawer>
   );
 }
 
@@ -344,49 +324,23 @@ interface SettingsDrawerProps {
 
 /**
  * Slide-out drawer wrapping the settings ribbon for viewports below `xl`,
- * anchored to the right to mirror the ribbon's desktop column. Closes on
- * backdrop click and on Esc. Dialog chrome (Escape via the shared modal
- * stack, Tab focus trap, focus seed and restore) comes from
- * {@link useModalChrome}; the global `MotionConfig` disables the slide under
- * a reduced-motion preference.
+ * right-anchored to mirror the ribbon's desktop column. Backdrop, slide, and
+ * dialog chrome come from the shared {@link Drawer}.
  *
  * @param props - Drawer configuration.
- * @returns Backdrop + sliding panel.
+ * @returns The settings drawer.
  */
 function SettingsDrawer({ open, onClose, children }: SettingsDrawerProps) {
-  const panelRef = useRef<HTMLElement | null>(null);
-  useModalChrome(open, onClose, panelRef);
-
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            key="backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-40 bg-black/45"
-            onClick={onClose}
-            aria-hidden="true"
-          />
-          <motion.aside
-            key="panel"
-            ref={panelRef}
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed right-0 top-[var(--topbar-h)] z-50 flex h-[calc(var(--viewport-height)-var(--topbar-h))] w-[320px] max-w-[85vw] flex-col border-l border-border shadow-[var(--shadow-float)]"
-            role="dialog"
-            aria-label="Note settings"
-          >
-            {children}
-          </motion.aside>
-        </>
-      )}
-    </AnimatePresence>
+    <Drawer
+      open={open}
+      onClose={onClose}
+      side="right"
+      width="320px"
+      label="Note settings"
+    >
+      {children}
+    </Drawer>
   );
 }
 
