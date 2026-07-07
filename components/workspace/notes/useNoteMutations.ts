@@ -245,6 +245,7 @@ export function useCreateNote(projectId: string) {
       const tempRow: NoteTreeRow = {
         id: crypto.randomUUID(),
         slug: "",
+        sequenceNumber: 0,
         title: input.title,
         type: input.type ?? "reference",
         folder: input.folder ?? "",

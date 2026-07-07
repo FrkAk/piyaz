@@ -37,6 +37,7 @@ function row(id: string, overrides: Partial<NoteTreeRow> = {}): NoteTreeRow {
   return {
     id,
     slug: `slug-${id}`,
+    sequenceNumber: 1,
     title: `Title ${id}`,
     type: "reference",
     folder: "",
@@ -172,8 +173,10 @@ describe("mergeSummaryIntoDetail", () => {
   const summary: NoteSummary = {
     id: "n1",
     slug: "slug-n1-2",
+    sequenceNumber: 1,
     title: "Renamed",
     projectId: "p1",
+    projectIdentifier: "P1",
     folder: "specs",
     version: 3,
     updatedAt: new Date("2026-07-01T11:00:00.000Z"),

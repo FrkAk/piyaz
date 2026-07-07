@@ -40,6 +40,7 @@ import {
   assertNoteGateRows,
   assertProjectAccessTx,
   assertProjectGateRows,
+  assertTaskAccessTx,
   assertTaskGateRows,
   assertValidNoteId,
   assertValidProjectId,
@@ -87,6 +88,9 @@ import {
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
+import { BatchInputError } from "@/lib/data/task-batch";
+import { InvalidEditOpError } from "@/lib/data/task-edit";
+import { foldTextOp, type TextOp } from "@/lib/data/text-ops";
 import { ProjectArchivedError } from "@/lib/graph/errors";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { emitNoteEvent, emitProjectEvent } from "@/lib/realtime/events";
@@ -242,6 +246,32 @@ export class NoteLockedError extends Error {
   }
 }
 
+/**
+ * Thrown by {@link createNotesBatch} with `onDuplicate='error'` when any
+ * batch item collides with an existing live note's (folder, title) pair.
+ */
+export class DuplicateNoteTitleError extends Error {
+  /**
+   * @param titles - The colliding titles.
+   */
+  constructor(public readonly titles: string[]) {
+    super(`Note title(s) already exist: ${titles.join(", ")}`);
+    this.name = "DuplicateNoteTitleError";
+  }
+}
+
+/**
+ * Thrown by {@link createNoteTaskLink} when the note and the task belong
+ * to different projects; the DB trigger would reject the row anyway, this
+ * pre-check keeps the rejection typed.
+ */
+export class CrossProjectNoteLinkError extends Error {
+  constructor() {
+    super("Cannot link a note to a task in a different project.");
+    this.name = "CrossProjectNoteLinkError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -250,6 +280,7 @@ export class NoteLockedError extends Error {
 export type NoteTreeRow = {
   id: string;
   slug: string;
+  sequenceNumber: number;
   title: string;
   type: NoteType;
   folder: string;
@@ -291,6 +322,7 @@ export type NoteFull = Omit<Note, "searchTsv">;
 /** Single-note read: the full row plus its derived link context. */
 export type NoteFullResult = {
   note: NoteFull;
+  projectIdentifier: string;
   mentions: NoteMention[];
   linksOut: LinkedNoteSlim[];
   linksIn: LinkedNoteSlim[];
@@ -343,12 +375,18 @@ export type NotesTreeVersion = {
   liveCount: number;
 };
 
-/** Slim write-result shape returned by every note mutation. */
+/**
+ * Slim write-result shape returned by every note mutation.
+ * `sequenceNumber` + `projectIdentifier` let callers compose the noteRef
+ * (`PYZ-N12`) without a second query.
+ */
 export type NoteSummary = {
   id: string;
   slug: string;
+  sequenceNumber: number;
   title: string;
   projectId: string;
+  projectIdentifier: string;
   folder: string;
   version: number;
   updatedAt: Date;
@@ -385,6 +423,10 @@ export type CreateNoteInput = {
   summary?: string;
   tags?: string[];
   category?: string | null;
+  feedMode?: FeedMode;
+  feedCategories?: string[];
+  feedTags?: string[];
+  feedTaskIds?: string[];
 };
 
 /** Mutable scalar fields accepted by {@link updateNote}. */
@@ -423,10 +465,15 @@ const PATCHABLE_NOTE_FIELDS = [
   "visibility",
 ] as const satisfies readonly (keyof NotePatch)[];
 
-/** Summary projection shared by every write's `.returning()`. */
+/**
+ * Summary projection shared by every write's `.returning()`.
+ * `projectIdentifier` cannot ride a `.returning()` (it lives on the
+ * projects join), so each write composes it from its gate row.
+ */
 const noteSummaryColumns = {
   id: notes.id,
   slug: notes.slug,
+  sequenceNumber: notes.sequenceNumber,
   title: notes.title,
   projectId: notes.projectId,
   folder: notes.folder,
@@ -438,6 +485,7 @@ const noteSummaryColumns = {
 const noteTreeColumns = {
   id: notes.id,
   slug: notes.slug,
+  sequenceNumber: notes.sequenceNumber,
   title: notes.title,
   type: notes.type,
   folder: notes.folder,
@@ -775,14 +823,24 @@ function summaryTitle(title: string): string {
 function gateSummary(
   gate: Pick<
     NoteAccessGate,
-    "id" | "slug" | "title" | "projectId" | "folder" | "version" | "updatedAt"
+    | "id"
+    | "slug"
+    | "sequenceNumber"
+    | "title"
+    | "projectId"
+    | "projectIdentifier"
+    | "folder"
+    | "version"
+    | "updatedAt"
   >,
 ): NoteSummary {
   return {
     id: gate.id,
     slug: gate.slug,
+    sequenceNumber: gate.sequenceNumber,
     title: gate.title,
     projectId: gate.projectId,
+    projectIdentifier: gate.projectIdentifier,
     folder: gate.folder,
     version: gate.version,
     updatedAt: gate.updatedAt,
@@ -1096,7 +1154,6 @@ export function taskNoteBacklinksStmt(read: ReadConn, taskId: string) {
     .select({
       ...noteTreeColumns,
       kind: noteTaskLinks.kind,
-      sequenceNumber: notes.sequenceNumber,
     })
     .from(noteTaskLinks)
     .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
@@ -1243,11 +1300,12 @@ export async function getNoteFull(
       noteLinksOutStmt(read, noteId),
       noteLinksInStmt(read, noteId),
     ]);
-  assertNoteGateRows(noteId, gateRows);
+  const gate = assertNoteGateRows(noteId, gateRows);
   const [note] = noteRows;
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
   return {
     note,
+    projectIdentifier: gate.projectIdentifier,
     mentions: mentionRows.map(toNoteMention),
     linksOut,
     linksIn,
@@ -1293,9 +1351,20 @@ export async function searchNotes(
     noteSearchStmt(read, projectId, trimmed),
   ]);
   assertProjectGateRows(projectId, gateRows);
-  return normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map((row) => ({
+  return normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit);
+}
+
+/**
+ * Map a raw search row to the slim hit shape.
+ *
+ * @param row - Raw search row.
+ * @returns Slim tree-projection hit.
+ */
+function toSearchHit(row: NoteSearchRawRow): NoteSearchHit {
+  return {
     id: row.id,
     slug: row.slug,
+    sequenceNumber: row.sequence_number,
     title: row.title,
     type: row.type as NoteType,
     folder: row.folder,
@@ -1304,7 +1373,7 @@ export async function searchNotes(
     agentWritable: row.agent_writable,
     locked: row.locked,
     updatedAt: toDate(row.updated_at),
-  }));
+  };
 }
 
 /** A cross-project note search result for the global ⌘K palette. */
@@ -1665,75 +1734,249 @@ export async function createNote(
   input: CreateNoteInput,
 ): Promise<NoteSummary> {
   assertValidProjectId(input.projectId);
-  assertTitleWithinCap(input.title);
-  const body = input.body ?? "";
-  assertBodyWithinCap(body);
-  assertMetadataWithinCaps(input);
-  const folder = normalizeFolder(input.folder ?? "");
+  assertCreateInputWithinCaps(input);
   const visibility = input.visibility ?? "private";
 
   const created = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, input.projectId);
     assertProjectWritable(access.project.status, access.project.identifier);
     await acquireProjectLock(tx, input.projectId);
-    const base = slugifyTitle(input.title);
-    const taken = await loadSlugNamespace(tx, input.projectId, base);
-    const slug = nextFreeSlug(base, taken);
-
-    const [note] = await tx
-      .insert(notes)
-      .values({
-        projectId: input.projectId,
-        title: input.title,
-        slug,
-        body,
-        folder,
-        type: input.type ?? "reference",
-        visibility,
-        summary: input.summary ?? "",
-        tags: input.tags ?? [],
-        category: input.category ?? null,
-        agentWritable: true,
-        locked: false,
-        createdBy: ctx.userId,
-        updatedBy: ctx.userId,
-      })
-      .returning(noteSummaryColumns);
-
-    if (body !== "") {
-      await replaceDerivedLinks(
-        tx,
-        note.id,
-        input.projectId,
-        access.project.identifier,
-        body,
-        true,
-      );
-      await insertRevisionWithPrune(
-        tx,
-        note.id,
-        note.version,
-        input.title,
-        body,
-        ctx.userId,
-      );
-    }
-    if (visibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: input.projectId,
-          taskId: null,
-          type: "note_created",
-          targetRef: slug,
-          summary: `created note "${summaryTitle(input.title)}"`,
-        },
-      ]);
-    }
-    return note;
+    return createNoteInTx(tx, ctx, input, access.project.identifier);
   });
 
   emitNoteEvent(created.projectId, created.id, visibility, created.updatedAt);
   return created;
+}
+
+/**
+ * Validate one create input against the field caps, shared by
+ * {@link createNote} and {@link createNotesBatch}.
+ *
+ * @param input - Create fields; `projectId` is validated by the caller.
+ * @throws NoteValidationError on any cap violation.
+ */
+function assertCreateInputWithinCaps(
+  input: Omit<CreateNoteInput, "projectId">,
+): void {
+  assertTitleWithinCap(input.title);
+  assertBodyWithinCap(input.body ?? "");
+  assertMetadataWithinCaps(input);
+}
+
+/**
+ * Insert one note inside an open write transaction: slug allocation, the
+ * insert, body-driven link derivation, the v1 revision snapshot, and the
+ * team-visibility activity event. The caller must have gated project
+ * access, asserted writability, and taken the project advisory lock.
+ * Shared by {@link createNote} and {@link createNotesBatch}.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param ctx - Resolved auth context.
+ * @param input - Validated note fields.
+ * @param projectIdentifier - Owning project identifier for link
+ *   derivation and the composed summary.
+ * @returns Slim summary of the created note.
+ */
+async function createNoteInTx(
+  tx: Tx,
+  ctx: AuthContext,
+  input: CreateNoteInput,
+  projectIdentifier: string,
+): Promise<NoteSummary> {
+  const body = input.body ?? "";
+  const folder = normalizeFolder(input.folder ?? "");
+  const visibility = input.visibility ?? "private";
+  const base = slugifyTitle(input.title);
+  const taken = await loadSlugNamespace(tx, input.projectId, base);
+  const slug = nextFreeSlug(base, taken);
+
+  const [note] = await tx
+    .insert(notes)
+    .values({
+      projectId: input.projectId,
+      title: input.title,
+      slug,
+      body,
+      folder,
+      type: input.type ?? "reference",
+      visibility,
+      summary: input.summary ?? "",
+      tags: input.tags ?? [],
+      category: input.category ?? null,
+      feedMode: input.feedMode ?? "none",
+      feedCategories: canonicalizeFeedLabels(input.feedCategories ?? []),
+      feedTags: canonicalizeFeedLabels(input.feedTags ?? []),
+      feedTaskIds: canonicalizeFeedLabels(input.feedTaskIds ?? []),
+      agentWritable: true,
+      locked: false,
+      createdBy: ctx.userId,
+      updatedBy: ctx.userId,
+    })
+    .returning(noteSummaryColumns);
+
+  if (body !== "") {
+    await replaceDerivedLinks(
+      tx,
+      note.id,
+      input.projectId,
+      projectIdentifier,
+      body,
+      true,
+    );
+    await insertRevisionWithPrune(
+      tx,
+      note.id,
+      note.version,
+      input.title,
+      body,
+      ctx.userId,
+    );
+  }
+  if (visibility === "team") {
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: input.projectId,
+        taskId: null,
+        type: "note_created",
+        targetRef: slug,
+        summary: `created note "${summaryTitle(input.title)}"`,
+      },
+    ]);
+  }
+  return { ...note, projectIdentifier };
+}
+
+/** One {@link createNotesBatch} item; projectId and visibility come from the call. */
+export type CreateNoteBatchItem = Omit<
+  CreateNoteInput,
+  "projectId" | "visibility"
+>;
+
+/** Result of {@link createNotesBatch}: inserted rows plus dedupe hits. */
+export type NotesBatchResult = {
+  created: NoteSummary[];
+  deduped: NoteSummary[];
+};
+
+/** Item cap per {@link createNotesBatch} call. */
+export const MAX_NOTE_BATCH = 10;
+
+/**
+ * Compose the batch-dedupe key for a (folder, title) pair. NUL separates
+ * the parts because it cannot appear in either (folder segments are
+ * trimmed path text, titles are byte-capped user text), so distinct pairs
+ * never collide.
+ *
+ * @param folder - Normalized folder path.
+ * @param title - Note title.
+ * @returns Collision-free composite key.
+ */
+function dedupeKey(folder: string, title: string): string {
+  return `${folder}\u0000${title}`;
+}
+
+/**
+ * Create 1-{@link MAX_NOTE_BATCH} notes in one transaction under the
+ * project advisory lock. Idempotent by exact (normalized folder, title)
+ * among live notes: with `onDuplicate='skip'` (the default) colliding
+ * items return under `deduped` with the existing rows, so a retried
+ * batch never duplicates a note set; `onDuplicate='error'` rejects the
+ * whole batch instead. Intra-batch (folder, title) repeats dedupe to the
+ * first occurrence. Teammates' private notes are invisible to the dedupe
+ * probe (RLS); a title collision with one only affects slug suffixing.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @param items - Note fields per item.
+ * @param opts - `visibility` applied to every item (the MCP handler
+ *   passes `team` per the PYZ-264 creator-dependent default) and the
+ *   duplicate policy.
+ * @returns Created and deduped summaries, batch order preserved.
+ * @throws BatchInputError when the item count is out of range.
+ * @throws DuplicateNoteTitleError with `onDuplicate='error'` on any
+ *   (folder, title) collision.
+ * @throws ForbiddenError when the caller cannot access the project.
+ * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteValidationError on any field cap violation.
+ */
+export async function createNotesBatch(
+  ctx: AuthContext,
+  projectId: string,
+  items: CreateNoteBatchItem[],
+  opts: { visibility: Visibility; onDuplicate?: "skip" | "error" },
+): Promise<NotesBatchResult> {
+  assertValidProjectId(projectId);
+  if (items.length === 0 || items.length > MAX_NOTE_BATCH) {
+    throw new BatchInputError(
+      `notes must contain 1-${MAX_NOTE_BATCH} items, got ${items.length}`,
+    );
+  }
+  const prepared = items.map((item) => {
+    assertCreateInputWithinCaps(item);
+    return { ...item, folder: normalizeFolder(item.folder ?? "") };
+  });
+  const onDuplicate = opts.onDuplicate ?? "skip";
+
+  const result = await withUserContext(ctx.userId, async (tx) => {
+    const access = await assertProjectAccessTx(tx, projectId);
+    assertProjectWritable(access.project.status, access.project.identifier);
+    await acquireProjectLock(tx, projectId);
+
+    const existing = await tx
+      .select(noteSummaryColumns)
+      .from(notes)
+      .where(
+        and(
+          eq(notes.projectId, projectId),
+          isNull(notes.deletedAt),
+          inArray(
+            notes.title,
+            prepared.map((item) => item.title),
+          ),
+        ),
+      );
+    const byKey = new Map<string, NoteSummary>();
+    for (const row of existing) {
+      byKey.set(dedupeKey(row.folder, row.title), {
+        ...row,
+        projectIdentifier: access.project.identifier,
+      });
+    }
+
+    if (onDuplicate === "error") {
+      const collisions = prepared.filter((item) =>
+        byKey.has(dedupeKey(item.folder, item.title)),
+      );
+      if (collisions.length > 0) {
+        throw new DuplicateNoteTitleError(collisions.map((c) => c.title));
+      }
+    }
+
+    const created: NoteSummary[] = [];
+    const deduped: NoteSummary[] = [];
+    for (const item of prepared) {
+      const key = dedupeKey(item.folder, item.title);
+      const hit = byKey.get(key);
+      if (hit) {
+        deduped.push(hit);
+        continue;
+      }
+      const summary = await createNoteInTx(
+        tx,
+        ctx,
+        { ...item, projectId, visibility: opts.visibility },
+        access.project.identifier,
+      );
+      byKey.set(key, summary);
+      created.push(summary);
+    }
+    return { created, deduped };
+  });
+
+  for (const note of result.created) {
+    emitNoteEvent(note.projectId, note.id, opts.visibility, note.updatedAt);
+  }
+  return result;
 }
 
 /**
@@ -1777,6 +2020,214 @@ export async function updateNote(
   patch: NotePatch,
   ifUpdatedAt?: string,
 ): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
+  return updateNoteCore(ctx, noteId, patch, ifUpdatedAt);
+}
+
+/** Fields a {@link NoteEditOp} may target; governance fields (`visibility`, `locked`, `agentWritable`) are excluded by design. */
+export type NoteEditField =
+  | "body"
+  | "title"
+  | "summary"
+  | "folder"
+  | "type"
+  | "category"
+  | "tags"
+  | "feedMode"
+  | "feedCategories"
+  | "feedTags"
+  | "feedTaskIds";
+
+/** A single operation-based note edit; text ops target `body` only. */
+export type NoteEditOp = {
+  op: "str_replace" | "append" | "set";
+  field: NoteEditField;
+  oldStr?: string;
+  newStr?: string;
+  text?: string;
+  value?: unknown;
+};
+
+/** Op cap per {@link applyNoteEditOps} call, mirroring the task editor. */
+export const MAX_NOTE_EDIT_OPS = 20;
+
+/** Note type values accepted by an op-based `set`. */
+const NOTE_TYPE_VALUES = ["reference", "guidance", "knowledge"] as const;
+
+/** Feed mode values accepted by an op-based `set` (PYZ-264 §14.3 enum). */
+const FEED_MODE_VALUES = [
+  "none",
+  "all",
+  "categories",
+  "tags",
+  "tasks",
+] as const;
+
+/**
+ * Narrow an op value to a string array.
+ *
+ * @param value - Candidate value.
+ * @returns Whether every element is a string.
+ */
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
+/**
+ * Validate ordered note-edit ops and split them into the scalar patch and
+ * the body text-op sequence. Scalar `set` repeats last-win; body ops keep
+ * their relative order for the in-transaction fold.
+ *
+ * @param ops - Ordered edit ops.
+ * @returns The scalar patch and the body ops.
+ * @throws InvalidEditOpError on any structurally incoherent op.
+ */
+function prepareNoteEditOps(ops: NoteEditOp[]): {
+  patch: NotePatch;
+  bodyOps: TextOp[];
+} {
+  if (ops.length === 0 || ops.length > MAX_NOTE_EDIT_OPS) {
+    throw new InvalidEditOpError(
+      0,
+      `operations must contain 1-${MAX_NOTE_EDIT_OPS} ops, got ${ops.length}`,
+    );
+  }
+  const patch: NotePatch = {};
+  const bodyOps: TextOp[] = [];
+  ops.forEach((op, index) => {
+    const bad = (reason: string): never => {
+      throw new InvalidEditOpError(index, reason);
+    };
+    if (op.field === "body") {
+      if (op.op === "str_replace") {
+        if (typeof op.oldStr !== "string" || op.oldStr.length === 0) {
+          bad("str_replace requires a non-empty oldStr");
+        }
+        if (typeof op.newStr !== "string") bad("str_replace requires newStr");
+        bodyOps.push({
+          t: "str_replace",
+          field: "body",
+          oldStr: op.oldStr as string,
+          newStr: op.newStr as string,
+        });
+        return;
+      }
+      if (op.op === "append") {
+        if (typeof op.text !== "string") bad("append requires text");
+        bodyOps.push({ t: "append", field: "body", text: op.text as string });
+        return;
+      }
+      const value = op.text !== undefined ? op.text : op.value;
+      if (typeof value !== "string") {
+        bad("set body requires string text (or value)");
+      }
+      bodyOps.push({ t: "set", field: "body", value: value as string });
+      return;
+    }
+    if (op.op !== "set") {
+      bad(`${op.op} targets body only; use set for ${op.field}`);
+    }
+    const value = "value" in op && op.value !== undefined ? op.value : op.text;
+    switch (op.field) {
+      case "title":
+        if (typeof value !== "string" || value.trim() === "") {
+          bad("set title requires non-empty string text");
+        }
+        patch.title = value as string;
+        return;
+      case "summary":
+        if (typeof value !== "string") bad("set summary requires string text");
+        patch.summary = value as string;
+        return;
+      case "folder":
+        if (typeof value !== "string") bad("set folder requires a string path");
+        patch.folder = value as string;
+        return;
+      case "type":
+        if (!(NOTE_TYPE_VALUES as readonly unknown[]).includes(value)) {
+          bad(`set type requires one of ${NOTE_TYPE_VALUES.join(", ")}`);
+        }
+        patch.type = value as NoteType;
+        return;
+      case "category":
+        if (value !== null && typeof value !== "string") {
+          bad("set category requires a string or null value");
+        }
+        patch.category = value as string | null;
+        return;
+      case "tags":
+      case "feedCategories":
+      case "feedTags":
+      case "feedTaskIds":
+        if (!isStringArray(value)) {
+          bad(`set ${op.field} requires an array of strings`);
+        }
+        patch[op.field] = value as string[];
+        return;
+      case "feedMode":
+        if (!(FEED_MODE_VALUES as readonly unknown[]).includes(value)) {
+          bad(`set feedMode requires one of ${FEED_MODE_VALUES.join(", ")}`);
+        }
+        patch.feedMode = value as FeedMode;
+        return;
+      default:
+        bad(`field '${op.field as string}' is not editable via ops`);
+    }
+  });
+  return { patch, bodyOps };
+}
+
+/**
+ * Apply 1-{@link MAX_NOTE_EDIT_OPS} ordered ops to one note atomically,
+ * with the task editor's semantics: body `str_replace` requires exactly
+ * one match (the error names the occurrence count), `append` joins with a
+ * blank line, scalar `set` replaces the field, and the whole call is a
+ * compare-and-swap when `ifUpdatedAt` is passed. Body ops fold inside the
+ * write transaction's locked read, so the edit is race-free even without
+ * a precondition.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @param ops - Ordered edit ops.
+ * @param ifUpdatedAt - Optional CAS precondition from a prior read.
+ * @returns Slim summary; a body change also carries the re-derived links.
+ * @throws InvalidEditOpError on any structurally incoherent op.
+ * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches.
+ * @throws NoteLockedError when the note is locked.
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteValidationError on cap violations.
+ */
+export async function applyNoteEditOps(
+  ctx: AuthContext,
+  noteId: string,
+  ops: NoteEditOp[],
+  ifUpdatedAt?: string,
+): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
+  const { patch, bodyOps } = prepareNoteEditOps(ops);
+  return updateNoteCore(ctx, noteId, patch, ifUpdatedAt, bodyOps);
+}
+
+/**
+ * Shared write core behind {@link updateNote} (whole-field patch) and
+ * {@link applyNoteEditOps} (op-based edit). `bodyOps`, when present, fold
+ * into the new body inside the transaction, reading the current body
+ * under the same `FOR UPDATE` lock that serves the access gate and CAS
+ * baseline.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @param patch - Scalar patch fields.
+ * @param ifUpdatedAt - Optional CAS precondition from a prior read.
+ * @param bodyOps - Ordered body text ops to fold in-transaction.
+ * @returns Slim summary; a body change also carries the re-derived links.
+ */
+async function updateNoteCore(
+  ctx: AuthContext,
+  noteId: string,
+  patch: NotePatch,
+  ifUpdatedAt?: string,
+  bodyOps?: TextOp[],
+): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
   assertValidNoteId(noteId);
   const applied: NotePatch = {};
   for (const field of PATCHABLE_NOTE_FIELDS) {
@@ -1797,13 +2248,15 @@ export async function updateNote(
   const ifUpdatedAtMs =
     ifUpdatedAt === undefined ? undefined : parseIfUpdatedAt(ifUpdatedAt);
 
+  const hasBodyOps = bodyOps !== undefined && bodyOps.length > 0;
   const result = await withUserContext(ctx.userId, async (tx) => {
-    const needsBody = applied.body !== undefined;
+    const needsBody = applied.body !== undefined || hasBodyOps;
     const [current] = await tx
       .select({
         id: notes.id,
         projectId: notes.projectId,
         slug: notes.slug,
+        sequenceNumber: notes.sequenceNumber,
         title: notes.title,
         folder: notes.folder,
         tags: notes.tags,
@@ -1846,6 +2299,13 @@ export async function updateNote(
       ifUpdatedAtMs !== current.updatedAt.getTime()
     ) {
       throw new NoteStaleWriteError(current.updatedAt, current.version);
+    }
+    if (hasBodyOps && bodyOps) {
+      let running: string | null = current.body;
+      for (const op of bodyOps) running = foldTextOp(running, op);
+      const newBody = running ?? "";
+      assertBodyWithinCap(newBody);
+      applied.body = newBody;
     }
     const currentSummary = gateSummary(current);
     if (Object.keys(applied).length === 0) {
@@ -1949,7 +2409,12 @@ export async function updateNote(
         },
       ]);
     }
-    return { summary, wasNoOp: false, visibility: nextVisibility, links };
+    return {
+      summary: { ...summary, projectIdentifier: current.projectIdentifier },
+      wasNoOp: false,
+      visibility: nextVisibility,
+      links,
+    };
   });
 
   if (!result.wasNoOp) {
@@ -2012,7 +2477,11 @@ export async function moveNote(
         },
       ]);
     }
-    return { summary, wasNoOp: false, visibility: gate.visibility };
+    return {
+      summary: { ...summary, projectIdentifier: gate.projectIdentifier },
+      wasNoOp: false,
+      visibility: gate.visibility,
+    };
   });
 
   if (!result.wasNoOp) {
@@ -2153,13 +2622,24 @@ export async function moveFolder(
 export async function deleteNote(
   ctx: AuthContext,
   noteId: string,
-): Promise<{ id: string; deletedAt: Date }> {
+): Promise<{
+  id: string;
+  deletedAt: Date;
+  sequenceNumber: number;
+  projectIdentifier: string;
+}> {
   assertValidNoteId(noteId);
   const result = await withUserContext(ctx.userId, async (tx) => {
     const gate = await assertNoteAccessTx(tx, noteId);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     if (gate.deletedAt !== null) {
-      return { id: gate.id, deletedAt: gate.deletedAt, wasNoOp: true as const };
+      return {
+        id: gate.id,
+        deletedAt: gate.deletedAt,
+        sequenceNumber: gate.sequenceNumber,
+        projectIdentifier: gate.projectIdentifier,
+        wasNoOp: true as const,
+      };
     }
     const [row] = await tx
       .update(notes)
@@ -2184,6 +2664,8 @@ export async function deleteNote(
     return {
       id: row.id,
       deletedAt: row.deletedAt as Date,
+      sequenceNumber: gate.sequenceNumber,
+      projectIdentifier: gate.projectIdentifier,
       wasNoOp: false as const,
       projectId: gate.projectId,
       visibility: gate.visibility,
@@ -2193,7 +2675,12 @@ export async function deleteNote(
   if (!result.wasNoOp && "projectId" in result) {
     emitNoteEvent(result.projectId, result.id, result.visibility);
   }
-  return { id: result.id, deletedAt: result.deletedAt };
+  return {
+    id: result.id,
+    deletedAt: result.deletedAt,
+    sequenceNumber: result.sequenceNumber,
+    projectIdentifier: result.projectIdentifier,
+  };
 }
 
 /**
@@ -2232,7 +2719,11 @@ export async function restoreNote(
     if (!current) throw new ForbiddenError("Forbidden", "note", noteId);
     if (current.deletedAt === null) {
       const { deletedAt: _live, ...summary } = current;
-      return { summary, wasNoOp: true, visibility: gate.visibility };
+      return {
+        summary: { ...summary, projectIdentifier: gate.projectIdentifier },
+        wasNoOp: true,
+        visibility: gate.visibility,
+      };
     }
     const base = slugifyTitle(current.title);
     const taken = await loadSlugNamespace(
@@ -2268,7 +2759,11 @@ export async function restoreNote(
         },
       ]);
     }
-    return { summary, wasNoOp: false, visibility: gate.visibility };
+    return {
+      summary: { ...summary, projectIdentifier: gate.projectIdentifier },
+      wasNoOp: false,
+      visibility: gate.visibility,
+    };
   });
 
   if (!result.wasNoOp) {
@@ -2317,7 +2812,7 @@ export async function requestShare(
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
-    return row;
+    return { ...row, projectIdentifier: gate.projectIdentifier };
   });
 
   emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
@@ -2399,7 +2894,7 @@ export async function declineShareRequest(
       })
       .where(eq(notes.id, gate.id))
       .returning(noteSummaryColumns);
-    return row;
+    return { ...row, projectIdentifier: gate.projectIdentifier };
   });
 
   emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
@@ -2442,5 +2937,327 @@ async function applyVisibilityTx(
       metadata: { fields: ["visibility"], version: row.version },
     },
   ]);
-  return row;
+  return { ...row, projectIdentifier: gate.projectIdentifier };
+}
+
+// ---------------------------------------------------------------------------
+// Agent-surface reads and deliberate links (piyaz_note)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tree list plus the owning project identifier, for callers composing
+ * noteRefs (`PYZ-N12`) per row. Same one-batch read as
+ * {@link getNoteTreeList}.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @returns The project identifier and tree rows ordered by folder, title.
+ * @throws ForbiddenError when the caller cannot access the project.
+ */
+export async function getNoteTreeForAgent(
+  ctx: AuthContext,
+  projectId: string,
+): Promise<{ projectIdentifier: string; rows: NoteTreeRow[] }> {
+  assertValidProjectId(projectId);
+  const [gateRows, treeRows] = await withUserContextRead(ctx.userId, (read) => [
+    projectAccessGateStmt(read, projectId),
+    noteTreeListStmt(read, projectId),
+  ]);
+  const gate = assertProjectGateRows(projectId, gateRows);
+  return { projectIdentifier: gate.identifier, rows: treeRows };
+}
+
+/**
+ * Ranked note search plus the owning project identifier, for callers
+ * composing noteRefs per hit. RLS-scoped like {@link searchNotes}: team
+ * notes regardless of feed mode plus the caller's own private notes.
+ * Feed exposure gates bundle injection, never search (Notes spec §14.3).
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project to search in.
+ * @param query - User search text.
+ * @returns The project identifier and up to 20 hits, best rank first.
+ * @throws ForbiddenError when the caller cannot access the project.
+ * @throws NoteValidationError when the query exceeds the length cap.
+ */
+export async function searchNotesForMcp(
+  ctx: AuthContext,
+  projectId: string,
+  query: string,
+): Promise<{ projectIdentifier: string; hits: NoteSearchHit[] }> {
+  assertValidProjectId(projectId);
+  const trimmed = query.trim();
+  if (trimmed.length > SEARCH_QUERY_MAX_CHARS) {
+    throw new NoteValidationError(
+      "query",
+      `query exceeds ${SEARCH_QUERY_MAX_CHARS} characters`,
+    );
+  }
+  if (trimmed === "") {
+    const [gateRows] = await withUserContextRead(ctx.userId, (read) => [
+      projectAccessGateStmt(read, projectId),
+    ]);
+    const gate = assertProjectGateRows(projectId, gateRows);
+    return { projectIdentifier: gate.identifier, hits: [] };
+  }
+  const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
+    projectAccessGateStmt(read, projectId),
+    noteSearchStmt(read, projectId, trimmed),
+  ]);
+  const gate = assertProjectGateRows(projectId, gateRows);
+  return {
+    projectIdentifier: gate.identifier,
+    hits: normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit),
+  };
+}
+
+/** The deliberate (caller-managed) note-task link kinds; `mention` is derivation-owned. */
+export type DeliberateNoteTaskLinkKind = Exclude<NoteTaskLinkKind, "mention">;
+
+/**
+ * Create a deliberate note-task link (`reference` or `spec_of`).
+ * Idempotent: an existing identical link returns `created: false`.
+ * `mention` rows are owned by body-link derivation and cannot be created
+ * here. Both endpoints must be live, accessible, and in the same project
+ * (the DB trigger rejects cross-project rows; this pre-check keeps the
+ * rejection typed).
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @param taskId - UUID of the task.
+ * @param kind - Link kind.
+ * @returns Whether a row was inserted, plus the note's ref parts.
+ * @throws ForbiddenError on inaccessible or trashed endpoints.
+ * @throws ProjectArchivedError when the project is archived.
+ * @throws CrossProjectNoteLinkError when the endpoints span projects.
+ */
+export async function createNoteTaskLink(
+  ctx: AuthContext,
+  noteId: string,
+  taskId: string,
+  kind: DeliberateNoteTaskLinkKind,
+): Promise<{
+  created: boolean;
+  sequenceNumber: number;
+  projectIdentifier: string;
+}> {
+  assertValidNoteId(noteId);
+  assertValidTaskId(taskId);
+  const result = await withUserContext(ctx.userId, async (tx) => {
+    const gate = await assertNoteAccessTx(tx, noteId);
+    assertNoteLive(gate);
+    assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    const task = await assertTaskAccessTx(tx, taskId);
+    if (task.projectId !== gate.projectId) {
+      throw new CrossProjectNoteLinkError();
+    }
+    const rows = await tx
+      .insert(noteTaskLinks)
+      .values({ noteId, taskId, kind })
+      .onConflictDoNothing()
+      .returning({ id: noteTaskLinks.id });
+    const created = rows.length > 0;
+    if (created && gate.visibility === "team") {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: gate.projectId,
+          taskId,
+          type: "note_updated",
+          targetRef: gate.slug,
+          summary: `linked note "${summaryTitle(gate.title)}" to a task`,
+          metadata: { fields: ["links"], kind },
+        },
+      ]);
+    }
+    return { created, gate };
+  });
+
+  if (result.created) {
+    emitNoteEvent(result.gate.projectId, noteId, result.gate.visibility);
+  }
+  return {
+    created: result.created,
+    sequenceNumber: result.gate.sequenceNumber,
+    projectIdentifier: result.gate.projectIdentifier,
+  };
+}
+
+/**
+ * Remove a deliberate note-task link (`reference` or `spec_of`).
+ * `mention` rows are owned by body-link derivation and cannot be removed
+ * here. Removing an absent link returns `removed: false`.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @param taskId - UUID of the task.
+ * @param kind - Link kind.
+ * @returns Whether a row was deleted, plus the note's ref parts.
+ * @throws ForbiddenError on an inaccessible or trashed note.
+ * @throws ProjectArchivedError when the project is archived.
+ */
+export async function removeNoteTaskLink(
+  ctx: AuthContext,
+  noteId: string,
+  taskId: string,
+  kind: DeliberateNoteTaskLinkKind,
+): Promise<{
+  removed: boolean;
+  sequenceNumber: number;
+  projectIdentifier: string;
+}> {
+  assertValidNoteId(noteId);
+  assertValidTaskId(taskId);
+  const result = await withUserContext(ctx.userId, async (tx) => {
+    const gate = await assertNoteAccessTx(tx, noteId);
+    assertNoteLive(gate);
+    assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    const rows = await tx
+      .delete(noteTaskLinks)
+      .where(
+        and(
+          eq(noteTaskLinks.noteId, noteId),
+          eq(noteTaskLinks.taskId, taskId),
+          eq(noteTaskLinks.kind, kind),
+        ),
+      )
+      .returning({ id: noteTaskLinks.id });
+    const removed = rows.length > 0;
+    if (removed && gate.visibility === "team") {
+      await insertActivityEvents(tx, ctx.actor, [
+        {
+          projectId: gate.projectId,
+          taskId,
+          type: "note_updated",
+          targetRef: gate.slug,
+          summary: `unlinked note "${summaryTitle(gate.title)}" from a task`,
+          metadata: { fields: ["links"], kind },
+        },
+      ]);
+    }
+    return { removed, gate };
+  });
+
+  if (result.removed) {
+    emitNoteEvent(result.gate.projectId, noteId, result.gate.visibility);
+  }
+  return {
+    removed: result.removed,
+    sequenceNumber: result.gate.sequenceNumber,
+    projectIdentifier: result.gate.projectIdentifier,
+  };
+}
+
+/** Slim revision descriptor; never carries `body`. */
+export type NoteRevisionMeta = {
+  version: number;
+  title: string;
+  createdBy: string | null;
+  createdAt: Date;
+};
+
+/** One revision snapshot, body included. */
+export type NoteRevisionSnapshot = NoteRevisionMeta & { body: string };
+
+/**
+ * List a live note's revision descriptors, newest first. The retention
+ * cap prunes past {@link NOTE_REVISION_KEEP}, so the list is bounded.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @returns The note's ref parts, live version, and revision descriptors.
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ */
+export async function listNoteRevisions(
+  ctx: AuthContext,
+  noteId: string,
+): Promise<{
+  sequenceNumber: number;
+  projectIdentifier: string;
+  currentVersion: number;
+  revisions: NoteRevisionMeta[];
+}> {
+  assertValidNoteId(noteId);
+  const [gateRows, revisionRows] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      noteAccessGateStmt(read, noteId),
+      read
+        .select({
+          version: noteRevisions.version,
+          title: noteRevisions.title,
+          createdBy: noteRevisions.createdBy,
+          createdAt: noteRevisions.createdAt,
+        })
+        .from(noteRevisions)
+        .where(eq(noteRevisions.noteId, noteId))
+        .orderBy(desc(noteRevisions.version)),
+    ],
+  );
+  const gate = assertNoteGateRows(noteId, gateRows);
+  assertNoteLive(gate);
+  return {
+    sequenceNumber: gate.sequenceNumber,
+    projectIdentifier: gate.projectIdentifier,
+    currentVersion: gate.version,
+    revisions: revisionRows,
+  };
+}
+
+/**
+ * Read one revision snapshot of a live note. A missing version returns a
+ * null snapshot plus the available version numbers, so callers can emit
+ * a corrective message without a second round trip.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @param version - Revision counter value to read.
+ * @returns The snapshot or null, plus available versions and ref parts.
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ */
+export async function getNoteRevision(
+  ctx: AuthContext,
+  noteId: string,
+  version: number,
+): Promise<{
+  snapshot: NoteRevisionSnapshot | null;
+  availableVersions: number[];
+  sequenceNumber: number;
+  projectIdentifier: string;
+}> {
+  assertValidNoteId(noteId);
+  const [gateRows, snapshotRows, versionRows] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      noteAccessGateStmt(read, noteId),
+      read
+        .select({
+          version: noteRevisions.version,
+          title: noteRevisions.title,
+          body: noteRevisions.body,
+          createdBy: noteRevisions.createdBy,
+          createdAt: noteRevisions.createdAt,
+        })
+        .from(noteRevisions)
+        .where(
+          and(
+            eq(noteRevisions.noteId, noteId),
+            eq(noteRevisions.version, version),
+          ),
+        )
+        .limit(1),
+      read
+        .select({ version: noteRevisions.version })
+        .from(noteRevisions)
+        .where(eq(noteRevisions.noteId, noteId))
+        .orderBy(desc(noteRevisions.version)),
+    ],
+  );
+  const gate = assertNoteGateRows(noteId, gateRows);
+  assertNoteLive(gate);
+  return {
+    snapshot: snapshotRows[0] ?? null,
+    availableVersions: versionRows.map((row) => row.version),
+    sequenceNumber: gate.sequenceNumber,
+    projectIdentifier: gate.projectIdentifier,
+  };
 }

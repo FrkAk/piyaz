@@ -36,6 +36,7 @@ const NOTE_SEARCH_LIMIT = 20;
 export type NoteSearchRawRow = {
   id: string;
   slug: string;
+  sequence_number: number;
   title: string;
   type: string;
   folder: string;
@@ -98,8 +99,8 @@ export function noteSearchStmt(
         ELSE websearch_to_tsquery('english', ${query})
       END)${prefixExpr} AS tsq
     )
-    SELECT n.id, n.slug, n.title, n.type, n.folder, n.summary,
-           n.visibility, n.agent_writable, n.locked, n.updated_at,
+    SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
+           n.summary, n.visibility, n.agent_writable, n.locked, n.updated_at,
            ts_rank(n.search_tsv, q.tsq) AS rank
     FROM q, ${notes} n
     WHERE n.project_id = ${projectId}
