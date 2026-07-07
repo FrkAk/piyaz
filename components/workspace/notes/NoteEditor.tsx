@@ -118,7 +118,17 @@ export function NoteEditor({
         }}
         onBlur={commit}
         className="block w-full bg-transparent outline-none"
-        style={{ fontSize: 13.5, lineHeight: 1.62, resize: "none" }}
+        style={{
+          fontFamily: "inherit",
+          fontSize: 13.5,
+          lineHeight: 1.5,
+          color: "var(--color-text-secondary)",
+          caretColor: "var(--color-accent)",
+          resize: "none",
+          border: "none",
+          padding: 0,
+          maxHeight: 100000,
+        }}
       />
       {wiki.popover}
     </div>

@@ -15,7 +15,7 @@ import { NOTE_TYPE_META, tint } from "./note-meta";
 import { NoteLinkContext } from "./NoteInline";
 
 /** Approx line height (px) of the editor textarea, for caret-line placement. */
-const LINE_HEIGHT_PX = 22;
+const LINE_HEIGHT_PX = 20;
 
 /**
  * The active `[[wiki` query at the caret: the text after the nearest

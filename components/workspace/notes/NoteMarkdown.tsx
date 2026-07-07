@@ -65,6 +65,7 @@ interface NoteMarkdownProps {
 export function NoteMarkdown({ body, identifier }: NoteMarkdownProps) {
   return (
     <Markdown
+      className="text-[13.5px] text-text-secondary"
       remarkPlugins={[[remarkNoteRefs, { identifier }], remarkSrcLine]}
       sanitizeSchema={noteSchema}
       components={components as never}
