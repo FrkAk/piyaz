@@ -35,6 +35,8 @@ import {
   RefNotFoundError,
 } from "@/lib/data/resolve-ref";
 import {
+  CrossProjectNoteLinkError,
+  DuplicateNoteTitleError,
   FolderCycleError,
   NoteLockedError,
   NoteShareStateError,
@@ -826,7 +828,9 @@ export function translateError(e: unknown): ToolResult {
     );
   }
   if (e instanceof NoteValidationError) {
-    return fail(`${e.message}. Fix the ${e.field} input and retry; no writes happened.`);
+    return fail(
+      `${e.message}. Fix the ${e.field} input and retry; no writes happened.`,
+    );
   }
   if (e instanceof FolderCycleError) {
     return fail(
@@ -843,6 +847,16 @@ export function translateError(e: unknown): ToolResult {
       e.reason === "already_team"
         ? "Note is already visible to the team. Treat as success; no share request is needed."
         : "Note has no pending share request. Nothing to approve or decline.",
+    );
+  }
+  if (e instanceof DuplicateNoteTitleError) {
+    return fail(
+      `Batch rejected with no writes: note title(s) already exist in their folder: ${e.titles.join(", ")}. Retry with onDuplicate='skip' to reuse the existing notes for an idempotent re-run.`,
+    );
+  }
+  if (e instanceof CrossProjectNoteLinkError) {
+    return fail(
+      `${e.message} Notes link only to tasks in their own project; move the note or pick a task from the same project.`,
     );
   }
   if (e instanceof StrReplaceNoMatchError) {

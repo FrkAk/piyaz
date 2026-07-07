@@ -107,7 +107,10 @@ function refOf(row: {
   projectIdentifier: string;
   sequenceNumber: number;
 }): string {
-  return composeNoteRef(asIdentifier(row.projectIdentifier), row.sequenceNumber);
+  return composeNoteRef(
+    asIdentifier(row.projectIdentifier),
+    row.sequenceNumber,
+  );
 }
 
 /**
@@ -187,10 +190,7 @@ function noteLine(row: NoteTreeRow, identifier: string): string {
  * @param identifier - Owning project identifier.
  * @returns Markdown list lines.
  */
-function linkedNoteLines(
-  rows: LinkedNoteSlim[],
-  identifier: string,
-): string[] {
+function linkedNoteLines(rows: LinkedNoteSlim[], identifier: string): string[] {
   return rows.map(
     (row) =>
       `- \`${composeNoteRef(asIdentifier(identifier), row.sequenceNumber)}\` "${row.title}" [${row.type}]`,
@@ -430,8 +430,7 @@ async function handleRead(
       [
         `# \`${refOf(rev)}\` revisions (live version ${rev.currentVersion})`,
         ...rev.revisions.map(
-          (r) =>
-            `- v${r.version} "${r.title}" ${r.createdAt.toISOString()}`,
+          (r) => `- v${r.version} "${r.title}" ${r.createdAt.toISOString()}`,
         ),
         "Read one via revision=<version>.",
       ].join("\n"),
@@ -584,10 +583,7 @@ async function handleList(
 ): Promise<ToolResult> {
   if (!p.project) return fail("list requires project ('PYZ' or UUID).");
   const projectId = await requireProjectId(ctx, p.project);
-  const { projectIdentifier, rows } = await getNoteTreeForAgent(
-    ctx,
-    projectId,
-  );
+  const { projectIdentifier, rows } = await getNoteTreeForAgent(ctx, projectId);
   if (rows.length === 0) {
     return ok(
       `Project ${projectIdentifier} has no notes yet. Record durable knowledge with piyaz_note create.`,
@@ -769,7 +765,10 @@ async function handleSearch(
     projectId,
     p.query,
   );
-  const limited = hits.slice(0, Math.min(p.limit ?? SEARCH_HIT_CAP, SEARCH_HIT_CAP));
+  const limited = hits.slice(
+    0,
+    Math.min(p.limit ?? SEARCH_HIT_CAP, SEARCH_HIT_CAP),
+  );
   if (limited.length === 0) {
     return ok(
       `No notes match "${p.query}" in ${projectIdentifier}. Team notes and your own private notes are searchable regardless of feed mode; try action='list' for the full tree.`,

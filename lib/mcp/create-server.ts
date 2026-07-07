@@ -382,7 +382,8 @@ export function registerAllTools(server: McpServer, ctx: AuthContext): void {
         heavy: (p) =>
           p.action === "search" ||
           (p.action === "read" &&
-            (p.revision !== undefined || (p.fields?.includes("body") ?? false))),
+            (p.revision !== undefined ||
+              (p.fields?.includes("body") ?? false))),
       },
       handleNote,
     ),

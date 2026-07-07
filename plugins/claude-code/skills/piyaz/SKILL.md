@@ -37,7 +37,7 @@ The Piyaz MCP server's instructions document multi-team awareness (404-shaped pr
 
 ## Tools: every shape and when to use it
 
-Eight tools. Read tools have cost (slim → very heavy); pick the lightest that answers the question. Mutation tools have side effects; the destructive ones flag below explicitly.
+Nine tools. Read tools have cost (slim → very heavy); pick the lightest that answers the question. Mutation tools have side effects; the destructive ones flag below explicitly.
 
 ### `piyaz_workspace`: identity, teams, projects
 
@@ -122,7 +122,23 @@ On "duplicate edge": the edge already exists — treat as success.
 
 ### `piyaz_activity`: what changed
 
-Keyset-paginated event feed per project or task, newest first. `since='<ISO instant>'` answers "what changed while I was away" — the resume primitive (resilience §7). Events carry actor, type, summary, and target ref; follow up with `piyaz_get`.
+Keyset-paginated event feed per project or task, newest first. `since='<ISO instant>'` answers "what changed while I was away" — the resume primitive (resilience §7). Events carry actor, type, summary, and target ref; follow up with `piyaz_get`. `note_*` events ride the same feed, so resume covers notes too.
+
+### `piyaz_note`: the project knowledge base
+
+Notes live in the same folder tree humans see in the web UI and are ref-first (`PYZ-N12`; a slug works with `project`). Three types with distinct delivery: `guidance` (short constraints block auto-injected into matching task bundles), `reference` (specs and docs, read on demand by heading), `knowledge` (agent-maintained wiki and memory). **Write back what you learn**: when you discover a gotcha, settle a convention, or finish work the next agent builds on, record it as a note instead of letting it die with the session.
+
+| Action | Cost | Use when |
+|---|---|---|
+| `create` | mutation | 1-10 notes in one call, idempotent by exact (folder, title). Agent-created notes land `visibility=team, feed_mode=none`: teammates' agents can search them immediately, but nothing auto-injects until `feedMode` is deliberately set (`all`/`categories`/`tags`/`tasks`; `feedTaskIds` accept taskRefs). Check `list` first and reuse existing folders. Set `summary`: it rides every tree list, search hit, and feed pointer. |
+| `read` | slim to heavy | meta header by default (sections listed, links, the `ifUpdatedAt` token); `fields=[...]` for exact values; `heading='...'` for one section (the cheap body read); `fields=['revisions']` for the snapshot list; `revision=N` for one snapshot. `fields=['body']` is heavy — prefer heading reads. |
+| `edit` | mutation | 1-20 ordered ops, atomic, `piyaz_edit` semantics: `str_replace`/`append`/`set` on `body` (oldStr must match exactly once), `set` for title/summary/folder/type/category/tags/feed fields. `ifUpdatedAt` makes it a compare-and-swap. `visibility`, `locked`, and `agent_writable` are not editable here. |
+| `list` | slim | the project's folder tree with refs, types, and governance flags. Run before creating or moving notes so the tree stays organized for humans. |
+| `move` | mutation | `note`+`folder` moves one note; `folder`+`destParent` (+`newLeaf`) re-parents or renames a whole folder subtree. |
+| `delete` / `restore` | mutation | delete previews by default (re-call `preview=false`); restore recovers a trashed note by UUID (a trashed ref no longer resolves). An overwritten body recovers via `revision=N` then `set body`. |
+| `request_share` | mutation | ask a human to make a private note team-visible. The only way an agent influences visibility. |
+| `link` / `unlink` | mutation | deliberate note-task relations, kind `reference` or `spec_of` (this note IS the task's spec). `mention` rows derive from `[[PYZ-42]]` / `[[Note Title]]` refs in the body — write the ref into the body instead. |
+| `search` | heavy | ranked full text in one project: team notes plus your own private notes, regardless of feed mode. Chain a hit into `read heading='...'`. |
 
 ### Heuristic
 
@@ -130,7 +146,8 @@ Keyset-paginated event feed per project or task, newest first. `since='<ISO inst
 2. To find a specific task: `piyaz_search` with a title fragment, tag, or filters.
 3. After identifying a task: `piyaz_get` at the right lens (let `_hints` guide you); `fields=[...]` when you need one field.
 4. Reach for `piyaz_get view='overview'` only when nothing else gives the picture you need.
-5. Mutations (`piyaz_workspace`, `piyaz_create`, `piyaz_edit`, `piyaz_link`): use surgically. Read response `_hints` for missing fields and re-call.
+5. Mutations (`piyaz_workspace`, `piyaz_create`, `piyaz_edit`, `piyaz_link`, `piyaz_note`): use surgically. Read response `_hints` for missing fields and re-call.
+6. Durable knowledge (constraints, conventions, learnings, specs): `piyaz_note`. Search notes before re-deriving something a teammate's agent may have recorded; write a note after discovering something the next agent needs.
 
 ## Detection (run once at session start, before any other action)
 

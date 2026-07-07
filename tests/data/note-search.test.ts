@@ -196,6 +196,7 @@ test("tree list and search hits stay slim: no body, no search_tsv", async () => 
       "folder",
       "id",
       "locked",
+      "sequenceNumber",
       "slug",
       "summary",
       "title",
