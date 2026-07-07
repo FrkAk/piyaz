@@ -1,5 +1,5 @@
-import { visit } from "unist-util-visit";
-import type { Root, Text } from "mdast";
+import { SKIP, visitParents } from "unist-util-visit-parents";
+import type { Parent, Root, Text } from "mdast";
 import { escapeRegExp } from "@/lib/data/note-parse";
 
 /** Options for {@link remarkNoteRefs}. */
@@ -16,8 +16,10 @@ type TaggedText = Text & {
 /**
  * Remark transformer that tags task refs (`RSC-3`) and `[[wiki]]` links in
  * plain-text nodes so the rehype renderer maps them to chips/links. Only
- * `text` nodes are visited, so refs inside inline or fenced code are left
- * literal, in lockstep with the server link extractor.
+ * `text` nodes are visited (so refs inside inline or fenced code are left
+ * literal) and refs inside a `strong` ancestor are skipped, keeping the
+ * rendered chips in lockstep with the server link extractor, which excludes
+ * inline code and bold runs.
  *
  * @param options - The owning project identifier.
  * @returns A unified transformer over the mdast tree.
@@ -26,8 +28,12 @@ export function remarkNoteRefs(options: NoteRefsOptions) {
   const id = escapeRegExp(options.identifier);
   const re = new RegExp(`\\b${id}-(\\d+)\\b|\\[\\[([^\\]]+)\\]\\]`, "g");
   return (tree: Root) => {
-    visit(tree, "text", (node, index, parent) => {
-      if (parent === undefined || index === undefined) return;
+    visitParents(tree, "text", (node, ancestors) => {
+      const parent = ancestors[ancestors.length - 1] as Parent | undefined;
+      if (parent === undefined) return;
+      if (ancestors.some((a) => a.type === "strong")) return;
+      const index = parent.children.indexOf(node);
+      if (index === -1) return;
       const value = node.value;
       re.lastIndex = 0;
       const out: (Text | TaggedText)[] = [];
@@ -62,7 +68,7 @@ export function remarkNoteRefs(options: NoteRefsOptions) {
       if (cursor < value.length)
         out.push({ type: "text", value: value.slice(cursor) });
       parent.children.splice(index, 1, ...out);
-      return index + out.length;
+      return [SKIP, index + out.length];
     });
   };
 }

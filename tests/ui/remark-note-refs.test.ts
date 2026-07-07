@@ -1,8 +1,10 @@
 import { test, expect } from "bun:test";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
+import remarkGfm from "remark-gfm";
 import { visit } from "unist-util-visit";
 import { remarkNoteRefs } from "@/components/workspace/notes/remark-note-refs";
+import { extractNoteRefs } from "@/lib/data/note-parse";
 
 /**
  * Parse markdown, run the plugin, and collect the tagged ref nodes.
@@ -43,4 +45,58 @@ test("ignores a foreign-project ref", () => {
 
 test("a blank wiki title degrades to text", () => {
   expect(refsIn("empty [[   ]] link")).toEqual([]);
+});
+
+test("does not tag refs inside bold runs", () => {
+  expect(refsIn("**bold RSC-3 [[X]]** tail")).toEqual([]);
+});
+
+/**
+ * Collect the refs the renderer surfaces (GFM parse + plugin), deduped like
+ * the extractor: distinct seqs, case-insensitively distinct titles.
+ *
+ * @param md - Markdown source.
+ * @returns Sorted seqs and titles.
+ */
+function rendererRefs(md: string) {
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(md);
+  remarkNoteRefs({ identifier: "RSC" })(tree);
+  const seqs = new Set<number>();
+  const seenTitle = new Set<string>();
+  const titles: string[] = [];
+  visit(tree, (n: unknown) => {
+    const data = (n as { data?: { hName?: string; hProperties?: object } })
+      .data;
+    const props = data?.hProperties as Record<string, unknown> | undefined;
+    if (data?.hName === "noteref-task") seqs.add(Number(props?.seq));
+    if (data?.hName === "noteref-wiki") {
+      const title = String(props?.title);
+      const key = title.toLowerCase();
+      if (seenTitle.has(key)) return;
+      seenTitle.add(key);
+      titles.push(title);
+    }
+  });
+  return { taskSeqs: [...seqs], titles };
+}
+
+const lockstepCorpus = [
+  "plain RSC-1 and [[One]]",
+  "bold **RSC-2 [[Two]]** then RSC-3",
+  "italic *RSC-4* stays a ref",
+  "strike ~~RSC-5~~ stays a ref",
+  "inline `RSC-6 [[Hidden]]` skipped",
+  "link [RSC-7](https://x.com) text",
+  "```\nRSC-8 [[Fenced]]\n```\nafter RSC-9",
+  "dupes [[Same]] [[same]] RSC-10 RSC-10",
+  "foreign XXX-9 and blank [[   ]]",
+];
+
+test.each(lockstepCorpus)("renderer refs match extractNoteRefs: %s", (md) => {
+  const rendered = rendererRefs(md);
+  const extracted = extractNoteRefs(md, "RSC");
+  expect(rendered.taskSeqs.toSorted((a, b) => a - b)).toEqual(
+    extracted.taskSeqs.toSorted((a, b) => a - b),
+  );
+  expect(rendered.titles.toSorted()).toEqual(extracted.titles.toSorted());
 });
