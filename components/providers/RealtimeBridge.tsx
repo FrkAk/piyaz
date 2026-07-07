@@ -3,7 +3,12 @@
 import { useEffect } from "react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
+import type { NoteFullResult, NoteTreeRow } from "@/lib/data/note";
 import { myTasksKeys, noteKeys, projectKeys, taskKeys } from "@/lib/query/keys";
+import {
+  hasUnsavedNoteEdits,
+  whenNoteWritesSettle,
+} from "@/lib/query/note-cache";
 import type { RealtimeEvent } from "@/lib/realtime/types";
 
 const INITIAL_BACKOFF_MS = 1_000;
@@ -31,20 +36,26 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   `lib/realtime/events.ts` is paired with a `project` dispatch that already
  *   invalidates the graph. If `emitTaskEvent` ever stops emitting the paired
  *   project event, restore the graph invalidation here.
- * - `note` events ride the `project:<projectId>` subscription (team notes
- *   only) and invalidate the project's note tree list and task-backlink panels,
- *   so renames, creates, deletes, and link changes from other sessions land live
- *   on both transports. The open note's `detail` is intentionally NOT
- *   invalidated: refetching would clobber the active editor's optimistic
- *   autosave buffer, which the conflict surface (PYZ-262) owns.
+ * - `note` events ride the `project:<projectId>` subscription for team notes
+ *   and the `note:<noteId>` subscription for private notes (see
+ *   `lib/realtime/events.ts`), and are judged by {@link handleNoteEvent}
+ *   after any in-flight local write for that note settles, so the actor's
+ *   own event, which can outrun the mutation response, never triggers a
+ *   redundant refetch.
  * - `project-list` events invalidate the home grid.
  * - `project-deleted` events invalidate the home grid and drop the
  *   workspace's slim-graph cache entry.
  *
+ * Exported for tests.
+ *
  * @param qc - The active QueryClient.
  * @param raw - JSON-encoded {@link RealtimeEvent} payload.
+ * @returns Promise settling once the event is fully applied.
  */
-function applyRealtimeEvent(qc: QueryClient, raw: string): void {
+export async function applyRealtimeEvent(
+  qc: QueryClient,
+  raw: string,
+): Promise<void> {
   let ev: RealtimeEvent;
   try {
     ev = JSON.parse(raw) as RealtimeEvent;
@@ -69,8 +80,7 @@ function applyRealtimeEvent(qc: QueryClient, raw: string): void {
       });
       break;
     case "note":
-      qc.invalidateQueries({ queryKey: noteKeys.list(ev.projectId) });
-      qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(ev.projectId) });
+      await handleNoteEvent(qc, ev);
       break;
     case "project-list":
       qc.invalidateQueries({ queryKey: projectKeys.list() });
@@ -79,6 +89,58 @@ function applyRealtimeEvent(qc: QueryClient, raw: string): void {
       qc.invalidateQueries({ queryKey: projectKeys.list() });
       qc.removeQueries({ queryKey: projectKeys.graph(ev.projectId) });
       break;
+  }
+}
+
+/**
+ * Milliseconds for a cached `updatedAt`, which is a `Date` after a
+ * mutation merge and an ISO string after a route fetch.
+ *
+ * @param value - Cached `updatedAt`.
+ * @returns Epoch milliseconds.
+ */
+function updatedAtMs(value: Date | string): number {
+  return typeof value === "string" ? Date.parse(value) : value.getTime();
+}
+
+/**
+ * Judge a `note` event against the cache and invalidate what is actually
+ * stale. Waits for the note's in-flight local writes to settle first, so
+ * the caches already hold the merged response when the actor's own event
+ * arrives. A cache entry at or past the event's `updatedAt` skips its
+ * refetch; an event without `updatedAt` (delete) always invalidates the
+ * list. The open note's detail additionally never refetches while the
+ * note holds unsaved editor content: a refetch must not clobber the
+ * optimistic autosave buffer or kept-optimistic conflict content.
+ *
+ * @param qc - The active QueryClient.
+ * @param ev - Decoded note event.
+ * @returns Promise settling once invalidations are issued.
+ */
+async function handleNoteEvent(
+  qc: QueryClient,
+  ev: { projectId: string; noteId: string; updatedAt?: string },
+): Promise<void> {
+  await whenNoteWritesSettle(ev.noteId);
+  const evMs = ev.updatedAt === undefined ? Infinity : Date.parse(ev.updatedAt);
+  const rows = qc.getQueryData<NoteTreeRow[]>(noteKeys.list(ev.projectId));
+  const row = rows?.find((r) => r.id === ev.noteId);
+  const listCurrent = row !== undefined && updatedAtMs(row.updatedAt) >= evMs;
+  if (!listCurrent) {
+    qc.invalidateQueries({ queryKey: noteKeys.list(ev.projectId) });
+    qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(ev.projectId) });
+  }
+  if (!hasUnsavedNoteEdits(ev.noteId)) {
+    const detail = qc.getQueryData<NoteFullResult>(
+      noteKeys.detail(ev.projectId, ev.noteId),
+    );
+    const detailCurrent =
+      detail !== undefined && updatedAtMs(detail.note.updatedAt) >= evMs;
+    if (!detailCurrent) {
+      qc.invalidateQueries({
+        queryKey: noteKeys.detail(ev.projectId, ev.noteId),
+      });
+    }
   }
 }
 
@@ -106,12 +168,12 @@ export function parseSseFrame(frame: string): string | null {
  * events into the shared TanStack Query cache. Self-host uses `EventSource`;
  * Cloudflare uses a WebSocket to the broker Durable Object. Both reconnect on
  * drop with capped exponential backoff (30 s) and run one full
- * `invalidateQueries()` on every open — the first open reconciles mutations
+ * `invalidateQueries()` on every open: the first open reconciles mutations
  * that landed in the connect-to-subscribe window, reconnects catch up on
  * anything missed while disconnected. Strict-Mode-safe: cleanup closes the
  * transport and clears any pending reconnect timer.
  *
- * @returns null — provider mounts side-effects only.
+ * @returns null; provider mounts side-effects only.
  */
 export function RealtimeBridge() {
   const qc = useQueryClient();
@@ -141,7 +203,7 @@ export function RealtimeBridge() {
     const openEventSource = () => {
       if (cancelled) return;
       es = new EventSource("/api/events");
-      es.onmessage = (msg) => applyRealtimeEvent(qc, msg.data);
+      es.onmessage = (msg) => void applyRealtimeEvent(qc, msg.data);
       es.onopen = onOpen;
       es.onerror = () => {
         es?.close();
@@ -157,7 +219,7 @@ export function RealtimeBridge() {
       ws.onmessage = (msg) => {
         if (typeof msg.data !== "string") return;
         const data = parseSseFrame(msg.data);
-        if (data) applyRealtimeEvent(qc, data);
+        if (data) void applyRealtimeEvent(qc, data);
       };
       ws.onopen = onOpen;
       ws.onclose = () => {

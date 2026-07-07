@@ -2,8 +2,12 @@ import { getAuthContext } from "@/lib/auth/context";
 import { ForbiddenError, assertNoteAccess } from "@/lib/auth/authorization";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { getNoteFull } from "@/lib/data/note";
+import { broker } from "@/lib/realtime/broker";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
+
+/** TTL for fetch-implicit note subscriptions: 10 minutes. */
+const NOTE_SUBSCRIPTION_TTL_MS = 10 * 60_000;
 
 /**
  * Conditional handler for `GET` and `HEAD` on a single note.
@@ -19,6 +23,14 @@ import { error } from "@/lib/api/response";
  * trashed note. Cold GETs skip the probe and authorize through
  * `getNoteFull`, which 404-shapes missing, trashed, and cross-team notes
  * itself.
+ *
+ * A 200 body response registers the fetch-implicit `note:<id>` broker
+ * subscription (TTL {@link NOTE_SUBSCRIPTION_TTL_MS}), the channel
+ * private-note events dispatch on, mirroring the `task:<id>` pattern in
+ * the task detail route. Registration is skipped on HEAD/304 (cache
+ * probes, not "user is viewing" signals) and when the caller has no live
+ * realtime connection, so a connection-less caller cannot leak an entry
+ * into their submap until the TTL elapses.
  *
  * @param req - Incoming request.
  * @param noteId - Note UUID from the route params.
@@ -41,6 +53,9 @@ async function handle(req: Request, noteId: string): Promise<Response> {
     }
 
     const result = await getNoteFull(ctx, noteId);
+    if (broker.hasConnections(ctx.userId)) {
+      broker.register(ctx.userId, `note:${noteId}`, NOTE_SUBSCRIPTION_TTL_MS);
+    }
     return conditionalRespond(req, result, result.note.updatedAt);
   } catch (err) {
     if (err instanceof ForbiddenError) {

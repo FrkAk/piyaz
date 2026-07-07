@@ -11,16 +11,18 @@ import { expect, mock, test } from "bun:test";
 const FAKE_SUB = "11111111-1111-4111-8111-111111111111";
 
 const realOauth2 = await import("better-auth/oauth2");
-const realVerify = await import("@/lib/mcp/verify");
 
 mock.module("better-auth/oauth2", () => ({
   ...realOauth2,
   verifyJwsAccessToken: async () => ({ sub: FAKE_SUB, azp: "test-client" }),
 }));
-mock.module("@/lib/mcp/verify", () => ({
-  ...realVerify,
-  hasKid: () => true,
-}));
+
+// A JWS-shaped bearer whose protected header carries a `kid`, so the route's
+// real `hasKid` probe passes without mocking `@/lib/mcp/verify`. A module mock
+// there leaks process-wide and clobbers `hasKid` for other test files.
+const KID_BEARER = `${Buffer.from(
+  JSON.stringify({ alg: "EdDSA", kid: "test" }),
+).toString("base64url")}.e30.sig`;
 
 const route = await import("@/app/api/mcp/route");
 
@@ -53,7 +55,7 @@ test("POST with a non-bearer authorization returns 401", async () => {
 test("POST over the body cap returns the MCP-shaped 413", async () => {
   const res = await route.POST(
     mcpRequest({
-      authorization: "Bearer fake-token",
+      authorization: `Bearer ${KID_BEARER}`,
       "content-length": String(100 * 1024 * 1024),
     }),
   );

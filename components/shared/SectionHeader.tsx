@@ -12,7 +12,7 @@ interface SectionHeaderProps {
 }
 
 /**
- * Reusable section header — mono uppercase label plus an optional count,
+ * Reusable section header: mono uppercase label plus an optional count,
  * badge, and trailing affordance, with a hairline rule that fills the
  * remaining width.
  *

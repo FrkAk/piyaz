@@ -7,7 +7,7 @@ import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
 import { updateTask } from "@/lib/graph/mutations";
 import { useInlineEdit } from "@/hooks/useInlineEdit";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 interface DescriptionSectionProps {
   /** Task UUID. */

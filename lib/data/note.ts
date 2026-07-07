@@ -11,9 +11,12 @@
  * team-visible notes: the feed and the tree fan out to every member, so
  * a private note's title, slug, and folder must never land there.
  *
- * Agent-facing policy (`agent_writable`, `locked`, the agent ban on
- * setting `visibility='team'`) is deliberately NOT enforced here — the
- * MCP handler layers it on (PYZ-252). Human server actions call these
+ * Agent-facing policy (`agent_writable`, the agent ban on setting
+ * `visibility='team'`) is deliberately NOT enforced here — the MCP
+ * handler layers it on (PYZ-252). `locked` is the exception: it gates
+ * every writer in {@link updateNote} and the share transitions, so a
+ * locked note is read-only for humans and agents alike until an unlock
+ * patch (`locked: false`) lands. Human server actions call these
  * functions directly.
  */
 import "server-only";
@@ -212,6 +215,20 @@ export class NoteShareStateError extends Error {
   }
 }
 
+/**
+ * Thrown when a write targets a locked note. `locked` is a universal
+ * write gate: every client (web actions and MCP alike) is read-only on a
+ * locked note, and {@link updateNote} accepts a write only when it
+ * unlocks the note (`locked: false`), which may bundle other field
+ * changes in the same patch.
+ */
+export class NoteLockedError extends Error {
+  constructor() {
+    super("Note is locked. Unlock it to edit.");
+    this.name = "NoteLockedError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -319,6 +336,17 @@ export type NoteSummary = {
   folder: string;
   version: number;
   updatedAt: Date;
+};
+
+/**
+ * Link context re-derived by a body-changing {@link updateNote}, read back
+ * inside the write transaction so the client folds it into its detail
+ * cache instead of refetching. `linksIn` is excluded: incoming rows belong
+ * to other notes' derivations and never change from this note's write.
+ */
+export type NoteLinksRefresh = {
+  mentions: NoteMention[];
+  linksOut: LinkedNoteSlim[];
 };
 
 /** Impact preview for {@link deleteNote}. */
@@ -1012,6 +1040,30 @@ export function noteMentionsStmt(read: ReadConn, noteId: string) {
 }
 
 /**
+ * Map a raw mention row (task join with identifier and sequence) to the
+ * {@link NoteMention} shape with the composed task ref.
+ *
+ * @param row - Joined mention row.
+ * @returns Mention row for the UI chip.
+ */
+function toNoteMention(row: {
+  taskId: string;
+  kind: NoteTaskLinkKind;
+  sequenceNumber: number;
+  identifier: string;
+  status: TaskStatus;
+  title: string;
+}): NoteMention {
+  return {
+    taskId: row.taskId,
+    kind: row.kind,
+    taskRef: `${row.identifier}-${row.sequenceNumber}`,
+    status: row.status,
+    title: row.title,
+  };
+}
+
+/**
  * Build the task-backlinks read as a lazy batch statement: live notes
  * linked to the task via `note_task_links`, slim tree projection plus the
  * link `kind`; never selects `body`/`search_tsv`. Served by
@@ -1175,13 +1227,7 @@ export async function getNoteFull(
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
   return {
     note,
-    mentions: mentionRows.map((row) => ({
-      taskId: row.taskId,
-      kind: row.kind,
-      taskRef: `${row.identifier}-${row.sequenceNumber}`,
-      status: row.status,
-      title: row.title,
-    })),
+    mentions: mentionRows.map(toNoteMention),
     linksOut,
     linksIn,
   };
@@ -1550,7 +1596,7 @@ export async function createNote(
     return note;
   });
 
-  emitNoteEvent(created.projectId, created.id, visibility);
+  emitNoteEvent(created.projectId, created.id, visibility, created.updatedAt);
   return created;
 }
 
@@ -1574,12 +1620,16 @@ export async function createNote(
  * @param noteId - UUID of the note.
  * @param patch - Fields to change; unknown/protected keys are stripped.
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
- * @returns Slim summary of the updated note.
+ * @returns Slim summary of the updated note; a body change also carries
+ *   the re-derived link context as `links`.
  * @throws ForbiddenError on inaccessible or trashed notes, or when a
  *   non-creator sets `visibility='private'` (the RLS WITH CHECK pins
  *   private rows to their creator; this pre-check keeps the rejection
  *   typed instead of a raw 42501).
  * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteLockedError when the note is locked and the patch does not
+ *   carry `locked: false`; a locked note accepts a write only when it
+ *   unlocks, though that unlock patch may bundle other field changes.
  * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches, carrying the
  *   live `updatedAt` and `version`.
  * @throws NoteValidationError on cap violations or a malformed
@@ -1590,7 +1640,7 @@ export async function updateNote(
   noteId: string,
   patch: NotePatch,
   ifUpdatedAt?: string,
-): Promise<NoteSummary> {
+): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
   assertValidNoteId(noteId);
   const applied: NotePatch = {};
   for (const field of PATCHABLE_NOTE_FIELDS) {
@@ -1652,6 +1702,9 @@ export async function updateNote(
     if (applied.visibility === "private" && current.createdBy !== ctx.userId) {
       throw new ForbiddenError("Forbidden", "note", noteId);
     }
+    if (current.locked && applied.locked !== false) {
+      throw new NoteLockedError();
+    }
     if (
       ifUpdatedAtMs !== undefined &&
       ifUpdatedAtMs !== current.updatedAt.getTime()
@@ -1664,6 +1717,7 @@ export async function updateNote(
         summary: currentSummary,
         wasNoOp: true,
         visibility: current.visibility,
+        links: undefined,
       };
     }
 
@@ -1674,6 +1728,7 @@ export async function updateNote(
         summary: currentSummary,
         wasNoOp: true,
         visibility: current.visibility,
+        links: undefined,
       };
     }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
@@ -1698,6 +1753,7 @@ export async function updateNote(
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
 
+    let links: NoteLinksRefresh | undefined;
     if (bodyChanged) {
       const newBody = applied.body ?? "";
       await insertRevisionWithPrune(
@@ -1716,6 +1772,34 @@ export async function updateNote(
         newBody,
         false,
       );
+      const mentionRows = await tx
+        .select({
+          taskId: noteTaskLinks.taskId,
+          kind: noteTaskLinks.kind,
+          sequenceNumber: tasks.sequenceNumber,
+          identifier: projects.identifier,
+          status: tasks.status,
+          title: tasks.title,
+        })
+        .from(noteTaskLinks)
+        .innerJoin(tasks, eq(tasks.id, noteTaskLinks.taskId))
+        .innerJoin(projects, eq(projects.id, tasks.projectId))
+        .where(eq(noteTaskLinks.noteId, noteId));
+      const linksOut = await tx
+        .select({
+          id: notes.id,
+          slug: notes.slug,
+          title: notes.title,
+          type: notes.type,
+          folder: notes.folder,
+          updatedAt: notes.updatedAt,
+        })
+        .from(noteLinks)
+        .innerJoin(notes, eq(notes.id, noteLinks.targetNoteId))
+        .where(
+          and(eq(noteLinks.sourceNoteId, noteId), isNull(notes.deletedAt)),
+        );
+      links = { mentions: mentionRows.map(toNoteMention), linksOut };
     }
     if (nextVisibility === "team") {
       await insertActivityEvents(tx, ctx.actor, [
@@ -1729,7 +1813,7 @@ export async function updateNote(
         },
       ]);
     }
-    return { summary, wasNoOp: false, visibility: nextVisibility };
+    return { summary, wasNoOp: false, visibility: nextVisibility, links };
   });
 
   if (!result.wasNoOp) {
@@ -1737,9 +1821,12 @@ export async function updateNote(
       result.summary.projectId,
       result.summary.id,
       result.visibility,
+      result.summary.updatedAt,
     );
   }
-  return result.summary;
+  return result.links
+    ? { ...result.summary, links: result.links }
+    : result.summary;
 }
 
 /**
@@ -1797,6 +1884,7 @@ export async function moveNote(
       result.summary.projectId,
       result.summary.id,
       result.visibility,
+      result.summary.updatedAt,
     );
   }
   return result.summary;
@@ -2052,6 +2140,7 @@ export async function restoreNote(
       result.summary.projectId,
       result.summary.id,
       result.visibility,
+      result.summary.updatedAt,
     );
   }
   return result.summary;
@@ -2095,7 +2184,7 @@ export async function requestShare(
     return row;
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "private");
+  emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
   return summary;
 }
 
@@ -2109,6 +2198,7 @@ export async function requestShare(
  * @returns Slim summary of the note.
  * @throws ForbiddenError on inaccessible or trashed notes.
  * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteLockedError when the note is locked.
  * @throws NoteShareStateError when no request is pending.
  */
 export async function approveShareRequest(
@@ -2120,13 +2210,63 @@ export async function approveShareRequest(
     const gate = await assertNoteAccessTx(tx, noteId);
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.locked) throw new NoteLockedError();
     if (gate.shareRequestedBy === null) {
       throw new NoteShareStateError("no_pending_request");
     }
     return applyVisibilityTx(tx, ctx, gate, "team");
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "team");
+  emitNoteEvent(summary.projectId, summary.id, "team", summary.updatedAt);
+  return summary;
+}
+
+/**
+ * Decline a pending share request: clears the `shareRequestedBy` marker
+ * while the note stays private. The counterpart to
+ * {@link approveShareRequest} for the ribbon's "Keep private" action; no
+ * other shipped path clears the marker without a visibility flip
+ * ({@link NotePatch} omits the field). Human-path function; the MCP layer
+ * never routes agents here. No activity event: the note stays private, so
+ * a feed row would leak its title (the same reason {@link requestShare}
+ * records none). The realtime emit rides the creator-only `note:<id>`
+ * channel, so the banner clears in the creator's other sessions without
+ * a project-wide signal.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @returns Slim summary of the note.
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteLockedError when the note is locked.
+ * @throws NoteShareStateError when no request is pending.
+ */
+export async function declineShareRequest(
+  ctx: AuthContext,
+  noteId: string,
+): Promise<NoteSummary> {
+  assertValidNoteId(noteId);
+  const summary = await withUserContext(ctx.userId, async (tx) => {
+    const gate = await assertNoteAccessTx(tx, noteId);
+    assertNoteLive(gate);
+    assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
+    if (gate.locked) throw new NoteLockedError();
+    if (gate.shareRequestedBy === null) {
+      throw new NoteShareStateError("no_pending_request");
+    }
+    const [row] = await tx
+      .update(notes)
+      .set({
+        shareRequestedBy: null,
+        updatedBy: ctx.userId,
+        updatedAt: new Date(),
+      })
+      .where(eq(notes.id, gate.id))
+      .returning(noteSummaryColumns);
+    return row;
+  });
+
+  emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
   return summary;
 }
 

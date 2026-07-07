@@ -34,7 +34,7 @@ import { LinksSection } from "./LinksSection";
 import { RelationshipsSection } from "./RelationshipsSection";
 import { ExecutionSection } from "./ExecutionSection";
 import { ActivitySection } from "./ActivitySection";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 interface DetailViewProps {
   /** Task UUID. */

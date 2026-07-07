@@ -41,29 +41,44 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
 }
 
 /**
- * Emit a note-affecting event. The `note` payload rides the
- * `project:<projectId>` channel — the only channel every project member
- * subscribes to on connect — so a team note's tree-list and task-backlink
- * changes fan out to every member. It fires only for team-visible notes: a
- * private note's changes are invisible to everyone else, so a fan-out would be
- * guaranteed-empty refetch egress and a timing signal of private activity, and
- * the author's own session already reflects the write optimistically.
+ * Emit a note-affecting event. Channel selection follows visibility:
+ *
+ * - A team note rides `project:<projectId>`, the channel every project
+ *   member subscribes to on connect, so tree-list and task-backlink
+ *   changes fan out to every member.
+ * - A private note rides `note:<noteId>`, the fetch-implicit channel the
+ *   note detail route registers (mirroring `task:<id>`). RLS confines
+ *   private-note fetches to the creator, so only the creator's own
+ *   sessions receive it: their other tabs stay CAS-fresh without leaking
+ *   a project-wide timing signal of private activity. A team session
+ *   still subscribed from before a private flip receives one event whose
+ *   refetch 404s the now-inaccessible note, which is the correct heal.
+ *
+ * `updatedAt` lets the consumer skip refetches its caches already reflect
+ * (the actor's own write, merged from the mutation response).
  *
  * @param projectId - Owning project id.
  * @param noteId - Note that changed.
  * @param visibility - The note's post-mutation visibility.
+ * @param updatedAt - The note's post-mutation `updatedAt`; omit when the
+ *   note no longer has one (delete).
  */
 export function emitNoteEvent(
   projectId: string,
   noteId: string,
   visibility: Visibility,
+  updatedAt?: Date,
 ): void {
-  if (visibility !== "team") return;
-  broker.dispatch(`project:${projectId}`, {
+  const payload = {
     kind: "note",
     projectId,
     noteId,
-  } satisfies RealtimeEvent);
+    ...(updatedAt !== undefined ? { updatedAt: updatedAt.toISOString() } : {}),
+  } satisfies RealtimeEvent;
+  broker.dispatch(
+    visibility === "team" ? `project:${projectId}` : `note:${noteId}`,
+    payload,
+  );
 }
 
 /**

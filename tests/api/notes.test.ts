@@ -4,6 +4,7 @@ import { seedUserOrgProject } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
 import { createNote } from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
+import { broker } from "@/lib/realtime/broker";
 import {
   GET as listGET,
   HEAD as listHEAD,
@@ -19,6 +20,7 @@ const setSession = (
 ).__setTestSession;
 
 afterEach(async () => {
+  broker._resetForTests();
   await truncateAll();
 });
 
@@ -234,6 +236,34 @@ test("GET /api/note/[id] — full composition with body, mentions, links; ETag o
   );
   expect(replay.status).toBe(304);
   expect(await replay.text()).toBe("");
+});
+
+test("GET /api/note/[id] — registers note:<id> only for connected users, never on 304", async () => {
+  const f = await seedUserOrgProject("note-sub");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "S" });
+  setSession({ user: { id: f.userId } });
+
+  const cold = await noteGET(get(`/api/note/${note.id}`), {
+    params: Promise.resolve({ noteId: note.id }),
+  });
+  expect(cold.status).toBe(200);
+  expect([...broker.subscribers(`note:${note.id}`)]).toEqual([]);
+
+  broker.attach(f.userId, { send: () => {}, close: () => {} });
+  const etag = cold.headers.get("etag")!;
+  const replay = await noteGET(
+    get(`/api/note/${note.id}`, { "if-none-match": etag }),
+    { params: Promise.resolve({ noteId: note.id }) },
+  );
+  expect(replay.status).toBe(304);
+  expect([...broker.subscribers(`note:${note.id}`)]).toEqual([]);
+
+  const warm = await noteGET(get(`/api/note/${note.id}`), {
+    params: Promise.resolve({ noteId: note.id }),
+  });
+  expect(warm.status).toBe(200);
+  expect([...broker.subscribers(`note:${note.id}`)]).toEqual([f.userId]);
 });
 
 test("GET /api/note/[id] — cross-team note and non-uuid id 404", async () => {

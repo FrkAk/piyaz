@@ -7,7 +7,7 @@ import { Markdown } from "@/components/shared/Markdown";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import { updateTask } from "@/lib/graph/mutations";
 import type { TaskEdge } from "@/lib/db/schema";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 /** Lifecycle action types — match the PlanTab undo identifiers. */
 type LifecycleAction = "plan-saved" | "start-impl" | "mark-done";

@@ -24,7 +24,7 @@ import {
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
 import { taskKeys } from "@/lib/query/keys";
 import { formatRelative } from "@/components/workspace/structure/relativeTime";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 interface ActivitySectionProps {
   /** Owning project id (for the query key). */

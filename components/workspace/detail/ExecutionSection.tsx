@@ -1,7 +1,7 @@
 "use client";
 
 import { Markdown } from "@/components/shared/Markdown";
-import { SectionHeader } from "./SectionHeader";
+import { SectionHeader } from "@/components/shared/SectionHeader";
 
 interface ExecutionSectionProps {
   /** Execution record markdown, or null when not present. */
