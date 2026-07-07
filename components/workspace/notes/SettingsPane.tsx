@@ -1,8 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   IconAgent,
+  IconCheck,
   IconDoc,
   IconHumansAgents,
   IconLock,
@@ -172,6 +180,8 @@ interface SettingsPaneProps {
   taskMap: TaskSlimMap;
   /** @param onSelectNote - Select another note (linked-note navigation). */
   onSelectNote: (noteId: string | null) => void;
+  /** @param onSelectTask - Open a task's detail (mention navigation). */
+  onSelectTask: (taskId: string) => void;
   /** @param fill - Drawer mode: full width, no left border, close button. */
   fill?: boolean;
   /** @param onCollapse - Collapse the ribbon at `lg` (column mode only). */
@@ -200,6 +210,7 @@ export function SettingsPane({
   projectTags,
   taskMap,
   onSelectNote,
+  onSelectTask,
   fill = false,
   onCollapse,
   onClose,
@@ -500,7 +511,11 @@ export function SettingsPane({
             <div className="py-0.5 text-[12px] text-text-faint">None</div>
           ) : (
             data.mentions.map((mention) => (
-              <MentionRow key={mention.taskId} mention={mention} />
+              <MentionRow
+                key={mention.taskId}
+                mention={mention}
+                onSelect={onSelectTask}
+              />
             ))
           )}
 
@@ -795,7 +810,11 @@ function FeedEditor({
 
   return (
     <div>
-      <div className="mb-2 flex flex-wrap gap-1.5">
+      <div
+        role="radiogroup"
+        aria-label="Feed mode"
+        className="mb-2 flex flex-wrap gap-1.5"
+      >
         {FEED_MODES.map((m) => {
           const active = note.feedMode === m.id;
           return (
@@ -803,19 +822,17 @@ function FeedEditor({
               key={m.id}
               type="button"
               disabled={disabled}
-              aria-pressed={active}
+              role="radio"
+              aria-checked={active}
               onClick={() => {
                 if (m.id !== note.feedMode) onSetMode(m.id);
               }}
-              className="rounded-full px-2 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
+              className="rounded-full px-2.5 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
               style={{
-                color: active
-                  ? "var(--color-accent-light)"
-                  : "var(--color-text-muted)",
-                background: active
-                  ? tint("var(--color-accent)", 13)
-                  : "transparent",
-                border: `1px solid ${active ? tint("var(--color-accent)", 32) : "var(--color-border)"}`,
+                color: active ? "#fff" : "var(--color-text-muted)",
+                fontWeight: active ? 500 : 400,
+                background: active ? "var(--color-accent)" : "transparent",
+                border: `1px solid ${active ? "var(--color-accent)" : "var(--color-border)"}`,
               }}
             >
               {m.label}
@@ -903,7 +920,9 @@ interface FeedTaskPickerProps {
  * Searchable by-task feed picker. Selected tasks are always listed;
  * matches for the current query (title or ref, over the already-loaded
  * task map, capped) appear below them, so a large project never renders
- * its whole task list.
+ * its whole task list. The search input drives the row list as an ARIA
+ * combobox: ArrowUp/ArrowDown move the highlight (wrapping), Enter
+ * toggles the highlighted row, Escape clears the query.
  *
  * @param props - Task map, selection, disabled flag, and the setter.
  * @returns The search input plus the bounded row list.
@@ -914,7 +933,10 @@ function FeedTaskPicker({
   disabled,
   onChange,
 }: FeedTaskPickerProps) {
+  const listId = useId();
   const [query, setQuery] = useState("");
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const listRef = useRef<HTMLDivElement>(null);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const needle = query.trim().toLowerCase();
@@ -934,6 +956,15 @@ function FeedTaskPicker({
     return hits;
   }, [needle, selectedSet, taskMap]);
 
+  const rowIds = useMemo(
+    () => [...selectedIds, ...results],
+    [selectedIds, results],
+  );
+  const highlightedId =
+    highlightIdx >= 0 && highlightIdx < rowIds.length
+      ? rowIds[highlightIdx]
+      : undefined;
+
   const toggle = (taskId: string) => {
     onChange(
       selectedSet.has(taskId)
@@ -942,19 +973,64 @@ function FeedTaskPicker({
     );
   };
 
+  const moveHighlight = (delta: number) => {
+    if (rowIds.length === 0) return;
+    const next =
+      highlightIdx === -1
+        ? delta > 0
+          ? 0
+          : rowIds.length - 1
+        : (highlightIdx + delta + rowIds.length) % rowIds.length;
+    setHighlightIdx(next);
+    const target = rowIds[next];
+    if (target !== undefined) {
+      listRef.current
+        ?.querySelector(`[data-task-id="${target}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }
+  };
+
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveHighlight(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveHighlight(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (highlightedId !== undefined) toggle(highlightedId);
+    } else if (e.key === "Escape" && query !== "") {
+      e.stopPropagation();
+      setQuery("");
+      setHighlightIdx(-1);
+    }
+  };
+
   const row = (taskId: string, active: boolean) => {
     const task = taskMap.get(taskId);
     if (!task) return null;
+    const highlighted = taskId === highlightedId;
     return (
       <button
         key={taskId}
+        id={`${listId}-${taskId}`}
+        data-task-id={taskId}
         type="button"
+        role="option"
         disabled={disabled}
-        aria-pressed={active}
+        aria-selected={active}
         onClick={() => toggle(taskId)}
         className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
         style={{
-          background: active ? tint("var(--color-accent)", 8) : "transparent",
+          background: highlighted
+            ? "var(--color-surface-hover)"
+            : active
+              ? tint("var(--color-accent)", 8)
+              : "transparent",
+          boxShadow: highlighted
+            ? `inset 0 0 0 1px ${tint("var(--color-accent)", 55)}`
+            : undefined,
         }}
       >
         <MonoId
@@ -984,14 +1060,33 @@ function FeedTaskPicker({
         <input
           value={query}
           disabled={disabled}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setHighlightIdx(e.target.value.trim() === "" ? -1 : 0);
+          }}
+          onKeyDown={onSearchKeyDown}
+          role="combobox"
+          aria-expanded={rowIds.length > 0}
+          aria-controls={listId}
+          aria-activedescendant={
+            highlightedId !== undefined
+              ? `${listId}-${highlightedId}`
+              : undefined
+          }
           aria-label="Search tasks to feed"
           placeholder="Search tasks by title or ref…"
           className="w-full bg-transparent text-[11px] outline-none placeholder:text-text-faint disabled:cursor-not-allowed"
           style={{ color: "var(--color-text-secondary)" }}
         />
       </div>
-      <div className="flex max-h-[240px] flex-col gap-1 overflow-y-auto">
+      <div
+        ref={listRef}
+        id={listId}
+        role="listbox"
+        aria-label="Feed tasks"
+        aria-multiselectable="true"
+        className="flex max-h-[240px] flex-col gap-1 overflow-y-auto"
+      >
         {selectedIds.map((taskId) => row(taskId, true))}
         {results.map((taskId) => row(taskId, false))}
       </div>
@@ -1015,7 +1110,9 @@ interface ChipToggleProps {
 }
 
 /**
- * Selectable accent chip for a category or tag feed target.
+ * Selectable accent chip for a category or tag feed target. A selected
+ * target carries a check glyph and accent fill so it reads as a checked
+ * filter, distinct from the solid single-choice mode pills above it.
  *
  * @param props - Label, active/disabled state, and the toggle handler.
  * @returns The pill toggle button.
@@ -1027,36 +1124,44 @@ function ChipToggle({ label, active, disabled, onClick }: ChipToggleProps) {
       disabled={disabled}
       aria-pressed={active}
       onClick={onClick}
-      className="max-w-full truncate rounded-full px-2 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
+      className="inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
       style={{
         color: active ? "var(--color-accent-light)" : "var(--color-text-muted)",
-        background: active ? tint("var(--color-accent)", 13) : "transparent",
-        border: `1px solid ${active ? tint("var(--color-accent)", 30) : "var(--color-border)"}`,
+        background: active ? tint("var(--color-accent)", 16) : "transparent",
+        border: `1px solid ${active ? tint("var(--color-accent)", 45) : "var(--color-border)"}`,
       }}
     >
-      {label}
+      {active && <IconCheck size={9} aria-hidden="true" />}
+      <span className="truncate">{label}</span>
     </button>
   );
 }
 
 interface MentionRowProps {
   mention: NoteMention;
+  onSelect: (taskId: string) => void;
 }
 
 /**
  * One mention row: the referenced task's status-colored ref and title.
+ * Clicking opens the task's detail.
  *
- * @param props - The mention to render.
- * @returns The mention row.
+ * @param props - The mention to render and the task-select handler.
+ * @returns The mention button row.
  */
-function MentionRow({ mention }: MentionRowProps) {
+function MentionRow({ mention, onSelect }: MentionRowProps) {
   return (
-    <div className="flex items-center gap-2 py-1">
+    <button
+      type="button"
+      onClick={() => onSelect(mention.taskId)}
+      title={`Open ${mention.taskRef}`}
+      className="flex w-full cursor-pointer items-center gap-2 rounded-md py-1 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+    >
       <MonoId id={mention.taskRef} copyable={false} tone={mention.status} />
       <span className="min-w-0 flex-1 truncate text-[11.5px] text-text-secondary">
         {mention.title}
       </span>
-    </div>
+    </button>
   );
 }
 

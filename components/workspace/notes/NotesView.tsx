@@ -21,7 +21,7 @@ interface NotesViewProps {
   noteId: string | null;
   /** @param onSelectNote - Write `?note=<id>` (null clears); the selection contract the notes panes call. */
   onSelectNote: (noteId: string | null) => void;
-  /** @param onSelectTask - Open a task's detail from an inline editor chip. */
+  /** @param onSelectTask - Open a task detail from an editor chip or a ribbon mention. */
   onSelectTask: (taskId: string) => void;
   /** @param taskMap - Project task slim map for inline chip resolution. */
   taskMap: TaskSlimMap;
@@ -173,6 +173,7 @@ export function NotesView({
             projectTags={projectTags}
             taskMap={taskMap}
             onSelectNote={onSelectNote}
+            onSelectTask={onSelectTask}
             onCollapse={toggleSettings}
           />
         )}
@@ -190,6 +191,7 @@ export function NotesView({
                 projectTags={projectTags}
                 taskMap={taskMap}
                 onSelectNote={onSelectNote}
+                onSelectTask={onSelectTask}
                 onClose={closeSettings}
               />
             )}
@@ -255,6 +257,7 @@ export function NotesView({
             projectTags={projectTags}
             taskMap={taskMap}
             onSelectNote={onSelectNote}
+            onSelectTask={onSelectTask}
             onClose={closeSettings}
           />
         )}
