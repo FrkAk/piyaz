@@ -42,6 +42,7 @@ export type NoteSearchRawRow = {
   folder: string;
   summary: string;
   visibility: string;
+  feed_mode: string;
   agent_writable: boolean;
   locked: boolean;
   updated_at: string | Date;
@@ -100,8 +101,8 @@ export function noteSearchStmt(
       END)${prefixExpr} AS tsq
     )
     SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
-           n.summary, n.visibility, n.agent_writable, n.locked, n.updated_at,
-           ts_rank(n.search_tsv, q.tsq) AS rank
+           n.summary, n.visibility, n.feed_mode, n.agent_writable, n.locked,
+           n.updated_at, ts_rank(n.search_tsv, q.tsq) AS rank
     FROM q, ${notes} n
     WHERE n.project_id = ${projectId}
       AND n.deleted_at IS NULL

@@ -92,7 +92,11 @@ import { BatchInputError } from "@/lib/data/task-batch";
 import { InvalidEditOpError } from "@/lib/data/task-edit";
 import { foldTextOp, type TextOp } from "@/lib/data/text-ops";
 import { ProjectArchivedError } from "@/lib/graph/errors";
-import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
+import {
+  asIdentifier,
+  composeNoteRef,
+  composeTaskRef,
+} from "@/lib/graph/identifier";
 import { emitNoteEvent, emitProjectEvent } from "@/lib/realtime/events";
 import type {
   FeedMode,
@@ -286,6 +290,7 @@ export type NoteTreeRow = {
   folder: string;
   summary: string;
   visibility: Visibility;
+  feedMode: FeedMode;
   agentWritable: boolean;
   locked: boolean;
   updatedAt: Date;
@@ -492,6 +497,7 @@ const noteTreeColumns = {
   folder: notes.folder,
   summary: notes.summary,
   visibility: notes.visibility,
+  feedMode: notes.feedMode,
   agentWritable: notes.agentWritable,
   locked: notes.locked,
   updatedAt: notes.updatedAt,
@@ -530,6 +536,13 @@ const noteFullColumns = {
   updatedAt: notes.updatedAt,
   deletedAt: notes.deletedAt,
 } as const;
+
+/**
+ * Scalar projection for field reads that touch no large column: every
+ * `noteFullColumns` entry except `body`, so a scalar read skips the body
+ * detoast and transfer.
+ */
+const { body: _body, ...noteScalarColumns } = noteFullColumns;
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -642,7 +655,7 @@ function nextFreeSlug(base: string, taken: ReadonlySet<string>): string {
  * @returns Canonical path (`""` = root).
  * @throws NoteValidationError when the normalized path exceeds the cap.
  */
-function normalizeFolder(raw: string): string {
+export function normalizeFolder(raw: string): string {
   const folder = raw
     .split("/")
     .map((segment) => segment.trim())
@@ -1315,6 +1328,76 @@ export async function getNoteFull(
 }
 
 /**
+ * Body-less scalar read: the note's scalar columns with `body`, mentions,
+ * and links empty, for field reads that touch no large column. Body and
+ * links fields must route to {@link getNoteFull}; this skips the body
+ * detoast and transfer. Same result shape as {@link getNoteFull}, so
+ * scalar-field rendering is shared.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @returns Full-shaped result with an empty `body` and no link context.
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ */
+export async function getNoteScalarFields(
+  ctx: AuthContext,
+  noteId: string,
+): Promise<NoteFullResult> {
+  assertValidNoteId(noteId);
+  const [gateRows, noteRows] = await withUserContextRead(ctx.userId, (read) => [
+    noteAccessGateStmt(read, noteId),
+    read
+      .select(noteScalarColumns)
+      .from(notes)
+      .where(and(eq(notes.id, noteId), isNull(notes.deletedAt)))
+      .limit(1),
+  ]);
+  const gate = assertNoteGateRows(noteId, gateRows);
+  const [row] = noteRows;
+  if (!row) throw new ForbiddenError("Forbidden", "note", noteId);
+  return {
+    note: { ...row, body: "" },
+    projectIdentifier: gate.projectIdentifier,
+    mentions: [],
+    linksOut: [],
+    linksIn: [],
+  };
+}
+
+/**
+ * Resolve feed task ids to taskRefs for a ref-first render. One
+ * `tasks JOIN projects` read, RLS-scoped; ids with no visible row are
+ * absent from the map, and the caller falls back to the raw UUID.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskIds - Feed task UUIDs.
+ * @returns Map from task id to composed taskRef.
+ */
+export async function composeFeedTaskRefs(
+  ctx: AuthContext,
+  taskIds: string[],
+): Promise<Map<string, string>> {
+  if (taskIds.length === 0) return new Map();
+  const [rows] = await withUserContextRead(ctx.userId, (read) => [
+    read
+      .select({
+        id: tasks.id,
+        identifier: projects.identifier,
+        sequenceNumber: tasks.sequenceNumber,
+      })
+      .from(tasks)
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .where(inArray(tasks.id, taskIds)),
+  ]);
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      String(composeTaskRef(asIdentifier(r.identifier), r.sequenceNumber)),
+    ]),
+  );
+}
+
+/**
  * Rank-search a project's live notes over the generated `search_tsv`.
  * User text goes through `websearch_to_tsquery` (plainto fallback), never
  * raw `to_tsquery`; the last term also matches as a sanitized prefix
@@ -1370,6 +1453,7 @@ function toSearchHit(row: NoteSearchRawRow): NoteSearchHit {
     title: row.title,
     type: row.type as NoteType,
     folder: row.folder,
+    feedMode: row.feed_mode as FeedMode,
     summary: row.summary,
     visibility: row.visibility as Visibility,
     agentWritable: row.agent_writable,

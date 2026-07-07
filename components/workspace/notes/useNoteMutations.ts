@@ -251,6 +251,7 @@ export function useCreateNote(projectId: string) {
         folder: input.folder ?? "",
         summary: input.summary ?? "",
         visibility: input.visibility ?? "private",
+        feedMode: input.feedMode ?? "none",
         agentWritable: true,
         locked: false,
         updatedAt: new Date(),

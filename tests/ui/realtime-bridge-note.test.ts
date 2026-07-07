@@ -33,6 +33,7 @@ function row(updatedAt: Date): NoteTreeRow {
     title: "Title",
     type: "reference",
     folder: "",
+    feedMode: "none",
     summary: "",
     visibility: "team",
     agentWritable: true,

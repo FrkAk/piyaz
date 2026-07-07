@@ -608,6 +608,15 @@ test("feedTaskIds accept task refs on create and edit", async () => {
   const noteId = await resolveId(ctx, fx, created.ref);
   expect((await getNoteFull(ctx, noteId)).note.feedTaskIds).toEqual([task.id]);
 
+  const fieldRead = okData<string>(
+    await handleNote(
+      { action: "read", note: created.ref, fields: ["feedTaskIds"] },
+      ctx,
+    ),
+  );
+  expect(fieldRead).toContain(taskRef);
+  expect(fieldRead).not.toContain(task.id);
+
   const badRef = errText(
     await handleNote(
       {
@@ -622,4 +631,51 @@ test("feedTaskIds accept task refs on create and edit", async () => {
   );
   expect(badRef).toContain("unresolved task ref");
   expect(badRef).toContain("PRJNC13-999");
+});
+
+test("list and search render the feed mode", async () => {
+  const fx = await seedUserOrgProject("NC14");
+  const ctx = makeAuthContext(fx.userId);
+  await createOne(ctx, "PRJNC14", {
+    title: "Injected guidance",
+    type: "guidance",
+    body: "constraint text",
+    feedMode: "all",
+  });
+  await createOne(ctx, "PRJNC14", { title: "Plain reference" });
+
+  const tree = okData<string>(
+    await handleNote({ action: "list", project: "PRJNC14" }, ctx),
+  );
+  expect(tree).toContain("feed=all");
+
+  const hits = okData<{ text: string }>(
+    await handleNote(
+      { action: "search", project: "PRJNC14", query: "constraint" },
+      ctx,
+    ),
+  );
+  expect(hits.text).toContain("feed=all");
+});
+
+test("read rejects heading combined with fields", async () => {
+  const fx = await seedUserOrgProject("NC15");
+  const ctx = makeAuthContext(fx.userId);
+  const created = await createOne(ctx, "PRJNC15", {
+    title: "Combo",
+    body: "## Design\nplan",
+  });
+
+  const conflict = errText(
+    await handleNote(
+      {
+        action: "read",
+        note: created.ref,
+        heading: "Design",
+        fields: ["revisions"],
+      },
+      ctx,
+    ),
+  );
+  expect(conflict).toContain("either heading");
 });

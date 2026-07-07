@@ -43,6 +43,7 @@ function row(id: string, overrides: Partial<NoteTreeRow> = {}): NoteTreeRow {
     folder: "",
     summary: "",
     visibility: "private",
+    feedMode: "none",
     agentWritable: false,
     locked: false,
     updatedAt: when,

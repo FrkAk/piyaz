@@ -10,16 +10,19 @@
 
 import {
   applyNoteEditOps,
+  composeFeedTaskRefs,
   createNotesBatch,
   createNoteTaskLink,
   deleteNote,
   deleteNotePreview,
   getNoteFull,
   getNoteRevision,
+  getNoteScalarFields,
   getNoteTreeForAgent,
   listNoteRevisions,
   moveFolder,
   moveNote,
+  normalizeFolder,
   removeNoteTaskLink,
   requestShare,
   restoreNote,
@@ -169,16 +172,12 @@ async function resolveFeedTaskRefs(
 function noteLine(row: NoteTreeRow, identifier: string): string {
   const ref = composeNoteRef(asIdentifier(identifier), row.sequenceNumber);
   const flags = [
-    row.type,
-    row.visibility === "private" ? "private" : `feed=${""}`,
-  ];
-  void flags;
-  const governance = [
     row.visibility === "private" ? "private" : null,
+    row.feedMode !== "none" ? `feed=${row.feedMode}` : null,
     row.locked ? "locked" : null,
     row.agentWritable ? null : "agent-read-only",
   ].filter(Boolean);
-  const suffix = governance.length > 0 ? ` (${governance.join(", ")})` : "";
+  const suffix = flags.length > 0 ? ` (${flags.join(", ")})` : "";
   const summary = row.summary === "" ? "" : ` — ${row.summary}`;
   return `- \`${ref}\` "${row.title}" [${row.type}]${suffix}${summary}`;
 }
@@ -198,13 +197,19 @@ function linkedNoteLines(rows: LinkedNoteSlim[], identifier: string): string[] {
 }
 
 /**
- * Render the raw value of one addressable field.
+ * Render the raw value of one addressable field. `feedTaskRefs` maps the
+ * note's feed task UUIDs to taskRefs so `feedTaskIds` renders ref-first.
  *
  * @param field - Requested field.
  * @param full - Full note read.
+ * @param feedTaskRefs - Task UUID to taskRef map for `feedTaskIds`.
  * @returns Markdown lines for the field.
  */
-function renderNoteField(field: NoteFieldName, full: NoteFullResult): string[] {
+function renderNoteField(
+  field: NoteFieldName,
+  full: NoteFullResult,
+  feedTaskRefs: Map<string, string>,
+): string[] {
   const { note, projectIdentifier } = full;
   switch (field) {
     case "body":
@@ -221,6 +226,10 @@ function renderNoteField(field: NoteFieldName, full: NoteFullResult): string[] {
         `linksIn (${full.linksIn.length}):`,
         ...linkedNoteLines(full.linksIn, projectIdentifier),
       ];
+    case "feedTaskIds": {
+      const refs = note.feedTaskIds.map((id) => feedTaskRefs.get(id) ?? id);
+      return [`feedTaskIds: ${JSON.stringify(refs)}`];
+    }
     case "title":
     case "summary":
     case "folder":
@@ -228,10 +237,8 @@ function renderNoteField(field: NoteFieldName, full: NoteFullResult): string[] {
     case "visibility":
     case "feedMode":
     case "category":
-      return [`${field}: ${JSON.stringify(note[field])}`];
     case "feedCategories":
     case "feedTags":
-    case "feedTaskIds":
     case "tags":
       return [`${field}: ${JSON.stringify(note[field])}`];
     case "agentWritable":
@@ -344,18 +351,25 @@ async function handleCreate(
   });
 
   const hints: string[] = [];
-  const fedItems = p.notes.filter(
+  const createdKey = (folder: string, title: string) => `${folder} ${title}`;
+  const createdKeys = new Set(
+    result.created.map((s) => createdKey(s.folder, s.title)),
+  );
+  const createdInputs = p.notes.filter((n) =>
+    createdKeys.has(createdKey(normalizeFolder(n.folder ?? ""), n.title)),
+  );
+  const fedItems = createdInputs.filter(
     (n) => n.feedMode !== undefined && n.feedMode !== "none",
   ).length;
-  if (result.created.length > 0 && fedItems === 0) {
+  if (createdInputs.length > 0 && fedItems === 0) {
     hints.push(
       "Created team-visible: teammates' agents can search these now. Nothing auto-injects into task bundles until feedMode is set (edit set feedMode='categories'/'tags'/'tasks'/'all').",
     );
   }
-  const missingSummaries = p.notes.filter(
+  const missingSummaries = createdInputs.filter(
     (n) => n.summary === undefined || n.summary === "",
   ).length;
-  if (result.created.length > 0 && missingSummaries > 0) {
+  if (missingSummaries > 0) {
     hints.push(
       `${missingSummaries} note(s) have no summary; summaries ride tree lists, search hits, and feed pointers — set them via edit.`,
     );
@@ -419,13 +433,17 @@ async function handleRead(
     );
   }
 
+  if (p.heading !== undefined && (p.fields?.length ?? 0) > 0) {
+    return fail(
+      "read takes either heading='...' (one section) or fields=[...] (field values), not both. Call read twice.",
+    );
+  }
+
   const wantsRevisions = p.fields?.includes("revisions") ?? false;
-  const revisions = wantsRevisions
-    ? await listNoteRevisions(ctx, noteId)
-    : null;
   const otherFields = (p.fields ?? []).filter((f) => f !== "revisions");
+
   if (wantsRevisions && otherFields.length === 0 && p.heading === undefined) {
-    const rev = revisions as NonNullable<typeof revisions>;
+    const rev = await listNoteRevisions(ctx, noteId);
     return ok(
       [
         `# \`${refOf(rev)}\` revisions (live version ${rev.currentVersion})`,
@@ -437,13 +455,12 @@ async function handleRead(
     );
   }
 
-  const full = await getNoteFull(ctx, noteId);
-  const ref = refOf({
-    projectIdentifier: full.projectIdentifier,
-    sequenceNumber: full.note.sequenceNumber,
-  });
-
   if (p.heading !== undefined) {
+    const full = await getNoteFull(ctx, noteId);
+    const ref = refOf({
+      projectIdentifier: full.projectIdentifier,
+      sequenceNumber: full.note.sequenceNumber,
+    });
     const section = extractSection(full.note.body, p.heading);
     if (section === null) {
       const available = listSections(full.note.body);
@@ -466,6 +483,19 @@ async function handleRead(
   }
 
   if (otherFields.length > 0) {
+    const needsFull = otherFields.some((f) => f === "body" || f === "links");
+    const [full, revisions] = await Promise.all([
+      needsFull ? getNoteFull(ctx, noteId) : getNoteScalarFields(ctx, noteId),
+      wantsRevisions ? listNoteRevisions(ctx, noteId) : Promise.resolve(null),
+    ]);
+    const ref = refOf({
+      projectIdentifier: full.projectIdentifier,
+      sequenceNumber: full.note.sequenceNumber,
+    });
+    const feedTaskRefs =
+      otherFields.includes("feedTaskIds") && full.note.feedTaskIds.length > 0
+        ? await composeFeedTaskRefs(ctx, full.note.feedTaskIds)
+        : new Map<string, string>();
     const parts: string[] = [
       untrustedContentNotice("working"),
       "",
@@ -473,9 +503,9 @@ async function handleRead(
       `updatedAt: ${full.note.updatedAt.toISOString()} (pass as ifUpdatedAt on piyaz_note edit for a compare-and-swap)`,
     ];
     for (const field of otherFields) {
-      parts.push("", ...renderNoteField(field, full));
+      parts.push("", ...renderNoteField(field, full, feedTaskRefs));
     }
-    if (wantsRevisions && revisions) {
+    if (revisions) {
       parts.push(
         "",
         "## revisions",
@@ -500,6 +530,7 @@ async function handleRead(
     );
   }
 
+  const full = await getNoteFull(ctx, noteId);
   return ok(renderNoteMeta(full));
 }
 
