@@ -17,7 +17,7 @@ import { noteKeys } from "@/lib/query/keys";
 import { fetchNotesTree } from "@/lib/query/queries";
 import type { TaskStatus } from "@/lib/types";
 import { formatRelative } from "@/lib/ui/relative-time";
-import { LiveEditor } from "./LiveEditor";
+import { NoteEditor } from "./NoteEditor";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import {
   NoteLinkContext,
@@ -360,9 +360,10 @@ function EditorBody({
         <BodySkeleton />
       ) : (
         <NoteLinkContext.Provider value={linkContext}>
-          <LiveEditor
+          <NoteEditor
             body={note.body}
             editable={editable}
+            identifier={projectIdentifier}
             onCommitBody={(next) => autosave.commit({ body: next })}
           />
         </NoteLinkContext.Provider>
