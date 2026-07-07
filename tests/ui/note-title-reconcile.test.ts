@@ -7,10 +7,8 @@ import {
 
 /**
  * Pure unit tests for the note editor title reconciliation predicates. No
- * DOM, no cache. Pins the adopt/commit outcomes the editor's render-phase
- * reconcile and blur/Enter/unmount commit dispatch on, guarding against the
- * stale-title clobber (PYZ-301) and the never-overwrite-in-progress-edit
- * invariant (AC 4b46ea3f).
+ * DOM, no cache. Pins the adopt, commit, and clear-dirty outcomes the editor's
+ * render-phase reconcile and blur/Enter/unmount commit dispatch on.
  */
 
 test("shouldAdoptServerTitle adopts only when idle", () => {
