@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { CodeBlock } from "@/components/shared/CodeBlock";
 
-const schema = {
+export const schema = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
