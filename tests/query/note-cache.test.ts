@@ -10,6 +10,7 @@ import {
   markNoteDirty,
   mergeLinksIntoDetail,
   mergeSummaryIntoDetail,
+  moveFolderInTree,
   notePlaceholderFromRow,
   patchNoteInTree,
   removeNoteFromTree,
@@ -357,5 +358,38 @@ describe("dirty note registry", () => {
     expect(hasUnsavedNoteEdits("d2")).toBe(false);
     clearNoteDirty("d1");
     expect(hasUnsavedNoteEdits("d1")).toBe(false);
+  });
+});
+
+describe("moveFolderInTree", () => {
+  test("rewrites the folder and every descendant path", () => {
+    const rows = [
+      row("n1", { folder: "a" }),
+      row("n2", { folder: "a/b" }),
+      row("n3", { folder: "other" }),
+    ];
+    const next = moveFolderInTree(rows, "a", "x/a");
+    expect(next?.map((r) => r.folder)).toEqual(["x/a", "x/a/b", "other"]);
+  });
+
+  test("never rewrites a sibling sharing the prefix", () => {
+    const rows = [row("n1", { folder: "a" }), row("n2", { folder: "ab" })];
+    const next = moveFolderInTree(rows, "a", "x");
+    expect(next?.map((r) => r.folder)).toEqual(["x", "ab"]);
+  });
+
+  test("returns the same reference when no row is under the source", () => {
+    const rows = [row("n1", { folder: "other" })];
+    expect(moveFolderInTree(rows, "a", "x")).toBe(rows);
+  });
+
+  test("passes undefined through when the list is not cached", () => {
+    expect(moveFolderInTree(undefined, "a", "x")).toBeUndefined();
+  });
+
+  test("keeps untouched rows reference-equal", () => {
+    const rows = [row("n1", { folder: "a" }), row("n2", { folder: "other" })];
+    const next = moveFolderInTree(rows, "a", "x");
+    expect(next?.[1]).toBe(rows[1]);
   });
 });
