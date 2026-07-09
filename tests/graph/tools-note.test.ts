@@ -3,7 +3,12 @@ import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask } from "@/lib/data/task";
-import { createNote, getNoteFull, updateNote } from "@/lib/data/note";
+import {
+  createNote,
+  createNoteFolder,
+  getNoteFull,
+  updateNote,
+} from "@/lib/data/note";
 import { handleNote, type NoteParams } from "@/lib/graph/tools/note";
 import type { AuthContext } from "@/lib/auth/context";
 
@@ -890,4 +895,58 @@ test("a locked note in a subtree blocks folder moves for humans and agents", asy
   }
 
   expect((await getNoteFull(ctx, noteId)).note.folder).toBe("kb");
+});
+
+test("list shows explicit empty folders; folder moves hint only when nothing matched", async () => {
+  const fx = await seedUserOrgProject("NC16");
+  const ctx = makeAuthContext(fx.userId);
+  await createNoteFolder(ctx, fx.projectId, "Research/empty");
+
+  const tree = okData<string>(
+    await handleNote({ action: "list", project: "PRJNC16" }, ctx),
+  );
+  expect(tree).toContain("Research/empty/");
+  expect(tree).not.toContain("no notes yet");
+
+  const renamed = okData<{
+    dest: string;
+    movedCount: number;
+    explicitMoved: number;
+    _hints?: string[];
+  }>(
+    await handleNote(
+      {
+        action: "move",
+        project: "PRJNC16",
+        folder: "Research/empty",
+        destParent: "Research",
+        newLeaf: "renamed",
+      },
+      ctx,
+    ),
+  );
+  expect(renamed.dest).toBe("Research/renamed");
+  expect(renamed.movedCount).toBe(0);
+  expect(renamed.explicitMoved).toBe(1);
+  expect(renamed._hints).toBeUndefined();
+
+  const missing = okData<{
+    movedCount: number;
+    explicitMoved: number;
+    _hints?: string[];
+  }>(
+    await handleNote(
+      {
+        action: "move",
+        project: "PRJNC16",
+        folder: "Ghost",
+        destParent: "",
+        newLeaf: "Spectre",
+      },
+      ctx,
+    ),
+  );
+  expect(missing.movedCount).toBe(0);
+  expect(missing.explicitMoved).toBe(0);
+  expect(missing._hints?.[0]).toContain("no explicit folder");
 });

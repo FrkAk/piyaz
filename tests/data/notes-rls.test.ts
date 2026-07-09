@@ -939,4 +939,22 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     );
     expect(nullAuthor.code).toBe("42501");
   });
+
+  test("note_folders UPDATE is revoked for app_user, even for the row's creator", async () => {
+    const fx = await seedUserOrgProject("notes-nf-upd");
+
+    const su = superuserPool();
+    const [folder] = await su<{ id: string }[]>`
+      INSERT INTO note_folders (project_id, path, created_by)
+      VALUES (${fx.projectId}, 'Pinned', ${fx.userId})
+      RETURNING id
+    `;
+
+    const denied = await captureAppUserError(
+      fx.userId,
+      (tx) =>
+        tx`UPDATE note_folders SET path = 'Forged' WHERE id = ${folder.id}`,
+    );
+    expect(denied.code).toBe("42501");
+  });
 });

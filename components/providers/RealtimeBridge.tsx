@@ -42,6 +42,8 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   after any in-flight local write for that note settles, so the actor's
  *   own event, which can outrun the mutation response, never triggers a
  *   redundant refetch.
+ * - `note-folders` events invalidate the explicit-folders list so another
+ *   member's empty-folder create/rename/delete reaches every open tree.
  * - `project-list` events invalidate the home grid.
  * - `project-deleted` events invalidate the home grid and drop the
  *   workspace's slim-graph cache entry.
@@ -81,6 +83,9 @@ export async function applyRealtimeEvent(
       break;
     case "note":
       await handleNoteEvent(qc, ev);
+      break;
+    case "note-folders":
+      qc.invalidateQueries({ queryKey: noteKeys.folders(ev.projectId) });
       break;
     case "project-list":
       qc.invalidateQueries({ queryKey: projectKeys.list() });

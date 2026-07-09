@@ -82,6 +82,22 @@ export function emitNoteEvent(
 }
 
 /**
+ * Emit an explicit-note-folders change event. Rides `project:<projectId>`:
+ * folder marker rows are team-visible structural metadata, so every member's
+ * cached folder list refreshes. Callers dispatch only when marker rows
+ * actually changed — an idempotent duplicate create or a zero-row delete
+ * stays silent.
+ *
+ * @param projectId - Project whose explicit folder set changed.
+ */
+export function emitNoteFoldersEvent(projectId: string): void {
+  broker.dispatch(`project:${projectId}`, {
+    kind: "note-folders",
+    projectId,
+  } satisfies RealtimeEvent);
+}
+
+/**
  * Emit project + both endpoint task events for an edge mutation. Avoids the
  * double project dispatch that two `emitTaskEvent` calls would produce.
  * Batched into one Workers sub-request.

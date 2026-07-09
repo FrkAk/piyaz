@@ -654,6 +654,18 @@ export function TreePane({
   }
 
   /**
+   * Select a note row, clearing the folder create-target selection even
+   * when the note is already selected (the selection sync only fires on
+   * a changed id).
+   *
+   * @param noteId - Clicked note id.
+   */
+  function selectNote(noteId: string) {
+    setSelectedFolder(null);
+    onSelect(noteId);
+  }
+
+  /**
    * Rewrite client-local state keyed by folder path (collapsed entries
    * and the selected folder) under a moved prefix.
    *
@@ -1055,7 +1067,7 @@ export function TreePane({
                 active={n.id === selectedId}
                 dragging={drag?.kind === "note" && drag.id === n.id}
                 dropTarget={drag !== null && dropRowId === n.id}
-                onSelect={() => onSelect(n.id)}
+                onSelect={() => selectNote(n.id)}
                 onDragStart={() => setDrag({ kind: "note", id: n.id })}
                 onDragEnd={clearDrag}
                 onDragOver={(e) => {
@@ -1256,7 +1268,7 @@ export function TreePane({
                 indent={8}
                 active={h.id === selectedId}
                 dragging={false}
-                onSelect={() => onSelect(h.id)}
+                onSelect={() => selectNote(h.id)}
               />
             ))
           ) : search.isPending ? (
@@ -1306,7 +1318,7 @@ export function TreePane({
                 active={n.id === selectedId}
                 dragging={drag?.kind === "note" && drag.id === n.id}
                 dropTarget={drag !== null && dropRowId === n.id}
-                onSelect={() => onSelect(n.id)}
+                onSelect={() => selectNote(n.id)}
                 onDragStart={() => setDrag({ kind: "note", id: n.id })}
                 onDragEnd={clearDrag}
                 onDragOver={(e) => {

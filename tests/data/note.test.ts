@@ -287,7 +287,7 @@ test("moveFolder re-parents the subtree in one update with a cycle guard", async
   });
 
   const moved = await moveFolder(ctx, f.projectId, "a/b", "x");
-  expect(moved).toEqual({ dest: "x/b", movedCount: 2 });
+  expect(moved).toEqual({ dest: "x/b", movedCount: 2, explicitMoved: 0 });
 
   const tree = await getNoteTreeList(ctx, f.projectId);
   const folders = new Map(tree.map((n) => [n.id, n.folder]));
@@ -318,7 +318,7 @@ test("moveFolder rewrites paths containing non-BMP characters correctly", async 
   });
 
   const moved = await moveFolder(ctx, f.projectId, "📁a", "x");
-  expect(moved).toEqual({ dest: "x/📁a", movedCount: 2 });
+  expect(moved).toEqual({ dest: "x/📁a", movedCount: 2, explicitMoved: 0 });
 
   const tree = await getNoteTreeList(ctx, f.projectId);
   const folders = new Map(tree.map((n) => [n.id, n.folder]));
@@ -341,7 +341,11 @@ test("moveFolder with a new leaf renames the subtree in place", async () => {
   });
 
   const renamed = await moveFolder(ctx, f.projectId, "a/b", "a", "renamed");
-  expect(renamed).toEqual({ dest: "a/renamed", movedCount: 2 });
+  expect(renamed).toEqual({
+    dest: "a/renamed",
+    movedCount: 2,
+    explicitMoved: 0,
+  });
 
   const tree = await getNoteTreeList(ctx, f.projectId);
   const folders = new Map(tree.map((n) => [n.id, n.folder]));
@@ -349,7 +353,7 @@ test("moveFolder with a new leaf renames the subtree in place", async () => {
   expect(folders.get(deep.id)).toBe("a/renamed/c");
 
   const noOp = await moveFolder(ctx, f.projectId, "a/renamed", "a", "renamed");
-  expect(noOp).toEqual({ dest: "a/renamed", movedCount: 0 });
+  expect(noOp).toEqual({ dest: "a/renamed", movedCount: 0, explicitMoved: 0 });
 
   await expect(
     moveFolder(ctx, f.projectId, "a/renamed", "a", "  /  "),
@@ -910,7 +914,11 @@ test("moveFolder renames an empty explicit folder server-side", async () => {
 
   await createNoteFolder(ctx, f.projectId, "a/b");
   const renamed = await moveFolder(ctx, f.projectId, "a/b", "a", "renamed");
-  expect(renamed).toEqual({ dest: "a/renamed", movedCount: 0 });
+  expect(renamed).toEqual({
+    dest: "a/renamed",
+    movedCount: 0,
+    explicitMoved: 1,
+  });
 
   const after = await listNoteFolderPaths(ctx, f.projectId);
   expect(after.paths).toEqual(["a/renamed"]);
@@ -928,12 +936,40 @@ test("moveFolder carries explicit rows with the subtree and merges collisions", 
   await createNoteFolder(ctx, f.projectId, "x/b/empty");
 
   const moved = await moveFolder(ctx, f.projectId, "a/b", "x");
-  expect(moved).toEqual({ dest: "x/b", movedCount: 1 });
+  expect(moved).toEqual({ dest: "x/b", movedCount: 1, explicitMoved: 1 });
 
   const tree = await getNoteTreeList(ctx, f.projectId);
   expect(tree.find((n) => n.id === note.id)?.folder).toBe("x/b");
   const after = await listNoteFolderPaths(ctx, f.projectId);
   expect(after.paths).toEqual(["x/b/empty"]);
+});
+
+test("folder create, delete, and empty move dispatch note-folders events only when rows change", async () => {
+  const f = await seedUserOrgProject("notefolderrt");
+  const ctx = makeAuthContext(f.userId);
+  const frames: string[] = [];
+  broker.attach(f.userId, {
+    send: (frame: string) => frames.push(frame),
+    close: () => {},
+  });
+  broker.register(f.userId, `project:${f.projectId}`);
+  const folderEvents = () =>
+    frames.filter((fr) => fr.includes('"kind":"note-folders"')).length;
+
+  await createNoteFolder(ctx, f.projectId, "rt");
+  expect(folderEvents()).toBe(1);
+
+  await createNoteFolder(ctx, f.projectId, "rt");
+  expect(folderEvents()).toBe(1);
+
+  await moveFolder(ctx, f.projectId, "rt", "", "rt2");
+  expect(folderEvents()).toBe(2);
+
+  await deleteNoteFolder(ctx, f.projectId, "rt2");
+  expect(folderEvents()).toBe(3);
+
+  await deleteNoteFolder(ctx, f.projectId, "rt2");
+  expect(folderEvents()).toBe(3);
 });
 
 test("moveFolder cap guard considers explicit descendant paths", async () => {
