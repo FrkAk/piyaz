@@ -508,7 +508,7 @@ export type NewNote = typeof notes.$inferInsert;
 // `folder` values; these rows only add explicitly created folders that
 // hold no notes yet, so they survive reloads. Ancestors are never stored
 // (the client derives them), and `moveFolder` rewrites rows here as
-// insert-then-delete so the folders-list validator (MAX(created_at),
+// delete-then-insert so the folders-list validator (MAX(created_at),
 // COUNT(*)) shifts on every mutation.
 export const noteFolders = pgTable(
   "note_folders",

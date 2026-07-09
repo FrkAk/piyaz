@@ -2758,7 +2758,7 @@ export async function moveNote(
  * name at the destination, so a rename is a move to the same parent with
  * a new leaf. The UPDATE runs under the caller's RLS scope, so
  * teammates' private notes in the subtree are untouched and keep their
- * old paths — a definer-privileged bulk write would let members rewrite
+ * old paths; a definer-privileged bulk write would let members rewrite
  * paths of notes they cannot see. The activity event and project
  * dispatch fire only when a team-visible note actually moved.
  *
@@ -2904,7 +2904,7 @@ export async function moveFolder(
  * Persist an explicitly created empty folder as a `note_folders` marker
  * row. Idempotent: a duplicate create upserts into the existing row via
  * `onConflictDoNothing` on the `(project_id, path)` unique index. No
- * activity event — the row is structural metadata with no note to
+ * activity event: the row is structural metadata with no note to
  * attribute.
  *
  * @param ctx - Resolved auth context.
@@ -2939,7 +2939,7 @@ export async function createNoteFolder(
 
 /**
  * Delete a folder's explicit marker rows: the path itself plus every
- * explicit descendant. Notes are untouched — callers soft-delete them
+ * explicit descendant. Notes are untouched; callers soft-delete them
  * separately when emptying a non-empty folder.
  *
  * @param ctx - Resolved auth context.

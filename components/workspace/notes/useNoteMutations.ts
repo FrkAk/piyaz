@@ -468,7 +468,7 @@ export function useMoveFolder(projectId: string) {
 /**
  * Optimistic empty-folder create: appends the path to the cached folders
  * list up front, restores the snapshot on failure, returned or thrown.
- * Kept as-is on success — the server upsert is idempotent and returns
+ * Kept as-is on success: the server upsert is idempotent and returns
  * the same normalized path the optimistic entry used.
  *
  * @param projectId - Owning project id.

@@ -320,9 +320,9 @@ CREATE POLICY "note_links_delete_member_only" ON "note_links"
     AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
   );
 
--- note_folders — 2-hop via projects' RLS. Rows are explicit empty-folder
+-- note_folders: 2-hop via projects' RLS. Rows are explicit empty-folder
 -- markers: team-visible structural metadata (paths only, no note content),
--- deliberately project-scoped rather than per-creator — a per-creator scope
+-- deliberately project-scoped rather than per-creator; a per-creator scope
 -- would turn the (project_id, path) unique index into a cross-user existence
 -- oracle via insert conflicts and split the tree per member. The RESTRICTIVE
 -- INSERT floor pins created_by to the caller (mirror

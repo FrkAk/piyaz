@@ -1,7 +1,7 @@
 /**
  * Explicit note-folders cache validator: latest `created_at` plus the row
  * count for one project's folder markers. Sound because folder moves
- * rewrite rows as insert-then-delete, so every mutation shifts MAX or
+ * rewrite rows as delete-then-insert, so every mutation shifts MAX or
  * COUNT.
  */
 
