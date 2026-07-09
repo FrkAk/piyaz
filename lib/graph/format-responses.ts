@@ -4,7 +4,6 @@
  */
 
 import type {
-  McpSearchItem,
   McpSearchPage,
   SearchResult,
   TaskSlim,
