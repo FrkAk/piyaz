@@ -13,6 +13,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { motion, type Transition } from "motion/react";
 import {
   IconChevronDown,
   IconChevronRight,
@@ -57,6 +58,12 @@ import {
 
 /** Debounce window between a keystroke and the server search request. */
 const SEARCH_DEBOUNCE_MS = 250;
+
+/** Row enter/glide timing, a faster cut of the rail's collapse curve. */
+const ROW_TRANSITION: Transition = {
+  duration: 0.18,
+  ease: [0.16, 1, 0.3, 1],
+};
 
 /** Type-filter chip order. */
 const CHIPS: TypeFilter[] = ["all", "reference", "guidance", "knowledge"];
@@ -224,7 +231,13 @@ function NoteRow({
   }
 
   return (
-    <div className="group relative flex w-full items-center">
+    <motion.div
+      layout="position"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={ROW_TRANSITION}
+      className="group relative flex w-full items-center"
+    >
       <button
         type="button"
         draggable={draggable}
@@ -327,7 +340,7 @@ function NoteRow({
             <IconTrash size={11} />
           </button>
         ))}
-    </div>
+    </motion.div>
   );
 }
 
@@ -655,7 +668,7 @@ export function TreePane({
       return;
     }
     moveFolder.mutate(
-      { src, destParent: plan.destParent, leaf: plan.leaf },
+      { src, destParent: plan.destParent, leaf: plan.leaf, dest: plan.dest },
       {
         onSuccess: (result) => {
           if (result.ok) rewriteLocalPaths(src, result.data.dest);
@@ -863,7 +876,13 @@ export function TreePane({
     const isDropTarget = dropFolder === path;
     const indent = 8 + depth * 12;
     return (
-      <div key={path}>
+      <motion.div
+        key={path}
+        layout="position"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={ROW_TRANSITION}
+      >
         {renaming?.path === path ? (
           <div
             className="flex w-full items-center gap-1 rounded-md pr-2 text-text-secondary"
@@ -1022,7 +1041,7 @@ export function TreePane({
             ))}
           </>
         )}
-      </div>
+      </motion.div>
     );
   }
 
@@ -1032,7 +1051,7 @@ export function TreePane({
   return (
     <div
       className={
-        fill ? "flex h-full w-full flex-col" : "flex shrink-0 flex-col"
+        fill ? "flex h-full w-full flex-col" : "flex h-full min-h-0 flex-col"
       }
       style={{
         width: fill ? undefined : RAIL_WIDTH,
@@ -1066,7 +1085,10 @@ export function TreePane({
             title="New note"
             className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:cursor-default disabled:opacity-50"
           >
-            <IconPlus size={13} />
+            <IconPlus
+              size={13}
+              className={createPending ? "animate-pulse" : undefined}
+            />
           </button>
           {onCollapse !== undefined && (
             <button

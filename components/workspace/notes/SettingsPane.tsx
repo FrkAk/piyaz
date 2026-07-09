@@ -621,7 +621,7 @@ function RibbonShell({
 }: RibbonShellProps) {
   return (
     <div
-      className={`flex min-h-0 flex-col ${fill ? "h-full w-full" : "w-[320px] shrink-0 border-l border-border"}`}
+      className={`flex h-full min-h-0 flex-col ${fill ? "w-full" : "w-[320px] border-l border-border"}`}
       style={{ background: "var(--color-base)" }}
     >
       <div
