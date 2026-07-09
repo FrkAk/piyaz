@@ -2,13 +2,21 @@ import { test, expect, afterEach } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
-import { createNote } from "@/lib/data/note";
+import {
+  createNote,
+  createNoteFolder,
+  deleteNoteFolder,
+} from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
 import { broker } from "@/lib/realtime/broker";
 import {
   GET as listGET,
   HEAD as listHEAD,
 } from "@/app/api/project/[projectId]/notes/route";
+import {
+  GET as foldersGET,
+  HEAD as foldersHEAD,
+} from "@/app/api/project/[projectId]/notes/folders/route";
 import { GET as noteGET } from "@/app/api/note/[noteId]/route";
 import { GET as searchGET } from "@/app/api/project/[projectId]/notes/search/route";
 import { GET as backlinksGET } from "@/app/api/task/[taskId]/notes/route";
@@ -481,4 +489,72 @@ test("GET /api/task/[id]/notes — non-uuid and cross-team task 404; unauthentic
     }),
   ]);
   for (const r of responses) expect(r.status).toBe(401);
+});
+
+test("GET /api/project/[id]/notes/folders — ordered paths, ETag; 304 + HEAD replay; validator moves", async () => {
+  const f = await seedUserOrgProject("notes-folders");
+  const ctx = makeAuthContext(f.userId);
+  await createNoteFolder(ctx, f.projectId, "b");
+  await createNoteFolder(ctx, f.projectId, "a/nested");
+  setSession({ user: { id: f.userId } });
+
+  const res = await foldersGET(
+    get(`/api/project/${f.projectId}/notes/folders`),
+    {
+      params: Promise.resolve({ projectId: f.projectId }),
+    },
+  );
+  expect(res.status).toBe(200);
+  const etag = res.headers.get("etag");
+  expect(etag).toBeTruthy();
+  expect((await res.json()) as string[]).toEqual(["a/nested", "b"]);
+
+  const replay = await foldersGET(
+    get(`/api/project/${f.projectId}/notes/folders`, {
+      "if-none-match": etag!,
+    }),
+    { params: Promise.resolve({ projectId: f.projectId }) },
+  );
+  expect(replay.status).toBe(304);
+  expect(await replay.text()).toBe("");
+
+  const head = await foldersHEAD(
+    new Request(`http://test/api/project/${f.projectId}/notes/folders`, {
+      method: "HEAD",
+    }),
+    { params: Promise.resolve({ projectId: f.projectId }) },
+  );
+  expect(head.status).toBe(200);
+  expect(head.headers.get("etag")).toBe(etag);
+  expect(await head.text()).toBe("");
+
+  await deleteNoteFolder(ctx, f.projectId, "b");
+  const afterDelete = await foldersGET(
+    get(`/api/project/${f.projectId}/notes/folders`, {
+      "if-none-match": etag!,
+    }),
+    { params: Promise.resolve({ projectId: f.projectId }) },
+  );
+  expect(afterDelete.status).toBe(200);
+  expect(afterDelete.headers.get("etag")).not.toBe(etag);
+  expect((await afterDelete.json()) as string[]).toEqual(["a/nested"]);
+});
+
+test("GET /api/project/[id]/notes/folders — cross-team 404, unauthenticated 401", async () => {
+  const f = await seedUserOrgProject("notes-folders-404a");
+  const g = await seedUserOrgProject("notes-folders-404b");
+  setSession({ user: { id: f.userId } });
+
+  const foreign = await foldersGET(
+    get(`/api/project/${g.projectId}/notes/folders`),
+    { params: Promise.resolve({ projectId: g.projectId }) },
+  );
+  expect(foreign.status).toBe(404);
+
+  setSession(null);
+  const anon = await foldersGET(
+    get(`/api/project/${f.projectId}/notes/folders`),
+    { params: Promise.resolve({ projectId: f.projectId }) },
+  );
+  expect(anon.status).toBe(401);
 });

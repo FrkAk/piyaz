@@ -52,6 +52,8 @@ export const noteKeys = {
   all: (projectId: string) => ["notes", projectId] as const,
   /** Slim tree list for the notes pane. */
   list: (projectId: string) => ["notes", projectId, "list"] as const,
+  /** Explicit empty-folder paths for the notes tree. */
+  folders: (projectId: string) => ["notes", projectId, "folders"] as const,
   /** Full note (body + link context) for the editor. */
   detail: (projectId: string, noteId: string) =>
     ["notes", projectId, "detail", noteId] as const,

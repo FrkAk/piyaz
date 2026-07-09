@@ -43,6 +43,13 @@
       "when": 1783365063664,
       "tag": "0005_overconfident_kate_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783629504615,
+      "tag": "0006_friendly_jigsaw",
+      "breakpoints": true
     }
   ]
 }
