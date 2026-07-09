@@ -284,11 +284,19 @@ test("feed rows and overflow pointers carry composed note refs", async () => {
   }
 });
 
-test("guidance bodies ship bounded on the bodies variant and never otherwise", async () => {
+test("bodies variant ships guidance bodies only, slim ships none", async () => {
   const f = await seedUserOrgProject("feedG");
   const ctx = makeAuthContext(f.userId);
   const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
 
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Ref",
+    visibility: "team",
+    type: "reference",
+    body: "reference-body-payload",
+    feedMode: "all",
+  });
   await createNote(ctx, {
     projectId: f.projectId,
     title: "Guide",
@@ -297,12 +305,41 @@ test("guidance bodies ship bounded on the bodies variant and never otherwise", a
     body: "guidance-body-payload",
     feedMode: "all",
   });
+
+  const pool = appUserPool();
+  const q = new PgDialect().sqlToQuery(
+    notesFeedSql(f.projectId, task, FEED_NOTE_CAP, FEED_NOTE_CAP + 1, {
+      rankCap: FEED_NOTE_CAP,
+      charBound: FEED_CHAR_BUDGET + 1,
+      budget: FEED_CHAR_BUDGET,
+    }),
+  );
+  const deep = await pool.begin(async (tx) => {
+    await tx`SELECT set_config('app.user_id', ${f.userId}, true)`;
+    return tx.unsafe(q.sql, q.params as string[]);
+  });
+  const byTitle = new Map(deep.map((r) => [r.title, r]));
+  expect(byTitle.get("Guide")?.body).toBe("guidance-body-payload");
+  expect(byTitle.get("Ref")?.body).toBe("");
+
+  const slim = await resolveExposedNotes(ctx, f.projectId, task);
+  expect(slim.notes.every((n) => n.body === "")).toBe(true);
+});
+
+test("running-sum egress bound: an over-budget guidance body blanks later bodies", async () => {
+  const f = await seedUserOrgProject("feedEgress");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+
+  // "Small" is created first (older), "Huge" second (newer). Exposure order
+  // is updated_at DESC, so Huge ranks first and its LEFT-bounded body alone
+  // exhausts the budget, blanking Small's body server-side.
   await createNote(ctx, {
     projectId: f.projectId,
-    title: "Ref",
+    title: "Small",
     visibility: "team",
-    type: "reference",
-    body: "reference-body-payload",
+    type: "guidance",
+    body: "small-guidance-body",
     feedMode: "all",
   });
   await createNote(ctx, {
@@ -314,40 +351,35 @@ test("guidance bodies ship bounded on the bodies variant and never otherwise", a
     feedMode: "all",
   });
 
-  const pool = appUserPool();
-  const runFeed = async (bodies?: { rankCap: number; charBound: number }) => {
-    const q = new PgDialect().sqlToQuery(
-      notesFeedSql(
-        f.projectId,
-        task,
-        FEED_NOTE_CAP,
-        FEED_NOTE_CAP + FEED_POINTER_CAP + 1,
-        bodies,
-      ),
-    );
-    return pool.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${f.userId}, true)`;
-      return tx.unsafe(q.sql, q.params as string[]);
-    });
-  };
-
-  const deep = await runFeed({
-    rankCap: FEED_NOTE_CAP,
-    charBound: FEED_CHAR_BUDGET + 1,
+  const q = new PgDialect().sqlToQuery(
+    notesFeedSql(f.projectId, task, FEED_NOTE_CAP, FEED_NOTE_CAP + 1, {
+      rankCap: FEED_NOTE_CAP,
+      charBound: FEED_CHAR_BUDGET + 1,
+      budget: FEED_CHAR_BUDGET,
+    }),
+  );
+  const rows = await appUserPool().begin(async (tx) => {
+    await tx`SELECT set_config('app.user_id', ${f.userId}, true)`;
+    return tx.unsafe(q.sql, q.params as string[]);
   });
-  const byTitle = new Map(deep.map((r) => [r.title, r]));
-  expect(byTitle.get("Guide")?.body).toBe("guidance-body-payload");
-  expect(byTitle.get("Ref")?.body).toBe("");
+  const byTitle = new Map(rows.map((r) => [r.title, r]));
   expect(byTitle.get("Huge")?.body.length).toBe(FEED_CHAR_BUDGET + 1);
+  expect(byTitle.get("Small")?.body).toBe("");
 
-  const rankBound = await runFeed({
-    rankCap: 1,
-    charBound: FEED_CHAR_BUDGET + 1,
-  });
-  expect(rankBound.filter((r) => r.body !== "").length).toBe(1);
+  // The resolver degrades the over-budget Huge body to a pointer, and Small
+  // never had a body to render, so no guidance renders full-body.
+  const res = await resolveExposedNotes(ctx, f.projectId, task, undefined);
+  const huge = res.notes.find((n) => n.title === "Huge");
+  expect(huge?.body ?? "").toBe("");
+});
 
-  const slim = await resolveExposedNotes(ctx, f.projectId, task);
-  expect(slim.notes.map((n) => n.body)).toEqual(["", "", ""]);
+test("budget counts codepoints, not UTF-16 units, for astral bodies", () => {
+  const emoji = "😀"; // 1 codepoint, 2 UTF-16 units
+  const withinBudget = makeBodyRow(1, 0);
+  withinBudget.body = emoji.repeat(FEED_CHAR_BUDGET - 10);
+  const res = applyFeedBudget([withinBudget], { maxChars: FEED_CHAR_BUDGET });
+  expect(res.notes.length).toBe(1);
+  expect(res.notes[0].body).toBe(withinBudget.body);
 });
 
 test("applyFeedBudget counts body chars toward the char budget", () => {

@@ -218,10 +218,27 @@ const NOTE_READ_HINT =
   "Read a note with piyaz_note action='read' note='<ref>' (heading='...' fetches one section).";
 
 /**
+ * Collapse a note title or summary to a single line. Note titles and
+ * summaries are teammate-authored free text that only byte-length caps
+ * bound, so a value with an embedded newline would break out of the
+ * `### ` heading or `- ` pointer line it renders into and inject
+ * unframed markdown. Collapsing every whitespace run to one space keeps
+ * the value inside its intended line.
+ *
+ * @param text - Raw note title or summary.
+ * @returns The value with internal whitespace collapsed to single spaces.
+ */
+function singleLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
  * Render full-body guidance notes as a constraints block: the framing
  * blockquote, then one `### ref title` block per note with every body
  * line blockquote-prefixed so embedded markdown cannot pose as bundle
- * structure.
+ * structure. The title is collapsed to one line so it cannot break out
+ * of the heading, and the body splits on every CommonMark line ending
+ * (`\n`, `\r`, `\r\n`) so a bare-CR line stays inside the blockquote.
  *
  * @param rows - Admitted guidance rows carrying bodies.
  * @returns Markdown block, or empty string when no rows.
@@ -230,10 +247,10 @@ export function formatGuidanceNotes(rows: NoteFeedRow[]): string {
   if (rows.length === 0) return "";
   const blocks = rows.map((row) => {
     const body = row.body
-      .split("\n")
+      .split(/\r\n?|\n/)
       .map((line) => `> ${line}`)
       .join("\n");
-    return `### \`${row.noteRef}\` ${row.title}\n${body}`;
+    return `### \`${row.noteRef}\` ${singleLine(row.title)}\n${body}`;
   });
   return [GUIDANCE_FRAMING, ...blocks].join("\n\n");
 }
@@ -251,8 +268,9 @@ function notePointerLine(
   note: { noteRef: string; type: string; title: string },
   summary: string,
 ): string {
-  let line = `- \`${note.noteRef}\` [${note.type}] ${note.title}`;
-  if (summary) line += ` — ${summary}`;
+  let line = `- \`${note.noteRef}\` [${note.type}] ${singleLine(note.title)}`;
+  const collapsed = singleLine(summary);
+  if (collapsed) line += ` — ${collapsed}`;
   return line;
 }
 

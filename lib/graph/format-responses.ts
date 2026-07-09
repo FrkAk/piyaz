@@ -3,11 +3,7 @@
  * Used by shared handlers so both web AI SDK and MCP get identical output.
  */
 
-import type {
-  McpSearchPage,
-  SearchResult,
-  TaskSlim,
-} from "@/lib/data/task";
+import type { McpSearchPage, SearchResult, TaskSlim } from "@/lib/data/task";
 import type { DetailedEdge } from "@/lib/data/edge";
 import type {
   Neighbor,

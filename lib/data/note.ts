@@ -1684,9 +1684,24 @@ function clampFeedBudget(budget?: FeedBudget): {
 }
 
 /**
+ * Count a string in Unicode codepoints, matching Postgres `char_length`
+ * and `LEFT`. String `.length` counts UTF-16 code units, so astral
+ * characters (emoji, some CJK) would over-count against the char budget
+ * and wrongly degrade an in-budget guidance body to a pointer.
+ *
+ * @param text - Any string.
+ * @returns Codepoint count.
+ */
+function charLen(text: string): number {
+  let count = 0;
+  for (const _ of text) count++;
+  return count;
+}
+
+/**
  * Apply the §7/§10 bundle budget to exposure-ordered feed rows: admit a
  * strict prefix while both the note cap and the running char budget
- * (per-row `title.length + summary.length + body.length`) hold; the
+ * (per-row codepoint count of `title + summary + body`) hold; the
  * first row failing either bound stops admission and remaining rows
  * degrade to pointers, capped at {@link FEED_POINTER_CAP} with
  * `truncated` flagging any drop. Pure; {@link resolveExposedNotes} and
@@ -1708,7 +1723,7 @@ export function applyFeedBudget(
   let cut = rows.length;
   for (let i = 0; i < rows.length; i++) {
     const rowChars =
-      rows[i].title.length + rows[i].summary.length + rows[i].body.length;
+      charLen(rows[i].title) + charLen(rows[i].summary) + charLen(rows[i].body);
     if (admitted.length >= maxNotes || runningChars + rowChars > maxChars) {
       cut = i;
       break;

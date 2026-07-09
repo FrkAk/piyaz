@@ -285,9 +285,6 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
       return props.blockedBy.length > 0;
     case "guidance":
     case "notes":
-      // The note feed resolves server-side per bundle; the detail panel
-      // loads no note data, so these sections surface only in the MD raw
-      // view, which fetches the real bundle.
       return false;
   }
 }

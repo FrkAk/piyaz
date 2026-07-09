@@ -54,11 +54,16 @@ export type NoteFeedRawRow = {
  * `rankCap` limits which rows ship a body (guidance rows within the
  * admission rank); `charBound` is the server-side `LEFT` bound, one char
  * past the char budget so an over-budget body arrives over-budget and
- * degrades to a pointer instead of rendering truncated.
+ * degrades to a pointer instead of rendering truncated; `budget` caps the
+ * cumulative body egress so a row only ships its body while the bodies of
+ * the guidance rows before it sum within `budget`. The row that first
+ * crosses `budget` still ships (its full length is what marks it
+ * over-budget to the decoder), every guidance row after it blanks.
  */
 export type NoteFeedBodyBound = {
   rankCap: number;
   charBound: number;
+  budget: number;
 };
 
 /**
@@ -116,8 +121,9 @@ function tagsArmSql(tags: string[]): SQL {
  *   callers pass the effective note cap.
  * @param limit - Row bound; callers pass note cap + pointer cap + 1
  *   (the sentinel row that disambiguates truncation).
- * @param bodies - When set, guidance rows within `rankCap` ship their
- *   body `LEFT`-bounded to `charBound` chars; omitted (slim callers,
+ * @param bodies - When set, guidance rows within `rankCap` whose
+ *   preceding guidance bodies sum within `budget` ship their body
+ *   `LEFT`-bounded to `charBound` chars; omitted (slim callers,
  *   standalone resolution) the query selects no body at all.
  * @returns SQL yielding {@link NoteFeedRawRow}s, most recently updated
  *   first (ties broken by id ascending).
@@ -134,6 +140,11 @@ export function notesFeedSql(
       CASE
         WHEN n.type = 'guidance'
           AND row_number() OVER (ORDER BY n.updated_at DESC, n.id ASC) <= ${bodies.rankCap}
+          AND COALESCE(
+            SUM(CASE WHEN n.type = 'guidance' THEN char_length(LEFT(n.body, ${bodies.charBound})) ELSE 0 END)
+              OVER (ORDER BY n.updated_at DESC, n.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+            0
+          ) <= ${bodies.budget}
         THEN LEFT(n.body, ${bodies.charBound}) ELSE ''
       END AS body,`
     : sql``;

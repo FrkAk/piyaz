@@ -182,7 +182,11 @@ const DEEP_FEED_DEPTHS: ReadonlySet<TaskFetchDepth> = new Set([
  */
 function bundleFeedStmt(db: ReadConn, task: TaskFull, depth: TaskFetchDepth) {
   const bodies: NoteFeedBodyBound | undefined = DEEP_FEED_DEPTHS.has(depth)
-    ? { rankCap: FEED_NOTE_CAP, charBound: FEED_CHAR_BUDGET + 1 }
+    ? {
+        rankCap: FEED_NOTE_CAP,
+        charBound: FEED_CHAR_BUDGET + 1,
+        budget: FEED_CHAR_BUDGET,
+      }
     : undefined;
   return notesFeedStmt(
     db,
@@ -373,7 +377,6 @@ function secondariesBatch(
  *
  * @param userId - Authenticated user id.
  * @param task - Resolved task row from the closure core.
- * @param taskId - UUID of the task.
  * @param deps - Active prerequisite ids.
  * @param downstream - Active dependent ids.
  * @param relatedEdges - Raw `relates_to` edge rows from the core batch.
@@ -386,7 +389,6 @@ function secondariesBatch(
 async function resolveClosureSecondaries(
   userId: string,
   task: TaskFull,
-  taskId: string,
   deps: { id: string }[],
   downstream: { id: string }[],
   relatedEdges: RelatedEdgeRows,
@@ -412,7 +414,7 @@ async function resolveClosureSecondaries(
       ...secondariesBatch(
         db,
         task.projectId,
-        taskId,
+        task.id,
         deps,
         downstream,
         relatedEdges,
@@ -424,7 +426,7 @@ async function resolveClosureSecondaries(
     mapDependencyTaskRows(depRows),
     mapTaskSummaryRows(summaryRows),
     mapEdgeNoteRows(tgtNotes),
-    assembleDetailedEdges(taskId, relatedEdges, relatedInfoRows),
+    assembleDetailedEdges(task.id, relatedEdges, relatedInfoRows),
     decodeFeedRows(feedRaw),
   ];
 }
@@ -459,7 +461,6 @@ export async function resolveDependencyClosure(
   );
   return finishClosure(
     userId,
-    taskId,
     decodeClosureCore(taskId, results),
     false,
     depth,
@@ -488,7 +489,6 @@ async function resolveClosureWithHeader(
   );
   const closure = await finishClosure(
     userId,
-    taskId,
     decodeClosureCore(taskId, results),
     false,
     depth,
@@ -502,7 +502,6 @@ async function resolveClosureWithHeader(
  * header-rendering closure resolvers.
  *
  * @param userId - Authenticated user id (RLS scope).
- * @param taskId - UUID of the task.
  * @param core - Decoded closure-core rows.
  * @param withDownstreamDescriptions - Whether downstream summaries select
  *   the `description` column.
@@ -511,7 +510,6 @@ async function resolveClosureWithHeader(
  */
 async function finishClosure(
   userId: string,
-  taskId: string,
   core: ClosureCore,
   withDownstreamDescriptions: boolean,
   depth: TaskFetchDepth,
@@ -521,7 +519,6 @@ async function finishClosure(
     await resolveClosureSecondaries(
       userId,
       core.task,
-      taskId,
       core.deps,
       core.downstream,
       relatedEdges,
@@ -759,7 +756,7 @@ export async function resolveRecordData(
     depth: number | string;
   }>(downRaw).map((r) => ({ id: r.id, depth: Number(r.depth) }));
   const [downstreamSummaries, downstreamEdgeNotes, feed] =
-    await resolveDownstreamSecondaries(userId, task, taskId, downstream);
+    await resolveDownstreamSecondaries(userId, task, downstream);
   return {
     task,
     project: toProjectHeader(headerRows[0] ?? null),
@@ -778,14 +775,12 @@ export async function resolveRecordData(
  *
  * @param userId - Authenticated user id (RLS scope).
  * @param task - Resolved record-depth task row.
- * @param taskId - UUID of the task.
  * @param downstream - Active dependent ids from the downstream walk.
  * @returns Downstream summaries, incoming notes, and the feed resolution.
  */
 async function resolveDownstreamSecondaries(
   userId: string,
   task: TaskFull,
-  taskId: string,
   downstream: { id: string }[],
 ): Promise<[DownstreamSummary[], Map<string, string>, NoteFeedResolution]> {
   if (downstream.length === 0) {
@@ -803,7 +798,7 @@ async function resolveDownstreamSecondaries(
         downstream.map((d) => d.id),
         false,
       ),
-      edgeNotesByTargetStmt(db, taskId),
+      edgeNotesByTargetStmt(db, task.id),
       bundleFeedStmt(db, task, "record"),
     ],
   );
@@ -850,7 +845,7 @@ export async function resolveAgentBundleData(
   if (!isTerminalStatus(core.task.status as string)) {
     return {
       kind: "agent",
-      data: await finishClosure(userId, taskId, core, false, "agent"),
+      data: await finishClosure(userId, core, false, "agent"),
     };
   }
   const [summaryRows, tgtNotes, headerRows, feedRaw] =
