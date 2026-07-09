@@ -6,7 +6,9 @@ import { appUserPool, superuserPool } from "@/tests/setup/global";
 import {
   applyFeedBudget,
   createNote,
+  decodeFeedRows,
   deleteNote,
+  feedFetchLimit,
   resolveExposedNotes,
   updateNote,
   FEED_CHAR_BUDGET,
@@ -65,8 +67,22 @@ function makeRow(i: number, summaryChars: number): NoteFeedRow {
     type: "guidance",
     folder: "",
     summary: "s".repeat(summaryChars),
+    body: "",
+    sequenceNumber: i,
+    noteRef: `PRJ-N${i}`,
     updatedAt: new Date(Date.now() - i * 1000),
   };
+}
+
+/**
+ * Build a synthetic guidance row whose char cost is dominated by `body`.
+ *
+ * @param i - Index folded into id/slug/title.
+ * @param bodyChars - Length of the generated body.
+ * @returns A guidance feed row with an empty summary.
+ */
+function makeBodyRow(i: number, bodyChars: number): NoteFeedRow {
+  return { ...makeRow(i, 0), body: "b".repeat(bodyChars) };
 }
 
 test("Notes spec (PYZ-264) §7 truth table: mode arms expose only matching tasks", async () => {
@@ -238,11 +254,170 @@ test("note cap: first 8 by updatedAt DESC admit, remainder degrade to pointers",
   for (const pointer of res.overflow) {
     expect(Object.keys(pointer).sort()).toEqual([
       "id",
+      "noteRef",
+      "sequenceNumber",
       "slug",
       "title",
       "type",
     ]);
   }
+});
+
+test("feed rows and overflow pointers carry composed note refs", async () => {
+  const f = await seedUserOrgProject("feedN");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+
+  for (let i = 0; i < FEED_NOTE_CAP + 2; i++) {
+    await seedTeamNote(ctx, f.projectId, `Doc ${i}`, { feedMode: "all" });
+  }
+
+  const res = await resolveExposedNotes(ctx, f.projectId, task);
+  expect(res.notes.length).toBe(FEED_NOTE_CAP);
+  for (const row of res.notes) {
+    expect(row.sequenceNumber).toBeGreaterThan(0);
+    expect(row.noteRef).toBe(`PRJfeedN-N${row.sequenceNumber}`);
+  }
+  expect(res.overflow.length).toBe(2);
+  for (const pointer of res.overflow) {
+    expect(pointer.noteRef).toBe(`PRJfeedN-N${pointer.sequenceNumber}`);
+  }
+});
+
+test("bodies variant ships guidance bodies only, slim ships none", async () => {
+  const f = await seedUserOrgProject("feedG");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Ref",
+    visibility: "team",
+    type: "reference",
+    body: "reference-body-payload",
+    feedMode: "all",
+  });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Guide",
+    visibility: "team",
+    type: "guidance",
+    body: "guidance-body-payload",
+    feedMode: "all",
+  });
+
+  const pool = appUserPool();
+  const q = new PgDialect().sqlToQuery(
+    notesFeedSql(f.projectId, task, FEED_NOTE_CAP, FEED_NOTE_CAP + 1, {
+      rankCap: FEED_NOTE_CAP,
+      charBound: FEED_CHAR_BUDGET + 1,
+      budget: FEED_CHAR_BUDGET,
+    }),
+  );
+  const deep = await pool.begin(async (tx) => {
+    await tx`SELECT set_config('app.user_id', ${f.userId}, true)`;
+    return tx.unsafe(q.sql, q.params as string[]);
+  });
+  const byTitle = new Map(deep.map((r) => [r.title, r]));
+  expect(byTitle.get("Guide")?.body).toBe("guidance-body-payload");
+  expect(byTitle.get("Ref")?.body).toBe("");
+
+  const slim = await resolveExposedNotes(ctx, f.projectId, task);
+  expect(slim.notes.every((n) => n.body === "")).toBe(true);
+});
+
+test("running-sum egress bound: an over-budget guidance body blanks later bodies", async () => {
+  const f = await seedUserOrgProject("feedEgress");
+  const ctx = makeAuthContext(f.userId);
+  const task: FeedTask = { id: crypto.randomUUID(), category: null, tags: [] };
+
+  // "Small" is created first (older), "Huge" second (newer). Exposure order
+  // is updated_at DESC, so Huge ranks first and its LEFT-bounded body alone
+  // exhausts the budget, blanking Small's body server-side.
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Small",
+    visibility: "team",
+    type: "guidance",
+    body: "small-guidance-body",
+    feedMode: "all",
+  });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Huge",
+    visibility: "team",
+    type: "guidance",
+    body: "word ".repeat((FEED_CHAR_BUDGET + 500) / 5),
+    feedMode: "all",
+  });
+
+  const q = new PgDialect().sqlToQuery(
+    notesFeedSql(f.projectId, task, FEED_NOTE_CAP, FEED_NOTE_CAP + 1, {
+      rankCap: FEED_NOTE_CAP,
+      charBound: FEED_CHAR_BUDGET + 1,
+      budget: FEED_CHAR_BUDGET,
+    }),
+  );
+  const rows = await appUserPool().begin(async (tx) => {
+    await tx`SELECT set_config('app.user_id', ${f.userId}, true)`;
+    return tx.unsafe(q.sql, q.params as string[]);
+  });
+  const byTitle = new Map(rows.map((r) => [r.title, r]));
+  expect(byTitle.get("Huge")?.body.length).toBe(FEED_CHAR_BUDGET + 1);
+  expect(byTitle.get("Small")?.body).toBe("");
+
+  // The resolver degrades the over-budget Huge body to a pointer, and Small
+  // never had a body to render, so no guidance renders full-body.
+  const res = await resolveExposedNotes(ctx, f.projectId, task, undefined);
+  const huge = res.notes.find((n) => n.title === "Huge");
+  expect(huge?.body ?? "").toBe("");
+});
+
+test("budget counts codepoints, not UTF-16 units, for astral bodies", () => {
+  const emoji = "😀"; // 1 codepoint, 2 UTF-16 units
+  const withinBudget = makeBodyRow(1, 0);
+  withinBudget.body = emoji.repeat(FEED_CHAR_BUDGET - 10);
+  const res = applyFeedBudget([withinBudget], { maxChars: FEED_CHAR_BUDGET });
+  expect(res.notes.length).toBe(1);
+  expect(res.notes[0].body).toBe(withinBudget.body);
+});
+
+test("applyFeedBudget counts body chars toward the char budget", () => {
+  const over = applyFeedBudget(
+    [makeBodyRow(1, FEED_CHAR_BUDGET + 1), makeBodyRow(2, 10)],
+    { maxChars: FEED_CHAR_BUDGET },
+  );
+  expect(over.notes).toEqual([]);
+  expect(over.overflow.length).toBe(2);
+
+  const fits = applyFeedBudget([makeBodyRow(1, 100), makeRow(2, 100)], {
+    maxChars: 300,
+  });
+  expect(fits.notes.length).toBe(2);
+});
+
+test("decodeFeedRows enforces the sentinel fetch bound", () => {
+  const raw = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+      slug: `raw-${i}`,
+      title: `T${i}`,
+      type: "guidance",
+      folder: "",
+      summary: "",
+      sequence_number: i + 1,
+      identifier: "PRJ",
+      updated_at: "2026-07-09T00:00:00.000Z",
+    }));
+
+  const limit = feedFetchLimit();
+  const truncated = decodeFeedRows(raw(limit + 1));
+  expect(truncated.truncated).toBe(true);
+  expect(truncated.notes.length + truncated.overflow.length).toBe(limit);
+
+  const exact = decodeFeedRows(raw(limit));
+  expect(exact.truncated).toBe(false);
+  expect(exact.notes[0].noteRef).toBe("PRJ-N1");
 });
 
 test("applyFeedBudget: strict prefix semantics on the char budget", () => {

@@ -255,6 +255,27 @@ test("getProjectMaxUpdatedAt returns the latest updated_at across project + task
   }
 });
 
+test("getProjectMaxUpdatedAt folds notes in only when includeNotes is set", async () => {
+  const f = await seedUserOrgProject("maxnotes");
+  const ctx = makeAuthContext(f.userId);
+
+  const sqlc = superuserPool();
+  try {
+    const future = new Date(Date.now() + 7200_000);
+    await sqlc`
+      INSERT INTO notes ("project_id", "title", "slug", "visibility", "updated_at")
+      VALUES (${f.projectId}, 'Fresh note', 'fresh-note', 'team', ${future})
+    `;
+    const withoutNotes = await getProjectMaxUpdatedAt(ctx, f.projectId);
+    expect(withoutNotes.getTime()).toBeLessThan(future.getTime() - 1000);
+
+    const withNotes = await getProjectMaxUpdatedAt(ctx, f.projectId, true);
+    expect(withNotes.getTime()).toBeGreaterThanOrEqual(future.getTime() - 1000);
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
+});
+
 test("getProjectListMaxUpdatedAt returns the latest updated_at across the caller's accessible scope", async () => {
   // RLS scopes the row sets; the helper aggregates MAX(updated_at) with
   // no piyaz_auth join (app_user has no grant there).

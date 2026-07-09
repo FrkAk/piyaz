@@ -82,8 +82,9 @@ type DepthProjection = {
 /**
  * The exact column set each depth's formatter reads. `files` is omitted at
  * every depth (no formatter reads it — bundles point at the PR diff instead
- * of recorded file lists). `category` is selected at every depth: each
- * bundle header renders it. `implementationPlan` is true for `summary`
+ * of recorded file lists). `category` and `tags` are selected at every
+ * depth: each bundle header renders the category, and the note-feed match
+ * (PYZ-253) keys on both. `implementationPlan` is true for `summary`
  * because `buildSummaryContext` reads its presence (`hasImplementationPlan`)
  * even though it never renders the plan text; `agent` selects it
  * `"active-only"` because terminal tasks dispatch to the record bundle,
@@ -103,7 +104,7 @@ type DepthProjection = {
  */
 export const DEPTH_PROJECTIONS: Record<TaskFetchDepth, DepthProjection> = {
   summary: {
-    tags: false,
+    tags: true,
     category: true,
     implementationPlan: true,
     executionRecord: false,

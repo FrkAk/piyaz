@@ -3,6 +3,7 @@ import "server-only";
 import type { EdgeType, Priority, Estimate } from "@/lib/types";
 import type { TaskLinkRef } from "@/lib/data/views";
 import type { AuthContext } from "@/lib/auth/context";
+import type { NoteFeedResolution } from "@/lib/data/note";
 import { resolveSummaryData } from "@/lib/context/_core/bundle";
 
 /** Detailed edge information for summary context. */
@@ -36,6 +37,7 @@ export type SummaryContext = {
   assigneeCount: number;
   hasImplementationPlan: boolean;
   links: TaskLinkRef[];
+  feed: NoteFeedResolution;
 };
 
 /**
@@ -48,7 +50,7 @@ export async function buildSummaryContext(
   ctx: AuthContext,
   taskId: string,
 ): Promise<SummaryContext> {
-  const { task, detailedEdges, project } = await resolveSummaryData(
+  const { task, detailedEdges, project, feed } = await resolveSummaryData(
     ctx.userId,
     taskId,
   );
@@ -94,6 +96,7 @@ export async function buildSummaryContext(
     assigneeCount: task.assignees.length,
     hasImplementationPlan: !!task.implementationPlan,
     links,
+    feed,
   };
 }
 

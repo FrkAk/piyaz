@@ -287,22 +287,27 @@ export async function getProjectChrome(
 }
 
 /**
- * Latest `updated_at` across the project, its tasks, and its edges. Used
- * by the conditional-GET path on the workspace graph endpoint to short-
- * circuit the heavy slim-graph read on a 304 response.
+ * Latest `updated_at` across the project, its tasks, and its edges (and
+ * its notes when `includeNotes` is set). Used by the conditional-GET path
+ * on the workspace graph and context-bundle endpoints to short-circuit the
+ * heavy read on a 304 response. The context route sets `includeNotes` so a
+ * note edit invalidates the bundles that now embed note content; the graph
+ * route leaves it off.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
+ * @param includeNotes - Fold `notes.updated_at` into the validator.
  * @returns The latest timestamp.
  * @throws ForbiddenError on missing or cross-team project.
  */
 export async function getProjectMaxUpdatedAt(
   ctx: AuthContext,
   projectId: string,
+  includeNotes = false,
 ): Promise<Date> {
   return withUserContext(ctx.userId, async (tx) => {
     await assertProjectAccessTx(tx, projectId);
-    const max = await getProjectMaxUpdatedAtRaw(tx, projectId);
+    const max = await getProjectMaxUpdatedAtRaw(tx, projectId, includeNotes);
     if (!max) {
       throw new Error(
         `getProjectMaxUpdatedAt: project ${projectId} disappeared after access check`,

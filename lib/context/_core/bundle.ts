@@ -27,6 +27,14 @@ import {
 import { assertValidTaskId } from "@/lib/auth/authorization";
 import { withUserContextRead, type ReadConn } from "@/lib/db/rls";
 import { normalizeExecuteResult } from "@/lib/db/raw";
+import {
+  decodeFeedRows,
+  feedFetchLimit,
+  FEED_CHAR_BUDGET,
+  FEED_NOTE_CAP,
+  type NoteFeedResolution,
+} from "@/lib/data/note";
+import { notesFeedStmt, type NoteFeedBodyBound } from "@/lib/db/raw/notes-feed";
 import type { ReadResults } from "@/lib/db/read-guard";
 import { effectiveDepChainStmt } from "@/lib/db/raw/fetch-effective-dep-chain";
 import { effectiveDownstreamStmt } from "@/lib/db/raw/fetch-effective-downstream";
@@ -93,6 +101,8 @@ export type DependencyClosureData = {
   downstreamSummaries: DownstreamSummary[];
   /** 1-hop `relates_to` edges with connected-task detail (non-blocking). */
   related: DetailedEdge[];
+  /** Notes the feed exposes for this task, budgeted (PYZ-253). */
+  feed: NoteFeedResolution;
 };
 
 /** Exactly what {@link buildAgentContextFrom} reads. */
@@ -128,6 +138,8 @@ export type RecordContextData = {
   downstreamSummaries: DownstreamSummary[];
   /** Incoming depends_on edge notes, keyed by dependent id. */
   downstreamEdgeNotes: Map<string, string>;
+  /** Notes the feed exposes for this task, budgeted (PYZ-253). */
+  feed: NoteFeedResolution;
 };
 
 /** Exactly what {@link buildWorkingContextFrom} reads. */
@@ -138,7 +150,53 @@ export type WorkingContextData = {
   detailedEdges: DetailedEdge[];
   /** Ancestor chain (always the parent project). */
   ancestors: Ancestor[];
+  /** Notes the feed exposes for this task, budgeted (PYZ-253). */
+  feed: NoteFeedResolution;
 };
+
+/**
+ * Depths whose bundles render guidance full-body. Slim depths ship no
+ * bodies at all: the feed query selects no body column for them.
+ */
+const DEEP_FEED_DEPTHS: ReadonlySet<TaskFetchDepth> = new Set([
+  "agent",
+  "planning",
+  "review",
+]);
+
+/**
+ * Build the note-feed statement for a resolved task row, keyed on the
+ * bundle depth: deep depths ship guidance bodies LEFT-bounded one char
+ * past the char budget (an over-budget body arrives over-budget and
+ * degrades to a pointer instead of rendering truncated); slim depths
+ * select no body. The task row's category/tags/id bind as parameters,
+ * so the statement rides each resolver's SECOND batch (PYZ-253 fold
+ * decision). That batch follows a first batch whose task-row fetch
+ * already asserted task (hence project) access under RLS, so no
+ * project-access gate re-runs on this path.
+ *
+ * @param db - Read statement-building handle.
+ * @param task - Resolved task row from the first batch.
+ * @param depth - Bundle depth deciding body egress.
+ * @returns Lazy feed statement decoded by {@link decodeFeedRows}.
+ */
+function bundleFeedStmt(db: ReadConn, task: TaskFull, depth: TaskFetchDepth) {
+  const bodies: NoteFeedBodyBound | undefined = DEEP_FEED_DEPTHS.has(depth)
+    ? {
+        rankCap: FEED_NOTE_CAP,
+        charBound: FEED_CHAR_BUDGET + 1,
+        budget: FEED_CHAR_BUDGET,
+      }
+    : undefined;
+  return notesFeedStmt(
+    db,
+    task.projectId,
+    { id: task.id, category: task.category ?? null, tags: task.tags ?? [] },
+    FEED_NOTE_CAP,
+    feedFetchLimit() + 1,
+    bodies,
+  );
+}
 
 /** Header row produced by `projectHeaderByTaskStmt`. */
 type HeaderRow = ProjectHeader & { id: string };
@@ -312,57 +370,64 @@ function secondariesBatch(
 
 /**
  * Fetch the closure secondaries (dependency-task summaries, downstream
- * summaries, incoming edge notes, and related-task detail) in one read
- * batch, skipped entirely when the closure and the `relates_to` set are
- * both empty.
+ * summaries, incoming edge notes, and related-task detail) plus the note
+ * feed in one read batch. When the closure and the `relates_to` set are
+ * both empty the feed runs as the sole statement, so the resolver stays
+ * at two round trips and never adds a third.
  *
  * @param userId - Authenticated user id.
- * @param projectId - UUID of the task's project (from the closure task row).
- * @param taskId - UUID of the task.
+ * @param task - Resolved task row from the closure core.
  * @param deps - Active prerequisite ids.
  * @param downstream - Active dependent ids.
  * @param relatedEdges - Raw `relates_to` edge rows from the core batch.
  * @param withDownstreamDescriptions - Whether downstream summaries select
  *   the `description` column.
- * @returns Dep-task summaries, downstream summaries, incoming notes, and
- *   assembled `relates_to` detailed edges.
+ * @param depth - Bundle depth deciding feed body egress.
+ * @returns Dep-task summaries, downstream summaries, incoming notes,
+ *   assembled `relates_to` detailed edges, and the feed resolution.
  */
 async function resolveClosureSecondaries(
   userId: string,
-  projectId: string,
-  taskId: string,
+  task: TaskFull,
   deps: { id: string }[],
   downstream: { id: string }[],
   relatedEdges: RelatedEdgeRows,
   withDownstreamDescriptions: boolean,
+  depth: TaskFetchDepth,
 ): Promise<
   [
     DependencyTaskInfo[],
     DownstreamSummary[],
     Map<string, string>,
     DetailedEdge[],
+    NoteFeedResolution,
   ]
 > {
   if (!closureHasSecondaries(deps, downstream, relatedEdges)) {
-    return [[], [], new Map(), []];
+    const [feedRaw] = await withUserContextRead(userId, (db) => [
+      bundleFeedStmt(db, task, depth),
+    ]);
+    return [[], [], new Map(), [], decodeFeedRows(feedRaw)];
   }
-  const [depRows, summaryRows, tgtNotes, relatedInfoRows] =
-    await withUserContextRead(userId, (db) =>
-      secondariesBatch(
+  const [depRows, summaryRows, tgtNotes, relatedInfoRows, feedRaw] =
+    await withUserContextRead(userId, (db) => [
+      ...secondariesBatch(
         db,
-        projectId,
-        taskId,
+        task.projectId,
+        task.id,
         deps,
         downstream,
         relatedEdges,
         withDownstreamDescriptions,
       ),
-    );
+      bundleFeedStmt(db, task, depth),
+    ]);
   return [
     mapDependencyTaskRows(depRows),
     mapTaskSummaryRows(summaryRows),
     mapEdgeNoteRows(tgtNotes),
-    assembleDetailedEdges(taskId, relatedEdges, relatedInfoRows),
+    assembleDetailedEdges(task.id, relatedEdges, relatedInfoRows),
+    decodeFeedRows(feedRaw),
   ];
 }
 
@@ -396,9 +461,9 @@ export async function resolveDependencyClosure(
   );
   return finishClosure(
     userId,
-    taskId,
     decodeClosureCore(taskId, results),
     false,
+    depth,
   );
 }
 
@@ -424,9 +489,9 @@ async function resolveClosureWithHeader(
   );
   const closure = await finishClosure(
     userId,
-    taskId,
     decodeClosureCore(taskId, results),
     false,
+    depth,
   );
   return { closure, header: results[5][0] ?? null };
 }
@@ -437,28 +502,28 @@ async function resolveClosureWithHeader(
  * header-rendering closure resolvers.
  *
  * @param userId - Authenticated user id (RLS scope).
- * @param taskId - UUID of the task.
  * @param core - Decoded closure-core rows.
  * @param withDownstreamDescriptions - Whether downstream summaries select
  *   the `description` column.
+ * @param depth - Bundle depth deciding feed body egress.
  * @returns The resolved closure.
  */
 async function finishClosure(
   userId: string,
-  taskId: string,
   core: ClosureCore,
   withDownstreamDescriptions: boolean,
+  depth: TaskFetchDepth,
 ): Promise<DependencyClosureData> {
   const { relatedEdges, ...coreData } = core;
-  const [depTasks, downstreamSummaries, downstreamEdgeNotes, related] =
+  const [depTasks, downstreamSummaries, downstreamEdgeNotes, related, feed] =
     await resolveClosureSecondaries(
       userId,
-      core.task.projectId,
-      taskId,
+      core.task,
       core.deps,
       core.downstream,
       relatedEdges,
       withDownstreamDescriptions,
+      depth,
     );
   return {
     ...coreData,
@@ -466,6 +531,7 @@ async function finishClosure(
     downstreamEdgeNotes,
     downstreamSummaries,
     related,
+    feed,
   };
 }
 
@@ -493,19 +559,26 @@ export async function resolvePlanningData(
   const core = decodeClosureCore(taskId, results);
   const { relatedEdges, ...coreData } = core;
   const header = results[5][0] ?? null;
-  const [depRows, summaryRows, tgtNotes, relatedInfoRows, cancelledRows] =
-    await withUserContextRead(userId, (db) => [
-      ...secondariesBatch(
-        db,
-        core.task.projectId,
-        taskId,
-        core.deps,
-        core.downstream,
-        relatedEdges,
-        true,
-      ),
-      cancelledDepRecordsStmt(db, core.task.projectId, taskId),
-    ]);
+  const [
+    depRows,
+    summaryRows,
+    tgtNotes,
+    relatedInfoRows,
+    cancelledRows,
+    feedRaw,
+  ] = await withUserContextRead(userId, (db) => [
+    ...secondariesBatch(
+      db,
+      core.task.projectId,
+      taskId,
+      core.deps,
+      core.downstream,
+      relatedEdges,
+      true,
+    ),
+    cancelledDepRecordsStmt(db, core.task.projectId, taskId),
+    bundleFeedStmt(db, core.task, "planning"),
+  ]);
   return {
     ...coreData,
     depTasks: mapDependencyTaskRows(depRows),
@@ -514,6 +587,7 @@ export async function resolvePlanningData(
     related: assembleDetailedEdges(taskId, relatedEdges, relatedInfoRows),
     abandonedDeps: mapDependencyTaskRows(cancelledRows),
     project: toProjectHeader(header),
+    feed: decodeFeedRows(feedRaw),
   };
 }
 
@@ -537,6 +611,7 @@ async function resolveTaskEdgesHeader(
 ): Promise<{
   task: TaskFull;
   detailedEdges: DetailedEdge[];
+  feed: NoteFeedResolution;
   header: HeaderRow | null;
 }> {
   assertValidTaskId(taskId);
@@ -554,8 +629,14 @@ async function resolveTaskEdgesHeader(
     normalizeExecuteResult<TaskFullRawRow>(taskRaw),
     taskId,
   );
-  const detailedEdges = await resolveDetailedEdges(userId, taskId, edges);
-  return { task, detailedEdges, header: headerRows[0] ?? null };
+  const { detailedEdges, feed } = await resolveEdgesAndFeed(
+    userId,
+    taskId,
+    task,
+    edges,
+    depth,
+  );
+  return { task, detailedEdges, feed, header: headerRows[0] ?? null };
 }
 
 /**
@@ -572,12 +653,12 @@ export async function resolveWorkingData(
   userId: string,
   taskId: string,
 ): Promise<WorkingContextData> {
-  const { task, detailedEdges, header } = await resolveTaskEdgesHeader(
+  const { task, detailedEdges, feed, header } = await resolveTaskEdgesHeader(
     userId,
     taskId,
     "working",
   );
-  return { task, detailedEdges, ancestors: toAncestors(header) };
+  return { task, detailedEdges, ancestors: toAncestors(header), feed };
 }
 
 /** Exactly what `buildSummaryContext` reads. */
@@ -588,6 +669,8 @@ export type SummaryContextData = {
   detailedEdges: DetailedEdge[];
   /** Parent project header, or null when the project is unjoinable. */
   project: ProjectHeader | null;
+  /** Notes the feed exposes for this task, budgeted (PYZ-253). */
+  feed: NoteFeedResolution;
 };
 
 /**
@@ -604,12 +687,12 @@ export async function resolveSummaryData(
   userId: string,
   taskId: string,
 ): Promise<SummaryContextData> {
-  const { task, detailedEdges, header } = await resolveTaskEdgesHeader(
+  const { task, detailedEdges, feed, header } = await resolveTaskEdgesHeader(
     userId,
     taskId,
     "summary",
   );
-  return { task, detailedEdges, project: toProjectHeader(header) };
+  return { task, detailedEdges, project: toProjectHeader(header), feed };
 }
 
 /**
@@ -672,49 +755,58 @@ export async function resolveRecordData(
     id: string;
     depth: number | string;
   }>(downRaw).map((r) => ({ id: r.id, depth: Number(r.depth) }));
-  const [downstreamSummaries, downstreamEdgeNotes] =
-    await resolveDownstreamSecondaries(
-      userId,
-      task.projectId,
-      taskId,
-      downstream,
-    );
+  const [downstreamSummaries, downstreamEdgeNotes, feed] =
+    await resolveDownstreamSecondaries(userId, task, downstream);
   return {
     task,
     project: toProjectHeader(headerRows[0] ?? null),
     downstream,
     downstreamSummaries,
     downstreamEdgeNotes,
+    feed,
   };
 }
 
 /**
- * Fetch downstream summaries (no descriptions) and incoming edge notes in
- * one read batch, skipped entirely when the downstream walk is empty.
+ * Fetch downstream summaries (no descriptions), incoming edge notes, and
+ * the note feed in one read batch. When the downstream walk is empty the
+ * feed runs as the sole statement, keeping the record path at two round
+ * trips.
  *
  * @param userId - Authenticated user id (RLS scope).
- * @param projectId - UUID of the task's project.
- * @param taskId - UUID of the task.
+ * @param task - Resolved record-depth task row.
  * @param downstream - Active dependent ids from the downstream walk.
- * @returns Downstream summaries and incoming notes.
+ * @returns Downstream summaries, incoming notes, and the feed resolution.
  */
 async function resolveDownstreamSecondaries(
   userId: string,
-  projectId: string,
-  taskId: string,
+  task: TaskFull,
   downstream: { id: string }[],
-): Promise<[DownstreamSummary[], Map<string, string>]> {
-  if (downstream.length === 0) return [[], new Map()];
-  const [summaryRows, tgtNotes] = await withUserContextRead(userId, (db) => [
-    taskSummariesStmt(
-      db,
-      projectId,
-      downstream.map((d) => d.id),
-      false,
-    ),
-    edgeNotesByTargetStmt(db, taskId),
-  ]);
-  return [mapTaskSummaryRows(summaryRows), mapEdgeNoteRows(tgtNotes)];
+): Promise<[DownstreamSummary[], Map<string, string>, NoteFeedResolution]> {
+  if (downstream.length === 0) {
+    const [feedRaw] = await withUserContextRead(userId, (db) => [
+      bundleFeedStmt(db, task, "record"),
+    ]);
+    return [[], new Map(), decodeFeedRows(feedRaw)];
+  }
+  const [summaryRows, tgtNotes, feedRaw] = await withUserContextRead(
+    userId,
+    (db) => [
+      taskSummariesStmt(
+        db,
+        task.projectId,
+        downstream.map((d) => d.id),
+        false,
+      ),
+      edgeNotesByTargetStmt(db, task.id),
+      bundleFeedStmt(db, task, "record"),
+    ],
+  );
+  return [
+    mapTaskSummaryRows(summaryRows),
+    mapEdgeNoteRows(tgtNotes),
+    decodeFeedRows(feedRaw),
+  ];
 }
 
 /** Discriminated resolver output for the MCP `agent` depth. */
@@ -753,12 +845,11 @@ export async function resolveAgentBundleData(
   if (!isTerminalStatus(core.task.status as string)) {
     return {
       kind: "agent",
-      data: await finishClosure(userId, taskId, core, false),
+      data: await finishClosure(userId, core, false, "agent"),
     };
   }
-  const [summaryRows, tgtNotes, headerRows] = await withUserContextRead(
-    userId,
-    (db) => [
+  const [summaryRows, tgtNotes, headerRows, feedRaw] =
+    await withUserContextRead(userId, (db) => [
       taskSummariesStmt(
         db,
         core.task.projectId,
@@ -767,8 +858,8 @@ export async function resolveAgentBundleData(
       ),
       edgeNotesByTargetStmt(db, taskId),
       projectHeaderByTaskStmt(db, taskId, true),
-    ],
-  );
+      bundleFeedStmt(db, core.task, "record"),
+    ]);
   return {
     kind: "record",
     data: {
@@ -777,6 +868,7 @@ export async function resolveAgentBundleData(
       downstream: core.downstream,
       downstreamSummaries: mapTaskSummaryRows(summaryRows),
       downstreamEdgeNotes: mapEdgeNoteRows(tgtNotes),
+      feed: decodeFeedRows(feedRaw),
     },
   };
 }
@@ -810,23 +902,38 @@ function toAncestors(header: HeaderRow | null): Ancestor[] {
 }
 
 /**
- * Fetch connected-task detail for a task's edges in one follow-up batch and
- * assemble the {@link DetailedEdge} projection. No edges, no batch.
+ * Fetch connected-task detail for a task's edges plus the note feed in one
+ * follow-up batch and assemble the {@link DetailedEdge} projection. For an
+ * isolated task the feed runs as the sole statement, keeping the working
+ * and summary paths at two round trips.
  *
  * @param userId - Authenticated user id (RLS scope).
  * @param taskId - UUID of the anchor task.
+ * @param task - Resolved task row from the first batch.
  * @param edges - Edge rows from the first batch.
- * @returns Detailed edges (empty for an isolated task).
+ * @param depth - Bundle depth deciding feed body egress.
+ * @returns Detailed edges (empty for an isolated task) and the feed.
  */
-async function resolveDetailedEdges(
+async function resolveEdgesAndFeed(
   userId: string,
   taskId: string,
+  task: TaskFull,
   edges: Parameters<typeof assembleDetailedEdges>[1],
-): Promise<DetailedEdge[]> {
-  if (edges.length === 0) return [];
+  depth: TaskFetchDepth,
+): Promise<{ detailedEdges: DetailedEdge[]; feed: NoteFeedResolution }> {
+  if (edges.length === 0) {
+    const [feedRaw] = await withUserContextRead(userId, (db) => [
+      bundleFeedStmt(db, task, depth),
+    ]);
+    return { detailedEdges: [], feed: decodeFeedRows(feedRaw) };
+  }
   const ids = connectedTaskIds(taskId, edges);
-  const [connectedRows] = await withUserContextRead(userId, (db) => [
+  const [connectedRows, feedRaw] = await withUserContextRead(userId, (db) => [
     connectedTaskInfoStmt(db, ids),
+    bundleFeedStmt(db, task, depth),
   ]);
-  return assembleDetailedEdges(taskId, edges, connectedRows);
+  return {
+    detailedEdges: assembleDetailedEdges(taskId, edges, connectedRows),
+    feed: decodeFeedRows(feedRaw),
+  };
 }

@@ -1,6 +1,8 @@
 import "server-only";
 
 import {
+  buildGuidancePart,
+  buildNotesPart,
   capLines,
   MAX_BUNDLE_RECORD_BLOCKS,
   section,
@@ -100,6 +102,9 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
       markdown: section("Project Context") + "\n" + projectLines.join("\n"),
     });
   }
+
+  const guidancePart = buildGuidancePart(data.feed);
+  if (guidancePart) parts.push(guidancePart);
 
   parts.push({
     id: "spec",
@@ -233,6 +238,9 @@ export function buildReviewContextParts(data: ReviewContextData): BundlePart[] {
       });
     }
   }
+
+  const notesPart = buildNotesPart(data.feed, { guidanceAsPointers: false });
+  if (notesPart) parts.push(notesPart);
 
   parts.push({
     id: "lens",
