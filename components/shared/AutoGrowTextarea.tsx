@@ -17,13 +17,19 @@ const DEFAULT_MAX_HEIGHT_PX = 256;
  */
 export function AutoGrowTextarea({ onInput, ...rest }: AutoGrowTextareaProps) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
+  const maxHeightRef = useRef<number | null>(null);
 
   const resize = () => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    const cssMax = parseFloat(getComputedStyle(el).maxHeight);
-    const cap = Number.isFinite(cssMax) ? cssMax : DEFAULT_MAX_HEIGHT_PX;
+    if (maxHeightRef.current === null) {
+      const cssMax = parseFloat(getComputedStyle(el).maxHeight);
+      maxHeightRef.current = Number.isFinite(cssMax)
+        ? cssMax
+        : DEFAULT_MAX_HEIGHT_PX;
+    }
+    const cap = maxHeightRef.current;
     const target = Math.min(el.scrollHeight, cap);
     el.style.height = `${target}px`;
     el.style.overflowY = el.scrollHeight > target ? "auto" : "hidden";
