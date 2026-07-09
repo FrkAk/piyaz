@@ -1087,7 +1087,9 @@ export function TreePane({
           >
             <IconPlus
               size={13}
-              className={createPending ? "animate-pulse" : undefined}
+              className={
+                createPending ? "motion-safe:animate-pulse" : undefined
+              }
             />
           </button>
           {onCollapse !== undefined && (
@@ -1189,7 +1191,10 @@ export function TreePane({
         </p>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <motion.div
+        layoutScroll
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+      >
         {searching ? (
           search.isError ? (
             <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
@@ -1277,7 +1282,7 @@ export function TreePane({
             ))}
           </>
         )}
-      </div>
+      </motion.div>
       <ConfirmDialog
         open={pendingFolderDelete !== null}
         title="Delete folder?"

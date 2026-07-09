@@ -328,9 +328,11 @@ export function useUpdateNote(projectId: string) {
 }
 
 /**
- * Optimistic note move: patches the cached tree row's folder up front,
- * folds the summary into the tree and detail caches on success (no list
- * refetch), restores on any failure, returned or thrown.
+ * Optimistic note move: cancels in-flight list refetches (a stale
+ * response landing after success would resurrect the old folder with no
+ * reconciling invalidation), patches the cached tree row's folder up
+ * front, folds the summary into the tree and detail caches on success
+ * (no list refetch), restores on any failure, returned or thrown.
  *
  * @param projectId - Owning project id.
  * @returns Mutation taking `{ noteId, folder }`.
@@ -343,6 +345,7 @@ export function useMoveNote(projectId: string) {
       folder: string;
     }): Promise<NoteActionResult<NoteSummary>> => {
       const listKey = noteKeys.list(projectId);
+      await qc.cancelQueries({ queryKey: listKey });
       const prevList = qc.getQueryData<NoteTreeRow[]>(listKey);
       qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
         patchNoteInTree(rows, vars.noteId, { folder: vars.folder }),
