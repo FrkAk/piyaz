@@ -34,6 +34,7 @@ import {
   markNoteDirty,
   mergeLinksIntoDetail,
   mergeSummaryIntoDetail,
+  moveFolderInTree,
   patchNoteInTree,
   removeNoteFromTree,
   revertPatchInTree,
@@ -327,9 +328,11 @@ export function useUpdateNote(projectId: string) {
 }
 
 /**
- * Optimistic note move: patches the cached tree row's folder up front,
- * folds the summary into the detail cache on success, restores on any
- * failure, returned or thrown.
+ * Optimistic note move: cancels in-flight list refetches (a stale
+ * response landing after success would resurrect the old folder with no
+ * reconciling invalidation), patches the cached tree row's folder up
+ * front, folds the summary into the tree and detail caches on success
+ * (no list refetch), restores on any failure, returned or thrown.
  *
  * @param projectId - Owning project id.
  * @returns Mutation taking `{ noteId, folder }`.
@@ -342,6 +345,7 @@ export function useMoveNote(projectId: string) {
       folder: string;
     }): Promise<NoteActionResult<NoteSummary>> => {
       const listKey = noteKeys.list(projectId);
+      await qc.cancelQueries({ queryKey: listKey });
       const prevList = qc.getQueryData<NoteTreeRow[]>(listKey);
       qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
         patchNoteInTree(rows, vars.noteId, { folder: vars.folder }),
@@ -354,11 +358,18 @@ export function useMoveNote(projectId: string) {
         throw err;
       }
       if (result.ok) {
+        qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
+          patchNoteInTree(rows, vars.noteId, {
+            folder: result.data.folder,
+            slug: result.data.slug,
+            title: result.data.title,
+            updatedAt: result.data.updatedAt,
+          }),
+        );
         qc.setQueryData<NoteFullResult>(
           noteKeys.detail(projectId, vars.noteId),
           (detail) => mergeSummaryIntoDetail(detail, result.data),
         );
-        qc.invalidateQueries({ queryKey: listKey });
       } else if (prevList !== undefined) {
         qc.setQueryData(listKey, prevList);
       }
@@ -433,13 +444,15 @@ export function useRestoreNote(projectId: string) {
 }
 
 /**
- * Folder subtree re-parent (tree drag-and-drop and rename). No optimistic
- * surgery: the move touches an unbounded set of rows, so on success the
- * whole note prefix revalidates (tree, details, search, backlinks all
- * render folder paths; unchanged entries cost a bodiless 304).
+ * Optimistic folder subtree re-parent (tree drag-and-drop and rename):
+ * rewrites every cached tree row under the planned destination up front
+ * and restores the snapshot on any failure, returned or thrown. On
+ * success the whole note prefix still revalidates against the server's
+ * authoritative paths (tree, details, search, backlinks all render folder
+ * paths; unchanged entries cost a bodiless 304).
  *
  * @param projectId - Owning project id.
- * @returns Mutation taking `{ src, destParent, leaf? }`.
+ * @returns Mutation taking `{ src, destParent, leaf?, dest }`.
  */
 export function useMoveFolder(projectId: string) {
   const qc = useQueryClient();
@@ -448,15 +461,29 @@ export function useMoveFolder(projectId: string) {
       src: string;
       destParent: string;
       leaf?: string;
+      dest: string;
     }): Promise<NoteActionResult<{ dest: string; movedCount: number }>> => {
-      const result = await moveFolderAction(
-        projectId,
-        vars.src,
-        vars.destParent,
-        vars.leaf,
+      const listKey = noteKeys.list(projectId);
+      const prevList = qc.getQueryData<NoteTreeRow[]>(listKey);
+      qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
+        moveFolderInTree(rows, vars.src, vars.dest),
       );
+      let result: NoteActionResult<{ dest: string; movedCount: number }>;
+      try {
+        result = await moveFolderAction(
+          projectId,
+          vars.src,
+          vars.destParent,
+          vars.leaf,
+        );
+      } catch (err) {
+        if (prevList !== undefined) qc.setQueryData(listKey, prevList);
+        throw err;
+      }
       if (result.ok) {
         qc.invalidateQueries({ queryKey: noteKeys.all(projectId) });
+      } else if (prevList !== undefined) {
+        qc.setQueryData(listKey, prevList);
       }
       return result;
     },

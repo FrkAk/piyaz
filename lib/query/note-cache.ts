@@ -221,6 +221,33 @@ export function patchNoteInTree(
 }
 
 /**
+ * Rewrite the folder path of every cached row at or under a moved folder,
+ * the tree-list half of an optimistic folder move or rename.
+ *
+ * @param rows - Cached tree rows, or `undefined` when the list isn't cached.
+ * @param src - Source folder path.
+ * @param dest - Destination folder path.
+ * @returns New array with rewritten paths; the same reference when no row
+ *   lives under the source.
+ */
+export function moveFolderInTree(
+  rows: NoteTreeRow[] | undefined,
+  src: string,
+  dest: string,
+): NoteTreeRow[] | undefined {
+  if (!rows) return rows;
+  const prefix = `${src}/`;
+  if (!rows.some((r) => r.folder === src || r.folder.startsWith(prefix))) {
+    return rows;
+  }
+  return rows.map((r) =>
+    r.folder === src || r.folder.startsWith(prefix)
+      ? { ...r, folder: dest + r.folder.slice(src.length) }
+      : r,
+  );
+}
+
+/**
  * Drop a row from the cached tree list.
  *
  * @param rows - Cached tree rows, or `undefined` when the list isn't cached.
