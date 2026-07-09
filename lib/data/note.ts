@@ -62,6 +62,7 @@ import { escapeRegExp, extractNoteRefs } from "@/lib/data/note-parse";
 import {
   NOTE_BODY_MAX_CHARS,
   NOTE_TITLE_MAX_BYTES,
+  noteFolders,
   noteLinks,
   noteRevisions,
   notes,
@@ -77,6 +78,10 @@ import {
   type ReadConn,
 } from "@/lib/db/raw";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
+import {
+  noteFoldersVersionStmt,
+  type NoteFoldersVersionRow,
+} from "@/lib/db/raw/get-note-folders-version";
 import {
   notesTreeVersionStmt,
   type NotesTreeVersionRow,
@@ -100,7 +105,11 @@ import {
   composeNoteRef,
   composeTaskRef,
 } from "@/lib/graph/identifier";
-import { emitNoteEvent, emitProjectEvent } from "@/lib/realtime/events";
+import {
+  emitNoteEvent,
+  emitNoteFoldersEvent,
+  emitProjectEvent,
+} from "@/lib/realtime/events";
 import type {
   FeedMode,
   NoteTaskLinkKind,
@@ -404,6 +413,15 @@ export type FeedBudget = {
 export type NotesTreeVersion = {
   maxUpdatedAt: Date | null;
   liveCount: number;
+};
+
+/**
+ * Explicit folder paths plus their cache validator, returned together so
+ * the folders route derives its ETag without a second round trip.
+ */
+export type NoteFoldersList = {
+  paths: string[];
+  version: { maxCreatedAt: Date | null; count: number };
 };
 
 /**
@@ -1329,6 +1347,44 @@ export async function getNotesTreeVersion(
   return {
     maxUpdatedAt: max === null ? null : toDate(max),
     liveCount: Number(row?.live_count ?? 0),
+  };
+}
+
+/**
+ * List a project's explicit folder paths with their cache validator.
+ * ONE read batch: project gate + ordered paths + version.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @returns Paths ordered by path plus the ETag validator pair.
+ * @throws ForbiddenError when the caller cannot access the project.
+ */
+export async function listNoteFolderPaths(
+  ctx: AuthContext,
+  projectId: string,
+): Promise<NoteFoldersList> {
+  assertValidProjectId(projectId);
+  const [gateRows, pathRows, versionRaw] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      projectAccessGateStmt(read, projectId),
+      read
+        .select({ path: noteFolders.path })
+        .from(noteFolders)
+        .where(eq(noteFolders.projectId, projectId))
+        .orderBy(asc(noteFolders.path)),
+      noteFoldersVersionStmt(read, projectId),
+    ],
+  );
+  assertProjectGateRows(projectId, gateRows);
+  const [row] = normalizeExecuteResult<NoteFoldersVersionRow>(versionRaw);
+  const max = row?.max_created_at ?? null;
+  return {
+    paths: pathRows.map((r) => r.path),
+    version: {
+      maxCreatedAt: max === null ? null : toDate(max),
+      count: Number(row?.live_count ?? 0),
+    },
   };
 }
 
@@ -2693,23 +2749,31 @@ export async function moveNote(
 }
 
 /**
- * Re-parent a folder and its whole subtree. Folders are not rows: one
- * UPDATE rewrites the `folder` prefix on every live descendant note.
- * Moving a folder into itself or a descendant is rejected. Passing
- * `newLeaf` replaces the folder's own name at the destination, so a
- * rename is a move to the same parent with a new leaf. The UPDATE
- * runs under the caller's RLS scope, so teammates' private notes in the
- * subtree are untouched and keep their old paths — a definer-privileged
- * bulk write would let members rewrite paths of notes they cannot see.
- * The activity event and project dispatch fire only when a team-visible
- * note actually moved.
+ * Re-parent a folder and its whole subtree: one UPDATE rewrites the
+ * `folder` prefix on every live descendant note, and explicit
+ * `note_folders` markers under the prefix are rewritten as
+ * delete-then-insert (deleting first keeps a rewritten path that lands
+ * back under the source prefix out of the delete filter; fresh rows keep
+ * the folders-list validator moving, and `onConflictDoNothing` merges a
+ * racing collision instead of erroring). An empty explicit folder moves
+ * through this same path with zero notes, so the guards pass trivially
+ * and no activity event fires. Moving a folder into itself or a
+ * descendant is rejected. Passing `newLeaf` replaces the folder's own
+ * name at the destination, so a rename is a move to the same parent with
+ * a new leaf. The UPDATE runs under the caller's RLS scope, so
+ * teammates' private notes in the subtree are untouched and keep their
+ * old paths; a definer-privileged bulk write would let members rewrite
+ * paths of notes they cannot see. The activity event and project
+ * dispatch fire only when a team-visible note actually moved; a
+ * `note-folders` dispatch fires when explicit marker rows were rewritten.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
  * @param src - Folder path being moved (must be non-root).
  * @param destParent - New parent path (`""` = root).
  * @param newLeaf - Replacement folder name; defaults to `src`'s leaf.
- * @returns The destination path and how many notes moved.
+ * @returns The destination path, how many notes moved, and how many
+ *   explicit marker rows were rewritten.
  * @throws ForbiddenError when the caller cannot access the project.
  * @throws ProjectArchivedError when the project is archived.
  * @throws FolderCycleError when `destParent` is `src` or a descendant.
@@ -2726,7 +2790,7 @@ export async function moveFolder(
   src: string,
   destParent: string,
   newLeaf?: string,
-): Promise<{ dest: string; movedCount: number }> {
+): Promise<{ dest: string; movedCount: number; explicitMoved: number }> {
   assertValidProjectId(projectId);
   const srcPath = normalizeFolder(src);
   const destParentPath = normalizeFolder(destParent);
@@ -2755,7 +2819,9 @@ export async function moveFolder(
   const moved = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
     assertProjectWritable(access.project.status, access.project.identifier);
-    if (dest === srcPath) return { movedCount: 0, teamMoved: false };
+    if (dest === srcPath) {
+      return { movedCount: 0, teamMoved: false, explicitMoved: 0 };
+    }
     await acquireProjectLock(tx, projectId);
     const subtreeFilter = and(
       eq(notes.projectId, projectId),
@@ -2765,11 +2831,21 @@ export async function moveFolder(
         like(notes.folder, `${escapeLike(srcPath)}/%`),
       ),
     );
+    const explicitSubtreeFilter = and(
+      eq(noteFolders.projectId, projectId),
+      or(
+        eq(noteFolders.path, srcPath),
+        like(noteFolders.path, `${escapeLike(srcPath)}/%`),
+      ),
+    );
     const [guard] = await tx
       .select({
         lockedCount: sql<number>`count(*) filter (where ${notes.locked})`,
         readOnlyCount: sql<number>`count(*) filter (where not ${notes.agentWritable})`,
         longest: sql<number | null>`max(char_length(${notes.folder}))`,
+        explicitLongest: sql<
+          number | null
+        >`(select max(char_length(${noteFolders.path})) from ${noteFolders} where ${explicitSubtreeFilter})`,
       })
       .from(notes)
       .where(subtreeFilter);
@@ -2777,7 +2853,8 @@ export async function moveFolder(
     if (ctx.actor.source === "mcp" && Number(guard?.readOnlyCount ?? 0) > 0) {
       throw new NoteAgentReadOnlyError();
     }
-    if (growth > 0 && (guard?.longest ?? 0) + growth > FOLDER_MAX_CHARS) {
+    const longest = Math.max(guard?.longest ?? 0, guard?.explicitLongest ?? 0);
+    if (growth > 0 && longest + growth > FOLDER_MAX_CHARS) {
       throw new NoteValidationError(
         "folder",
         `move would push a descendant past ${FOLDER_MAX_CHARS} characters`,
@@ -2792,6 +2869,22 @@ export async function moveFolder(
       })
       .where(subtreeFilter)
       .returning({ id: notes.id, visibility: notes.visibility });
+    const explicitRows = await tx
+      .delete(noteFolders)
+      .where(explicitSubtreeFilter)
+      .returning({ path: noteFolders.path });
+    if (explicitRows.length > 0) {
+      await tx
+        .insert(noteFolders)
+        .values(
+          explicitRows.map((row) => ({
+            projectId,
+            path: dest + row.path.slice(srcPath.length),
+            createdBy: ctx.userId,
+          })),
+        )
+        .onConflictDoNothing();
+    }
     const teamMoved = rows.some((row) => row.visibility === "team");
     if (teamMoved) {
       await insertActivityEvents(tx, ctx.actor, [
@@ -2805,11 +2898,107 @@ export async function moveFolder(
         },
       ]);
     }
-    return { movedCount: rows.length, teamMoved };
+    return {
+      movedCount: rows.length,
+      teamMoved,
+      explicitMoved: explicitRows.length,
+    };
   });
 
   if (moved.teamMoved) emitProjectEvent(projectId);
-  return { dest, movedCount: moved.movedCount };
+  if (moved.explicitMoved > 0) emitNoteFoldersEvent(projectId);
+  return {
+    dest,
+    movedCount: moved.movedCount,
+    explicitMoved: moved.explicitMoved,
+  };
+}
+
+/**
+ * Persist an explicitly created empty folder as a `note_folders` marker
+ * row. Idempotent: a duplicate create upserts into the existing row via
+ * `onConflictDoNothing` on the `(project_id, path)` unique index. No
+ * activity event: the row is structural metadata with no note to
+ * attribute. A `note-folders` realtime event fires only when a row was
+ * actually inserted.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @param rawPath - Caller-supplied folder path.
+ * @returns The normalized persisted path.
+ * @throws ForbiddenError when the caller cannot access the project.
+ * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteValidationError when the path is empty or over the cap.
+ */
+export async function createNoteFolder(
+  ctx: AuthContext,
+  projectId: string,
+  rawPath: string,
+): Promise<{ path: string }> {
+  assertValidProjectId(projectId);
+  const path = normalizeFolder(rawPath);
+  if (path === "") {
+    throw new NoteValidationError("folder", "folder name cannot be empty");
+  }
+  const inserted = await withUserContext(ctx.userId, async (tx) => {
+    const access = await assertProjectAccessTx(tx, projectId);
+    assertProjectWritable(access.project.status, access.project.identifier);
+    await acquireProjectLock(tx, projectId);
+    const rows = await tx
+      .insert(noteFolders)
+      .values({ projectId, path, createdBy: ctx.userId })
+      .onConflictDoNothing()
+      .returning({ id: noteFolders.id });
+    return rows.length > 0;
+  });
+  if (inserted) emitNoteFoldersEvent(projectId);
+  return { path };
+}
+
+/**
+ * Delete a folder's explicit marker rows: the path itself plus every
+ * explicit descendant. Notes are untouched; callers soft-delete them
+ * separately when emptying a non-empty folder. A `note-folders` realtime
+ * event fires only when at least one row was deleted.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project.
+ * @param rawPath - Caller-supplied folder path.
+ * @returns How many marker rows were deleted.
+ * @throws ForbiddenError when the caller cannot access the project.
+ * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteValidationError when the path is empty or over the cap.
+ */
+export async function deleteNoteFolder(
+  ctx: AuthContext,
+  projectId: string,
+  rawPath: string,
+): Promise<{ deletedCount: number }> {
+  assertValidProjectId(projectId);
+  const path = normalizeFolder(rawPath);
+  if (path === "") {
+    throw new NoteValidationError("folder", "cannot delete the root folder");
+  }
+  const deletedCount = await withUserContext(ctx.userId, async (tx) => {
+    const access = await assertProjectAccessTx(tx, projectId);
+    assertProjectWritable(access.project.status, access.project.identifier);
+    await acquireProjectLock(tx, projectId);
+    const rows = await tx
+      .delete(noteFolders)
+      .where(
+        and(
+          eq(noteFolders.projectId, projectId),
+          or(
+            eq(noteFolders.path, path),
+            like(noteFolders.path, `${escapeLike(path)}/%`),
+          ),
+        ),
+      )
+      .returning({ id: noteFolders.id });
+    return rows.length;
+  });
+  if (deletedCount > 0) emitNoteFoldersEvent(projectId);
+  return { deletedCount };
 }
 
 /**
@@ -3153,25 +3342,43 @@ async function applyVisibilityTx(
 
 /**
  * Tree list plus the owning project identifier, for callers composing
- * noteRefs (`PYZ-N12`) per row. Same one-batch read as
- * {@link getNoteTreeList}.
+ * noteRefs (`PYZ-N12`) per row, plus the explicit `note_folders` paths so
+ * the agent tree shows empty folders the web tree shows. Same one-batch
+ * read as {@link getNoteTreeList} with the folder paths joined in.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @returns The project identifier and tree rows ordered by folder, title.
+ * @returns The project identifier, tree rows ordered by folder then
+ *   title, and explicit folder paths ordered by path.
  * @throws ForbiddenError when the caller cannot access the project.
  */
 export async function getNoteTreeForAgent(
   ctx: AuthContext,
   projectId: string,
-): Promise<{ projectIdentifier: string; rows: NoteTreeRow[] }> {
+): Promise<{
+  projectIdentifier: string;
+  rows: NoteTreeRow[];
+  explicitFolders: string[];
+}> {
   assertValidProjectId(projectId);
-  const [gateRows, treeRows] = await withUserContextRead(ctx.userId, (read) => [
-    projectAccessGateStmt(read, projectId),
-    noteTreeListStmt(read, projectId),
-  ]);
+  const [gateRows, treeRows, folderRows] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      projectAccessGateStmt(read, projectId),
+      noteTreeListStmt(read, projectId),
+      read
+        .select({ path: noteFolders.path })
+        .from(noteFolders)
+        .where(eq(noteFolders.projectId, projectId))
+        .orderBy(asc(noteFolders.path)),
+    ],
+  );
   const gate = assertProjectGateRows(projectId, gateRows);
-  return { projectIdentifier: gate.identifier, rows: treeRows };
+  return {
+    projectIdentifier: gate.identifier,
+    rows: treeRows,
+    explicitFolders: folderRows.map((row) => row.path),
+  };
 }
 
 /**

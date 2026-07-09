@@ -8,6 +8,7 @@ const TRUNCATE_TABLES = [
   "note_revisions",
   "note_links",
   "note_task_links",
+  "note_folders",
   "notes",
   "task_assignees",
   "task_acceptance_criteria",

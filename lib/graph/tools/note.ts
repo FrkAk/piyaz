@@ -603,6 +603,9 @@ async function handleEditAction(
 
 /**
  * Handle the `list` action: the folder tree agents and humans share.
+ * Folder headers union note-derived paths with explicit `note_folders`
+ * markers, so an explicitly created folder with no notes yet still
+ * renders (as a bare header) and agents can target it on create.
  *
  * @param p - Note params.
  * @param ctx - Resolved auth context.
@@ -614,20 +617,28 @@ async function handleList(
 ): Promise<ToolResult> {
   if (!p.project) return fail("list requires project ('PYZ' or UUID).");
   const projectId = await requireProjectId(ctx, p.project);
-  const { projectIdentifier, rows } = await getNoteTreeForAgent(ctx, projectId);
-  if (rows.length === 0) {
+  const { projectIdentifier, rows, explicitFolders } =
+    await getNoteTreeForAgent(ctx, projectId);
+  if (rows.length === 0 && explicitFolders.length === 0) {
     return ok(
       `Project ${projectIdentifier} has no notes yet. Record durable knowledge with piyaz_note create.`,
     );
   }
-  const lines: string[] = [];
-  let currentFolder: string | null = null;
+  const notesByFolder = new Map<string, NoteTreeRow[]>();
   for (const row of rows) {
-    if (row.folder !== currentFolder) {
-      currentFolder = row.folder;
-      lines.push(currentFolder === "" ? "(root)/" : `${currentFolder}/`);
+    const group = notesByFolder.get(row.folder);
+    if (group === undefined) notesByFolder.set(row.folder, [row]);
+    else group.push(row);
+  }
+  const folders = [
+    ...new Set([...notesByFolder.keys(), ...explicitFolders]),
+  ].sort();
+  const lines: string[] = [];
+  for (const folder of folders) {
+    lines.push(folder === "" ? "(root)/" : `${folder}/`);
+    for (const row of notesByFolder.get(folder) ?? []) {
+      lines.push(`  ${noteLine(row, projectIdentifier)}`);
     }
-    lines.push(`  ${noteLine(row, projectIdentifier)}`);
   }
   const budgeted = budgetLines(
     lines,
@@ -671,11 +682,13 @@ async function handleMove(
     return ok({
       dest: result.dest,
       movedCount: result.movedCount,
-      ...(result.movedCount === 0 && {
-        _hints: [
-          "No live notes matched the source folder; the tree derives from note paths, so an empty folder does not exist.",
-        ],
-      }),
+      explicitMoved: result.explicitMoved,
+      ...(result.movedCount === 0 &&
+        result.explicitMoved === 0 && {
+          _hints: [
+            "Nothing moved: no live notes and no explicit folder markers under that source path. Check the path with piyaz_note action='list'.",
+          ],
+        }),
     });
   }
   if (!p.note || p.folder === undefined) {

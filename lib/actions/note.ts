@@ -11,8 +11,10 @@ import {
 import {
   approveShareRequest as coreApproveShareRequest,
   createNote as coreCreateNote,
+  createNoteFolder as coreCreateNoteFolder,
   declineShareRequest as coreDeclineShareRequest,
   deleteNote as coreDeleteNote,
+  deleteNoteFolder as coreDeleteNoteFolder,
   moveFolder as coreMoveFolder,
   moveNote as coreMoveNote,
   restoreNote as coreRestoreNote,
@@ -193,6 +195,52 @@ export async function moveFolderAction(
     const failure = noteFailureFrom(err);
     if (failure.code === "unknown") {
       console.error("moveFolderAction failed", { projectId, err });
+    }
+    return failure;
+  }
+}
+
+/**
+ * Server action: persist an explicitly created empty folder.
+ * @param projectId - Owning project id.
+ * @param path - Folder path to persist.
+ * @returns The normalized persisted path, or a typed failure.
+ */
+export async function createFolderAction(
+  projectId: string,
+  path: string,
+): Promise<NoteActionResult<{ path: string }>> {
+  try {
+    const ctx = await authorizeWrite(NOTE_BUDGETS.noteCreate);
+    return { ok: true, data: await coreCreateNoteFolder(ctx, projectId, path) };
+  } catch (err) {
+    const failure = noteFailureFrom(err);
+    if (failure.code === "unknown") {
+      console.error("createFolderAction failed", { projectId, err });
+    }
+    return failure;
+  }
+}
+
+/**
+ * Server action: delete a folder's explicit marker rows (the path and its
+ * explicit descendants). Notes under the folder are deleted separately.
+ *
+ * @param projectId - Owning project id.
+ * @param path - Folder path to delete.
+ * @returns The deleted marker-row count, or a typed failure.
+ */
+export async function deleteFolderAction(
+  projectId: string,
+  path: string,
+): Promise<NoteActionResult<{ deletedCount: number }>> {
+  try {
+    const ctx = await authorizeWrite(NOTE_BUDGETS.noteDelete);
+    return { ok: true, data: await coreDeleteNoteFolder(ctx, projectId, path) };
+  } catch (err) {
+    const failure = noteFailureFrom(err);
+    if (failure.code === "unknown") {
+      console.error("deleteFolderAction failed", { projectId, err });
     }
     return failure;
   }

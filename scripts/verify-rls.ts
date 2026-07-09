@@ -25,6 +25,7 @@ interface ExpectedContract {
  */
 const REVOKED_PRIVILEGES = [
   { role: "app_user", table: "public.note_revisions", privilege: "UPDATE" },
+  { role: "app_user", table: "public.note_folders", privilege: "UPDATE" },
 ] as const;
 
 /**

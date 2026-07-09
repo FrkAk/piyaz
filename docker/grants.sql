@@ -42,3 +42,14 @@ BEGIN
     EXECUTE 'REVOKE UPDATE ON public.note_revisions FROM app_user';
   END IF;
 END $$;
+
+-- note_folders marker rows are immutable once written: the app rewrites them
+-- delete-then-insert (moveFolder) and never UPDATEs, so revoking UPDATE pins
+-- created_by and path at the privilege layer — the UPDATE-side complement of
+-- the note_folders_insert_author_only floor. Same existence guard as above.
+DO $$
+BEGIN
+  IF to_regclass('public.note_folders') IS NOT NULL THEN
+    EXECUTE 'REVOKE UPDATE ON public.note_folders FROM app_user';
+  END IF;
+END $$;

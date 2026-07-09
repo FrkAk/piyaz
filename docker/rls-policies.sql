@@ -320,6 +320,23 @@ CREATE POLICY "note_links_delete_member_only" ON "note_links"
     AND EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_links.target_note_id)
   );
 
+-- note_folders: 2-hop via projects' RLS. Rows are explicit empty-folder
+-- markers: team-visible structural metadata (paths only, no note content),
+-- deliberately project-scoped rather than per-creator; a per-creator scope
+-- would turn the (project_id, path) unique index into a cross-user existence
+-- oracle via insert conflicts and split the tree per member. The RESTRICTIVE
+-- INSERT floor pins created_by to the caller (mirror
+-- notes_insert_author_only) so a member cannot forge folder attribution.
+DROP POLICY IF EXISTS "note_folders_member_access" ON "note_folders";
+CREATE POLICY "note_folders_member_access" ON "note_folders" AS PERMISSIVE FOR ALL TO app_user
+  USING (project_id IN (SELECT id FROM public.projects))
+  WITH CHECK (project_id IN (SELECT id FROM public.projects));
+
+DROP POLICY IF EXISTS "note_folders_insert_author_only" ON "note_folders";
+CREATE POLICY "note_folders_insert_author_only" ON "note_folders"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (created_by = (SELECT public.current_app_user_id()));
+
 
 -- ENABLE explicitly: testcontainer/self-host get this from `drizzle-kit
 -- push` reading `.enableRLS()`, but `drizzle-kit migrate` does not emit
@@ -337,6 +354,7 @@ ALTER TABLE "notes" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_task_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "note_folders" ENABLE ROW LEVEL SECURITY;
 
 -- FORCE subjects the table owner to RLS. BYPASSRLS roles and real
 -- superusers still sidestep.
@@ -353,3 +371,4 @@ ALTER TABLE "notes" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_task_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "note_folders" FORCE ROW LEVEL SECURITY;

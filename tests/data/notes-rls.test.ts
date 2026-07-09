@@ -864,4 +864,97 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     );
     expect(forgedRequester.code).toBe("42501");
   });
+
+  test("note_folders: cross-org rows are invisible and cross-org writes are denied", async () => {
+    const teamA = await seedUserOrgProject("notes-nf-a");
+    const teamB = await seedUserOrgProject("notes-nf-b");
+
+    const su = superuserPool();
+    const [folder] = await su<{ id: string }[]>`
+      INSERT INTO note_folders (project_id, path, created_by)
+      VALUES (${teamA.projectId}, 'Ideas', ${teamA.userId})
+      RETURNING id
+    `;
+
+    const c = appUserConnect();
+    await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+      const leaked = await tx<{ id: string }[]>`
+        SELECT id FROM note_folders WHERE id = ${folder.id}
+      `;
+      expect(leaked.length).toBe(0);
+    });
+    await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${teamA.userId}, true)`;
+      const visible = await tx<{ id: string }[]>`
+        SELECT id FROM note_folders WHERE id = ${folder.id}
+      `;
+      expect(visible.length).toBe(1);
+    });
+
+    const crossInsert = await captureAppUserError(
+      teamB.userId,
+      (tx) =>
+        tx`
+        INSERT INTO note_folders (project_id, path, created_by)
+        VALUES (${teamA.projectId}, 'Sneak', ${teamB.userId})
+      `,
+    );
+    expect(crossInsert.code).toBe("42501");
+
+    await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${teamB.userId}, true)`;
+      const deleted = await tx<{ id: string }[]>`
+        DELETE FROM note_folders WHERE id = ${folder.id} RETURNING id
+      `;
+      expect(deleted.length).toBe(0);
+    });
+    const [survivor] = await su<{ id: string }[]>`
+      SELECT id FROM note_folders WHERE id = ${folder.id}
+    `;
+    expect(survivor.id).toBe(folder.id);
+  });
+
+  test("note_folders INSERT cannot forge created_by — the restrictive floor pins it to the caller", async () => {
+    const fx = await seedUserOrgProject("notes-nf-forge");
+    const userB = await seedSecondMember(fx.organizationId, "notes-nf-forge-b");
+
+    const forged = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        INSERT INTO note_folders (project_id, path, created_by)
+        VALUES (${fx.projectId}, 'Forged', ${fx.userId})
+      `,
+    );
+    expect(forged.code).toBe("42501");
+
+    const nullAuthor = await captureAppUserError(
+      userB,
+      (tx) =>
+        tx`
+        INSERT INTO note_folders (project_id, path)
+        VALUES (${fx.projectId}, 'NullAuthor')
+      `,
+    );
+    expect(nullAuthor.code).toBe("42501");
+  });
+
+  test("note_folders UPDATE is revoked for app_user, even for the row's creator", async () => {
+    const fx = await seedUserOrgProject("notes-nf-upd");
+
+    const su = superuserPool();
+    const [folder] = await su<{ id: string }[]>`
+      INSERT INTO note_folders (project_id, path, created_by)
+      VALUES (${fx.projectId}, 'Pinned', ${fx.userId})
+      RETURNING id
+    `;
+
+    const denied = await captureAppUserError(
+      fx.userId,
+      (tx) =>
+        tx`UPDATE note_folders SET path = 'Forged' WHERE id = ${folder.id}`,
+    );
+    expect(denied.code).toBe("42501");
+  });
 });

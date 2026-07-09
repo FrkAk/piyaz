@@ -145,4 +145,18 @@ describe("applyRealtimeEvent note case", () => {
     expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
     expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
   });
+
+  test("note-folders event invalidates the folders query and nothing else", async () => {
+    const qc = seededClient(when);
+    qc.setQueryData(noteKeys.folders(PROJECT), []);
+
+    await applyRealtimeEvent(
+      qc,
+      JSON.stringify({ kind: "note-folders", projectId: PROJECT }),
+    );
+
+    expect(invalidated(qc, noteKeys.folders(PROJECT))).toBe(true);
+    expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+  });
 });

@@ -174,6 +174,26 @@ export function fetchNotesTree(
 }
 
 /**
+ * QueryFn factory for a project's explicit note-folder paths.
+ *
+ * @param qc - QueryClient.
+ * @param projectId - Project id.
+ * @returns Conditional-GET fetcher.
+ */
+export function fetchNoteFolders(
+  qc: QueryClient,
+  projectId: string,
+): Fn<string[]> {
+  return (ctx) =>
+    conditionalFetch<string[]>({
+      url: `/api/project/${projectId}/notes/folders`,
+      queryKey: noteKeys.folders(projectId),
+      queryClient: qc,
+      signal: ctx.signal,
+    });
+}
+
+/**
  * QueryFn factory for a single full note with its link context.
  *
  * @param qc - QueryClient.

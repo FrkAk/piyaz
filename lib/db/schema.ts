@@ -501,6 +501,39 @@ export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
 
 // ---------------------------------------------------------------------------
+// Note Folders (markers for explicitly created empty folders)
+// ---------------------------------------------------------------------------
+
+// Pure marker rows: the notes tree stays path-derived from live notes'
+// `folder` values; these rows only add explicitly created folders that
+// hold no notes yet, so they survive reloads. Ancestors are never stored
+// (the client derives them), and `moveFolder` rewrites rows here as
+// delete-then-insert so the folders-list validator (MAX(created_at),
+// COUNT(*)) shifts on every mutation.
+export const noteFolders = pgTable(
+  "note_folders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    createdBy: uuid("created_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("note_folders_project_path_unique").on(t.projectId, t.path),
+  ],
+).enableRLS();
+
+export type NoteFolder = typeof noteFolders.$inferSelect;
+export type NewNoteFolder = typeof noteFolders.$inferInsert;
+
+// ---------------------------------------------------------------------------
 // Note ↔ Task Links (junction: notes reference tasks)
 // ---------------------------------------------------------------------------
 
