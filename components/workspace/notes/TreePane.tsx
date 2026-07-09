@@ -33,21 +33,29 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import type { NoteTreeRow } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
-import { fetchNoteSearch, fetchNotesTree } from "@/lib/query/queries";
+import {
+  fetchNoteFolders,
+  fetchNoteSearch,
+  fetchNotesTree,
+} from "@/lib/query/queries";
 import { DeleteConfirm } from "@/components/workspace/structure/DeleteConfirm";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { MoveToFolderDialog } from "./MoveToFolderDialog";
 import {
   type FolderMovePlan,
   leafOf,
+  normalizeFolderInput,
   NOTE_TYPE_META,
   parentOf,
   planFolderMove,
   planFolderRename,
+  resolveCreateTarget,
   tint,
   type TypeFilter,
 } from "./note-meta";
 import {
+  useCreateFolder,
+  useDeleteFolder,
   useDeleteNote,
   useMoveFolder,
   useMoveNote,
@@ -428,19 +436,23 @@ function TreeSkeleton() {
 
 /**
  * Left pane, searchable nested folder tree with drag-and-drop and inline
- * actions, backed by the notes tree list and the server search route.
- * Folders are path prefixes on note rows; empty folders created here are
- * client-local and persist only once a note lands in them. Folder and
- * note rows rename inline (double-click or F2) and delete via a hover
- * trash that arms a two-step inline confirm: a note deletes with an Undo
- * entry, an empty client-local folder just drops from the local set, and a
- * non-empty folder instead opens a bulk modal then deletes its notes as
- * one undoable entry. Tree mutation failures surface in a strip above the
- * list. On fine pointers notes and folders reorder by native drag-and-drop
- * (which never fires on touch); on coarse pointers a per-row overflow menu
- * exposes Rename, Move to folder, and Delete, with Move opening a folder
- * picker so touch users can reorganize. A keyboard-accessible move
- * affordance is still deferred to a follow-up.
+ * actions, backed by the notes tree list, the explicit-folders list, and
+ * the server search route. Folders are path prefixes on note rows plus
+ * explicit `note_folders` marker rows for empty folders, so a created
+ * folder survives reload. New folders are naming-first: the button opens
+ * an inline name input and the folder persists on commit. Clicking a
+ * folder toggles collapse and selects it as the New-note create target
+ * (accent-tinted, `aria-current`); selecting a note clears the folder
+ * selection. Folder and note rows rename inline (double-click or F2) and
+ * delete via a hover trash that arms a two-step inline confirm: a note
+ * deletes with an Undo entry, an empty folder deletes its marker rows,
+ * and a non-empty folder instead opens a bulk modal then deletes its
+ * notes as one undoable entry. Tree mutation failures surface in a strip
+ * above the list. On fine pointers notes and folders reorder by native
+ * drag-and-drop (which never fires on touch); on coarse pointers a
+ * per-row overflow menu exposes Rename, Move to folder, and Delete, with
+ * Move opening a folder picker so touch users can reorganize. A
+ * keyboard-accessible move affordance is still deferred to a follow-up.
  *
  * @param props - Project scope, selection state, create wiring, and drawer-mode flags.
  * @returns The fixed-width tree column, or a parent-filling column in drawer mode.
@@ -464,7 +476,8 @@ export function TreePane({
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [rawQuery, setRawQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [extraFolders, setExtraFolders] = useState<string[]>([]);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [creatingFolder, setCreatingFolder] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{
     path: string;
     value: string;
@@ -495,6 +508,17 @@ export function TreePane({
   });
   const rows = list.data;
 
+  const folders = useQuery({
+    queryKey: noteKeys.folders(projectId),
+    queryFn: fetchNoteFolders(qc, projectId),
+  });
+
+  const [prevSelectedId, setPrevSelectedId] = useState(selectedId);
+  if (prevSelectedId !== selectedId) {
+    setPrevSelectedId(selectedId);
+    if (selectedId !== null) setSelectedFolder(null);
+  }
+
   useEffect(() => {
     const trimmed = rawQuery.trim();
     const id = setTimeout(
@@ -518,6 +542,8 @@ export function TreePane({
   const updateNote = useUpdateNote(projectId);
   const deleteNote = useDeleteNote(projectId);
   const restoreNote = useRestoreNote(projectId);
+  const createFolder = useCreateFolder(projectId);
+  const deleteFolder = useDeleteFolder(projectId);
 
   const {
     canUndo,
@@ -542,7 +568,7 @@ export function TreePane({
   }, [rows, typeFilter]);
 
   const allFolders = useMemo(() => {
-    const set = new Set<string>(extraFolders);
+    const set = new Set<string>(folders.data ?? []);
     for (const r of rows ?? []) if (r.folder) set.add(r.folder);
     for (const f of [...set]) {
       const parts = f.split("/");
@@ -553,7 +579,7 @@ export function TreePane({
       }
     }
     return [...set].sort();
-  }, [rows, extraFolders]);
+  }, [rows, folders.data]);
 
   const notesByFolder = useMemo(() => {
     const map = new Map<string, NoteTreeRow[]>();
@@ -591,26 +617,45 @@ export function TreePane({
     setDropRowId(null);
   }
 
-  /** Create a uniquely-named empty root folder (client-local). */
+  /** Open the naming-first inline input for a new root folder. */
   function handleNewFolder() {
-    const existing = new Set(allFolders);
-    let name = "New folder";
-    let i = 2;
-    while (existing.has(name)) name = `New folder ${i++}`;
-    setExtraFolders((f) => [...f, name]);
+    setTreeError(null);
+    setRawQuery("");
+    setCreatingFolder("");
   }
 
-  /** Create a note in the selected row's folder, or Drafts. */
+  /**
+   * Commit the naming-first folder create. An empty input cancels; an
+   * existing path just selects that folder; otherwise the folder
+   * persists server-side and becomes the selected create target.
+   */
+  function commitNewFolder() {
+    const draft = creatingFolder;
+    if (draft === null) return;
+    setCreatingFolder(null);
+    const path = normalizeFolderInput(draft);
+    if (path === "") return;
+    setSelectedFolder(path);
+    if (allFolders.includes(path)) return;
+    createFolder.mutate(path, {
+      onSuccess: (result) => {
+        if (!result.ok) setTreeError(result.message);
+      },
+      onError: () => setTreeError("Folder create failed"),
+    });
+  }
+
+  /** Create a note in the selected folder, the selected note's folder, or Drafts. */
   function handleNewNote() {
     const selectedRow = selectedId
       ? (rows ?? []).find((r) => r.id === selectedId)
       : undefined;
-    onNewNote(selectedRow?.folder ? selectedRow.folder : "Drafts");
+    onNewNote(resolveCreateTarget(selectedFolder, selectedRow?.folder));
   }
 
   /**
-   * Rewrite client-local state keyed by folder path (empty extra folders
-   * and collapsed entries) under a moved prefix.
+   * Rewrite client-local state keyed by folder path (collapsed entries
+   * and the selected folder) under a moved prefix.
    *
    * @param src - Source folder path.
    * @param dest - Destination folder path.
@@ -618,28 +663,27 @@ export function TreePane({
   function rewriteLocalPaths(src: string, dest: string) {
     const rewrite = (f: string) =>
       f === src || f.startsWith(`${src}/`) ? dest + f.slice(src.length) : f;
-    setExtraFolders((fs) => fs.map(rewrite));
     setCollapsed((c) => new Set([...c].map(rewrite)));
+    setSelectedFolder((s) => (s === null ? s : rewrite(s)));
   }
 
   /**
-   * Whether any server note lives in a folder or its subtree.
+   * Clear the selected folder when it sits at or under a deleted path.
    *
-   * @param path - Folder path.
-   * @returns True when at least one note row is under the path.
+   * @param path - Deleted folder path.
    */
-  function folderHasNotes(path: string): boolean {
-    return (rows ?? []).some(
-      (r) => r.folder === path || r.folder.startsWith(`${path}/`),
+  function clearSelectionUnder(path: string) {
+    setSelectedFolder((s) =>
+      s !== null && (s === path || s.startsWith(`${path}/`)) ? null : s,
     );
   }
 
   /**
    * Dispatch a folder mutation plan from rename or drag re-parent.
    * Collisions surface in the error strip without dispatching (no
-   * silent merge). Folders without server notes move as a pure
-   * client-local path rewrite; otherwise the whole subtree re-parents
-   * server-side via `moveFolder`.
+   * silent merge). The whole subtree re-parents server-side via
+   * `moveFolder`, which also rewrites explicit empty-folder rows, so an
+   * empty folder's rename or move survives a reload.
    *
    * @param src - Folder path being moved or renamed.
    * @param plan - Plan from {@link planFolderRename} or {@link planFolderMove}.
@@ -648,10 +692,6 @@ export function TreePane({
     if (plan.kind === "noop") return;
     if (plan.kind === "collision") {
       setTreeError(`Folder "${plan.dest}" already exists`);
-      return;
-    }
-    if (!folderHasNotes(src)) {
-      rewriteLocalPaths(src, plan.dest);
       return;
     }
     moveFolder.mutate(
@@ -787,21 +827,27 @@ export function TreePane({
   }
 
   /**
-   * Drop an empty client-local folder from the local set and disarm.
+   * Delete an empty folder's explicit rows server-side and disarm.
    *
    * @param path - Folder path to remove.
    */
   function dropEmptyFolder(path: string) {
     setArmedDelete(null);
-    setExtraFolders((fs) =>
-      fs.filter((f) => f !== path && !f.startsWith(`${path}/`)),
-    );
+    clearSelectionUnder(path);
+    deleteFolder.mutate(path, {
+      onSuccess: (result) => {
+        if (!result.ok) setTreeError(result.message);
+      },
+      onError: () => setTreeError("Delete failed"),
+    });
   }
 
   /**
    * Confirm a non-empty folder delete: clear the selection when the open
-   * note is inside, await the soft-delete of every note under the folder,
-   * then push one undo entry that restores the whole folder.
+   * note is inside, drop the subtree's explicit folder rows, await the
+   * soft-delete of every note under the folder, then push one undo entry
+   * that restores the notes (explicit empty subfolders are not
+   * resurrected by the undo).
    */
   async function confirmFolderDelete() {
     const pending = pendingFolderDelete;
@@ -810,9 +856,13 @@ export function TreePane({
     if (selectedId !== null && pending.noteIds.includes(selectedId)) {
       onSelect(null);
     }
-    setExtraFolders((fs) =>
-      fs.filter((f) => f !== pending.path && !f.startsWith(`${pending.path}/`)),
-    );
+    clearSelectionUnder(pending.path);
+    deleteFolder.mutate(pending.path, {
+      onSuccess: (result) => {
+        if (!result.ok) setTreeError(result.message);
+      },
+      onError: () => setTreeError("Delete failed"),
+    });
     const results = await Promise.all(
       pending.noteIds.map((id) => deleteNote.mutateAsync(id).catch(() => null)),
     );
@@ -861,6 +911,7 @@ export function TreePane({
     const subFolders = allFolders.filter((f) => parentOf(f) === path);
     const isCollapsed = collapsed.has(path);
     const isDropTarget = dropFolder === path;
+    const isSelected = selectedFolder === path;
     const indent = 8 + depth * 12;
     return (
       <div key={path}>
@@ -888,7 +939,11 @@ export function TreePane({
               type="button"
               draggable
               aria-roledescription="Draggable folder"
-              onClick={() => toggle(path)}
+              aria-current={isSelected ? "true" : undefined}
+              onClick={() => {
+                toggle(path);
+                setSelectedFolder(path);
+              }}
               onDoubleClick={() => beginRename(path)}
               onKeyDown={(e) => {
                 if (e.key === "F2") {
@@ -910,20 +965,39 @@ export function TreePane({
                 e.preventDefault();
                 dropOnto(path);
               }}
-              className="flex min-w-0 flex-1 items-center gap-1 rounded-md text-left text-text-secondary"
+              className="relative flex min-w-0 flex-1 items-center gap-1 rounded-md text-left"
               style={{
                 height: 26,
                 paddingLeft: indent,
                 paddingRight: 30,
                 opacity: drag?.kind === "folder" && drag.id === path ? 0.45 : 1,
+                color: isSelected
+                  ? "var(--color-text-primary)"
+                  : "var(--color-text-secondary)",
                 background: isDropTarget
                   ? tint("var(--color-accent)", 14)
-                  : "transparent",
+                  : isSelected
+                    ? tint("var(--color-accent)", 7)
+                    : "transparent",
                 outline: isDropTarget
                   ? "1px solid var(--color-accent)"
                   : "1px solid transparent",
               }}
             >
+              {isSelected && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: 4,
+                    top: 4,
+                    bottom: 4,
+                    width: 2,
+                    borderRadius: 2,
+                    background: "var(--color-accent)",
+                  }}
+                />
+              )}
               {isCollapsed ? (
                 <IconChevronRight size={11} className="text-text-muted" />
               ) : (
@@ -1028,6 +1102,7 @@ export function TreePane({
 
   const roots = allFolders.filter((f) => parentOf(f) === "");
   const rootNotes = notesByFolder.get("") ?? [];
+  const foldersError = folders.isError ? "Failed to load folders" : null;
 
   return (
     <div
@@ -1158,12 +1233,12 @@ export function TreePane({
         })}
       </div>
 
-      {(treeError ?? createError) !== null && (
+      {(treeError ?? createError ?? foldersError) !== null && (
         <p
           className="px-3 pb-1.5 font-mono text-[10.5px]"
           style={{ color: "var(--color-danger)" }}
         >
-          {treeError ?? createError}
+          {treeError ?? createError ?? foldersError}
         </p>
       )}
 
@@ -1199,12 +1274,29 @@ export function TreePane({
           </p>
         ) : list.isPending ? (
           <TreeSkeleton />
-        ) : roots.length === 0 && rootNotes.length === 0 ? (
+        ) : roots.length === 0 &&
+          rootNotes.length === 0 &&
+          creatingFolder === null ? (
           <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
             No notes yet
           </p>
         ) : (
           <>
+            {creatingFolder !== null && (
+              <div
+                className="flex w-full items-center gap-1 rounded-md pr-2 text-text-secondary"
+                style={{ height: 26, paddingLeft: 8 }}
+              >
+                <IconChevronDown size={11} className="text-text-muted" />
+                <RenameInput
+                  value={creatingFolder}
+                  onChange={setCreatingFolder}
+                  onCommit={commitNewFolder}
+                  onCancel={() => setCreatingFolder(null)}
+                  ariaLabel="New folder name"
+                />
+              </div>
+            )}
             {roots.map((r) => renderFolder(r, 0))}
             {rootNotes.map((n) => (
               <NoteRow

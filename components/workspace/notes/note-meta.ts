@@ -75,6 +75,42 @@ export function leafOf(path: string): string {
 }
 
 /**
+ * Normalize user-entered folder text with the server's segment rules:
+ * split on `/`, trim segments, drop empties. Shared by the inline
+ * rename and the naming-first folder create so both compute the exact
+ * path the server will persist.
+ *
+ * @param raw - User-entered folder name or path.
+ * @returns Canonical path (`""` when nothing survives normalization).
+ */
+export function normalizeFolderInput(raw: string): string {
+  return raw
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment !== "")
+    .join("/");
+}
+
+/**
+ * Resolve the folder a new note lands in: an explicitly selected folder
+ * wins, else the selected note's folder, else the `Drafts` inbox (also
+ * the fallback for a selected root note, preserving the pre-selection
+ * behavior byte for byte).
+ *
+ * @param selectedFolder - Folder selected in the tree, or null.
+ * @param selectedNoteFolder - Selected note's folder, or undefined when
+ *   no note is selected.
+ * @returns Destination folder path for the create.
+ */
+export function resolveCreateTarget(
+  selectedFolder: string | null,
+  selectedNoteFolder: string | undefined,
+): string {
+  if (selectedFolder !== null) return selectedFolder;
+  return selectedNoteFolder ? selectedNoteFolder : "Drafts";
+}
+
+/**
  * Outcome of a folder mutation (inline rename or drag re-parent):
  * nothing to do, a sibling collision that would silently merge two
  * folders, or the dispatchable move.
@@ -100,11 +136,7 @@ export function planFolderRename(
   rawName: string,
   allFolders: readonly string[],
 ): FolderMovePlan {
-  const leaf = rawName
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment !== "")
-    .join("/");
+  const leaf = normalizeFolderInput(rawName);
   if (leaf === "" || leaf === leafOf(path)) return { kind: "noop" };
   const destParent = parentOf(path);
   const dest = destParent === "" ? leaf : `${destParent}/${leaf}`;

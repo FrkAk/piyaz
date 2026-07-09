@@ -9,8 +9,10 @@ import type {
 } from "@/lib/actions/note-errors";
 import {
   approveShareRequestAction,
+  createFolderAction,
   createNoteAction,
   declineShareRequestAction,
+  deleteFolderAction,
   deleteNoteAction,
   moveFolderAction,
   moveNoteAction,
@@ -458,6 +460,71 @@ export function useMoveFolder(projectId: string) {
       if (result.ok) {
         qc.invalidateQueries({ queryKey: noteKeys.all(projectId) });
       }
+      return result;
+    },
+  });
+}
+
+/**
+ * Optimistic empty-folder create: appends the path to the cached folders
+ * list up front, restores the snapshot on failure, returned or thrown.
+ * Kept as-is on success — the server upsert is idempotent and returns
+ * the same normalized path the optimistic entry used.
+ *
+ * @param projectId - Owning project id.
+ * @returns Mutation taking the normalized folder path.
+ */
+export function useCreateFolder(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      path: string,
+    ): Promise<NoteActionResult<{ path: string }>> => {
+      const foldersKey = noteKeys.folders(projectId);
+      const prev = qc.getQueryData<string[]>(foldersKey);
+      qc.setQueryData<string[]>(foldersKey, (paths) =>
+        (paths ?? []).includes(path) ? paths : [...(paths ?? []), path].sort(),
+      );
+      let result: NoteActionResult<{ path: string }>;
+      try {
+        result = await createFolderAction(projectId, path);
+      } catch (err) {
+        if (prev !== undefined) qc.setQueryData(foldersKey, prev);
+        throw err;
+      }
+      if (!result.ok && prev !== undefined) qc.setQueryData(foldersKey, prev);
+      return result;
+    },
+  });
+}
+
+/**
+ * Optimistic empty-folder delete: drops the path and its descendants
+ * from the cached folders list up front, restores the snapshot on
+ * failure, returned or thrown.
+ *
+ * @param projectId - Owning project id.
+ * @returns Mutation taking the folder path.
+ */
+export function useDeleteFolder(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      path: string,
+    ): Promise<NoteActionResult<{ deletedCount: number }>> => {
+      const foldersKey = noteKeys.folders(projectId);
+      const prev = qc.getQueryData<string[]>(foldersKey);
+      qc.setQueryData<string[]>(foldersKey, (paths) =>
+        (paths ?? []).filter((p) => p !== path && !p.startsWith(`${path}/`)),
+      );
+      let result: NoteActionResult<{ deletedCount: number }>;
+      try {
+        result = await deleteFolderAction(projectId, path);
+      } catch (err) {
+        if (prev !== undefined) qc.setQueryData(foldersKey, prev);
+        throw err;
+      }
+      if (!result.ok && prev !== undefined) qc.setQueryData(foldersKey, prev);
       return result;
     },
   });
