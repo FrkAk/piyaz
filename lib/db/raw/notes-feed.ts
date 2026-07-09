@@ -20,11 +20,12 @@
  * post-filters over the exposed subset only. A bound `LIMIT` caps the
  * fetch, and `summary` is blanked past the admission cap so rows that
  * can only become pointers carry no summary egress. Never selects
- * `body` or `search_tsv`.
+ * `search_tsv`; `body` ships only on the bodies variant, char-bounded
+ * and restricted to guidance rows within the admission rank.
  */
 
 import { sql, type SQL } from "drizzle-orm";
-import { notes } from "@/lib/db/schema";
+import { notes, projects } from "@/lib/db/schema";
 import { type ReadConn } from "@/lib/db/raw";
 
 /** The task shape feed resolution matches against; callers hold the row. */
@@ -42,7 +43,22 @@ export type NoteFeedRawRow = {
   type: string;
   folder: string;
   summary: string;
+  sequence_number: number;
+  identifier: string;
+  body?: string;
   updated_at: string | Date;
+};
+
+/**
+ * Guidance-body bounds for the bodies variant of the feed query.
+ * `rankCap` limits which rows ship a body (guidance rows within the
+ * admission rank); `charBound` is the server-side `LEFT` bound, one char
+ * past the char budget so an over-budget body arrives over-budget and
+ * degrades to a pointer instead of rendering truncated.
+ */
+export type NoteFeedBodyBound = {
+  rankCap: number;
+  charBound: number;
 };
 
 /**
@@ -100,6 +116,9 @@ function tagsArmSql(tags: string[]): SQL {
  *   callers pass the effective note cap.
  * @param limit - Row bound; callers pass note cap + pointer cap + 1
  *   (the sentinel row that disambiguates truncation).
+ * @param bodies - When set, guidance rows within `rankCap` ship their
+ *   body `LEFT`-bounded to `charBound` chars; omitted (slim callers,
+ *   standalone resolution) the query selects no body at all.
  * @returns SQL yielding {@link NoteFeedRawRow}s, most recently updated
  *   first (ties broken by id ascending).
  */
@@ -108,15 +127,25 @@ export function notesFeedSql(
   task: FeedTask,
   summaryCap: number,
   limit: number,
+  bodies?: NoteFeedBodyBound,
 ): SQL {
+  const bodyColumn = bodies
+    ? sql`
+      CASE
+        WHEN n.type = 'guidance'
+          AND row_number() OVER (ORDER BY n.updated_at DESC, n.id ASC) <= ${bodies.rankCap}
+        THEN LEFT(n.body, ${bodies.charBound}) ELSE ''
+      END AS body,`
+    : sql``;
   return sql`
-    SELECT n.id, n.slug, n.title, n.type, n.folder,
+    SELECT n.id, n.slug, n.title, n.type, n.folder, n.sequence_number, p.identifier,
       CASE
         WHEN row_number() OVER (ORDER BY n.updated_at DESC, n.id ASC) <= ${summaryCap}
         THEN n.summary ELSE ''
-      END AS summary,
+      END AS summary,${bodyColumn}
       n.updated_at
     FROM ${notes} n
+    JOIN ${projects} p ON p.id = n.project_id
     WHERE n.project_id = ${projectId}
       AND n.feed_mode <> 'none'
       AND n.deleted_at IS NULL
@@ -133,14 +162,17 @@ export function notesFeedSql(
 }
 
 /**
- * The feed-exposure query as a lazy batch statement. Batch alongside
- * `projectAccessGateStmt` and evaluate the gate rows first.
+ * The feed-exposure query as a lazy batch statement. Standalone callers
+ * batch it alongside `projectAccessGateStmt` and evaluate the gate rows
+ * first; the bundle path folds it into a batch that already asserted
+ * task (hence project) access and skips the redundant gate.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project whose notes are resolved.
  * @param task - The task the feed targets.
  * @param summaryCap - Rows past this rank return an empty `summary`.
  * @param limit - Row bound; callers pass note cap + pointer cap + 1.
+ * @param bodies - Guidance-body bounds; omit to select no body.
  * @returns Lazy raw statement yielding {@link NoteFeedRawRow}s.
  */
 export function notesFeedStmt(
@@ -149,6 +181,7 @@ export function notesFeedStmt(
   task: FeedTask,
   summaryCap: number,
   limit: number,
+  bodies?: NoteFeedBodyBound,
 ) {
-  return read.execute(notesFeedSql(projectId, task, summaryCap, limit));
+  return read.execute(notesFeedSql(projectId, task, summaryCap, limit, bodies));
 }

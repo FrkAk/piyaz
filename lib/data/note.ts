@@ -354,7 +354,12 @@ export type NoteSearchHit = NoteTreeRow;
 
 export type { FeedTask };
 
-/** Slim agent-exposed note row; never carries `body` or `search_tsv`. */
+/**
+ * Agent-exposed note row. `body` is non-empty only for guidance rows
+ * returned by the bodies variant of the feed query, char-bounded
+ * server-side; `search_tsv` is never selected. `noteRef` is the composed
+ * `<IDENT>-N<seq>` reference.
+ */
 export type NoteFeedRow = {
   id: string;
   slug: string;
@@ -362,6 +367,9 @@ export type NoteFeedRow = {
   type: NoteType;
   folder: string;
   summary: string;
+  body: string;
+  sequenceNumber: number;
+  noteRef: string;
   updatedAt: Date;
 };
 
@@ -371,6 +379,8 @@ export type NoteFeedPointer = {
   slug: string;
   title: string;
   type: NoteType;
+  sequenceNumber: number;
+  noteRef: string;
 };
 
 /**
@@ -1676,11 +1686,12 @@ function clampFeedBudget(budget?: FeedBudget): {
 /**
  * Apply the §7/§10 bundle budget to exposure-ordered feed rows: admit a
  * strict prefix while both the note cap and the running char budget
- * (per-row `title.length + summary.length`) hold; the first row failing
- * either bound stops admission and remaining rows degrade to pointers,
- * capped at {@link FEED_POINTER_CAP} with `truncated` flagging any drop.
- * Pure; PYZ-253 consumes the feed through {@link resolveExposedNotes},
- * never the raw statement.
+ * (per-row `title.length + summary.length + body.length`) hold; the
+ * first row failing either bound stops admission and remaining rows
+ * degrade to pointers, capped at {@link FEED_POINTER_CAP} with
+ * `truncated` flagging any drop. Pure; {@link resolveExposedNotes} and
+ * the bundle-batch fold (PYZ-253 decision) both reach it through
+ * {@link decodeFeedRows}.
  *
  * @param rows - Exposed rows, already ordered `updatedAt DESC, id ASC`.
  * @param budget - Optional caps; each clamps to [1, its default]
@@ -1696,7 +1707,8 @@ export function applyFeedBudget(
   let runningChars = 0;
   let cut = rows.length;
   for (let i = 0; i < rows.length; i++) {
-    const rowChars = rows[i].title.length + rows[i].summary.length;
+    const rowChars =
+      rows[i].title.length + rows[i].summary.length + rows[i].body.length;
     if (admitted.length >= maxNotes || runningChars + rowChars > maxChars) {
       cut = i;
       break;
@@ -1710,6 +1722,8 @@ export function applyFeedBudget(
     slug: row.slug,
     title: row.title,
     type: row.type,
+    sequenceNumber: row.sequenceNumber,
+    noteRef: row.noteRef,
   }));
   return { notes: admitted, overflow, truncated: pointerEnd < rows.length };
 }
@@ -1729,19 +1743,62 @@ function mapNoteFeedRow(row: NoteFeedRawRow): NoteFeedRow {
     type: row.type as NoteType,
     folder: row.folder,
     summary: row.summary,
+    body: row.body ?? "",
+    sequenceNumber: row.sequence_number,
+    noteRef: composeNoteRef(asIdentifier(row.identifier), row.sequence_number),
     updatedAt: toDate(row.updated_at),
   };
 }
 
 /**
- * Resolve the notes an agent may see for one task: the single §7
- * exposure authority for the planned note-search (PYZ-251) and
- * context-injection (PYZ-253) call sites. A note is exposed iff
- * `visibility = 'team'` AND `feed_mode <> 'none'` AND its feed mode
- * targets the task; the budget then degrades overflow to pointers. The
- * fetch is bounded to note cap + {@link FEED_POINTER_CAP} rows plus one
- * sentinel row, so `truncated` is true only when exposed notes were
- * actually dropped. Zero matches resolve to empty lists, never an error.
+ * Fetch bound for one feed read: the effective note cap plus
+ * {@link FEED_POINTER_CAP}. Callers pass `feedFetchLimit(budget) + 1` as
+ * the SQL LIMIT; the extra sentinel row disambiguates truncation in
+ * {@link decodeFeedRows}.
+ *
+ * @param budget - Optional caller caps.
+ * @returns Row bound before the sentinel.
+ */
+export function feedFetchLimit(budget?: FeedBudget): number {
+  return clampFeedBudget(budget).maxNotes + FEED_POINTER_CAP;
+}
+
+/**
+ * Decode raw feed rows into a budgeted resolution: normalize the driver
+ * result, compose note refs, drop the sentinel row past
+ * {@link feedFetchLimit}, apply the budget, and flag truncation when the
+ * sentinel was present. The single decode for {@link resolveExposedNotes}
+ * and the bundle-batch fold, so the sentinel logic is never duplicated.
+ *
+ * @param rowsRaw - Raw driver result from the feed statement.
+ * @param budget - Optional caps; each clamps to [1, its default].
+ * @returns Admitted rows, pointer-only overflow, and the truncation flag.
+ */
+export function decodeFeedRows(
+  rowsRaw: unknown,
+  budget?: FeedBudget,
+): NoteFeedResolution {
+  const fetchLimit = feedFetchLimit(budget);
+  const fetched =
+    normalizeExecuteResult<NoteFeedRawRow>(rowsRaw).map(mapNoteFeedRow);
+  const rows = fetched.slice(0, fetchLimit);
+  const resolution = applyFeedBudget(rows, budget);
+  return {
+    ...resolution,
+    truncated: resolution.truncated || fetched.length > fetchLimit,
+  };
+}
+
+/**
+ * Resolve the notes an agent may see for one task: the standalone §7
+ * exposure entry. The bundle path (PYZ-253) folds {@link notesFeedStmt}
+ * into its existing read batch instead and decodes via
+ * {@link decodeFeedRows}. A note is exposed iff `visibility = 'team'`
+ * AND `feed_mode <> 'none'` AND its feed mode targets the task; the
+ * budget then degrades overflow to pointers. The fetch is bounded to
+ * note cap + {@link FEED_POINTER_CAP} rows plus one sentinel row, so
+ * `truncated` is true only when exposed notes were actually dropped.
+ * Zero matches resolve to empty lists, never an error.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project whose notes are resolved.
@@ -1759,20 +1816,12 @@ export async function resolveExposedNotes(
 ): Promise<NoteFeedResolution> {
   assertValidProjectId(projectId);
   const { maxNotes } = clampFeedBudget(budget);
-  const fetchLimit = maxNotes + FEED_POINTER_CAP;
   const [gateRows, rowsRaw] = await withUserContextRead(ctx.userId, (read) => [
     projectAccessGateStmt(read, projectId),
-    notesFeedStmt(read, projectId, task, maxNotes, fetchLimit + 1),
+    notesFeedStmt(read, projectId, task, maxNotes, feedFetchLimit(budget) + 1),
   ]);
   assertProjectGateRows(projectId, gateRows);
-  const fetched =
-    normalizeExecuteResult<NoteFeedRawRow>(rowsRaw).map(mapNoteFeedRow);
-  const rows = fetched.slice(0, fetchLimit);
-  const resolution = applyFeedBudget(rows, budget);
-  return {
-    ...resolution,
-    truncated: resolution.truncated || fetched.length > fetchLimit,
-  };
+  return decodeFeedRows(rowsRaw, budget);
 }
 
 /**

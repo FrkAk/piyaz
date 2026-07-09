@@ -3,13 +3,16 @@ import "server-only";
 import type { AcceptanceCriterion } from "@/lib/types";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import {
+  buildNotesPart,
   capLines,
   formatCriteria,
   formatLinkLine,
+  MAX_SLIM_NOTE_LINES,
   untrustedContentNotice,
 } from "@/lib/context/format";
 import { joinParts, type BundlePart } from "@/lib/context/parts";
 import type { AuthContext } from "@/lib/auth/context";
+import type { NoteFeedResolution } from "@/lib/data/note";
 import {
   resolveWorkingData,
   type WorkingContextData,
@@ -31,6 +34,7 @@ type WorkingContext = {
   }[];
   assignees: AssigneeRef[];
   links: TaskLinkRef[];
+  feed: NoteFeedResolution;
 };
 
 /**
@@ -62,6 +66,7 @@ export function buildWorkingContextFrom(
     edges,
     assignees: task.assignees,
     links: task.links,
+    feed: data.feed,
   };
 }
 
@@ -156,6 +161,12 @@ export function formatWorkingContextParts(ctx: WorkingContext): BundlePart[] {
 
   const links = formatLinksSection(ctx.links);
   if (links) parts.push({ id: "links", heading: "Links", markdown: links });
+
+  const notes = buildNotesPart(ctx.feed, {
+    guidanceAsPointers: true,
+    limit: MAX_SLIM_NOTE_LINES,
+  });
+  if (notes) parts.push(notes);
 
   return parts;
 }

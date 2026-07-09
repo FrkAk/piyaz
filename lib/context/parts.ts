@@ -49,7 +49,9 @@ export type BundleSectionId =
   | "execution"
   | "project"
   | "blocked"
-  | "lens";
+  | "lens"
+  | "guidance"
+  | "notes";
 
 /** Part identifiers: drawer sections plus bundle-only chrome. */
 export type BundlePartId =

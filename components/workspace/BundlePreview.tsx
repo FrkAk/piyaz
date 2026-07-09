@@ -99,6 +99,12 @@ const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
   project: { id: "project", label: "project", color: "var(--color-relates)" },
   blocked: { id: "blocked", label: "blocked", color: "var(--color-danger)" },
   lens: { id: "lens", label: "lens", color: "var(--color-accent)" },
+  guidance: {
+    id: "guidance",
+    label: "guidance",
+    color: "var(--color-accent)",
+  },
+  notes: { id: "notes", label: "notes", color: "var(--color-accent-2)" },
 };
 
 export interface BundleNeighbor {
@@ -277,6 +283,12 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
       return (props.executionRecord ?? "").trim().length > 0;
     case "blocked":
       return props.blockedBy.length > 0;
+    case "guidance":
+    case "notes":
+      // The note feed resolves server-side per bundle; the detail panel
+      // loads no note data, so these sections surface only in the MD raw
+      // view, which fetches the real bundle.
+      return false;
   }
 }
 
@@ -344,6 +356,9 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
     case "execution":
     case "work-so-far":
       return Math.max(len(props.executionRecord ?? ""), 1);
+    case "guidance":
+    case "notes":
+      return 1;
   }
 }
 

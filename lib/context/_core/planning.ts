@@ -1,6 +1,8 @@
 import "server-only";
 
 import {
+  buildGuidancePart,
+  buildNotesPart,
   capLines,
   MAX_BUNDLE_RECORD_BLOCKS,
   section,
@@ -84,6 +86,9 @@ export function buildPlanningContextParts(
       markdown: section("Project Context") + "\n" + projectLines.join("\n"),
     });
   }
+
+  const guidancePart = buildGuidancePart(data.feed);
+  if (guidancePart) parts.push(guidancePart);
 
   parts.push({
     id: "spec",
@@ -250,6 +255,9 @@ export function buildPlanningContextParts(
       });
     }
   }
+
+  const notesPart = buildNotesPart(data.feed, { guidanceAsPointers: false });
+  if (notesPart) parts.push(notesPart);
 
   if (data.related.length > 0) {
     parts.push({
