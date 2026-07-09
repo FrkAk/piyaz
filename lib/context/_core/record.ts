@@ -1,6 +1,8 @@
 import "server-only";
 
 import {
+  buildNotesPart,
+  MAX_SLIM_NOTE_LINES,
   section,
   formatCriteria,
   formatDecisions,
@@ -156,6 +158,12 @@ export function buildRecordContextParts(data: RecordContextData): BundlePart[] {
       parts.push({ id: "nudge", heading: null, markdown: READ_PR_NUDGE });
     }
   }
+
+  const notesPart = buildNotesPart(data.feed, {
+    guidanceAsPointers: true,
+    limit: MAX_SLIM_NOTE_LINES,
+  });
+  if (notesPart) parts.push(notesPart);
 
   return parts;
 }

@@ -55,7 +55,7 @@ test("resolveDependencyClosure resolves in two read batches for a connected task
   }
 });
 
-test("resolveDependencyClosure skips the secondary batch for an isolated task", async () => {
+test("resolveDependencyClosure runs the feed as the sole second-batch statement for an isolated task", async () => {
   const fx = await seedUserOrgProject("bundle-isolated");
   const { superuserPool } = await import("@/tests/setup/global");
   const su = superuserPool();
@@ -68,10 +68,11 @@ test("resolveDependencyClosure skips the secondary batch for an isolated task", 
 
   try {
     const closure = await resolveDependencyClosure(fx.userId, task.id, "agent");
-    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(readSpy).toHaveBeenCalledTimes(2);
     expect(closure.deps).toEqual([]);
     expect(closure.downstream).toEqual([]);
     expect(closure.depTasks).toEqual([]);
+    expect(closure.feed.notes).toEqual([]);
   } finally {
     readSpy.mockRestore();
   }
@@ -212,7 +213,7 @@ test("agent-depth dispatch drops the implementation plan for terminal tasks", as
   expect(resolved.data.task.implementationPlan).toBeNull();
 });
 
-test("resolveRecordData skips the secondary batch without dependents", async () => {
+test("resolveRecordData runs the feed as the sole second-batch statement without dependents", async () => {
   const fx = await seedUserOrgProject("record-isolated");
   const { superuserPool } = await import("@/tests/setup/global");
   const su = superuserPool();
@@ -225,9 +226,10 @@ test("resolveRecordData skips the secondary batch without dependents", async () 
 
   try {
     const data = await resolveRecordData(fx.userId, task.id);
-    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(readSpy).toHaveBeenCalledTimes(2);
     expect(data.downstream).toEqual([]);
     expect(data.downstreamSummaries).toEqual([]);
+    expect(data.feed.notes).toEqual([]);
   } finally {
     readSpy.mockRestore();
   }

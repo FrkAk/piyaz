@@ -1,6 +1,8 @@
 import "server-only";
 
 import {
+  buildGuidancePart,
+  buildNotesPart,
   capLines,
   MAX_BUNDLE_RECORD_BLOCKS,
   section,
@@ -118,6 +120,9 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
       markdown: blocked,
     });
   }
+
+  const guidancePart = buildGuidancePart(data.feed);
+  if (guidancePart) parts.push(guidancePart);
 
   if (task.implementationPlan && !isTerminalStatus(status)) {
     parts.push({
@@ -240,6 +245,9 @@ export function buildAgentContextParts(data: AgentContextData): BundlePart[] {
       });
     }
   }
+
+  const notesPart = buildNotesPart(data.feed, { guidanceAsPointers: false });
+  if (notesPart) parts.push(notesPart);
 
   if (data.related.length > 0) {
     parts.push({

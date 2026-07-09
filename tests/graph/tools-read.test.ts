@@ -383,3 +383,35 @@ test("workspace members requires organizationId on multi-team accounts", async (
     expect(result.error).toContain("Second TMEMMULTI");
   }
 });
+
+test("get renders exposed notes through the MCP lens surface", async () => {
+  const fx = await seedUserOrgProject("TNOTES");
+  const ctx = makeAuthContext(fx.userId);
+  await createTask(ctx, { projectId: fx.projectId, title: "Note consumer" });
+  const sr = serviceRoleConnect();
+  try {
+    await sr`INSERT INTO notes (project_id, title, slug, visibility, type, body, summary, feed_mode)
+             VALUES (${fx.projectId}, 'House rules', 'house-rules', 'team', 'guidance',
+                     'Run the full gate.', 'gate rule', 'all'),
+                    (${fx.projectId}, 'Area map', 'area-map', 'team', 'reference',
+                     'Endpoints live in app/api.', 'endpoint index', 'all')`;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+
+  const agent = okText(
+    await handleGet({ task: "PRJTNOTES-1", lens: "agent" }, ctx),
+  );
+  expect(agent).toContain("## Project Guidance");
+  expect(agent).toContain("> Run the full gate.");
+  expect(agent).toContain("## Relevant Notes");
+  expect(agent).toContain("[reference] Area map — endpoint index");
+  expect(agent).not.toContain("Endpoints live in app/api.");
+
+  const summary = okText(
+    await handleGet({ task: "PRJTNOTES-1", lens: "summary" }, ctx),
+  );
+  expect(summary).toContain("## Relevant Notes");
+  expect(summary).toContain("[guidance] House rules — gate rule");
+  expect(summary).not.toContain("Run the full gate.");
+});

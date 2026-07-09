@@ -119,7 +119,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
     if (kind === "record" && !isTerminalStatus(gate.status)) {
       return error(RECORD_REQUIRES_TERMINAL, 400);
     }
-    const max = await getProjectMaxUpdatedAt(ctx, gate.projectId);
+    const max = await getProjectMaxUpdatedAt(ctx, gate.projectId, true);
 
     if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);

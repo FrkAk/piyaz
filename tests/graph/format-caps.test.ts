@@ -33,6 +33,7 @@ test("summary lens caps a hub task's edge list with narrowing guidance", () => {
     assigneeCount: 0,
     hasImplementationPlan: false,
     links: [],
+    feed: { notes: [], overflow: [], truncated: false },
   });
 
   expect(text).toContain(`\`HUB-${MAX_BUNDLE_LIST_LINES + 1}\``);

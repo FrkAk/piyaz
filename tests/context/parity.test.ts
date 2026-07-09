@@ -106,6 +106,12 @@ async function seedFullParityTask(suffix: string) {
     await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type, note)
              VALUES (${fx.taskId}, ${dead.id}, 'depends_on', 'old route'),
                     (${fx.taskId}, ${draftDep.id}, 'depends_on', 'new api')`;
+    await sr`INSERT INTO notes (project_id, title, slug, visibility, type, body, summary, feed_mode)
+             SELECT project_id, 'House rules', 'house-rules', 'team', 'guidance', 'Rule body.', 'rules', 'all'
+             FROM tasks WHERE id = ${fx.taskId}`;
+    await sr`INSERT INTO notes (project_id, title, slug, visibility, type, body, summary, feed_mode)
+             SELECT project_id, 'Area map', 'area-map', 'team', 'reference', 'Map body.', 'map', 'all'
+             FROM tasks WHERE id = ${fx.taskId}`;
   });
   return fx;
 }

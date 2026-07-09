@@ -94,9 +94,18 @@ export const SECTIONS_BY_BUNDLE: Record<
   BundleVariant,
   readonly BundleSectionId[]
 > = {
-  working: ["spec", "meta", "criteria", "decisions", "connected", "links"],
+  working: [
+    "spec",
+    "meta",
+    "criteria",
+    "decisions",
+    "connected",
+    "links",
+    "notes",
+  ],
   planning: [
     "project",
+    "guidance",
     "spec",
     "criteria",
     "plan",
@@ -107,23 +116,27 @@ export const SECTIONS_BY_BUNDLE: Record<
     "decisions",
     "links",
     "downstream",
+    "notes",
     "related",
   ],
   agent: [
     "blocked",
     "spec",
+    "guidance",
     "plan",
     "prerequisites",
     "built",
     "links",
     "execution",
     "downstream",
+    "notes",
     "related",
     "constraints",
     "criteria",
   ],
   review: [
     "project",
+    "guidance",
     "spec",
     "criteria",
     "plan",
@@ -133,6 +146,7 @@ export const SECTIONS_BY_BUNDLE: Record<
     "prerequisites",
     "built",
     "downstream",
+    "notes",
     "lens",
   ],
   "record-done": [
@@ -143,6 +157,7 @@ export const SECTIONS_BY_BUNDLE: Record<
     "decisions",
     "links",
     "downstream",
+    "notes",
   ],
   "record-cancelled": [
     "project",
@@ -151,6 +166,7 @@ export const SECTIONS_BY_BUNDLE: Record<
     "decisions",
     "dependents",
     "links",
+    "notes",
   ],
 };
 

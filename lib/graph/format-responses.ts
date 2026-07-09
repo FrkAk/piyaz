@@ -3,12 +3,7 @@
  * Used by shared handlers so both web AI SDK and MCP get identical output.
  */
 
-import type {
-  McpSearchItem,
-  McpSearchPage,
-  SearchResult,
-  TaskSlim,
-} from "@/lib/data/task";
+import type { McpSearchPage, SearchResult, TaskSlim } from "@/lib/data/task";
 import type { DetailedEdge } from "@/lib/data/edge";
 import type {
   Neighbor,
@@ -24,7 +19,12 @@ import type { TeamMemberEntry } from "@/lib/data/membership";
 import type { UserTeamEntry } from "@/lib/data/project";
 import type { ProjectOverview } from "@/lib/context/_core/overview";
 import type { SummaryContext } from "@/lib/context/_core/summary";
-import { capLines, untrustedContentNotice } from "@/lib/context/format";
+import {
+  capLines,
+  formatNotePointers,
+  MAX_SLIM_NOTE_LINES,
+  untrustedContentNotice,
+} from "@/lib/context/format";
 import { budgetLines } from "@/lib/mcp/budget";
 import type { ProjectMeta } from "@/lib/data/views";
 
@@ -139,6 +139,15 @@ export function formatSummary(ctx: SummaryContext): string {
         `run piyaz_map view='neighbors'${ctx.node.taskRef ? ` task='${ctx.node.taskRef}'` : ""} for the full list.`,
       ),
     );
+  }
+
+  const notePointers = formatNotePointers(ctx.feed, {
+    guidanceAsPointers: true,
+    limit: MAX_SLIM_NOTE_LINES,
+  });
+  if (notePointers) {
+    parts.push("\n## Relevant Notes");
+    parts.push(notePointers);
   }
   return untrustedContentNotice() + "\n\n" + parts.join("\n");
 }
