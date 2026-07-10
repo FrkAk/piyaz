@@ -39,9 +39,7 @@ async function handle(req: Request, noteId: string): Promise<Response> {
       cursor,
       limit: limit !== undefined && Number.isFinite(limit) ? limit : undefined,
     });
-    const maxMs = page.events.length
-      ? Date.parse(page.events[0].createdAt)
-      : 0;
+    const maxMs = page.events.length ? Date.parse(page.events[0].createdAt) : 0;
     return conditionalRespond(req, page, `${maxMs}-${page.events.length}`);
   } catch (err) {
     if (err instanceof ForbiddenError) return error("Note not found", 404);

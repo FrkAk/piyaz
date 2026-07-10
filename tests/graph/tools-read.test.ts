@@ -476,7 +476,10 @@ test("activity note scope resolves a slug with project and rejects task+note", a
   );
   expect(bySlug).toContain("Slugged note");
 
-  const both = await handleActivity({ task: "PRJTACTSLUG-1", note: note.id }, ctx);
+  const both = await handleActivity(
+    { task: "PRJTACTSLUG-1", note: note.id },
+    ctx,
+  );
   expect(both.ok).toBe(false);
   if (!both.ok) expect(both.error).toContain("exactly one");
 });

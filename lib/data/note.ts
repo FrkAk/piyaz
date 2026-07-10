@@ -3228,8 +3228,7 @@ export async function restoreNote(
         type: "note_restored",
         targetRef: slug,
         summary: `restored note "${summaryTitle(summary.title)}"`,
-        metadata:
-          slug === current.slug ? null : { previousSlug: current.slug },
+        metadata: slug === current.slug ? null : { previousSlug: current.slug },
       },
     ]);
     return {

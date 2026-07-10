@@ -307,15 +307,24 @@ function describeNoteEvent(event: ActivityEvent): {
   }
   switch (event.type) {
     case "note_created":
-      return { icon: <IconPlus size={12} />, text: stripTitle(event, "created note") };
+      return {
+        icon: <IconPlus size={12} />,
+        text: stripTitle(event, "created note"),
+      };
     case "note_updated":
       return { icon: <IconPencil size={12} />, text: phraseUpdate(event) };
     case "note_moved":
       return { icon: <IconSort size={12} />, text: phraseMove(event) };
     case "note_deleted":
-      return { icon: <IconTrash size={12} />, text: stripTitle(event, "moved to trash") };
+      return {
+        icon: <IconTrash size={12} />,
+        text: stripTitle(event, "moved to trash"),
+      };
     case "note_restored":
-      return { icon: <IconUndo size={12} />, text: stripTitle(event, "restored from trash") };
+      return {
+        icon: <IconUndo size={12} />,
+        text: stripTitle(event, "restored from trash"),
+      };
     default:
       return { icon: <IconMore size={12} />, text: event.summary };
   }
@@ -363,7 +372,8 @@ function phraseUpdate(event: ActivityEvent): string {
  */
 function phraseMove(event: ActivityEvent): string {
   const to = (event.metadata as { to?: string } | null)?.to;
-  if (typeof to === "string") return to === "" ? "moved to root" : `moved to ${to}`;
+  if (typeof to === "string")
+    return to === "" ? "moved to root" : `moved to ${to}`;
   return stripTitle(event, "moved note");
 }
 

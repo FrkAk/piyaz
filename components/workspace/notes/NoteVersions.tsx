@@ -131,8 +131,8 @@ export function NoteVersions({
         count={data !== undefined ? data.revisions.length : undefined}
       />
       <p className="mb-2 text-[11px] leading-snug text-text-muted">
-        Snapshots of past saves. Restoring is reversible: the current
-        content is kept as its own version.
+        Snapshots of past saves. Restoring is reversible: the current content is
+        kept as its own version.
       </p>
       {isPending ? (
         <div className="space-y-2" role="status" aria-label="Loading versions">
@@ -237,8 +237,8 @@ export function NoteVersions({
         body={
           <>
             The note&rsquo;s title and body revert to version{" "}
-            {confirmVersion ?? ""}. Nothing is lost — the current content
-            stays available as its own version.
+            {confirmVersion ?? ""}. Nothing is lost — the current content stays
+            available as its own version.
           </>
         }
         confirmLabel="Restore"
