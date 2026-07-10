@@ -118,7 +118,7 @@ grows.
 
 - **Account and workspace data**: for as long as your account is active. After you delete your account, data is removed within **30 days**, and residual copies in backups are purged within **90 days**.
 - **Session records**: expire automatically after **7 days**.
-- **Acceptance records**: retained for the life of your account plus **3 years** to evidence your agreement.
+- **Acceptance records**: anonymized when your account is deleted (the link to you, your IP address, and your user-agent are removed) and retained in that anonymized form as evidence that the agreement existed.
 - **Operational logs and traces**: retained for up to **90 days** and then deleted or anonymized.
 
 ## Your data protection rights
