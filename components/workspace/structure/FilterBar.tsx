@@ -1,6 +1,10 @@
 "use client";
 
-import { ChipButton, ChipTrigger } from "@/components/shared/FilterChip";
+import {
+  ChipButton,
+  ChipTrigger,
+  labelFor,
+} from "@/components/shared/FilterChip";
 import { Dropdown } from "@/components/shared/Dropdown";
 import { IconFilter, IconList, IconSort } from "@/components/shared/icons";
 
@@ -41,20 +45,6 @@ const GROUP_OPTIONS: ReadonlyArray<{ value: GroupKey; label: string }> = [
   { value: "category", label: "Category" },
   { value: "none", label: "None" },
 ];
-
-/**
- * Lookup the display label for a value in an options table.
- *
- * @param options - Option list.
- * @param value - Active value.
- * @returns Matching label or empty string.
- */
-function labelFor<V extends string>(
-  options: ReadonlyArray<{ value: V; label: string }>,
-  value: V,
-): string {
-  return options.find((o) => o.value === value)?.label ?? "";
-}
 
 /**
  * Top filter bar above the structure list — owns the filter sheet toggle

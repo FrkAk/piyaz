@@ -35,6 +35,7 @@ import type {
   NotePatch,
 } from "@/lib/data/note";
 import type { FeedMode, Visibility } from "@/lib/types";
+import { NOTE_TYPE_ORDER } from "@/lib/ui/note-order";
 import type { TaskSlimMap } from "./EditorPane";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import {
@@ -49,9 +50,6 @@ import {
   useDeclineShareRequest,
   useUpdateNote,
 } from "./useNoteMutations";
-
-/** The note types offered in the Type group, in display order. */
-const TYPE_ORDER = ["reference", "guidance", "knowledge"] as const;
 
 /** Feed mode buttons in display order, with their labels. */
 const FEED_MODES: { id: FeedMode; label: string }[] = [
@@ -336,7 +334,7 @@ export function SettingsPane({
             className="mb-3 grid grid-cols-3 gap-1.5"
             style={{ opacity: dimmed("type") }}
           >
-            {TYPE_ORDER.map((t) => {
+            {NOTE_TYPE_ORDER.map((t) => {
               const m = NOTE_TYPE_META[t];
               const active = note.type === t;
               return (
@@ -607,7 +605,7 @@ interface RibbonShellProps {
 
 /**
  * Ribbon frame: a slim toolbar with the collapse (column) or close (drawer)
- * affordance over a scrollable body. At `lg` the column is a fixed 320px
+ * affordance over a scrollable body. At `lg` the column is a fixed 352px
  * rail with a left border; in `fill` (drawer) mode it stretches full width.
  *
  * @param props - Chrome mode and body.
@@ -621,7 +619,7 @@ function RibbonShell({
 }: RibbonShellProps) {
   return (
     <div
-      className={`flex h-full min-h-0 flex-col ${fill ? "w-full" : "w-[320px] border-l border-border"}`}
+      className={`flex h-full min-h-0 flex-col ${fill ? "w-full" : "w-[352px] border-l border-border"}`}
       style={{ background: "var(--color-base)" }}
     >
       <div

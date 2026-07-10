@@ -304,7 +304,11 @@ export class CrossProjectNoteLinkError extends Error {
 // Types
 // ---------------------------------------------------------------------------
 
-/** Slim tree-list row; never carries `body` or `search_tsv`. */
+/**
+ * Slim tree-list row; never carries `body` or `search_tsv`. `category` is
+ * optional: the tree list projects it for client-side category grouping;
+ * the search-hit path leaves it undefined (hits render flat by relevance).
+ */
 export type NoteTreeRow = {
   id: string;
   slug: string;
@@ -312,6 +316,7 @@ export type NoteTreeRow = {
   title: string;
   type: NoteType;
   folder: string;
+  category?: string | null;
   summary: string;
   visibility: Visibility;
   feedMode: FeedMode;
@@ -538,6 +543,7 @@ const noteTreeColumns = {
   title: notes.title,
   type: notes.type,
   folder: notes.folder,
+  category: notes.category,
   summary: notes.summary,
   visibility: notes.visibility,
   feedMode: notes.feedMode,

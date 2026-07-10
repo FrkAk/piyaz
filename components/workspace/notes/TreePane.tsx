@@ -25,15 +25,18 @@ import {
   IconDoc,
   IconFolderPlus,
   IconGrip,
+  IconList,
   IconLock,
   IconMore,
   IconPanelLeft,
   IconPlus,
   IconSearch,
+  IconSort,
   IconUser,
   IconX,
 } from "@/components/shared/icons";
 import { Dropdown } from "@/components/shared/Dropdown";
+import { ChipTrigger, labelFor } from "@/components/shared/FilterChip";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import type { NoteTreeRow } from "@/lib/data/note";
@@ -49,9 +52,11 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { MoveToFolderDialog } from "./MoveToFolderDialog";
 import {
   type FlatTreeRow,
+  flattenNoteCategories,
   flattenNoteTree,
   type FolderMovePlan,
   groupFoldersByParent,
+  groupNotesByCategory,
   leafOf,
   normalizeFolderInput,
   NOTE_TYPE_META,
@@ -59,9 +64,16 @@ import {
   planFolderMove,
   planFolderRename,
   resolveCreateTarget,
+  sortNoteRows,
   tint,
   type TypeFilter,
 } from "./note-meta";
+import {
+  NOTE_GROUP_OPTIONS,
+  NOTE_SORT_OPTIONS,
+  type NoteGroupKey,
+  type NoteSortKey,
+} from "@/lib/ui/note-order";
 import {
   useCreateFolder,
   useDeleteFolder,
@@ -103,6 +115,14 @@ interface TreePaneProps {
   createPending: boolean;
   /** @param createError - Failure message from the last note create, or null. */
   createError: string | null;
+  /** @param sort - Active sort key for the tree rows. */
+  sort: NoteSortKey;
+  /** @param group - Active group key: folder tree or category sections. */
+  group: NoteGroupKey;
+  /** @param onSortChange - Update the sort key (persisted upstream). */
+  onSortChange: (next: NoteSortKey) => void;
+  /** @param onGroupChange - Update the group key (persisted upstream). */
+  onGroupChange: (next: NoteGroupKey) => void;
   /** @param fill - Fill the parent instead of the fixed-width rail (drawer mode). */
   fill?: boolean;
   /** @param onClose - When set, renders a close button in the header (drawer mode). */
@@ -608,6 +628,41 @@ const FolderRow = memo(function FolderRow({
   );
 });
 
+interface SectionRowProps {
+  /** @param label - Section display label. */
+  label: string;
+  /** @param noteCount - Number of notes in the section. */
+  noteCount: number;
+}
+
+/**
+ * Non-interactive category section header in the virtualized tree:
+ * label plus note count in the pane's mono-uppercase header voice. No
+ * collapse, drag, rename, or menu: sections mirror StructureView's
+ * group headers. Fixed at 26px so the virtualizer's size estimate holds.
+ *
+ * @param props - Section label and note count.
+ * @returns The section header row.
+ */
+const SectionRow = memo(function SectionRow({
+  label,
+  noteCount,
+}: SectionRowProps) {
+  return (
+    <div
+      className="flex w-full items-center gap-1 pr-2"
+      style={{ height: 26, paddingLeft: 8 }}
+    >
+      <span className="truncate font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+        {label}
+      </span>
+      <span className="ml-auto font-mono text-[10px] tabular-nums text-text-faint">
+        {noteCount}
+      </span>
+    </div>
+  );
+});
+
 /** Tree-shaped skeleton rows: two folders with nested and root files. */
 const SKELETON_ROWS: { height: number; indent: number; bar: number }[] = [
   { height: 26, indent: 8, bar: 96 },
@@ -677,6 +732,10 @@ export function TreePane({
   onNewNote,
   createPending,
   createError,
+  sort,
+  group,
+  onSortChange,
+  onGroupChange,
   fill = false,
   onClose,
   onCollapse,
@@ -735,6 +794,18 @@ export function TreePane({
     if (selectedId !== null) setSelectedFolder(null);
   }
 
+  // Category mode renders no folder rows, so a surviving folder selection
+  // or in-progress folder creation would silently target an invisible
+  // folder (render-time state adjustment, not an effect).
+  const [prevGroup, setPrevGroup] = useState(group);
+  if (prevGroup !== group) {
+    setPrevGroup(group);
+    if (group === "category") {
+      setSelectedFolder(null);
+      setCreatingFolder(null);
+    }
+  }
+
   useEffect(() => {
     const trimmed = rawQuery.trim();
     const id = setTimeout(
@@ -746,6 +817,10 @@ export function TreePane({
 
   const query = rawQuery.trim() === "" ? "" : debouncedQuery;
   const searching = query !== "";
+  // Note rows accept drops only in the folder tree: a drop in category
+  // mode would move the dragged note into the hovered note's folder, an
+  // invisible side effect while no folder rows are rendered.
+  const noteDropEnabled = !searching && group === "folder";
   const search = useQuery({
     queryKey: noteKeys.search(projectId, query),
     queryFn: fetchNoteSearch(projectId, query),
@@ -812,6 +887,11 @@ export function TreePane({
       : all.filter((r) => r.type === typeFilter);
   }, [rows, typeFilter]);
 
+  const sortedRows = useMemo(
+    () => sortNoteRows(visibleRows, sort),
+    [visibleRows, sort],
+  );
+
   const allFolders = useMemo(() => {
     const set = new Set<string>(folders.data ?? []);
     for (const r of rows ?? []) if (r.folder) set.add(r.folder);
@@ -828,13 +908,13 @@ export function TreePane({
 
   const notesByFolder = useMemo(() => {
     const map = new Map<string, NoteTreeRow[]>();
-    for (const r of visibleRows) {
+    for (const r of sortedRows) {
       const bucket = map.get(r.folder);
       if (bucket) bucket.push(r);
       else map.set(r.folder, [r]);
     }
     return map;
-  }, [visibleRows]);
+  }, [sortedRows]);
 
   const hits = useMemo(() => {
     const all = search.data ?? [];
@@ -1321,8 +1401,18 @@ export function TreePane({
             note: h,
             indent: 8,
           }))
-        : flattenNoteTree(foldersByParent, notesByFolder, collapsed),
-    [searching, hits, foldersByParent, notesByFolder, collapsed],
+        : group === "category"
+          ? flattenNoteCategories(groupNotesByCategory(sortedRows))
+          : flattenNoteTree(foldersByParent, notesByFolder, collapsed),
+    [
+      searching,
+      hits,
+      group,
+      sortedRows,
+      foldersByParent,
+      notesByFolder,
+      collapsed,
+    ],
   );
 
   const keyIndex = useMemo(() => {
@@ -1368,8 +1458,8 @@ export function TreePane({
   const scrollRef = useRef<HTMLDivElement>(null);
   /** Virtual-list offset inside the scroll element: the naming-first folder input renders above it. */
   const scrollMargin = creatingFolder === null ? 0 : 26;
-  // Sizes are fixed inline per row kind (folder 26, note 30, rename
-  // variants identical), so positions stay pixel-accurate without
+  // Sizes are fixed inline per row kind (folder 26, section 26, note 30,
+  // rename variants identical), so positions stay pixel-accurate without
   // `measureElement`.
   //
   // `useVirtualizer` uses interior mutability; React Compiler auto-skip is safe.
@@ -1378,7 +1468,7 @@ export function TreePane({
   const virtualizer = useVirtualizer({
     count: flatItems.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => (flatItems[index]?.kind === "folder" ? 26 : 30),
+    estimateSize: (index) => (flatItems[index]?.kind === "note" ? 30 : 26),
     getItemKey: (index) => flatItems[index]?.key ?? index,
     overscan: 8,
     rangeExtractor,
@@ -1477,9 +1567,10 @@ export function TreePane({
           <button
             type="button"
             onClick={handleNewFolder}
+            disabled={group === "category"}
             aria-label="New folder"
             title="New folder"
-            className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary"
+            className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:cursor-default disabled:opacity-50"
           >
             <IconFolderPlus size={13} />
           </button>
@@ -1557,9 +1648,6 @@ export function TreePane({
             </button>
           )}
         </div>
-        <p className="mt-1 px-0.5 font-mono text-[9.5px] text-text-faint">
-          Same index agents query via piyaz_note search
-        </p>
       </div>
 
       <div className="flex gap-1.5 overflow-x-auto px-3 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -1586,6 +1674,41 @@ export function TreePane({
             </button>
           );
         })}
+      </div>
+
+      <div className="flex items-center gap-1 px-3 pb-1.5">
+        <Dropdown
+          value={group}
+          options={NOTE_GROUP_OPTIONS}
+          onChange={onGroupChange}
+          align="start"
+          ariaLabel={`Group: ${labelFor(NOTE_GROUP_OPTIONS, group)}`}
+          title={`Group: ${labelFor(NOTE_GROUP_OPTIONS, group)}`}
+          renderTrigger={(_active, open) => (
+            <ChipTrigger icon={<IconList size={11} />} open={open}>
+              <span className="text-text-faint">Group</span>
+              <span className="ml-1 text-text-primary">
+                {labelFor(NOTE_GROUP_OPTIONS, group)}
+              </span>
+            </ChipTrigger>
+          )}
+        />
+        <Dropdown
+          value={sort}
+          options={NOTE_SORT_OPTIONS}
+          onChange={onSortChange}
+          align="start"
+          ariaLabel={`Sort: ${labelFor(NOTE_SORT_OPTIONS, sort)}`}
+          title={`Sort: ${labelFor(NOTE_SORT_OPTIONS, sort)}`}
+          renderTrigger={(_active, open) => (
+            <ChipTrigger icon={<IconSort size={11} />} open={open}>
+              <span className="text-text-faint">Sort</span>
+              <span className="ml-1 text-text-primary">
+                {labelFor(NOTE_SORT_OPTIONS, sort)}
+              </span>
+            </ChipTrigger>
+          )}
+        />
       </div>
 
       {(treeError ?? createError ?? foldersError) !== null && (
@@ -1662,7 +1785,9 @@ export function TreePane({
                     transform: `translateY(${vi.start - scrollMargin}px)`,
                   }}
                 >
-                  {item.kind === "folder" ? (
+                  {item.kind === "section" ? (
+                    <SectionRow label={item.label} noteCount={item.noteCount} />
+                  ) : item.kind === "folder" ? (
                     <FolderRow
                       path={item.path}
                       indent={item.indent}
@@ -1710,8 +1835,10 @@ export function TreePane({
                       onSelect={selectNote}
                       onDragStart={searching ? undefined : handleNoteDragStart}
                       onDragEnd={searching ? undefined : clearDrag}
-                      onDragOver={searching ? undefined : handleNoteDragOver}
-                      onDrop={searching ? undefined : handleDrop}
+                      onDragOver={
+                        noteDropEnabled ? handleNoteDragOver : undefined
+                      }
+                      onDrop={noteDropEnabled ? handleDrop : undefined}
                       renaming={!searching && renamingNote?.id === item.note.id}
                       renameValue={
                         renamingNote?.id === item.note.id

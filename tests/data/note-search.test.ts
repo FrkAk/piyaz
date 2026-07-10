@@ -193,6 +193,7 @@ test("tree list and search hits stay slim: no body, no search_tsv", async () => 
   expect(Object.keys(treeRow).sort()).toEqual(
     [
       "agentWritable",
+      "category",
       "feedMode",
       "folder",
       "id",
@@ -212,4 +213,5 @@ test("tree list and search hits stay slim: no body, no search_tsv", async () => 
   expect("searchTsv" in hit).toBe(false);
   expect("snippet" in hit).toBe(false);
   expect("rank" in hit).toBe(false);
+  expect("category" in hit).toBe(false);
 });
