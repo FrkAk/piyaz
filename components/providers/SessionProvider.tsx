@@ -8,8 +8,18 @@ type SessionState = ReturnType<typeof useSession>;
 
 const SessionContext = createContext<SessionState | null>(null);
 
-/** Paths that don't require a valid session. */
-const PUBLIC_PATHS = ["/sign-in", "/sign-up"];
+/**
+ * Paths that don't require a valid session. Must cover every unauthenticated
+ * page in the middleware `isPublicPath` allowlist, or this client-side guard
+ * bounces signed-out visitors off public pages after they render.
+ */
+const PUBLIC_PATHS = [
+  "/sign-in",
+  "/sign-up",
+  "/privacy",
+  "/terms",
+  "/impressum",
+];
 
 /**
  * Provides reactive auth session state to client components.
