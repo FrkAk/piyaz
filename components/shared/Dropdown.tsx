@@ -56,6 +56,14 @@ const PANEL_MAX_HEIGHT_PX = 288;
  * coordinates so a parent's `overflow-y-auto` (which CSS-spec-promotes
  * to `overflow: auto` on both axes) cannot clip it sideways or below.
  *
+ * Keyboard contract: opening seeds focus onto the selected (else first
+ * enabled) option, ArrowDown/ArrowUp move between options with wrap,
+ * and Escape, Tab, and selection close the panel and return focus to
+ * the trigger. Tab must land back on the trigger before a host
+ * dialog's focus trap sees the event: the panel is portalled outside
+ * the dialog panel, so focus left inside it would let Tab walk out of
+ * the dialog.
+ *
  * @param props - Dropdown configuration.
  * @returns Trigger button plus animated portalled panel.
  */
@@ -95,7 +103,15 @@ export function Dropdown<V extends string>({
       if (!inTrigger && !inPopover) setOpen(false);
     };
     const escape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      const active = document.activeElement;
+      if (
+        popoverRef.current?.contains(active) ||
+        triggerRef.current?.contains(active)
+      ) {
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener("mousedown", handler);
     document.addEventListener("keydown", escape);
@@ -121,6 +137,52 @@ export function Dropdown<V extends string>({
   // disabled while open (e.g. a sibling write goes in flight), gating on
   // `disabled` here closes it without an effect-driven setState.
   const panelOpen = open && !disabled;
+
+  // Seed focus onto the selected (else first enabled) option when the
+  // panel opens; the panel is portalled to `document.body`, so without
+  // this Tab order would walk the whole page before reaching it.
+  useEffect(() => {
+    if (!panelOpen) return;
+    const nodes = popoverRef.current?.querySelectorAll<HTMLButtonElement>(
+      '[role="option"]:not(:disabled)',
+    );
+    if (!nodes || nodes.length === 0) return;
+    const items = Array.from(nodes);
+    const target =
+      items.find((o) => o.getAttribute("aria-selected") === "true") ?? items[0];
+    target.focus();
+  }, [panelOpen]);
+
+  // Roving focus inside the panel: arrows move between enabled options
+  // with wrap; Tab hands focus back to the trigger (see the keyboard
+  // contract above) and lets the keydown's default action proceed from
+  // there, so a host dialog's Tab trap operates on an in-panel element.
+  const handlePanelKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === "Tab") {
+        setOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      const nodes = popoverRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="option"]:not(:disabled)',
+      );
+      if (!nodes || nodes.length === 0) return;
+      const items = Array.from(nodes);
+      const current = items.indexOf(
+        document.activeElement as HTMLButtonElement,
+      );
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      const next =
+        current === -1
+          ? items[delta === 1 ? 0 : items.length - 1]
+          : items[(current + delta + items.length) % items.length];
+      next.focus();
+    },
+    [],
+  );
   const active = options.find((o) => o.value === value);
   const flipped = anchor?.vertical === "above";
 
@@ -165,6 +227,7 @@ export function Dropdown<V extends string>({
                 transition={{ duration: 0.11, ease: "easeOut" }}
                 className="z-50 max-h-[280px] overflow-y-auto rounded-md border border-border-strong bg-surface-raised py-1 shadow-float"
                 style={panelStyle}
+                onKeyDown={handlePanelKeyDown}
               >
                 {options.map((option) => {
                   const selected = option.value === value;
@@ -179,8 +242,9 @@ export function Dropdown<V extends string>({
                         if (option.disabled) return;
                         onChange(option.value);
                         setOpen(false);
+                        triggerRef.current?.focus();
                       }}
-                      className={`flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+                      className={`flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-left text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent/40 ${
                         selected
                           ? "bg-accent/10 text-accent-light"
                           : option.disabled
