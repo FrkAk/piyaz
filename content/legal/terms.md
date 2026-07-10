@@ -1,14 +1,12 @@
 # Beta Terms of Service
 
-> **Status: DRAFT, pending review by qualified legal counsel. Not yet in effect.**
-> Version: `draft-2026-06-23` · Effective date: `[EFFECTIVE DATE]`
+> **Status: preliminary beta version, not yet reviewed by legal counsel.**
+> Version: `draft-2026-07-10` · Effective while the Service is in beta.
 >
 > **Scope:** These Beta Terms govern the **hosted Piyaz service at `app.piyaz.ai`**,
-> operated by the Piyaz founders. **If you self-host Piyaz, these terms do not apply to
+> operated by the Piyaz team. **If you self-host Piyaz, these terms do not apply to
 > your deployment**: you set your own terms with your own users. The Piyaz software
 > itself is licensed separately (see `LICENSE` / `LICENSING.md`).
->
-> **Placeholders** in `[BRACKETS]` must be confirmed before these terms go live.
 
 ---
 
@@ -19,8 +17,9 @@ these Beta Terms of Service ("Terms"). If you do not agree, do not use the Servi
 you use the Service on behalf of an organization, you confirm you are authorized to
 accept these Terms for that organization. You must be at least 16 years old.
 
-The Service is operated by the founders of Piyaz ("Piyaz", "we", "us"), pending
-incorporation. Contact: **legal@piyaz.ai**.
+The Service is operated by the Piyaz team ("Piyaz", "we", "us"). A formal operating
+entity has not yet been established; see the [Legal Notice](/impressum). Contact:
+**legal@piyaz.ai**.
 
 ## 2. Beta status of the Service
 
@@ -87,14 +86,12 @@ Section 10).**
 
 ## 10. Limitation of liability
 
-**This clause is written for German law and intentionally differs from US-style "total"
-disclaimers.** Under German law, certain liability cannot be excluded.
+To the **maximum extent permitted by applicable law**, and reflecting that the Service
+is provided **free of charge during the beta**:
 
-- We are liable **without limitation** for damages arising from **intent (Vorsatz) or gross negligence (grobe Fahrlässigkeit)**, for injury to **life, body, or health**, under the **German Product Liability Act (Produkthaftungsgesetz)**, and to the extent of any guarantee we expressly give.
-- For **slight negligence (einfache Fahrlässigkeit)**, we are liable only for breach of a **material contractual obligation** (an obligation whose fulfilment makes proper performance of the contract possible and on which you may reasonably rely), and then only for the **typical, foreseeable** damage.
-- **All other liability is excluded.** Because the Service is provided free of charge during the beta, our liability is further limited to the extent permitted by §§ 521, 599 BGB (reduced liability for gratuitous provision), without prejudice to the mandatory liability above.
-
-`[Have counsel confirm this clause against the latest BGB §§ 305–310 (standard-terms control) and consumer-protection rules before launch.]`
+- We are **not liable** for indirect, incidental, special, consequential, or punitive damages, or for loss of profits, revenue, data, or goodwill, arising out of or relating to the Service.
+- For damages not excluded above, our **total aggregate liability** is limited to the greater of the amount you paid us for the Service in the twelve months before the claim (during the free beta: zero) and **EUR 100**.
+- **Nothing in these Terms excludes or limits liability that cannot be excluded or limited under applicable law**, including (where applicable law so provides) liability for intent or gross negligence, for injury to life, body, or health, under product-liability statutes, or for breach of obligations essential to the contract, where liability for the latter may be capped to typical and foreseeable damage.
 
 ## 11. Indemnity
 
@@ -102,21 +99,28 @@ To the extent permitted by mandatory law, you will hold us harmless from third-p
 claims arising out of your unlawful use of the Service or your breach of these Terms.
 This does not apply where the claim results from our intent or gross negligence.
 
-## 12. Governing law and jurisdiction
+## 12. Data export and switching
 
-These Terms are governed by the laws of the **Federal Republic of Germany**, excluding its
-conflict-of-laws rules and the UN Convention on Contracts for the International Sale of
-Goods (CISG). Mandatory consumer-protection rights in your country of residence remain
-unaffected. Place of jurisdiction is `[PLACE OF JURISDICTION, GERMANY]`, to the extent
-permitted by law.
+You can export your account data in a machine-readable format (see the
+[Privacy Policy](/privacy)) and take your project content with you at any time. We do
+not impose switching barriers or charge export fees during the beta.
 
-## 13. Changes to these Terms
+## 13. Governing law and jurisdiction
 
-We may update these Terms. The version identifier and effective date at the top reflect
-the current version. We will notify you of material changes `[in-app and/or by email]`,
-and where required we will ask you to re-accept before you continue using the Service.
+Because the operating entity has not yet been established, these preliminary Terms do
+not yet designate a governing law or forum. Mandatory consumer-protection rules of your
+country of residence apply regardless of anything in these Terms. The final version of
+these Terms will designate governing law and jurisdiction.
 
-## 14. Contact
+## 14. Changes to these Terms
 
-Questions about these Terms: **legal@piyaz.ai**. Provider identity and address: see the
-[Impressum](/impressum).
+We may update these Terms. The version identifier at the top reflects the current
+version. We will notify you of material changes in-app or by email. When the beta ends,
+when paid plans are introduced, or for any other material change, we will ask you to
+**actively re-accept** the new terms before you continue using the Service; silence is
+not treated as acceptance.
+
+## 15. Contact
+
+Questions about these Terms: **legal@piyaz.ai**. Operator details: see the
+[Legal Notice](/impressum).

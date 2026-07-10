@@ -1,10 +1,7 @@
 # Sub-processors
 
-> **Status: DRAFT, pending review by qualified legal counsel. Not yet in effect.**
-> Version: `draft-2026-06-23` · Effective date: `[EFFECTIVE DATE]`
->
-> **Placeholders** in `[BRACKETS]` are values the operators must confirm before this
-> page goes live. They are intentionally not filled in.
+> **Status: preliminary beta version, not yet reviewed by legal counsel.**
+> Version: `draft-2026-07-10` · Effective while the Service is in beta.
 
 ---
 
@@ -20,6 +17,10 @@ deployment: you are the data controller for your own instance.
 | **Neon, LLC** (a Databricks company, US) | Managed PostgreSQL database. | AWS `eu-central-1` (Frankfurt, Germany) | EU SCCs; EU-US Data Privacy Framework |
 | **Amazon Web Services (AWS)** (US) | Underlying cloud infrastructure for the Neon database. | Frankfurt region (EU) | EU SCCs; EU-US Data Privacy Framework |
 | **Cloudflare, Inc.** (US) | Application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging. | Global edge network | EU SCCs; EU-US Data Privacy Framework |
+
+A transactional email provider is not yet engaged. Before one begins processing any
+personal data (such as recipient email addresses), it will be added to this list
+through the change process below.
 
 ## Changes to our sub-processors
 
