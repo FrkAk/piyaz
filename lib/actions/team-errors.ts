@@ -7,8 +7,9 @@ import { z } from "zod/v4";
  * Better Auth's `ORGANIZATION_ERROR_CODES` (57 entries) plus the
  * credential entries of `BASE_ERROR_CODES` (`INVALID_PASSWORD`,
  * `PASSWORD_TOO_SHORT`, `PASSWORD_TOO_LONG`,
- * `CREDENTIAL_ACCOUNT_NOT_FOUND`) and the generic `UNAUTHORIZED` — we
- * never invent a parallel taxonomy.
+ * `CREDENTIAL_ACCOUNT_NOT_FOUND`), the freshness entries
+ * (`SESSION_EXPIRED`, `SESSION_NOT_FRESH`), and the generic
+ * `UNAUTHORIZED` — we never invent a parallel taxonomy.
  */
 export type TeamActionFailureCode =
   | "unauthorized"
@@ -24,6 +25,7 @@ export type TeamActionFailureCode =
   | "cannot_delete_sole_owner"
   | "slug_taken"
   | "invalid_password"
+  | "session_not_fresh"
   | "rate_limited"
   | "unknown";
 
@@ -57,6 +59,8 @@ export const TEAM_ACTION_MESSAGES: Record<TeamActionFailureCode, string> = {
     "You solely own a team that still has other members. Transfer ownership or delete that team first, then delete your account.",
   slug_taken: "That URL slug is already in use. Try a different one.",
   invalid_password: "Current password is incorrect.",
+  session_not_fresh:
+    "For security, confirm with your password or sign in again, then retry.",
   rate_limited: "Too many attempts. Please wait a moment and try again.",
   unknown: "Something went wrong. Please try again.",
 };
@@ -138,6 +142,10 @@ export function mapBetterAuthError(err: unknown): TeamActionFailureCode {
       return "slug_taken";
     case "INVALID_PASSWORD":
       return "invalid_password";
+    // deleteUser without a password on a session older than freshAge.
+    case "SESSION_EXPIRED":
+    case "SESSION_NOT_FRESH":
+      return "session_not_fresh";
     case "PASSWORD_TOO_SHORT":
     case "PASSWORD_TOO_LONG":
       return "invalid_input";

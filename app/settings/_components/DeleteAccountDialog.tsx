@@ -21,11 +21,13 @@ interface DeleteAccountDialogProps {
 
 /**
  * Two-stage account-deletion dialog. Typed-confirmation gate: the user
- * must type their email or the literal word DELETE. On confirm it calls
- * `deleteAccountAction`; on success the session is gone, so the user is
- * redirected to `/sign-in`. The sole-owner block surfaces inline so the
- * user can transfer or delete the offending team first. No password field
- * and no email round-trip.
+ * must type their email or the literal word DELETE. Password-account
+ * holders also confirm with their password; provider-account holders
+ * leave it blank and rely on a recent sign-in (`session_not_fresh`
+ * surfaces inline otherwise). On confirm it calls `deleteAccountAction`;
+ * on success the session is gone, so the user is redirected to
+ * `/sign-in`. The sole-owner block surfaces inline so the user can
+ * transfer or delete the offending team first.
  *
  * Mounts the body only while `open` is true so state resets on each open.
  *
@@ -69,6 +71,7 @@ function DeleteAccountDialogBody({
 }: DeleteAccountDialogBodyProps) {
   const router = useRouter();
   const [typed, setTyped] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -81,7 +84,9 @@ function DeleteAccountDialogBody({
     if (!canConfirm) return;
     setError(null);
     startTransition(async () => {
-      const result = await deleteAccountAction();
+      const result = await deleteAccountAction(
+        password ? { password } : undefined,
+      );
       if (!result.ok) {
         setError(result.message);
         return;
@@ -144,6 +149,20 @@ function DeleteAccountDialogBody({
             autoFocus
             autoComplete="off"
             placeholder="DELETE"
+            className={INPUT_CLASS}
+          />
+        </label>
+
+        <label className="mt-3 block">
+          <span className="mb-1 block text-xs font-medium text-text-secondary">
+            Your password (leave blank if you sign in with a provider)
+          </span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            disabled={pending}
+            autoComplete="current-password"
             className={INPUT_CLASS}
           />
         </label>

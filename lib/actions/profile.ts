@@ -70,19 +70,28 @@ export async function updateProfileAction(input: {
   return { ok: true };
 }
 
+const deleteAccountSchema = z.object({
+  password: z.string().min(1).max(256).optional(),
+});
+
 /**
  * Delete the signed-in user's account (GDPR Art. 17). Rate-limited, then
  * dispatched through Better Auth's `auth.api.deleteUser`, whose
  * `beforeDelete` hook (lib/auth.ts) blocks the sole-owner-with-members
  * case, cascade-deletes solely-owned memberless teams, and anonymizes the
  * caller's retained legal-acceptance evidence before the FK cascade wipes
- * sessions, accounts, memberships, and owned content. No password and no
- * email round-trip — the typed-confirmation dialog is the intent gate.
+ * sessions, accounts, memberships, and owned content. Re-authentication
+ * gate: a supplied password is verified by Better Auth; without one, the
+ * session must be younger than `freshAge`, otherwise `session_not_fresh`
+ * is returned so the dialog can prompt for password or re-login.
  *
+ * @param input - Optional `{ password }` for credential-account holders.
  * @returns Discriminated `TeamActionResult`; `cannot_delete_sole_owner`
  *          when an owned team must be handed off first.
  */
-export async function deleteAccountAction(): Promise<TeamActionResult> {
+export async function deleteAccountAction(input?: {
+  password?: string;
+}): Promise<TeamActionResult> {
   let userId: string;
   try {
     const session = await requireSession();
@@ -90,6 +99,8 @@ export async function deleteAccountAction(): Promise<TeamActionResult> {
   } catch {
     return teamFail("unauthorized");
   }
+  const parsed = parseOrFail(deleteAccountSchema, input ?? {});
+  if (!parsed.ok) return parsed;
 
   const limit = await checkActionRateLimit(
     {
@@ -103,7 +114,10 @@ export async function deleteAccountAction(): Promise<TeamActionResult> {
   if (!limit.ok) return teamFail("rate_limited");
 
   try {
-    await auth.api.deleteUser({ body: {}, headers: await headers() });
+    await auth.api.deleteUser({
+      body: parsed.data.password ? { password: parsed.data.password } : {},
+      headers: await headers(),
+    });
     return { ok: true };
   } catch (err) {
     const code = mapBetterAuthError(err);

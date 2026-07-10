@@ -79,19 +79,12 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
-    // deleteUser runs a manual freshness check when called without a
-    // password (account.ts:deleteUser handler): it throws SESSION_EXPIRED
-    // when the session is older than `freshAge`. The resolved deletion
-    // model is typed-confirmation (email or DELETE) with no password and
-    // immediate erase, so a session older than a day would fail that gate
-    // and break "erase immediately". Setting `freshAge: 0` disables the
-    // manual check — the only lever better-auth exposes (there is no
-    // per-operation override). The verified active session plus the
-    // typed-confirmation dialog are the intentionality gate. The only
-    // other freshness-gated built-in is unlinkAccount, which piyaz does
-    // not expose (email/password plus the OAuth AS, no account-linking
-    // surface), so the practical blast radius is the deletion path itself.
-    freshAge: 0,
+    // Default freshness stays enabled: deleteUser without a password
+    // requires a session younger than `freshAge` (BA throws SESSION_EXPIRED
+    // otherwise), and a supplied password bypasses the freshness check.
+    // deleteAccountAction forwards an optional password, so credential
+    // users confirm with it and social-login users rely on a recent
+    // sign-in; a stale session surfaces `session_not_fresh` to the dialog.
     // BA writes every session to Drizzle AND KV. Required for oauthProvider
     // (which throws at boot without DB-backed sessions). KV is the per-POP
     // read cache; Drizzle is the durable store. NOTE: BA's `findSession`
