@@ -104,8 +104,23 @@ We do not sell your personal data and we do not share it for advertising. We dis
 personal data only:
 
 - **to the sub-processors above**, who process it on our behalf under contract;
+- **at your direction**: when you or the agents and tools you authorize access or retrieve data through the Service's interfaces (see "Agents and connected tools" below);
 - **to comply with the law** or respond to valid legal requests, and to protect the rights, safety, and security of our users, the public, or the Service;
 - **in a business transfer**: if the Service or its assets move to the operating entity once it is formed, or as part of a merger, acquisition, or reorganization, your data may transfer with it. We will notify you, and the receiving party will remain bound by this policy or one at least as protective.
+
+## Agents and connected tools
+
+Piyaz is designed to be used by coding agents and other tools you connect over
+MCP/OAuth. When you authorize such a tool:
+
+- it can read and write your workspace data on your instruction, within the access you grant;
+- data it retrieves is transmitted from our systems to that tool and, typically, to the AI provider behind it. That transfer happens **at your direction**: we do not send your data to AI providers ourselves, and we have no access to, or influence over, what the tool or its provider does with it;
+- the tool's and its AI provider's own privacy policies govern their processing of that data;
+- you can revoke a tool's access at any time in your settings (see also the [Beta Terms](/terms), section 6).
+
+We process the requests your tools send to our API and record metadata about connected
+clients (see "Integration data" above), but we do not receive or store the
+conversations, prompts, or model outputs your tools handle outside the Service.
 
 ## How we protect your data
 

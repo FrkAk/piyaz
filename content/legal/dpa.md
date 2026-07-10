@@ -48,6 +48,12 @@ The controller authorizes the processor to engage the sub-processors listed on t
 processing purpose, its data region, and its transfer mechanism, and is
 incorporated into this DPA by reference.
 
+Agents, harnesses, and other tools that the controller or its users connect to the
+Service act on the controller's instructions and receive data at the controller's
+direction; they are recipients chosen by the controller, not sub-processors engaged
+by the processor, and the processor has no access to or influence over their
+behavior.
+
 ### Changes to sub-processors
 
 Under **Article 28(2) GDPR**, the controller receives advance notice before the

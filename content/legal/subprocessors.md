@@ -21,6 +21,11 @@ A transactional email provider is not yet engaged. Before one begins processing 
 personal data (such as recipient email addresses), it will be added to this list
 through the change process below.
 
+Coding agents, harnesses, and other tools you connect to your workspace are not
+sub-processors: they act on your instructions and receive data at your direction. See
+the [Privacy Policy](/privacy) ("Agents and connected tools") and the
+[DPA](/dpa).
+
 ## Changes to our sub-processors
 
 Under **Article 28(2) GDPR**, B2B controllers who process personal data through Piyaz
