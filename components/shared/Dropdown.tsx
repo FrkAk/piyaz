@@ -58,7 +58,11 @@ const PANEL_MAX_HEIGHT_PX = 288;
  *
  * Keyboard contract: opening seeds focus onto the selected (else first
  * enabled) option, ArrowDown/ArrowUp move between options with wrap,
- * and both Escape and selection return focus to the trigger.
+ * and Escape, Tab, and selection close the panel and return focus to
+ * the trigger. Tab must land back on the trigger before a host
+ * dialog's focus trap sees the event: the panel is portalled outside
+ * the dialog panel, so focus left inside it would let Tab walk out of
+ * the dialog.
  *
  * @param props - Dropdown configuration.
  * @returns Trigger button plus animated portalled panel.
@@ -101,7 +105,13 @@ export function Dropdown<V extends string>({
     const escape = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setOpen(false);
-      triggerRef.current?.focus();
+      const active = document.activeElement;
+      if (
+        popoverRef.current?.contains(active) ||
+        triggerRef.current?.contains(active)
+      ) {
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener("mousedown", handler);
     document.addEventListener("keydown", escape);
@@ -143,8 +153,17 @@ export function Dropdown<V extends string>({
     target.focus();
   }, [panelOpen]);
 
+  // Roving focus inside the panel: arrows move between enabled options
+  // with wrap; Tab hands focus back to the trigger (see the keyboard
+  // contract above) and lets the keydown's default action proceed from
+  // there, so a host dialog's Tab trap operates on an in-panel element.
   const handlePanelKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === "Tab") {
+        setOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
       e.preventDefault();
       const nodes = popoverRef.current?.querySelectorAll<HTMLButtonElement>(

@@ -173,8 +173,9 @@ interface RowActionsMenuProps {
 /**
  * Overflow menu in a row's trailing slot: Rename, Move, Delete. Always
  * visible on coarse pointers, where native drag never fires; on fine
- * pointers it reveals on row hover or keyboard focus, making it the
- * keyboard reorganize path.
+ * pointers it reveals on row hover or keyboard focus and stays visible
+ * while its menu is open (the open panel holds focus outside the row),
+ * making it the keyboard reorganize path.
  *
  * @param props - Accessible label, pointer mode, and action handlers.
  * @returns The anchored `⋯` action menu.
@@ -187,13 +188,7 @@ function RowActionsMenu({
   onDelete,
 }: RowActionsMenuProps) {
   return (
-    <span
-      className={`absolute right-1 top-1/2 -translate-y-1/2 ${
-        coarse
-          ? ""
-          : "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-      }`}
-    >
+    <span className="absolute right-1 top-1/2 -translate-y-1/2">
       <Dropdown<string>
         value=""
         options={ROW_ACTION_OPTIONS}
@@ -205,8 +200,14 @@ function RowActionsMenu({
           else if (v === "move") onMove();
           else onDelete();
         }}
-        renderTrigger={() => (
-          <span className="inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary in-focus-visible:bg-surface-hover in-focus-visible:text-text-primary">
+        renderTrigger={(_active, open) => (
+          <span
+            className={`inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary in-focus-visible:bg-surface-hover in-focus-visible:text-text-primary ${
+              coarse || open
+                ? ""
+                : "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+            }`}
+          >
             <IconMore size={14} />
           </span>
         )}
@@ -1373,26 +1374,35 @@ export function TreePane({
   // targets whatever was focused when the dialog opened (often a menu node
   // detached by re-render), so this effect re-resolves the row by its flat
   // key, scrolls it into the virtual window, and focuses its main button.
-  // The frame callback resolves the row by `data-key` (indexes shift when
-  // the optimistic tree update commits) and leaves the request pending
-  // when the row is not committed yet; the `keyIndex` dependency retries
-  // it on the next tree render. A key with no match yet (the moved row's
-  // post-move key lands a render later) waits for that retry; a key that
-  // never resolves (row under a collapsed folder with no fallback,
-  // deleted, or re-keyed by realtime) expires after a short timeout so a
-  // stale request can never steal focus later.
+  // It runs only while the hand-back would not yank focus: if focus sits
+  // outside the row list (and not on `body`), e.g. the user reached the
+  // editor before a slow mutation settled, the request is dropped. The
+  // frame callback resolves the row by `data-key` (indexes shift when the
+  // optimistic tree update commits); the `keyIndex` dependency retries it
+  // on the next tree render. Every attempt re-arms a short expiry, so a
+  // request that never resolves (row under a collapsed folder with no
+  // fallback, deleted, re-keyed by realtime, or whose node never
+  // materializes after the scroll) clears itself instead of stealing
+  // focus later.
   useEffect(() => {
     if (pendingFocus === null) return;
+    const active = document.activeElement;
+    const canTakeFocus =
+      active === null ||
+      active === document.body ||
+      (scrollRef.current?.contains(active) ?? false);
+    if (!canTakeFocus) {
+      setPendingFocus(null);
+      return;
+    }
+    const timer = setTimeout(() => setPendingFocus(null), 1500);
     const key = keyIndex.has(pendingFocus.key)
       ? pendingFocus.key
       : pendingFocus.fallbackKey !== null &&
           keyIndex.has(pendingFocus.fallbackKey)
         ? pendingFocus.fallbackKey
         : null;
-    if (key === null) {
-      const timer = setTimeout(() => setPendingFocus(null), 1500);
-      return () => clearTimeout(timer);
-    }
+    if (key === null) return () => clearTimeout(timer);
     const index = keyIndex.get(key);
     if (index !== undefined) virtualizer.scrollToIndex(index);
     const resolve = (k: string) =>
@@ -1418,7 +1428,10 @@ export function TreePane({
         if (retry) settle(retry);
       });
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+    };
   }, [pendingFocus, keyIndex, virtualizer]);
 
   const showVirtual = searching
