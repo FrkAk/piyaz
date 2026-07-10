@@ -1254,7 +1254,7 @@ export function TreePane({
    * Apply the pending move to the chosen destination. A note moves
    * folders; a folder re-parents through {@link applyFolderPlan}. The
    * focus hand-back to the moved row is queued from the mutation
-   * callbacks — only then has the tree committed the row's final key —
+   * callbacks (only then has the tree committed the row's final key),
    * targeting the origin key when the move failed and the row stayed put.
    *
    * @param dest - Destination folder path (`""` = root).
