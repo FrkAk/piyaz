@@ -92,6 +92,11 @@ export function NotesView({
   // note selection.
   if (noteId === null && settingsOpen) setSettingsOpen(false);
 
+  // The tree drawer only renders below `lg`; a `treeOpen` surviving an lg
+  // resize cycle would make it reappear unprompted when the viewport
+  // shrinks again (same render-time pattern as above).
+  if (isLg && treeOpen) setTreeOpen(false);
+
   /**
    * Create a persisted note in a folder, then select it and request
    * title focus. Selection only moves on the authoritative server id;
