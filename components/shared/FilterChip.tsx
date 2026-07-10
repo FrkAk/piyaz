@@ -42,6 +42,20 @@ export function ChipButton({
   );
 }
 
+/**
+ * Lookup the display label for a value in an options table.
+ *
+ * @param options - Option list.
+ * @param value - Active value.
+ * @returns Matching label or empty string.
+ */
+export function labelFor<V extends string>(
+  options: ReadonlyArray<{ value: V; label: string }>,
+  value: V,
+): string {
+  return options.find((o) => o.value === value)?.label ?? "";
+}
+
 interface ChipTriggerProps {
   icon: React.ReactNode;
   open: boolean;

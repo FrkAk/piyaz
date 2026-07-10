@@ -1,5 +1,6 @@
 import type { NoteTreeRow } from "@/lib/data/note";
 import type { NoteType } from "@/lib/types";
+import { NOTE_TYPE_RANK, type NoteSortKey } from "@/lib/ui/note-order";
 
 /** Display metadata and context behavior for one note type. */
 export interface NoteTypeMeta {
@@ -177,9 +178,10 @@ const INDENT_BASE = 8;
 const INDENT_STEP = 12;
 
 /**
- * One row of the flattened visible tree: a folder header or a note. The
- * flat sequence preserves the recursive render order so the virtualized
- * list matches the previous DOM exactly.
+ * One row of the flattened visible tree: a folder header, a note, or a
+ * non-interactive category section header. The flat sequence preserves
+ * the recursive render order so the virtualized list matches the
+ * previous DOM exactly.
  */
 export type FlatTreeRow =
   | {
@@ -190,7 +192,103 @@ export type FlatTreeRow =
       indent: number;
       noteCount: number;
     }
-  | { kind: "note"; key: string; note: NoteTreeRow; indent: number };
+  | { kind: "note"; key: string; note: NoteTreeRow; indent: number }
+  | { kind: "section"; key: string; label: string; noteCount: number };
+
+/** Category-group bucket key for rows with no category. */
+const UNCATEGORIZED_KEY = "__uncategorized__";
+
+/**
+ * Sort note rows by the active sort key with stable tie-breaks.
+ *
+ * @param rows - Note rows in server list order.
+ * @param key - Active sort key: `title` (numeric-aware, ties on id),
+ *   `updated` (newest first, ties on title), or `type` (rank ascending,
+ *   ties on title).
+ * @returns Sorted shallow copy.
+ */
+export function sortNoteRows(
+  rows: readonly NoteTreeRow[],
+  key: NoteSortKey,
+): NoteTreeRow[] {
+  const byTitle = (a: NoteTreeRow, b: NoteTreeRow) =>
+    a.title.localeCompare(b.title, undefined, { numeric: true });
+  const copy = [...rows];
+  if (key === "updated") {
+    copy.sort((a, b) => {
+      const at = a.updatedAt ? Date.parse(String(a.updatedAt)) : 0;
+      const bt = b.updatedAt ? Date.parse(String(b.updatedAt)) : 0;
+      if (at !== bt) return bt - at;
+      return byTitle(a, b);
+    });
+  } else if (key === "type") {
+    copy.sort((a, b) => {
+      const rank = NOTE_TYPE_RANK[a.type] - NOTE_TYPE_RANK[b.type];
+      if (rank !== 0) return rank;
+      return byTitle(a, b);
+    });
+  } else {
+    copy.sort((a, b) => {
+      const order = byTitle(a, b);
+      if (order !== 0) return order;
+      return a.id.localeCompare(b.id);
+    });
+  }
+  return copy;
+}
+
+/**
+ * Group note rows by category, preserving input order within buckets.
+ *
+ * @param rows - Note rows, already sorted by the active sort key.
+ * @returns Map from category (uncategorized sentinel for null/undefined)
+ *   to its notes.
+ */
+export function groupNotesByCategory(
+  rows: readonly NoteTreeRow[],
+): Map<string, NoteTreeRow[]> {
+  const map = new Map<string, NoteTreeRow[]>();
+  for (const r of rows) {
+    const key = r.category ?? UNCATEGORIZED_KEY;
+    const bucket = map.get(key);
+    if (bucket) bucket.push(r);
+    else map.set(key, [r]);
+  }
+  return map;
+}
+
+/**
+ * Flatten category buckets into one row sequence: section labels sorted
+ * alphabetically with the uncategorized bucket forced last and labelled
+ * `Uncategorized`; each section header row is followed by its notes at
+ * the base indent. Sections are not collapsible.
+ *
+ * @param notesByCategory - Buckets from {@link groupNotesByCategory}.
+ * @returns Flat rows in render order.
+ */
+export function flattenNoteCategories(
+  notesByCategory: ReadonlyMap<string, NoteTreeRow[]>,
+): FlatTreeRow[] {
+  const labels = [...notesByCategory.keys()].sort((a, b) => {
+    if (a === UNCATEGORIZED_KEY) return 1;
+    if (b === UNCATEGORIZED_KEY) return -1;
+    return a.localeCompare(b);
+  });
+  const items: FlatTreeRow[] = [];
+  for (const label of labels) {
+    const notes = notesByCategory.get(label) ?? [];
+    items.push({
+      kind: "section",
+      key: `section:${label}`,
+      label: label === UNCATEGORIZED_KEY ? "Uncategorized" : label,
+      noteCount: notes.length,
+    });
+    for (const note of notes) {
+      items.push({ kind: "note", key: note.id, note, indent: INDENT_BASE });
+    }
+  }
+  return items;
+}
 
 /**
  * Group folder paths by their parent path, preserving input order.
