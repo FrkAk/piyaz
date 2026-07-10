@@ -10,7 +10,13 @@
 export type RealtimeEvent =
   | { kind: "project"; projectId: string }
   | { kind: "task"; projectId: string; taskId: string }
-  | { kind: "note"; projectId: string; noteId: string; updatedAt?: string }
+  | {
+      kind: "note";
+      projectId: string;
+      noteId: string;
+      updatedAt?: string;
+      version?: number;
+    }
   | {
       kind: "note-presence";
       noteId: string;

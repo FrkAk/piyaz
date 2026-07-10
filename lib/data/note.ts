@@ -1988,7 +1988,13 @@ export async function createNote(
     return createNoteInTx(tx, ctx, input, access.project.identifier);
   });
 
-  emitNoteEvent(created.projectId, created.id, visibility, created.updatedAt);
+  emitNoteEvent(
+    created.projectId,
+    created.id,
+    visibility,
+    created.updatedAt,
+    created.version,
+  );
   return created;
 }
 
@@ -2218,7 +2224,13 @@ export async function createNotesBatch(
   });
 
   for (const note of result.created) {
-    emitNoteEvent(note.projectId, note.id, opts.visibility, note.updatedAt);
+    emitNoteEvent(
+      note.projectId,
+      note.id,
+      opts.visibility,
+      note.updatedAt,
+      note.version,
+    );
   }
   return result;
 }
@@ -2705,6 +2717,7 @@ async function updateNoteCore(
       result.summary.id,
       result.visibility,
       result.summary.updatedAt,
+      result.summary.version,
     );
   }
   return result.links
@@ -2787,6 +2800,7 @@ export async function moveNote(
       result.summary.id,
       result.visibility,
       result.summary.updatedAt,
+      result.summary.version,
     );
   }
   return result.summary;
@@ -3263,6 +3277,7 @@ export async function restoreNote(
       result.summary.id,
       result.visibility,
       result.summary.updatedAt,
+      result.summary.version,
     );
   }
   return result.summary;
@@ -3306,7 +3321,13 @@ export async function requestShare(
     return { ...row, projectIdentifier: gate.projectIdentifier };
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
+  emitNoteEvent(
+    summary.projectId,
+    summary.id,
+    "private",
+    summary.updatedAt,
+    summary.version,
+  );
   return summary;
 }
 
@@ -3339,7 +3360,13 @@ export async function approveShareRequest(
     return applyVisibilityTx(tx, ctx, gate, "team");
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "team", summary.updatedAt);
+  emitNoteEvent(
+    summary.projectId,
+    summary.id,
+    "team",
+    summary.updatedAt,
+    summary.version,
+  );
   return summary;
 }
 
@@ -3388,7 +3415,13 @@ export async function declineShareRequest(
     return { ...row, projectIdentifier: gate.projectIdentifier };
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
+  emitNoteEvent(
+    summary.projectId,
+    summary.id,
+    "private",
+    summary.updatedAt,
+    summary.version,
+  );
   return summary;
 }
 
@@ -3590,7 +3623,13 @@ export async function createNoteTaskLink(
   });
 
   if (result.created) {
-    emitNoteEvent(result.gate.projectId, noteId, result.gate.visibility);
+    emitNoteEvent(
+      result.gate.projectId,
+      noteId,
+      result.gate.visibility,
+      undefined,
+      result.gate.version,
+    );
   }
   return {
     created: result.created,
@@ -3658,7 +3697,13 @@ export async function removeNoteTaskLink(
   });
 
   if (result.removed) {
-    emitNoteEvent(result.gate.projectId, noteId, result.gate.visibility);
+    emitNoteEvent(
+      result.gate.projectId,
+      noteId,
+      result.gate.visibility,
+      undefined,
+      result.gate.version,
+    );
   }
   return {
     removed: result.removed,

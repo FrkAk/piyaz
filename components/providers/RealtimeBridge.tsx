@@ -115,6 +115,52 @@ function updatedAtMs(value: Date | string): number {
   return typeof value === "string" ? Date.parse(value) : value.getTime();
 }
 
+/** Quiet window that coalesces per-note history refetches across an autosave burst. */
+const NOTE_EVENTS_INVALIDATE_QUIET_MS = 2_000;
+
+/** Pending per-note history invalidation timers, keyed by note id. */
+const noteEventsInvalidateTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
+
+/**
+ * Invalidate a note's events query after a quiet window, coalescing
+ * autosave bursts into one refetch. Before invalidating, the cached
+ * infinite data is trimmed to its first page so the refetch fetches one
+ * keyset page instead of every page the viewer had expanded.
+ *
+ * @param qc - The active QueryClient.
+ * @param projectId - Owning project id.
+ * @param noteId - Note whose events query to invalidate.
+ */
+function scheduleNoteEventsInvalidation(
+  qc: QueryClient,
+  projectId: string,
+  noteId: string,
+): void {
+  const existing = noteEventsInvalidateTimers.get(noteId);
+  if (existing !== undefined) clearTimeout(existing);
+  noteEventsInvalidateTimers.set(
+    noteId,
+    setTimeout(() => {
+      noteEventsInvalidateTimers.delete(noteId);
+      const key = noteKeys.events(projectId, noteId);
+      qc.setQueryData<{ pages: unknown[]; pageParams: unknown[] }>(
+        key,
+        (data) =>
+          data !== undefined && data.pages.length > 1
+            ? {
+                pages: data.pages.slice(0, 1),
+                pageParams: data.pageParams.slice(0, 1),
+              }
+            : data,
+      );
+      qc.invalidateQueries({ queryKey: key });
+    }, NOTE_EVENTS_INVALIDATE_QUIET_MS),
+  );
+}
+
 /**
  * Judge a `note` event against the cache and invalidate what is actually
  * stale. Waits for the note's in-flight local writes to settle first, so
@@ -127,8 +173,12 @@ function updatedAtMs(value: Date | string): number {
  * open note's detail additionally never refetches while the note holds
  * unsaved editor content: a refetch must not clobber the optimistic
  * autosave buffer or kept-optimistic conflict content. The note's events
- * and revisions queries invalidate unconditionally: they never touch the
- * editor buffer, so no dirty gating applies.
+ * query invalidates through {@link scheduleNoteEventsInvalidation}, which
+ * coalesces autosave bursts; the revisions query invalidates only when the
+ * event's `version` outruns the cached `currentVersion` (the actor's own
+ * body writes land in that cache from the mutation response, and
+ * metadata-only events never move it). Neither touches the editor buffer,
+ * so no dirty gating applies.
  *
  * @param qc - The active QueryClient.
  * @param ev - Decoded note event.
@@ -136,13 +186,27 @@ function updatedAtMs(value: Date | string): number {
  */
 async function handleNoteEvent(
   qc: QueryClient,
-  ev: { projectId: string; noteId: string; updatedAt?: string },
+  ev: {
+    projectId: string;
+    noteId: string;
+    updatedAt?: string;
+    version?: number;
+  },
 ): Promise<void> {
   await whenNoteWritesSettle(ev.noteId);
-  qc.invalidateQueries({ queryKey: noteKeys.events(ev.projectId, ev.noteId) });
-  qc.invalidateQueries({
-    queryKey: noteKeys.revisions(ev.projectId, ev.noteId),
-  });
+  scheduleNoteEventsInvalidation(qc, ev.projectId, ev.noteId);
+  const revisions = qc.getQueryData<{ currentVersion: number }>(
+    noteKeys.revisions(ev.projectId, ev.noteId),
+  );
+  const revisionsCurrent =
+    ev.version !== undefined &&
+    revisions !== undefined &&
+    revisions.currentVersion >= ev.version;
+  if (!revisionsCurrent) {
+    qc.invalidateQueries({
+      queryKey: noteKeys.revisions(ev.projectId, ev.noteId),
+    });
+  }
   const evMs = ev.updatedAt === undefined ? Infinity : Date.parse(ev.updatedAt);
   if (ev.updatedAt !== undefined) {
     clearNoteTrashedIfRestoredRemotely(ev.noteId, evMs);
