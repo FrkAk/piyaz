@@ -74,4 +74,47 @@ describe("enqueueNoteWrite", () => {
     expect(await one).toBe(1);
     expect(await two).toBe(2);
   });
+
+  test("a chained delete runs strictly after an in-flight autosave (F5)", async () => {
+    const log: string[] = [];
+    const autosave = gatedJob(log, "autosave");
+    const pAutosave = enqueueNoteWrite("note-f5", autosave.job);
+    const pDelete = enqueueNoteWrite("note-f5", async () => {
+      log.push("delete");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(log).toEqual(["start:autosave"]);
+    autosave.release();
+    await Promise.all([pAutosave, pDelete]);
+    expect(log).toEqual(["start:autosave", "end:autosave", "delete"]);
+  });
+
+  test("a chained restore runs strictly after the delete, even a failed one (F6)", async () => {
+    const log: string[] = [];
+    const del = gatedJob(log, "delete");
+    const pDelete = enqueueNoteWrite("note-f6", del.job);
+    const pRestore = enqueueNoteWrite("note-f6", async () => {
+      log.push("restore");
+    });
+    del.release();
+    await Promise.all([pDelete, pRestore]);
+    expect(log).toEqual(["start:delete", "end:delete", "restore"]);
+
+    const failingDelete = enqueueNoteWrite("note-f6b", async () => {
+      throw new Error("delete failed");
+    });
+    const restoreAfterFailure = enqueueNoteWrite("note-f6b", async () => "ok");
+    await expect(failingDelete).rejects.toThrow("delete failed");
+    await expect(restoreAfterFailure).resolves.toBe("ok");
+  });
+
+  test("a chained job reads state written by the previous job's merge (F4)", async () => {
+    let cachedToken = "token-v1";
+    const first = enqueueNoteWrite("note-f4", async () => {
+      cachedToken = "token-v2";
+    });
+    const observed = enqueueNoteWrite("note-f4", async () => cachedToken);
+    await first;
+    expect(await observed).toBe("token-v2");
+  });
 });

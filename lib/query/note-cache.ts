@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import type {
   NoteFull,
   NoteFullResult,
@@ -5,6 +6,7 @@ import type {
   NoteSummary,
   NoteTreeRow,
 } from "@/lib/data/note";
+import { noteKeys } from "@/lib/query/keys";
 
 /** Tree-visible fields a patch may change; `id` is immutable. */
 export type NoteTreePatch = Partial<Omit<NoteTreeRow, "id">>;
@@ -20,6 +22,32 @@ export type NoteTreePatch = Partial<Omit<NoteTreeRow, "id">>;
  */
 export function casToken(updatedAt: Date | string): string {
   return typeof updatedAt === "string" ? updatedAt : updatedAt.toISOString();
+}
+
+/**
+ * Read the CAS token for a note from the cache: the detail entry when
+ * present, else the note's cached tree-list row, so a metadata write
+ * always carries a token whenever either cache holds the note.
+ *
+ * @param qc - QueryClient.
+ * @param projectId - Owning project id.
+ * @param noteId - Note id.
+ * @returns Token for `ifUpdatedAt`, or `undefined` when neither cache
+ *   holds the note.
+ */
+export function cachedCasToken(
+  qc: QueryClient,
+  projectId: string,
+  noteId: string,
+): string | undefined {
+  const detail = qc.getQueryData<NoteFullResult>(
+    noteKeys.detail(projectId, noteId),
+  );
+  if (detail) return casToken(detail.note.updatedAt);
+  const row = qc
+    .getQueryData<NoteTreeRow[]>(noteKeys.list(projectId))
+    ?.find((r) => r.id === noteId);
+  return row ? casToken(row.updatedAt) : undefined;
 }
 
 /**
@@ -55,6 +83,41 @@ export function clearNoteDirty(noteId: string): void {
  */
 export function hasUnsavedNoteEdits(noteId: string): boolean {
   return dirtyNoteIds.has(noteId);
+}
+
+/**
+ * Note ids confirmed soft-deleted whose restore has not yet succeeded.
+ * The autosave hook checks this so a buffered or in-flight edit for a
+ * deleted note is dropped instead of hitting the server's trashed-note
+ * rejection, and so a post-delete block commit never resurrects a ghost
+ * detail entry. Module-level because autosave buffers are per-hook refs
+ * the delete mutation cannot reach.
+ */
+const trashedNoteIds = new Set<string>();
+
+/**
+ * Mark a note as soft-deleted after a confirmed delete.
+ * @param noteId - Note id.
+ */
+export function markNoteTrashed(noteId: string): void {
+  trashedNoteIds.add(noteId);
+}
+
+/**
+ * Clear a note's trashed mark after a confirmed restore.
+ * @param noteId - Note id.
+ */
+export function clearNoteTrashed(noteId: string): void {
+  trashedNoteIds.delete(noteId);
+}
+
+/**
+ * Whether a note is marked soft-deleted.
+ * @param noteId - Note id.
+ * @returns True when autosave must drop the note's buffered edits.
+ */
+export function isNoteTrashed(noteId: string): boolean {
+  return trashedNoteIds.has(noteId);
 }
 
 /** Per-note FIFO chains; see {@link enqueueNoteWrite}. */

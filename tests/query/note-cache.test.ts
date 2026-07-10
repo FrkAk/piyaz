@@ -1,13 +1,19 @@
 import { describe, expect, test } from "bun:test";
+import { QueryClient } from "@tanstack/react-query";
 import type {
   NoteLinksRefresh,
   NoteSummary,
   NoteTreeRow,
 } from "@/lib/data/note";
+import { noteKeys } from "@/lib/query/keys";
 import {
+  cachedCasToken,
   clearNoteDirty,
+  clearNoteTrashed,
   hasUnsavedNoteEdits,
+  isNoteTrashed,
   markNoteDirty,
+  markNoteTrashed,
   mergeLinksIntoDetail,
   mergeSummaryIntoDetail,
   moveFolderInTree,
@@ -358,6 +364,104 @@ describe("dirty note registry", () => {
     expect(hasUnsavedNoteEdits("d2")).toBe(false);
     clearNoteDirty("d1");
     expect(hasUnsavedNoteEdits("d1")).toBe(false);
+  });
+});
+
+describe("trashed note registry", () => {
+  test("marks, reports, and clears trashed ids independently", () => {
+    expect(isNoteTrashed("t1")).toBe(false);
+    markNoteTrashed("t1");
+    expect(isNoteTrashed("t1")).toBe(true);
+    expect(isNoteTrashed("t2")).toBe(false);
+    clearNoteTrashed("t1");
+    expect(isNoteTrashed("t1")).toBe(false);
+  });
+});
+
+describe("cachedCasToken", () => {
+  const detailAt = new Date("2026-07-02T09:00:00.000Z");
+  const treeAt = new Date("2026-07-02T08:00:00.000Z");
+
+  test("prefers the cached detail entry's updatedAt", () => {
+    const qc = new QueryClient();
+    const detail = notePlaceholderFromRow("p1", row("n1"));
+    qc.setQueryData(noteKeys.detail("p1", "n1"), {
+      ...detail,
+      note: { ...detail.note, updatedAt: detailAt },
+    });
+    qc.setQueryData(noteKeys.list("p1"), [row("n1", { updatedAt: treeAt })]);
+    expect(cachedCasToken(qc, "p1", "n1")).toBe(detailAt.toISOString());
+  });
+
+  test("falls back to the cached tree row when the detail entry is absent", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(noteKeys.list("p1"), [row("n1", { updatedAt: treeAt })]);
+    expect(cachedCasToken(qc, "p1", "n1")).toBe(treeAt.toISOString());
+  });
+
+  test("returns undefined only when neither cache holds the note", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(noteKeys.list("p1"), [row("other")]);
+    expect(cachedCasToken(qc, "p1", "n1")).toBeUndefined();
+  });
+});
+
+describe("field-scoped list rollback (F7)", () => {
+  test("move rollback via revertPatchInTree keeps a concurrent sibling patch", () => {
+    const seeded = [row("a", { folder: "src" }), row("b")];
+    const optimisticA = patchNoteInTree(seeded, "a", { folder: "dest" });
+    const siblingB = patchNoteInTree(optimisticA, "b", { title: "B edited" });
+    const rolledBack = revertPatchInTree(
+      siblingB,
+      "a",
+      { folder: "dest" },
+      { folder: "src" },
+    );
+    expect(rolledBack?.find((r) => r.id === "a")?.folder).toBe("src");
+    expect(rolledBack?.find((r) => r.id === "b")?.title).toBe("B edited");
+  });
+
+  test("delete rollback re-inserts only its own captured row", () => {
+    const prevRowA = row("a", { title: "A original" });
+    const seeded = [prevRowA, row("b")];
+    const removed = removeNoteFromTree(seeded, "a");
+    const siblingB = patchNoteInTree(removed, "b", { title: "B edited" });
+    const rolledBack = upsertNoteInTree(siblingB, prevRowA);
+    expect(rolledBack.find((r) => r.id === "a")?.title).toBe("A original");
+    expect(rolledBack.find((r) => r.id === "b")?.title).toBe("B edited");
+  });
+
+  test("create rollback removes only its temp row", () => {
+    const seeded = [row("b")];
+    const withTemp = upsertNoteInTree(seeded, row("temp-1"));
+    const siblingB = patchNoteInTree(withTemp, "b", { title: "B edited" });
+    const rolledBack = removeNoteFromTree(siblingB, "temp-1");
+    expect(rolledBack?.some((r) => r.id === "temp-1")).toBe(false);
+    expect(rolledBack?.find((r) => r.id === "b")?.title).toBe("B edited");
+  });
+});
+
+describe("field-scoped revert never resurrects unpersisted values (F3)", () => {
+  test("tree revert skips a field a newer optimistic write replaced", () => {
+    const seeded = [row("a", { folder: "src" })];
+    const olderOptimistic = patchNoteInTree(seeded, "a", { folder: "older" });
+    const newerOptimistic = patchNoteInTree(olderOptimistic, "a", {
+      folder: "newer",
+    });
+    const out = revertPatchInTree(
+      newerOptimistic,
+      "a",
+      { folder: "older" },
+      { folder: "src" },
+    );
+    expect(out?.find((r) => r.id === "a")?.folder).toBe("newer");
+  });
+
+  test("detail revert skips a field a newer optimistic write replaced", () => {
+    const detail = notePlaceholderFromRow("p1", row("n1"));
+    const newer = { ...detail, note: { ...detail.note, folder: "newer" } };
+    const out = revertPatchOnDetail(newer, { folder: "older" }, { folder: "" });
+    expect(out?.note.folder).toBe("newer");
   });
 });
 

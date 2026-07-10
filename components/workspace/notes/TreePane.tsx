@@ -38,6 +38,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import type { NoteTreeRow } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
+import { casToken } from "@/lib/query/note-cache";
 import {
   fetchNoteFolders,
   fetchNoteSearch,
@@ -765,10 +766,13 @@ export function TreePane({
     canUndo,
     push: pushUndo,
     undo,
-  } = useUndo<{ noteIds: string[]; label: string }>({
+  } = useUndo<{ notes: { id: string; token?: string }[]; label: string }>({
     onUndo: async (item) => {
-      for (const id of item.noteIds) {
-        const result = await restoreNoteAsync(id);
+      for (const n of item.notes) {
+        const result = await restoreNoteAsync({
+          noteId: n.id,
+          ifUpdatedAt: n.token,
+        });
         if (!result.ok) throw new Error(result.message);
       }
     },
@@ -1151,7 +1155,10 @@ export function TreePane({
       mutateDeleteNote(row.id, {
         onSuccess: (result) => {
           if (result.ok) {
-            pushUndo({ noteIds: [row.id], label: row.title || "Untitled" });
+            pushUndo({
+              notes: [{ id: row.id, token: casToken(result.data.updatedAt) }],
+              label: row.title || "Untitled",
+            });
           } else {
             setTreeError(result.message);
           }
@@ -1248,7 +1255,15 @@ export function TreePane({
       if (result === null) setTreeError("Delete failed");
       else if (!result.ok) setTreeError(result.message);
     }
-    pushUndo({ noteIds: pending.noteIds, label: leafOf(pending.path) });
+    pushUndo({
+      notes: pending.noteIds.map((id, i) => {
+        const result = results[i];
+        return result?.ok
+          ? { id, token: casToken(result.data.updatedAt) }
+          : { id };
+      }),
+      label: leafOf(pending.path),
+    });
   }
 
   /**
