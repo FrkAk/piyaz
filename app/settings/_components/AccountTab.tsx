@@ -17,6 +17,15 @@ import { DeleteAccountDialog } from "./DeleteAccountDialog";
 const NAME_MAX = 80;
 const PASSWORD_MIN = 8;
 
+/** Legal documents linked from the account tab, opened in a new tab. */
+const LEGAL_DOC_LINKS = [
+  { href: "/terms", label: "Terms" },
+  { href: "/privacy", label: "Privacy" },
+  { href: "/impressum", label: "Legal Notice" },
+  { href: "/dpa", label: "DPA" },
+  { href: "/subprocessors", label: "Sub-processors" },
+];
+
 const INPUT_CLASS =
   "w-full rounded-md border border-border-strong bg-base px-3 py-2.5 text-[13px] text-text-primary placeholder:text-text-muted outline-none transition-colors focus:border-accent";
 
@@ -188,6 +197,23 @@ export function AccountTab({ user, passwordUpdatedAt }: AccountTabProps) {
       ) : null}
 
       <DangerZone email={user.email} />
+
+      <nav
+        aria-label="Legal documents"
+        className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-[11.5px] text-text-muted"
+      >
+        {LEGAL_DOC_LINKS.map((link) => (
+          <a
+            key={link.href}
+            href={link.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="transition-colors hover:text-text-primary"
+          >
+            {link.label}
+          </a>
+        ))}
+      </nav>
     </section>
   );
 }
