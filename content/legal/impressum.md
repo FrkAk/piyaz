@@ -1,13 +1,9 @@
 # Legal Notice (Impressum)
 
-> **Status: in effect for the beta period.** Prepared in good faith without external
-> legal counsel review; we will revise this document when our operating entity is
-> formed and before paid plans launch, and material changes will require re-acceptance.
-> Version: `beta-2026-07-11`
->
-> **Scope:** This legal notice covers the **hosted Piyaz service at `app.piyaz.ai`**.
-> **Self-hosters must provide their own legal notice** if their jurisdiction requires
-> one.
+Last updated: July 11, 2026
+
+This legal notice covers the **hosted Piyaz service at `app.piyaz.ai`**. Self-hosters
+must provide their own legal notice if their jurisdiction requires one.
 
 ---
 

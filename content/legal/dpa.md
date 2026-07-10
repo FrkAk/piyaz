@@ -1,13 +1,6 @@
 # Data Processing Agreement
 
-> **Status: in effect for the beta period.** Prepared in good faith without external
-> legal counsel review; we will revise this document when our operating entity is
-> formed and before paid plans launch, and material changes will require re-acceptance.
-> Version: `beta-2026-07-11` · Effective while the service is in beta.
->
-> This is a baseline DPA offered during the beta. A final version, naming the
-> operating entity as the contracting processor, will replace it once that entity
-> is established.
+Last updated: July 11, 2026
 
 ---
 
@@ -18,7 +11,9 @@ customer organization whose owner accepts it in the team settings (the
 [Legal Notice](/impressum)). It governs the processing of personal data that the
 controller places into Piyaz workspaces, under **Article 28 GDPR**. If you
 self-host Piyaz, this DPA does not apply to your deployment: you are the
-controller and the processor for your own instance.
+controller and the processor for your own instance. A revised version naming the
+operating entity as the contracting processor will be offered once that entity is
+established.
 
 ## Subject matter and duration
 

@@ -1,14 +1,11 @@
 # Beta Terms of Service
 
-> **Status: in effect for the beta period.** Prepared in good faith without external
-> legal counsel review; we will revise this document when our operating entity is
-> formed and before paid plans launch, and material changes will require re-acceptance.
-> Version: `beta-2026-07-11` · Effective while the Service is in beta.
->
-> **Scope:** These Beta Terms govern the **hosted Piyaz service at `app.piyaz.ai`**,
-> operated by the Piyaz team. **If you self-host Piyaz, these terms do not apply to
-> your deployment**: you set your own terms with your own users. The Piyaz software
-> itself is licensed separately (see `LICENSE` / `LICENSING.md`).
+Last updated: July 11, 2026
+
+These Beta Terms govern the **hosted Piyaz service at `app.piyaz.ai`**, operated by
+the Piyaz team, for the duration of the beta. **If you self-host Piyaz, these terms do
+not apply to your deployment**: you set your own terms with your own users. The Piyaz
+software itself is licensed separately (see `LICENSE` / `LICENSING.md`).
 
 ---
 

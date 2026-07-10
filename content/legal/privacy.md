@@ -1,14 +1,11 @@
 # Privacy Policy
 
-> **Status: in effect for the beta period.** Prepared in good faith without external
-> legal counsel review; we will revise this document when our operating entity is
-> formed and before paid plans launch, and material changes will require re-acceptance.
-> Version: `beta-2026-07-11` · Effective while the service is in beta.
->
-> **Scope:** This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**,
-> operated by the Piyaz team. **If you self-host Piyaz, this document does not
-> apply to your deployment**: you are the data controller for your own instance and
-> must provide your own privacy policy.
+Last updated: July 11, 2026
+
+This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**, operated
+by the Piyaz team. **If you self-host Piyaz, this document does not apply to your
+deployment**: you are the data controller for your own instance and must provide your
+own privacy policy.
 
 ---
 
