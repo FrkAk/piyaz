@@ -24,7 +24,7 @@ let nextRestoreResult:
       currentUpdatedAt: string;
       currentVersion: number;
     }
-  | { ok: false; code: "validation"; field: string; message: string };
+  | { ok: false; code: "invalid_input"; field: string; message: string };
 
 /**
  * Stub for an action this suite never calls.
@@ -159,7 +159,7 @@ describe("runRestoreRevisionWrite", () => {
     const qc = seededClient();
     nextRestoreResult = {
       ok: false,
-      code: "validation",
+      code: "invalid_input",
       field: "version",
       message: "version 9 not found",
     };
