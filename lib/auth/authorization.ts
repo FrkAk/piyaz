@@ -259,6 +259,8 @@ export async function assertNoteAccess(
  *
  * @param tx - Active RLS transaction handle.
  * @param noteId - UUID of the note to authorize.
+ * @param opts - `forUpdate` locks the notes row so the gate row doubles as
+ *   a CAS baseline; see {@link findNoteAccessTx}.
  * @returns The slim gate row for the note.
  * @throws ForbiddenError on malformed id, missing note, cross-team access,
  *   or another member's private note.
@@ -266,9 +268,10 @@ export async function assertNoteAccess(
 export async function assertNoteAccessTx(
   tx: Tx,
   noteId: string,
+  opts?: { forUpdate?: boolean },
 ): Promise<NoteAccessGate> {
   assertValidNoteId(noteId);
-  const note = await findNoteAccessTx(tx, noteId);
+  const note = await findNoteAccessTx(tx, noteId, opts);
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
   return note;
 }

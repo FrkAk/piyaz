@@ -387,6 +387,135 @@ test("moveNote relocates a single note", async () => {
   expect(moved.folder).toBe("Architecture/Auth");
 });
 
+test("moveNote enforces the ifUpdatedAt compare-and-swap", async () => {
+  const f = await seedUserOrgProject("notemvcas");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "N",
+    folder: "Drafts",
+  });
+
+  const bumped = await updateNote(ctx, note.id, { summary: "changed" });
+
+  let staleErr: unknown;
+  try {
+    await moveNote(ctx, note.id, "Elsewhere", note.updatedAt.toISOString());
+  } catch (e) {
+    staleErr = e;
+  }
+  expect(staleErr).toBeInstanceOf(NoteStaleWriteError);
+  const err = staleErr as NoteStaleWriteError;
+  expect(err.currentUpdatedAt.getTime()).toBe(bumped.updatedAt.getTime());
+  expect(err.currentVersion).toBe(bumped.version);
+  const tree = await getNoteTreeList(ctx, f.projectId);
+  expect(tree.find((n) => n.id === note.id)?.folder).toBe("Drafts");
+
+  const fresh = await moveNote(
+    ctx,
+    note.id,
+    "Elsewhere",
+    bumped.updatedAt.toISOString(),
+  );
+  expect(fresh.folder).toBe("Elsewhere");
+
+  const tokenless = await moveNote(ctx, note.id, "Third");
+  expect(tokenless.folder).toBe("Third");
+
+  await expect(
+    moveNote(ctx, note.id, "Fourth", "not-a-timestamp"),
+  ).rejects.toBeInstanceOf(NoteValidationError);
+});
+
+test("moveNote rejects a stale token even when the move is a no-op", async () => {
+  const f = await seedUserOrgProject("notemvnoop");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "N",
+    folder: "Drafts",
+  });
+  const bumped = await updateNote(ctx, note.id, { summary: "changed" });
+
+  await expect(
+    moveNote(ctx, note.id, "Drafts", note.updatedAt.toISOString()),
+  ).rejects.toBeInstanceOf(NoteStaleWriteError);
+
+  const noOp = await moveNote(
+    ctx,
+    note.id,
+    "Drafts",
+    bumped.updatedAt.toISOString(),
+  );
+  expect(noOp.folder).toBe("Drafts");
+  expect(noOp.updatedAt.getTime()).toBe(bumped.updatedAt.getTime());
+});
+
+test("deleteNote enforces CAS and returns the restore-undo token", async () => {
+  const f = await seedUserOrgProject("notedelcas");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "N" });
+  const bumped = await updateNote(ctx, note.id, { summary: "changed" });
+
+  let staleErr: unknown;
+  try {
+    await deleteNote(ctx, note.id, note.updatedAt.toISOString());
+  } catch (e) {
+    staleErr = e;
+  }
+  expect(staleErr).toBeInstanceOf(NoteStaleWriteError);
+  expect((await getNoteTreeList(ctx, f.projectId)).length).toBe(1);
+
+  const deleted = await deleteNote(
+    ctx,
+    note.id,
+    bumped.updatedAt.toISOString(),
+  );
+  const sr = serviceRoleConnect();
+  const [stored] = await sr<{ updated_at: Date }[]>`
+    SELECT updated_at FROM notes WHERE id = ${note.id}`;
+  expect(deleted.updatedAt.getTime()).toBe(stored.updated_at.getTime());
+  expect(deleted.updatedAt.getTime()).toBe(deleted.deletedAt.getTime());
+
+  await expect(
+    deleteNote(ctx, note.id, bumped.updatedAt.toISOString()),
+  ).rejects.toBeInstanceOf(NoteStaleWriteError);
+
+  const repeat = await deleteNote(
+    ctx,
+    note.id,
+    deleted.updatedAt.toISOString(),
+  );
+  expect(repeat.deletedAt.getTime()).toBe(deleted.deletedAt.getTime());
+});
+
+test("restoreNote enforces CAS with the delete's returned token", async () => {
+  const f = await seedUserOrgProject("noterescas");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "N" });
+
+  const deleted = await deleteNote(ctx, note.id);
+
+  await expect(
+    restoreNote(ctx, note.id, note.updatedAt.toISOString()),
+  ).rejects.toBeInstanceOf(NoteStaleWriteError);
+
+  const restored = await restoreNote(
+    ctx,
+    note.id,
+    deleted.updatedAt.toISOString(),
+  );
+  expect(restored.id).toBe(note.id);
+  expect((await getNoteTreeList(ctx, f.projectId)).length).toBe(1);
+
+  const noOp = await restoreNote(ctx, note.id);
+  expect(noOp.id).toBe(note.id);
+
+  await expect(
+    restoreNote(ctx, note.id, deleted.updatedAt.toISOString()),
+  ).rejects.toBeInstanceOf(NoteStaleWriteError);
+});
+
 test("note reads are 404-shaped for foreign and malformed ids", async () => {
   const mine = await seedUserOrgProject("noteacc1");
   const theirs = await seedUserOrgProject("noteacc2");
