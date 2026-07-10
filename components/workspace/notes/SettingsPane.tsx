@@ -605,7 +605,7 @@ interface RibbonShellProps {
 
 /**
  * Ribbon frame: a slim toolbar with the collapse (column) or close (drawer)
- * affordance over a scrollable body. At `lg` the column is a fixed 320px
+ * affordance over a scrollable body. At `lg` the column is a fixed 352px
  * rail with a left border; in `fill` (drawer) mode it stretches full width.
  *
  * @param props - Chrome mode and body.
@@ -619,7 +619,7 @@ function RibbonShell({
 }: RibbonShellProps) {
   return (
     <div
-      className={`flex h-full min-h-0 flex-col ${fill ? "w-full" : "w-[320px] border-l border-border"}`}
+      className={`flex h-full min-h-0 flex-col ${fill ? "w-full" : "w-[352px] border-l border-border"}`}
       style={{ background: "var(--color-base)" }}
     >
       <div

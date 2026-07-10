@@ -21,8 +21,11 @@ import { SettingsPane } from "./SettingsPane";
 import { TreePane } from "./TreePane";
 import { useCreateNote } from "./useNoteMutations";
 
-/** Width of the desktop tree rail and settings column, in pixels. */
+/** Width of the desktop tree rail, in pixels. */
 const RAIL_WIDTH = 320;
+
+/** Width of the settings column and drawer, in pixels; fits the feed-mode chip row on one line. */
+const SETTINGS_WIDTH = 352;
 
 interface NotesViewProps {
   /** @param projectId - Owning project id. */
@@ -226,7 +229,7 @@ export function NotesView({
           {editor}
         </div>
         {isXl && noteId !== null && (
-          <CollapsibleRail open={!settingsCollapsed} width={RAIL_WIDTH}>
+          <CollapsibleRail open={!settingsCollapsed} width={SETTINGS_WIDTH}>
             <SettingsPane
               key={noteId}
               projectId={projectId}
@@ -389,7 +392,7 @@ function SettingsDrawer({ open, onClose, children }: SettingsDrawerProps) {
       open={open}
       onClose={onClose}
       side="right"
-      width="320px"
+      width={`${SETTINGS_WIDTH}px`}
       label="Note settings"
     >
       {children}
