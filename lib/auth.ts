@@ -252,7 +252,7 @@ export const auth = betterAuth({
         // and user-agent. Must be `after` (not `before`): the rows FK to the
         // user, which does not exist until creation commits. On write failure,
         // compensate by deleting the just-created user so no account survives
-        // without its acceptance evidence — a throw here does NOT roll the user
+        // without its acceptance evidence; a throw here does NOT roll the user
         // back (the row is already committed when `after` runs).
         after: async (user, ctx) => {
           const requestHeaders = ctx?.headers;
