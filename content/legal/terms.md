@@ -36,7 +36,7 @@ changes that materially and adversely affect you where we can.
 ## 3. Fees: free during beta
 
 The Service is currently **free of charge**. We may introduce paid plans or fees in
-future. **We will not start charging you without giving you prior notice and the choice
+the future. **We will not start charging you without giving you prior notice and the choice
 to stop using the Service before any fee applies.** Continuing to use a paid feature
 after a fee takes effect means you agree to that fee.
 
@@ -118,7 +118,7 @@ these Terms will designate governing law and jurisdiction.
 We may update these Terms. The version identifier at the top reflects the current
 version. We will notify you of material changes in-app or by email. When the beta ends,
 when paid plans are introduced, or for any other material change, we will ask you to
-**actively re-accept** the new terms before you continue using the Service; silence is
+**actively re-accept** the new Terms before you continue using the Service; silence is
 not treated as acceptance.
 
 ## 15. Contact

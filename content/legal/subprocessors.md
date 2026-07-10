@@ -1,7 +1,7 @@
 # Sub-processors
 
 > **Status: preliminary beta version, not yet reviewed by legal counsel.**
-> Version: `draft-2026-07-10` · Effective while the Service is in beta.
+> Version: `draft-2026-07-10` · Effective while the service is in beta.
 
 ---
 

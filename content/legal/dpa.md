@@ -1,7 +1,7 @@
 # Data Processing Agreement
 
 > **Status: preliminary beta version, not yet reviewed by legal counsel.**
-> Version: `draft-2026-07-10` · Effective while the Service is in beta.
+> Version: `draft-2026-07-10` · Effective while the service is in beta.
 >
 > This is a baseline DPA offered during the beta. A final version, naming the
 > operating entity as the contracting processor, will replace it once that entity
@@ -39,7 +39,7 @@ controller and the processor for your own instance.
 The processor processes personal data only on the controller's documented
 instructions (the service agreement, these terms, and the controller's use of the
 service settings), ensures personnel are bound by confidentiality, and implements
-the technical and organisational measures described in the
+the technical and organizational measures described in the
 [Privacy Policy](/privacy) (section "How we protect your data"). Taking into
 account the nature of processing and the information available to it, the
 processor assists the controller with data-subject requests and with the
@@ -55,7 +55,7 @@ data-protection law.
 
 ## Sub-processors
 
-The controller authorises the processor to engage the sub-processors listed on the
+The controller authorizes the processor to engage the sub-processors listed on the
 [sub-processor list](/subprocessors). That page names each sub-processor, its
 processing purpose, its data region, and its transfer mechanism, and is
 incorporated into this DPA by reference.

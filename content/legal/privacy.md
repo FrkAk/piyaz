@@ -1,7 +1,7 @@
 # Privacy Policy
 
 > **Status: preliminary beta version, not yet reviewed by legal counsel.**
-> Version: `draft-2026-07-10` · Effective while the Service is in beta.
+> Version: `draft-2026-07-10` · Effective while the service is in beta.
 >
 > **Scope:** This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**,
 > operated by the Piyaz team. **If you self-host Piyaz, this document does not
@@ -14,7 +14,7 @@
 
 Piyaz ("Piyaz", "we", "us", "our") is operated by its team. A formal operating entity
 has not yet been established; the team members jointly decide why and how your personal
-data is processed and act as **joint controllers** under Article 26 GDPR. As joint
+data is processed and act as **joint controllers** under Art. 26 GDPR. As joint
 controllers, the team members are jointly responsible for your rights under this
 policy: regardless of any internal allocation, you may exercise your GDPR rights
 against any of us through the single designated contact point below. The essence of
@@ -33,7 +33,7 @@ once it is formed (see the [Legal Notice](/impressum)).
 We collect the following categories of personal data:
 
 - **Account data**: your name and email address.
-- **Credentials**: a salted, hashed password (we never store your password in plain text). If you sign in with a third-party provider in future, we receive your basic profile from that provider instead.
+- **Credentials**: a salted, hashed password (we never store your password in plain text). If you sign in with a third-party provider in the future, we receive your basic profile from that provider instead.
 - **Profile data**: an optional avatar image URL.
 - **Technical and session data**: your IP address, browser user-agent, session identifiers, and timestamps.
 - **Workspace data**: team/organization names, membership roles, and the email addresses of people you invite.
@@ -91,11 +91,12 @@ Two things are true at once, and we state both plainly:
   network, so requests (including TLS termination) are processed at the Cloudflare
   location nearest to you, which may be outside the European Economic Area.
 
-Our US-headquartered sub-processors (Neon, LLC and Cloudflare, Inc.) may also access
-data from outside the EEA for support and operational purposes. All such transfers are
-governed by each provider's Data Processing Agreement incorporating the **EU Standard
-Contractual Clauses (SCCs)**, with the provider's certification under the **EU-US Data
-Privacy Framework** as an additional safeguard.
+Our US-headquartered sub-processors (Neon, LLC; Amazon Web Services, Inc.; and
+Cloudflare, Inc.) may also access data from outside the EEA for support and
+operational purposes. All such transfers are governed by each sub-processor's Data
+Processing Agreement incorporating the **EU Standard Contractual Clauses (SCCs)**,
+with the sub-processor's certification under the **EU-US Data Privacy Framework** as
+an additional safeguard.
 
 ## How we protect your data
 

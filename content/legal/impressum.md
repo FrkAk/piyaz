@@ -1,6 +1,6 @@
 # Legal Notice (Impressum)
 
-> **Status: DRAFT, preliminary beta version. Not yet reviewed by legal counsel.**
+> **Status: preliminary beta version, not yet reviewed by legal counsel.**
 > Version: `draft-2026-07-10`
 >
 > **Scope:** This legal notice covers the **hosted Piyaz service at `app.piyaz.ai`**.
