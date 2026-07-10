@@ -96,6 +96,23 @@ test("malformed BRAND_FOOTER_LINKS yields undefined without throwing", () => {
   expect(resolveBrandConfig().footerLinks).toBeUndefined();
 });
 
+test("footer links with blank label or url are dropped", () => {
+  process.env.BRAND_FOOTER_LINKS = JSON.stringify([
+    { label: "", url: "" },
+    { label: "Home", url: "   " },
+    { label: "  ", url: "https://acme.example" },
+  ]);
+  expect(resolveBrandConfig().footerLinks).toBeUndefined();
+
+  process.env.BRAND_FOOTER_LINKS = JSON.stringify([
+    { label: "", url: "" },
+    { label: "Home", url: "https://acme.example" },
+  ]);
+  expect(resolveBrandConfig().footerLinks).toEqual([
+    { label: "Home", url: "https://acme.example" },
+  ]);
+});
+
 test("blank env var is treated as unset", () => {
   process.env.APP_NAME = "   ";
   process.env.BETTER_AUTH_URL = "https://tasks.acme.example";
@@ -146,6 +163,15 @@ test("every purpose falls back to EMAIL_FROM when the per-purpose vars are unset
   expect(senderFor("transactional").from).toBe("mail@acme.example");
   expect(senderFor("personal").from).toBe("mail@acme.example");
   expect(senderFor("informational").from).toBe("mail@acme.example");
+});
+
+test("an out-of-union purpose falls back to the from-address instead of returning undefined", () => {
+  process.env.BETTER_AUTH_URL = "https://tasks.acme.example";
+  process.env.EMAIL_FROM = "mail@acme.example";
+
+  const sender = senderFor("unknown" as Parameters<typeof senderFor>[0]);
+  expect(sender.from).toBe("mail@acme.example");
+  expect(sender.replyTo).toBeUndefined();
 });
 
 test("fully unconfigured from-address is noreply@<host> and never @piyaz.ai", () => {

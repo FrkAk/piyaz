@@ -57,7 +57,9 @@ function parseFooterLinks(raw: string | undefined): BrandConfig["footerLinks"] {
       typeof entry === "object" &&
       entry !== null &&
       typeof (entry as { label?: unknown }).label === "string" &&
-      typeof (entry as { url?: unknown }).url === "string",
+      (entry as { label: string }).label.trim() !== "" &&
+      typeof (entry as { url?: unknown }).url === "string" &&
+      (entry as { url: string }).url.trim() !== "",
   );
   return links.length > 0 ? links : undefined;
 }
@@ -120,5 +122,7 @@ export function senderFor(purpose: EmailPurpose): {
     }
     case "informational":
       return { from: brandString("EMAIL_FROM_INFO") ?? fallbackFrom };
+    default:
+      return { from: fallbackFrom };
   }
 }
