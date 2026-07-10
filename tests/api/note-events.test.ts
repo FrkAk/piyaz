@@ -1,0 +1,274 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { truncateAll } from "@/tests/setup/schema";
+import { seedUserOrgProject } from "@/tests/setup/seed";
+import { superuserPool } from "@/tests/setup/global";
+import { broker } from "@/lib/realtime/broker";
+import {
+  GET as getEvents,
+  HEAD as headEvents,
+} from "@/app/api/note/[noteId]/events/route";
+import {
+  GET as getRevisions,
+  HEAD as headRevisions,
+} from "@/app/api/note/[noteId]/revisions/route";
+import { makeAuthContext } from "@/lib/auth/context";
+import { createNote, deleteNote, updateNote } from "@/lib/data/note";
+import type { ActivityEvent } from "@/lib/types";
+
+const setSession = (
+  globalThis as unknown as {
+    __setTestSession: (s: { user: { id: string } } | null) => void;
+  }
+).__setTestSession;
+
+afterEach(async () => {
+  broker._resetForTests();
+  await truncateAll();
+});
+
+/** Seed a team note with a body update so it has two events and two revisions. */
+async function seedNoteWithHistory(prefix: string) {
+  const fx = await seedUserOrgProject(prefix);
+  const ctx = makeAuthContext(fx.userId);
+  const note = await createNote(ctx, {
+    projectId: fx.projectId,
+    title: "N",
+    body: "one",
+    visibility: "team",
+  });
+  await updateNote(ctx, note.id, { body: "two" });
+  return { fx, ctx, noteId: note.id };
+}
+
+/**
+ * Insert a new user and add them to an existing org as a plain member.
+ *
+ * @param organizationId - Org the new member joins.
+ * @param suffix - Unique suffix for the user's name and email.
+ * @returns The new user's id.
+ */
+async function seedSecondMember(
+  organizationId: string,
+  suffix: string,
+): Promise<string> {
+  const sql = superuserPool();
+  const [u] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
+    RETURNING id
+  `;
+  await sql`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${organizationId}, ${u.id}, 'member', now())
+  `;
+  return u.id;
+}
+
+const callEvents = (
+  noteId: string,
+  query = "",
+  headers: Record<string, string> = {},
+  method: "GET" | "HEAD" = "GET",
+) =>
+  (method === "HEAD" ? headEvents : getEvents)(
+    new Request(`http://test/api/note/${noteId}/events${query}`, {
+      method,
+      headers,
+    }),
+    { params: Promise.resolve({ noteId }) },
+  );
+
+const callRevisions = (
+  noteId: string,
+  headers: Record<string, string> = {},
+  method: "GET" | "HEAD" = "GET",
+) =>
+  (method === "HEAD" ? headRevisions : getRevisions)(
+    new Request(`http://test/api/note/${noteId}/revisions`, {
+      method,
+      headers,
+    }),
+    { params: Promise.resolve({ noteId }) },
+  );
+
+describe("GET /api/note/[noteId]/events", () => {
+  test("returns the note's events newest-first with a 200", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nev-owner");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await callEvents(noteId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      events: ActivityEvent[];
+      nextCursor: string | null;
+    };
+    expect(body.events.map((e) => e.type)).toEqual([
+      "note_updated",
+      "note_created",
+    ]);
+    expect(body.nextCursor).toBeNull();
+  });
+
+  test("a second request with the matching ETag returns 304 with no body", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nev-etag");
+    setSession({ user: { id: fx.userId } });
+
+    const first = await callEvents(noteId);
+    const etag = first.headers.get("etag");
+    expect(etag).not.toBeNull();
+
+    const replay = await callEvents(noteId, "", {
+      "if-none-match": etag as string,
+    });
+    expect(replay.status).toBe(304);
+    expect(await replay.text()).toBe("");
+
+    await updateNote(makeAuthContext(fx.userId), noteId, { body: "three" });
+    const after = await callEvents(noteId, "", {
+      "if-none-match": etag as string,
+    });
+    expect(after.status).toBe(200);
+  });
+
+  test("HEAD returns the ETag and no body", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nev-head");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await callEvents(noteId, "", {}, "HEAD");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).not.toBeNull();
+    expect(await res.text()).toBe("");
+  });
+
+  test("honors ?limit and walks the second page via the cursor", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nev-page");
+    setSession({ user: { id: fx.userId } });
+
+    const first = await callEvents(noteId, "?limit=1");
+    const firstBody = (await first.json()) as {
+      events: ActivityEvent[];
+      nextCursor: string | null;
+    };
+    expect(firstBody.events).toHaveLength(1);
+    expect(firstBody.nextCursor).not.toBeNull();
+
+    const second = await callEvents(
+      noteId,
+      `?limit=1&cursor=${encodeURIComponent(firstBody.nextCursor as string)}`,
+    );
+    const secondBody = (await second.json()) as {
+      events: ActivityEvent[];
+      nextCursor: string | null;
+    };
+    expect(secondBody.events).toHaveLength(1);
+    expect(secondBody.events[0].id).not.toBe(firstBody.events[0].id);
+  });
+
+  test("returns 404 for a non-uuid id before any SQL", async () => {
+    const { fx } = await seedNoteWithHistory("nev-uuid");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await callEvents("not-a-uuid");
+    expect(res.status).toBe(404);
+  });
+
+  test("returns 404 for a cross-team caller and for another member on a private note", async () => {
+    const { fx, ctx, noteId } = await seedNoteWithHistory("nev-x");
+    const stranger = await seedUserOrgProject("nev-stranger");
+    setSession({ user: { id: stranger.userId } });
+    expect((await callEvents(noteId)).status).toBe(404);
+
+    const priv = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "Private note",
+    });
+    const mate = await seedSecondMember(fx.organizationId, "nev-x-b");
+    setSession({ user: { id: mate } });
+    const res = await callEvents(priv.id);
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("Private note");
+  });
+
+  test("returns 404 for a trashed note", async () => {
+    const { fx, ctx, noteId } = await seedNoteWithHistory("nev-trash");
+    await deleteNote(ctx, noteId);
+    setSession({ user: { id: fx.userId } });
+
+    expect((await callEvents(noteId)).status).toBe(404);
+  });
+
+  test("returns 401 without a session", async () => {
+    const { noteId } = await seedNoteWithHistory("nev-noauth");
+    setSession(null);
+
+    expect((await callEvents(noteId)).status).toBe(401);
+  });
+});
+
+describe("GET /api/note/[noteId]/revisions", () => {
+  test("lists slim revision descriptors newest-first, never the body", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nrev-owner");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await callRevisions(noteId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      currentVersion: number;
+      revisions: { version: number; title: string }[];
+    };
+    expect(body.currentVersion).toBe(2);
+    expect(body.revisions.map((r) => r.version)).toEqual([2, 1]);
+    expect(JSON.stringify(body)).not.toContain('"body"');
+  });
+
+  test("a second request with the matching ETag returns 304; a new revision moves it", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nrev-etag");
+    setSession({ user: { id: fx.userId } });
+
+    const first = await callRevisions(noteId);
+    const etag = first.headers.get("etag");
+    expect(etag).not.toBeNull();
+
+    const replay = await callRevisions(noteId, {
+      "if-none-match": etag as string,
+    });
+    expect(replay.status).toBe(304);
+
+    await updateNote(makeAuthContext(fx.userId), noteId, { body: "three" });
+    const after = await callRevisions(noteId, {
+      "if-none-match": etag as string,
+    });
+    expect(after.status).toBe(200);
+  });
+
+  test("HEAD returns the ETag and no body", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nrev-head");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await callRevisions(noteId, {}, "HEAD");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).not.toBeNull();
+    expect(await res.text()).toBe("");
+  });
+
+  test("returns 404 for a non-uuid id, a cross-team caller, and a trashed note", async () => {
+    const { fx, ctx, noteId } = await seedNoteWithHistory("nrev-x");
+    setSession({ user: { id: fx.userId } });
+    expect((await callRevisions("not-a-uuid")).status).toBe(404);
+
+    const stranger = await seedUserOrgProject("nrev-stranger");
+    setSession({ user: { id: stranger.userId } });
+    expect((await callRevisions(noteId)).status).toBe(404);
+
+    await deleteNote(ctx, noteId);
+    setSession({ user: { id: fx.userId } });
+    expect((await callRevisions(noteId)).status).toBe(404);
+  });
+
+  test("returns 401 without a session", async () => {
+    const { noteId } = await seedNoteWithHistory("nrev-noauth");
+    setSession(null);
+
+    expect((await callRevisions(noteId)).status).toBe(401);
+  });
+});
