@@ -1,12 +1,12 @@
 # Beta Terms of Service
 
-> **Status: DRAFT — pending review by qualified legal counsel. Not yet in effect.**
+> **Status: DRAFT, pending review by qualified legal counsel. Not yet in effect.**
 > Version: `draft-2026-06-23` · Effective date: `[EFFECTIVE DATE]`
 >
 > **Scope:** These Beta Terms govern the **hosted Piyaz service at `app.piyaz.ai`**,
 > operated by the Piyaz founders. **If you self-host Piyaz, these terms do not apply to
-> your deployment** — you set your own terms with your own users. The Piyaz software
-> itself is licensed separately (see `LICENSE` / `LICENSING.md`). See `docs/legal/README.md`.
+> your deployment**: you set your own terms with your own users. The Piyaz software
+> itself is licensed separately (see `LICENSE` / `LICENSING.md`).
 >
 > **Placeholders** in `[BRACKETS]` must be confirmed before these terms go live.
 
@@ -34,7 +34,7 @@ We may add, change, suspend, or remove features, and we may change or discontinu
 Service (in whole or in part) at any time. We will give **reasonable advance notice** of
 changes that materially and adversely affect you where we can.
 
-## 3. Fees — free during beta
+## 3. Fees: free during beta
 
 The Service is currently **free of charge**. We may introduce paid plans or fees in
 future. **We will not start charging you without giving you prior notice and the choice
