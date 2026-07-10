@@ -3761,7 +3761,7 @@ export async function getNoteRevision(
 
 /**
  * Restore a note's title and body to a stored revision snapshot by writing
- * through {@link updateNote} — append-only revert: the write snapshots a NEW
+ * through {@link updateNote}, an append-only revert: the write snapshots a NEW
  * revision and bumps `version`; nothing is destroyed. The snapshot read and
  * the write are separate transactions by design: revisions are
  * append-only-immutable (`note_revisions` is UPDATE-revoked), so the read

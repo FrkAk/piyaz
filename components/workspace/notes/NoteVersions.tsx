@@ -77,9 +77,9 @@ function restoreFailureCopy(failure: NoteActionFailure): string {
 /**
  * Versions panel for the settings ribbon: the note's revision snapshots
  * newest-first, the live version pinned as `current`, and a restore
- * control per older row. Restore is append-only — it writes the snapshot
+ * control per older row. Restore is append-only (it writes the snapshot
  * back through the note-update path, so a new revision is snapshotted and
- * nothing is destroyed — and is confirmed through the shared
+ * nothing is destroyed) and is confirmed through the shared
  * {@link ConfirmDialog}. The control is disabled while the note is locked,
  * still loading, or holds unsaved editor content (a restore under a dirty
  * buffer would race the autosave; the server CAS is the backstop).
@@ -237,7 +237,7 @@ export function NoteVersions({
         body={
           <>
             The note&rsquo;s title and body revert to version{" "}
-            {confirmVersion ?? ""}. Nothing is lost — the current content stays
+            {confirmVersion ?? ""}. Nothing is lost: the current content stays
             available as its own version.
           </>
         }

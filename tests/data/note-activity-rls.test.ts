@@ -92,7 +92,7 @@ async function seedNoteEvent(
  *   - hard-deleting a note cascades its events (ON DELETE CASCADE, so a
  *     purged note never leaves orphan rows whose gate would blank out).
  */
-describe("activity_events RLS — note_id gate, project pin, cascade", () => {
+describe("activity_events RLS: note_id gate, project pin, cascade", () => {
   test("private-note event is author-only; team-note event is member-visible", async () => {
     const fx = await seedUserOrgProject("ae-note-vis");
     const userB = await seedSecondMember(fx.organizationId, "ae-note-vis-b");

@@ -44,7 +44,7 @@ async function seedNoteWithRevisions(ctx: AuthContext, projectId: string) {
   return updateNote(ctx, note.id, { title: "Draft v2", body: "second body" });
 }
 
-describe("restoreNoteRevision — append-only revert through updateNote", () => {
+describe("restoreNoteRevision: append-only revert through updateNote", () => {
   test("restore reverts title/body, appends a revision, and leaves prior revisions untouched", async () => {
     const fx = await seedUserOrgProject("rev-restore");
     const ctx = makeAuthContext(fx.userId);

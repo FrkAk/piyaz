@@ -386,7 +386,7 @@ export async function listTaskActivity(
  * masquerading as "no activity". For MCP actors the PYZ-250 agent-exposure
  * rule applies here in the data ring (mirroring `assertAgentWritable`'s
  * placement): a private note or a team note with `feed_mode = 'none'` throws
- * the same 404-shaped `ForbiddenError` as a missing note — no existence
+ * the same 404-shaped `ForbiddenError` as a missing note, so no existence
  * oracle, zero extra reads (the gate row already carries visibility and
  * feed mode).
  *

@@ -13,7 +13,7 @@ const SUMMARY_MAX_CHARS = 160;
  * Build the keyset page SQL for one note's activity. Pages newest-first over
  * `(created_at, id)` and hydrates display identity inline via the
  * `activity_actors_for_project_visible` / `oauth_client_name` SECURITY
- * DEFINER functions — the note-anchored sibling of `activityPageSql`, no
+ * DEFINER functions: the note-anchored sibling of `activityPageSql`, no
  * `service_role`. The project id feeding the identity function resolves from
  * the RLS-scoped `notes` row inline, keeping the read one batch: an
  * invisible note yields NULL (no identity rows), and the caller's gate probe

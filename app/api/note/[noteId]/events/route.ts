@@ -11,7 +11,7 @@ import { error } from "@/lib/api/response";
  * The payload rows are the validator source: the events read is already the
  * cheap slim read (one batch: note gate + keyset page), so no dedicated
  * version probe precedes it; a 304 saves response egress, not DB compute.
- * The token folds the newest event's `createdAt` ms with the page length —
+ * The token folds the newest event's `createdAt` ms with the page length;
  * events are append-only, so a new event always moves the pair. `cursor`
  * and `limit` vary the URL, so each page caches under its own validator.
  * A non-UUID id, a missing/cross-team note, another member's private note,

@@ -69,7 +69,7 @@ async function seedTask(projectId: string): Promise<string> {
   return task.id;
 }
 
-describe("listNoteActivity — per-note history, gates, paging", () => {
+describe("listNoteActivity: per-note history, gates, paging", () => {
   test("author pages a private note's history; a second member is 404-shaped", async () => {
     const fx = await seedUserOrgProject("na-priv");
     const userB = await seedSecondMember(fx.organizationId, "na-priv-b");
@@ -164,7 +164,7 @@ describe("listNoteActivity — per-note history, gates, paging", () => {
   });
 });
 
-describe("feed exposure — project and task scopes", () => {
+describe("feed exposure: project and task scopes", () => {
   test("private-note events are excluded from the project feed for every member, author included", async () => {
     const fx = await seedUserOrgProject("na-feed");
     const userB = await seedSecondMember(fx.organizationId, "na-feed-b");

@@ -50,7 +50,7 @@ export async function handleActivity(
     const noteWithProject = Boolean(p.note) && Boolean(p.project) && !p.task;
     if (scopeCount === 0 || (scopeCount > 1 && !noteWithProject)) {
       return fail(
-        "Pass exactly one scope: project ('PYZ' or UUID), task ('PYZ-42' or UUID), or note ('PYZ-N12', UUID, or slug — slug form also needs project).",
+        "Pass exactly one scope: project ('PYZ' or UUID), task ('PYZ-42' or UUID), or note ('PYZ-N12', UUID, or slug; slug form also needs project).",
       );
     }
     if (p.since !== undefined && Number.isNaN(new Date(p.since).getTime())) {

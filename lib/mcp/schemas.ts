@@ -183,7 +183,7 @@ export const DESCRIPTIONS = {
     "neighbors=1-2 hops around one task, both edge types, both directions, with notes — the context-network walk; every line is ref-chainable into piyaz_get. " +
     "ready/blocked/plannable/critical_path need project; downstream/neighbors need task.",
   piyaz_activity:
-    "What changed, newest first, keyset-paginated. Pass exactly one scope: project ('PYZ' or UUID), task ('PYZ-42' or UUID), or note ('PYZ-N12', UUID, or slug — slug form also needs project). " +
+    "What changed, newest first, keyset-paginated. Pass exactly one scope: project ('PYZ' or UUID), task ('PYZ-42' or UUID), or note ('PYZ-N12', UUID, or slug; slug form also needs project). " +
     "since (ISO timestamp) answers 'what changed since I left' — the resume-after-compaction primitive: piyaz_activity project='PYZ' since='<last known instant>'. " +
     "note scope is per-note history (edits, moves, links, restores) and requires the note to be agent-exposed: team visibility AND feed enabled. A private note or one with feed_mode='none' reads as not found; project/task scopes silently exclude non-exposed notes' events. " +
     "Events carry actor, type, summary, and target ref. Follow up on a specific task with piyaz_get, or on a note with piyaz_note read.",

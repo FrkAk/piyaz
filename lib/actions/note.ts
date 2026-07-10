@@ -110,7 +110,7 @@ export async function updateNoteAction(
 /**
  * Server action: restore a note's title and body to a stored revision.
  * Writes through the note-update path (it IS an update: same budget, CAS,
- * lock, and event semantics); the revert is append-only — a new revision
+ * lock, and event semantics); the revert is append-only: a new revision
  * is snapshotted, nothing destroyed. A stale `ifUpdatedAt` returns a
  * `stale_write` failure; a missing version returns a `validation` failure
  * naming the available versions.

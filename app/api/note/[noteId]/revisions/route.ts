@@ -9,9 +9,9 @@ import { error } from "@/lib/api/response";
  * Conditional handler for `GET` and `HEAD` on a note's revision list.
  *
  * Returns slim revision descriptors newest-first (`version`, `title`,
- * `createdBy`, `createdAt` — never `body`) plus the live `currentVersion`.
+ * `createdBy`, `createdAt`, never `body`) plus the live `currentVersion`.
  * The payload rows are the validator source: the token folds the max
- * version with the row count — retention pruning shrinks the count while a
+ * version with the row count; retention pruning shrinks the count while a
  * restore grows the max version, so the composite always moves. Revisions
  * are append-only-immutable, so no other mutation can go unseen. A non-UUID
  * id, a missing/cross-team note, another member's private note, and a

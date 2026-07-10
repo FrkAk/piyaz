@@ -210,12 +210,12 @@ function groupEvents(events: ActivityEvent[]): EventGroup[] {
 interface NoteEventGroupProps {
   /** Actor group to render. */
   group: EventGroup;
-  /** Whether this is the last group — drops the trailing rail. */
+  /** Whether this is the last group, which drops the trailing rail. */
   isLast: boolean;
 }
 
 /**
- * One actor cluster — identity header plus the actor's action rows, joined
+ * One actor cluster: identity header plus the actor's action rows, joined
  * to the next cluster by a vertical rail behind the avatar. Compact sibling
  * of the task detail's `ActivityGroup`, sized for the 352px ribbon.
  *
@@ -331,7 +331,7 @@ function describeNoteEvent(event: ActivityEvent): {
 }
 
 /**
- * Replace a stored `verbed note "Title"` summary with a short phrase — the
+ * Replace a stored `verbed note "Title"` summary with a short phrase: the
  * panel already sits on the note, so repeating its title per row is noise.
  * Summaries that don't match the stored shape pass through untouched.
  *

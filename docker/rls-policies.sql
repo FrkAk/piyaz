@@ -60,7 +60,7 @@ CREATE POLICY "task_links_member_access" ON "task_links" AS PERMISSIVE FOR ALL T
   USING (task_id IN (SELECT id FROM public.tasks))
   WITH CHECK (task_id IN (SELECT id FROM public.tasks));
 
--- activity_events — 2-hop via projects' RLS, mirroring tasks. USING also
+-- activity_events: 2-hop via projects' RLS, mirroring tasks. USING also
 -- gates note_id-bearing rows through the notes RLS with a correlated EXISTS
 -- (one notes_pkey probe; notes_member_access hides other users' private
 -- notes, so the probe fails closed and private-note events stay invisible to
