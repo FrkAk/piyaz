@@ -781,6 +781,13 @@ export function TreePane({
   useEffect(() => {
     dragRef.current = drag;
   }, [drag]);
+  // `onSelect`'s identity follows the URL search params upstream; reading
+  // it through a ref keeps the row-facing callbacks stable across
+  // selection changes so memoized rows skip re-render.
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
   const selectedIdRef = useRef(selectedId);
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -952,13 +959,10 @@ export function TreePane({
    *
    * @param noteId - Clicked note id.
    */
-  const selectNote = useCallback(
-    (noteId: string) => {
-      setSelectedFolder(null);
-      onSelect(noteId);
-    },
-    [onSelect],
-  );
+  const selectNote = useCallback((noteId: string) => {
+    setSelectedFolder(null);
+    onSelectRef.current(noteId);
+  }, []);
 
   /**
    * Rewrite client-local state keyed by folder path (collapsed entries
@@ -1129,7 +1133,7 @@ export function TreePane({
     (row: NoteTreeRow) => {
       setTreeError(null);
       setArmedDelete(null);
-      if (row.id === selectedIdRef.current) onSelect(null);
+      if (row.id === selectedIdRef.current) onSelectRef.current(null);
       mutateDeleteNote(row.id, {
         onSuccess: (result) => {
           if (result.ok) {
@@ -1141,7 +1145,7 @@ export function TreePane({
         onError: () => setTreeError("Delete failed"),
       });
     },
-    [onSelect, mutateDeleteNote, pushUndo],
+    [mutateDeleteNote, pushUndo],
   );
 
   /** Arm the two-step delete confirm on a note row. */
