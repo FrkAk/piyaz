@@ -1,3 +1,4 @@
+import type { NoteTreeRow } from "@/lib/data/note";
 import type { NoteType } from "@/lib/types";
 
 /** Display metadata and context behavior for one note type. */
@@ -167,4 +168,88 @@ export function planFolderMove(
   const dest = destParent === "" ? leaf : `${destParent}/${leaf}`;
   if (allFolders.includes(dest)) return { kind: "collision", dest };
   return { kind: "move", destParent, leaf, dest };
+}
+
+/** Base row indent in px; each nesting level adds {@link INDENT_STEP}. */
+const INDENT_BASE = 8;
+
+/** Indent added per folder nesting level, in px. */
+const INDENT_STEP = 12;
+
+/**
+ * One row of the flattened visible tree: a folder header or a note. The
+ * flat sequence preserves the recursive render order so the virtualized
+ * list matches the previous DOM exactly.
+ */
+export type FlatTreeRow =
+  | {
+      kind: "folder";
+      key: string;
+      path: string;
+      depth: number;
+      indent: number;
+      noteCount: number;
+    }
+  | { kind: "note"; key: string; note: NoteTreeRow; indent: number };
+
+/**
+ * Group folder paths by their parent path, preserving input order.
+ *
+ * @param allFolders - Every visible folder path, sorted.
+ * @returns Map from parent path (`""` = root) to its child folder paths.
+ */
+export function groupFoldersByParent(
+  allFolders: readonly string[],
+): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const f of allFolders) {
+    const parent = parentOf(f);
+    const bucket = map.get(parent);
+    if (bucket) bucket.push(f);
+    else map.set(parent, [f]);
+  }
+  return map;
+}
+
+/**
+ * Flatten the visible folder tree into one row sequence: for each folder
+ * its header row, then (when expanded) its child folders and its direct
+ * notes; root notes follow all root folders. A collapsed folder emits
+ * only its header. Folders with no visible notes still render.
+ *
+ * @param foldersByParent - Parent-keyed folder map from {@link groupFoldersByParent}.
+ * @param notesByFolder - Visible notes keyed by folder path.
+ * @param collapsed - Collapsed folder paths.
+ * @returns Flat rows in render order with per-row indent.
+ */
+export function flattenNoteTree(
+  foldersByParent: ReadonlyMap<string, string[]>,
+  notesByFolder: ReadonlyMap<string, NoteTreeRow[]>,
+  collapsed: ReadonlySet<string>,
+): FlatTreeRow[] {
+  const items: FlatTreeRow[] = [];
+  const walk = (path: string, depth: number) => {
+    const indent = INDENT_BASE + depth * INDENT_STEP;
+    const notes = notesByFolder.get(path) ?? [];
+    items.push({
+      kind: "folder",
+      key: `folder:${path}`,
+      path,
+      depth,
+      indent,
+      noteCount: notes.length,
+    });
+    if (collapsed.has(path)) return;
+    for (const child of foldersByParent.get(path) ?? []) {
+      walk(child, depth + 1);
+    }
+    for (const note of notes) {
+      items.push({ kind: "note", key: note.id, note, indent });
+    }
+  };
+  for (const root of foldersByParent.get("") ?? []) walk(root, 0);
+  for (const note of notesByFolder.get("") ?? []) {
+    items.push({ kind: "note", key: note.id, note, indent: INDENT_BASE });
+  }
+  return items;
 }
