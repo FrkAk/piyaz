@@ -1,7 +1,9 @@
 # Privacy Policy
 
-> **Status: preliminary beta version, not yet reviewed by legal counsel.**
-> Version: `draft-2026-07-10` · Effective while the service is in beta.
+> **Status: in effect for the beta period.** Prepared in good faith without external
+> legal counsel review; we will revise this document when our operating entity is
+> formed and before paid plans launch, and material changes will require re-acceptance.
+> Version: `beta-2026-07-11` · Effective while the service is in beta.
 >
 > **Scope:** This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**,
 > operated by the Piyaz team. **If you self-host Piyaz, this document does not
@@ -24,9 +26,9 @@ is formed. Contact for all data-protection matters:
 - Email: **privacy@piyaz.ai**
 
 We have not appointed a Data Protection Officer (a DPO is not mandatory for an
-operation of our current size under Art. 37 GDPR). This policy is a preliminary beta
-version and will be updated to name the operating entity and its full contact details
-once it is formed (see the [Legal Notice](/impressum)).
+operation of our current size under Art. 37 GDPR). This policy is in effect for the
+beta period and will be updated to name the operating entity and its full contact
+details once it is formed (see the [Legal Notice](/impressum)).
 
 ## What data we collect
 

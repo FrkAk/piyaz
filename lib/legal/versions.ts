@@ -10,7 +10,7 @@ import type { LegalDocumentType } from "@/lib/types";
  * bump never touches call sites.
  */
 export const LEGAL_VERSIONS: Record<LegalDocumentType, string> = {
-  terms: "draft-2026-07-10",
-  privacy: "draft-2026-07-10",
-  dpa: "draft-2026-07-10",
+  terms: "beta-2026-07-11",
+  privacy: "beta-2026-07-11",
+  dpa: "beta-2026-07-11",
 };

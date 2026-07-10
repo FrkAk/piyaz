@@ -1,7 +1,9 @@
 # Beta Terms of Service
 
-> **Status: preliminary beta version, not yet reviewed by legal counsel.**
-> Version: `draft-2026-07-10` · Effective while the Service is in beta.
+> **Status: in effect for the beta period.** Prepared in good faith without external
+> legal counsel review; we will revise this document when our operating entity is
+> formed and before paid plans launch, and material changes will require re-acceptance.
+> Version: `beta-2026-07-11` · Effective while the Service is in beta.
 >
 > **Scope:** These Beta Terms govern the **hosted Piyaz service at `app.piyaz.ai`**,
 > operated by the Piyaz team. **If you self-host Piyaz, these terms do not apply to
@@ -108,9 +110,9 @@ switching barriers or charge export fees during the beta.
 
 ## 13. Governing law and jurisdiction
 
-Because the operating entity has not yet been established, these preliminary Terms do
-not yet designate a governing law or forum. Mandatory consumer-protection rules of your
-country of residence apply regardless of anything in these Terms. The final version of
+Because the operating entity has not yet been established, these Terms do not yet
+designate a governing law or forum. Mandatory consumer-protection rules of your
+country of residence apply regardless of anything in these Terms. A future version of
 these Terms will designate governing law and jurisdiction.
 
 ## 14. Changes to these Terms

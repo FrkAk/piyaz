@@ -1,7 +1,9 @@
 # Sub-processors
 
-> **Status: preliminary beta version, not yet reviewed by legal counsel.**
-> Version: `draft-2026-07-10` · Effective while the service is in beta.
+> **Status: in effect for the beta period.** Prepared in good faith without external
+> legal counsel review; we will revise this document when our operating entity is
+> formed and before paid plans launch, and material changes will require re-acceptance.
+> Version: `beta-2026-07-11` · Effective while the service is in beta.
 
 ---
 
