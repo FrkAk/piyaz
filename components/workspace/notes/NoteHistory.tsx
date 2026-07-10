@@ -71,6 +71,7 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
   });
 
   const events = data?.pages.flatMap((p) => p.events) ?? [];
+  // Branching on the union flag directly narrows sibling bindings to `never`.
   const nextPageFailed: boolean = isFetchNextPageError;
 
   return (
@@ -97,7 +98,7 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
           <button
             type="button"
             onClick={() => refetch()}
-            className="cursor-pointer text-text-faint underline hover:text-text-secondary"
+            className="cursor-pointer text-text-muted underline hover:text-text-secondary"
           >
             Retry
           </button>
@@ -119,12 +120,12 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
           </ul>
           {hasNextPage &&
             (nextPageFailed ? (
-              <div className="mt-1 flex items-center gap-2 pl-[30px] text-[11px] text-text-secondary">
+              <div className="mt-1 flex items-center gap-2 pl-[28px] text-[11px] text-text-secondary">
                 <span>Couldn&rsquo;t load more.</span>
                 <button
                   type="button"
                   onClick={() => fetchNextPage()}
-                  className="cursor-pointer text-text-faint underline hover:text-text-secondary"
+                  className="cursor-pointer text-text-muted underline hover:text-text-secondary"
                 >
                   Retry
                 </button>
@@ -134,7 +135,7 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
                 type="button"
                 onClick={() => fetchNextPage()}
                 disabled={isFetchingNextPage}
-                className="mt-1 cursor-pointer pl-[30px] text-[11px] text-text-faint hover:text-text-secondary disabled:cursor-default"
+                className="mt-1 cursor-pointer pl-[28px] text-[11px] text-text-muted hover:text-text-secondary disabled:cursor-default"
               >
                 {isFetchingNextPage ? "Loading…" : "Show more"}
               </button>
@@ -293,7 +294,7 @@ function describeNoteEvent(event: NoteActivityEvent): {
   if (event.type === "note_updated" && restoredFrom !== undefined) {
     return {
       icon: <IconUndo size={12} />,
-      text: `reverted to v${restoredFrom}`,
+      text: `restored to v${restoredFrom}`,
     };
   }
   switch (event.type) {

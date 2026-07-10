@@ -11,6 +11,8 @@ interface ConfirmDialogProps {
   body: React.ReactNode;
   /** @param confirmLabel - Confirm button text. */
   confirmLabel: string;
+  /** @param tone - Confirm button tone: `danger` (default) for destructive actions, `neutral` for reversible ones. */
+  tone?: "danger" | "neutral";
   /** @param onConfirm - Called when the user confirms the action. */
   onConfirm: () => void;
   /** @param onCancel - Dismiss without confirming (backdrop, Escape, Cancel). */
@@ -18,13 +20,14 @@ interface ConfirmDialogProps {
 }
 
 /**
- * Centered confirm dialog for a destructive action, built on
- * {@link ModalShell} for its backdrop, motion, and modal chrome (Escape, Tab
- * focus trap, focus seed and restore). Cancel is the first focusable, so the
- * shell seeds focus there and a stray Enter never confirms. Backdrop click and
- * Cancel dismiss without confirming.
+ * Centered confirm dialog, built on {@link ModalShell} for its backdrop,
+ * motion, and modal chrome (Escape, Tab focus trap, focus seed and
+ * restore). Cancel is the first focusable, so the shell seeds focus there
+ * and a stray Enter never confirms. Backdrop click and Cancel dismiss
+ * without confirming. The confirm button is danger-red by default;
+ * `tone="neutral"` renders it accent for reversible actions.
  *
- * @param props - Open flag, copy, and confirm/cancel wiring.
+ * @param props - Open flag, copy, tone, and confirm/cancel wiring.
  * @returns Backdrop + centered panel, or nothing while closed.
  */
 export function ConfirmDialog({
@@ -32,6 +35,7 @@ export function ConfirmDialog({
   title,
   body,
   confirmLabel,
+  tone = "danger",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -64,7 +68,10 @@ export function ConfirmDialog({
           type="button"
           onClick={onConfirm}
           className="inline-flex h-8 cursor-pointer items-center rounded-md px-3 text-[12px] font-semibold text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
-          style={{ background: "var(--color-danger)" }}
+          style={{
+            background:
+              tone === "danger" ? "var(--color-danger)" : "var(--color-accent)",
+          }}
         >
           {confirmLabel}
         </button>

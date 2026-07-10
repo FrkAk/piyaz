@@ -132,7 +132,7 @@ export function NoteVersions({
           <button
             type="button"
             onClick={() => refetch()}
-            className="cursor-pointer text-text-faint underline hover:text-text-secondary"
+            className="cursor-pointer text-text-muted underline hover:text-text-secondary"
           >
             Retry
           </button>
@@ -196,10 +196,14 @@ export function NoteVersions({
                     title={
                       dirty
                         ? "Save or resolve open edits first"
-                        : `Restore v${rev.version}`
+                        : locked
+                          ? "Note is locked"
+                          : loading
+                            ? "Loading note"
+                            : `Restore v${rev.version}`
                     }
                     aria-label={`Restore version ${rev.version}`}
-                    className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-muted transition-colors hover:bg-accent-glow hover:text-accent-light focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-muted transition-colors hover:bg-accent-glow hover:text-accent-light focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55"
                   >
                     <IconUndo size={10} />
                     {isPendingRow ? "Restoring…" : "Restore"}
@@ -230,6 +234,7 @@ export function NoteVersions({
           </>
         }
         confirmLabel="Restore"
+        tone="neutral"
         onConfirm={() => {
           if (confirmVersion !== null) void runRestore(confirmVersion);
         }}
