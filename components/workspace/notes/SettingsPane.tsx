@@ -44,6 +44,8 @@ import {
   feedTargetActive,
   type AccessLevel,
 } from "./settings-access";
+import { NoteHistory } from "./NoteHistory";
+import { NoteVersions } from "./NoteVersions";
 import { useNoteDetail } from "./useNoteDetail";
 import {
   useApproveShareRequest,
@@ -562,6 +564,14 @@ export function SettingsPane({
             </>
           )}
         </div>
+
+        <NoteVersions
+          projectId={projectId}
+          noteId={noteId}
+          locked={note.locked}
+          loading={loading}
+        />
+        <NoteHistory projectId={projectId} noteId={noteId} />
       </div>
     </RibbonShell>
   );
