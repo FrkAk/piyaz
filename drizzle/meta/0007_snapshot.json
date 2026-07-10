@@ -1,5 +1,5 @@
 {
-  "id": "4673a4c2-764d-49cf-9e8a-4fbcf70f8a02",
+  "id": "b47b5c5e-f676-4e96-815c-1e6f7a72b177",
   "prevId": "4bed2e09-a278-4986-9834-ba4e2894807f",
   "version": "7",
   "dialect": "postgresql",
@@ -122,6 +122,7 @@
             }
           ],
           "isUnique": false,
+          "where": "note_id IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -225,6 +226,10 @@
         "activity_events_source_check": {
           "name": "activity_events_source_check",
           "value": "\"activity_events\".\"source\" IN ('web', 'mcp', 'system')"
+        },
+        "activity_events_note_ref_check": {
+          "name": "activity_events_note_ref_check",
+          "value": "\"activity_events\".\"type\" NOT LIKE 'note\\_%' OR \"activity_events\".\"note_id\" IS NOT NULL"
         }
       },
       "isRLSEnabled": true
@@ -697,6 +702,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'private'"
+        },
+        "shared_since": {
+          "name": "shared_since",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "agent_writable": {
           "name": "agent_writable",
