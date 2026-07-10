@@ -638,7 +638,7 @@ interface SectionRowProps {
 /**
  * Non-interactive category section header in the virtualized tree:
  * label plus note count in the pane's mono-uppercase header voice. No
- * collapse, drag, rename, or menu — sections mirror StructureView's
+ * collapse, drag, rename, or menu: sections mirror StructureView's
  * group headers. Fixed at 26px so the virtualizer's size estimate holds.
  *
  * @param props - Section label and note count.

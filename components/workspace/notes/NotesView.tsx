@@ -133,7 +133,7 @@ export function NotesView({
       else next.set(key, value);
       const nextQs = next.toString();
       const currentQs = searchParams.toString();
-      // Skip when nothing changed — e.g. clicking the already-active option.
+      // Skip when nothing changed, e.g. clicking the already-active option.
       // Each `router.replace` triggers an RSC refetch of the project layout,
       // so eliding no-op replaces avoids unnecessary server work.
       if (nextQs === currentQs) return;

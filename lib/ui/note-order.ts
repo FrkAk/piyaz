@@ -1,7 +1,7 @@
 import type { NoteType } from "@/lib/types";
 
 /**
- * Display order for note types — SettingsPane's Type group and every
+ * Display order for note types: SettingsPane's Type group and every
  * future type-ordered surface read from this single list so they cannot
  * drift.
  */
