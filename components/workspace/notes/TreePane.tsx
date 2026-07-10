@@ -2,7 +2,8 @@
 
 import {
   type DragEvent,
-  type ReactNode,
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -13,7 +14,11 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { motion, type Transition } from "motion/react";
+import {
+  defaultRangeExtractor,
+  type Range,
+  useVirtualizer,
+} from "@tanstack/react-virtual";
 import {
   IconChevronDown,
   IconChevronRight,
@@ -43,7 +48,10 @@ import { DeleteConfirm } from "@/components/workspace/structure/DeleteConfirm";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { MoveToFolderDialog } from "./MoveToFolderDialog";
 import {
+  type FlatTreeRow,
+  flattenNoteTree,
   type FolderMovePlan,
+  groupFoldersByParent,
   leafOf,
   normalizeFolderInput,
   NOTE_TYPE_META,
@@ -67,11 +75,14 @@ import {
 /** Debounce window between a keystroke and the server search request. */
 const SEARCH_DEBOUNCE_MS = 250;
 
-/** Row enter/glide timing, a faster cut of the rail's collapse curve. */
-const ROW_TRANSITION: Transition = {
-  duration: 0.18,
-  ease: [0.16, 1, 0.3, 1],
-};
+/**
+ * Row glide on the virtualizer's translateY wrappers, matching the pane's
+ * 180ms curve. Fires only when a mounted row's offset changes (insert,
+ * remove, move, collapse above it), never on scroll-driven mounts, and
+ * sits behind `motion-safe:` so reduced motion disables it.
+ */
+const ROW_GLIDE_CLASS =
+  "motion-safe:transition-transform motion-safe:duration-[180ms] motion-safe:ease-[cubic-bezier(0.16,1,0.3,1)]";
 
 /** Type-filter chip order. */
 const CHIPS: TypeFilter[] = ["all", "reference", "guidance", "knowledge"];
@@ -102,29 +113,39 @@ interface TreePaneProps {
 
 type DragItem = { kind: "note" | "folder"; id: string };
 
+/**
+ * Current drop target: the hovered folder path plus the hovered note row
+ * id when the pointer sits over a note rather than a folder header.
+ */
+type DropTarget = { folder: string; rowId: string | null };
+
 interface NoteRowProps {
   row: NoteTreeRow;
   indent: number;
   active: boolean;
   dragging: boolean;
   dropTarget?: boolean;
-  onSelect: () => void;
-  onDragStart?: () => void;
+  onSelect: (noteId: string) => void;
+  onDragStart?: (noteId: string) => void;
   onDragEnd?: () => void;
-  onDragOver?: (e: DragEvent<HTMLButtonElement>) => void;
-  onDrop?: (e: DragEvent<HTMLButtonElement>) => void;
+  onDragOver?: (
+    folder: string,
+    noteId: string,
+    e: DragEvent<HTMLButtonElement>,
+  ) => void;
+  onDrop?: (folder: string, e: DragEvent<HTMLButtonElement>) => void;
   renaming?: boolean;
   renameValue?: string;
-  onRenameChange?: (value: string) => void;
+  onRenameChange?: (noteId: string, value: string) => void;
   onRenameCommit?: () => void;
   onRenameCancel?: () => void;
-  onBeginRename?: () => void;
-  onDelete?: () => void;
+  onBeginRename?: (row: NoteTreeRow) => void;
+  onDelete?: (row: NoteTreeRow) => void;
   armed?: boolean;
-  onArmDelete?: () => void;
+  onArmDelete?: (noteId: string) => void;
   onCancelDelete?: () => void;
   coarse?: boolean;
-  onMove?: () => void;
+  onMove?: (row: NoteTreeRow) => void;
 }
 
 /** Row action-menu option values. */
@@ -188,12 +209,13 @@ function RowActionsMenu({
  * One note row, shared between the folder tree and the flat search-hit
  * list. Draggable only when drag handlers are wired (tree mode). In tree
  * mode double-click or F2 opens the inline rename input and a hover trash
- * deletes the note; the search-hit list wires neither.
+ * deletes the note; the search-hit list wires neither. Memoized with
+ * id-taking handlers so parent state churn skips uninvolved rows.
  *
  * @param props - Row data, indentation, selection state, and handlers.
  * @returns The note row, or its inline rename input while renaming.
  */
-function NoteRow({
+const NoteRow = memo(function NoteRow({
   row,
   indent,
   active,
@@ -229,7 +251,7 @@ function NoteRow({
         <IconDoc size={13} style={{ color }} />
         <RenameInput
           value={renameValue}
-          onChange={(value) => onRenameChange?.(value)}
+          onChange={(value) => onRenameChange?.(row.id, value)}
           onCommit={() => onRenameCommit?.()}
           onCancel={() => onRenameCancel?.()}
           ariaLabel="Note name"
@@ -239,30 +261,32 @@ function NoteRow({
   }
 
   return (
-    <motion.div
-      layout="position"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={ROW_TRANSITION}
-      className="group relative flex w-full items-center"
-    >
+    <div className="group relative flex w-full items-center">
       <button
         type="button"
         draggable={draggable}
         aria-roledescription={draggable ? "Draggable note" : undefined}
-        onDragStart={onDragStart}
+        onDragStart={
+          onDragStart === undefined ? undefined : () => onDragStart(row.id)
+        }
         onDragEnd={onDragEnd}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-        onClick={onSelect}
-        onDoubleClick={onBeginRename}
+        onDragOver={
+          onDragOver === undefined
+            ? undefined
+            : (e) => onDragOver(row.folder, row.id, e)
+        }
+        onDrop={onDrop === undefined ? undefined : (e) => onDrop(row.folder, e)}
+        onClick={() => onSelect(row.id)}
+        onDoubleClick={
+          onBeginRename === undefined ? undefined : () => onBeginRename(row)
+        }
         onKeyDown={
           onBeginRename === undefined
             ? undefined
             : (e) => {
                 if (e.key === "F2") {
                   e.preventDefault();
-                  onBeginRename();
+                  onBeginRename(row);
                 }
               }
         }
@@ -326,21 +350,21 @@ function NoteRow({
             style={{ background: "var(--color-base-2)" }}
           >
             <DeleteConfirm
-              onConfirm={onDelete}
+              onConfirm={() => onDelete(row)}
               onCancel={() => onCancelDelete?.()}
             />
           </span>
         ) : coarse ? (
           <RowActionsMenu
             label="Note actions"
-            onRename={() => onBeginRename?.()}
-            onMove={() => onMove?.()}
-            onDelete={() => onArmDelete?.()}
+            onRename={() => onBeginRename?.(row)}
+            onMove={() => onMove?.(row)}
+            onDelete={() => onArmDelete?.(row.id)}
           />
         ) : (
           <button
             type="button"
-            onClick={() => onArmDelete?.()}
+            onClick={() => onArmDelete?.(row.id)}
             aria-label="Delete note"
             title="Delete note"
             className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-text-muted opacity-0 transition-all hover:bg-surface-hover hover:text-danger group-hover:opacity-100"
@@ -348,9 +372,9 @@ function NoteRow({
             <IconTrash size={11} />
           </button>
         ))}
-    </motion.div>
+    </div>
   );
-}
+});
 
 interface RenameInputProps {
   /** @param value - Current draft name. */
@@ -407,6 +431,185 @@ function RenameInput({
     />
   );
 }
+
+interface FolderRowProps {
+  path: string;
+  indent: number;
+  noteCount: number;
+  collapsed: boolean;
+  selected: boolean;
+  dropTarget: boolean;
+  dragging: boolean;
+  renaming: boolean;
+  renameValue: string;
+  armed: boolean;
+  coarse: boolean;
+  onClick: (path: string) => void;
+  onBeginRename: (path: string) => void;
+  onRenameChange: (path: string, value: string) => void;
+  onRenameCommit: () => void;
+  onRenameCancel: () => void;
+  onDragStart: (path: string, e: DragEvent<HTMLButtonElement>) => void;
+  onDragEnd: () => void;
+  onDragOver: (path: string, e: DragEvent<HTMLButtonElement>) => void;
+  onDrop: (path: string, e: DragEvent<HTMLButtonElement>) => void;
+  onDelete: (path: string) => void;
+  onConfirmDelete: (path: string) => void;
+  onCancelDelete: () => void;
+  onMove: (path: string) => void;
+}
+
+/**
+ * One folder row. Clicking toggles collapse and selects the folder as the
+ * New-note create target; double-click or F2 opens the inline rename
+ * input; the trailing slot arms a two-step delete or, on coarse pointers,
+ * opens the overflow menu. Memoized with path-taking handlers so parent
+ * state churn skips uninvolved rows.
+ *
+ * @param props - Folder path, indentation, row state flags, and handlers.
+ * @returns The folder row, or its inline rename input while renaming.
+ */
+const FolderRow = memo(function FolderRow({
+  path,
+  indent,
+  noteCount,
+  collapsed,
+  selected,
+  dropTarget,
+  dragging,
+  renaming,
+  renameValue,
+  armed,
+  coarse,
+  onClick,
+  onBeginRename,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
+  onDelete,
+  onConfirmDelete,
+  onCancelDelete,
+  onMove,
+}: FolderRowProps) {
+  if (renaming) {
+    return (
+      <div
+        className="flex w-full items-center gap-1 rounded-md pr-2 text-text-secondary"
+        style={{ height: 26, paddingLeft: indent }}
+      >
+        {collapsed ? (
+          <IconChevronRight size={11} className="text-text-muted" />
+        ) : (
+          <IconChevronDown size={11} className="text-text-muted" />
+        )}
+        <RenameInput
+          value={renameValue}
+          onChange={(value) => onRenameChange(path, value)}
+          onCommit={onRenameCommit}
+          onCancel={onRenameCancel}
+          ariaLabel="Folder name"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="group relative flex w-full items-center">
+      <button
+        type="button"
+        draggable
+        aria-roledescription="Draggable folder"
+        aria-current={selected ? "true" : undefined}
+        onClick={() => onClick(path)}
+        onDoubleClick={() => onBeginRename(path)}
+        onKeyDown={(e) => {
+          if (e.key === "F2") {
+            e.preventDefault();
+            onBeginRename(path);
+          }
+        }}
+        onDragStart={(e) => onDragStart(path, e)}
+        onDragEnd={onDragEnd}
+        onDragOver={(e) => onDragOver(path, e)}
+        onDrop={(e) => onDrop(path, e)}
+        className="relative flex min-w-0 flex-1 items-center gap-1 rounded-md text-left"
+        style={{
+          height: 26,
+          paddingLeft: indent,
+          paddingRight: 30,
+          opacity: dragging ? 0.45 : 1,
+          color: selected
+            ? "var(--color-text-primary)"
+            : "var(--color-text-secondary)",
+          background: dropTarget
+            ? tint("var(--color-accent)", 14)
+            : selected
+              ? tint("var(--color-accent)", 7)
+              : "transparent",
+          outline: dropTarget
+            ? "1px solid var(--color-accent)"
+            : "1px solid transparent",
+        }}
+      >
+        {selected && (
+          <span
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              left: 4,
+              top: 4,
+              bottom: 4,
+              width: 2,
+              borderRadius: 2,
+              background: "var(--color-accent)",
+            }}
+          />
+        )}
+        {collapsed ? (
+          <IconChevronRight size={11} className="text-text-muted" />
+        ) : (
+          <IconChevronDown size={11} className="text-text-muted" />
+        )}
+        <span className="text-[12px] font-semibold">{leafOf(path)}</span>
+        <span className="ml-auto font-mono text-[10px] text-text-faint">
+          {noteCount}
+        </span>
+      </button>
+      {armed ? (
+        <span
+          className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center rounded px-0.5"
+          style={{ background: "var(--color-base-2)" }}
+        >
+          <DeleteConfirm
+            onConfirm={() => onConfirmDelete(path)}
+            onCancel={onCancelDelete}
+          />
+        </span>
+      ) : coarse ? (
+        <RowActionsMenu
+          label="Folder actions"
+          onRename={() => onBeginRename(path)}
+          onMove={() => onMove(path)}
+          onDelete={() => onDelete(path)}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => onDelete(path)}
+          aria-label="Delete folder"
+          title="Delete folder"
+          className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-text-muted opacity-0 transition-all hover:bg-surface-hover hover:text-danger group-hover:opacity-100"
+        >
+          <IconTrash size={11} />
+        </button>
+      )}
+    </div>
+  );
+});
 
 /** Tree-shaped skeleton rows: two folders with nested and root files. */
 const SKELETON_ROWS: { height: number; indent: number; bar: number }[] = [
@@ -484,8 +687,7 @@ export function TreePane({
   const qc = useQueryClient();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [drag, setDrag] = useState<DragItem | null>(null);
-  const [dropFolder, setDropFolder] = useState<string | null>(null);
-  const [dropRowId, setDropRowId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [rawQuery, setRawQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -550,13 +752,14 @@ export function TreePane({
     placeholderData: keepPreviousData,
   });
 
-  const moveNote = useMoveNote(projectId);
-  const moveFolder = useMoveFolder(projectId);
-  const updateNote = useUpdateNote(projectId);
-  const deleteNote = useDeleteNote(projectId);
-  const restoreNote = useRestoreNote(projectId);
-  const createFolder = useCreateFolder(projectId);
-  const deleteFolder = useDeleteFolder(projectId);
+  const { mutate: mutateMoveNote } = useMoveNote(projectId);
+  const { mutate: mutateMoveFolder } = useMoveFolder(projectId);
+  const { mutate: mutateUpdateNote } = useUpdateNote(projectId);
+  const { mutate: mutateDeleteNote, mutateAsync: deleteNoteAsync } =
+    useDeleteNote(projectId);
+  const { mutateAsync: restoreNoteAsync } = useRestoreNote(projectId);
+  const { mutate: mutateCreateFolder } = useCreateFolder(projectId);
+  const { mutate: mutateDeleteFolder } = useDeleteFolder(projectId);
 
   const {
     canUndo,
@@ -565,13 +768,38 @@ export function TreePane({
   } = useUndo<{ noteIds: string[]; label: string }>({
     onUndo: async (item) => {
       for (const id of item.noteIds) {
-        const result = await restoreNote.mutateAsync(id);
+        const result = await restoreNoteAsync(id);
         if (!result.ok) throw new Error(result.message);
       }
     },
     resetOn: projectId,
     keyboard: true,
   });
+
+  const dropTargetRef = useRef<DropTarget | null>(null);
+  const dragRef = useRef<DragItem | null>(null);
+  useEffect(() => {
+    dragRef.current = drag;
+  }, [drag]);
+  // `onSelect`'s identity follows the URL search params upstream; reading
+  // it through a ref keeps the row-facing callbacks stable across
+  // selection changes so memoized rows skip re-render.
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
+  const selectedIdRef = useRef(selectedId);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+  const renamingRef = useRef(renaming);
+  useEffect(() => {
+    renamingRef.current = renaming;
+  }, [renaming]);
+  const renamingNoteRef = useRef(renamingNote);
+  useEffect(() => {
+    renamingNoteRef.current = renamingNote;
+  }, [renamingNote]);
 
   const visibleRows = useMemo(() => {
     const all = rows ?? [];
@@ -613,22 +841,80 @@ export function TreePane({
 
   const count = searching ? hits.length : visibleRows.length;
 
-  /** Toggle a folder's collapsed state. */
-  function toggle(path: string) {
+  /**
+   * Folder row click: toggle collapse and select the folder as the
+   * New-note create target.
+   */
+  const handleFolderClick = useCallback((path: string) => {
     setCollapsed((c) => {
       const next = new Set(c);
       if (next.has(path)) next.delete(path);
       else next.add(path);
       return next;
     });
-  }
+    setSelectedFolder(path);
+  }, []);
 
   /** Clear the in-flight drag state. */
-  function clearDrag() {
+  const clearDrag = useCallback(() => {
+    dropTargetRef.current = null;
     setDrag(null);
-    setDropFolder(null);
-    setDropRowId(null);
-  }
+    setDropTarget(null);
+  }, []);
+
+  /** Start dragging a note row. */
+  const handleNoteDragStart = useCallback((noteId: string) => {
+    setDrag({ kind: "note", id: noteId });
+  }, []);
+
+  /** Start dragging a folder row. */
+  const handleFolderDragStart = useCallback(
+    (path: string, e: DragEvent<HTMLButtonElement>) => {
+      e.stopPropagation();
+      setDrag({ kind: "folder", id: path });
+    },
+    [],
+  );
+
+  /**
+   * Drag-over on a folder row. `preventDefault` must run on every event
+   * or the browser never fires the drop; the state write is guarded so an
+   * unchanged target schedules no update.
+   */
+  const handleFolderDragOver = useCallback(
+    (path: string, e: DragEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      const current = dropTargetRef.current;
+      if (current !== null && current.folder === path && current.rowId === null)
+        return;
+      const next: DropTarget = { folder: path, rowId: null };
+      dropTargetRef.current = next;
+      setDropTarget(next);
+    },
+    [],
+  );
+
+  /**
+   * Drag-over on a note row: targets the note's folder while highlighting
+   * the hovered row. Same unconditional-`preventDefault` and guarded
+   * state write as {@link handleFolderDragOver}.
+   */
+  const handleNoteDragOver = useCallback(
+    (folder: string, noteId: string, e: DragEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      const current = dropTargetRef.current;
+      if (
+        current !== null &&
+        current.folder === folder &&
+        current.rowId === noteId
+      )
+        return;
+      const next: DropTarget = { folder, rowId: noteId };
+      dropTargetRef.current = next;
+      setDropTarget(next);
+    },
+    [],
+  );
 
   /** Open the naming-first inline input for a new root folder. */
   function handleNewFolder() {
@@ -650,7 +936,7 @@ export function TreePane({
     if (path === "") return;
     setSelectedFolder(path);
     if (allFolders.includes(path)) return;
-    createFolder.mutate(path, {
+    mutateCreateFolder(path, {
       onSuccess: (result) => {
         if (!result.ok) setTreeError(result.message);
       },
@@ -673,10 +959,10 @@ export function TreePane({
    *
    * @param noteId - Clicked note id.
    */
-  function selectNote(noteId: string) {
+  const selectNote = useCallback((noteId: string) => {
     setSelectedFolder(null);
-    onSelect(noteId);
-  }
+    onSelectRef.current(noteId);
+  }, []);
 
   /**
    * Rewrite client-local state keyed by folder path (collapsed entries
@@ -685,23 +971,23 @@ export function TreePane({
    * @param src - Source folder path.
    * @param dest - Destination folder path.
    */
-  function rewriteLocalPaths(src: string, dest: string) {
+  const rewriteLocalPaths = useCallback((src: string, dest: string) => {
     const rewrite = (f: string) =>
       f === src || f.startsWith(`${src}/`) ? dest + f.slice(src.length) : f;
     setCollapsed((c) => new Set([...c].map(rewrite)));
     setSelectedFolder((s) => (s === null ? s : rewrite(s)));
-  }
+  }, []);
 
   /**
    * Clear the selected folder when it sits at or under a deleted path.
    *
    * @param path - Deleted folder path.
    */
-  function clearSelectionUnder(path: string) {
+  const clearSelectionUnder = useCallback((path: string) => {
     setSelectedFolder((s) =>
       s !== null && (s === path || s.startsWith(`${path}/`)) ? null : s,
     );
-  }
+  }, []);
 
   /**
    * Dispatch a folder mutation plan from rename or drag re-parent.
@@ -713,23 +999,26 @@ export function TreePane({
    * @param src - Folder path being moved or renamed.
    * @param plan - Plan from {@link planFolderRename} or {@link planFolderMove}.
    */
-  function applyFolderPlan(src: string, plan: FolderMovePlan) {
-    if (plan.kind === "noop") return;
-    if (plan.kind === "collision") {
-      setTreeError(`Folder "${plan.dest}" already exists`);
-      return;
-    }
-    moveFolder.mutate(
-      { src, destParent: plan.destParent, leaf: plan.leaf, dest: plan.dest },
-      {
-        onSuccess: (result) => {
-          if (result.ok) rewriteLocalPaths(src, result.data.dest);
-          else setTreeError(result.message);
+  const applyFolderPlan = useCallback(
+    (src: string, plan: FolderMovePlan) => {
+      if (plan.kind === "noop") return;
+      if (plan.kind === "collision") {
+        setTreeError(`Folder "${plan.dest}" already exists`);
+        return;
+      }
+      mutateMoveFolder(
+        { src, destParent: plan.destParent, leaf: plan.leaf, dest: plan.dest },
+        {
+          onSuccess: (result) => {
+            if (result.ok) rewriteLocalPaths(src, result.data.dest);
+            else setTreeError(result.message);
+          },
+          onError: () => setTreeError("Folder move failed"),
         },
-        onError: () => setTreeError("Folder move failed"),
-      },
-    );
-  }
+      );
+    },
+    [mutateMoveFolder, rewriteLocalPaths],
+  );
 
   /**
    * Complete a drop onto a folder, moving the dragged note or folder.
@@ -738,102 +1027,134 @@ export function TreePane({
    *
    * @param path - Target folder path.
    */
-  function dropOnto(path: string) {
-    const item = drag;
-    clearDrag();
-    if (!item) return;
-    setTreeError(null);
-    if (item.kind === "note") {
-      const row = (rows ?? []).find((r) => r.id === item.id);
-      if (!row || row.folder === path) return;
-      moveNote.mutate(
-        { noteId: item.id, folder: path },
-        {
-          onSuccess: (result) => {
-            if (!result.ok) setTreeError(result.message);
+  const dropOnto = useCallback(
+    (path: string) => {
+      const item = dragRef.current;
+      clearDrag();
+      if (!item) return;
+      setTreeError(null);
+      if (item.kind === "note") {
+        const row = (rows ?? []).find((r) => r.id === item.id);
+        if (!row || row.folder === path) return;
+        mutateMoveNote(
+          { noteId: item.id, folder: path },
+          {
+            onSuccess: (result) => {
+              if (!result.ok) setTreeError(result.message);
+            },
+            onError: () => setTreeError("Move failed"),
           },
-          onError: () => setTreeError("Move failed"),
-        },
-      );
-      return;
-    }
-    applyFolderPlan(item.id, planFolderMove(item.id, path, allFolders));
-  }
+        );
+        return;
+      }
+      applyFolderPlan(item.id, planFolderMove(item.id, path, allFolders));
+    },
+    [rows, allFolders, mutateMoveNote, applyFolderPlan, clearDrag],
+  );
+
+  /** Drop on a folder or note row: move the dragged item into the folder. */
+  const handleDrop = useCallback(
+    (folder: string, e: DragEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      dropOnto(folder);
+    },
+    [dropOnto],
+  );
 
   /**
    * Enter inline rename mode on a folder row.
    *
    * @param path - Folder path to rename.
    */
-  function beginRename(path: string) {
+  const beginRename = useCallback((path: string) => {
     setTreeError(null);
     setRenaming({ path, value: leafOf(path) });
-  }
+  }, []);
+
+  /** Update the in-flight folder rename draft. */
+  const handleRenameChange = useCallback((path: string, value: string) => {
+    setRenaming({ path, value });
+  }, []);
 
   /** Commit the in-flight rename through {@link applyFolderPlan}. */
-  function commitRename() {
-    const r = renaming;
+  const commitRename = useCallback(() => {
+    const r = renamingRef.current;
     if (!r) return;
     setRenaming(null);
     applyFolderPlan(r.path, planFolderRename(r.path, r.value, allFolders));
-  }
+  }, [allFolders, applyFolderPlan]);
+
+  /** Cancel the in-flight folder rename. */
+  const cancelRename = useCallback(() => setRenaming(null), []);
 
   /**
    * Enter inline rename mode on a note row.
    *
    * @param row - Note row to rename.
    */
-  function beginRenameNote(row: NoteTreeRow) {
+  const beginRenameNote = useCallback((row: NoteTreeRow) => {
     setTreeError(null);
     setRenamingNote({ id: row.id, value: row.title });
-  }
+  }, []);
+
+  /** Update the in-flight note rename draft. */
+  const handleNoteRenameChange = useCallback(
+    (noteId: string, value: string) => {
+      setRenamingNote({ id: noteId, value });
+    },
+    [],
+  );
 
   /**
    * Commit the in-flight note rename. A blank or unchanged title is a
    * no-op; a real change patches the title, which re-slugs a still-
    * untitled note server-side.
    */
-  function commitRenameNote() {
-    const r = renamingNote;
+  const commitRenameNote = useCallback(() => {
+    const r = renamingNoteRef.current;
     if (r === null) return;
     setRenamingNote(null);
     const row = (rows ?? []).find((x) => x.id === r.id);
     const next = r.value.trim();
     if (row === undefined || next === "" || next === row.title) return;
-    updateNote.mutate({ noteId: r.id, patch: { title: next } });
-  }
+    mutateUpdateNote({ noteId: r.id, patch: { title: next } });
+  }, [rows, mutateUpdateNote]);
+
+  /** Cancel the in-flight note rename. */
+  const cancelRenameNote = useCallback(() => setRenamingNote(null), []);
 
   /**
-   * Soft-delete a note and push a single-note undo entry.
+   * Soft-delete a note, disarm the confirm, and push a single-note undo
+   * entry.
    *
    * @param row - Note row to delete.
    */
-  function handleDeleteNote(row: NoteTreeRow) {
-    setTreeError(null);
-    if (row.id === selectedId) onSelect(null);
-    deleteNote.mutate(row.id, {
-      onSuccess: (result) => {
-        if (result.ok) {
-          pushUndo({ noteIds: [row.id], label: row.title || "Untitled" });
-        } else {
-          setTreeError(result.message);
-        }
-      },
-      onError: () => setTreeError("Delete failed"),
-    });
-  }
+  const handleDeleteNote = useCallback(
+    (row: NoteTreeRow) => {
+      setTreeError(null);
+      setArmedDelete(null);
+      if (row.id === selectedIdRef.current) onSelectRef.current(null);
+      mutateDeleteNote(row.id, {
+        onSuccess: (result) => {
+          if (result.ok) {
+            pushUndo({ noteIds: [row.id], label: row.title || "Untitled" });
+          } else {
+            setTreeError(result.message);
+          }
+        },
+        onError: () => setTreeError("Delete failed"),
+      });
+    },
+    [mutateDeleteNote, pushUndo],
+  );
 
-  /**
-   * Every server note id at or under a folder path.
-   *
-   * @param path - Folder path.
-   * @returns Ids of notes in the folder subtree.
-   */
-  function noteIdsUnder(path: string): string[] {
-    return (rows ?? [])
-      .filter((r) => r.folder === path || r.folder.startsWith(`${path}/`))
-      .map((r) => r.id);
-  }
+  /** Arm the two-step delete confirm on a note row. */
+  const armNoteDelete = useCallback((noteId: string) => {
+    setArmedDelete({ kind: "note", id: noteId });
+  }, []);
+
+  /** Disarm the two-step delete confirm. */
+  const cancelArmedDelete = useCallback(() => setArmedDelete(null), []);
 
   /**
    * Delete a folder. An empty client-local folder arms the inline
@@ -841,31 +1162,49 @@ export function TreePane({
    *
    * @param path - Folder path to delete.
    */
-  function handleDeleteFolder(path: string) {
-    setTreeError(null);
-    const ids = noteIdsUnder(path);
-    if (ids.length === 0) {
-      setArmedDelete({ kind: "folder", id: path });
-      return;
-    }
-    setPendingFolderDelete({ path, noteIds: ids });
-  }
+  const handleDeleteFolder = useCallback(
+    (path: string) => {
+      setTreeError(null);
+      const ids = (rows ?? [])
+        .filter((r) => r.folder === path || r.folder.startsWith(`${path}/`))
+        .map((r) => r.id);
+      if (ids.length === 0) {
+        setArmedDelete({ kind: "folder", id: path });
+        return;
+      }
+      setPendingFolderDelete({ path, noteIds: ids });
+    },
+    [rows],
+  );
 
   /**
    * Delete an empty folder's explicit rows server-side and disarm.
    *
    * @param path - Folder path to remove.
    */
-  function dropEmptyFolder(path: string) {
-    setArmedDelete(null);
-    clearSelectionUnder(path);
-    deleteFolder.mutate(path, {
-      onSuccess: (result) => {
-        if (!result.ok) setTreeError(result.message);
-      },
-      onError: () => setTreeError("Delete failed"),
-    });
-  }
+  const dropEmptyFolder = useCallback(
+    (path: string) => {
+      setArmedDelete(null);
+      clearSelectionUnder(path);
+      mutateDeleteFolder(path, {
+        onSuccess: (result) => {
+          if (!result.ok) setTreeError(result.message);
+        },
+        onError: () => setTreeError("Delete failed"),
+      });
+    },
+    [clearSelectionUnder, mutateDeleteFolder],
+  );
+
+  /** Open the move-to-folder picker for a note row. */
+  const openMoveNote = useCallback((row: NoteTreeRow) => {
+    setMoveTarget({ kind: "note", id: row.id, currentPath: row.folder });
+  }, []);
+
+  /** Open the move-to-folder picker for a folder row. */
+  const openMoveFolder = useCallback((path: string) => {
+    setMoveTarget({ kind: "folder", id: path, currentPath: parentOf(path) });
+  }, []);
 
   /**
    * Confirm a non-empty folder delete: clear the selection when the open
@@ -882,14 +1221,14 @@ export function TreePane({
       onSelect(null);
     }
     clearSelectionUnder(pending.path);
-    deleteFolder.mutate(pending.path, {
+    mutateDeleteFolder(pending.path, {
       onSuccess: (result) => {
         if (!result.ok) setTreeError(result.message);
       },
       onError: () => setTreeError("Delete failed"),
     });
     const results = await Promise.all(
-      pending.noteIds.map((id) => deleteNote.mutateAsync(id).catch(() => null)),
+      pending.noteIds.map((id) => deleteNoteAsync(id).catch(() => null)),
     );
     for (const result of results) {
       if (result === null) setTreeError("Delete failed");
@@ -910,7 +1249,7 @@ export function TreePane({
     if (target === null) return;
     setTreeError(null);
     if (target.kind === "note") {
-      moveNote.mutate(
+      mutateMoveNote(
         { noteId: target.id, folder: dest },
         {
           onSuccess: (result) => {
@@ -924,215 +1263,81 @@ export function TreePane({
     applyFolderPlan(target.id, planFolderMove(target.id, dest, allFolders));
   }
 
-  /**
-   * Recursively render a folder, its child folders, and its notes.
-   *
-   * @param path - Folder path.
-   * @param depth - Nesting depth, drives indentation.
-   * @returns The folder branch.
-   */
-  function renderFolder(path: string, depth: number): ReactNode {
-    const folderNotes = notesByFolder.get(path) ?? [];
-    const subFolders = allFolders.filter((f) => parentOf(f) === path);
-    const isCollapsed = collapsed.has(path);
-    const isDropTarget = dropFolder === path;
-    const isSelected = selectedFolder === path;
-    const indent = 8 + depth * 12;
-    return (
-      <motion.div
-        key={path}
-        layout="position"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={ROW_TRANSITION}
-      >
-        {renaming?.path === path ? (
-          <div
-            className="flex w-full items-center gap-1 rounded-md pr-2 text-text-secondary"
-            style={{ height: 26, paddingLeft: indent }}
-          >
-            {isCollapsed ? (
-              <IconChevronRight size={11} className="text-text-muted" />
-            ) : (
-              <IconChevronDown size={11} className="text-text-muted" />
-            )}
-            <RenameInput
-              value={renaming.value}
-              onChange={(value) => setRenaming({ path, value })}
-              onCommit={commitRename}
-              onCancel={() => setRenaming(null)}
-              ariaLabel="Folder name"
-            />
-          </div>
-        ) : (
-          <div className="group relative flex w-full items-center">
-            <button
-              type="button"
-              draggable
-              aria-roledescription="Draggable folder"
-              aria-current={isSelected ? "true" : undefined}
-              onClick={() => {
-                toggle(path);
-                setSelectedFolder(path);
-              }}
-              onDoubleClick={() => beginRename(path)}
-              onKeyDown={(e) => {
-                if (e.key === "F2") {
-                  e.preventDefault();
-                  beginRename(path);
-                }
-              }}
-              onDragStart={(e) => {
-                e.stopPropagation();
-                setDrag({ kind: "folder", id: path });
-              }}
-              onDragEnd={clearDrag}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDropFolder(path);
-                setDropRowId(null);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                dropOnto(path);
-              }}
-              className="relative flex min-w-0 flex-1 items-center gap-1 rounded-md text-left"
-              style={{
-                height: 26,
-                paddingLeft: indent,
-                paddingRight: 30,
-                opacity: drag?.kind === "folder" && drag.id === path ? 0.45 : 1,
-                color: isSelected
-                  ? "var(--color-text-primary)"
-                  : "var(--color-text-secondary)",
-                background: isDropTarget
-                  ? tint("var(--color-accent)", 14)
-                  : isSelected
-                    ? tint("var(--color-accent)", 7)
-                    : "transparent",
-                outline: isDropTarget
-                  ? "1px solid var(--color-accent)"
-                  : "1px solid transparent",
-              }}
-            >
-              {isSelected && (
-                <span
-                  aria-hidden="true"
-                  style={{
-                    position: "absolute",
-                    left: 4,
-                    top: 4,
-                    bottom: 4,
-                    width: 2,
-                    borderRadius: 2,
-                    background: "var(--color-accent)",
-                  }}
-                />
-              )}
-              {isCollapsed ? (
-                <IconChevronRight size={11} className="text-text-muted" />
-              ) : (
-                <IconChevronDown size={11} className="text-text-muted" />
-              )}
-              <span className="text-[12px] font-semibold">{leafOf(path)}</span>
-              <span className="ml-auto font-mono text-[10px] text-text-faint">
-                {folderNotes.length}
-              </span>
-            </button>
-            {armedDelete?.kind === "folder" && armedDelete.id === path ? (
-              <span
-                className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center rounded px-0.5"
-                style={{ background: "var(--color-base-2)" }}
-              >
-                <DeleteConfirm
-                  onConfirm={() => dropEmptyFolder(path)}
-                  onCancel={() => setArmedDelete(null)}
-                />
-              </span>
-            ) : coarse ? (
-              <RowActionsMenu
-                label="Folder actions"
-                onRename={() => beginRename(path)}
-                onMove={() =>
-                  setMoveTarget({
-                    kind: "folder",
-                    id: path,
-                    currentPath: parentOf(path),
-                  })
-                }
-                onDelete={() => handleDeleteFolder(path)}
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={() => handleDeleteFolder(path)}
-                aria-label="Delete folder"
-                title="Delete folder"
-                className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-text-muted opacity-0 transition-all hover:bg-surface-hover hover:text-danger group-hover:opacity-100"
-              >
-                <IconTrash size={11} />
-              </button>
-            )}
-          </div>
-        )}
-        {!isCollapsed && (
-          <>
-            {subFolders.map((s) => renderFolder(s, depth + 1))}
-            {folderNotes.map((n) => (
-              <NoteRow
-                key={n.id}
-                row={n}
-                indent={indent}
-                active={n.id === selectedId}
-                dragging={drag?.kind === "note" && drag.id === n.id}
-                dropTarget={drag !== null && dropRowId === n.id}
-                onSelect={() => selectNote(n.id)}
-                onDragStart={() => setDrag({ kind: "note", id: n.id })}
-                onDragEnd={clearDrag}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDropFolder(n.folder);
-                  setDropRowId(n.id);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  dropOnto(n.folder);
-                }}
-                renaming={renamingNote?.id === n.id}
-                renameValue={
-                  renamingNote !== null && renamingNote.id === n.id
-                    ? renamingNote.value
-                    : ""
-                }
-                onRenameChange={(value) => setRenamingNote({ id: n.id, value })}
-                onRenameCommit={commitRenameNote}
-                onRenameCancel={() => setRenamingNote(null)}
-                onBeginRename={() => beginRenameNote(n)}
-                onDelete={() => {
-                  handleDeleteNote(n);
-                  setArmedDelete(null);
-                }}
-                armed={armedDelete?.kind === "note" && armedDelete.id === n.id}
-                onArmDelete={() => setArmedDelete({ kind: "note", id: n.id })}
-                onCancelDelete={() => setArmedDelete(null)}
-                coarse={coarse}
-                onMove={() =>
-                  setMoveTarget({
-                    kind: "note",
-                    id: n.id,
-                    currentPath: n.folder,
-                  })
-                }
-              />
-            ))}
-          </>
-        )}
-      </motion.div>
-    );
-  }
+  const foldersByParent = useMemo(
+    () => groupFoldersByParent(allFolders),
+    [allFolders],
+  );
 
-  const roots = allFolders.filter((f) => parentOf(f) === "");
-  const rootNotes = notesByFolder.get("") ?? [];
+  const flatItems = useMemo<FlatTreeRow[]>(
+    () =>
+      searching
+        ? hits.map((h) => ({
+            kind: "note" as const,
+            key: h.id,
+            note: h,
+            indent: 8,
+          }))
+        : flattenNoteTree(foldersByParent, notesByFolder, collapsed),
+    [searching, hits, foldersByParent, notesByFolder, collapsed],
+  );
+
+  const keyIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    flatItems.forEach((item, index) => map.set(item.key, index));
+    return map;
+  }, [flatItems]);
+
+  // Rows that must stay mounted off-viewport: the native drag source (an
+  // unmounted source never fires `dragend`, stranding drag state) and the
+  // focused rename input (unmounting it on a realtime reorder blurs it).
+  const pinnedIndexes = useMemo(() => {
+    const keys: string[] = [];
+    if (drag !== null) {
+      keys.push(drag.kind === "note" ? drag.id : `folder:${drag.id}`);
+    }
+    if (renamingNote !== null) keys.push(renamingNote.id);
+    if (renaming !== null) keys.push(`folder:${renaming.path}`);
+    const indexes: number[] = [];
+    for (const key of keys) {
+      const index = keyIndex.get(key);
+      if (index !== undefined) indexes.push(index);
+    }
+    return indexes;
+  }, [drag, renamingNote, renaming, keyIndex]);
+
+  const rangeExtractor = useCallback(
+    (range: Range) =>
+      pinnedIndexes.length === 0
+        ? defaultRangeExtractor(range)
+        : [
+            ...new Set([...pinnedIndexes, ...defaultRangeExtractor(range)]),
+          ].sort((a, b) => a - b),
+    [pinnedIndexes],
+  );
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  /** Virtual-list offset inside the scroll element: the naming-first folder input renders above it. */
+  const scrollMargin = creatingFolder === null ? 0 : 26;
+  // Sizes are fixed inline per row kind (folder 26, note 30, rename
+  // variants identical), so positions stay pixel-accurate without
+  // `measureElement`.
+  //
+  // `useVirtualizer` uses interior mutability; React Compiler auto-skip is safe.
+  // https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => (flatItems[index]?.kind === "folder" ? 26 : 30),
+    getItemKey: (index) => flatItems[index]?.key ?? index,
+    overscan: 8,
+    rangeExtractor,
+    scrollMargin,
+  });
+
+  const showVirtual = searching
+    ? !search.isError && flatItems.length > 0
+    : !list.isError && !list.isPending && flatItems.length > 0;
   const foldersError = folders.isError ? "Failed to load folders" : null;
 
   return (
@@ -1278,27 +1483,13 @@ export function TreePane({
         </p>
       )}
 
-      <motion.div
-        layoutScroll
-        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
-      >
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {searching ? (
           search.isError ? (
             <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
               Search failed
             </p>
-          ) : hits.length > 0 ? (
-            hits.map((h) => (
-              <NoteRow
-                key={h.id}
-                row={h}
-                indent={8}
-                active={h.id === selectedId}
-                dragging={false}
-                onSelect={() => selectNote(h.id)}
-              />
-            ))
-          ) : search.isPending ? (
+          ) : hits.length > 0 ? null : search.isPending ? (
             <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
               Searching…
             </p>
@@ -1313,80 +1504,129 @@ export function TreePane({
           </p>
         ) : list.isPending ? (
           <TreeSkeleton />
-        ) : roots.length === 0 &&
-          rootNotes.length === 0 &&
-          creatingFolder === null ? (
+        ) : flatItems.length === 0 && creatingFolder === null ? (
           <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
             No notes yet
           </p>
-        ) : (
-          <>
-            {creatingFolder !== null && (
-              <div
-                className="flex w-full items-center gap-1 rounded-md pr-2 text-text-secondary"
-                style={{ height: 26, paddingLeft: 8 }}
-              >
-                <IconChevronDown size={11} className="text-text-muted" />
-                <RenameInput
-                  value={creatingFolder}
-                  onChange={setCreatingFolder}
-                  onCommit={commitNewFolder}
-                  onCancel={() => setCreatingFolder(null)}
-                  ariaLabel="New folder name"
-                />
-              </div>
-            )}
-            {roots.map((r) => renderFolder(r, 0))}
-            {rootNotes.map((n) => (
-              <NoteRow
-                key={n.id}
-                row={n}
-                indent={8}
-                active={n.id === selectedId}
-                dragging={drag?.kind === "note" && drag.id === n.id}
-                dropTarget={drag !== null && dropRowId === n.id}
-                onSelect={() => selectNote(n.id)}
-                onDragStart={() => setDrag({ kind: "note", id: n.id })}
-                onDragEnd={clearDrag}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDropFolder(n.folder);
-                  setDropRowId(n.id);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  dropOnto(n.folder);
-                }}
-                renaming={renamingNote?.id === n.id}
-                renameValue={
-                  renamingNote !== null && renamingNote.id === n.id
-                    ? renamingNote.value
-                    : ""
-                }
-                onRenameChange={(value) => setRenamingNote({ id: n.id, value })}
-                onRenameCommit={commitRenameNote}
-                onRenameCancel={() => setRenamingNote(null)}
-                onBeginRename={() => beginRenameNote(n)}
-                onDelete={() => {
-                  handleDeleteNote(n);
-                  setArmedDelete(null);
-                }}
-                armed={armedDelete?.kind === "note" && armedDelete.id === n.id}
-                onArmDelete={() => setArmedDelete({ kind: "note", id: n.id })}
-                onCancelDelete={() => setArmedDelete(null)}
-                coarse={coarse}
-                onMove={() =>
-                  setMoveTarget({
-                    kind: "note",
-                    id: n.id,
-                    currentPath: n.folder,
-                  })
-                }
-              />
-            ))}
-          </>
+        ) : creatingFolder !== null ? (
+          <div
+            className="flex w-full items-center gap-1 rounded-md pr-2 text-text-secondary"
+            style={{ height: 26, paddingLeft: 8 }}
+          >
+            <IconChevronDown size={11} className="text-text-muted" />
+            <RenameInput
+              value={creatingFolder}
+              onChange={setCreatingFolder}
+              onCommit={commitNewFolder}
+              onCancel={() => setCreatingFolder(null)}
+              ariaLabel="New folder name"
+            />
+          </div>
+        ) : null}
+        {showVirtual && (
+          <div
+            style={{
+              height: virtualizer.getTotalSize(),
+              position: "relative",
+              width: "100%",
+            }}
+          >
+            {virtualizer.getVirtualItems().map((vi) => {
+              const item = flatItems[vi.index];
+              if (!item) return null;
+              return (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  className={ROW_GLIDE_CLASS}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    transform: `translateY(${vi.start - scrollMargin}px)`,
+                  }}
+                >
+                  {item.kind === "folder" ? (
+                    <FolderRow
+                      path={item.path}
+                      indent={item.indent}
+                      noteCount={item.noteCount}
+                      collapsed={collapsed.has(item.path)}
+                      selected={selectedFolder === item.path}
+                      dropTarget={dropTarget?.folder === item.path}
+                      dragging={
+                        drag?.kind === "folder" && drag.id === item.path
+                      }
+                      renaming={renaming?.path === item.path}
+                      renameValue={
+                        renaming?.path === item.path ? renaming.value : ""
+                      }
+                      armed={
+                        armedDelete?.kind === "folder" &&
+                        armedDelete.id === item.path
+                      }
+                      coarse={coarse}
+                      onClick={handleFolderClick}
+                      onBeginRename={beginRename}
+                      onRenameChange={handleRenameChange}
+                      onRenameCommit={commitRename}
+                      onRenameCancel={cancelRename}
+                      onDragStart={handleFolderDragStart}
+                      onDragEnd={clearDrag}
+                      onDragOver={handleFolderDragOver}
+                      onDrop={handleDrop}
+                      onDelete={handleDeleteFolder}
+                      onConfirmDelete={dropEmptyFolder}
+                      onCancelDelete={cancelArmedDelete}
+                      onMove={openMoveFolder}
+                    />
+                  ) : (
+                    <NoteRow
+                      row={item.note}
+                      indent={item.indent}
+                      active={item.note.id === selectedId}
+                      dragging={
+                        drag?.kind === "note" && drag.id === item.note.id
+                      }
+                      dropTarget={
+                        drag !== null && dropTarget?.rowId === item.note.id
+                      }
+                      onSelect={selectNote}
+                      onDragStart={searching ? undefined : handleNoteDragStart}
+                      onDragEnd={searching ? undefined : clearDrag}
+                      onDragOver={searching ? undefined : handleNoteDragOver}
+                      onDrop={searching ? undefined : handleDrop}
+                      renaming={!searching && renamingNote?.id === item.note.id}
+                      renameValue={
+                        renamingNote?.id === item.note.id
+                          ? renamingNote.value
+                          : ""
+                      }
+                      onRenameChange={
+                        searching ? undefined : handleNoteRenameChange
+                      }
+                      onRenameCommit={searching ? undefined : commitRenameNote}
+                      onRenameCancel={searching ? undefined : cancelRenameNote}
+                      onBeginRename={searching ? undefined : beginRenameNote}
+                      onDelete={searching ? undefined : handleDeleteNote}
+                      armed={
+                        !searching &&
+                        armedDelete?.kind === "note" &&
+                        armedDelete.id === item.note.id
+                      }
+                      onArmDelete={searching ? undefined : armNoteDelete}
+                      onCancelDelete={searching ? undefined : cancelArmedDelete}
+                      coarse={coarse}
+                      onMove={searching ? undefined : openMoveNote}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
-      </motion.div>
+      </div>
       <ConfirmDialog
         open={pendingFolderDelete !== null}
         title="Delete folder?"
