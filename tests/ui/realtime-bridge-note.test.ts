@@ -5,15 +5,32 @@ import type { NoteTreeRow } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
 import {
   clearNoteDirty,
+  clearNoteTrashed,
   enqueueNoteWrite,
+  hasUnsavedNoteEdits,
+  isNoteTrashed,
   markNoteDirty,
+  markNoteTrashed,
   notePlaceholderFromRow,
 } from "@/lib/query/note-cache";
+import {
+  _resetPresenceForTests,
+  getPresenceSnapshot,
+} from "@/lib/realtime/presence-store";
+import {
+  mergeConflictStash,
+  type NoteConflictState,
+} from "@/components/workspace/notes/note-conflict";
+import { runOptimisticNoteWrite } from "@/components/workspace/notes/useNoteMutations";
+import { cachedCasToken } from "@/lib/query/note-cache";
 
 /**
  * Pins the guarded `note` invalidation contract: the actor's own write
  * (cached `updatedAt` equals the event's) skips the list refetch, an open
- * detail refetches only when stale, and a dirty note is never refetched.
+ * detail refetches only when stale, a dirty note is never refetched, a
+ * strictly-newer event clears a trashed mark (cross-client restore) while
+ * an older-or-equal one never does, and `note-presence` events write the
+ * presence store without touching the query cache.
  */
 
 const when = new Date("2026-07-01T10:00:00.000Z");
@@ -83,6 +100,8 @@ function noteEvent(updatedAt?: Date): string {
 
 afterEach(() => {
   clearNoteDirty(NOTE);
+  clearNoteTrashed(NOTE);
+  _resetPresenceForTests();
 });
 
 describe("applyRealtimeEvent note case", () => {
@@ -144,6 +163,105 @@ describe("applyRealtimeEvent note case", () => {
 
     expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
     expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+  });
+
+  test("a strictly newer event clears the trashed mark (cross-client restore)", async () => {
+    const qc = seededClient(when);
+    markNoteTrashed(NOTE, when);
+    await applyRealtimeEvent(
+      qc,
+      noteEvent(new Date("2026-07-01T11:00:00.000Z")),
+    );
+    expect(isNoteTrashed(NOTE)).toBe(false);
+  });
+
+  test("an equal-or-older event never clears the trashed mark (own pre-delete autosave)", async () => {
+    const qc = seededClient(when);
+    markNoteTrashed(NOTE, when);
+    await applyRealtimeEvent(qc, noteEvent(when));
+    expect(isNoteTrashed(NOTE)).toBe(true);
+    await applyRealtimeEvent(
+      qc,
+      noteEvent(new Date("2026-07-01T09:00:00.000Z")),
+    );
+    expect(isNoteTrashed(NOTE)).toBe(true);
+  });
+
+  test("a delete event (no updatedAt) never clears the trashed mark", async () => {
+    const qc = seededClient(when);
+    markNoteTrashed(NOTE, when);
+    await applyRealtimeEvent(qc, noteEvent());
+    expect(isNoteTrashed(NOTE)).toBe(true);
+  });
+
+  test("a note-presence event mutates the store and issues zero invalidations", async () => {
+    const qc = seededClient(when);
+    await applyRealtimeEvent(
+      qc,
+      JSON.stringify({
+        kind: "note-presence",
+        noteId: NOTE,
+        userId: "u2",
+        name: "Remote User",
+        image: null,
+        state: "editing",
+      }),
+    );
+    expect(getPresenceSnapshot(NOTE).map((e) => e.userId)).toEqual(["u2"]);
+    expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+  });
+
+  test("open-draft remote update resolves through the conflict path with both sides intact", async () => {
+    const t0 = when;
+    const t1 = new Date("2026-07-01T11:00:00.000Z");
+    const qc = seededClient(t0);
+
+    markNoteDirty(NOTE);
+    await applyRealtimeEvent(qc, noteEvent(t1));
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+    expect(hasUnsavedNoteEdits(NOTE)).toBe(true);
+    expect(cachedCasToken(qc, PROJECT, NOTE)).toBe(t0.toISOString());
+
+    const patch = { body: "local draft body" };
+    let sentToken: string | undefined;
+    let conflict: NoteConflictState | null = null;
+    const result = await runOptimisticNoteWrite(
+      qc,
+      PROJECT,
+      NOTE,
+      patch,
+      async () => {
+        sentToken = cachedCasToken(qc, PROJECT, NOTE);
+        return {
+          ok: false as const,
+          code: "stale_write" as const,
+          message: "stale",
+          currentUpdatedAt: t1.toISOString(),
+          currentVersion: 2,
+        };
+      },
+      false,
+    );
+
+    expect(sentToken).toBe(t0.toISOString());
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.code === "stale_write") {
+      conflict = mergeConflictStash(null, {
+        noteId: NOTE,
+        currentUpdatedAt: result.currentUpdatedAt,
+        currentVersion: result.currentVersion,
+        patch,
+      });
+    }
+    expect(conflict?.patch).toEqual(patch);
+    expect(conflict?.currentVersion).toBe(2);
+
+    const detail = qc.getQueryData<{ note: { body: string } }>(
+      noteKeys.detail(PROJECT, NOTE),
+    );
+    expect(detail?.note.body).toBe("local draft body");
+    expect(hasUnsavedNoteEdits(NOTE)).toBe(true);
   });
 
   test("note-folders event invalidates the folders query and nothing else", async () => {

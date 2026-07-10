@@ -39,6 +39,13 @@ interface NoteEditorProps {
   identifier: string;
   /** @param onCommitBody - Commit the edited body on Escape / blur. */
   onCommitBody: (next: string) => void;
+  /**
+   * @param onEditingChange - Edit-session boundary: `true` when the raw
+   *   textarea opens, `false` after commit. Called after `onCommitBody`
+   *   on the changed path, so an exit with buffered content keeps the
+   *   autosave dirty gate held while a no-op exit releases it.
+   */
+  onEditingChange?: (editing: boolean) => void;
 }
 
 /**
@@ -57,6 +64,7 @@ export function NoteEditor({
   editable,
   identifier,
   onCommitBody,
+  onEditingChange,
 }: NoteEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const clickYRef = useRef<number | null>(null);
@@ -76,6 +84,7 @@ export function NoteEditor({
     setDraft(body);
     setEntryCaret(offset);
     setEditing(true);
+    onEditingChange?.(true);
   };
 
   useEffect(() => {
@@ -118,6 +127,7 @@ export function NoteEditor({
   const commit = () => {
     setEditing(false);
     if (draft !== body) onCommitBody(draft);
+    onEditingChange?.(false);
   };
 
   if (editing) {

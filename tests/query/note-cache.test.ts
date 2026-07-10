@@ -10,6 +10,7 @@ import {
   cachedCasToken,
   clearNoteDirty,
   clearNoteTrashed,
+  clearNoteTrashedIfRestoredRemotely,
   hasUnsavedNoteEdits,
   isNoteTrashed,
   markNoteDirty,
@@ -368,13 +369,63 @@ describe("dirty note registry", () => {
 });
 
 describe("trashed note registry", () => {
+  const deletedAt = new Date("2026-07-01T10:00:00.000Z");
+
   test("marks, reports, and clears trashed ids independently", () => {
     expect(isNoteTrashed("t1")).toBe(false);
-    markNoteTrashed("t1");
+    markNoteTrashed("t1", deletedAt);
     expect(isNoteTrashed("t1")).toBe(true);
     expect(isNoteTrashed("t2")).toBe(false);
     clearNoteTrashed("t1");
     expect(isNoteTrashed("t1")).toBe(false);
+  });
+
+  test("remote clear requires a strictly newer event than the delete baseline", () => {
+    markNoteTrashed("t1", deletedAt);
+
+    const older = deletedAt.getTime() - 1_000;
+    expect(clearNoteTrashedIfRestoredRemotely("t1", older)).toBe(false);
+    expect(isNoteTrashed("t1")).toBe(true);
+
+    expect(clearNoteTrashedIfRestoredRemotely("t1", deletedAt.getTime())).toBe(
+      false,
+    );
+    expect(isNoteTrashed("t1")).toBe(true);
+
+    const newer = deletedAt.getTime() + 1_000;
+    expect(clearNoteTrashedIfRestoredRemotely("t1", newer)).toBe(true);
+    expect(isNoteTrashed("t1")).toBe(false);
+    expect(clearNoteTrashedIfRestoredRemotely("t1", newer)).toBe(false);
+  });
+
+  test("accepts an ISO-string baseline", () => {
+    markNoteTrashed("t1", deletedAt.toISOString());
+    expect(
+      clearNoteTrashedIfRestoredRemotely("t1", deletedAt.getTime() + 1),
+    ).toBe(true);
+  });
+
+  test("re-marking a note refreshes its baseline", () => {
+    markNoteTrashed("t1", deletedAt);
+    const laterDelete = new Date(deletedAt.getTime() + 10_000);
+    markNoteTrashed("t1", laterDelete);
+    expect(
+      clearNoteTrashedIfRestoredRemotely("t1", deletedAt.getTime() + 1_000),
+    ).toBe(false);
+    expect(isNoteTrashed("t1")).toBe(true);
+    clearNoteTrashed("t1");
+  });
+
+  test("caps at 200 entries, evicting the oldest insertion", () => {
+    for (let i = 0; i < 200; i += 1) {
+      markNoteTrashed(`cap-${i}`, deletedAt);
+    }
+    expect(isNoteTrashed("cap-0")).toBe(true);
+    markNoteTrashed("cap-200", deletedAt);
+    expect(isNoteTrashed("cap-0")).toBe(false);
+    expect(isNoteTrashed("cap-1")).toBe(true);
+    expect(isNoteTrashed("cap-200")).toBe(true);
+    for (let i = 0; i <= 200; i += 1) clearNoteTrashed(`cap-${i}`);
   });
 });
 
