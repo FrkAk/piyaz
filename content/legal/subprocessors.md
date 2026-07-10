@@ -1,6 +1,6 @@
 # Sub-processors
 
-> **Status: DRAFT — pending review by qualified legal counsel. Not yet in effect.**
+> **Status: DRAFT, pending review by qualified legal counsel. Not yet in effect.**
 > Version: `draft-2026-06-23` · Effective date: `[EFFECTIVE DATE]`
 >
 > **Placeholders** in `[BRACKETS]` are values the operators must confirm before this
@@ -15,11 +15,11 @@ deployment: you are the data controller for your own instance.
 
 ## Current sub-processors
 
-| Sub-processor | Processing purpose | Data region |
-| --- | --- | --- |
-| **Neon** (Neon Inc.) | Managed PostgreSQL database. | AWS `eu-central-1` (Frankfurt, Germany) |
-| **Amazon Web Services (AWS)** | Underlying cloud infrastructure for the Neon database. | Frankfurt region (EU) |
-| **Cloudflare, Inc.** | Application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging. | Global edge network |
+| Sub-processor | Processing purpose | Data region | Transfer mechanism |
+| --- | --- | --- | --- |
+| **Neon, LLC** (a Databricks company, US) | Managed PostgreSQL database. | AWS `eu-central-1` (Frankfurt, Germany) | EU SCCs; EU-US Data Privacy Framework |
+| **Amazon Web Services (AWS)** (US) | Underlying cloud infrastructure for the Neon database. | Frankfurt region (EU) | EU SCCs; EU-US Data Privacy Framework |
+| **Cloudflare, Inc.** (US) | Application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging. | Global edge network | EU SCCs; EU-US Data Privacy Framework |
 
 ## Changes to our sub-processors
 
@@ -28,5 +28,5 @@ receive advance notice before we add or replace a sub-processor, so they can obj
 
 To subscribe to sub-processor change notices, email **privacy@piyaz.ai** with the
 subject line **"Subscribe: sub-processor changes"**. Subscribed controllers receive at
-least `[NOTICE PERIOD]` days' advance notice before a new or replacement sub-processor
-begins processing personal data.
+least **30 days'** advance notice before a new or replacement sub-processor begins
+processing personal data.
