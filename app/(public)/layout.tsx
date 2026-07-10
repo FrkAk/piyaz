@@ -6,6 +6,7 @@ const LEGAL_NAV = [
   { href: "/terms", label: "Terms" },
   { href: "/privacy", label: "Privacy" },
   { href: "/impressum", label: "Legal Notice" },
+  { href: "/subprocessors", label: "Sub-processors" },
 ];
 
 /**
