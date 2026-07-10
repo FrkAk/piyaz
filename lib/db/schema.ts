@@ -337,6 +337,7 @@ export const activityEvents = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    noteId: uuid("note_id").references(() => notes.id, { onDelete: "cascade" }),
     type: text("type").$type<ActivityEventType>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -352,6 +353,7 @@ export const activityEvents = pgTable(
   },
   (t) => [
     index("activity_events_task_id_created_idx").on(t.taskId, t.createdAt),
+    index("activity_events_note_id_created_idx").on(t.noteId, t.createdAt),
     index("activity_events_project_id_created_idx").on(
       t.projectId,
       t.createdAt,
