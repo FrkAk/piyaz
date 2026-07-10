@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar } from "@/components/shared/Avatar";
 import {
   IconMore,
@@ -15,8 +15,9 @@ import {
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { formatRelative } from "@/components/workspace/structure/relativeTime";
 import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
+import { conditionalFetchPage } from "@/lib/query/conditional-fetch";
 import { noteKeys } from "@/lib/query/keys";
-import type { ActivityEvent } from "@/lib/types";
+import type { NoteActivityEvent } from "@/lib/types";
 
 interface NoteHistoryProps {
   /** @param projectId - Owning project id (for the query key). */
@@ -25,27 +26,10 @@ interface NoteHistoryProps {
   noteId: string;
 }
 
+/** Payload of one `GET /api/note/[noteId]/events` keyset page. */
 interface NoteEventsPage {
-  events: ActivityEvent[];
+  events: NoteActivityEvent[];
   nextCursor: string | null;
-}
-
-/**
- * Fetch one keyset page of a note's activity.
- *
- * @param noteId - Note id.
- * @param cursor - Opaque keyset cursor or null for the first page.
- * @returns The page payload.
- * @throws Error when the request fails.
- */
-async function fetchNoteEvents(
-  noteId: string,
-  cursor: string | null,
-): Promise<NoteEventsPage> {
-  const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-  const res = await fetch(`/api/note/${noteId}/events${qs}`);
-  if (!res.ok) throw new Error(`note-events ${res.status}`);
-  return res.json();
 }
 
 /**
@@ -60,6 +44,7 @@ async function fetchNoteEvents(
  * @returns The History ribbon section.
  */
 export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
+  const qc = useQueryClient();
   const {
     data,
     isPending,
@@ -71,15 +56,21 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
     isFetchNextPageError,
   } = useInfiniteQuery({
     queryKey: noteKeys.events(projectId, noteId),
-    queryFn: ({ pageParam }) => fetchNoteEvents(noteId, pageParam),
+    queryFn: ({ pageParam, signal }) =>
+      conditionalFetchPage<NoteEventsPage>({
+        url: pageParam
+          ? `/api/note/${noteId}/events?cursor=${encodeURIComponent(pageParam)}`
+          : `/api/note/${noteId}/events`,
+        queryKey: noteKeys.events(projectId, noteId),
+        pageParam,
+        queryClient: qc,
+        signal,
+      }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
   });
 
   const events = data?.pages.flatMap((p) => p.events) ?? [];
-  // Alias to a plain boolean: branching on the destructured union flag itself
-  // narrows the sibling bindings to `never`, since no result variant types
-  // this flag as `true`.
   const nextPageFailed: boolean = isFetchNextPageError;
 
   return (
@@ -169,7 +160,7 @@ interface EventGroup {
   /** Actor avatar URL, when resolved. */
   avatar: string | null;
   /** Events in the run, newest-first. */
-  events: ActivityEvent[];
+  events: NoteActivityEvent[];
 }
 
 /**
@@ -180,7 +171,7 @@ interface EventGroup {
  * @param events - Flat, newest-first events.
  * @returns Ordered actor groups.
  */
-function groupEvents(events: ActivityEvent[]): EventGroup[] {
+function groupEvents(events: NoteActivityEvent[]): EventGroup[] {
   const groups: EventGroup[] = [];
   for (const e of events) {
     const last = groups[groups.length - 1];
@@ -292,7 +283,7 @@ function NoteEventGroup({ group, isLast }: NoteEventGroupProps) {
  * @param event - Event to describe.
  * @returns Glyph and phrase for one action row.
  */
-function describeNoteEvent(event: ActivityEvent): {
+function describeNoteEvent(event: NoteActivityEvent): {
   icon: ReactNode;
   text: string;
 } {
@@ -339,7 +330,7 @@ function describeNoteEvent(event: ActivityEvent): {
  * @param phrase - Replacement phrase for the matching summary shape.
  * @returns The compact phrase, or the original summary.
  */
-function stripTitle(event: ActivityEvent, phrase: string): string {
+function stripTitle(event: NoteActivityEvent, phrase: string): string {
   return /^\w+ note "/.test(event.summary) ? phrase : event.summary;
 }
 
@@ -351,7 +342,7 @@ function stripTitle(event: ActivityEvent, phrase: string): string {
  * @param event - The update event.
  * @returns One action phrase.
  */
-function phraseUpdate(event: ActivityEvent): string {
+function phraseUpdate(event: NoteActivityEvent): string {
   if (/^(linked|unlinked) note "/.test(event.summary)) {
     return event.summary.startsWith("linked")
       ? "linked to a task"
@@ -370,7 +361,7 @@ function phraseUpdate(event: ActivityEvent): string {
  * @param event - The move event.
  * @returns One action phrase.
  */
-function phraseMove(event: ActivityEvent): string {
+function phraseMove(event: NoteActivityEvent): string {
   const to = (event.metadata as { to?: string } | null)?.to;
   if (typeof to === "string")
     return to === "" ? "moved to root" : `moved to ${to}`;

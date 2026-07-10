@@ -135,6 +135,15 @@ export type ActivityEvent = {
   metadata: Record<string, unknown> | null;
 };
 
+/**
+ * Per-note history payload row: {@link ActivityEvent} minus the fields the
+ * note context already implies (`projectId`, `taskId`, `targetRef`).
+ */
+export type NoteActivityEvent = Omit<
+  ActivityEvent,
+  "projectId" | "taskId" | "targetRef"
+>;
+
 /** A verifiable acceptance criterion for a task. */
 export type AcceptanceCriterion = {
   id: string;

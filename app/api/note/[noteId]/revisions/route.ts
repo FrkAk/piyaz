@@ -9,14 +9,12 @@ import { error } from "@/lib/api/response";
  * Conditional handler for `GET` and `HEAD` on a note's revision list.
  *
  * Returns slim revision descriptors newest-first (`version`, `title`,
- * `createdBy`, `createdAt`, never `body`) plus the live `currentVersion`.
- * The payload rows are the validator source: the token folds the max
- * version with the row count; retention pruning shrinks the count while a
- * restore grows the max version, so the composite always moves. Revisions
- * are append-only-immutable, so no other mutation can go unseen. A non-UUID
- * id, a missing/cross-team note, another member's private note, and a
- * trashed note are all 404-shaped (`ForbiddenError` from the data ring; the
- * non-UUID check runs before any SQL).
+ * `createdAt`; never `body` or author ids) plus the live `currentVersion`.
+ * The ETag folds the max version with the row count: pruning shrinks the
+ * count while a body write grows the max version, so the composite always
+ * moves. A non-UUID id, a missing/cross-team note, another member's
+ * private note, and a trashed note are all 404-shaped (`ForbiddenError`
+ * from the data ring; the non-UUID check runs before any SQL).
  *
  * @param req - Incoming request.
  * @param noteId - Note UUID from the route params.
@@ -32,11 +30,16 @@ async function handle(req: Request, noteId: string): Promise<Response> {
 
   try {
     const { currentVersion, revisions } = await listNoteRevisions(ctx, noteId);
-    const maxVersion = revisions.length ? revisions[0].version : 0;
+    const rows = revisions.map((r) => ({
+      version: r.version,
+      title: r.title,
+      createdAt: r.createdAt,
+    }));
+    const maxVersion = rows.length ? rows[0].version : 0;
     return conditionalRespond(
       req,
-      { currentVersion, revisions },
-      `${maxVersion}-${revisions.length}`,
+      { currentVersion, revisions: rows },
+      `${maxVersion}-${rows.length}`,
     );
   } catch (err) {
     if (err instanceof ForbiddenError) return error("Note not found", 404);

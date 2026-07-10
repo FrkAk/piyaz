@@ -4,19 +4,19 @@ import { listNoteActivity } from "@/lib/data/activity";
 import { conditionalRespond } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
+import type { NoteActivityEvent } from "@/lib/types";
 
 /**
  * Conditional handler for `GET` and `HEAD` on a note's activity page.
  *
- * The payload rows are the validator source: the events read is already the
- * cheap slim read (one batch: note gate + keyset page), so no dedicated
- * version probe precedes it; a 304 saves response egress, not DB compute.
- * The token folds the newest event's `createdAt` ms with the page length;
- * events are append-only, so a new event always moves the pair. `cursor`
- * and `limit` vary the URL, so each page caches under its own validator.
- * A non-UUID id, a missing/cross-team note, another member's private note,
- * and a trashed note are all 404-shaped (`ForbiddenError` from the data
- * ring; the non-UUID check runs before any SQL).
+ * Rows are the slim {@link NoteActivityEvent} shape (the note context
+ * implies `projectId`/`taskId`/`targetRef`). The ETag folds the newest
+ * event's timestamp with its id, so a same-millisecond append still moves
+ * the validator; `cursor` and `limit` vary the URL, so each page caches
+ * under its own validator. A non-UUID id, a missing/cross-team note,
+ * another member's private note, and a trashed note are all 404-shaped
+ * (`ForbiddenError` from the data ring; the non-UUID check runs before
+ * any SQL).
  *
  * @param req - Incoming request; reads `?cursor` and `?limit`.
  * @param noteId - Note UUID from the route params.
@@ -39,8 +39,28 @@ async function handle(req: Request, noteId: string): Promise<Response> {
       cursor,
       limit: limit !== undefined && Number.isFinite(limit) ? limit : undefined,
     });
-    const maxMs = page.events.length ? Date.parse(page.events[0].createdAt) : 0;
-    return conditionalRespond(req, page, `${maxMs}-${page.events.length}`);
+    const events: NoteActivityEvent[] = page.events.map((e) => ({
+      id: e.id,
+      type: e.type,
+      createdAt: e.createdAt,
+      actorUserId: e.actorUserId,
+      actorName: e.actorName,
+      actorAvatar: e.actorAvatar,
+      source: e.source,
+      agent: e.agent,
+      agentVerified: e.agentVerified,
+      summary: e.summary,
+      metadata: e.metadata,
+    }));
+    const newest = page.events[0];
+    const validator = newest
+      ? `${Date.parse(newest.createdAt)}-${newest.id}`
+      : "none";
+    return conditionalRespond(
+      req,
+      { events, nextCursor: page.nextCursor },
+      validator,
+    );
   } catch (err) {
     if (err instanceof ForbiddenError) return error("Note not found", 404);
     return internalError("note-events", err);

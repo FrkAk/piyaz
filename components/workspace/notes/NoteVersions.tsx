@@ -1,15 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconUndo } from "@/components/shared/icons";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { formatRelative } from "@/components/workspace/structure/relativeTime";
 import type { NoteActionFailure } from "@/lib/actions/note-errors";
+import { conditionalFetch } from "@/lib/query/conditional-fetch";
 import { noteKeys } from "@/lib/query/keys";
 import { hasUnsavedNoteEdits } from "@/lib/query/note-cache";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { useRestoreRevision } from "./useNoteMutations";
+import {
+  useRestoreRevision,
+  type NoteRevisionsCache,
+} from "./useNoteMutations";
 
 interface NoteVersionsProps {
   /** @param projectId - Owning project id (for the query key). */
@@ -20,33 +24,6 @@ interface NoteVersionsProps {
   locked: boolean;
   /** @param loading - Whether the detail is still placeholder data. */
   loading: boolean;
-}
-
-/** One slim revision descriptor from the revisions route. */
-interface RevisionRow {
-  version: number;
-  title: string;
-  createdBy: string | null;
-  createdAt: string;
-}
-
-/** Payload of `GET /api/note/[noteId]/revisions`. */
-interface RevisionsPayload {
-  currentVersion: number;
-  revisions: RevisionRow[];
-}
-
-/**
- * Fetch the note's slim revision descriptors.
- *
- * @param noteId - Note id.
- * @returns The revisions payload.
- * @throws Error when the request fails.
- */
-async function fetchRevisions(noteId: string): Promise<RevisionsPayload> {
-  const res = await fetch(`/api/note/${noteId}/revisions`);
-  if (!res.ok) throw new Error(`note-revisions ${res.status}`);
-  return res.json();
 }
 
 /**
@@ -98,9 +75,16 @@ export function NoteVersions({
   const [pendingVersion, setPendingVersion] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const qc = useQueryClient();
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: noteKeys.revisions(projectId, noteId),
-    queryFn: () => fetchRevisions(noteId),
+    queryFn: ({ signal }) =>
+      conditionalFetch<NoteRevisionsCache>({
+        url: `/api/note/${noteId}/revisions`,
+        queryKey: noteKeys.revisions(projectId, noteId),
+        queryClient: qc,
+        signal,
+      }),
   });
 
   const dirty = hasUnsavedNoteEdits(noteId);
@@ -162,6 +146,10 @@ export function NoteVersions({
           {data.revisions.map((rev) => {
             const isCurrent = rev.version === data.currentVersion;
             const isPendingRow = pendingVersion === rev.version;
+            const createdAtIso =
+              typeof rev.createdAt === "string"
+                ? rev.createdAt
+                : rev.createdAt.toISOString();
             return (
               <li
                 key={rev.version}
@@ -190,11 +178,11 @@ export function NoteVersions({
                   {rev.title}
                 </span>
                 <time
-                  dateTime={rev.createdAt}
-                  title={new Date(rev.createdAt).toLocaleString()}
+                  dateTime={createdAtIso}
+                  title={new Date(createdAtIso).toLocaleString()}
                   className="shrink-0 font-mono text-[10px] tabular-nums text-text-faint"
                 >
-                  {formatRelative(rev.createdAt)}
+                  {formatRelative(createdAtIso)}
                 </time>
                 {isCurrent ? (
                   <span className="shrink-0 font-mono text-[9px] uppercase text-text-faint">
