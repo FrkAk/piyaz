@@ -2009,7 +2009,7 @@ function assertCreateInputWithinCaps(
 /**
  * Insert one note inside an open write transaction: slug allocation, the
  * insert, body-driven link derivation, the v1 revision snapshot, and the
- * team-visibility activity event. The caller must have gated project
+ * note-keyed activity event. The caller must have gated project
  * access, asserted writability, and taken the project advisory lock.
  * Shared by {@link createNote} and {@link createNotesBatch}.
  *
@@ -2075,17 +2075,16 @@ async function createNoteInTx(
       ctx.userId,
     );
   }
-  if (visibility === "team") {
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: input.projectId,
-        taskId: null,
-        type: "note_created",
-        targetRef: slug,
-        summary: `created note "${summaryTitle(input.title)}"`,
-      },
-    ]);
-  }
+  await insertActivityEvents(tx, ctx.actor, [
+    {
+      projectId: input.projectId,
+      taskId: null,
+      noteId: note.id,
+      type: "note_created",
+      targetRef: slug,
+      summary: `created note "${summaryTitle(input.title)}"`,
+    },
+  ]);
   return { ...note, projectIdentifier };
 }
 
@@ -2242,6 +2241,9 @@ export async function createNotesBatch(
  * @param noteId - UUID of the note.
  * @param patch - Fields to change; unknown/protected keys are stripped.
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
+ * @param opts - `restoredFromVersion` marks the write as a revision
+ *   restore: the emitted event's summary and metadata name the source
+ *   version; the write path itself is unchanged.
  * @returns Slim summary of the updated note; a body change also carries
  *   the re-derived link context as `links`.
  * @throws ForbiddenError on inaccessible or trashed notes, or when a
@@ -2262,8 +2264,16 @@ export async function updateNote(
   noteId: string,
   patch: NotePatch,
   ifUpdatedAt?: string,
+  opts?: { restoredFromVersion?: number },
 ): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
-  return updateNoteCore(ctx, noteId, patch, ifUpdatedAt);
+  return updateNoteCore(
+    ctx,
+    noteId,
+    patch,
+    ifUpdatedAt,
+    undefined,
+    opts?.restoredFromVersion,
+  );
 }
 
 /** Fields a {@link NoteEditOp} may target; governance fields (`visibility`, `locked`, `agentWritable`) are excluded by design. */
@@ -2474,6 +2484,8 @@ export async function applyNoteEditOps(
  * @param patch - Scalar patch fields.
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
  * @param bodyOps - Ordered body text ops to fold in-transaction.
+ * @param restoredFromVersion - Source revision version when the write is a
+ *   restore; alters only the emitted event's summary and metadata.
  * @returns Slim summary; a body change also carries the re-derived links.
  */
 async function updateNoteCore(
@@ -2482,6 +2494,7 @@ async function updateNoteCore(
   patch: NotePatch,
   ifUpdatedAt?: string,
   bodyOps?: TextOp[],
+  restoredFromVersion?: number,
 ): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
   assertValidNoteId(noteId);
   const applied: NotePatch = {};
@@ -2654,18 +2667,24 @@ async function updateNoteCore(
         );
       links = { mentions: mentionRows.map(toNoteMention), linksOut };
     }
-    if (nextVisibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: current.projectId,
-          taskId: null,
-          type: "note_updated",
-          targetRef: summary.slug,
-          summary: `updated note "${summaryTitle(summary.title)}"`,
-          metadata: { fields: changedFields, version: newVersion },
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: current.projectId,
+        taskId: null,
+        noteId: current.id,
+        type: "note_updated",
+        targetRef: summary.slug,
+        summary:
+          restoredFromVersion !== undefined
+            ? `restored note "${summaryTitle(summary.title)}" to v${restoredFromVersion}`
+            : `updated note "${summaryTitle(summary.title)}"`,
+        metadata: {
+          fields: changedFields,
+          version: newVersion,
+          ...(restoredFromVersion !== undefined ? { restoredFromVersion } : {}),
         },
-      ]);
-    }
+      },
+    ]);
     return {
       summary: { ...summary, projectIdentifier: current.projectIdentifier },
       wasNoOp: false,
@@ -2738,18 +2757,17 @@ export async function moveNote(
       .set({ folder: dest, updatedBy: ctx.userId, updatedAt: new Date() })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
-    if (gate.visibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: gate.projectId,
-          taskId: null,
-          type: "note_moved",
-          targetRef: summary.slug,
-          summary: `moved note "${summaryTitle(summary.title)}"`,
-          metadata: { from: gate.folder, to: dest },
-        },
-      ]);
-    }
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: gate.projectId,
+        taskId: null,
+        noteId: gate.id,
+        type: "note_moved",
+        targetRef: summary.slug,
+        summary: `moved note "${summaryTitle(summary.title)}"`,
+        metadata: { from: gate.folder, to: dest },
+      },
+    ]);
     return {
       summary: { ...summary, projectIdentifier: gate.projectIdentifier },
       wasNoOp: false,
@@ -3088,17 +3106,16 @@ export async function deleteNote(
         deletedAt: notes.deletedAt,
         updatedAt: notes.updatedAt,
       });
-    if (gate.visibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: gate.projectId,
-          taskId: null,
-          type: "note_deleted",
-          targetRef: gate.slug,
-          summary: `trashed note "${summaryTitle(gate.title)}"`,
-        },
-      ]);
-    }
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: gate.projectId,
+        taskId: null,
+        noteId: gate.id,
+        type: "note_deleted",
+        targetRef: gate.slug,
+        summary: `trashed note "${summaryTitle(gate.title)}"`,
+      },
+    ]);
     return {
       id: row.id,
       deletedAt: row.deletedAt as Date,
@@ -3202,19 +3219,18 @@ export async function restoreNote(
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
-    if (gate.visibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: gate.projectId,
-          taskId: null,
-          type: "note_restored",
-          targetRef: slug,
-          summary: `restored note "${summaryTitle(summary.title)}"`,
-          metadata:
-            slug === current.slug ? null : { previousSlug: current.slug },
-        },
-      ]);
-    }
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: gate.projectId,
+        taskId: null,
+        noteId: gate.id,
+        type: "note_restored",
+        targetRef: slug,
+        summary: `restored note "${summaryTitle(summary.title)}"`,
+        metadata:
+          slug === current.slug ? null : { previousSlug: current.slug },
+      },
+    ]);
     return {
       summary: { ...summary, projectIdentifier: gate.projectIdentifier },
       wasNoOp: false,
@@ -3387,6 +3403,7 @@ async function applyVisibilityTx(
     {
       projectId: gate.projectId,
       taskId: null,
+      noteId: gate.id,
       type: "note_updated",
       targetRef: row.slug,
       summary: `updated note "${summaryTitle(row.title)}"`,
@@ -3533,11 +3550,12 @@ export async function createNoteTaskLink(
       .onConflictDoNothing()
       .returning({ id: noteTaskLinks.id });
     const created = rows.length > 0;
-    if (created && gate.visibility === "team") {
+    if (created) {
       await insertActivityEvents(tx, ctx.actor, [
         {
           projectId: gate.projectId,
           taskId,
+          noteId: gate.id,
           type: "note_updated",
           targetRef: gate.slug,
           summary: `linked note "${summaryTitle(gate.title)}" to a task`,
@@ -3600,11 +3618,12 @@ export async function removeNoteTaskLink(
       )
       .returning({ id: noteTaskLinks.id });
     const removed = rows.length > 0;
-    if (removed && gate.visibility === "team") {
+    if (removed) {
       await insertActivityEvents(tx, ctx.actor, [
         {
           projectId: gate.projectId,
           taskId,
+          noteId: gate.id,
           type: "note_updated",
           targetRef: gate.slug,
           summary: `unlinked note "${summaryTitle(gate.title)}" from a task`,

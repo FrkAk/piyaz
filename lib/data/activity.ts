@@ -42,6 +42,7 @@ export function actorColumns(actor: ActorDescriptor): ActorColumns {
 export type ActivityEventInput = {
   projectId: string;
   taskId: string | null;
+  noteId?: string | null;
   type: ActivityEventType;
   summary: string;
   targetRef?: string | null;
@@ -69,6 +70,7 @@ export async function insertActivityEvents(
     events.map((e) => ({
       projectId: e.projectId,
       taskId: e.taskId,
+      noteId: e.noteId ?? null,
       type: e.type,
       actorUserId: cols.actorUserId,
       source: cols.source,

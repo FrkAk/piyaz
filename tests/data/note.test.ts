@@ -865,7 +865,7 @@ test("metadata caps reject oversized summary, labels, and feed ids", async () =>
   ).rejects.toBeInstanceOf(NoteValidationError);
 });
 
-test("only team-visible note writes record activity events", async () => {
+test("note writes record note-keyed activity events for every visibility", async () => {
   const f = await seedUserOrgProject("noteact");
   const ctx = makeAuthContext(f.userId);
   const sr = serviceRoleConnect();
@@ -876,9 +876,17 @@ test("only team-visible note writes record activity events", async () => {
   await requestShare(ctx, hidden.id);
   await deleteNote(ctx, hidden.id);
   await restoreNote(ctx, hidden.id);
-  const privateRows = await sr<{ type: string }[]>`
-    SELECT type FROM activity_events WHERE project_id = ${f.projectId}`;
-  expect(privateRows.length).toBe(0);
+  const privateRows = await sr<{ type: string; note_id: string | null }[]>`
+    SELECT type, note_id FROM activity_events
+    WHERE project_id = ${f.projectId} ORDER BY created_at`;
+  expect(privateRows.map((r) => r.type)).toEqual([
+    "note_created",
+    "note_updated",
+    "note_moved",
+    "note_deleted",
+    "note_restored",
+  ]);
+  expect(privateRows.every((r) => r.note_id === hidden.id)).toBe(true);
 
   const note = await createNote(ctx, {
     projectId: f.projectId,
@@ -886,9 +894,12 @@ test("only team-visible note writes record activity events", async () => {
     visibility: "team",
   });
   await updateNote(ctx, note.id, { body: "hello" });
-  const rows = await sr<{ type: string; task_id: string | null }[]>`
-    SELECT type, task_id FROM activity_events
-    WHERE project_id = ${f.projectId} ORDER BY created_at`;
+  const rows = await sr<
+    { type: string; task_id: string | null; note_id: string | null }[]
+  >`
+    SELECT type, task_id, note_id FROM activity_events
+    WHERE project_id = ${f.projectId} AND note_id = ${note.id}
+    ORDER BY created_at`;
   expect(rows.map((r) => r.type)).toEqual(["note_created", "note_updated"]);
   expect(rows.every((r) => r.task_id === null)).toBe(true);
 });
