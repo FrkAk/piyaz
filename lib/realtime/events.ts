@@ -82,6 +82,32 @@ export function emitNoteEvent(
 }
 
 /**
+ * Emit an editing-presence event for a note. Rides `note:<noteId>` only:
+ * the viewers are exactly the fetch-implicit subscribers the note detail
+ * route registered, and on a private note that channel's membership is
+ * RLS-confined to the creator's own sessions. Presence never invalidates
+ * queries, so no `projectId` travels with it.
+ *
+ * @param noteId - Note being viewed.
+ * @param actor - Session-derived sender identity; never client-supplied.
+ * @param state - `editing` upserts the sender, `gone` removes it.
+ */
+export function emitNotePresence(
+  noteId: string,
+  actor: { userId: string; name: string; image: string | null },
+  state: "editing" | "gone",
+): void {
+  broker.dispatch(`note:${noteId}`, {
+    kind: "note-presence",
+    noteId,
+    userId: actor.userId,
+    name: actor.name,
+    image: actor.image,
+    state,
+  } satisfies RealtimeEvent);
+}
+
+/**
  * Emit an explicit-note-folders change event. Rides `project:<projectId>`:
  * folder marker rows are team-visible structural metadata, so every member's
  * cached folder list refreshes. Callers dispatch only when marker rows
