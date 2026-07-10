@@ -30,7 +30,6 @@ import {
   IconPanelLeft,
   IconPlus,
   IconSearch,
-  IconTrash,
   IconUser,
   IconX,
 } from "@/components/shared/icons";
@@ -151,7 +150,7 @@ interface NoteRowProps {
 /** Row action-menu option values. */
 type RowAction = "rename" | "move" | "delete";
 
-/** Action-menu options shared by note and folder rows on touch. */
+/** Action-menu options shared by note and folder rows. */
 const ROW_ACTION_OPTIONS: { value: RowAction; label: string }[] = [
   { value: "rename", label: "Rename" },
   { value: "move", label: "Move to folder…" },
@@ -161,6 +160,8 @@ const ROW_ACTION_OPTIONS: { value: RowAction; label: string }[] = [
 interface RowActionsMenuProps {
   /** @param label - Accessible label for the trigger. */
   label: string;
+  /** @param coarse - Coarse pointer: keep the trigger always visible. */
+  coarse: boolean;
   /** @param onRename - Enter inline rename. */
   onRename: () => void;
   /** @param onMove - Open the move-to-folder picker. */
@@ -170,20 +171,29 @@ interface RowActionsMenuProps {
 }
 
 /**
- * Touch overflow menu in a row's trailing slot: Rename, Move, Delete. The
- * only reorganize path on coarse pointers, where native drag never fires.
+ * Overflow menu in a row's trailing slot: Rename, Move, Delete. Always
+ * visible on coarse pointers, where native drag never fires; on fine
+ * pointers it reveals on row hover or keyboard focus, making it the
+ * keyboard reorganize path.
  *
- * @param props - Accessible label and action handlers.
+ * @param props - Accessible label, pointer mode, and action handlers.
  * @returns The anchored `⋯` action menu.
  */
 function RowActionsMenu({
   label,
+  coarse,
   onRename,
   onMove,
   onDelete,
 }: RowActionsMenuProps) {
   return (
-    <span className="absolute right-1 top-1/2 -translate-y-1/2">
+    <span
+      className={`absolute right-1 top-1/2 -translate-y-1/2 ${
+        coarse
+          ? ""
+          : "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+      }`}
+    >
       <Dropdown<string>
         value=""
         options={ROW_ACTION_OPTIONS}
@@ -196,7 +206,7 @@ function RowActionsMenu({
           else onDelete();
         }}
         renderTrigger={() => (
-          <span className="inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary in-focus-visible:bg-surface-hover in-focus-visible:text-text-primary">
             <IconMore size={14} />
           </span>
         )}
@@ -208,9 +218,10 @@ function RowActionsMenu({
 /**
  * One note row, shared between the folder tree and the flat search-hit
  * list. Draggable only when drag handlers are wired (tree mode). In tree
- * mode double-click or F2 opens the inline rename input and a hover trash
- * deletes the note; the search-hit list wires neither. Memoized with
- * id-taking handlers so parent state churn skips uninvolved rows.
+ * mode double-click or F2 opens the inline rename input and the trailing
+ * overflow menu renames, moves, or deletes the note; the search-hit list
+ * wires neither. Memoized with id-taking handlers so parent state churn
+ * skips uninvolved rows.
  *
  * @param props - Row data, indentation, selection state, and handlers.
  * @returns The note row, or its inline rename input while renaming.
@@ -350,27 +361,19 @@ const NoteRow = memo(function NoteRow({
             style={{ background: "var(--color-base-2)" }}
           >
             <DeleteConfirm
+              autoFocus
               onConfirm={() => onDelete(row)}
               onCancel={() => onCancelDelete?.()}
             />
           </span>
-        ) : coarse ? (
+        ) : (
           <RowActionsMenu
             label="Note actions"
+            coarse={coarse}
             onRename={() => onBeginRename?.(row)}
             onMove={() => onMove?.(row)}
             onDelete={() => onArmDelete?.(row.id)}
           />
-        ) : (
-          <button
-            type="button"
-            onClick={() => onArmDelete?.(row.id)}
-            aria-label="Delete note"
-            title="Delete note"
-            className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-text-muted opacity-0 transition-all hover:bg-surface-hover hover:text-danger group-hover:opacity-100"
-          >
-            <IconTrash size={11} />
-          </button>
         ))}
     </div>
   );
@@ -462,9 +465,9 @@ interface FolderRowProps {
 /**
  * One folder row. Clicking toggles collapse and selects the folder as the
  * New-note create target; double-click or F2 opens the inline rename
- * input; the trailing slot arms a two-step delete or, on coarse pointers,
- * opens the overflow menu. Memoized with path-taking handlers so parent
- * state churn skips uninvolved rows.
+ * input; the trailing overflow menu renames, moves, or arms a two-step
+ * delete. Memoized with path-taking handlers so parent state churn skips
+ * uninvolved rows.
  *
  * @param props - Folder path, indentation, row state flags, and handlers.
  * @returns The folder row, or its inline rename input while renaming.
@@ -585,27 +588,19 @@ const FolderRow = memo(function FolderRow({
           style={{ background: "var(--color-base-2)" }}
         >
           <DeleteConfirm
+            autoFocus
             onConfirm={() => onConfirmDelete(path)}
             onCancel={onCancelDelete}
           />
         </span>
-      ) : coarse ? (
+      ) : (
         <RowActionsMenu
           label="Folder actions"
+          coarse={coarse}
           onRename={() => onBeginRename(path)}
           onMove={() => onMove(path)}
           onDelete={() => onDelete(path)}
         />
-      ) : (
-        <button
-          type="button"
-          onClick={() => onDelete(path)}
-          aria-label="Delete folder"
-          title="Delete folder"
-          className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded text-text-muted opacity-0 transition-all hover:bg-surface-hover hover:text-danger group-hover:opacity-100"
-        >
-          <IconTrash size={11} />
-        </button>
       )}
     </div>
   );
@@ -659,16 +654,16 @@ function TreeSkeleton() {
  * an inline name input and the folder persists on commit. Clicking a
  * folder toggles collapse and selects it as the New-note create target
  * (accent-tinted, `aria-current`); selecting a note clears the folder
- * selection. Folder and note rows rename inline (double-click or F2) and
- * delete via a hover trash that arms a two-step inline confirm: a note
- * deletes with an Undo entry, an empty folder deletes its marker rows,
- * and a non-empty folder instead opens a bulk modal then deletes its
- * notes as one undoable entry. Tree mutation failures surface in a strip
- * above the list. On fine pointers notes and folders reorder by native
- * drag-and-drop (which never fires on touch); on coarse pointers a
- * per-row overflow menu exposes Rename, Move to folder, and Delete, with
- * Move opening a folder picker so touch users can reorganize. A
- * keyboard-accessible move affordance is still deferred to a follow-up.
+ * selection. Folder and note rows rename inline (double-click or F2).
+ * Every row carries an overflow menu in its trailing slot exposing
+ * Rename, Move to folder, and Delete: always visible on coarse pointers
+ * (where native drag never fires), revealed on hover or keyboard focus
+ * on fine pointers, so the menu is also the keyboard reorganize path.
+ * Delete arms a two-step inline confirm: a note deletes with an Undo
+ * entry, an empty folder deletes its marker rows, and a non-empty folder
+ * instead opens a bulk modal then deletes its notes as one undoable
+ * entry. Tree mutation failures surface in a strip above the list. On
+ * fine pointers notes and folders also reorder by native drag-and-drop.
  *
  * @param props - Project scope, selection state, create wiring, and drawer-mode flags.
  * @returns The fixed-width tree column, or a parent-filling column in drawer mode.
@@ -713,6 +708,10 @@ export function TreePane({
     kind: "note" | "folder";
     id: string;
     currentPath: string;
+  } | null>(null);
+  const [pendingFocus, setPendingFocus] = useState<{
+    key: string;
+    fallbackKey: string | null;
   } | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
   const coarse = useMediaQuery("(pointer: coarse)");
@@ -998,9 +997,15 @@ export function TreePane({
    *
    * @param src - Folder path being moved or renamed.
    * @param plan - Plan from {@link planFolderRename} or {@link planFolderMove}.
+   * @param onSettledPath - Called with the folder's settled path: the
+   *   destination on success, the unchanged source on failure.
    */
   const applyFolderPlan = useCallback(
-    (src: string, plan: FolderMovePlan) => {
+    (
+      src: string,
+      plan: FolderMovePlan,
+      onSettledPath?: (path: string) => void,
+    ) => {
       if (plan.kind === "noop") return;
       if (plan.kind === "collision") {
         setTreeError(`Folder "${plan.dest}" already exists`);
@@ -1010,10 +1015,18 @@ export function TreePane({
         { src, destParent: plan.destParent, leaf: plan.leaf, dest: plan.dest },
         {
           onSuccess: (result) => {
-            if (result.ok) rewriteLocalPaths(src, result.data.dest);
-            else setTreeError(result.message);
+            if (result.ok) {
+              rewriteLocalPaths(src, result.data.dest);
+              onSettledPath?.(result.data.dest);
+              return;
+            }
+            setTreeError(result.message);
+            onSettledPath?.(src);
           },
-          onError: () => setTreeError("Folder move failed"),
+          onError: () => {
+            setTreeError("Folder move failed");
+            onSettledPath?.(src);
+          },
         },
       );
     },
@@ -1238,8 +1251,11 @@ export function TreePane({
   }
 
   /**
-   * Apply the pending touch move to the chosen destination. A note moves
-   * folders; a folder re-parents through {@link applyFolderPlan}.
+   * Apply the pending move to the chosen destination. A note moves
+   * folders; a folder re-parents through {@link applyFolderPlan}. The
+   * focus hand-back to the moved row is queued from the mutation
+   * callbacks — only then has the tree committed the row's final key —
+   * targeting the origin key when the move failed and the row stayed put.
    *
    * @param dest - Destination folder path (`""` = root).
    */
@@ -1248,19 +1264,31 @@ export function TreePane({
     setMoveTarget(null);
     if (target === null) return;
     setTreeError(null);
+    const fallbackKey = dest === "" ? null : `folder:${dest}`;
     if (target.kind === "note") {
       mutateMoveNote(
         { noteId: target.id, folder: dest },
         {
           onSuccess: (result) => {
             if (!result.ok) setTreeError(result.message);
+            setPendingFocus({
+              key: target.id,
+              fallbackKey: result.ok ? fallbackKey : null,
+            });
           },
-          onError: () => setTreeError("Move failed"),
+          onError: () => {
+            setTreeError("Move failed");
+            setPendingFocus({ key: target.id, fallbackKey: null });
+          },
         },
       );
       return;
     }
-    applyFolderPlan(target.id, planFolderMove(target.id, dest, allFolders));
+    applyFolderPlan(
+      target.id,
+      planFolderMove(target.id, dest, allFolders),
+      (path) => setPendingFocus({ key: `folder:${path}`, fallbackKey }),
+    );
   }
 
   const foldersByParent = useMemo(
@@ -1288,8 +1316,9 @@ export function TreePane({
   }, [flatItems]);
 
   // Rows that must stay mounted off-viewport: the native drag source (an
-  // unmounted source never fires `dragend`, stranding drag state) and the
-  // focused rename input (unmounting it on a realtime reorder blurs it).
+  // unmounted source never fires `dragend`, stranding drag state), the
+  // focused rename input (unmounting it on a realtime reorder blurs it),
+  // and the move dialog's origin row (its focus hand-back needs the node).
   const pinnedIndexes = useMemo(() => {
     const keys: string[] = [];
     if (drag !== null) {
@@ -1297,13 +1326,18 @@ export function TreePane({
     }
     if (renamingNote !== null) keys.push(renamingNote.id);
     if (renaming !== null) keys.push(`folder:${renaming.path}`);
+    if (moveTarget !== null) {
+      keys.push(
+        moveTarget.kind === "note" ? moveTarget.id : `folder:${moveTarget.id}`,
+      );
+    }
     const indexes: number[] = [];
     for (const key of keys) {
       const index = keyIndex.get(key);
       if (index !== undefined) indexes.push(index);
     }
     return indexes;
-  }, [drag, renamingNote, renaming, keyIndex]);
+  }, [drag, renamingNote, renaming, moveTarget, keyIndex]);
 
   const rangeExtractor = useCallback(
     (range: Range) =>
@@ -1334,6 +1368,58 @@ export function TreePane({
     rangeExtractor,
     scrollMargin,
   });
+
+  // Focus hand-back after the move dialog closes: ModalShell's own restore
+  // targets whatever was focused when the dialog opened (often a menu node
+  // detached by re-render), so this effect re-resolves the row by its flat
+  // key, scrolls it into the virtual window, and focuses its main button.
+  // The frame callback resolves the row by `data-key` (indexes shift when
+  // the optimistic tree update commits) and leaves the request pending
+  // when the row is not committed yet; the `keyIndex` dependency retries
+  // it on the next tree render. A key with no match yet (the moved row's
+  // post-move key lands a render later) waits for that retry; a key that
+  // never resolves (row under a collapsed folder with no fallback,
+  // deleted, or re-keyed by realtime) expires after a short timeout so a
+  // stale request can never steal focus later.
+  useEffect(() => {
+    if (pendingFocus === null) return;
+    const key = keyIndex.has(pendingFocus.key)
+      ? pendingFocus.key
+      : pendingFocus.fallbackKey !== null &&
+          keyIndex.has(pendingFocus.fallbackKey)
+        ? pendingFocus.fallbackKey
+        : null;
+    if (key === null) {
+      const timer = setTimeout(() => setPendingFocus(null), 1500);
+      return () => clearTimeout(timer);
+    }
+    const index = keyIndex.get(key);
+    if (index !== undefined) virtualizer.scrollToIndex(index);
+    const resolve = (k: string) =>
+      scrollRef.current?.querySelector<HTMLButtonElement>(
+        `[data-key="${CSS.escape(k)}"] button`,
+      );
+    const settle = (row: HTMLButtonElement) => {
+      row.focus();
+      setPendingFocus(null);
+    };
+    let frame = requestAnimationFrame(() => {
+      const row = resolve(pendingFocus.key);
+      if (row) {
+        settle(row);
+        return;
+      }
+      frame = requestAnimationFrame(() => {
+        const retry =
+          resolve(pendingFocus.key) ??
+          (pendingFocus.fallbackKey === null
+            ? undefined
+            : resolve(pendingFocus.fallbackKey));
+        if (retry) settle(retry);
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pendingFocus, keyIndex, virtualizer]);
 
   const showVirtual = searching
     ? !search.isError && flatItems.length > 0
@@ -1538,6 +1624,7 @@ export function TreePane({
                 <div
                   key={vi.key}
                   data-index={vi.index}
+                  data-key={String(vi.key)}
                   className={ROW_GLIDE_CLASS}
                   style={{
                     position: "absolute",
@@ -1659,7 +1746,18 @@ export function TreePane({
         folders={allFolders}
         currentPath={moveTarget?.currentPath ?? ""}
         onPick={applyMove}
-        onCancel={() => setMoveTarget(null)}
+        onCancel={() => {
+          if (moveTarget !== null) {
+            setPendingFocus({
+              key:
+                moveTarget.kind === "note"
+                  ? moveTarget.id
+                  : `folder:${moveTarget.id}`,
+              fallbackKey: null,
+            });
+          }
+          setMoveTarget(null);
+        }}
       />
     </div>
   );
