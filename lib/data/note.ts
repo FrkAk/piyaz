@@ -3020,7 +3020,7 @@ export async function deleteNoteFolder(
  * note is a no-op, though a stale `ifUpdatedAt` is rejected before the
  * idempotence check. The gate read locks the notes row
  * (`FOR UPDATE OF notes`) so the CAS compare and the write share one
- * locked snapshot. Links and revisions stay in place — read paths filter
+ * locked snapshot. Links and revisions stay in place; read paths filter
  * trashed endpoints, and the FK cascade covers an eventual hard purge.
  * The returned `updatedAt` is the restore-undo CAS token.
  *
