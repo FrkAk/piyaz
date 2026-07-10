@@ -1648,9 +1648,6 @@ export function TreePane({
             </button>
           )}
         </div>
-        <p className="mt-1 px-0.5 font-mono text-[9.5px] text-text-faint">
-          Same index agents query via piyaz_note search
-        </p>
       </div>
 
       <div className="flex gap-1.5 overflow-x-auto px-3 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
