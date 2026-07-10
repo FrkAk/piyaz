@@ -406,7 +406,7 @@ describe("cachedCasToken", () => {
   });
 });
 
-describe("field-scoped list rollback (F7)", () => {
+describe("field-scoped list rollback keeps concurrent sibling writes", () => {
   test("move rollback via revertPatchInTree keeps a concurrent sibling patch", () => {
     const seeded = [row("a", { folder: "src" }), row("b")];
     const optimisticA = patchNoteInTree(seeded, "a", { folder: "dest" });
@@ -441,7 +441,7 @@ describe("field-scoped list rollback (F7)", () => {
   });
 });
 
-describe("field-scoped revert never resurrects unpersisted values (F3)", () => {
+describe("field-scoped revert never resurrects unpersisted values", () => {
   test("tree revert skips a field a newer optimistic write replaced", () => {
     const seeded = [row("a", { folder: "src" })];
     const olderOptimistic = patchNoteInTree(seeded, "a", { folder: "older" });
