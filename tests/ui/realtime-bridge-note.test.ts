@@ -283,6 +283,25 @@ describe("applyRealtimeEvent note case", () => {
     expect(hasUnsavedNoteEdits(NOTE)).toBe(true);
   });
 
+  test("a note event invalidates events and revisions unconditionally, dirty or not", async () => {
+    const qc = seededClient(when);
+    qc.setQueryData(noteKeys.events(PROJECT, NOTE), {
+      events: [],
+      nextCursor: null,
+    });
+    qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
+      currentVersion: 1,
+      revisions: [],
+    });
+    markNoteDirty(NOTE);
+
+    await applyRealtimeEvent(qc, noteEvent(when));
+
+    expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(true);
+    expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(true);
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+  });
+
   test("note-folders event invalidates the folders query and nothing else", async () => {
     const qc = seededClient(when);
     qc.setQueryData(noteKeys.folders(PROJECT), []);

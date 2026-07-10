@@ -126,7 +126,9 @@ function updatedAtMs(value: Date | string): number {
  * pre-delete autosave event is older-or-equal and never qualifies). The
  * open note's detail additionally never refetches while the note holds
  * unsaved editor content: a refetch must not clobber the optimistic
- * autosave buffer or kept-optimistic conflict content.
+ * autosave buffer or kept-optimistic conflict content. The note's events
+ * and revisions queries invalidate unconditionally: they never touch the
+ * editor buffer, so no dirty gating applies.
  *
  * @param qc - The active QueryClient.
  * @param ev - Decoded note event.
@@ -137,6 +139,10 @@ async function handleNoteEvent(
   ev: { projectId: string; noteId: string; updatedAt?: string },
 ): Promise<void> {
   await whenNoteWritesSettle(ev.noteId);
+  qc.invalidateQueries({ queryKey: noteKeys.events(ev.projectId, ev.noteId) });
+  qc.invalidateQueries({
+    queryKey: noteKeys.revisions(ev.projectId, ev.noteId),
+  });
   const evMs = ev.updatedAt === undefined ? Infinity : Date.parse(ev.updatedAt);
   if (ev.updatedAt !== undefined) {
     clearNoteTrashedIfRestoredRemotely(ev.noteId, evMs);

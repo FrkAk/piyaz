@@ -17,6 +17,7 @@ import {
   moveFolderAction,
   moveNoteAction,
   restoreNoteAction,
+  restoreRevisionAction,
   updateNoteAction,
 } from "@/lib/actions/note";
 import type {
@@ -481,6 +482,63 @@ export function useRestoreNote(projectId: string) {
         }
         return result;
       }),
+  });
+}
+
+/**
+ * Revision-restore write flow behind {@link useRestoreRevision}:
+ * serialized through the per-note write chain so it never races an
+ * in-flight autosave; the CAS token is read at send time inside the
+ * chained job for the same reason. No optimistic surgery: the restored
+ * content is server-derived (the client holds no revision body), so
+ * success invalidates the detail, tree list, events, and revisions
+ * queries and the editor refetches the restored note. A `stale_write`
+ * failure surfaces to the caller (the versions panel renders it inline;
+ * no silent retry) and still invalidates, so the panel re-syncs to
+ * server truth. Other failures invalidate nothing: the server applied no
+ * write and the caches hold nothing optimistic.
+ *
+ * @param qc - QueryClient.
+ * @param projectId - Owning project id.
+ * @param noteId - Note id.
+ * @param version - Revision counter value to restore.
+ * @returns The typed action result.
+ */
+export async function runRestoreRevisionWrite(
+  qc: QueryClient,
+  projectId: string,
+  noteId: string,
+  version: number,
+): Promise<NoteWriteResult> {
+  return enqueueNoteWrite(noteId, async () => {
+    const result = await restoreRevisionAction(
+      noteId,
+      version,
+      cachedCasToken(qc, projectId, noteId),
+    );
+    if (result.ok || result.code === "stale_write") {
+      qc.invalidateQueries({ queryKey: noteKeys.detail(projectId, noteId) });
+      qc.invalidateQueries({ queryKey: noteKeys.list(projectId) });
+      qc.invalidateQueries({ queryKey: noteKeys.events(projectId, noteId) });
+      qc.invalidateQueries({
+        queryKey: noteKeys.revisions(projectId, noteId),
+      });
+    }
+    return result;
+  });
+}
+
+/**
+ * Revision restore over {@link runRestoreRevisionWrite}.
+ *
+ * @param projectId - Owning project id.
+ * @returns Mutation taking `{ noteId, version }`.
+ */
+export function useRestoreRevision(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { noteId: string; version: number }) =>
+      runRestoreRevisionWrite(qc, projectId, vars.noteId, vars.version),
   });
 }
 
