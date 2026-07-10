@@ -184,6 +184,7 @@ export type NoteValidationField =
   | "title"
   | "body"
   | "folder"
+  | "version"
   | "query"
   | "ifUpdatedAt"
   | "summary"
@@ -3757,4 +3758,60 @@ export async function getNoteRevision(
     sequenceNumber: gate.sequenceNumber,
     projectIdentifier: gate.projectIdentifier,
   };
+}
+
+/**
+ * Restore a note's title and body to a stored revision snapshot by writing
+ * through {@link updateNote} — append-only revert: the write snapshots a NEW
+ * revision and bumps `version`; nothing is destroyed. The snapshot read and
+ * the write are separate transactions by design: revisions are
+ * append-only-immutable (`note_revisions` is UPDATE-revoked), so the read
+ * cannot go stale, and note concurrency is owned by `updateNote`'s CAS +
+ * `FOR UPDATE` lock. Locked, agent-read-only, and archived-project
+ * rejections are inherited; restoring content identical to the live note is
+ * a no-op (no event, no version bump).
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @param version - Revision counter value to restore.
+ * @param opts - `ifUpdatedAt` CAS precondition from a prior read.
+ * @returns Slim summary of the restored note (plus re-derived `links` on a
+ *   body change).
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ * @throws NoteValidationError when the version does not exist, naming the
+ *   available versions.
+ * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches.
+ * @throws NoteLockedError when the note is locked.
+ * @throws ProjectArchivedError when the project is archived.
+ */
+export async function restoreNoteRevision(
+  ctx: AuthContext,
+  noteId: string,
+  version: number,
+  opts?: { ifUpdatedAt?: string },
+): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
+  if (!Number.isInteger(version) || version < 1) {
+    throw new NoteValidationError(
+      "version",
+      "version must be a positive integer",
+    );
+  }
+  const { snapshot, availableVersions } = await getNoteRevision(
+    ctx,
+    noteId,
+    version,
+  );
+  if (snapshot === null) {
+    throw new NoteValidationError(
+      "version",
+      `version ${version} not found; available versions: ${availableVersions.join(", ")}`,
+    );
+  }
+  return updateNote(
+    ctx,
+    noteId,
+    { title: snapshot.title, body: snapshot.body },
+    opts?.ifUpdatedAt,
+    { restoredFromVersion: version },
+  );
 }
