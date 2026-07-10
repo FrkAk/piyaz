@@ -2682,30 +2682,44 @@ async function updateNoteCore(
 }
 
 /**
- * Move one note into a folder.
+ * Move one note into a folder. The gate read locks the notes row
+ * (`FOR UPDATE OF notes`) so the CAS compare and the write share one
+ * locked snapshot.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
  * @param folder - Destination folder path (`""` = root).
+ * @param ifUpdatedAt - Optional CAS precondition from a prior read.
  * @returns Slim summary of the moved note.
  * @throws ForbiddenError on inaccessible or trashed notes.
  * @throws ProjectArchivedError when the project is archived.
- * @throws NoteValidationError when the folder path exceeds the cap.
+ * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches.
+ * @throws NoteValidationError when the folder path exceeds the cap or
+ *   `ifUpdatedAt` is malformed.
  */
 export async function moveNote(
   ctx: AuthContext,
   noteId: string,
   folder: string,
+  ifUpdatedAt?: string,
 ): Promise<NoteSummary> {
   assertValidNoteId(noteId);
   const dest = normalizeFolder(folder);
+  const ifUpdatedAtMs =
+    ifUpdatedAt === undefined ? undefined : parseIfUpdatedAt(ifUpdatedAt);
 
   const result = await withUserContext(ctx.userId, async (tx) => {
-    const gate = await assertNoteAccessTx(tx, noteId);
+    const gate = await assertNoteAccessTx(tx, noteId, { forUpdate: true });
     assertNoteLive(gate);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     if (gate.locked) throw new NoteLockedError();
     assertAgentWritable(ctx, gate.agentWritable);
+    if (
+      ifUpdatedAtMs !== undefined &&
+      ifUpdatedAtMs !== gate.updatedAt.getTime()
+    ) {
+      throw new NoteStaleWriteError(gate.updatedAt, gate.version);
+    }
     if (gate.folder === dest) {
       return {
         summary: gateSummary(gate),
@@ -3003,48 +3017,71 @@ export async function deleteNoteFolder(
 
 /**
  * Soft-delete a note (sets `deleted_at`). Idempotent: deleting a trashed
- * note is a no-op. Links and revisions stay in place — read paths filter
+ * note is a no-op, though a stale `ifUpdatedAt` is rejected before the
+ * idempotence check. The gate read locks the notes row
+ * (`FOR UPDATE OF notes`) so the CAS compare and the write share one
+ * locked snapshot. Links and revisions stay in place — read paths filter
  * trashed endpoints, and the FK cascade covers an eventual hard purge.
+ * The returned `updatedAt` is the restore-undo CAS token.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
- * @returns The note id and its `deletedAt` instant.
+ * @param ifUpdatedAt - Optional CAS precondition from a prior read.
+ * @returns The note id, its `deletedAt` instant, and post-delete `updatedAt`.
  * @throws ForbiddenError when the caller cannot access the note.
  * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches.
+ * @throws NoteValidationError when `ifUpdatedAt` is malformed.
  */
 export async function deleteNote(
   ctx: AuthContext,
   noteId: string,
+  ifUpdatedAt?: string,
 ): Promise<{
   id: string;
   deletedAt: Date;
+  updatedAt: Date;
   sequenceNumber: number;
   projectIdentifier: string;
 }> {
   assertValidNoteId(noteId);
+  const ifUpdatedAtMs =
+    ifUpdatedAt === undefined ? undefined : parseIfUpdatedAt(ifUpdatedAt);
   const result = await withUserContext(ctx.userId, async (tx) => {
-    const gate = await assertNoteAccessTx(tx, noteId);
+    const gate = await assertNoteAccessTx(tx, noteId, { forUpdate: true });
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     if (gate.locked) throw new NoteLockedError();
     assertAgentWritable(ctx, gate.agentWritable);
+    if (
+      ifUpdatedAtMs !== undefined &&
+      ifUpdatedAtMs !== gate.updatedAt.getTime()
+    ) {
+      throw new NoteStaleWriteError(gate.updatedAt, gate.version);
+    }
     if (gate.deletedAt !== null) {
       return {
         id: gate.id,
         deletedAt: gate.deletedAt,
+        updatedAt: gate.updatedAt,
         sequenceNumber: gate.sequenceNumber,
         projectIdentifier: gate.projectIdentifier,
         wasNoOp: true as const,
       };
     }
+    const now = new Date();
     const [row] = await tx
       .update(notes)
       .set({
-        deletedAt: new Date(),
+        deletedAt: now,
         updatedBy: ctx.userId,
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(notes.id, noteId))
-      .returning({ id: notes.id, deletedAt: notes.deletedAt });
+      .returning({
+        id: notes.id,
+        deletedAt: notes.deletedAt,
+        updatedAt: notes.updatedAt,
+      });
     if (gate.visibility === "team") {
       await insertActivityEvents(tx, ctx.actor, [
         {
@@ -3059,6 +3096,7 @@ export async function deleteNote(
     return {
       id: row.id,
       deletedAt: row.deletedAt as Date,
+      updatedAt: row.updatedAt,
       sequenceNumber: gate.sequenceNumber,
       projectIdentifier: gate.projectIdentifier,
       wasNoOp: false as const,
@@ -3073,6 +3111,7 @@ export async function deleteNote(
   return {
     id: result.id,
     deletedAt: result.deletedAt,
+    updatedAt: result.updatedAt,
     sequenceNumber: result.sequenceNumber,
     projectIdentifier: result.projectIdentifier,
   };
@@ -3082,24 +3121,33 @@ export async function deleteNote(
  * Restore a trashed note. When a live note has since taken its slug, the
  * restored note is auto-suffixed within its base namespace under the
  * project advisory lock; a free slug is kept as-is. Idempotent on a live
- * note.
+ * note when no `ifUpdatedAt` is given; with a token the compare always
+ * runs under the `FOR UPDATE` read, so a stale undo token is rejected
+ * even when the note is already live.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
+ * @param ifUpdatedAt - Optional CAS precondition (the delete's returned
+ *   `updatedAt` for an undo).
  * @returns Slim summary; `slug` may differ from before the delete.
  * @throws ForbiddenError when the caller cannot access the note.
  * @throws ProjectArchivedError when the project is archived.
+ * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches.
+ * @throws NoteValidationError when `ifUpdatedAt` is malformed.
  */
 export async function restoreNote(
   ctx: AuthContext,
   noteId: string,
+  ifUpdatedAt?: string,
 ): Promise<NoteSummary> {
   assertValidNoteId(noteId);
+  const ifUpdatedAtMs =
+    ifUpdatedAt === undefined ? undefined : parseIfUpdatedAt(ifUpdatedAt);
   const result = await withUserContext(ctx.userId, async (tx) => {
     const gate = await assertNoteAccessTx(tx, noteId);
     assertProjectWritable(gate.projectStatus, gate.projectIdentifier);
     assertAgentWritable(ctx, gate.agentWritable);
-    if (gate.deletedAt === null) {
+    if (gate.deletedAt === null && ifUpdatedAtMs === undefined) {
       return {
         summary: gateSummary(gate),
         wasNoOp: true,
@@ -3113,6 +3161,12 @@ export async function restoreNote(
       .where(eq(notes.id, noteId))
       .for("update");
     if (!current) throw new ForbiddenError("Forbidden", "note", noteId);
+    if (
+      ifUpdatedAtMs !== undefined &&
+      ifUpdatedAtMs !== current.updatedAt.getTime()
+    ) {
+      throw new NoteStaleWriteError(current.updatedAt, current.version);
+    }
     if (current.deletedAt === null) {
       const { deletedAt: _live, ...summary } = current;
       return {

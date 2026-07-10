@@ -107,16 +107,21 @@ export async function updateNoteAction(
 }
 
 /**
- * Server action: soft-delete a note.
+ * Server action: soft-delete a note with optimistic concurrency. The
+ * returned `updatedAt` is the restore-undo CAS token.
+ *
  * @param noteId - Note id.
- * @returns The id and deletion timestamp, or a typed failure.
+ * @param ifUpdatedAt - The cached `updatedAt` as CAS token; omit to force.
+ * @returns The id, deletion timestamp, and post-delete `updatedAt`, or a
+ *   typed failure.
  */
 export async function deleteNoteAction(
   noteId: string,
-): Promise<NoteActionResult<{ id: string; deletedAt: Date }>> {
+  ifUpdatedAt?: string,
+): Promise<NoteActionResult<{ id: string; deletedAt: Date; updatedAt: Date }>> {
   try {
     const ctx = await authorizeWrite(NOTE_BUDGETS.noteDelete);
-    return { ok: true, data: await coreDeleteNote(ctx, noteId) };
+    return { ok: true, data: await coreDeleteNote(ctx, noteId, ifUpdatedAt) };
   } catch (err) {
     const failure = noteFailureFrom(err);
     if (failure.code === "unknown") {
@@ -131,14 +136,17 @@ export async function deleteNoteAction(
  * slug may differ from before the delete when its namespace was taken.
  *
  * @param noteId - Note id.
+ * @param ifUpdatedAt - The delete's returned `updatedAt` as CAS token;
+ *   omit for an idempotent tokenless restore.
  * @returns Slim summary of the restored note, or a typed failure.
  */
 export async function restoreNoteAction(
   noteId: string,
+  ifUpdatedAt?: string,
 ): Promise<NoteActionResult<NoteSummary>> {
   try {
     const ctx = await authorizeWrite(NOTE_BUDGETS.noteDelete);
-    return { ok: true, data: await coreRestoreNote(ctx, noteId) };
+    return { ok: true, data: await coreRestoreNote(ctx, noteId, ifUpdatedAt) };
   } catch (err) {
     const failure = noteFailureFrom(err);
     if (failure.code === "unknown") {
@@ -149,18 +157,25 @@ export async function restoreNoteAction(
 }
 
 /**
- * Server action: move a note to another folder.
+ * Server action: move a note to another folder with optimistic
+ * concurrency.
+ *
  * @param noteId - Note id.
  * @param folder - Destination folder path.
+ * @param ifUpdatedAt - The cached `updatedAt` as CAS token; omit to force.
  * @returns Slim summary of the moved note, or a typed failure.
  */
 export async function moveNoteAction(
   noteId: string,
   folder: string,
+  ifUpdatedAt?: string,
 ): Promise<NoteActionResult<NoteSummary>> {
   try {
     const ctx = await authorizeWrite(NOTE_BUDGETS.noteMove);
-    return { ok: true, data: await coreMoveNote(ctx, noteId, folder) };
+    return {
+      ok: true,
+      data: await coreMoveNote(ctx, noteId, folder, ifUpdatedAt),
+    };
   } catch (err) {
     const failure = noteFailureFrom(err);
     if (failure.code === "unknown") {
