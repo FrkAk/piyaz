@@ -36,7 +36,7 @@ import {
   IconX,
 } from "@/components/shared/icons";
 import { Dropdown } from "@/components/shared/Dropdown";
-import { ChipTrigger } from "@/components/shared/FilterChip";
+import { ChipTrigger, labelFor } from "@/components/shared/FilterChip";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useUndo, UndoButton } from "@/hooks/useUndo";
 import type { NoteTreeRow } from "@/lib/data/note";
@@ -656,26 +656,12 @@ const SectionRow = memo(function SectionRow({
       <span className="truncate font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted">
         {label}
       </span>
-      <span className="ml-auto font-mono text-[10px] text-text-faint">
+      <span className="ml-auto font-mono text-[10px] tabular-nums text-text-faint">
         {noteCount}
       </span>
     </div>
   );
 });
-
-/**
- * Lookup the display label for a value in an options table.
- *
- * @param options - Option list.
- * @param value - Active value.
- * @returns Matching label or empty string.
- */
-function labelFor<V extends string>(
-  options: ReadonlyArray<{ value: V; label: string }>,
-  value: V,
-): string {
-  return options.find((o) => o.value === value)?.label ?? "";
-}
 
 /** Tree-shaped skeleton rows: two folders with nested and root files. */
 const SKELETON_ROWS: { height: number; indent: number; bar: number }[] = [
@@ -809,12 +795,15 @@ export function TreePane({
   }
 
   // Category mode renders no folder rows, so a surviving folder selection
-  // would silently target an invisible folder on New note (render-time
-  // state adjustment, not an effect).
+  // or in-progress folder creation would silently target an invisible
+  // folder (render-time state adjustment, not an effect).
   const [prevGroup, setPrevGroup] = useState(group);
   if (prevGroup !== group) {
     setPrevGroup(group);
-    if (group === "category") setSelectedFolder(null);
+    if (group === "category") {
+      setSelectedFolder(null);
+      setCreatingFolder(null);
+    }
   }
 
   useEffect(() => {
@@ -1578,9 +1567,10 @@ export function TreePane({
           <button
             type="button"
             onClick={handleNewFolder}
+            disabled={group === "category"}
             aria-label="New folder"
             title="New folder"
-            className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary"
+            className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:cursor-default disabled:opacity-50"
           >
             <IconFolderPlus size={13} />
           </button>
@@ -1689,7 +1679,7 @@ export function TreePane({
         })}
       </div>
 
-      <div className="flex items-center gap-1 px-2 pb-1.5">
+      <div className="flex items-center gap-1 px-3 pb-1.5">
         <Dropdown
           value={group}
           options={NOTE_GROUP_OPTIONS}
