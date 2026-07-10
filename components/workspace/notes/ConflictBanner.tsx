@@ -49,7 +49,7 @@ function fieldsPhrase(fields: NoteAutosaveConflict["fields"]): string {
  * a `stale_write` flush. Names the conflicted fields and the fresh remote
  * version, and owns the recovery actions: an inline read-only remote
  * preview, discard-local, and keep-mine. The preview fetch deliberately
- * bypasses the query cache — writing the remote payload into the detail
+ * bypasses the query cache: writing the remote payload into the detail
  * entry would clobber the kept-optimistic local content. Entrance rides
  * the global `rise-in` CSS animation, which the app-wide
  * `prefers-reduced-motion` clamp suppresses with zero component code.

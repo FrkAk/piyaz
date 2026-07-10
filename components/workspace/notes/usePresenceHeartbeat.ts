@@ -8,7 +8,7 @@ import { PRESENCE_HEARTBEAT_MS } from "@/lib/realtime/presence-store";
  * heartbeat immediately and every {@link PRESENCE_HEARTBEAT_MS}, and a
  * best-effort `gone` (with `keepalive` so it survives navigation) on
  * unmount, note switch, or `enabled` turning false. Failures, including
- * 429, are swallowed — the next beat retries, so presence degrades to a
+ * 429, are swallowed; the next beat retries, so presence degrades to a
  * longer refresh and never surfaces an error; at most one warning is
  * logged per note session. Reconnects need no special handling: the next
  * beat re-establishes presence and re-registers the `note:<id>`

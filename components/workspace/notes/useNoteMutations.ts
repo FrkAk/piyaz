@@ -706,7 +706,7 @@ export type NoteAutosaveError = {
  * never displaces another's unsaved content; the flush drains one write
  * at a time under a single-flight guard.
  *
- * Failure semantics: `stale_write` is terminal for the flush — it keeps
+ * Failure semantics: `stale_write` is terminal for the flush. It keeps
  * the optimistic cache content (the server applied no write), stashes the
  * failed patch, and surfaces `conflict` with the live
  * `updatedAt`/`version`; the conflict banner owns recovery via

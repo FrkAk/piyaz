@@ -84,7 +84,7 @@ function decodeFrames(frames: string[]): RealtimeEvent[] {
   );
 }
 
-test("POST /api/note/[id]/presence — 401 unauthenticated", async () => {
+test("POST /api/note/[id]/presence: 401 unauthenticated", async () => {
   const f = await seedUserOrgProject("presence-401");
   const note = await createNote(makeAuthContext(f.userId), {
     projectId: f.projectId,
@@ -97,7 +97,7 @@ test("POST /api/note/[id]/presence — 401 unauthenticated", async () => {
   expect(res.status).toBe(401);
 });
 
-test("POST /api/note/[id]/presence — 404 for non-uuid, cross-team, and trashed notes", async () => {
+test("POST /api/note/[id]/presence: 404 for non-uuid, cross-team, and trashed notes", async () => {
   const f = await seedUserOrgProject("presence-404a");
   const g = await seedUserOrgProject("presence-404b");
   const foreign = await createNote(makeAuthContext(g.userId), {
@@ -125,7 +125,7 @@ test("POST /api/note/[id]/presence — 404 for non-uuid, cross-team, and trashed
   );
 });
 
-test("POST /api/note/[id]/presence — 400 for malformed or identity-carrying bodies", async () => {
+test("POST /api/note/[id]/presence: 400 for malformed or identity-carrying bodies", async () => {
   const f = await seedUserOrgProject("presence-400");
   const note = await createNote(makeAuthContext(f.userId), {
     projectId: f.projectId,
@@ -148,7 +148,7 @@ test("POST /api/note/[id]/presence — 400 for malformed or identity-carrying bo
   ).toBe(400);
 });
 
-test("POST /api/note/[id]/presence — 429 over budget with Retry-After", async () => {
+test("POST /api/note/[id]/presence: 429 over budget with Retry-After", async () => {
   const f = await seedUserOrgProject("presence-429");
   const note = await createNote(makeAuthContext(f.userId), {
     projectId: f.projectId,
@@ -175,7 +175,7 @@ test("POST /api/note/[id]/presence — 429 over budget with Retry-After", async 
   }
 });
 
-test("POST /api/note/[id]/presence — team note dispatches session-derived identity on note:<id>", async () => {
+test("POST /api/note/[id]/presence: team note dispatches session-derived identity on note:<id>", async () => {
   const f = await seedUserOrgProject("presence-team");
   const note = await createNote(makeAuthContext(f.userId), {
     projectId: f.projectId,
@@ -214,7 +214,7 @@ test("POST /api/note/[id]/presence — team note dispatches session-derived iden
   ]);
 });
 
-test("POST /api/note/[id]/presence — private note returns 204 and dispatches nothing", async () => {
+test("POST /api/note/[id]/presence: private note returns 204 and dispatches nothing", async () => {
   const f = await seedUserOrgProject("presence-private");
   const note = await createNote(makeAuthContext(f.userId), {
     projectId: f.projectId,
@@ -232,7 +232,7 @@ test("POST /api/note/[id]/presence — private note returns 204 and dispatches n
   expect(frames).toEqual([]);
 });
 
-test("POST /api/note/[id]/presence — registers note:<id> only for connected callers and only on editing", async () => {
+test("POST /api/note/[id]/presence: registers note:<id> only for connected callers and only on editing", async () => {
   const f = await seedUserOrgProject("presence-reg");
   const note = await createNote(makeAuthContext(f.userId), {
     projectId: f.projectId,
