@@ -196,6 +196,7 @@ const noteGateColumns = {
   slug: notes.slug,
   folder: notes.folder,
   visibility: notes.visibility,
+  feedMode: notes.feedMode,
   agentWritable: notes.agentWritable,
   locked: notes.locked,
   version: notes.version,
@@ -223,6 +224,7 @@ export type NoteAccessGate = Pick<
   | "slug"
   | "folder"
   | "visibility"
+  | "feedMode"
   | "agentWritable"
   | "locked"
   | "version"

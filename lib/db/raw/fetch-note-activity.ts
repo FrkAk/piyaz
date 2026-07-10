@@ -1,44 +1,39 @@
 import { sql, type SQL } from "drizzle-orm";
 import { type ReadConn } from "@/lib/db/raw";
-import {
-  noteExposureClause,
-  type ActivityCursor,
-} from "@/lib/db/raw/fetch-task-activity";
+import type { ActivityCursor } from "@/lib/db/raw/fetch-task-activity";
 
 /**
- * Hard cap on the `summary` text egressed per row. Mirrors the task-activity
- * path so the project feed egresses only the rendered prefix, never a
- * full free-form criterion or decision body embedded in a summary.
+ * Hard cap on the `summary` text egressed per row. Mirrors the task- and
+ * project-activity paths so the per-note history egresses only the rendered
+ * prefix.
  */
 const SUMMARY_MAX_CHARS = 160;
 
 /**
- * Build the keyset page SQL for a project's activity. Pages newest-first over
+ * Build the keyset page SQL for one note's activity. Pages newest-first over
  * `(created_at, id)` and hydrates display identity inline via the
- * `activity_actors_for_project_visible` / `oauth_client_name` SECURITY DEFINER
- * functions — the project-anchored twin of `activityPageSql`, no `service_role`.
- * A non-member sees an empty page because the `activity_events` RLS policy
- * hides the rows.
+ * `activity_actors_for_project_visible` / `oauth_client_name` SECURITY
+ * DEFINER functions — the note-anchored sibling of `activityPageSql`, no
+ * `service_role`. The project id feeding the identity function resolves from
+ * the RLS-scoped `notes` row inline, keeping the read one batch: an
+ * invisible note yields NULL (no identity rows), and the caller's gate probe
+ * 404-shapes the request regardless.
  *
  * `summary` is capped to {@link SUMMARY_MAX_CHARS}. `oauth_client_name` is
  * resolved once per distinct client id on the page (a STABLE function is not
- * memoized across rows). The optional `since` lower bound is AND'd with the
- * keyset clause.
+ * memoized across rows).
  *
- * @param projectId - Project whose events to read.
+ * @param noteId - Note whose events to read.
  * @param cur - Decoded keyset cursor, or null for the first page.
  * @param limit - Row cap (already includes the +1 look-ahead).
  * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
- * @param agentExposed - Restrict note-linked events to feed-enabled notes
- *   ({@link noteExposureClause}).
  * @returns Parameterized read-only SQL.
  */
-function projectActivityPageSql(
-  projectId: string,
+function noteActivityPageSql(
+  noteId: string,
   cur: ActivityCursor | null,
   limit: number,
   since: string | null,
-  agentExposed: boolean,
 ): SQL {
   const keyset = cur
     ? sql`AND (ae.created_at < ${cur.createdAt}::timestamptz
@@ -58,8 +53,7 @@ function projectActivityPageSql(
         substring(ae.summary FROM 1 FOR ${SUMMARY_MAX_CHARS}) AS summary,
         ae.target_ref, ae.metadata
       FROM public.activity_events ae
-      WHERE ae.project_id = ${projectId}::uuid
-      ${noteExposureClause(agentExposed)}
+      WHERE ae.note_id = ${noteId}::uuid
       ${sinceClause}
       ${keyset}
       ORDER BY ae.created_at DESC, ae.id DESC
@@ -83,34 +77,30 @@ function projectActivityPageSql(
       a.image AS actor_image,
       cn.name AS agent_name
     FROM page
-    LEFT JOIN public.activity_actors_for_project_visible(${projectId}::uuid) a
+    LEFT JOIN public.activity_actors_for_project_visible(
+      (SELECT project_id FROM public.notes WHERE id = ${noteId}::uuid)) a
       ON a.user_id = page.actor_user_id
     LEFT JOIN client_names cn ON cn.client_id = page.actor_client_id
     ORDER BY page.created_at DESC, page.id DESC`;
 }
 
 /**
- * Lazy read statement for one keyset page of a project's activity, for the
- * `withUserContextRead` batch. Project-anchored sibling of `taskActivityStmt`.
+ * Lazy read statement for one keyset page of a note's activity, for the
+ * `withUserContextRead` batch. Note-anchored sibling of `taskActivityStmt`.
  *
  * @param read - RLS-scoped read connection from `withUserContextRead`.
- * @param projectId - Project whose events to read.
+ * @param noteId - Note whose events to read.
  * @param cur - Decoded keyset cursor, or null for the first page.
  * @param limit - Row cap (already includes the +1 look-ahead).
  * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
- * @param agentExposed - Restrict note-linked events to feed-enabled notes
- *   ({@link noteExposureClause}).
  * @returns Lazy raw-SQL read statement.
  */
-export function projectActivityStmt(
+export function noteActivityStmt(
   read: ReadConn,
-  projectId: string,
+  noteId: string,
   cur: ActivityCursor | null,
   limit: number,
-  since: string | null,
-  agentExposed = false,
+  since: string | null = null,
 ) {
-  return read.execute(
-    projectActivityPageSql(projectId, cur, limit, since, agentExposed),
-  );
+  return read.execute(noteActivityPageSql(noteId, cur, limit, since));
 }
