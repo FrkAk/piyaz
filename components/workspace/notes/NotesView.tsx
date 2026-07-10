@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { CollapsibleRail } from "@/components/shared/CollapsibleRail";
 import { Drawer } from "@/components/shared/Drawer";
@@ -9,6 +10,12 @@ import {
   useNotesRailCollapse,
   useNotesSettingsCollapse,
 } from "@/hooks/useNotesCollapse";
+import {
+  type NoteGroupKey,
+  type NoteSortKey,
+  readNoteGroup,
+  readNoteSort,
+} from "@/lib/ui/note-order";
 import { EditorPane, type TaskSlimMap } from "./EditorPane";
 import { SettingsPane } from "./SettingsPane";
 import { TreePane } from "./TreePane";
@@ -62,6 +69,9 @@ export function NotesView({
   categories,
   projectTags,
 }: NotesViewProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const isLg = useMediaQuery("(min-width: 1024px)", true);
   const isXl = useMediaQuery("(min-width: 1280px)", true);
   const createNote = useCreateNote(projectId);
@@ -113,6 +123,41 @@ export function NotesView({
 
   const handleFocusedTitle = useCallback(() => setFocusTitle(null), []);
 
+  const sort = readNoteSort(searchParams.get("nsort"));
+  const group = readNoteGroup(searchParams.get("ngroup"));
+
+  const updateParam = useCallback(
+    (key: string, value: string | null) => {
+      const next = new URLSearchParams(searchParams.toString());
+      if (value === null || value === "") next.delete(key);
+      else next.set(key, value);
+      const nextQs = next.toString();
+      const currentQs = searchParams.toString();
+      // Skip when nothing changed — e.g. clicking the already-active option.
+      // Each `router.replace` triggers an RSC refetch of the project layout,
+      // so eliding no-op replaces avoids unnecessary server work.
+      if (nextQs === currentQs) return;
+      router.replace(nextQs ? `${pathname}?${nextQs}` : pathname, {
+        scroll: false,
+      });
+    },
+    [router, pathname, searchParams],
+  );
+
+  const handleSortChange = useCallback(
+    (next: NoteSortKey) => {
+      updateParam("nsort", next === "title" ? null : next);
+    },
+    [updateParam],
+  );
+
+  const handleGroupChange = useCallback(
+    (next: NoteGroupKey) => {
+      updateParam("ngroup", next === "folder" ? null : next);
+    },
+    [updateParam],
+  );
+
   const handleSelect = useCallback(
     (nextNoteId: string | null) => {
       onSelectNote(nextNoteId);
@@ -148,6 +193,10 @@ export function NotesView({
             onNewNote={(folder) => void createAndSelect(folder)}
             createPending={createNote.isPending}
             createError={createError}
+            sort={sort}
+            group={group}
+            onSortChange={handleSortChange}
+            onGroupChange={handleGroupChange}
             onCollapse={toggleRail}
           />
         </CollapsibleRail>
@@ -256,6 +305,10 @@ export function NotesView({
           onNewNote={(folder) => void createAndSelect(folder)}
           createPending={createNote.isPending}
           createError={createError}
+          sort={sort}
+          group={group}
+          onSortChange={handleSortChange}
+          onGroupChange={handleGroupChange}
           onClose={closeTree}
         />
       </TreeDrawer>

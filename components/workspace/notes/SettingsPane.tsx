@@ -35,6 +35,7 @@ import type {
   NotePatch,
 } from "@/lib/data/note";
 import type { FeedMode, Visibility } from "@/lib/types";
+import { NOTE_TYPE_ORDER } from "@/lib/ui/note-order";
 import type { TaskSlimMap } from "./EditorPane";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import {
@@ -49,9 +50,6 @@ import {
   useDeclineShareRequest,
   useUpdateNote,
 } from "./useNoteMutations";
-
-/** The note types offered in the Type group, in display order. */
-const TYPE_ORDER = ["reference", "guidance", "knowledge"] as const;
 
 /** Feed mode buttons in display order, with their labels. */
 const FEED_MODES: { id: FeedMode; label: string }[] = [
@@ -336,7 +334,7 @@ export function SettingsPane({
             className="mb-3 grid grid-cols-3 gap-1.5"
             style={{ opacity: dimmed("type") }}
           >
-            {TYPE_ORDER.map((t) => {
+            {NOTE_TYPE_ORDER.map((t) => {
               const m = NOTE_TYPE_META[t];
               const active = note.type === t;
               return (
