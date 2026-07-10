@@ -27,19 +27,49 @@ function brandString(name: string): string | undefined {
 }
 
 /**
- * Hostname of `appUrl`, falling back to `"localhost"` so a malformed
- * `BETTER_AUTH_URL` cannot crash address resolution.
+ * Hostname of `appUrl`, or `undefined` when the URL is unparsable or hostless,
+ * so `appUrl` and `appName` degrade from the same validity check and a
+ * malformed `BETTER_AUTH_URL` cannot crash address resolution.
  */
-function hostOf(appUrl: string): string {
+function hostOf(appUrl: string): string | undefined {
   try {
-    return new URL(appUrl).hostname;
+    const host = new URL(appUrl).hostname;
+    return host === "" ? undefined : host;
   } catch {
-    return "localhost";
+    return undefined;
   }
 }
 
 /**
- * Parse `BRAND_FOOTER_LINKS` as a JSON array of `{ label, url }`. Returns
+ * Return `url` only when it parses as `http:` or `https:`, else `undefined`,
+ * so a non-web value never lands in an email `src`/`href`.
+ */
+function httpUrl(url: string | undefined): string | undefined {
+  if (url === undefined) return undefined;
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "http:" || protocol === "https:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Return `color` only when it is a CSS hex color (`#` plus 3, 4, 6, or 8 hex
+ * digits), else `undefined`, so a garbage `BRAND_COLOR` degrades to the
+ * neutral render instead of broken inline styles.
+ */
+function hexColor(color: string | undefined): string | undefined {
+  if (color === undefined) return undefined;
+  return /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color)
+    ? color
+    : undefined;
+}
+
+/**
+ * Parse `BRAND_FOOTER_LINKS` as a JSON array of `{ label, url }`. Entries are
+ * remapped to trimmed `label`/`url` only (unknown JSON fields never reach the
+ * `BrandConfig`) and dropped when blank or when `url` is not http(s). Returns
  * `undefined` for unset, malformed, non-array, or empty-after-filtering input;
  * never throws, so a bad value yields a neutral footer instead of a crash.
  */
@@ -52,36 +82,45 @@ function parseFooterLinks(raw: string | undefined): BrandConfig["footerLinks"] {
     return undefined;
   }
   if (!Array.isArray(parsed)) return undefined;
-  const links = parsed.filter(
-    (entry): entry is { label: string; url: string } =>
-      typeof entry === "object" &&
-      entry !== null &&
-      typeof (entry as { label?: unknown }).label === "string" &&
-      (entry as { label: string }).label.trim() !== "" &&
-      typeof (entry as { url?: unknown }).url === "string" &&
-      (entry as { url: string }).url.trim() !== "",
-  );
+  const links = parsed
+    .filter(
+      (entry): entry is { label: string; url: string } =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { label?: unknown }).label === "string" &&
+        (entry as { label: string }).label.trim() !== "" &&
+        typeof (entry as { url?: unknown }).url === "string" &&
+        (entry as { url: string }).url.trim() !== "",
+    )
+    .map((entry) => ({ label: entry.label.trim(), url: entry.url.trim() }))
+    .filter((entry) => httpUrl(entry.url) !== undefined);
   return links.length > 0 ? links : undefined;
 }
 
 /**
- * Resolve the deployment's `BrandConfig` from env. `appName` comes from
- * `APP_NAME`, else the `appUrl` host (never `Piyaz`). `appUrl` comes from
- * `BETTER_AUTH_URL`, else `http://localhost:3000`. The presentation fields
+ * Resolve the deployment's `BrandConfig` from env. `appUrl` comes from
+ * `BETTER_AUTH_URL`, else `http://localhost:3000` when unset or unparsable, so
+ * a malformed value never reaches template hrefs. `appName` comes from
+ * `APP_NAME`, else the `appUrl` host (never `Piyaz`). The presentation fields
  * (`logoUrl` from `BRAND_LOGO_URL`, `brandColor` from `BRAND_COLOR`,
- * `footerLinks` from `BRAND_FOOTER_LINKS`, `supportEmail` from `EMAIL_SUPPORT`)
- * default to `undefined` when their var is unset, keeping self-host neutral.
+ * `footerLinks` from `BRAND_FOOTER_LINKS`, `supportEmail` from
+ * `EMAIL_REPLY_TO`) default to `undefined` when their var is unset or
+ * malformed, keeping self-host neutral.
  */
 export function resolveBrandConfig(): BrandConfig {
-  const appUrl = brandString("BETTER_AUTH_URL") ?? "http://localhost:3000";
-  const appName = brandString("APP_NAME") ?? hostOf(appUrl);
+  const configuredUrl = brandString("BETTER_AUTH_URL");
+  const appUrl =
+    configuredUrl !== undefined && hostOf(configuredUrl) !== undefined
+      ? configuredUrl
+      : "http://localhost:3000";
+  const appName = brandString("APP_NAME") ?? hostOf(appUrl) ?? "localhost";
   return {
     appName,
     appUrl,
-    logoUrl: brandString("BRAND_LOGO_URL"),
-    brandColor: brandString("BRAND_COLOR"),
+    logoUrl: httpUrl(brandString("BRAND_LOGO_URL")),
+    brandColor: hexColor(brandString("BRAND_COLOR")),
     footerLinks: parseFooterLinks(brandString("BRAND_FOOTER_LINKS")),
-    supportEmail: brandString("EMAIL_SUPPORT"),
+    supportEmail: brandString("EMAIL_REPLY_TO"),
   };
 }
 
@@ -101,7 +140,7 @@ export type EmailPurpose = "transactional" | "personal" | "informational";
  * `EMAIL_FROM`, then to `noreply@<appUrl host>` so the resolver is total and
  * non-throwing even fully unconfigured, never emitting `@piyaz.ai`.
  * - `transactional`: `EMAIL_FROM_NOREPLY`, no `replyTo`.
- * - `personal`: `EMAIL_FROM_SUPPORT`, `replyTo` = `EMAIL_SUPPORT` else the
+ * - `personal`: `EMAIL_FROM_SUPPORT`, `replyTo` = `EMAIL_REPLY_TO` else the
  *   resolved `from` (a `replyTo` is always present).
  * - `informational`: `EMAIL_FROM_INFO`, no `replyTo`.
  */
@@ -111,7 +150,8 @@ export function senderFor(purpose: EmailPurpose): {
 } {
   const brand = resolveBrandConfig();
   const fallbackFrom =
-    brandString("EMAIL_FROM") ?? `noreply@${hostOf(brand.appUrl)}`;
+    brandString("EMAIL_FROM") ??
+    `noreply@${hostOf(brand.appUrl) ?? "localhost"}`;
 
   switch (purpose) {
     case "transactional":
