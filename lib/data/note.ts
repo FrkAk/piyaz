@@ -352,8 +352,8 @@ export type TaskNoteBacklink = NoteTreeRow & {
   sequenceNumber: number;
 };
 
-/** Full note row minus the server-side `search_tsv` column. */
-export type NoteFull = Omit<Note, "searchTsv">;
+/** Full note row minus the server-side `search_tsv` and `shared_since` columns (RLS fence state; no client reads it). */
+export type NoteFull = Omit<Note, "searchTsv" | "sharedSince">;
 
 /** Single-note read: the full row plus its derived link context. */
 export type NoteFullResult = {
@@ -2044,6 +2044,7 @@ async function createNoteInTx(
       folder,
       type: input.type ?? "reference",
       visibility,
+      ...(visibility === "team" ? { sharedSince: sql`now()` } : {}),
       summary: input.summary ?? "",
       tags: input.tags ?? [],
       category: input.category ?? null,
@@ -2609,6 +2610,10 @@ async function updateNoteCore(
     }
     if (applied.visibility === "team" && current.visibility !== "team") {
       changes.shareRequestedBy = null;
+      changes.sharedSince = sql`now()`;
+    }
+    if (applied.visibility === "private" && current.visibility !== "private") {
+      changes.sharedSince = null;
     }
 
     const nextVisibility = applied.visibility ?? current.visibility;
@@ -2802,9 +2807,11 @@ export async function moveNote(
  * a new leaf. The UPDATE runs under the caller's RLS scope, so
  * teammates' private notes in the subtree are untouched and keep their
  * old paths; a definer-privileged bulk write would let members rewrite
- * paths of notes they cannot see. The activity event and project
- * dispatch fire only when a team-visible note actually moved; a
- * `note-folders` dispatch fires when explicit marker rows were rewritten.
+ * paths of notes they cannot see. Each moved note records its own
+ * note-keyed `note_moved` event (read-time gating scopes who sees it,
+ * matching {@link moveNote}); the project dispatch fires only when a
+ * team-visible note actually moved, and a `note-folders` dispatch fires
+ * when explicit marker rows were rewritten.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -2907,7 +2914,13 @@ export async function moveFolder(
         updatedAt: new Date(),
       })
       .where(subtreeFilter)
-      .returning({ id: notes.id, visibility: notes.visibility });
+      .returning({
+        id: notes.id,
+        slug: notes.slug,
+        title: notes.title,
+        folder: notes.folder,
+        visibility: notes.visibility,
+      });
     const explicitRows = await tx
       .delete(noteFolders)
       .where(explicitSubtreeFilter)
@@ -2925,17 +2938,23 @@ export async function moveFolder(
         .onConflictDoNothing();
     }
     const teamMoved = rows.some((row) => row.visibility === "team");
-    if (teamMoved) {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
+    if (rows.length > 0) {
+      await insertActivityEvents(
+        tx,
+        ctx.actor,
+        rows.map((row) => ({
           projectId,
           taskId: null,
-          type: "note_moved",
-          targetRef: srcPath,
-          summary: `moved folder "${srcPath}" to "${dest}"`,
-          metadata: { src: srcPath, dest, count: rows.length },
-        },
-      ]);
+          noteId: row.id,
+          type: "note_moved" as const,
+          targetRef: row.slug,
+          summary: `moved note "${summaryTitle(row.title)}"`,
+          metadata: {
+            from: srcPath + row.folder.slice(dest.length),
+            to: row.folder,
+          },
+        })),
+      );
     }
     return {
       movedCount: rows.length,
@@ -3375,7 +3394,9 @@ export async function declineShareRequest(
 
 /**
  * Shared visibility write: updates the column, clears the share-request
- * marker when flipping to `team`, and records the activity event.
+ * marker and stamps `shared_since` (DB `now()`) when flipping to `team`,
+ * clears `shared_since` when flipping to `private`, and records the
+ * activity event.
  *
  * @param tx - Active RLS transaction handle.
  * @param ctx - Resolved auth context.
@@ -3393,7 +3414,9 @@ async function applyVisibilityTx(
     .update(notes)
     .set({
       visibility,
-      ...(visibility === "team" ? { shareRequestedBy: null } : {}),
+      ...(visibility === "team"
+        ? { shareRequestedBy: null, sharedSince: sql`now()` }
+        : { sharedSince: null }),
       updatedBy: ctx.userId,
       updatedAt: new Date(),
     })

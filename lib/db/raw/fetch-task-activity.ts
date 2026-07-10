@@ -45,12 +45,16 @@ const SUMMARY_MAX_CHARS = 160;
 
 /**
  * Feed-level exposure filter for note-linked events, shared by the task and
- * project page fetchers. `note_id IS NULL` short-circuits task/edge/legacy
- * rows; note-event rows require a team-visible note (one `notes_pkey` EXISTS
- * probe that also fails closed through the notes RLS), and for MCP actors
- * additionally a feed-enabled note (the PYZ-250 agent-exposure rule). The
- * author's own private-note events surface only on the per-note read path,
- * never in a feed, so feeds cannot become an existence oracle.
+ * project page fetchers. `note_id IS NULL` short-circuits task/edge rows;
+ * note-event rows require a currently shared note (team-visible with
+ * `shared_since` set) and an event inside the current share window
+ * (`created_at >= shared_since`), all via one `notes_pkey` EXISTS probe
+ * that also fails closed through the notes RLS. A trashed note keeps only
+ * its `note_deleted` event in feeds until restored. For MCP actors the
+ * probe additionally requires a feed-enabled note (the PYZ-250
+ * agent-exposure rule). The author's own private-note events surface only
+ * on the per-note read path, never in a feed, so feeds cannot become an
+ * existence oracle.
  *
  * @param agentExposed - True for MCP actors: additionally require
  *   `feed_mode <> 'none'`.
@@ -60,7 +64,11 @@ export function noteExposureClause(agentExposed: boolean): SQL {
   const feedArm = agentExposed ? sql`AND n.feed_mode <> 'none'` : sql``;
   return sql`AND (ae.note_id IS NULL OR EXISTS (
         SELECT 1 FROM public.notes n
-        WHERE n.id = ae.note_id AND n.visibility = 'team' ${feedArm}))`;
+        WHERE n.id = ae.note_id AND n.visibility = 'team'
+          AND n.shared_since IS NOT NULL
+          AND ae.created_at >= n.shared_since
+          AND (n.deleted_at IS NULL OR ae.type = 'note_deleted')
+          ${feedArm}))`;
 }
 
 /**
