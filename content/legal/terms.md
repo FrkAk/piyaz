@@ -60,20 +60,27 @@ You agree not to:
 - **Our software stays ours.** We (and our licensors) own all rights in the Service and its software, design, and trademarks, except for rights expressly granted under the separate open-source license in `LICENSE` / `LICENSING.md`. Nothing here transfers ownership of the software to you beyond that license.
 - **Feedback.** If you send us feedback or suggestions, you grant us a perpetual, royalty-free license to use them to improve the Service, with no obligation to you.
 
-## 7. Confidentiality of non-public features
+## 7. Copyright and content complaints
+
+If you believe content on the Service infringes your copyright or other rights, email
+**legal@piyaz.ai** with enough detail to identify the content and your rights in it. We
+will review it and, where appropriate, remove the content, and we may terminate the
+accounts of repeat infringers.
+
+## 8. Confidentiality of non-public features
 
 Some beta features may be non-public. If we identify a feature as confidential, you agree
 not to disclose non-public information about it (such as screenshots of unreleased
 functionality) until it is publicly released.
 
-## 8. Suspension and termination
+## 9. Suspension and termination
 
 You may stop using the Service and delete your account at any time. We may suspend or
 terminate your access if you breach these Terms, if required by law, or if we discontinue
 the Service. On termination, your right to use the Service ends; provisions that by their
-nature should survive (e.g., IP, liability, governing law) survive.
+nature should survive (e.g., intellectual property, disclaimer, liability, and indemnity) survive.
 
-## 9. Disclaimer of warranties
+## 10. Disclaimer of warranties
 
 To the fullest extent permitted by applicable law, the Service is provided **"AS IS"** and
 **"AS AVAILABLE"** without warranties of any kind, whether express or implied, including
@@ -81,9 +88,9 @@ implied warranties of merchantability, fitness for a particular purpose, and
 non-infringement. We do not warrant that the Service will be uninterrupted, timely,
 secure, or error-free, or that data will not be lost. **This disclaimer does not exclude
 or limit any warranty or liability that cannot be excluded under mandatory law (see
-Section 10).**
+Section 11).**
 
-## 10. Limitation of liability
+## 11. Limitation of liability
 
 To the **maximum extent permitted by applicable law**, and reflecting that the Service
 is provided **free of charge during the beta**:
@@ -92,35 +99,47 @@ is provided **free of charge during the beta**:
 - For damages not excluded above, our **total aggregate liability** is limited to the greater of the amount you paid us for the Service in the twelve months before the claim (during the free beta: zero) and **EUR 100**.
 - **Nothing in these Terms excludes or limits liability that cannot be excluded or limited under applicable law**, including (where applicable law so provides) liability for intent or gross negligence, for injury to life, body, or health, under product-liability statutes, or for breach of obligations essential to the contract, where liability for the latter may be capped to typical and foreseeable damage.
 
-## 11. Indemnity
+## 12. Indemnity
 
 To the extent permitted by mandatory law, you will hold us harmless from third-party
 claims arising out of your unlawful use of the Service or your breach of these Terms.
 This does not apply where the claim results from our intent or gross negligence.
 
-## 12. Data export and switching
+## 13. Data export and switching
 
 You can export your account data in a machine-readable format (see the
 [Privacy Policy](/privacy)), and your project content remains accessible to you
 through the Service so you can take it with you at any time. We do not impose
 switching barriers or charge export fees during the beta.
 
-## 13. Governing law and jurisdiction
+## 14. Governing law and jurisdiction
 
 Because the operating entity has not yet been established, these Terms do not yet
 designate a governing law or forum. Mandatory consumer-protection rules of your
 country of residence apply regardless of anything in these Terms. A future version of
 these Terms will designate governing law and jurisdiction.
 
-## 14. Changes to these Terms
+## 15. General terms
 
-We may update these Terms. The version identifier at the top reflects the current
+- **Entire agreement.** These Terms, together with the [Privacy Policy](/privacy) and, where it applies, the [Data Processing Agreement](/dpa), are the entire agreement between you and us about the Service and replace any prior agreements on that subject.
+- **Severability.** If any provision of these Terms is held invalid or unenforceable, that provision is limited or removed to the minimum extent necessary and the rest stays in full force.
+- **No waiver.** Our failure to enforce a provision is not a waiver of our right to enforce it later.
+- **Assignment.** You may not assign or transfer these Terms without our prior written consent. We may assign these Terms to the operating entity once it is formed, or in connection with a merger, acquisition, or sale of assets; we will give you notice if we do. Any other attempted assignment is void.
+- **Third-party services.** The Service can connect to third-party tools you choose (such as coding-agent clients). We are not responsible for those services, and your use of them is governed by their own terms.
+- **Export and sanctions.** You confirm you are not located in, and will not use the Service from, a country or region subject to comprehensive sanctions, and that you are not on any applicable sanctions or denied-party list. You agree not to use the Service in violation of applicable export-control or sanctions laws.
+- **Force majeure.** We are not liable for any delay or failure to provide the Service caused by events beyond our reasonable control, including outages of our infrastructure providers.
+- **Notices.** We may send you notices about the Service by email to your account address or in-app, and you agree to receive them electronically. Legal notices to us must go to **legal@piyaz.ai**.
+- **Survival.** Provisions that by their nature should survive termination do, including Sections 6 (content and IP), 10 (disclaimer), 11 (liability), and 12 (indemnity).
+
+## 16. Changes to these Terms
+
+We may update these Terms. The date at the top reflects the current
 version. We will notify you of material changes in-app or by email. When the beta ends,
 when paid plans are introduced, or for any other material change, we will ask you to
 **actively re-accept** the new Terms before you continue using the Service; silence is
 not treated as acceptance.
 
-## 15. Contact
+## 17. Contact
 
 Questions about these Terms: **legal@piyaz.ai**. Operator details: see the
 [Legal Notice](/impressum).

@@ -11,11 +11,11 @@ deployment: you are the data controller for your own instance.
 
 ## Current sub-processors
 
-| Sub-processor | Processing purpose | Data region | Transfer mechanism |
-| --- | --- | --- | --- |
-| **Neon, LLC** (a Databricks company, US) | Managed PostgreSQL database. | AWS `eu-central-1` (Frankfurt, Germany) | EU SCCs; EU-US Data Privacy Framework |
-| **Amazon Web Services (AWS)** (US) | Underlying cloud infrastructure for the Neon database. | Frankfurt region (EU) | EU SCCs; EU-US Data Privacy Framework |
-| **Cloudflare, Inc.** (US) | Application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging. | Global edge network | EU SCCs; EU-US Data Privacy Framework |
+| Sub-processor | Processing purpose | Data categories | Data region | Transfer mechanism |
+| --- | --- | --- | --- | --- |
+| **Neon, LLC** (a Databricks company, US) | Managed PostgreSQL database. | All service data at rest: account, workspace content, technical and session data, acceptance records. | AWS `eu-central-1` (Frankfurt, Germany) | EU SCCs; EU-US Data Privacy Framework |
+| **Amazon Web Services (AWS)** (US) | Underlying cloud infrastructure for the Neon database. | The same data at rest, as Neon's hosting provider. | Frankfurt region (EU) | EU SCCs; EU-US Data Privacy Framework |
+| **Cloudflare, Inc.** (US) | Application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging. | Technical and session data; all service data transiently in processing. | Global edge network | EU SCCs; EU-US Data Privacy Framework |
 
 A transactional email provider is not yet engaged. Before one begins processing any
 personal data (such as recipient email addresses), it will be added to this list

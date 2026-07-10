@@ -15,36 +15,27 @@ controller and the processor for your own instance. A revised version naming the
 operating entity as the contracting processor will be offered once that entity is
 established.
 
-## Subject matter and duration
+## Definitions
 
-- **Subject matter:** hosting and processing of the personal data the controller's
-  team places into its Piyaz workspaces (projects, tasks, notes, decisions,
-  execution records) and the account data of its team members.
-- **Duration:** for the term of the underlying service agreement. On account or
-  team deletion, data is removed within 30 days and backup copies are purged
-  within 90 days, as described in the [Privacy Policy](/privacy).
-- **Nature and purpose:** storage, retrieval, display, search, and transmission of
-  workspace content solely to provide the project-management service to the
-  controller; the processor does not use the data for its own purposes.
-- **Categories of data subjects:** the controller's team members, invitees, and
-  any individuals referenced in workspace content the controller chooses to store.
-- **Categories of personal data:** account and contact data (name, email address),
-  technical and session data, and workspace content that may contain personal data.
+"Controller", "processor", "personal data", "processing", "data subject",
+"sub-processor", and "personal data breach" have the meanings given in the GDPR.
+"GDPR" means Regulation (EU) 2016/679. The subject matter, duration, nature and
+purpose of processing, and the categories of data subjects and personal data are
+set out in **Annex I**.
 
 ## Processor obligations
 
 The processor processes personal data only on the controller's documented
 instructions (the service agreement, these terms, and the controller's use of the
 service settings), ensures personnel are bound by confidentiality, and implements
-the technical and organizational measures described in the
-[Privacy Policy](/privacy) (section "How we protect your data"). Taking into
+the technical and organizational measures in **Annex II**. Taking into
 account the nature of processing and the information available to it, the
 processor assists the controller with data-subject requests and with the
 controller's obligations under **Articles 32 to 36 GDPR** (security,
 personal-data-breach notification, data protection impact assessments, and prior
 consultation). The processor deletes personal data at the end of processing
-within the retention windows above (export is available to the controller at any
-time before deletion).
+within the retention windows in **Annex I** (export is available to the controller
+at any time before deletion).
 
 The processor immediately informs the controller if, in its opinion, an
 instruction from the controller infringes the GDPR or other applicable
@@ -90,3 +81,32 @@ compliance with Article 28. The controller may request an audit in writing to
 **privacy@piyaz.ai** no more than once per year; audits are conducted with
 reasonable notice, during business hours, without disrupting the service, and
 subject to confidentiality.
+
+## Liability and precedence
+
+This DPA forms part of, and is subject to, the [Beta Terms of Service](/terms),
+including their limitation of liability, which applies to the parties' obligations
+under this DPA. If this DPA conflicts with the Beta Terms of Service on the
+processing of personal data, this DPA prevails. Where the Standard Contractual
+Clauses referenced above apply, they prevail over this DPA to the extent of any
+conflict.
+
+## Annex I: Details of processing
+
+| Item | Detail |
+| --- | --- |
+| Subject matter | Hosting and processing of the personal data the controller's team places into its Piyaz workspaces (projects, tasks, notes, decisions, execution records), and the account data of its team members. |
+| Duration | For the term of the underlying service agreement. On account or team deletion, data is removed within 30 days and backup copies are purged within 90 days, as described in the [Privacy Policy](/privacy). |
+| Nature and purpose | Storage, retrieval, display, search, and transmission of workspace content solely to provide the project-management service to the controller. The processor does not use the data for its own purposes. |
+| Categories of data subjects | The controller's team members, invitees, and any individuals referenced in workspace content the controller chooses to store. |
+| Categories of personal data | Account and contact data (name, email address), technical and session data, and workspace content that may contain personal data. |
+| Special categories | None. The controller must not place special-category data (Art. 9 GDPR) into workspace content. |
+| Frequency of transfer | On a continuous basis for the term of the service agreement. |
+
+## Annex II: Technical and organizational measures
+
+The processor implements the measures described in the [Privacy Policy](/privacy),
+section "How we protect your data": encryption in transit (TLS), provider
+encryption at rest, row-level security for tenant isolation, salted password
+hashing, short-lived and revocable sessions, restricted production access, and
+rate-limiting of API surfaces.

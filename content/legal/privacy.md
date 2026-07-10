@@ -47,6 +47,7 @@ We do **not** collect special-category data (Art. 9 GDPR) and ask that you do no
 We collect personal data when you:
 
 - register for and use an account;
+- sign in through a third-party provider you choose (if offered), in which case we receive your basic profile from that provider;
 - create teams, invite collaborators, and produce workspace content;
 - connect a coding agent or other client over MCP/OAuth;
 - interact with the service, which automatically records technical and session data needed to operate and secure it.
@@ -82,7 +83,7 @@ reference.
 
 ### International transfers
 
-Two things are true at once, and we state both plainly:
+Where your data is stored and where it is processed are different, and both matter:
 
 - **Data at rest** lives in the EU: the database runs in AWS `eu-central-1`
   (Frankfurt, Germany).
@@ -96,6 +97,15 @@ operational purposes. All such transfers are governed by each sub-processor's Da
 Processing Agreement incorporating the **EU Standard Contractual Clauses (SCCs)**,
 with the sub-processor's certification under the **EU-US Data Privacy Framework** as
 an additional safeguard.
+
+## When we share or disclose your data
+
+We do not sell your personal data and we do not share it for advertising. We disclose
+personal data only:
+
+- **to the sub-processors above**, who process it on our behalf under contract;
+- **to comply with the law** or respond to valid legal requests, and to protect the rights, safety, and security of our users, the public, or the Service;
+- **in a business transfer**: if the Service or its assets move to the operating entity once it is formed, or as part of a merger, acquisition, or reorganization, your data may transfer with it. We will notify you, and the receiving party will remain bound by this policy or one at least as protective.
 
 ## How we protect your data
 
@@ -168,7 +178,7 @@ practices of other sites.
 
 ## Changes to this policy
 
-We keep this policy under review and may update it. The version identifier at the top
+We keep this policy under review and may update it. The date at the top
 reflects the current version. We will notify you of material changes in-app or by
 email, and where required we will ask you to re-accept.
 
