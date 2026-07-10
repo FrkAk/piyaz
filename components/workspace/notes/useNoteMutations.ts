@@ -132,6 +132,51 @@ function pickFields<T extends object>(
   return prev as Partial<T>;
 }
 
+/** Client cache shape of the revisions query (`GET /api/note/[id]/revisions`), plus mutation-merged rows whose `createdAt` is still a `Date`. */
+export type NoteRevisionsCache = {
+  currentVersion: number;
+  revisions: { version: number; title: string; createdAt: string | Date }[];
+};
+
+/**
+ * Fold a body-changing write's new revision into the cached revisions
+ * query, so the actor's own autosaves and restores never trigger a
+ * revisions refetch (the realtime bridge skips invalidation when the
+ * cached `currentVersion` already covers the event's `version`).
+ *
+ * @param qc - QueryClient.
+ * @param projectId - Owning project id.
+ * @param noteId - Note id.
+ * @param summary - Success response summary carrying `version`, `title`,
+ *   and `updatedAt` (the revision snapshot's own timestamp).
+ */
+function mergeRevisionIntoCache(
+  qc: QueryClient,
+  projectId: string,
+  noteId: string,
+  summary: NoteSummary,
+): void {
+  qc.setQueryData<NoteRevisionsCache>(
+    noteKeys.revisions(projectId, noteId),
+    (data) => {
+      if (data === undefined || summary.version <= data.currentVersion) {
+        return data;
+      }
+      return {
+        currentVersion: summary.version,
+        revisions: [
+          {
+            version: summary.version,
+            title: summary.title,
+            createdAt: summary.updatedAt,
+          },
+          ...data.revisions,
+        ],
+      };
+    },
+  );
+}
+
 /**
  * Shared optimistic core for note writes: apply the patch to the detail
  * and tree caches immediately, serialize the server call through the
@@ -220,6 +265,7 @@ export async function runOptimisticNoteWrite(
           updatedAt: result.data.updatedAt,
         }),
       );
+      mergeRevisionIntoCache(qc, projectId, noteId, result.data);
       if (result.data.links !== undefined) {
         qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(projectId) });
       }
