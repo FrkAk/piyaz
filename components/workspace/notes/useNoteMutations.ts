@@ -38,10 +38,13 @@ import {
   type NotePendingPatch,
 } from "@/components/workspace/notes/note-conflict";
 import {
+  beginNoteEditSession,
   cachedCasToken,
   casToken,
   clearNoteDirty,
+  clearNoteDirtyUnlessEditing,
   clearNoteTrashed,
+  endNoteEditSession,
   enqueueNoteWrite,
   isNoteTrashed,
   markNoteDirty,
@@ -721,18 +724,22 @@ export type NoteAutosaveError = {
  * so the next commit re-buffers it. Callers must gate `commit` on
  * `isPlaceholderData` from {@link useNoteDetail}: a placeholder's empty
  * body must never be autosaved. The dirty mark clears only on a confirmed
- * save with an empty buffer or an idle `endEditSession`. Notes marked
+ * save with an empty buffer outside an open edit session, or on an idle
+ * `endEditSession`. Notes marked
  * trashed (a confirmed delete whose restore has not yet succeeded) are
  * excluded on both ends: `commit` drops the edit before touching the
  * buffer or the removed detail entry, and the flush discards a buffered
  * edit instead of sending a doomed write.
  *
- * Edit sessions: `beginEditSession` marks the note dirty for the whole
- * open-textarea session so a mid-edit remote event never refetches the
- * detail (a refetch would refresh the CAS token and let the eventual
- * commit silently clobber the remote change); `endEditSession` releases
- * the gate only when nothing is buffered, no flush is in flight for the
- * note, and no conflict is live.
+ * Edit sessions: `beginEditSession` records an open session (focused
+ * title input or open body textarea) and marks the note dirty, so a
+ * mid-edit remote event never refetches the detail (a refetch would
+ * refresh the CAS token and let the eventual commit silently clobber the
+ * remote change). The session is recorded module-level so a save
+ * confirmed mid-session releases nothing: the flush clears the dirty
+ * mark only outside an open session. `endEditSession` releases the gate
+ * only when nothing is buffered, no flush is in flight for the note, and
+ * no conflict is live; unmount ends any dangling session the same way.
  *
  * @param projectId - Owning project id.
  * @param noteId - Note being edited.
@@ -835,7 +842,7 @@ export function useNoteAutosave(projectId: string, noteId: string) {
             continue;
           }
           transportFailuresRef.current = 0;
-          if (!buffers.has(target)) clearNoteDirty(target);
+          if (!buffers.has(target)) clearNoteDirtyUnlessEditing(target);
           if (conflictRef.current?.noteId === target) setConflict(null);
           setSaveErrorState((e) => (e?.noteId === target ? null : e));
         } finally {
@@ -893,18 +900,13 @@ export function useNoteAutosave(projectId: string, noteId: string) {
     [noteId, projectId, qc],
   );
 
-  useEffect(() => {
-    return () => {
-      void flushRef.current();
-    };
-  }, [noteId]);
-
   const beginEditSession = useCallback(() => {
     if (isNoteTrashed(noteId)) return;
-    markNoteDirty(noteId);
+    beginNoteEditSession(noteId);
   }, [noteId]);
 
   const endEditSession = useCallback(() => {
+    endNoteEditSession(noteId);
     if (
       buffersRef.current.has(noteId) ||
       inFlightNoteRef.current === noteId ||
@@ -914,6 +916,13 @@ export function useNoteAutosave(projectId: string, noteId: string) {
     }
     clearNoteDirty(noteId);
   }, [noteId]);
+
+  useEffect(() => {
+    return () => {
+      endEditSession();
+      void flushRef.current();
+    };
+  }, [endEditSession]);
 
   const resolveConflictDrop = useCallback(() => {
     if (conflictRef.current?.noteId !== noteId) return;

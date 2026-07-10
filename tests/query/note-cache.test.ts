@@ -7,10 +7,13 @@ import type {
 } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
 import {
+  beginNoteEditSession,
   cachedCasToken,
   clearNoteDirty,
+  clearNoteDirtyUnlessEditing,
   clearNoteTrashed,
   clearNoteTrashedIfRestoredRemotely,
+  endNoteEditSession,
   hasUnsavedNoteEdits,
   isNoteTrashed,
   markNoteDirty,
@@ -365,6 +368,31 @@ describe("dirty note registry", () => {
     expect(hasUnsavedNoteEdits("d2")).toBe(false);
     clearNoteDirty("d1");
     expect(hasUnsavedNoteEdits("d1")).toBe(false);
+  });
+});
+
+describe("note edit sessions", () => {
+  test("an open session marks dirty and holds the gate across a save release", () => {
+    beginNoteEditSession("s1");
+    expect(hasUnsavedNoteEdits("s1")).toBe(true);
+    clearNoteDirtyUnlessEditing("s1");
+    expect(hasUnsavedNoteEdits("s1")).toBe(true);
+    endNoteEditSession("s1");
+    clearNoteDirtyUnlessEditing("s1");
+    expect(hasUnsavedNoteEdits("s1")).toBe(false);
+  });
+
+  test("clearNoteDirtyUnlessEditing releases with no open session", () => {
+    markNoteDirty("s2");
+    clearNoteDirtyUnlessEditing("s2");
+    expect(hasUnsavedNoteEdits("s2")).toBe(false);
+  });
+
+  test("ending a session leaves the dirty mark for the caller to release", () => {
+    beginNoteEditSession("s3");
+    endNoteEditSession("s3");
+    expect(hasUnsavedNoteEdits("s3")).toBe(true);
+    clearNoteDirty("s3");
   });
 });
 

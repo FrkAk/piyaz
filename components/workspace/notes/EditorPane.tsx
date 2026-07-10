@@ -359,10 +359,14 @@ function EditorBody({
           setTitle(e.target.value);
           setDirty(true);
         }}
-        onFocus={() => setFocused(true)}
+        onFocus={() => {
+          setFocused(true);
+          if (!note.locked) autosave.beginEditSession();
+        }}
         onBlur={() => {
           setFocused(false);
           commitRef.current();
+          autosave.endEditSession();
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") commitRef.current();

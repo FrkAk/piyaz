@@ -4,8 +4,11 @@ import { applyRealtimeEvent } from "@/components/providers/RealtimeBridge";
 import type { NoteTreeRow } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
 import {
+  beginNoteEditSession,
   clearNoteDirty,
+  clearNoteDirtyUnlessEditing,
   clearNoteTrashed,
+  endNoteEditSession,
   enqueueNoteWrite,
   hasUnsavedNoteEdits,
   isNoteTrashed,
@@ -99,6 +102,7 @@ function noteEvent(updatedAt?: Date): string {
 }
 
 afterEach(() => {
+  endNoteEditSession(NOTE);
   clearNoteDirty(NOTE);
   clearNoteTrashed(NOTE);
   _resetPresenceForTests();
@@ -192,6 +196,21 @@ describe("applyRealtimeEvent note case", () => {
     markNoteTrashed(NOTE, when);
     await applyRealtimeEvent(qc, noteEvent());
     expect(isNoteTrashed(NOTE)).toBe(true);
+  });
+
+  test("a save release during an open edit session keeps suppressing the detail refetch", async () => {
+    const qc = seededClient(when);
+    const newer = new Date("2026-07-01T11:00:00.000Z");
+
+    beginNoteEditSession(NOTE);
+    clearNoteDirtyUnlessEditing(NOTE);
+    await applyRealtimeEvent(qc, noteEvent(newer));
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+
+    endNoteEditSession(NOTE);
+    clearNoteDirtyUnlessEditing(NOTE);
+    await applyRealtimeEvent(qc, noteEvent(newer));
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(true);
   });
 
   test("a note-presence event mutates the store and issues zero invalidations", async () => {

@@ -86,6 +86,47 @@ export function hasUnsavedNoteEdits(noteId: string): boolean {
 }
 
 /**
+ * Notes with an open editor session (focused title input or open body
+ * textarea). A session holds the dirty gate for its whole lifetime:
+ * {@link clearNoteDirtyUnlessEditing} skips the release while the session
+ * is open, so a mid-session save can never let a realtime event refetch
+ * the detail, refresh the CAS baseline under the editor, and turn the
+ * session's eventual commit into a silent overwrite of a remote change.
+ * Focus exclusivity keeps the title and body sessions from overlapping
+ * for the same note.
+ */
+const openNoteEditSessions = new Set<string>();
+
+/**
+ * Open an edit session: record it and mark the note dirty.
+ * @param noteId - Note id.
+ */
+export function beginNoteEditSession(noteId: string): void {
+  openNoteEditSessions.add(noteId);
+  dirtyNoteIds.add(noteId);
+}
+
+/**
+ * Close an edit session. Leaves the dirty mark in place: buffered
+ * content, an in-flight flush, or a live conflict may still hold the
+ * gate, so the caller decides the release.
+ * @param noteId - Note id.
+ */
+export function endNoteEditSession(noteId: string): void {
+  openNoteEditSessions.delete(noteId);
+}
+
+/**
+ * Release the dirty mark unless an open edit session still holds it. The
+ * autosave flush calls this on a confirmed save with an empty buffer.
+ * @param noteId - Note id.
+ */
+export function clearNoteDirtyUnlessEditing(noteId: string): void {
+  if (openNoteEditSessions.has(noteId)) return;
+  dirtyNoteIds.delete(noteId);
+}
+
+/**
  * Hard cap on tracked trashed notes. Map insertion order gives
  * oldest-first eviction; an evicted mark degrades safely to the server's
  * typed trashed-write rejection.
