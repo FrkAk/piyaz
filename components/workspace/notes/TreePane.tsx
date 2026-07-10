@@ -1316,6 +1316,8 @@ export function TreePane({
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** Virtual-list offset inside the scroll element: the naming-first folder input renders above it. */
+  const scrollMargin = creatingFolder === null ? 0 : 26;
   // Sizes are fixed inline per row kind (folder 26, note 30, rename
   // variants identical), so positions stay pixel-accurate without
   // `measureElement`.
@@ -1330,6 +1332,7 @@ export function TreePane({
     getItemKey: (index) => flatItems[index]?.key ?? index,
     overscan: 8,
     rangeExtractor,
+    scrollMargin,
   });
 
   const showVirtual = searching
@@ -1541,7 +1544,7 @@ export function TreePane({
                     top: 0,
                     left: 0,
                     right: 0,
-                    transform: `translateY(${vi.start}px)`,
+                    transform: `translateY(${vi.start - scrollMargin}px)`,
                   }}
                 >
                   {item.kind === "folder" ? (
