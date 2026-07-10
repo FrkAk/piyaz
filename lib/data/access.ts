@@ -260,18 +260,24 @@ export async function findNoteAccess(
  *
  * @param tx - Active RLS transaction handle.
  * @param noteId - UUID of the note.
+ * @param opts - `forUpdate` locks the notes row (`FOR UPDATE OF notes`) so
+ *   the gate row doubles as a CAS baseline with no TOCTOU window.
  * @returns Gate row with only the columns callers read, or null when inaccessible.
  */
 export async function findNoteAccessTx(
   tx: Tx,
   noteId: string,
+  opts?: { forUpdate?: boolean },
 ): Promise<NoteAccessGate | null> {
-  const [row] = await tx
+  const query = tx
     .select(noteGateColumns)
     .from(notes)
     .innerJoin(projects, eq(projects.id, notes.projectId))
     .where(eq(notes.id, noteId))
     .limit(1);
+  const [row] = await (opts?.forUpdate
+    ? query.for("update", { of: notes })
+    : query);
   return row ?? null;
 }
 

@@ -74,4 +74,62 @@ describe("enqueueNoteWrite", () => {
     expect(await one).toBe(1);
     expect(await two).toBe(2);
   });
+
+  test("a chained delete runs strictly after an in-flight autosave", async () => {
+    const log: string[] = [];
+    const autosave = gatedJob(log, "autosave");
+    const pAutosave = enqueueNoteWrite(
+      "note-delete-after-autosave",
+      autosave.job,
+    );
+    const pDelete = enqueueNoteWrite("note-delete-after-autosave", async () => {
+      log.push("delete");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(log).toEqual(["start:autosave"]);
+    autosave.release();
+    await Promise.all([pAutosave, pDelete]);
+    expect(log).toEqual(["start:autosave", "end:autosave", "delete"]);
+  });
+
+  test("a chained restore runs strictly after the delete, even a failed one", async () => {
+    const log: string[] = [];
+    const del = gatedJob(log, "delete");
+    const pDelete = enqueueNoteWrite("note-restore-after-delete", del.job);
+    const pRestore = enqueueNoteWrite("note-restore-after-delete", async () => {
+      log.push("restore");
+    });
+    del.release();
+    await Promise.all([pDelete, pRestore]);
+    expect(log).toEqual(["start:delete", "end:delete", "restore"]);
+
+    const failingDelete = enqueueNoteWrite(
+      "note-restore-after-failed-delete",
+      async () => {
+        throw new Error("delete failed");
+      },
+    );
+    const restoreAfterFailure = enqueueNoteWrite(
+      "note-restore-after-failed-delete",
+      async () => "ok",
+    );
+    await expect(failingDelete).rejects.toThrow("delete failed");
+    await expect(restoreAfterFailure).resolves.toBe("ok");
+  });
+
+  test("a chained job reads state written by the previous job's merge", async () => {
+    let cachedToken = "token-v1";
+    const first = enqueueNoteWrite(
+      "note-merge-visible-to-next-job",
+      async () => {
+        cachedToken = "token-v2";
+      },
+    );
+    const observed = enqueueNoteWrite(
+      "note-merge-visible-to-next-job",
+      async () => cachedToken,
+    );
+    await first;
+    expect(await observed).toBe("token-v2");
+  });
 });
