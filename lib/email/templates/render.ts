@@ -1,12 +1,13 @@
 /**
- * Security and layout core for the transactional email templates. Every value
- * that reaches an email is untrusted: `BrandConfig` carries `logoUrl`,
- * `brandColor`, and `footerLinks[].url` through from env UNVALIDATED by design
- * (see `resolveBrandConfig` in `lib/email/brand.ts`), and per-email params come
- * from callers. This module is the sole defense: every interpolated value is
- * HTML-escaped, URLs are scheme-validated before use, and `brandColor` is
- * accepted only against a strict pattern. All sanitizers are non-throwing, so a
- * hostile value degrades to neutral output rather than crashing a send.
+ * Security and layout core for the transactional email templates. Env-derived
+ * brand values arrive already validated by `resolveBrandConfig` in
+ * `lib/email/brand.ts`, which shares this module's `safeUrl` and scheme
+ * allowlists, but a `BrandConfig` and per-email params can also be constructed
+ * by callers directly, so everything is re-validated at render time: every
+ * interpolated value is HTML-escaped, URLs are scheme-checked before use, and
+ * `brandColor` is accepted only as a 3- or 6-digit hex color. All sanitizers
+ * are non-throwing, so a hostile value degrades to neutral output rather than
+ * crashing a send.
  *
  * Pure string builders with a single import of the shared type: no
  * `server-only`, no `process.env`, so templates stay unit-testable and compile
@@ -32,13 +33,17 @@ export function escapeHtml(value: string): string {
  * Return `raw` only when it parses as an absolute URL whose scheme is allowed
  * (`allow` holds protocol strings with the trailing colon, e.g. `"https:"`).
  * Rejects `javascript:`/`data:` (disallowed scheme), protocol-relative and
- * relative URLs (no base, so `new URL` throws), and any unparseable value.
- * Callers still HTML-escape the result before placing it in `href`/`src`.
+ * relative URLs (no base, so `new URL` throws), any unparseable value, and any
+ * value containing whitespace or control characters, which the WHATWG parser
+ * would strip before parsing and which would otherwise smuggle extra lines
+ * into the plain-text part. Callers still HTML-escape the result before
+ * placing it in `href`/`src`.
  */
 export function safeUrl(
   raw: string,
   allow: readonly string[],
 ): string | undefined {
+  if (/[\u0000-\u0020]/.test(raw)) return undefined;
   let url: URL;
   try {
     url = new URL(raw);
@@ -48,27 +53,18 @@ export function safeUrl(
   return allow.includes(url.protocol) ? raw : undefined;
 }
 
-const HEX_COLOR =
-  /^#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})$/;
-const FUNC_COLOR = /^(?:rgb|rgba|hsl|hsla)\(\s*[0-9.,%/\s]+\)$/;
+const HEX_COLOR = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/;
 
 /**
- * Return `raw` only when it is a strict CSS color: a 3/4/6/8-digit hex, or an
- * `rgb`/`rgba`/`hsl`/`hsla` function whose arguments are numeric, percent,
- * comma, slash, or whitespace only. Anything carrying `;`, `}`, quotes, angle
- * brackets, `url(`, or `expression(` fails the pattern and degrades to the
- * neutral accent, so a `brandColor` cannot inject into the `style` attribute.
+ * Return `raw` only when it is a 3- or 6-digit hex color. Alpha and functional
+ * forms are rejected: the accent must be opaque so its luminance can pick a
+ * readable button label color, and anything failing the pattern (including
+ * `;`, `}`, quotes, `url(`, `expression(`) degrades to the neutral accent, so
+ * a `brandColor` cannot inject into the `style` attribute.
  */
 export function safeBrandColor(raw: string): string | undefined {
   const value = raw.trim();
-  if (HEX_COLOR.test(value) || FUNC_COLOR.test(value)) return value;
-  return undefined;
-}
-
-/** A tappable primary action rendered as a button in HTML and a labeled URL in text. */
-export interface EmailAction {
-  label: string;
-  url: string;
+  return HEX_COLOR.test(value) ? value : undefined;
 }
 
 /** One content block. Templates compose an ordered list of these; the shell renders them. */
@@ -90,15 +86,36 @@ const TEXT = "#111827";
 const MUTED = "#6b7280";
 const BORDER = "#e5e7eb";
 const NEUTRAL_ACCENT = "#1f2937";
-const ACTION_SCHEMES = ["https:"] as const;
-const LOGO_SCHEMES = ["https:"] as const;
-const FOOTER_SCHEMES = ["https:", "mailto:"] as const;
-const APP_URL_SCHEMES = ["https:", "http:"] as const;
+
+/**
+ * Scheme allowlists shared with `resolveBrandConfig` so the resolver and the
+ * renderer can never disagree on what survives. `WEB_SCHEMES` (action links
+ * and `appUrl`) includes `http:` only because local dev derives links from the
+ * `http://localhost:3000` fallback; hosted deployments always emit `https:`.
+ */
+export const WEB_SCHEMES = ["https:", "http:"] as const;
+export const LOGO_SCHEMES = ["https:"] as const;
+export const FOOTER_SCHEMES = ["https:", "mailto:"] as const;
 
 /** Resolve the accent color for buttons, falling back to the neutral default on any unsafe value. */
 function accentColor(brand: BrandConfig): string {
   const safe = brand.brandColor ? safeBrandColor(brand.brandColor) : undefined;
   return safe ?? NEUTRAL_ACCENT;
+}
+
+/**
+ * Pick the button label color from the accent's YIQ luminance, so a light
+ * brand accent gets dark text instead of unreadable white-on-light.
+ */
+function buttonTextColor(accent: string): string {
+  const hex =
+    accent.length === 4
+      ? [...accent.slice(1)].map((c) => c + c).join("")
+      : accent.slice(1);
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 >= 128 ? TEXT : "#ffffff";
 }
 
 /** Footer links whose URL passes the https/mailto scheme check; invalid links are dropped individually. */
@@ -125,17 +142,16 @@ function renderBlock(block: EmailBlock, accent: string): string {
   if (block.kind === "note") {
     return `<p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:${MUTED};">${escapeHtml(block.text)}</p>`;
   }
-  const url = safeUrl(block.url, ACTION_SCHEMES);
+  const url = safeUrl(block.url, WEB_SCHEMES);
   const label = escapeHtml(block.label);
   if (!url) {
-    // Degrade: never emit a live hostile action link.
     return `<p style="margin:0 0 16px;font-size:15px;font-weight:600;color:${TEXT};">${label}</p>`;
   }
   const href = escapeHtml(url);
   return (
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px;">` +
     `<tr><td style="border-radius:6px;background:${accent};">` +
-    `<a href="${href}" style="display:inline-block;padding:12px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:6px;">${label}</a>` +
+    `<a href="${href}" style="display:inline-block;padding:12px 22px;font-size:15px;font-weight:600;color:${buttonTextColor(accent)};text-decoration:none;border-radius:6px;">${label}</a>` +
     `</td></tr></table>` +
     `<p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:${MUTED};">Or paste this link into your browser:<br /><a href="${href}" style="color:${MUTED};">${href}</a></p>`
   );
@@ -143,7 +159,7 @@ function renderBlock(block: EmailBlock, accent: string): string {
 
 function renderFooter(brand: BrandConfig): string {
   const name = escapeHtml(brand.appName);
-  const appUrl = safeUrl(brand.appUrl, APP_URL_SCHEMES);
+  const appUrl = safeUrl(brand.appUrl, WEB_SCHEMES);
   const identity = appUrl
     ? `<a href="${escapeHtml(appUrl)}" style="color:${MUTED};">${name}</a>`
     : name;
@@ -207,7 +223,7 @@ export function renderText(brand: BrandConfig, content: EmailContent): string {
   const lines: string[] = [brand.appName, "", content.heading, ""];
   for (const block of content.blocks) {
     if (block.kind === "action") {
-      const url = safeUrl(block.url, ACTION_SCHEMES);
+      const url = safeUrl(block.url, WEB_SCHEMES);
       lines.push(`${block.label}:`);
       if (url) lines.push(url);
       lines.push("");
@@ -216,7 +232,7 @@ export function renderText(brand: BrandConfig, content: EmailContent): string {
     }
   }
   lines.push("--", brand.appName);
-  const appUrl = safeUrl(brand.appUrl, APP_URL_SCHEMES);
+  const appUrl = safeUrl(brand.appUrl, WEB_SCHEMES);
   if (appUrl) lines.push(appUrl);
   for (const link of safeFooterLinks(brand)) {
     lines.push(`${link.label}: ${link.url}`);

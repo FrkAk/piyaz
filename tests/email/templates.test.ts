@@ -91,13 +91,20 @@ describe("sanitizers", () => {
     expect(safeUrl("not a url", ["https:"])).toBeUndefined();
   });
 
-  test("safeBrandColor accepts strict CSS colors and rejects injection", () => {
+  test("safeUrl rejects URLs carrying whitespace or control characters", () => {
+    expect(
+      safeUrl("https://ok.example/a\n\ninjected", ["https:"]),
+    ).toBeUndefined();
+    expect(safeUrl("https://ok.\texample/p", ["https:"])).toBeUndefined();
+    expect(safeUrl("https://ok.example/\rp", ["https:"])).toBeUndefined();
+  });
+
+  test("safeBrandColor accepts 3/6-digit hex and rejects everything else", () => {
     expect(safeBrandColor("#123")).toBe("#123");
-    expect(safeBrandColor("#12345678")).toBe("#12345678");
-    expect(safeBrandColor("rgb(10, 20, 30)")).toBe("rgb(10, 20, 30)");
-    expect(safeBrandColor("hsla(200 50% 40% / 0.5)")).toBe(
-      "hsla(200 50% 40% / 0.5)",
-    );
+    expect(safeBrandColor("#123456")).toBe("#123456");
+    expect(safeBrandColor("#12345678")).toBeUndefined();
+    expect(safeBrandColor("rgb(10, 20, 30)")).toBeUndefined();
+    expect(safeBrandColor("hsla(200 50% 40% / 0.5)")).toBeUndefined();
     expect(safeBrandColor("red")).toBeUndefined();
     expect(safeBrandColor("#12")).toBeUndefined();
     expect(safeBrandColor("red;} body{background:url(x)}")).toBeUndefined();
@@ -141,14 +148,14 @@ describe("template structure", () => {
       verifyUrl: "https://app.example/v",
     });
     expect(html).not.toContain("<img");
-    expect(html).toContain("#1f2937"); // neutral default accent
+    expect(html).toContain("#1f2937");
     expect(html).not.toContain("piyaz.ai");
     expect(text).not.toContain("piyaz.ai");
   });
 
   test("passwordChanged has no action link; support pointer gated on supportEmail", () => {
     const withSupport = passwordChangedEmail(branded, {});
-    expect(withSupport.html).not.toContain("color:#ffffff"); // no action button (white button text)
+    expect(withSupport.html).not.toContain("color:#ffffff");
     expect(withSupport.text).not.toContain("Confirm email:");
     expect(withSupport.text).toContain("help@acme.example");
     const withoutSupport = passwordChangedEmail(neutral, {});
@@ -161,6 +168,26 @@ describe("template structure", () => {
       verifyUrl: "https://app.example/verify?t=abc",
     });
     expect(text).toMatch(/\nhttps:\/\/app\.example\/verify\?t=abc\n/);
+  });
+
+  test("http action URLs survive for local-dev links", () => {
+    const { text } = verificationEmail(neutral, {
+      verifyUrl: "http://localhost:3000/verify?t=abc",
+    });
+    expect(text).toMatch(/\nhttp:\/\/localhost:3000\/verify\?t=abc\n/);
+  });
+
+  test("button label color follows the accent's luminance", () => {
+    const light = verificationEmail(
+      { ...neutral, brandColor: "#ffee00" },
+      { verifyUrl: "https://app.example/v" },
+    );
+    expect(light.html).toContain("background:#ffee00");
+    expect(light.html).toContain("color:#111827;text-decoration:none");
+    const dark = verificationEmail(branded, {
+      verifyUrl: "https://app.example/v",
+    });
+    expect(dark.html).toContain("color:#ffffff;text-decoration:none");
   });
 });
 
@@ -185,10 +212,10 @@ describe("hostile input is neutralized (AC #4)", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("background:url(x)");
     expect(html).not.toContain("red;}");
-    expect(html).toContain("#1f2937"); // rejected brandColor → neutral accent
+    expect(html).toContain("#1f2937");
     expect(html).not.toContain('"><img');
     expect(html).not.toContain('"><b>');
-    expect(html).toContain("https://ok.example"); // valid sibling link kept
+    expect(html).toContain("https://ok.example");
   });
 
   test("a hostile action URL degrades to its label with no live link", () => {
@@ -198,6 +225,14 @@ describe("hostile input is neutralized (AC #4)", () => {
     expect(html).not.toContain("javascript:");
     expect(html).toContain("Confirm email");
     expect(text).not.toContain("javascript:");
+  });
+
+  test("an action URL smuggling newlines degrades instead of injecting text lines", () => {
+    const { html, text } = verificationEmail(neutral, {
+      verifyUrl: "https://app.example/v\n\nYour account is locked, call now",
+    });
+    expect(html).not.toContain("call now");
+    expect(text).not.toContain("call now");
   });
 });
 
