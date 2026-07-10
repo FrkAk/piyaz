@@ -1,6 +1,6 @@
 # Data Processing Agreement
 
-> **Status: DRAFT — pending review by qualified legal counsel. Not yet in effect.**
+> **Status: DRAFT, pending review by qualified legal counsel. Not yet in effect.**
 > Version: `draft-unpublished` · Effective date: `[EFFECTIVE DATE]`
 >
 > **Placeholders** in `[BRACKETS]` are values the operators and counsel must

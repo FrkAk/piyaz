@@ -107,15 +107,16 @@ describe("getDpaAcceptance", () => {
     await truncateAll();
   });
 
-  test("returns the current-version acceptance for the same user", async () => {
+  test("returns the current-version acceptance for the same user and org", async () => {
     const userA = await seedUserOrgProject("dpa-a");
 
     await recordAcceptance(userA.userId, "dpa", {
       ipAddress: null,
       userAgent: null,
+      organizationId: userA.organizationId,
     });
 
-    const result = await getDpaAcceptance(userA.userId);
+    const result = await getDpaAcceptance(userA.userId, userA.organizationId);
 
     expect(result).not.toBeNull();
     expect(result?.version).toBe(LEGAL_VERSIONS.dpa);
@@ -129,9 +130,27 @@ describe("getDpaAcceptance", () => {
     await recordAcceptance(userA.userId, "dpa", {
       ipAddress: null,
       userAgent: null,
+      organizationId: userA.organizationId,
     });
 
-    expect(await getDpaAcceptance(userB.userId)).toBeNull();
+    expect(
+      await getDpaAcceptance(userB.userId, userB.organizationId),
+    ).toBeNull();
+  });
+
+  test("returns null for another org of the same user", async () => {
+    const userA = await seedUserOrgProject("dpa-a");
+    const otherOrg = await seedUserOrgProject("dpa-a-other");
+
+    await recordAcceptance(userA.userId, "dpa", {
+      ipAddress: null,
+      userAgent: null,
+      organizationId: userA.organizationId,
+    });
+
+    expect(
+      await getDpaAcceptance(userA.userId, otherOrg.organizationId),
+    ).toBeNull();
   });
 
   test("returns null when only a superseded version was accepted", async () => {
@@ -142,9 +161,12 @@ describe("getDpaAcceptance", () => {
         userId: userA.userId,
         documentType: "dpa",
         documentVersion: "draft-superseded",
+        organizationId: userA.organizationId,
       });
     });
 
-    expect(await getDpaAcceptance(userA.userId)).toBeNull();
+    expect(
+      await getDpaAcceptance(userA.userId, userA.organizationId),
+    ).toBeNull();
   });
 });

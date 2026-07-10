@@ -185,7 +185,7 @@ export function SettingsView({
           ? getOrCreateTeamInviteCodeAction({ organizationId: teamId })
           : Promise.resolve(null),
         team.role === "owner"
-          ? getDpaAcceptanceAction()
+          ? getDpaAcceptanceAction({ organizationId: teamId })
           : Promise.resolve(null),
       ])
         .then(

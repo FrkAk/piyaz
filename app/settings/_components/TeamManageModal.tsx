@@ -92,7 +92,9 @@ async function fetchTeamManagePayload(
       isAdminOrOwner
         ? getOrCreateTeamInviteCodeAction({ organizationId: team.id })
         : Promise.resolve(null),
-      team.role === "owner" ? getDpaAcceptanceAction() : Promise.resolve(null),
+      team.role === "owner"
+        ? getDpaAcceptanceAction({ organizationId: team.id })
+        : Promise.resolve(null),
     ]);
 
   if (!membersResult.ok) {

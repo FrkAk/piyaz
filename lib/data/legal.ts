@@ -85,17 +85,20 @@ export async function removeAcceptances(userId: string): Promise<void> {
 }
 
 /**
- * Read the caller's latest `dpa` acceptance pinned to the current
- * `LEGAL_VERSIONS.dpa`. Returns `null` when the caller has never accepted the
- * current version, so a version bump re-offers the DPA to owners who only
- * accepted a superseded version. Routes through `withUserContextRead(userId)`,
- * so RLS scopes the read to the caller's own rows.
+ * Read the caller's latest `dpa` acceptance for one organization, pinned to
+ * the current `LEGAL_VERSIONS.dpa`. Returns `null` when the caller has never
+ * accepted the current version for that organization, so a version bump
+ * re-offers the DPA and each team carries its own acceptance evidence. Routes
+ * through `withUserContextRead(userId)`, so RLS scopes the read to the
+ * caller's own rows.
  *
  * @param userId - The caller's id; the RLS scope for the read.
+ * @param organizationId - The team whose DPA acceptance is read.
  * @returns The pinned-version acceptance (`version` + `acceptedAt`), or `null`.
  */
 export async function getDpaAcceptance(
   userId: string,
+  organizationId: string,
 ): Promise<{ version: string; acceptedAt: Date } | null> {
   const version = LEGAL_VERSIONS.dpa;
   const [rows] = await withUserContextRead(userId, (read) => [
@@ -109,6 +112,7 @@ export async function getDpaAcceptance(
         and(
           eq(legalAcceptances.documentType, "dpa"),
           eq(legalAcceptances.documentVersion, version),
+          eq(legalAcceptances.organizationId, organizationId),
         ),
       )
       .orderBy(desc(legalAcceptances.acceptedAt))

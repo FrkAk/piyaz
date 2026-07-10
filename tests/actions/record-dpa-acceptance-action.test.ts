@@ -108,6 +108,7 @@ describe("recordDpaAcceptanceAction", () => {
     expect(rows[0].documentType).toBe("dpa");
     expect(rows[0].documentVersion).toBe(LEGAL_VERSIONS.dpa);
     expect(rows[0].userId).toBe(org.userId);
+    expect(rows[0].organizationId).toBe(org.organizationId);
     expect(rows[0].acceptedAt).toBeInstanceOf(Date);
   });
 });
