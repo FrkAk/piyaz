@@ -92,6 +92,14 @@ export function hasUnsavedNoteEdits(noteId: string): boolean {
  * rejection, and so a post-delete block commit never resurrects a ghost
  * detail entry. Module-level because autosave buffers are per-hook refs
  * the delete mutation cannot reach.
+ *
+ * Invariant: every restore surface must clear the mark via
+ * {@link clearNoteTrashed} on confirmation; today the only surface is the
+ * delete-undo restore. A stale mark silently drops the note's edits, so
+ * any future restore path (trash view, MCP action, cross-client restore)
+ * must clear it. The realtime bridge must NOT clear it from note events:
+ * the actor's own pre-delete autosave event settles after the delete and
+ * would wrongly unmark the note.
  */
 const trashedNoteIds = new Set<string>();
 

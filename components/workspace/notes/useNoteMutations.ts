@@ -31,6 +31,7 @@ import type {
 import { noteKeys } from "@/lib/query/keys";
 import {
   cachedCasToken,
+  casToken,
   clearNoteDirty,
   clearNoteTrashed,
   enqueueNoteWrite,
@@ -129,6 +130,13 @@ function pickFields<T extends object>(
  * On `stale_write` with `rollbackOnStale` false the optimistic content is
  * kept: the server applied no write, and the autosave conflict banner
  * owns recovery. Settings controls pass true so the control snaps back.
+ *
+ * The success merge is not field-scoped: an earlier chained write's
+ * response can transiently overwrite a newer write's optimistic `title`
+ * or `folder` until the newer write's own merge or revert lands one
+ * round trip later. Every interleaving converges on server truth, so the
+ * exposure is a brief flicker, accepted over tracking per-field
+ * optimistic ownership.
  *
  * @param qc - QueryClient.
  * @param projectId - Owning project id.
@@ -358,13 +366,71 @@ export function useMoveNote(projectId: string) {
 }
 
 /**
- * Optimistic note delete: drops the cached tree row up front; the server
- * call rides the per-note write chain with a send-time CAS token, so a
- * buffered autosave ahead of it merges first. On success marks the note
- * trashed (autosave drops any later buffered edits), revalidates the list,
- * and removes the detail entry; on any failure, returned or thrown,
- * re-inserts only its own captured row so a concurrent sibling optimistic
- * write survives.
+ * Delete write flow behind {@link useDeleteNote}: drops the cached tree
+ * row up front; the server call rides the per-note write chain with a
+ * send-time CAS token, falling back to the row token captured before the
+ * optimistic removal (the removal empties the tree-side cache, so a
+ * never-opened note would otherwise send no token). On success marks the
+ * note trashed (autosave drops any later buffered edits), revalidates the
+ * list, and removes the detail entry; on any failure, returned or thrown,
+ * re-inserts only its own captured row. The detail entry is never
+ * restored: the optimistic phase does not touch it, and rewriting it
+ * would regress a chained-ahead autosave's merged `updatedAt`.
+ *
+ * @param qc - QueryClient.
+ * @param projectId - Owning project id.
+ * @param noteId - Note id.
+ * @returns The typed action result; thrown transport errors roll back
+ *   first.
+ */
+export async function runDeleteNoteWrite(
+  qc: QueryClient,
+  projectId: string,
+  noteId: string,
+): Promise<NoteActionResult<{ id: string; deletedAt: Date; updatedAt: Date }>> {
+  const listKey = noteKeys.list(projectId);
+  const detailKey = noteKeys.detail(projectId, noteId);
+  const prevRow = qc
+    .getQueryData<NoteTreeRow[]>(listKey)
+    ?.find((r) => r.id === noteId);
+  const fallbackToken = prevRow ? casToken(prevRow.updatedAt) : undefined;
+  qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
+    removeNoteFromTree(rows, noteId),
+  );
+  const restoreOwnRow = () => {
+    qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
+      prevRow ? upsertNoteInTree(rows, prevRow) : rows,
+    );
+  };
+  return enqueueNoteWrite(noteId, async () => {
+    let result: NoteActionResult<{
+      id: string;
+      deletedAt: Date;
+      updatedAt: Date;
+    }>;
+    try {
+      result = await deleteNoteAction(
+        noteId,
+        cachedCasToken(qc, projectId, noteId) ?? fallbackToken,
+      );
+    } catch (err) {
+      restoreOwnRow();
+      throw err;
+    }
+    if (result.ok) {
+      clearNoteDirty(noteId);
+      markNoteTrashed(noteId);
+      qc.invalidateQueries({ queryKey: listKey });
+      qc.removeQueries({ queryKey: detailKey });
+    } else {
+      restoreOwnRow();
+    }
+    return result;
+  });
+}
+
+/**
+ * Optimistic note delete over {@link runDeleteNoteWrite}.
  *
  * @param projectId - Owning project id.
  * @returns Mutation taking the note id.
@@ -372,52 +438,7 @@ export function useMoveNote(projectId: string) {
 export function useDeleteNote(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (
-      noteId: string,
-    ): Promise<
-      NoteActionResult<{ id: string; deletedAt: Date; updatedAt: Date }>
-    > => {
-      const listKey = noteKeys.list(projectId);
-      const detailKey = noteKeys.detail(projectId, noteId);
-      const prevRow = qc
-        .getQueryData<NoteTreeRow[]>(listKey)
-        ?.find((r) => r.id === noteId);
-      const prevDetail = qc.getQueryData<NoteFullResult>(detailKey);
-      qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
-        removeNoteFromTree(rows, noteId),
-      );
-      const restoreOwnRow = () => {
-        qc.setQueryData<NoteTreeRow[]>(listKey, (rows) =>
-          prevRow ? upsertNoteInTree(rows, prevRow) : rows,
-        );
-        if (prevDetail !== undefined) qc.setQueryData(detailKey, prevDetail);
-      };
-      return enqueueNoteWrite(noteId, async () => {
-        let result: NoteActionResult<{
-          id: string;
-          deletedAt: Date;
-          updatedAt: Date;
-        }>;
-        try {
-          result = await deleteNoteAction(
-            noteId,
-            cachedCasToken(qc, projectId, noteId),
-          );
-        } catch (err) {
-          restoreOwnRow();
-          throw err;
-        }
-        if (result.ok) {
-          clearNoteDirty(noteId);
-          markNoteTrashed(noteId);
-          qc.invalidateQueries({ queryKey: listKey });
-          qc.removeQueries({ queryKey: detailKey });
-        } else {
-          restoreOwnRow();
-        }
-        return result;
-      });
-    },
+    mutationFn: (noteId: string) => runDeleteNoteWrite(qc, projectId, noteId),
   });
 }
 
