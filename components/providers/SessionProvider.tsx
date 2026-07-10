@@ -20,6 +20,7 @@ const PUBLIC_PATHS = [
   "/terms",
   "/impressum",
   "/subprocessors",
+  "/dpa",
 ];
 
 /**
