@@ -102,8 +102,9 @@ This does not apply where the claim results from our intent or gross negligence.
 ## 12. Data export and switching
 
 You can export your account data in a machine-readable format (see the
-[Privacy Policy](/privacy)) and take your project content with you at any time. We do
-not impose switching barriers or charge export fees during the beta.
+[Privacy Policy](/privacy)), and your project content remains accessible to you
+through the Service so you can take it with you at any time. We do not impose
+switching barriers or charge export fees during the beta.
 
 ## 13. Governing law and jurisdiction
 

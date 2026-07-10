@@ -38,12 +38,20 @@ controller and the processor for your own instance.
 
 The processor processes personal data only on the controller's documented
 instructions (the service agreement, these terms, and the controller's use of the
-service settings), ensures personnel are bound by confidentiality, implements the
-technical and organisational measures described in the
-[Privacy Policy](/privacy) (section "How we protect your data"), assists the controller with
-data-subject requests, and deletes personal data at the end of processing within
-the retention windows above (export is available to the controller at any time
-before deletion).
+service settings), ensures personnel are bound by confidentiality, and implements
+the technical and organisational measures described in the
+[Privacy Policy](/privacy) (section "How we protect your data"). Taking into
+account the nature of processing and the information available to it, the
+processor assists the controller with data-subject requests and with the
+controller's obligations under **Articles 32 to 36 GDPR** (security,
+personal-data-breach notification, data protection impact assessments, and prior
+consultation). The processor deletes personal data at the end of processing
+within the retention windows above (export is available to the controller at any
+time before deletion).
+
+The processor immediately informs the controller if, in its opinion, an
+instruction from the controller infringes the GDPR or other applicable
+data-protection law.
 
 ## Sub-processors
 

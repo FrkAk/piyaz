@@ -14,8 +14,12 @@
 
 Piyaz ("Piyaz", "we", "us", "our") is operated by its team. A formal operating entity
 has not yet been established; the team members jointly decide why and how your personal
-data is processed and act as **joint controllers** under Article 26 GDPR. Contact for
-all data-protection matters:
+data is processed and act as **joint controllers** under Article 26 GDPR. As joint
+controllers, the team members are jointly responsible for your rights under this
+policy: regardless of any internal allocation, you may exercise your GDPR rights
+against any of us through the single designated contact point below. The essence of
+the joint-controller arrangement will be published in full once the operating entity
+is formed. Contact for all data-protection matters:
 
 - Email: **privacy@piyaz.ai**
 
@@ -74,7 +78,8 @@ Your data is stored in the **European Union**. We use the following sub-processo
 - **Amazon Web Services (AWS)**: underlying cloud infrastructure for the Neon database, Frankfurt region (EU).
 - **Cloudflare, Inc.**: application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging across its global edge network.
 
-A current sub-processor list is maintained at `https://app.piyaz.ai/subprocessors`.
+A current [sub-processor list](/subprocessors) is maintained and incorporated here by
+reference.
 
 ### International transfers
 
@@ -124,7 +129,7 @@ Under the GDPR you have the right to:
 - **Rectification**: have inaccurate or incomplete data corrected.
 - **Erasure**: ask us to delete your personal data ("right to be forgotten").
 - **Restriction**: ask us to limit how we process your data.
-- **Data portability**: receive your data in a structured, machine-readable format.
+- **Data portability**: receive the personal data you provided to us in a structured, machine-readable format. Our self-serve export covers your account data (profile, team memberships, and your acceptance records); shared workspace content remains accessible through the Service itself.
 - **Object**: object to processing based on our legitimate interests.
 - **Withdraw consent**: where we rely on consent, withdraw it at any time (this does not affect prior processing).
 
