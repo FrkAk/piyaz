@@ -7,7 +7,7 @@ const KEYS = [
   "BRAND_LOGO_URL",
   "BRAND_COLOR",
   "BRAND_FOOTER_LINKS",
-  "EMAIL_SUPPORT",
+  "EMAIL_REPLY_TO",
   "EMAIL_FROM",
   "EMAIL_FROM_NOREPLY",
   "EMAIL_FROM_SUPPORT",
@@ -64,6 +64,13 @@ test("malformed BETTER_AUTH_URL yields a localhost appName without throwing", ()
   expect(brand.appName).toBe("localhost");
 });
 
+test("malformed BETTER_AUTH_URL yields the fallback appUrl, not the raw string", () => {
+  process.env.BETTER_AUTH_URL = "not a url";
+  const brand = resolveBrandConfig();
+
+  expect(brand.appUrl).toBe("http://localhost:3000");
+});
+
 test("branded render: each brand var surfaces on the resolved config", () => {
   process.env.APP_NAME = "Acme Tasks";
   process.env.BETTER_AUTH_URL = "https://tasks.acme.example";
@@ -72,7 +79,7 @@ test("branded render: each brand var surfaces on the resolved config", () => {
   process.env.BRAND_FOOTER_LINKS = JSON.stringify([
     { label: "Home", url: "https://acme.example" },
   ]);
-  process.env.EMAIL_SUPPORT = "help@acme.example";
+  process.env.EMAIL_REPLY_TO = "help@acme.example";
 
   const brand = resolveBrandConfig();
 
@@ -113,6 +120,44 @@ test("footer links with blank label or url are dropped", () => {
   ]);
 });
 
+test("footer links are trimmed and stripped to label and url", () => {
+  process.env.BRAND_FOOTER_LINKS = JSON.stringify([
+    { label: " Home ", url: " https://acme.example ", tracking: "x" },
+  ]);
+  expect(resolveBrandConfig().footerLinks).toEqual([
+    { label: "Home", url: "https://acme.example" },
+  ]);
+});
+
+test("footer links with a non-http(s) url are dropped", () => {
+  process.env.BRAND_FOOTER_LINKS = JSON.stringify([
+    { label: "Home", url: "javascript:alert(1)" },
+    { label: "Docs", url: "ftp://acme.example" },
+  ]);
+  expect(resolveBrandConfig().footerLinks).toBeUndefined();
+});
+
+test("invalid BRAND_COLOR degrades to undefined", () => {
+  for (const color of ["red", "#12345g", "#12345", "0f172a"]) {
+    process.env.BRAND_COLOR = color;
+    expect(resolveBrandConfig().brandColor).toBeUndefined();
+  }
+
+  process.env.BRAND_COLOR = "#abc";
+  expect(resolveBrandConfig().brandColor).toBe("#abc");
+});
+
+test("non-http(s) BRAND_LOGO_URL degrades to undefined", () => {
+  for (const url of [
+    "javascript:alert(1)",
+    "not a url",
+    "data:image/png;base64,x",
+  ]) {
+    process.env.BRAND_LOGO_URL = url;
+    expect(resolveBrandConfig().logoUrl).toBeUndefined();
+  }
+});
+
 test("blank env var is treated as unset", () => {
   process.env.APP_NAME = "   ";
   process.env.BETTER_AUTH_URL = "https://tasks.acme.example";
@@ -128,10 +173,10 @@ test("transactional uses the no-reply address and has no replyTo", () => {
   expect(sender.replyTo).toBeUndefined();
 });
 
-test("personal uses the support from-address and replyTo equals EMAIL_SUPPORT when set", () => {
+test("personal uses the support from-address and replyTo equals EMAIL_REPLY_TO when set", () => {
   process.env.BETTER_AUTH_URL = "https://tasks.acme.example";
   process.env.EMAIL_FROM_SUPPORT = "hello@acme.example";
-  process.env.EMAIL_SUPPORT = "help@acme.example";
+  process.env.EMAIL_REPLY_TO = "help@acme.example";
 
   const sender = senderFor("personal");
   expect(sender.from).toBe("hello@acme.example");
@@ -163,6 +208,18 @@ test("every purpose falls back to EMAIL_FROM when the per-purpose vars are unset
   expect(senderFor("transactional").from).toBe("mail@acme.example");
   expect(senderFor("personal").from).toBe("mail@acme.example");
   expect(senderFor("informational").from).toBe("mail@acme.example");
+});
+
+test("per-purpose vars beat EMAIL_FROM when both are set", () => {
+  process.env.BETTER_AUTH_URL = "https://tasks.acme.example";
+  process.env.EMAIL_FROM = "mail@acme.example";
+  process.env.EMAIL_FROM_NOREPLY = "noreply@acme.example";
+  process.env.EMAIL_FROM_SUPPORT = "hello@acme.example";
+  process.env.EMAIL_FROM_INFO = "info@acme.example";
+
+  expect(senderFor("transactional").from).toBe("noreply@acme.example");
+  expect(senderFor("personal").from).toBe("hello@acme.example");
+  expect(senderFor("informational").from).toBe("info@acme.example");
 });
 
 test("an out-of-union purpose falls back to the from-address instead of returning undefined", () => {

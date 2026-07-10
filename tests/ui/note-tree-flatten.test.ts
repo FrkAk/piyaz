@@ -1,16 +1,21 @@
 import { test, expect } from "bun:test";
 import {
   type FlatTreeRow,
+  flattenNoteCategories,
   flattenNoteTree,
   groupFoldersByParent,
+  groupNotesByCategory,
+  sortNoteRows,
 } from "@/components/workspace/notes/note-meta";
 import type { NoteTreeRow } from "@/lib/data/note";
+import type { NoteType } from "@/lib/types";
+import { readNoteGroup, readNoteSort } from "@/lib/ui/note-order";
 
 /**
  * Pure unit tests for the tree-flatten helpers backing the virtualized
  * notes tree. No DB. Pins render order (child folders before notes, root
- * notes last), collapse pruning, indent math, key format, and direct-note
- * counts.
+ * notes last), collapse pruning, indent math, key format, direct-note
+ * counts, sort comparators, category grouping, and URL sanitizers.
  */
 
 /**
@@ -18,9 +23,16 @@ import type { NoteTreeRow } from "@/lib/data/note";
  *
  * @param id - Note id, also the flat-row key.
  * @param folder - Owning folder path (`""` = root).
+ * @param extra - Optional field overrides (title, type, category, updatedAt).
  * @returns A {@link NoteTreeRow} with placeholder metadata.
  */
-function note(id: string, folder: string): NoteTreeRow {
+function note(
+  id: string,
+  folder: string,
+  extra?: Partial<
+    Pick<NoteTreeRow, "title" | "category" | "updatedAt"> & { type: NoteType }
+  >,
+): NoteTreeRow {
   return {
     id,
     slug: id,
@@ -34,6 +46,7 @@ function note(id: string, folder: string): NoteTreeRow {
     agentWritable: true,
     locked: false,
     updatedAt: new Date(0),
+    ...extra,
   };
 }
 
@@ -115,7 +128,13 @@ test("flattenNoteTree indents folders by depth and notes at the parent indent", 
     note("n-abc", "a/b/c"),
   ]);
   const rows = flattenNoteTree(groupFoldersByParent(folders), notes, new Set());
-  const indent = new Map(rows.map((r) => [r.key, r.indent]));
+  const indent = new Map(
+    rows
+      .filter((r): r is Exclude<FlatTreeRow, { kind: "section" }> => {
+        return r.kind !== "section";
+      })
+      .map((r) => [r.key, r.indent]),
+  );
   expect(indent.get("folder:a")).toBe(8);
   expect(indent.get("folder:a/b")).toBe(20);
   expect(indent.get("folder:a/b/c")).toBe(32);
@@ -146,4 +165,104 @@ test("flattenNoteTree keys are unique across folders and notes", () => {
   const rows = flattenNoteTree(groupFoldersByParent(folders), notes, new Set());
   const keys = rows.map((r) => r.key);
   expect(new Set(keys).size).toBe(keys.length);
+});
+
+test("sortNoteRows title compare is numeric-aware with id tie-break", () => {
+  const rows = [
+    note("n-2", "", { title: "Note 10" }),
+    note("n-3", "", { title: "same" }),
+    note("n-1", "", { title: "Note 2" }),
+    note("n-0", "", { title: "same" }),
+  ];
+  const sorted = sortNoteRows(rows, "title");
+  expect(sorted.map((r) => r.id)).toEqual(["n-1", "n-2", "n-0", "n-3"]);
+  expect(rows.map((r) => r.id)).toEqual(["n-2", "n-3", "n-1", "n-0"]);
+});
+
+test("sortNoteRows updated sorts newest first with title tie-break", () => {
+  const rows = [
+    note("n-old", "", { title: "a", updatedAt: new Date(1000) }),
+    note("n-new", "", { title: "z", updatedAt: new Date(3000) }),
+    note("n-tie-b", "", { title: "b", updatedAt: new Date(2000) }),
+    note("n-tie-a", "", { title: "a", updatedAt: new Date(2000) }),
+  ];
+  const sorted = sortNoteRows(rows, "updated");
+  expect(sorted.map((r) => r.id)).toEqual([
+    "n-new",
+    "n-tie-a",
+    "n-tie-b",
+    "n-old",
+  ]);
+});
+
+test("sortNoteRows type ranks reference, guidance, knowledge with title tie-break", () => {
+  const rows = [
+    note("n-k", "", { type: "knowledge", title: "k" }),
+    note("n-g", "", { type: "guidance", title: "g" }),
+    note("n-r2", "", { type: "reference", title: "b" }),
+    note("n-r1", "", { type: "reference", title: "a" }),
+  ];
+  const sorted = sortNoteRows(rows, "type");
+  expect(sorted.map((r) => r.id)).toEqual(["n-r1", "n-r2", "n-g", "n-k"]);
+});
+
+test("groupNotesByCategory buckets null and undefined as uncategorized, preserving order", () => {
+  const rows = [
+    note("n-1", "", { category: "Ops" }),
+    note("n-2", "", { category: null }),
+    note("n-3", "", { category: "Ops" }),
+    note("n-4", ""),
+  ];
+  const map = groupNotesByCategory(rows);
+  expect(map.get("Ops")?.map((r) => r.id)).toEqual(["n-1", "n-3"]);
+  expect(map.get("__uncategorized__")?.map((r) => r.id)).toEqual([
+    "n-2",
+    "n-4",
+  ]);
+});
+
+test("flattenNoteCategories orders sections alphabetically with Uncategorized last", () => {
+  const map = groupNotesByCategory([
+    note("n-none", ""),
+    note("n-z", "", { category: "Zeta" }),
+    note("n-a", "", { category: "Alpha" }),
+  ]);
+  const rows = flattenNoteCategories(map);
+  expect(
+    rows.map((r) => (r.kind === "section" ? `${r.key}#${r.label}` : r.key)),
+  ).toEqual([
+    "section:Alpha#Alpha",
+    "n-a",
+    "section:Zeta#Zeta",
+    "n-z",
+    "section:__uncategorized__#Uncategorized",
+    "n-none",
+  ]);
+  const sections = rows.filter(
+    (r): r is Extract<FlatTreeRow, { kind: "section" }> => {
+      return r.kind === "section";
+    },
+  );
+  expect(sections.map((s) => s.noteCount)).toEqual([1, 1, 1]);
+});
+
+test("flattenNoteCategories keys stay disjoint from folder keys and note ids", () => {
+  const map = groupNotesByCategory([
+    note("n-1", "", { category: "Uncategorized" }),
+    note("n-2", ""),
+  ]);
+  const rows = flattenNoteCategories(map);
+  const keys = rows.map((r) => r.key);
+  expect(new Set(keys).size).toBe(keys.length);
+  expect(keys.every((k) => !k.startsWith("folder:"))).toBe(true);
+});
+
+test("readNoteSort and readNoteGroup fall back to defaults on unknown tokens", () => {
+  expect(readNoteSort("updated")).toBe("updated");
+  expect(readNoteSort("type")).toBe("type");
+  expect(readNoteSort("bogus")).toBe("title");
+  expect(readNoteSort(null)).toBe("title");
+  expect(readNoteGroup("category")).toBe("category");
+  expect(readNoteGroup("bogus")).toBe("folder");
+  expect(readNoteGroup(null)).toBe("folder");
 });
