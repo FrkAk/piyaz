@@ -246,16 +246,21 @@ test("updateNote drops unchanged fields and no-ops equal-value patches", async (
   expect(rows[1].metadata?.fields).toEqual(["title"]);
 });
 
-test("body writes snapshot revisions and prune past the retention cap", async () => {
+test("checkpointed body writes prune past the retention cap; web bursts coalesce", async () => {
   const f = await seedUserOrgProject("noterev");
   const ctx = makeAuthContext(f.userId);
+  const mcp = makeAuthContext(f.userId, {
+    source: "mcp",
+    userId: f.userId,
+    clientId: null,
+  });
   const note = await createNote(ctx, {
     projectId: f.projectId,
     title: "N",
     body: "v1",
   });
-  for (let i = 2; i <= 55; i++) {
-    await updateNote(ctx, note.id, { body: `v${i}` });
+  for (let i = 2; i <= 56; i++) {
+    await updateNote(mcp, note.id, { body: `v${i}` });
   }
 
   const sr = serviceRoleConnect();
@@ -265,6 +270,13 @@ test("body writes snapshot revisions and prune past the retention cap", async ()
   expect(rows.length).toBe(50);
   expect(rows[0].version).toBe(6);
   expect(rows.at(-1)?.version).toBe(55);
+
+  await updateNote(ctx, note.id, { body: "web burst a" });
+  await updateNote(ctx, note.id, { body: "web burst b" });
+  const afterWeb = await sr<{ version: number }[]>`
+    SELECT version FROM note_revisions WHERE note_id = ${note.id}
+    ORDER BY version DESC LIMIT 1`;
+  expect(afterWeb[0].version).toBe(55);
 });
 
 test("moveFolder re-parents the subtree in one update with a cycle guard", async () => {
@@ -301,6 +313,47 @@ test("moveFolder re-parents the subtree in one update with a cycle guard", async
   await expect(moveFolder(ctx, f.projectId, "x", "x")).rejects.toBeInstanceOf(
     FolderCycleError,
   );
+});
+
+test("moveFolder records one note-keyed note_moved event per moved note", async () => {
+  const f = await seedUserOrgProject("notemove-ev");
+  const ctx = makeAuthContext(f.userId);
+  const privateNote = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Private in folder",
+    folder: "docs",
+    visibility: "private",
+  });
+  const teamNote = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Team in folder",
+    folder: "docs/deep",
+    visibility: "team",
+  });
+
+  await moveFolder(ctx, f.projectId, "docs", "archive");
+
+  const su = superuserPool();
+  const events = await su<
+    { note_id: string; metadata: { from: string; to: string } }[]
+  >`
+    SELECT note_id, metadata FROM activity_events
+    WHERE type = 'note_moved' AND project_id = ${f.projectId}
+    ORDER BY note_id
+  `;
+  expect(events.length).toBe(2);
+  expect(events.map((e) => e.note_id).sort()).toEqual(
+    [privateNote.id, teamNote.id].sort(),
+  );
+  const byNote = new Map(events.map((e) => [e.note_id, e.metadata]));
+  expect(byNote.get(privateNote.id)).toEqual({
+    from: "docs",
+    to: "archive/docs",
+  });
+  expect(byNote.get(teamNote.id)).toEqual({
+    from: "docs/deep",
+    to: "archive/docs/deep",
+  });
 });
 
 test("moveFolder rewrites paths containing non-BMP characters correctly", async () => {
@@ -865,7 +918,7 @@ test("metadata caps reject oversized summary, labels, and feed ids", async () =>
   ).rejects.toBeInstanceOf(NoteValidationError);
 });
 
-test("only team-visible note writes record activity events", async () => {
+test("note writes record note-keyed activity events for every visibility", async () => {
   const f = await seedUserOrgProject("noteact");
   const ctx = makeAuthContext(f.userId);
   const sr = serviceRoleConnect();
@@ -876,9 +929,17 @@ test("only team-visible note writes record activity events", async () => {
   await requestShare(ctx, hidden.id);
   await deleteNote(ctx, hidden.id);
   await restoreNote(ctx, hidden.id);
-  const privateRows = await sr<{ type: string }[]>`
-    SELECT type FROM activity_events WHERE project_id = ${f.projectId}`;
-  expect(privateRows.length).toBe(0);
+  const privateRows = await sr<{ type: string; note_id: string | null }[]>`
+    SELECT type, note_id FROM activity_events
+    WHERE project_id = ${f.projectId} ORDER BY created_at`;
+  expect(privateRows.map((r) => r.type)).toEqual([
+    "note_created",
+    "note_updated",
+    "note_moved",
+    "note_deleted",
+    "note_restored",
+  ]);
+  expect(privateRows.every((r) => r.note_id === hidden.id)).toBe(true);
 
   const note = await createNote(ctx, {
     projectId: f.projectId,
@@ -886,9 +947,12 @@ test("only team-visible note writes record activity events", async () => {
     visibility: "team",
   });
   await updateNote(ctx, note.id, { body: "hello" });
-  const rows = await sr<{ type: string; task_id: string | null }[]>`
-    SELECT type, task_id FROM activity_events
-    WHERE project_id = ${f.projectId} ORDER BY created_at`;
+  const rows = await sr<
+    { type: string; task_id: string | null; note_id: string | null }[]
+  >`
+    SELECT type, task_id, note_id FROM activity_events
+    WHERE project_id = ${f.projectId} AND note_id = ${note.id}
+    ORDER BY created_at`;
   expect(rows.map((r) => r.type)).toEqual(["note_created", "note_updated"]);
   expect(rows.every((r) => r.task_id === null)).toBe(true);
 });

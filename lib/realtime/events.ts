@@ -55,25 +55,36 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
  *   refetch 404s the now-inaccessible note, which is the correct heal.
  *
  * `updatedAt` lets the consumer skip refetches its caches already reflect
- * (the actor's own write, merged from the mutation response).
+ * (the actor's own write, merged from the mutation response); `version`
+ * and `revisionCheckpointed` let it maintain the revisions query without a
+ * refetch: the version bumps on every body change, but the stored revision
+ * list only changes when a write archived a pre-image checkpoint.
  *
  * @param projectId - Owning project id.
  * @param noteId - Note that changed.
  * @param visibility - The note's post-mutation visibility.
  * @param updatedAt - The note's post-mutation `updatedAt`; omit when the
  *   note no longer has one (delete).
+ * @param version - The note's post-mutation `version`; omit when unknown
+ *   (delete).
+ * @param revisionCheckpointed - Whether the write archived a revision
+ *   checkpoint (the stored revision list changed).
  */
 export function emitNoteEvent(
   projectId: string,
   noteId: string,
   visibility: Visibility,
   updatedAt?: Date,
+  version?: number,
+  revisionCheckpointed?: boolean,
 ): void {
   const payload = {
     kind: "note",
     projectId,
     noteId,
     ...(updatedAt !== undefined ? { updatedAt: updatedAt.toISOString() } : {}),
+    ...(version !== undefined ? { version } : {}),
+    ...(revisionCheckpointed !== undefined ? { revisionCheckpointed } : {}),
   } satisfies RealtimeEvent;
   broker.dispatch(
     visibility === "team" ? `project:${projectId}` : `note:${noteId}`,

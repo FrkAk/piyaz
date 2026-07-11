@@ -18,10 +18,12 @@ import {
   moveFolder as coreMoveFolder,
   moveNote as coreMoveNote,
   restoreNote as coreRestoreNote,
+  restoreNoteRevision as coreRestoreNoteRevision,
   updateNote as coreUpdateNote,
   type CreateNoteInput,
   type NoteLinksRefresh,
   type NotePatch,
+  type NoteRevisionCheckpoint,
   type NoteSummary,
 } from "@/lib/data/note";
 
@@ -90,7 +92,14 @@ export async function updateNoteAction(
   noteId: string,
   patch: NotePatch,
   ifUpdatedAt?: string,
-): Promise<NoteActionResult<NoteSummary & { links?: NoteLinksRefresh }>> {
+): Promise<
+  NoteActionResult<
+    NoteSummary & {
+      links?: NoteLinksRefresh;
+      revisionCheckpoint?: NoteRevisionCheckpoint;
+    }
+  >
+> {
   try {
     const ctx = await authorizeWrite(NOTE_BUDGETS.noteUpdate);
     return {
@@ -101,6 +110,49 @@ export async function updateNoteAction(
     const failure = noteFailureFrom(err);
     if (failure.code === "unknown") {
       console.error("updateNoteAction failed", { noteId, err });
+    }
+    return failure;
+  }
+}
+
+/**
+ * Server action: restore a note's title and body to a stored revision.
+ * Writes through the note-update path (it IS an update: same budget, CAS,
+ * lock, and event semantics); the revert is append-only: the pre-restore
+ * state is checkpointed, nothing destroyed. A stale `ifUpdatedAt` returns a
+ * `stale_write` failure; a missing version returns a `validation` failure
+ * naming the available versions.
+ *
+ * @param noteId - Note id.
+ * @param version - Revision counter value to restore.
+ * @param ifUpdatedAt - The cached `updatedAt` as CAS token; omit to force.
+ * @returns Slim summary with the fresh `updatedAt` (plus re-derived
+ *   `links` on a body change), or a typed failure.
+ */
+export async function restoreRevisionAction(
+  noteId: string,
+  version: number,
+  ifUpdatedAt?: string,
+): Promise<
+  NoteActionResult<
+    NoteSummary & {
+      links?: NoteLinksRefresh;
+      revisionCheckpoint?: NoteRevisionCheckpoint;
+    }
+  >
+> {
+  try {
+    const ctx = await authorizeWrite(NOTE_BUDGETS.noteUpdate);
+    return {
+      ok: true,
+      data: await coreRestoreNoteRevision(ctx, noteId, version, {
+        ifUpdatedAt,
+      }),
+    };
+  } catch (err) {
+    const failure = noteFailureFrom(err);
+    if (failure.code === "unknown") {
+      console.error("restoreRevisionAction failed", { noteId, version, err });
     }
     return failure;
   }

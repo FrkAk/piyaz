@@ -338,6 +338,7 @@ export const activityEvents = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    noteId: uuid("note_id").references(() => notes.id, { onDelete: "cascade" }),
     type: text("type").$type<ActivityEventType>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -353,6 +354,9 @@ export const activityEvents = pgTable(
   },
   (t) => [
     index("activity_events_task_id_created_idx").on(t.taskId, t.createdAt),
+    index("activity_events_note_id_created_idx")
+      .on(t.noteId, t.createdAt)
+      .where(sql`note_id IS NOT NULL`),
     index("activity_events_project_id_created_idx").on(
       t.projectId,
       t.createdAt,
@@ -361,6 +365,10 @@ export const activityEvents = pgTable(
     check(
       "activity_events_source_check",
       sql`${t.source} IN ('web', 'mcp', 'system')`,
+    ),
+    check(
+      "activity_events_note_ref_check",
+      sql`${t.type} NOT LIKE 'note\\_%' OR ${t.noteId} IS NOT NULL`,
     ),
   ],
 ).enableRLS();
@@ -393,6 +401,11 @@ export const notes = pgTable(
       .$type<Visibility>()
       .notNull()
       .default("private"),
+    // Start of the current team-visible period (DB now() at creation for
+    // team notes and at each private->team flip; NULL while private). The
+    // RLS fence on activity_events and note_revisions compares row
+    // created_at against it so pre-share history stays creator-only.
+    sharedSince: timestamp("shared_since", { withTimezone: true }),
     agentWritable: boolean("agent_writable").notNull().default(false),
     locked: boolean("locked").notNull().default(false),
     feedMode: text("feed_mode").$type<FeedMode>().notNull().default("none"),

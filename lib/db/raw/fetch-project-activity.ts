@@ -1,6 +1,9 @@
 import { sql, type SQL } from "drizzle-orm";
 import { type ReadConn } from "@/lib/db/raw";
-import type { ActivityCursor } from "@/lib/db/raw/fetch-task-activity";
+import {
+  noteExposureClause,
+  type ActivityCursor,
+} from "@/lib/db/raw/fetch-task-activity";
 
 /**
  * Hard cap on the `summary` text egressed per row. Mirrors the task-activity
@@ -26,6 +29,8 @@ const SUMMARY_MAX_CHARS = 160;
  * @param cur - Decoded keyset cursor, or null for the first page.
  * @param limit - Row cap (already includes the +1 look-ahead).
  * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
+ * @param agentExposed - Restrict note-linked events to feed-enabled notes
+ *   ({@link noteExposureClause}).
  * @returns Parameterized read-only SQL.
  */
 function projectActivityPageSql(
@@ -33,6 +38,7 @@ function projectActivityPageSql(
   cur: ActivityCursor | null,
   limit: number,
   since: string | null,
+  agentExposed: boolean,
 ): SQL {
   const keyset = cur
     ? sql`AND (ae.created_at < ${cur.createdAt}::timestamptz
@@ -53,6 +59,7 @@ function projectActivityPageSql(
         ae.target_ref, ae.metadata
       FROM public.activity_events ae
       WHERE ae.project_id = ${projectId}::uuid
+      ${noteExposureClause(agentExposed)}
       ${sinceClause}
       ${keyset}
       ORDER BY ae.created_at DESC, ae.id DESC
@@ -91,6 +98,8 @@ function projectActivityPageSql(
  * @param cur - Decoded keyset cursor, or null for the first page.
  * @param limit - Row cap (already includes the +1 look-ahead).
  * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
+ * @param agentExposed - Restrict note-linked events to feed-enabled notes
+ *   ({@link noteExposureClause}).
  * @returns Lazy raw-SQL read statement.
  */
 export function projectActivityStmt(
@@ -99,6 +108,9 @@ export function projectActivityStmt(
   cur: ActivityCursor | null,
   limit: number,
   since: string | null,
+  agentExposed = false,
 ) {
-  return read.execute(projectActivityPageSql(projectId, cur, limit, since));
+  return read.execute(
+    projectActivityPageSql(projectId, cur, limit, since, agentExposed),
+  );
 }

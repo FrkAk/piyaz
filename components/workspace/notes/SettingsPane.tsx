@@ -44,6 +44,8 @@ import {
   feedTargetActive,
   type AccessLevel,
 } from "./settings-access";
+import { NoteHistory } from "./NoteHistory";
+import { NoteVersions } from "./NoteVersions";
 import { useNoteDetail } from "./useNoteDetail";
 import {
   useApproveShareRequest,
@@ -427,7 +429,7 @@ export function SettingsPane({
                     void run("share", () => approveShare.mutateAsync(noteId))
                   }
                   className="rounded-md px-2.5 py-1 text-[11px] font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
-                  style={{ background: "var(--color-accent)" }}
+                  style={{ background: "var(--color-accent-fill)" }}
                 >
                   {pending.has("share") ? "Sharing…" : "Approve"}
                 </button>
@@ -562,6 +564,17 @@ export function SettingsPane({
             </>
           )}
         </div>
+
+        <NoteVersions
+          projectId={projectId}
+          noteId={noteId}
+          locked={note.locked}
+          loading={loading}
+          currentVersion={note.version}
+          currentTitle={note.title}
+          currentUpdatedAt={note.updatedAt}
+        />
+        <NoteHistory projectId={projectId} noteId={noteId} />
       </div>
     </RibbonShell>
   );

@@ -196,12 +196,14 @@ const noteGateColumns = {
   slug: notes.slug,
   folder: notes.folder,
   visibility: notes.visibility,
+  feedMode: notes.feedMode,
   agentWritable: notes.agentWritable,
   locked: notes.locked,
   version: notes.version,
   embeddingStatus: notes.embeddingStatus,
   shareRequestedBy: notes.shareRequestedBy,
   createdBy: notes.createdBy,
+  updatedBy: notes.updatedBy,
   updatedAt: notes.updatedAt,
   deletedAt: notes.deletedAt,
   projectStatus: projects.status,
@@ -223,12 +225,14 @@ export type NoteAccessGate = Pick<
   | "slug"
   | "folder"
   | "visibility"
+  | "feedMode"
   | "agentWritable"
   | "locked"
   | "version"
   | "embeddingStatus"
   | "shareRequestedBy"
   | "createdBy"
+  | "updatedBy"
   | "updatedAt"
   | "deletedAt"
 > & { projectStatus: ProjectStatus; projectIdentifier: string };

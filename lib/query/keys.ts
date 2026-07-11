@@ -60,6 +60,12 @@ export const noteKeys = {
   /** Ranked full-text search hits for a query string. */
   search: (projectId: string, q: string) =>
     ["notes", projectId, "search", q] as const,
+  /** Per-note activity timeline (history panel). */
+  events: (projectId: string, noteId: string) =>
+    ["notes", projectId, "events", noteId] as const,
+  /** Per-note revision descriptors (versions panel). */
+  revisions: (projectId: string, noteId: string) =>
+    ["notes", projectId, "revisions", noteId] as const,
   /** Notes linked to a task (backlinks panel). */
   backlinks: (projectId: string, taskId: string) =>
     ["notes", projectId, "backlinks", taskId] as const,

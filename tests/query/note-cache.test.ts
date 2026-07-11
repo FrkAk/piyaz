@@ -190,6 +190,7 @@ describe("mergeSummaryIntoDetail", () => {
     projectId: "p1",
     projectIdentifier: "P1",
     folder: "specs",
+    updatedBy: null,
     version: 3,
     updatedAt: new Date("2026-07-01T11:00:00.000Z"),
   };

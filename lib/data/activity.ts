@@ -4,13 +4,22 @@ import { eq } from "drizzle-orm";
 import { activityEvents, projects, tasks } from "@/lib/db/schema";
 import { withUserContextRead, type Tx } from "@/lib/db/rls";
 import { normalizeExecuteResult, toDate } from "@/lib/db/raw";
-import { ForbiddenError } from "@/lib/auth/authorization";
+import {
+  assertNoteGateRows,
+  assertValidNoteId,
+  ForbiddenError,
+} from "@/lib/auth/authorization";
+import { noteAccessGateStmt, type NoteAccessGate } from "@/lib/data/access";
 import {
   taskActivityStmt,
   type ActivityCursor,
   type ActivityRawRow,
 } from "@/lib/db/raw/fetch-task-activity";
 import { projectActivityStmt } from "@/lib/db/raw/fetch-project-activity";
+import {
+  noteActivityHeadStmt,
+  noteActivityStmt,
+} from "@/lib/db/raw/fetch-note-activity";
 import type { ActorDescriptor, AuthContext } from "@/lib/auth/context";
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
 import { isVerifiedOAuthClient } from "@/lib/auth/verified-oauth-clients";
@@ -42,6 +51,7 @@ export function actorColumns(actor: ActorDescriptor): ActorColumns {
 export type ActivityEventInput = {
   projectId: string;
   taskId: string | null;
+  noteId?: string | null;
   type: ActivityEventType;
   summary: string;
   targetRef?: string | null;
@@ -69,6 +79,7 @@ export async function insertActivityEvents(
     events.map((e) => ({
       projectId: e.projectId,
       taskId: e.taskId,
+      noteId: e.noteId ?? null,
       type: e.type,
       actorUserId: cols.actorUserId,
       source: cols.source,
@@ -330,7 +341,9 @@ function toActivityEvent(r: ActivityRawRow): ActivityEvent {
  * batch: the page (with read-time identity via the `activity_actors_visible`
  * / `oauth_client_name` SECURITY DEFINER functions — no `service_role`) plus
  * a task-existence probe, so a stale or foreign task id is 404-shaped
- * instead of masquerading as "no activity".
+ * instead of masquerading as "no activity". Note-linked events surface only
+ * for team-visible notes, and for MCP actors only feed-enabled ones
+ * (`noteExposureClause`).
  *
  * @param ctx - Caller auth context.
  * @param taskId - Task whose events to read.
@@ -348,11 +361,129 @@ export async function listTaskActivity(
   const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
   const since = normalizeSince(opts.since);
 
+  const agentExposed = ctx.actor.source === "mcp";
   const [raw, probe] = await withUserContextRead(ctx.userId, (read) => [
-    taskActivityStmt(read, taskId, cur, limit + 1, since),
+    taskActivityStmt(read, taskId, cur, limit + 1, since, agentExposed),
     read.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)),
   ]);
   if (probe.length === 0) throw new ForbiddenError("Forbidden", "task", taskId);
+  const rows = normalizeExecuteResult<ActivityRawRow>(raw);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  if (page.length === 0) return { events: [], nextCursor: null };
+
+  const last = page[page.length - 1];
+  return {
+    events: page.map(toActivityEvent),
+    nextCursor: hasMore ? encodeCursor(last.created_at_cursor, last.id) : null,
+  };
+}
+
+/**
+ * Assert a note's activity is readable by the caller: the gate row exists
+ * (RLS-visible), the note is not trashed, and for MCP actors the PYZ-250
+ * agent-exposure rule holds (team visibility with `feed_mode <> 'none'`).
+ * Every rejection is the same 404-shaped `ForbiddenError` a missing note
+ * throws, so no existence oracle.
+ *
+ * @param ctx - Caller auth context.
+ * @param noteId - Note being read.
+ * @param gateRows - Rows from `noteAccessGateStmt`.
+ * @throws ForbiddenError when the note is not readable.
+ */
+function assertNoteActivityReadable(
+  ctx: AuthContext,
+  noteId: string,
+  gateRows: readonly NoteAccessGate[],
+): void {
+  const gate = assertNoteGateRows(noteId, gateRows);
+  if (gate.deletedAt !== null) {
+    throw new ForbiddenError("Forbidden", "note", noteId);
+  }
+  if (
+    ctx.actor.source === "mcp" &&
+    !(gate.visibility === "team" && gate.feedMode !== "none")
+  ) {
+    throw new ForbiddenError("Forbidden", "note", noteId);
+  }
+}
+
+/**
+ * Newest event key of one note-activity page: the `(createdAtMs, id)` pair
+ * the matching {@link listNoteActivity} page would surface first, or null
+ * when the page is empty. One RLS-scoped batch (index head probe + access
+ * gate) with the same 404-shaping: the cheap validator resolve for
+ * `HEAD`/`If-None-Match`, so a 304 skips the full page fetch and its
+ * identity joins.
+ *
+ * @param ctx - Caller auth context.
+ * @param noteId - Note whose events to probe.
+ * @param opts - Optional opaque `cursor` and `since` lower bound, matching
+ *   the page read they validate.
+ * @returns The newest matching event's key, or null when none match.
+ * @throws ForbiddenError when the note is not visible to the caller, is
+ *   trashed, or is not agent-exposed for an MCP actor.
+ */
+export async function getNoteActivityHead(
+  ctx: AuthContext,
+  noteId: string,
+  opts: { cursor?: string; since?: string },
+): Promise<{ createdAtMs: number; id: string } | null> {
+  assertValidNoteId(noteId);
+  const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
+
+  const [raw, gateRows] = await withUserContextRead(ctx.userId, (read) => [
+    noteActivityHeadStmt(read, noteId, cur, since),
+    noteAccessGateStmt(read, noteId),
+  ]);
+  assertNoteActivityReadable(ctx, noteId, gateRows);
+  const [row] = normalizeExecuteResult<{
+    id: string;
+    created_at: Date | string;
+  }>(raw);
+  return row
+    ? { createdAtMs: toDate(row.created_at).getTime(), id: row.id }
+    : null;
+}
+
+/**
+ * List one note's activity newest-first, keyset-paginated. One RLS-scoped
+ * read batch: the page (read-time identity via
+ * `activity_actors_for_project_visible` / `oauth_client_name`, no
+ * `service_role`) plus the note access gate, so a missing, cross-team,
+ * trashed, or another member's private note is 404-shaped instead of
+ * masquerading as "no activity". For MCP actors the PYZ-250 agent-exposure
+ * rule applies here in the data ring (mirroring `assertAgentWritable`'s
+ * placement): a private note or a team note with `feed_mode = 'none'` throws
+ * the same 404-shaped `ForbiddenError` as a missing note, so no existence
+ * oracle, zero extra reads (the gate row already carries visibility and
+ * feed mode).
+ *
+ * @param ctx - Caller auth context.
+ * @param noteId - Note whose events to read.
+ * @param opts - `limit` (clamped to {@link MAX_LIMIT}), an opaque `cursor`, and
+ *   an optional `since` lower bound (events with `created_at > since`).
+ * @returns A page of events plus the next cursor (null when exhausted).
+ * @throws ForbiddenError when the note is not visible to the caller, is
+ *   trashed, or is not agent-exposed for an MCP actor.
+ */
+export async function listNoteActivity(
+  ctx: AuthContext,
+  noteId: string,
+  opts: { cursor?: string; limit?: number; since?: string },
+): Promise<{ events: ActivityEvent[]; nextCursor: string | null }> {
+  assertValidNoteId(noteId);
+  const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
+
+  const [raw, gateRows] = await withUserContextRead(ctx.userId, (read) => [
+    noteActivityStmt(read, noteId, cur, limit + 1, since),
+    noteAccessGateStmt(read, noteId),
+  ]);
+  assertNoteActivityReadable(ctx, noteId, gateRows);
   const rows = normalizeExecuteResult<ActivityRawRow>(raw);
 
   const hasMore = rows.length > limit;
@@ -372,7 +503,8 @@ export async function listTaskActivity(
  * `activity_actors_for_project_visible` / `oauth_client_name` SECURITY
  * DEFINER functions — no `service_role`) plus a project-existence probe, so
  * a stale or foreign project id is 404-shaped instead of masquerading as
- * "no activity".
+ * "no activity". Note-linked events surface only for team-visible notes, and
+ * for MCP actors only feed-enabled ones (`noteExposureClause`).
  *
  * @param ctx - Caller auth context.
  * @param projectId - Project whose events to read.
@@ -390,8 +522,9 @@ export async function listProjectActivity(
   const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
   const since = normalizeSince(opts.since);
 
+  const agentExposed = ctx.actor.source === "mcp";
   const [raw, probe] = await withUserContextRead(ctx.userId, (read) => [
-    projectActivityStmt(read, projectId, cur, limit + 1, since),
+    projectActivityStmt(read, projectId, cur, limit + 1, since, agentExposed),
     read
       .select({ id: projects.id })
       .from(projects)

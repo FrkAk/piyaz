@@ -25,6 +25,8 @@
   --color-accent-2: #6ee7d8;
   --color-accent-light: #a5b4fc;
   --color-accent-glow: rgba(129, 140, 248, 0.12);
+  /* Filled-button surface; holds a white label at AA in both themes */
+  --color-accent-fill: #4f46e5;
 
   --color-done: #5fc992;
   --color-done-bg: rgba(95, 201, 146, 0.1);
@@ -38,6 +40,7 @@
   --color-cancelled: #e57373;
   --color-cancelled-bg: rgba(229, 115, 115, 0.1);
   --color-danger: #ff6363;
+  --color-danger-fill: #dc2626;
 
   --color-depends: #55b3ff;
   --color-relates: #a78bfa;

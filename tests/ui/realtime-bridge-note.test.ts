@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
-import { applyRealtimeEvent } from "@/components/providers/RealtimeBridge";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import {
+  _setNoteEventsQuietMsForTests,
+  applyRealtimeEvent,
+} from "@/components/providers/RealtimeBridge";
 import type { NoteTreeRow } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
 import {
@@ -92,16 +95,32 @@ function invalidated(qc: QueryClient, key: readonly unknown[]): boolean {
  * @param updatedAt - Optional event timestamp.
  * @returns JSON payload string.
  */
-function noteEvent(updatedAt?: Date): string {
+function noteEvent(
+  updatedAt?: Date,
+  version?: number,
+  revisionCheckpointed?: boolean,
+): string {
   return JSON.stringify({
     kind: "note",
     projectId: PROJECT,
     noteId: NOTE,
     ...(updatedAt ? { updatedAt: updatedAt.toISOString() } : {}),
+    ...(version !== undefined ? { version } : {}),
+    ...(revisionCheckpointed !== undefined ? { revisionCheckpointed } : {}),
   });
 }
 
+/**
+ * Await until the debounced events invalidation could have fired.
+ * @param ms - Milliseconds to wait.
+ * @returns Promise resolving after the wait.
+ */
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 afterEach(() => {
+  _setNoteEventsQuietMsForTests(2_000);
   endNoteEditSession(NOTE);
   clearNoteDirty(NOTE);
   clearNoteTrashed(NOTE);
@@ -281,6 +300,127 @@ describe("applyRealtimeEvent note case", () => {
     );
     expect(detail?.note.body).toBe("local draft body");
     expect(hasUnsavedNoteEdits(NOTE)).toBe(true);
+  });
+
+  test("a checkpointed note event invalidates revisions and debounces events, even while dirty", async () => {
+    _setNoteEventsQuietMsForTests(5);
+    const qc = seededClient(when);
+    qc.setQueryData(noteKeys.events(PROJECT, NOTE), {
+      pages: [{ events: [], nextCursor: null }],
+      pageParams: [null],
+    });
+    qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
+      currentVersion: 1,
+      revisions: [],
+    });
+    markNoteDirty(NOTE);
+
+    await applyRealtimeEvent(qc, noteEvent(when, 2, true));
+
+    expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(true);
+    expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(false);
+    await wait(20);
+    expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(true);
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+  });
+
+  test("a checkpoint-free body event bumps cached currentVersion in place, no refetch", async () => {
+    _setNoteEventsQuietMsForTests(5);
+    const qc = seededClient(when);
+    const rows = [{ version: 1, title: "Old", createdAt: "2026-07-01" }];
+    qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
+      currentVersion: 2,
+      revisions: rows,
+    });
+
+    await applyRealtimeEvent(qc, noteEvent(when, 3, false));
+
+    expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(false);
+    const cache = qc.getQueryData<{
+      currentVersion: number;
+      revisions: unknown[];
+    }>(noteKeys.revisions(PROJECT, NOTE));
+    expect(cache?.currentVersion).toBe(3);
+    expect(cache?.revisions).toEqual(rows);
+  });
+
+  test("a note event whose version the revisions cache already covers skips that refetch", async () => {
+    _setNoteEventsQuietMsForTests(5);
+    const qc = seededClient(when);
+    qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
+      currentVersion: 3,
+      revisions: [],
+    });
+
+    await applyRealtimeEvent(qc, noteEvent(when, 3, true));
+    expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(false);
+
+    await applyRealtimeEvent(qc, noteEvent(when, 4, true));
+    expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(true);
+  });
+
+  test("a version-less note event always invalidates revisions", async () => {
+    _setNoteEventsQuietMsForTests(5);
+    const qc = seededClient(when);
+    qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
+      currentVersion: 3,
+      revisions: [],
+    });
+
+    await applyRealtimeEvent(qc, noteEvent(when));
+    expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(true);
+  });
+
+  test("burst note events coalesce into one events invalidation and trim to the first page", async () => {
+    _setNoteEventsQuietMsForTests(15);
+    const qc = seededClient(when);
+    const firstPage = { events: [{ id: "e1" }], nextCursor: "c1" };
+    qc.setQueryData(noteKeys.events(PROJECT, NOTE), {
+      pages: [firstPage, { events: [{ id: "e2" }], nextCursor: null }],
+      pageParams: [null, "c1"],
+    });
+
+    await applyRealtimeEvent(qc, noteEvent(when, 2));
+    await applyRealtimeEvent(qc, noteEvent(when, 3));
+    expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(false);
+
+    await wait(40);
+    expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(true);
+    const trimmed = qc.getQueryData<{
+      pages: unknown[];
+      pageParams: unknown[];
+    }>(noteKeys.events(PROJECT, NOTE));
+    expect(trimmed?.pages).toEqual([firstPage]);
+    expect(trimmed?.pageParams).toEqual([null]);
+  });
+
+  test("an observed events query keeps its expanded pages through the invalidation", async () => {
+    _setNoteEventsQuietMsForTests(5);
+    const qc = seededClient(when);
+    const pages = [
+      { events: [{ id: "e1" }], nextCursor: "c1" },
+      { events: [{ id: "e2" }], nextCursor: null },
+    ];
+    qc.setQueryData(noteKeys.events(PROJECT, NOTE), {
+      pages,
+      pageParams: [null, "c1"],
+    });
+    const observer = new QueryObserver(qc, {
+      queryKey: noteKeys.events(PROJECT, NOTE),
+      enabled: false,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+
+    await applyRealtimeEvent(qc, noteEvent(when, 2));
+    await wait(30);
+
+    expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(true);
+    const kept = qc.getQueryData<{ pages: unknown[]; pageParams: unknown[] }>(
+      noteKeys.events(PROJECT, NOTE),
+    );
+    expect(kept?.pages).toEqual(pages);
+    expect(kept?.pageParams).toEqual([null, "c1"]);
+    unsubscribe();
   });
 
   test("note-folders event invalidates the folders query and nothing else", async () => {

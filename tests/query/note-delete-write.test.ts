@@ -46,6 +46,7 @@ mock.module("@/lib/actions/note", () => ({
   moveFolderAction: unexpectedActionCall,
   moveNoteAction: unexpectedActionCall,
   restoreNoteAction: unexpectedActionCall,
+  restoreRevisionAction: unexpectedActionCall,
   updateNoteAction: unexpectedActionCall,
 }));
 

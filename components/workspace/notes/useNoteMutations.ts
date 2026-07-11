@@ -17,6 +17,7 @@ import {
   moveFolderAction,
   moveNoteAction,
   restoreNoteAction,
+  restoreRevisionAction,
   updateNoteAction,
 } from "@/lib/actions/note";
 import type {
@@ -25,6 +26,7 @@ import type {
   NoteFullResult,
   NoteLinksRefresh,
   NotePatch,
+  NoteRevisionCheckpoint,
   NoteSummary,
   NoteTreeRow,
 } from "@/lib/data/note";
@@ -68,7 +70,10 @@ const AUTOSAVE_RETRY_MAX_MS = 30_000;
 
 /** Write result shared by every note patch path. */
 type NoteWriteResult = NoteActionResult<
-  NoteSummary & { links?: NoteLinksRefresh }
+  NoteSummary & {
+    links?: NoteLinksRefresh;
+    revisionCheckpoint?: NoteRevisionCheckpoint;
+  }
 >;
 
 /**
@@ -129,6 +134,60 @@ function pickFields<T extends object>(
     }
   }
   return prev as Partial<T>;
+}
+
+/** Client cache shape of the revisions query (`GET /api/note/[id]/revisions`), plus mutation-merged rows whose `createdAt` is still a `Date`. */
+export type NoteRevisionsCache = {
+  currentVersion: number;
+  revisions: { version: number; title: string; createdAt: string | Date }[];
+};
+
+/**
+ * Fold a body-changing write into the cached revisions query, so the
+ * actor's own autosaves and restores never trigger a revisions refetch
+ * (the realtime bridge skips invalidation when the cached `currentVersion`
+ * already covers the event's `version`). `currentVersion` always follows
+ * the response; a row is prepended only when the write archived a
+ * pre-image checkpoint.
+ *
+ * @param qc - QueryClient.
+ * @param projectId - Owning project id.
+ * @param noteId - Note id.
+ * @param summary - Success response summary carrying `version` and the
+ *   optional `revisionCheckpoint` the write archived.
+ */
+function mergeRevisionIntoCache(
+  qc: QueryClient,
+  projectId: string,
+  noteId: string,
+  summary: NoteSummary & { revisionCheckpoint?: NoteRevisionCheckpoint },
+): void {
+  qc.setQueryData<NoteRevisionsCache>(
+    noteKeys.revisions(projectId, noteId),
+    (data) => {
+      if (data === undefined || summary.version <= data.currentVersion) {
+        return data;
+      }
+      const checkpoint = summary.revisionCheckpoint;
+      const prepend =
+        checkpoint !== undefined &&
+        (data.revisions.length === 0 ||
+          data.revisions[0].version < checkpoint.version);
+      return {
+        currentVersion: summary.version,
+        revisions: prepend
+          ? [
+              {
+                version: checkpoint.version,
+                title: checkpoint.title,
+                createdAt: checkpoint.createdAt,
+              },
+              ...data.revisions,
+            ]
+          : data.revisions,
+      };
+    },
+  );
 }
 
 /**
@@ -219,6 +278,7 @@ export async function runOptimisticNoteWrite(
           updatedAt: result.data.updatedAt,
         }),
       );
+      mergeRevisionIntoCache(qc, projectId, noteId, result.data);
       if (result.data.links !== undefined) {
         qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(projectId) });
       }
@@ -481,6 +541,63 @@ export function useRestoreNote(projectId: string) {
         }
         return result;
       }),
+  });
+}
+
+/**
+ * Revision-restore write flow behind {@link useRestoreRevision}:
+ * serialized through the per-note write chain so it never races an
+ * in-flight autosave; the CAS token is read at send time inside the
+ * chained job for the same reason. No optimistic surgery: the restored
+ * content is server-derived (the client holds no revision body), so
+ * success invalidates the detail, tree list, events, and revisions
+ * queries and the editor refetches the restored note. A `stale_write`
+ * failure surfaces to the caller (the versions panel renders it inline;
+ * no silent retry) and still invalidates, so the panel re-syncs to
+ * server truth. Other failures invalidate nothing: the server applied no
+ * write and the caches hold nothing optimistic.
+ *
+ * @param qc - QueryClient.
+ * @param projectId - Owning project id.
+ * @param noteId - Note id.
+ * @param version - Revision counter value to restore.
+ * @returns The typed action result.
+ */
+export async function runRestoreRevisionWrite(
+  qc: QueryClient,
+  projectId: string,
+  noteId: string,
+  version: number,
+): Promise<NoteWriteResult> {
+  return enqueueNoteWrite(noteId, async () => {
+    const result = await restoreRevisionAction(
+      noteId,
+      version,
+      cachedCasToken(qc, projectId, noteId),
+    );
+    if (result.ok || result.code === "stale_write") {
+      qc.invalidateQueries({ queryKey: noteKeys.detail(projectId, noteId) });
+      qc.invalidateQueries({ queryKey: noteKeys.list(projectId) });
+      qc.invalidateQueries({ queryKey: noteKeys.events(projectId, noteId) });
+      qc.invalidateQueries({
+        queryKey: noteKeys.revisions(projectId, noteId),
+      });
+    }
+    return result;
+  });
+}
+
+/**
+ * Revision restore over {@link runRestoreRevisionWrite}.
+ *
+ * @param projectId - Owning project id.
+ * @returns Mutation taking `{ noteId, version }`.
+ */
+export function useRestoreRevision(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { noteId: string; version: number }) =>
+      runRestoreRevisionWrite(qc, projectId, vars.noteId, vars.version),
   });
 }
 

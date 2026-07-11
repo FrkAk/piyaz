@@ -57,6 +57,13 @@
       "when": 1783716199339,
       "tag": "0007_married_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783763340532,
+      "tag": "0008_jittery_virginia_dare",
+      "breakpoints": true
     }
   ]
 }

@@ -60,15 +60,34 @@ CREATE POLICY "task_links_member_access" ON "task_links" AS PERMISSIVE FOR ALL T
   USING (task_id IN (SELECT id FROM public.tasks))
   WITH CHECK (task_id IN (SELECT id FROM public.tasks));
 
--- activity_events — 2-hop via projects' RLS, mirroring tasks. The WITH CHECK
--- also pins a non-null task_id to the row's own project, so a member cannot
--- write an event whose project_id is theirs but whose task_id belongs to a
--- foreign project (the task_id column otherwise carries no policy predicate).
--- The tasks sub-probe is RLS-scoped, so a cross-project task is invisible and
--- the check fails closed.
+-- activity_events: 2-hop via projects' RLS, mirroring tasks. USING also
+-- gates note_id-bearing rows through the notes RLS with a correlated EXISTS
+-- (one notes_pkey probe; notes_member_access hides other users' private
+-- notes, so the probe fails closed and private-note events stay invisible to
+-- other members). The EXISTS additionally fences pre-share history: a
+-- non-creator sees a note's events only when the note is currently shared
+-- (shared_since set) and the event postdates the current share
+-- (created_at >= shared_since); the creator sees all. The WITH CHECK pins a
+-- non-null task_id or note_id to the row's own project, so a member cannot
+-- write an event whose project_id is theirs but whose task_id/note_id
+-- belongs to a foreign project (those columns otherwise carry no policy
+-- predicate). Both sub-probes are RLS-scoped, so a cross-project target is
+-- invisible and the check fails closed.
 DROP POLICY IF EXISTS "activity_events_member_access" ON "activity_events";
 CREATE POLICY "activity_events_member_access" ON "activity_events" AS PERMISSIVE FOR ALL TO app_user
-  USING (project_id IN (SELECT id FROM public.projects))
+  USING (
+    project_id IN (SELECT id FROM public.projects)
+    AND (
+      note_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.notes n
+        WHERE n.id = activity_events.note_id
+          AND (n.created_by = (SELECT public.current_app_user_id())
+               OR (n.shared_since IS NOT NULL
+                   AND activity_events.created_at >= n.shared_since))
+      )
+    )
+  )
   WITH CHECK (
     project_id IN (SELECT id FROM public.projects)
     AND (
@@ -77,6 +96,14 @@ CREATE POLICY "activity_events_member_access" ON "activity_events" AS PERMISSIVE
         SELECT 1 FROM public.tasks t
         WHERE t.id = activity_events.task_id
           AND t.project_id = activity_events.project_id
+      )
+    )
+    AND (
+      note_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.notes n
+        WHERE n.id = activity_events.note_id
+          AND n.project_id = activity_events.project_id
       )
     )
   );
@@ -250,13 +277,25 @@ CREATE POLICY "note_task_links_delete_member_only" ON "note_task_links"
     AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
   );
 
--- note_revisions — 3-hop via notes' RLS (append-only body history). WITH CHECK
--- also pins created_by to the caller (or NULL) so a member cannot forge a
--- snapshot attributed to another user; UPDATE is revoked in grants.sql.
--- Correlated EXISTS per the note_task_links rationale above.
+-- note_revisions — 3-hop via notes' RLS (append-only body history). USING
+-- fences pre-share snapshots: a non-creator reads a revision only when the
+-- note is currently shared (shared_since set) and the snapshot postdates the
+-- current share (created_at >= shared_since); the creator reads all. The
+-- fence also scopes a non-creator write's retention DELETE, so pre-share
+-- rows past the keep window fall only to the creator's own writes (bounded:
+-- the visible window still prunes). WITH CHECK also pins created_by to the
+-- caller (or NULL) so a member cannot forge a snapshot attributed to another
+-- user; UPDATE is revoked in grants.sql. Correlated EXISTS per the
+-- note_task_links rationale above.
 DROP POLICY IF EXISTS "note_revisions_member_access" ON "note_revisions";
 CREATE POLICY "note_revisions_member_access" ON "note_revisions" AS PERMISSIVE FOR ALL TO app_user
-  USING (EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_revisions.note_id))
+  USING (EXISTS (
+    SELECT 1 FROM public.notes n
+    WHERE n.id = note_revisions.note_id
+      AND (n.created_by = (SELECT public.current_app_user_id())
+           OR (n.shared_since IS NOT NULL
+               AND note_revisions.created_at >= n.shared_since))
+  ))
   WITH CHECK (
     EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_revisions.note_id)
     AND (created_by IS NULL

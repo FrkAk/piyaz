@@ -44,6 +44,34 @@ export type ActivityRawRow = {
 const SUMMARY_MAX_CHARS = 160;
 
 /**
+ * Feed-level exposure filter for note-linked events, shared by the task and
+ * project page fetchers. `note_id IS NULL` short-circuits task/edge rows;
+ * note-event rows require a currently shared note (team-visible with
+ * `shared_since` set) and an event inside the current share window
+ * (`created_at >= shared_since`), all via one `notes_pkey` EXISTS probe
+ * that also fails closed through the notes RLS. A trashed note keeps only
+ * its `note_deleted` event in feeds until restored. For MCP actors the
+ * probe additionally requires a feed-enabled note (the PYZ-250
+ * agent-exposure rule). The author's own private-note events surface only
+ * on the per-note read path, never in a feed, so feeds cannot become an
+ * existence oracle.
+ *
+ * @param agentExposed - True for MCP actors: additionally require
+ *   `feed_mode <> 'none'`.
+ * @returns The AND-able SQL fragment.
+ */
+export function noteExposureClause(agentExposed: boolean): SQL {
+  const feedArm = agentExposed ? sql`AND n.feed_mode <> 'none'` : sql``;
+  return sql`AND (ae.note_id IS NULL OR EXISTS (
+        SELECT 1 FROM public.notes n
+        WHERE n.id = ae.note_id AND n.visibility = 'team'
+          AND n.shared_since IS NOT NULL
+          AND ae.created_at >= n.shared_since
+          AND (n.deleted_at IS NULL OR ae.type = 'note_deleted')
+          ${feedArm}))`;
+}
+
+/**
  * Build the keyset page SQL for a task's activity. Pages newest-first and
  * hydrates display identity inline via the `activity_actors_visible` /
  * `oauth_client_name` SECURITY DEFINER functions — the same idiom as the
@@ -60,6 +88,8 @@ const SUMMARY_MAX_CHARS = 160;
  * @param cur - Decoded keyset cursor, or null for the first page.
  * @param limit - Row cap (already includes the +1 look-ahead).
  * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
+ * @param agentExposed - Restrict note-linked events to feed-enabled notes
+ *   ({@link noteExposureClause}).
  * @returns Parameterized read-only SQL.
  */
 function activityPageSql(
@@ -67,6 +97,7 @@ function activityPageSql(
   cur: ActivityCursor | null,
   limit: number,
   since: string | null,
+  agentExposed: boolean,
 ): SQL {
   const keyset = cur
     ? sql`AND (ae.created_at < ${cur.createdAt}::timestamptz
@@ -87,6 +118,7 @@ function activityPageSql(
         ae.target_ref, ae.metadata
       FROM public.activity_events ae
       WHERE ae.task_id = ${taskId}::uuid
+      ${noteExposureClause(agentExposed)}
       ${sinceClause}
       ${keyset}
       ORDER BY ae.created_at DESC, ae.id DESC
@@ -125,6 +157,8 @@ function activityPageSql(
  * @param cur - Decoded keyset cursor, or null for the first page.
  * @param limit - Row cap (already includes the +1 look-ahead).
  * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
+ * @param agentExposed - Restrict note-linked events to feed-enabled notes
+ *   ({@link noteExposureClause}).
  * @returns Lazy raw-SQL read statement.
  */
 export function taskActivityStmt(
@@ -133,6 +167,7 @@ export function taskActivityStmt(
   cur: ActivityCursor | null,
   limit: number,
   since: string | null = null,
+  agentExposed = false,
 ) {
-  return read.execute(activityPageSql(taskId, cur, limit, since));
+  return read.execute(activityPageSql(taskId, cur, limit, since, agentExposed));
 }

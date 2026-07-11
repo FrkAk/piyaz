@@ -115,6 +115,69 @@ function updatedAtMs(value: Date | string): number {
   return typeof value === "string" ? Date.parse(value) : value.getTime();
 }
 
+/** Quiet window that coalesces per-note history refetches across an autosave burst. */
+let noteEventsInvalidateQuietMs = 2_000;
+
+/**
+ * Test-only override of the events-invalidation quiet window.
+ *
+ * @param ms - Replacement window in milliseconds.
+ */
+export function _setNoteEventsQuietMsForTests(ms: number): void {
+  noteEventsInvalidateQuietMs = ms;
+}
+
+/** Pending per-note history invalidation timers, keyed by note id. */
+const noteEventsInvalidateTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
+
+/**
+ * Invalidate a note's events query after a quiet window, coalescing
+ * autosave bursts into one refetch. When no observer is mounted, the
+ * cached infinite data is first trimmed to its first page so the next
+ * mount fetches one keyset page instead of every page the viewer had
+ * expanded; an actively observed query keeps its pages (the refetch
+ * revalidates each page under `If-None-Match`, and trimming would snap an
+ * open history panel back to page one).
+ *
+ * @param qc - The active QueryClient.
+ * @param projectId - Owning project id.
+ * @param noteId - Note whose events query to invalidate.
+ */
+function scheduleNoteEventsInvalidation(
+  qc: QueryClient,
+  projectId: string,
+  noteId: string,
+): void {
+  const existing = noteEventsInvalidateTimers.get(noteId);
+  if (existing !== undefined) clearTimeout(existing);
+  noteEventsInvalidateTimers.set(
+    noteId,
+    setTimeout(() => {
+      noteEventsInvalidateTimers.delete(noteId);
+      const key = noteKeys.events(projectId, noteId);
+      const observed =
+        (qc.getQueryCache().find({ queryKey: key })?.getObserversCount() ?? 0) >
+        0;
+      if (!observed) {
+        qc.setQueryData<{ pages: unknown[]; pageParams: unknown[] }>(
+          key,
+          (data) =>
+            data !== undefined && data.pages.length > 1
+              ? {
+                  pages: data.pages.slice(0, 1),
+                  pageParams: data.pageParams.slice(0, 1),
+                }
+              : data,
+        );
+      }
+      qc.invalidateQueries({ queryKey: key });
+    }, noteEventsInvalidateQuietMs),
+  );
+}
+
 /**
  * Judge a `note` event against the cache and invalidate what is actually
  * stale. Waits for the note's in-flight local writes to settle first, so
@@ -126,7 +189,14 @@ function updatedAtMs(value: Date | string): number {
  * pre-delete autosave event is older-or-equal and never qualifies). The
  * open note's detail additionally never refetches while the note holds
  * unsaved editor content: a refetch must not clobber the optimistic
- * autosave buffer or kept-optimistic conflict content.
+ * autosave buffer or kept-optimistic conflict content. The note's events
+ * query invalidates through {@link scheduleNoteEventsInvalidation}, which
+ * coalesces autosave bursts. The revisions query refetches only when the
+ * write archived a checkpoint (`revisionCheckpointed`): a checkpoint-free
+ * body save moves `currentVersion` alone, patched into the cache in place,
+ * and the actor's own writes land from the mutation response so the
+ * version gate skips them entirely. Neither touches the editor buffer, so
+ * no dirty gating applies.
  *
  * @param qc - The active QueryClient.
  * @param ev - Decoded note event.
@@ -134,9 +204,41 @@ function updatedAtMs(value: Date | string): number {
  */
 async function handleNoteEvent(
   qc: QueryClient,
-  ev: { projectId: string; noteId: string; updatedAt?: string },
+  ev: {
+    projectId: string;
+    noteId: string;
+    updatedAt?: string;
+    version?: number;
+    revisionCheckpointed?: boolean;
+  },
 ): Promise<void> {
   await whenNoteWritesSettle(ev.noteId);
+  scheduleNoteEventsInvalidation(qc, ev.projectId, ev.noteId);
+  const revisionsKey = noteKeys.revisions(ev.projectId, ev.noteId);
+  const revisions = qc.getQueryData<{
+    currentVersion: number;
+    revisions: unknown[];
+  }>(revisionsKey);
+  const revisionsCurrent =
+    ev.version !== undefined &&
+    revisions !== undefined &&
+    revisions.currentVersion >= ev.version;
+  if (!revisionsCurrent) {
+    if (
+      ev.version !== undefined &&
+      revisions !== undefined &&
+      ev.revisionCheckpointed !== true
+    ) {
+      const version = ev.version;
+      qc.setQueryData<{ currentVersion: number; revisions: unknown[] }>(
+        revisionsKey,
+        (data) =>
+          data === undefined ? data : { ...data, currentVersion: version },
+      );
+    } else {
+      qc.invalidateQueries({ queryKey: revisionsKey });
+    }
+  }
   const evMs = ev.updatedAt === undefined ? Infinity : Date.parse(ev.updatedAt);
   if (ev.updatedAt !== undefined) {
     clearNoteTrashedIfRestoredRemotely(ev.noteId, evMs);

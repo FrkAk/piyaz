@@ -4,6 +4,7 @@ import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask } from "@/lib/data/task";
+import { createNote } from "@/lib/data/note";
 import { handleWorkspace } from "@/lib/graph/tools/workspace";
 import { handleSearch } from "@/lib/graph/tools/search";
 import { handleGet } from "@/lib/graph/tools/get";
@@ -414,4 +415,71 @@ test("get renders exposed notes through the MCP lens surface", async () => {
   expect(summary).toContain("## Relevant Notes");
   expect(summary).toContain("[guidance] House rules — gate rule");
   expect(summary).not.toContain("Run the full gate.");
+});
+
+test("activity note scope pages an agent-exposed note and 404-shapes non-exposed ones for MCP", async () => {
+  const fx = await seedUserOrgProject("TACTNOTE");
+  const ctx = makeAuthContext(fx.userId);
+  const mcp = makeAuthContext(fx.userId, {
+    source: "mcp",
+    userId: fx.userId,
+    clientId: null,
+  });
+
+  const exposed = await createNote(ctx, {
+    projectId: fx.projectId,
+    title: "Exposed note",
+    visibility: "team",
+    feedMode: "all",
+  });
+  const feedOff = await createNote(ctx, {
+    projectId: fx.projectId,
+    title: "Quiet note",
+    visibility: "team",
+  });
+  const priv = await createNote(ctx, {
+    projectId: fx.projectId,
+    title: "Secret note",
+  });
+
+  const page = okText(await handleActivity({ note: exposed.id }, mcp));
+  expect(page).toContain("note_created");
+  expect(page).toContain("Exposed note");
+
+  for (const noteId of [feedOff.id, priv.id]) {
+    const denied = await handleActivity({ note: noteId }, mcp);
+    expect(denied.ok).toBe(false);
+    const text = JSON.stringify(denied);
+    expect(text).toContain("not found");
+    expect(text).not.toContain("Quiet note");
+    expect(text).not.toContain("Secret note");
+  }
+
+  const feed = okText(await handleActivity({ project: "PRJTACTNOTE" }, mcp));
+  expect(feed).toContain("Exposed note");
+  expect(feed).not.toContain("Quiet note");
+  expect(feed).not.toContain("Secret note");
+});
+
+test("activity note scope resolves a slug with project and rejects task+note", async () => {
+  const fx = await seedUserOrgProject("TACTSLUG");
+  const ctx = makeAuthContext(fx.userId);
+  const note = await createNote(ctx, {
+    projectId: fx.projectId,
+    title: "Slugged note",
+    visibility: "team",
+    feedMode: "all",
+  });
+
+  const bySlug = okText(
+    await handleActivity({ note: note.slug, project: "PRJTACTSLUG" }, ctx),
+  );
+  expect(bySlug).toContain("Slugged note");
+
+  const both = await handleActivity(
+    { task: "PRJTACTSLUG-1", note: note.id },
+    ctx,
+  );
+  expect(both.ok).toBe(false);
+  if (!both.ok) expect(both.error).toContain("exactly one");
 });

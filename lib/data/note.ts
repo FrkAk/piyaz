@@ -78,6 +78,7 @@ import {
   type ReadConn,
 } from "@/lib/db/raw";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
+import { noteUpdaterNameStmt } from "@/lib/db/raw/fetch-note-updater";
 import {
   noteFoldersVersionStmt,
   type NoteFoldersVersionRow,
@@ -120,6 +121,21 @@ import type {
 
 /** Revisions kept per note; older rows are pruned in the write tx. */
 const NOTE_REVISION_KEEP = 50;
+
+/**
+ * Same-author quiet window between revision checkpoints. A body write
+ * archives the pre-image only when the newest snapshot is at least this
+ * old; MCP writes, a change of author, and restores checkpoint
+ * unconditionally.
+ */
+const NOTE_REVISION_CHECKPOINT_MS = 10 * 60_000;
+
+/** Pre-image snapshot descriptor a body-changing write archived, when it did. */
+export type NoteRevisionCheckpoint = {
+  version: number;
+  title: string;
+  createdAt: Date;
+};
 
 /** Byte cap for generated slugs; leaves suffix headroom under the CHECK. */
 const SLUG_MAX_BYTES = 240;
@@ -184,6 +200,7 @@ export type NoteValidationField =
   | "title"
   | "body"
   | "folder"
+  | "version"
   | "query"
   | "ifUpdatedAt"
   | "summary"
@@ -351,13 +368,15 @@ export type TaskNoteBacklink = NoteTreeRow & {
   sequenceNumber: number;
 };
 
-/** Full note row minus the server-side `search_tsv` column. */
-export type NoteFull = Omit<Note, "searchTsv">;
+/** Full note row minus the server-side `search_tsv` and `shared_since` columns (RLS fence state; no client reads it). */
+export type NoteFull = Omit<Note, "searchTsv" | "sharedSince">;
 
 /** Single-note read: the full row plus its derived link context. */
 export type NoteFullResult = {
   note: NoteFull;
   projectIdentifier: string;
+  /** Last editor's org-visible display name, or null when unresolvable. */
+  updatedByName: string | null;
   mentions: NoteMention[];
   linksOut: LinkedNoteSlim[];
   linksIn: LinkedNoteSlim[];
@@ -444,6 +463,7 @@ export type NoteSummary = {
   folder: string;
   version: number;
   updatedAt: Date;
+  updatedBy: string | null;
 };
 
 /**
@@ -533,6 +553,7 @@ const noteSummaryColumns = {
   folder: notes.folder,
   version: notes.version,
   updatedAt: notes.updatedAt,
+  updatedBy: notes.updatedBy,
 } as const;
 
 /** Slim tree-list projection; excludes `body` and `search_tsv` by design. */
@@ -911,6 +932,7 @@ function gateSummary(
     | "folder"
     | "version"
     | "updatedAt"
+    | "updatedBy"
   >,
 ): NoteSummary {
   return {
@@ -922,6 +944,7 @@ function gateSummary(
     projectIdentifier: gate.projectIdentifier,
     folder: gate.folder,
     version: gate.version,
+    updatedBy: gate.updatedBy,
     updatedAt: gate.updatedAt,
   };
 }
@@ -1089,8 +1112,8 @@ async function replaceDerivedLinks(
 
 /**
  * Snapshot a note body into `note_revisions` and prune past the retention
- * cap. Runs in the body-write transaction; `created_by` is pinned to the
- * caller by the table's RLS WITH CHECK, and DELETE (not UPDATE) is the
+ * cap. Runs in the body-write transaction; `created_by` must be the caller
+ * or NULL (the table's RLS WITH CHECK pin), and DELETE (not UPDATE) is the
  * grant the prune relies on.
  *
  * @param tx - Active RLS transaction handle.
@@ -1098,7 +1121,11 @@ async function replaceDerivedLinks(
  * @param version - Revision counter value being snapshotted.
  * @param title - Note title at this revision.
  * @param body - Note body at this revision.
- * @param userId - Acting user attributed as `created_by`.
+ * @param userId - `created_by` attribution: the caller when they authored
+ *   the snapshotted content, NULL when archiving another author's state.
+ * @param createdAt - Snapshot timestamp; pre-image checkpoints pass the
+ *   note's pre-write `updatedAt` so the row dates the content, not the
+ *   archive write. Defaults to DB `now()`.
  */
 async function insertRevisionWithPrune(
   tx: Tx,
@@ -1106,7 +1133,8 @@ async function insertRevisionWithPrune(
   version: number,
   title: string,
   body: string,
-  userId: string,
+  userId: string | null,
+  createdAt?: Date,
 ): Promise<void> {
   await tx.insert(noteRevisions).values({
     noteId,
@@ -1114,6 +1142,7 @@ async function insertRevisionWithPrune(
     title,
     body,
     createdBy: userId,
+    ...(createdAt !== undefined ? { createdAt } : {}),
   });
   await tx
     .delete(noteRevisions)
@@ -1410,20 +1439,25 @@ export async function getNoteFull(
   noteId: string,
 ): Promise<NoteFullResult> {
   assertValidNoteId(noteId);
-  const [gateRows, noteRows, mentionRows, linksOut, linksIn] =
+  const [gateRows, noteRows, mentionRows, linksOut, linksIn, updaterRows] =
     await withUserContextRead(ctx.userId, (read) => [
       noteAccessGateStmt(read, noteId),
       noteRowStmt(read, noteId),
       noteMentionsStmt(read, noteId),
       noteLinksOutStmt(read, noteId),
       noteLinksInStmt(read, noteId),
+      noteUpdaterNameStmt(read, noteId),
     ]);
   const gate = assertNoteGateRows(noteId, gateRows);
   const [note] = noteRows;
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
+  const updaterName =
+    normalizeExecuteResult<{ name: string | null }>(updaterRows)[0]?.name ??
+    null;
   return {
     note,
     projectIdentifier: gate.projectIdentifier,
+    updatedByName: updaterName,
     mentions: mentionRows.map(toNoteMention),
     linksOut,
     linksIn,
@@ -1461,6 +1495,7 @@ export async function getNoteScalarFields(
   return {
     note: { ...row, body: "" },
     projectIdentifier: gate.projectIdentifier,
+    updatedByName: null,
     mentions: [],
     linksOut: [],
     linksIn: [],
@@ -1987,7 +2022,13 @@ export async function createNote(
     return createNoteInTx(tx, ctx, input, access.project.identifier);
   });
 
-  emitNoteEvent(created.projectId, created.id, visibility, created.updatedAt);
+  emitNoteEvent(
+    created.projectId,
+    created.id,
+    visibility,
+    created.updatedAt,
+    created.version,
+  );
   return created;
 }
 
@@ -2009,7 +2050,7 @@ function assertCreateInputWithinCaps(
 /**
  * Insert one note inside an open write transaction: slug allocation, the
  * insert, body-driven link derivation, the v1 revision snapshot, and the
- * team-visibility activity event. The caller must have gated project
+ * note-keyed activity event. The caller must have gated project
  * access, asserted writability, and taken the project advisory lock.
  * Shared by {@link createNote} and {@link createNotesBatch}.
  *
@@ -2043,6 +2084,7 @@ async function createNoteInTx(
       folder,
       type: input.type ?? "reference",
       visibility,
+      ...(visibility === "team" ? { sharedSince: sql`now()` } : {}),
       summary: input.summary ?? "",
       tags: input.tags ?? [],
       category: input.category ?? null,
@@ -2075,17 +2117,16 @@ async function createNoteInTx(
       ctx.userId,
     );
   }
-  if (visibility === "team") {
-    await insertActivityEvents(tx, ctx.actor, [
-      {
-        projectId: input.projectId,
-        taskId: null,
-        type: "note_created",
-        targetRef: slug,
-        summary: `created note "${summaryTitle(input.title)}"`,
-      },
-    ]);
-  }
+  await insertActivityEvents(tx, ctx.actor, [
+    {
+      projectId: input.projectId,
+      taskId: null,
+      noteId: note.id,
+      type: "note_created",
+      targetRef: slug,
+      summary: `created note "${summaryTitle(input.title)}"`,
+    },
+  ]);
   return { ...note, projectIdentifier };
 }
 
@@ -2217,7 +2258,13 @@ export async function createNotesBatch(
   });
 
   for (const note of result.created) {
-    emitNoteEvent(note.projectId, note.id, opts.visibility, note.updatedAt);
+    emitNoteEvent(
+      note.projectId,
+      note.id,
+      opts.visibility,
+      note.updatedAt,
+      note.version,
+    );
   }
   return result;
 }
@@ -2242,6 +2289,9 @@ export async function createNotesBatch(
  * @param noteId - UUID of the note.
  * @param patch - Fields to change; unknown/protected keys are stripped.
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
+ * @param opts - `restoredFromVersion` marks the write as a revision
+ *   restore: the emitted event's summary and metadata name the source
+ *   version, and the pre-restore state is checkpointed unconditionally.
  * @returns Slim summary of the updated note; a body change also carries
  *   the re-derived link context as `links`.
  * @throws ForbiddenError on inaccessible or trashed notes, or when a
@@ -2262,8 +2312,21 @@ export async function updateNote(
   noteId: string,
   patch: NotePatch,
   ifUpdatedAt?: string,
-): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
-  return updateNoteCore(ctx, noteId, patch, ifUpdatedAt);
+  opts?: { restoredFromVersion?: number },
+): Promise<
+  NoteSummary & {
+    links?: NoteLinksRefresh;
+    revisionCheckpoint?: NoteRevisionCheckpoint;
+  }
+> {
+  return updateNoteCore(
+    ctx,
+    noteId,
+    patch,
+    ifUpdatedAt,
+    undefined,
+    opts?.restoredFromVersion,
+  );
 }
 
 /** Fields a {@link NoteEditOp} may target; governance fields (`visibility`, `locked`, `agentWritable`) are excluded by design. */
@@ -2474,6 +2537,9 @@ export async function applyNoteEditOps(
  * @param patch - Scalar patch fields.
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
  * @param bodyOps - Ordered body text ops to fold in-transaction.
+ * @param restoredFromVersion - Source revision version when the write is a
+ *   restore; names the source version in the emitted event and forces the
+ *   pre-image checkpoint.
  * @returns Slim summary; a body change also carries the re-derived links.
  */
 async function updateNoteCore(
@@ -2482,7 +2548,13 @@ async function updateNoteCore(
   patch: NotePatch,
   ifUpdatedAt?: string,
   bodyOps?: TextOp[],
-): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
+  restoredFromVersion?: number,
+): Promise<
+  NoteSummary & {
+    links?: NoteLinksRefresh;
+    revisionCheckpoint?: NoteRevisionCheckpoint;
+  }
+> {
   assertValidNoteId(noteId);
   const applied: NotePatch = {};
   for (const field of PATCHABLE_NOTE_FIELDS) {
@@ -2530,6 +2602,7 @@ async function updateNoteCore(
         embeddingStatus: notes.embeddingStatus,
         deletedAt: notes.deletedAt,
         createdBy: notes.createdBy,
+        updatedBy: notes.updatedBy,
         projectStatus: projects.status,
         projectIdentifier: projects.identifier,
         body: needsBody ? notes.body : sql<string>`''`,
@@ -2570,6 +2643,7 @@ async function updateNoteCore(
         wasNoOp: true,
         visibility: current.visibility,
         links: undefined,
+        revisionCheckpoint: undefined,
       };
     }
 
@@ -2581,6 +2655,7 @@ async function updateNoteCore(
         wasNoOp: true,
         visibility: current.visibility,
         links: undefined,
+        revisionCheckpoint: undefined,
       };
     }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
@@ -2595,6 +2670,10 @@ async function updateNoteCore(
     }
     if (applied.visibility === "team" && current.visibility !== "team") {
       changes.shareRequestedBy = null;
+      changes.sharedSince = sql`now()`;
+    }
+    if (applied.visibility === "private" && current.visibility !== "private") {
+      changes.sharedSince = null;
     }
 
     const nextVisibility = applied.visibility ?? current.visibility;
@@ -2606,16 +2685,44 @@ async function updateNoteCore(
       .returning(noteSummaryColumns);
 
     let links: NoteLinksRefresh | undefined;
+    let revisionCheckpoint: NoteRevisionCheckpoint | undefined;
     if (bodyChanged) {
       const newBody = applied.body ?? "";
-      await insertRevisionWithPrune(
-        tx,
-        noteId,
-        newVersion,
-        applied.title ?? current.title,
-        newBody,
-        ctx.userId,
-      );
+      const [newestRevision] = await tx
+        .select({
+          version: noteRevisions.version,
+          createdAt: noteRevisions.createdAt,
+        })
+        .from(noteRevisions)
+        .where(eq(noteRevisions.noteId, noteId))
+        .orderBy(desc(noteRevisions.version))
+        .limit(1);
+      const preImageUnsnapshotted =
+        newestRevision === undefined ||
+        newestRevision.version < current.version;
+      const mustCheckpoint =
+        newestRevision === undefined ||
+        restoredFromVersion !== undefined ||
+        ctx.actor.source === "mcp" ||
+        current.updatedBy !== ctx.userId ||
+        Date.now() - newestRevision.createdAt.getTime() >=
+          NOTE_REVISION_CHECKPOINT_MS;
+      if (preImageUnsnapshotted && mustCheckpoint) {
+        await insertRevisionWithPrune(
+          tx,
+          noteId,
+          current.version,
+          current.title,
+          current.body,
+          current.updatedBy === ctx.userId ? ctx.userId : null,
+          current.updatedAt,
+        );
+        revisionCheckpoint = {
+          version: current.version,
+          title: current.title,
+          createdAt: current.updatedAt,
+        };
+      }
       await replaceDerivedLinks(
         tx,
         noteId,
@@ -2654,23 +2761,30 @@ async function updateNoteCore(
         );
       links = { mentions: mentionRows.map(toNoteMention), linksOut };
     }
-    if (nextVisibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: current.projectId,
-          taskId: null,
-          type: "note_updated",
-          targetRef: summary.slug,
-          summary: `updated note "${summaryTitle(summary.title)}"`,
-          metadata: { fields: changedFields, version: newVersion },
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: current.projectId,
+        taskId: null,
+        noteId: current.id,
+        type: "note_updated",
+        targetRef: summary.slug,
+        summary:
+          restoredFromVersion !== undefined
+            ? `restored note "${summaryTitle(summary.title)}" to v${restoredFromVersion}`
+            : `updated note "${summaryTitle(summary.title)}"`,
+        metadata: {
+          fields: changedFields,
+          version: newVersion,
+          ...(restoredFromVersion !== undefined ? { restoredFromVersion } : {}),
         },
-      ]);
-    }
+      },
+    ]);
     return {
       summary: { ...summary, projectIdentifier: current.projectIdentifier },
       wasNoOp: false,
       visibility: nextVisibility,
       links,
+      revisionCheckpoint,
     };
   });
 
@@ -2680,11 +2794,17 @@ async function updateNoteCore(
       result.summary.id,
       result.visibility,
       result.summary.updatedAt,
+      result.summary.version,
+      result.revisionCheckpoint !== undefined,
     );
   }
-  return result.links
-    ? { ...result.summary, links: result.links }
-    : result.summary;
+  return {
+    ...result.summary,
+    ...(result.links !== undefined ? { links: result.links } : {}),
+    ...(result.revisionCheckpoint !== undefined
+      ? { revisionCheckpoint: result.revisionCheckpoint }
+      : {}),
+  };
 }
 
 /**
@@ -2738,18 +2858,17 @@ export async function moveNote(
       .set({ folder: dest, updatedBy: ctx.userId, updatedAt: new Date() })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
-    if (gate.visibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: gate.projectId,
-          taskId: null,
-          type: "note_moved",
-          targetRef: summary.slug,
-          summary: `moved note "${summaryTitle(summary.title)}"`,
-          metadata: { from: gate.folder, to: dest },
-        },
-      ]);
-    }
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: gate.projectId,
+        taskId: null,
+        noteId: gate.id,
+        type: "note_moved",
+        targetRef: summary.slug,
+        summary: `moved note "${summaryTitle(summary.title)}"`,
+        metadata: { from: gate.folder, to: dest },
+      },
+    ]);
     return {
       summary: { ...summary, projectIdentifier: gate.projectIdentifier },
       wasNoOp: false,
@@ -2763,6 +2882,7 @@ export async function moveNote(
       result.summary.id,
       result.visibility,
       result.summary.updatedAt,
+      result.summary.version,
     );
   }
   return result.summary;
@@ -2783,9 +2903,11 @@ export async function moveNote(
  * a new leaf. The UPDATE runs under the caller's RLS scope, so
  * teammates' private notes in the subtree are untouched and keep their
  * old paths; a definer-privileged bulk write would let members rewrite
- * paths of notes they cannot see. The activity event and project
- * dispatch fire only when a team-visible note actually moved; a
- * `note-folders` dispatch fires when explicit marker rows were rewritten.
+ * paths of notes they cannot see. Each moved note records its own
+ * note-keyed `note_moved` event (read-time gating scopes who sees it,
+ * matching {@link moveNote}); the project dispatch fires only when a
+ * team-visible note actually moved, and a `note-folders` dispatch fires
+ * when explicit marker rows were rewritten.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -2888,7 +3010,13 @@ export async function moveFolder(
         updatedAt: new Date(),
       })
       .where(subtreeFilter)
-      .returning({ id: notes.id, visibility: notes.visibility });
+      .returning({
+        id: notes.id,
+        slug: notes.slug,
+        title: notes.title,
+        folder: notes.folder,
+        visibility: notes.visibility,
+      });
     const explicitRows = await tx
       .delete(noteFolders)
       .where(explicitSubtreeFilter)
@@ -2906,17 +3034,23 @@ export async function moveFolder(
         .onConflictDoNothing();
     }
     const teamMoved = rows.some((row) => row.visibility === "team");
-    if (teamMoved) {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
+    if (rows.length > 0) {
+      await insertActivityEvents(
+        tx,
+        ctx.actor,
+        rows.map((row) => ({
           projectId,
           taskId: null,
-          type: "note_moved",
-          targetRef: srcPath,
-          summary: `moved folder "${srcPath}" to "${dest}"`,
-          metadata: { src: srcPath, dest, count: rows.length },
-        },
-      ]);
+          noteId: row.id,
+          type: "note_moved" as const,
+          targetRef: row.slug,
+          summary: `moved note "${summaryTitle(row.title)}"`,
+          metadata: {
+            from: srcPath + row.folder.slice(dest.length),
+            to: row.folder,
+          },
+        })),
+      );
     }
     return {
       movedCount: rows.length,
@@ -3088,17 +3222,16 @@ export async function deleteNote(
         deletedAt: notes.deletedAt,
         updatedAt: notes.updatedAt,
       });
-    if (gate.visibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: gate.projectId,
-          taskId: null,
-          type: "note_deleted",
-          targetRef: gate.slug,
-          summary: `trashed note "${summaryTitle(gate.title)}"`,
-        },
-      ]);
-    }
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: gate.projectId,
+        taskId: null,
+        noteId: gate.id,
+        type: "note_deleted",
+        targetRef: gate.slug,
+        summary: `trashed note "${summaryTitle(gate.title)}"`,
+      },
+    ]);
     return {
       id: row.id,
       deletedAt: row.deletedAt as Date,
@@ -3202,19 +3335,17 @@ export async function restoreNote(
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
-    if (gate.visibility === "team") {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: gate.projectId,
-          taskId: null,
-          type: "note_restored",
-          targetRef: slug,
-          summary: `restored note "${summaryTitle(summary.title)}"`,
-          metadata:
-            slug === current.slug ? null : { previousSlug: current.slug },
-        },
-      ]);
-    }
+    await insertActivityEvents(tx, ctx.actor, [
+      {
+        projectId: gate.projectId,
+        taskId: null,
+        noteId: gate.id,
+        type: "note_restored",
+        targetRef: slug,
+        summary: `restored note "${summaryTitle(summary.title)}"`,
+        metadata: slug === current.slug ? null : { previousSlug: current.slug },
+      },
+    ]);
     return {
       summary: { ...summary, projectIdentifier: gate.projectIdentifier },
       wasNoOp: false,
@@ -3228,6 +3359,7 @@ export async function restoreNote(
       result.summary.id,
       result.visibility,
       result.summary.updatedAt,
+      result.summary.version,
     );
   }
   return result.summary;
@@ -3271,7 +3403,13 @@ export async function requestShare(
     return { ...row, projectIdentifier: gate.projectIdentifier };
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
+  emitNoteEvent(
+    summary.projectId,
+    summary.id,
+    "private",
+    summary.updatedAt,
+    summary.version,
+  );
   return summary;
 }
 
@@ -3304,7 +3442,13 @@ export async function approveShareRequest(
     return applyVisibilityTx(tx, ctx, gate, "team");
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "team", summary.updatedAt);
+  emitNoteEvent(
+    summary.projectId,
+    summary.id,
+    "team",
+    summary.updatedAt,
+    summary.version,
+  );
   return summary;
 }
 
@@ -3353,13 +3497,21 @@ export async function declineShareRequest(
     return { ...row, projectIdentifier: gate.projectIdentifier };
   });
 
-  emitNoteEvent(summary.projectId, summary.id, "private", summary.updatedAt);
+  emitNoteEvent(
+    summary.projectId,
+    summary.id,
+    "private",
+    summary.updatedAt,
+    summary.version,
+  );
   return summary;
 }
 
 /**
  * Shared visibility write: updates the column, clears the share-request
- * marker when flipping to `team`, and records the activity event.
+ * marker and stamps `shared_since` (DB `now()`) when flipping to `team`,
+ * clears `shared_since` when flipping to `private`, and records the
+ * activity event.
  *
  * @param tx - Active RLS transaction handle.
  * @param ctx - Resolved auth context.
@@ -3377,7 +3529,9 @@ async function applyVisibilityTx(
     .update(notes)
     .set({
       visibility,
-      ...(visibility === "team" ? { shareRequestedBy: null } : {}),
+      ...(visibility === "team"
+        ? { shareRequestedBy: null, sharedSince: sql`now()` }
+        : { sharedSince: null }),
       updatedBy: ctx.userId,
       updatedAt: new Date(),
     })
@@ -3387,6 +3541,7 @@ async function applyVisibilityTx(
     {
       projectId: gate.projectId,
       taskId: null,
+      noteId: gate.id,
       type: "note_updated",
       targetRef: row.slug,
       summary: `updated note "${summaryTitle(row.title)}"`,
@@ -3533,11 +3688,12 @@ export async function createNoteTaskLink(
       .onConflictDoNothing()
       .returning({ id: noteTaskLinks.id });
     const created = rows.length > 0;
-    if (created && gate.visibility === "team") {
+    if (created) {
       await insertActivityEvents(tx, ctx.actor, [
         {
           projectId: gate.projectId,
           taskId,
+          noteId: gate.id,
           type: "note_updated",
           targetRef: gate.slug,
           summary: `linked note "${summaryTitle(gate.title)}" to a task`,
@@ -3549,7 +3705,13 @@ export async function createNoteTaskLink(
   });
 
   if (result.created) {
-    emitNoteEvent(result.gate.projectId, noteId, result.gate.visibility);
+    emitNoteEvent(
+      result.gate.projectId,
+      noteId,
+      result.gate.visibility,
+      undefined,
+      result.gate.version,
+    );
   }
   return {
     created: result.created,
@@ -3600,11 +3762,12 @@ export async function removeNoteTaskLink(
       )
       .returning({ id: noteTaskLinks.id });
     const removed = rows.length > 0;
-    if (removed && gate.visibility === "team") {
+    if (removed) {
       await insertActivityEvents(tx, ctx.actor, [
         {
           projectId: gate.projectId,
           taskId,
+          noteId: gate.id,
           type: "note_updated",
           targetRef: gate.slug,
           summary: `unlinked note "${summaryTitle(gate.title)}" from a task`,
@@ -3616,7 +3779,13 @@ export async function removeNoteTaskLink(
   });
 
   if (result.removed) {
-    emitNoteEvent(result.gate.projectId, noteId, result.gate.visibility);
+    emitNoteEvent(
+      result.gate.projectId,
+      noteId,
+      result.gate.visibility,
+      undefined,
+      result.gate.version,
+    );
   }
   return {
     removed: result.removed,
@@ -3682,6 +3851,47 @@ export async function listNoteRevisions(
 }
 
 /**
+ * Resolve a live note's revision-list validator parts without fetching the
+ * descriptors: the live version plus the stored-checkpoint extent
+ * (`max(version)`, row count) the caller's RLS window can see. One
+ * RLS-scoped batch (access gate + one aggregate over the `(note_id,
+ * version)` index): the cheap validator resolve for `HEAD`/
+ * `If-None-Match`, so a 304 skips the full descriptor fetch.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @returns Live version, max stored version (0 when none), and row count.
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ */
+export async function getNoteRevisionsVersion(
+  ctx: AuthContext,
+  noteId: string,
+): Promise<{ currentVersion: number; maxVersion: number; count: number }> {
+  assertValidNoteId(noteId);
+  const [gateRows, extentRows] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      noteAccessGateStmt(read, noteId),
+      read
+        .select({
+          maxVersion: sql<number>`COALESCE(MAX(${noteRevisions.version}), 0)::int`,
+          count: sql<number>`COUNT(*)::int`,
+        })
+        .from(noteRevisions)
+        .where(eq(noteRevisions.noteId, noteId)),
+    ],
+  );
+  const gate = assertNoteGateRows(noteId, gateRows);
+  assertNoteLive(gate);
+  const [extent] = extentRows;
+  return {
+    currentVersion: gate.version,
+    maxVersion: extent?.maxVersion ?? 0,
+    count: extent?.count ?? 0,
+  };
+}
+
+/**
  * Read one revision snapshot of a live note. A missing version returns a
  * null snapshot plus the available version numbers, so callers can emit
  * a corrective message without a second round trip.
@@ -3738,4 +3948,60 @@ export async function getNoteRevision(
     sequenceNumber: gate.sequenceNumber,
     projectIdentifier: gate.projectIdentifier,
   };
+}
+
+/**
+ * Restore a note's title and body to a stored revision snapshot by writing
+ * through {@link updateNote}, an append-only revert: the pre-restore live
+ * state is checkpointed unconditionally and `version` bumps, so nothing is
+ * destroyed. The snapshot read and the write are separate transactions by
+ * design: revisions are append-only-immutable (`note_revisions` is
+ * UPDATE-revoked), so the read cannot go stale, and note concurrency is
+ * owned by `updateNote`'s CAS + `FOR UPDATE` lock. Locked, agent-read-only, and archived-project
+ * rejections are inherited; restoring content identical to the live note is
+ * a no-op (no event, no version bump).
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @param version - Revision counter value to restore.
+ * @param opts - `ifUpdatedAt` CAS precondition from a prior read.
+ * @returns Slim summary of the restored note (plus re-derived `links` on a
+ *   body change).
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ * @throws NoteValidationError when the version does not exist, naming the
+ *   available versions.
+ * @throws NoteStaleWriteError when `ifUpdatedAt` mismatches.
+ * @throws NoteLockedError when the note is locked.
+ * @throws ProjectArchivedError when the project is archived.
+ */
+export async function restoreNoteRevision(
+  ctx: AuthContext,
+  noteId: string,
+  version: number,
+  opts?: { ifUpdatedAt?: string },
+): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
+  if (!Number.isInteger(version) || version < 1) {
+    throw new NoteValidationError(
+      "version",
+      "version must be a positive integer",
+    );
+  }
+  const { snapshot, availableVersions } = await getNoteRevision(
+    ctx,
+    noteId,
+    version,
+  );
+  if (snapshot === null) {
+    throw new NoteValidationError(
+      "version",
+      `version ${version} not found; available versions: ${availableVersions.join(", ")}`,
+    );
+  }
+  return updateNote(
+    ctx,
+    noteId,
+    { title: snapshot.title, body: snapshot.body },
+    opts?.ifUpdatedAt,
+    { restoredFromVersion: version },
+  );
 }
