@@ -5,7 +5,7 @@
 @theme {
   --font-body: "Inter Variable", "Inter", system-ui, sans-serif;
   --font-mono:
-    "GeistMono Variable", "GeistMono", ui-monospace, SFMono-Regular, monospace;
+    "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, monospace;
 
   /* Dark mode (default) — Raycast near-black blue */
   --color-base: #07080a;
