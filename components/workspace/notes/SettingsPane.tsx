@@ -374,7 +374,7 @@ export function SettingsPane({
             {(["private", "team"] as Visibility[]).map((v) => {
               const active = visibility === v;
               const color =
-                v === "team" ? "var(--color-done)" : "var(--color-accent)";
+                v === "team" ? "var(--color-done)" : "var(--color-text-muted)";
               return (
                 <button
                   key={v}
@@ -529,7 +529,11 @@ export function SettingsPane({
             Tasks referenced in the body. Backlinks, not targeting.
           </p>
           {data.mentions.length === 0 ? (
-            <div className="py-0.5 text-[12px] text-text-faint">None</div>
+            loading ? (
+              <RefSkeleton />
+            ) : (
+              <div className="py-0.5 text-[12px] text-text-faint">None</div>
+            )
           ) : (
             data.mentions.map((mention) => (
               <MentionRow
@@ -542,7 +546,11 @@ export function SettingsPane({
 
           <FieldLabel className="mt-4">Linked notes</FieldLabel>
           {data.linksOut.length === 0 && data.linksIn.length === 0 ? (
-            <div className="py-0.5 text-[12px] text-text-faint">None</div>
+            loading ? (
+              <RefSkeleton />
+            ) : (
+              <div className="py-0.5 text-[12px] text-text-faint">None</div>
+            )
           ) : (
             <>
               {data.linksOut.map((linked) => (
@@ -606,6 +614,22 @@ function RibbonSkeleton() {
         style={{ "--skeleton-delay": "210ms" } as React.CSSProperties}
       />
     </div>
+  );
+}
+
+/**
+ * One-line reference placeholder shown while the note detail is still the
+ * tree-row placeholder, so an unresolved list never asserts "None".
+ *
+ * @returns A single skeleton bar shaped like a reference row.
+ */
+function RefSkeleton() {
+  return (
+    <span
+      className="skeleton-bar my-0.5 block h-4 w-2/3"
+      role="status"
+      aria-label="Loading references"
+    />
   );
 }
 
@@ -863,8 +887,8 @@ function FeedEditor({
               style={{
                 color: active ? "#fff" : "var(--color-text-muted)",
                 fontWeight: active ? 500 : 400,
-                background: active ? "var(--color-accent)" : "transparent",
-                border: `1px solid ${active ? "var(--color-accent)" : "var(--color-border)"}`,
+                background: active ? "var(--color-accent-fill)" : "transparent",
+                border: `1px solid ${active ? "var(--color-accent-fill)" : "var(--color-border)"}`,
               }}
             >
               {m.label}
@@ -1087,7 +1111,7 @@ function FeedTaskPicker({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
+      <div className="mb-1.5 flex items-center gap-1.5 rounded-md border border-border px-2 py-1 focus-within:border-accent/40 focus-within:ring-1 focus-within:ring-accent/40">
         <IconSearch size={11} className="shrink-0 text-text-faint" />
         <input
           value={query}

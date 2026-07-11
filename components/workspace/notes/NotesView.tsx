@@ -6,6 +6,7 @@ import { CollapsibleRail } from "@/components/shared/CollapsibleRail";
 import { Drawer } from "@/components/shared/Drawer";
 import { IconPanelLeft, IconSettings } from "@/components/shared/icons";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useMounted } from "@/hooks/useMounted";
 import {
   useNotesRailCollapse,
   useNotesSettingsCollapse,
@@ -85,6 +86,7 @@ export function NotesView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusTitle, setFocusTitle] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const mounted = useMounted();
 
   // A cleared selection closes the drawer for real (render-time state
   // adjustment, not an effect): the drawer only hides on `noteId === null`,
@@ -176,6 +178,11 @@ export function NotesView({
 
   const closeTree = useCallback(() => setTreeOpen(false), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+
+  // The viewport media queries resolve to their desktop SSR defaults until
+  // the first client paint; hold a neutral placeholder until mount so a
+  // narrow viewport never flashes the desktop three-pane layout.
+  if (!mounted) return <NotesViewSkeleton />;
 
   const editor = (
     <EditorPane
@@ -343,6 +350,33 @@ export function NotesView({
   );
 }
 
+/**
+ * Full-height placeholder for the first client paint, before the viewport
+ * media queries resolve. Prevents the notes view from flashing the desktop
+ * three-pane layout on a narrow viewport during hydration.
+ *
+ * @returns The decorative loading placeholder.
+ */
+function NotesViewSkeleton() {
+  return (
+    <div className="flex h-full w-full items-start justify-center">
+      <div className="w-full max-w-[760px] px-4 pt-6 sm:px-[34px] sm:pt-8">
+        <span className="sr-only">Loading notes</span>
+        <div aria-hidden="true" className="flex flex-col gap-3">
+          <span className="h-4 w-1/2 animate-pulse rounded bg-surface-hover" />
+          {[320, 280, 360, 240].map((width) => (
+            <span
+              key={width}
+              className="h-2 max-w-full animate-pulse rounded bg-surface-hover"
+              style={{ width }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface TreeDrawerProps {
   /** @param open - Whether the drawer is open. */
   open: boolean;
@@ -368,6 +402,7 @@ function TreeDrawer({ open, onClose, children }: TreeDrawerProps) {
       side="left"
       width="300px"
       label="Notes tree"
+      modal
     >
       {children}
     </Drawer>
@@ -399,6 +434,7 @@ function SettingsDrawer({ open, onClose, children }: SettingsDrawerProps) {
       side="right"
       width={`${SETTINGS_WIDTH}px`}
       label="Note settings"
+      modal
     >
       {children}
     </Drawer>
