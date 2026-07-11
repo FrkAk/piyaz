@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   _setNoteEventsQuietMsForTests,
   applyRealtimeEvent,
@@ -392,6 +392,35 @@ describe("applyRealtimeEvent note case", () => {
     }>(noteKeys.events(PROJECT, NOTE));
     expect(trimmed?.pages).toEqual([firstPage]);
     expect(trimmed?.pageParams).toEqual([null]);
+  });
+
+  test("an observed events query keeps its expanded pages through the invalidation", async () => {
+    _setNoteEventsQuietMsForTests(5);
+    const qc = seededClient(when);
+    const pages = [
+      { events: [{ id: "e1" }], nextCursor: "c1" },
+      { events: [{ id: "e2" }], nextCursor: null },
+    ];
+    qc.setQueryData(noteKeys.events(PROJECT, NOTE), {
+      pages,
+      pageParams: [null, "c1"],
+    });
+    const observer = new QueryObserver(qc, {
+      queryKey: noteKeys.events(PROJECT, NOTE),
+      enabled: false,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+
+    await applyRealtimeEvent(qc, noteEvent(when, 2));
+    await wait(30);
+
+    expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(true);
+    const kept = qc.getQueryData<{ pages: unknown[]; pageParams: unknown[] }>(
+      noteKeys.events(PROJECT, NOTE),
+    );
+    expect(kept?.pages).toEqual(pages);
+    expect(kept?.pageParams).toEqual([null, "c1"]);
+    unsubscribe();
   });
 
   test("note-folders event invalidates the folders query and nothing else", async () => {

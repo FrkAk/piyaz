@@ -135,9 +135,12 @@ const noteEventsInvalidateTimers = new Map<
 
 /**
  * Invalidate a note's events query after a quiet window, coalescing
- * autosave bursts into one refetch. Before invalidating, the cached
- * infinite data is trimmed to its first page so the refetch fetches one
- * keyset page instead of every page the viewer had expanded.
+ * autosave bursts into one refetch. When no observer is mounted, the
+ * cached infinite data is first trimmed to its first page so the next
+ * mount fetches one keyset page instead of every page the viewer had
+ * expanded; an actively observed query keeps its pages (the refetch
+ * revalidates each page under `If-None-Match`, and trimming would snap an
+ * open history panel back to page one).
  *
  * @param qc - The active QueryClient.
  * @param projectId - Owning project id.
@@ -155,16 +158,21 @@ function scheduleNoteEventsInvalidation(
     setTimeout(() => {
       noteEventsInvalidateTimers.delete(noteId);
       const key = noteKeys.events(projectId, noteId);
-      qc.setQueryData<{ pages: unknown[]; pageParams: unknown[] }>(
-        key,
-        (data) =>
-          data !== undefined && data.pages.length > 1
-            ? {
-                pages: data.pages.slice(0, 1),
-                pageParams: data.pageParams.slice(0, 1),
-              }
-            : data,
-      );
+      const observed =
+        (qc.getQueryCache().find({ queryKey: key })?.getObserversCount() ?? 0) >
+        0;
+      if (!observed) {
+        qc.setQueryData<{ pages: unknown[]; pageParams: unknown[] }>(
+          key,
+          (data) =>
+            data !== undefined && data.pages.length > 1
+              ? {
+                  pages: data.pages.slice(0, 1),
+                  pageParams: data.pageParams.slice(0, 1),
+                }
+              : data,
+        );
+      }
       qc.invalidateQueries({ queryKey: key });
     }, noteEventsInvalidateQuietMs),
   );
