@@ -5,7 +5,7 @@ import md from "@/content/legal/dpa.md";
 export const metadata: Metadata = { title: "Data Processing Agreement" };
 
 /**
- * Public data processing agreement page. Renders the tracked DRAFT Markdown
+ * Public data processing agreement page. Renders the tracked Markdown
  * bundled as a build-time module constant, so it serves with zero request-time
  * fs and no auth.
  *
