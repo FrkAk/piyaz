@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/shared/Button";
-import { ConsentCheckbox } from "@/components/shared/ConsentCheckbox";
+import { DpaConsentCheckbox } from "@/components/shared/DpaConsentCheckbox";
 import { createTeamAction } from "@/lib/actions/team";
 import { deriveTeamSlug } from "@/lib/team/derive-slug";
 import { TEAM_NAME_MAX } from "@/lib/team/slug-rules";
@@ -94,23 +94,7 @@ export function CreateTeamPanel({
         />
       </label>
       <div className="mt-3">
-        <ConsentCheckbox
-          id="settings-dpa-accept"
-          checked={dpaAccepted}
-          onChange={setDpaAccepted}
-        >
-          I accept the{" "}
-          <a
-            href="/dpa"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:underline"
-            style={{ color: "var(--color-accent-light)" }}
-          >
-            data processing agreement
-          </a>{" "}
-          on behalf of this team.
-        </ConsentCheckbox>
+        <DpaConsentCheckbox checked={dpaAccepted} onChange={setDpaAccepted} />
       </div>
       {error ? (
         <p

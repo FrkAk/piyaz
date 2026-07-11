@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getOutstandingConsent } from "@/lib/auth/consent";
-import { requireSession } from "@/lib/auth/session";
+import { getSession } from "@/lib/auth/session";
 import privacyMd from "@/content/legal/privacy.md";
 import termsMd from "@/content/legal/terms.md";
 import type { ReconsentDocumentType } from "@/lib/data/legal";
@@ -24,7 +24,8 @@ const DOCS: Record<ReconsentDocumentType, Omit<ReconsentDoc, "type">> = {
  * @returns The gate UI listing each outstanding document.
  */
 export default async function LegalAcceptPage() {
-  const session = await requireSession();
+  const session = await getSession();
+  if (!session) redirect("/sign-in");
   const outstanding = await getOutstandingConsent(session.user.id);
   if (outstanding.length === 0) redirect("/");
 

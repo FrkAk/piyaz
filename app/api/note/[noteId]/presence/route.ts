@@ -4,9 +4,9 @@ import {
   type ActionRateLimitConfig,
 } from "@/lib/actions/rate-limit-action";
 import { ForbiddenError, assertNoteAccess } from "@/lib/auth/authorization";
-import { consentGateResponse } from "@/lib/auth/consent";
+import { ConsentRequiredError } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
-import { internalError } from "@/lib/api/error";
+import { consentRequiredResponse, internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 import { broker } from "@/lib/realtime/broker";
 import { emitNotePresence } from "@/lib/realtime/events";
@@ -66,7 +66,7 @@ function parsePresenceBody(body: unknown): PresenceBody | null {
  *
  * @param req - Incoming request with the `{ state }` JSON body.
  * @param params - Route params with noteId.
- * @returns 204, 400, 401, 404, 429, or 500.
+ * @returns 204, 400, 401, 403 (consent), 404, 429, or 500.
  */
 export async function POST(
   req: Request,
@@ -83,11 +83,11 @@ export async function POST(
       res.headers.set("Retry-After", String(err.retryAfter));
       return res;
     }
+    if (err instanceof ConsentRequiredError) {
+      return consentRequiredResponse(err.outstanding);
+    }
     return error("Unauthorized", 401);
   }
-
-  const gate = await consentGateResponse(ctx.userId);
-  if (gate) return gate;
 
   let body: PresenceBody | null;
   try {

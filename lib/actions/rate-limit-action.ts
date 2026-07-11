@@ -2,6 +2,7 @@ import "server-only";
 
 import { headers } from "next/headers";
 import { getBackend, type RateLimitResult } from "@/lib/api/rate-limit";
+import { assertLegalConsent } from "@/lib/auth/consent";
 import { getAuthContext, type AuthContext } from "@/lib/auth/context";
 
 /**
@@ -170,6 +171,7 @@ export async function checkActionRateLimit(
  * @param config - Rate-limit policy for this write action.
  * @returns The caller's auth context.
  * @throws RateLimitError when either limb's budget is exceeded.
+ * @throws ConsentRequiredError when the caller must re-accept legal docs.
  */
 export async function authorizeWrite(
   config: ActionRateLimitConfig,
@@ -177,6 +179,7 @@ export async function authorizeWrite(
   const ipOutcome = await checkActionIpRateLimit(config);
   if (!ipOutcome.ok) throw new RateLimitError(ipOutcome.retryAfter);
   const ctx = await getAuthContext();
+  await assertLegalConsent(ctx.userId);
   const userOutcome = await checkActionUserRateLimit(config, ctx.userId);
   if (!userOutcome.ok) throw new RateLimitError(userOutcome.retryAfter);
   return ctx;

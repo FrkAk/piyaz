@@ -1,5 +1,9 @@
 import { betterAuth } from "better-auth";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import { organization, jwt } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
@@ -21,7 +25,11 @@ import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
 import { signupsDisabled } from "@/lib/config/env";
-import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
+import {
+  listOutstandingReconsent,
+  recordAcceptance,
+  removeAcceptances,
+} from "@/lib/data/legal";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
@@ -383,15 +391,32 @@ export const auth = betterAuth({
     },
   },
   hooks: {
-    // Gate every organization-creation path on affirmative DPA consent.
-    // Global endpoint hooks (unlike organizationHooks) receive the full
-    // request ctx (body, headers, returned value) and run for
-    // `auth.api.createOrganization` and a raw POST to
-    // `/api/auth/organization/create` alike, so the gate cannot be bypassed
-    // by skipping the client checkbox. `dpaAccepted` is a transient consent
-    // signal read off the request body; the durable evidence is the
-    // `legal_acceptances` row written in `after`.
+    // Two gates on the organization plugin's endpoints, which ride the
+    // better-auth catch-all and so bypass the app's route-level consent
+    // gate. Global endpoint hooks (unlike organizationHooks) receive the
+    // full request ctx (body, headers, returned value) and run for
+    // `auth.api.*` calls and raw POSTs to `/api/auth/organization/*` alike,
+    // so neither gate can be skipped by avoiding the web client.
+    // 1. Re-consent: every /organization/* endpoint is real tenant
+    //    read/write surface (list, members, invites, update, delete); a
+    //    caller with outstanding personal documents is blocked like on
+    //    /api routes.
+    // 2. DPA at create: `dpaAccepted` is a transient consent signal read
+    //    off the request body; the durable evidence is the
+    //    `legal_acceptances` row written in `after`.
     before: createAuthMiddleware(async (ctx) => {
+      if (!ctx.path.startsWith("/organization/")) return;
+      const session = await getSessionFromCtx(ctx);
+      if (session) {
+        const outstanding = await listOutstandingReconsent(session.user.id);
+        if (outstanding.length > 0) {
+          throw new APIError("FORBIDDEN", {
+            message:
+              "The Piyaz Terms of Service and Privacy Policy were updated and must be re-accepted before continuing. Open /legal/accept to review and accept them.",
+            code: "TERMS_ACCEPTANCE_REQUIRED",
+          });
+        }
+      }
       if (ctx.path !== "/organization/create") return;
       const body = ctx.body as { dpaAccepted?: unknown } | undefined;
       if (body?.dpaAccepted !== true) {

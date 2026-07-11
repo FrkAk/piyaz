@@ -1,37 +1,30 @@
 "use client";
 
-import type { ReactNode } from "react";
-
-interface ConsentCheckboxProps {
-  /** DOM id tying the visually hidden input to its label. */
-  id: string;
-  /** Controlled checked state; consent boxes start unchecked. */
+/** Props for {@link DpaConsentCheckbox}. */
+interface DpaConsentCheckboxProps {
+  /** Controlled checked state; consent boxes are never pre-checked. */
   checked: boolean;
   /** Change handler receiving the next checked state. */
   onChange: (checked: boolean) => void;
-  /** Label content, typically text with a link to the legal document. */
-  children: ReactNode;
 }
 
 /**
- * Affirmative-consent checkbox in the auth visual language: visually hidden
- * native input driving a styled box, so keyboard and screen-reader behavior
- * stay native. Mirrors the signup Terms checkbox
- * (`components/auth/SignUpForm.tsx`); consent boxes are never pre-checked.
+ * Affirmative DPA-consent checkbox shared by both team-creation surfaces
+ * (onboarding and settings), in the auth visual language: a visually
+ * hidden native input driving a styled box, so keyboard and screen-reader
+ * behavior stay native. The label wraps the input, so no id wiring is
+ * needed.
  *
- * @param props - Id, controlled state, change handler, and label content.
- * @returns Labeled checkbox row.
+ * @param props - Controlled state and change handler.
+ * @returns Labeled checkbox row with the DPA acceptance text.
  */
-export function ConsentCheckbox({
-  id,
+export function DpaConsentCheckbox({
   checked,
   onChange,
-  children,
-}: ConsentCheckboxProps) {
+}: DpaConsentCheckboxProps) {
   return (
-    <label htmlFor={id} className="flex cursor-pointer items-start gap-2.5">
+    <label className="flex cursor-pointer items-start gap-2.5">
       <input
-        id={id}
         type="checkbox"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
@@ -59,7 +52,17 @@ export function ConsentCheckbox({
         </svg>
       </span>
       <span className="text-[12.5px] leading-snug text-text-secondary">
-        {children}
+        I accept the{" "}
+        <a
+          href="/dpa"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:underline"
+          style={{ color: "var(--color-accent-light)" }}
+        >
+          data processing agreement
+        </a>{" "}
+        on behalf of this team.
       </span>
     </label>
   );

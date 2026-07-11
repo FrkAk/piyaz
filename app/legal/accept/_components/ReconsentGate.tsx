@@ -22,9 +22,6 @@ export type ReconsentDoc = {
   body: string;
 };
 
-const SECTION_LABEL =
-  "font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted";
-
 interface ReconsentGateProps {
   /** Outstanding documents, in display order. */
   docs: ReconsentDoc[];
@@ -50,6 +47,7 @@ export function ReconsentGate({ docs, email }: ReconsentGateProps) {
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  /** Record acceptance of every outstanding document, then leave the gate. */
   const handleAccept = () => {
     setError(null);
     startAccept(async () => {
@@ -63,6 +61,7 @@ export function ReconsentGate({ docs, email }: ReconsentGateProps) {
     });
   };
 
+  /** Download the caller's account data as a JSON file. */
   const handleExport = () => {
     setError(null);
     startExport(async () => {
@@ -83,6 +82,7 @@ export function ReconsentGate({ docs, email }: ReconsentGateProps) {
     });
   };
 
+  /** End the session and return to sign-in without accepting. */
   const handleSignOut = async () => {
     await signOut();
     router.replace("/sign-in");
@@ -94,7 +94,9 @@ export function ReconsentGate({ docs, email }: ReconsentGateProps) {
     <div className="flex min-h-dvh items-center justify-center px-4 py-10">
       <div className="w-full max-w-2xl space-y-6">
         <div>
-          <span className={SECTION_LABEL}>Updated legal documents</span>
+          <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+            Updated legal documents
+          </span>
           <h1
             className="mt-2 text-[22px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.005em", lineHeight: 1.2 }}
@@ -102,10 +104,9 @@ export function ReconsentGate({ docs, email }: ReconsentGateProps) {
             Review and accept to continue
           </h1>
           <p className="mt-2 text-sm leading-relaxed text-text-muted">
-            The {docTitles} {docs.length > 1 ? "were" : "was"} updated. Piyaz
-            needs your acceptance of the current{" "}
-            {docs.length > 1 ? "versions" : "version"} before you can keep using
-            the app, API, and MCP.
+            Piyaz updated the {docTitles}. Accept the current{" "}
+            {docs.length > 1 ? "versions" : "version"} to keep using the app,
+            API, and MCP.
           </p>
         </div>
 

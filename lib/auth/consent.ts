@@ -13,8 +13,10 @@ export const RECONSENT_PATH = "/legal/accept";
 
 /**
  * Personal legal documents the user has not accepted at their current
- * version. Wrapped with React `cache()` so the consent state resolves at
- * most once per request no matter how many gates consult it.
+ * version. Wrapped with React `cache()` so stacked gates in one RSC or
+ * server-action request (page + action prelude + write authorizer) share
+ * a single read; contexts outside a React request scope pay one query per
+ * call.
  *
  * @param userId - The authenticated caller's id.
  * @returns Outstanding document types; empty when the user is current.
@@ -25,9 +27,12 @@ export const getOutstandingConsent = cache(
 );
 
 /**
- * Consent gate for authenticated pages: redirect to the re-acceptance
- * interstitial when any personal legal document is outstanding. The
- * interstitial route itself must never call this (redirect loop).
+ * Consent gate for authenticated pages and server actions: redirect to the
+ * re-acceptance interstitial when any personal legal document is
+ * outstanding. In an action, call it outside any try/catch or the thrown
+ * redirect is swallowed. The interstitial route and the actions it relies
+ * on (accept, export, delete account) must never call this (redirect loop
+ * / lockout).
  *
  * @param userId - The authenticated caller's id.
  * @returns Resolves when the user is current on every personal document.
@@ -52,4 +57,32 @@ export async function consentGateResponse(
   const outstanding = await getOutstandingConsent(userId);
   if (outstanding.length === 0) return null;
   return consentRequiredResponse(outstanding);
+}
+
+/**
+ * Thrown by {@link assertLegalConsent} when the caller has outstanding
+ * personal documents. Boundaries convert it to their surface's blocking
+ * shape: route handlers to the 403 contract via `consentRequiredResponse`,
+ * server-action mappers to a redirect to {@link RECONSENT_PATH}.
+ */
+export class ConsentRequiredError extends Error {
+  /** @param outstanding - Document types lacking current-version acceptance. */
+  constructor(readonly outstanding: readonly ReconsentDocumentType[]) {
+    super("Updated legal documents must be re-accepted.");
+    this.name = "ConsentRequiredError";
+  }
+}
+
+/**
+ * Consent gate for shared authorizers that serve both actions and route
+ * handlers (e.g. `authorizeWrite`): throws instead of redirecting so each
+ * boundary picks its own blocking shape.
+ *
+ * @param userId - The authenticated caller's id.
+ * @returns Resolves when the user is current on every personal document.
+ * @throws ConsentRequiredError when any personal document is outstanding.
+ */
+export async function assertLegalConsent(userId: string): Promise<void> {
+  const outstanding = await getOutstandingConsent(userId);
+  if (outstanding.length > 0) throw new ConsentRequiredError(outstanding);
 }

@@ -25,41 +25,10 @@ import {
 import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
 import { isVerboseErrors } from "@/lib/api/error";
 import type { AuthContext } from "@/lib/auth/context";
-import {
-  listOutstandingReconsent,
-  type ReconsentDocumentType,
-} from "@/lib/data/legal";
+import { listOutstandingReconsent } from "@/lib/data/legal";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const acceptOrigin = new URL(baseUrl).origin;
-
-/**
- * Per-request memo for the outstanding-consent read, keyed on the ctx
- * object (one fresh AuthContext per MCP POST). All tool calls in one
- * request share a single index-backed query.
- */
-const outstandingByCtx = new WeakMap<
-  AuthContext,
-  Promise<ReconsentDocumentType[]>
->();
-
-/**
- * Resolve the caller's outstanding personal legal documents, at most once
- * per request.
- *
- * @param ctx - The request's auth context (the memo key).
- * @returns Outstanding document types; empty when the caller is current.
- */
-function outstandingConsent(
-  ctx: AuthContext,
-): Promise<ReconsentDocumentType[]> {
-  let pending = outstandingByCtx.get(ctx);
-  if (!pending) {
-    pending = listOutstandingReconsent(ctx.userId);
-    outstandingByCtx.set(ctx, pending);
-  }
-  return pending;
-}
 
 /**
  * Blocking-precondition message for a caller with outstanding re-consent.
@@ -114,8 +83,9 @@ type McpResponse = ReturnType<typeof toMcp>;
 /**
  * Wrap a tool handler with the cross-cutting concerns every tool shares:
  * the legal re-consent gate (mcp-source actors with an outstanding personal
- * document get a blocking error naming the acceptance URL; the read is
- * memoized per request via {@link outstandingConsent}), the heavy-tier rate
+ * document get a blocking error naming the acceptance URL; one indexed read
+ * per call — the stateless transport runs one tool call per POST, so there
+ * is nothing to memoize), the heavy-tier rate
  * check (middleware cannot see tool names, so the expensive shapes are
  * throttled here), the sanitised catch-all (mirrors `internalError` in
  * `lib/api/error.ts`: log server-side, return opaque `Internal error` unless
@@ -147,7 +117,7 @@ function wrapTool<P>(
     let errName: string | undefined;
     try {
       if (ctx.actor.source === "mcp") {
-        const outstanding = await outstandingConsent(ctx);
+        const outstanding = await listOutstandingReconsent(ctx.userId);
         if (outstanding.length > 0) {
           response = err(reconsentMessage(outstanding));
           return response;

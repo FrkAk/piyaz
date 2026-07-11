@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { isOrgAdmin } from "@/lib/auth/org-permissions";
 import {
@@ -64,6 +65,7 @@ export async function listPendingInvitationsAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
 
   const parsed = parseOrFail(listInvitationsSchema, input);
   if (!parsed.ok) return parsed;
@@ -152,6 +154,7 @@ export async function cancelInvitationAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
 
   const parsed = parseOrFail(cancelSchema, input);
   if (!parsed.ok) return parsed;

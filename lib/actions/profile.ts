@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
 import {
@@ -38,6 +39,7 @@ export async function updateProfileAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
 
   const parsed = parseOrFail(updateProfileSchema, input);
   if (!parsed.ok) return parsed;

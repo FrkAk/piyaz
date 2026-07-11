@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { getAuthContext } from "@/lib/auth/context";
 import { requireTeamMembership } from "@/lib/auth/membership";
 import { ForbiddenError } from "@/lib/auth/authorization";
@@ -42,6 +43,7 @@ export async function listTeamMembersAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(ctx.userId);
 
   const parsed = parseOrFail(inputSchema, input);
   if (!parsed.ok) return parsed;

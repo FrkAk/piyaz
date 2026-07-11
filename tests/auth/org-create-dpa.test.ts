@@ -7,16 +7,16 @@ import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 
 /**
- * Server-side coverage for the team-creation DPA gate (`lib/auth.ts`
- * global `hooks` on `/organization/create`): the `before` hook rejects
+ * Server-side coverage for the `lib/auth.ts` global `hooks` gates on the
+ * organization plugin: the `before` hook blocks every `/organization/*`
+ * endpoint for a caller with outstanding personal re-consent, rejects
  * creation unless the DPA is accepted, and the `after` hook persists one
  * `dpa` acceptance row carrying the new organization id, the pinned
  * LEGAL_VERSIONS version, the resolved client IP, and the user-agent.
  *
- * These drive the raw `POST /api/auth/organization/create` endpoint,
- * which is publicly routed (middleware allowlists `/api/auth/*`) and
- * bypasses `createTeamAction`, so the hook is the only line of defense
- * on this path.
+ * These drive the raw better-auth handler endpoints, which are publicly
+ * routed (middleware allowlists `/api/auth/*`) and bypass the server
+ * actions, so the hooks are the only line of defense on this path.
  */
 
 afterEach(async () => {
@@ -69,21 +69,24 @@ function sessionCookiePair(response: Response): string | undefined {
 }
 
 /**
- * Sign up a consenting user and sign in once, returning the user id and
- * session cookie pair.
+ * Sign up a consenting user through the raw endpoint, lifting the session
+ * cookie from the sign-up response (better-auth auto-signs-in), so each
+ * fixture costs one password hash instead of two.
  *
  * @param email - Account email.
- * @param ip - Loopback IP for both requests.
+ * @param ip - Loopback IP for the request.
  * @returns User id and session cookie for authenticated follow-ups.
  */
-async function signUpAndSignIn(
+async function signUpWithSession(
   email: string,
   ip: string,
 ): Promise<{ userId: string; cookie: string }> {
   const password = "real-password-12345";
-  const signUpBody = { email, name: "Dpa Gate", password, termsAccepted: true };
-  await auth.api.signUpEmail({ body: signUpBody });
-  const response = await authPost("/sign-in/email", { email, password }, ip);
+  const response = await authPost(
+    "/sign-up/email",
+    { email, name: "Dpa Gate", password, termsAccepted: true },
+    ip,
+  );
   expect(response.status).toBe(200);
   const cookie = sessionCookiePair(response);
   expect(cookie).toBeDefined();
@@ -110,7 +113,7 @@ async function orgCountBySlug(slug: string): Promise<number> {
 }
 
 test("organization/create without DPA acceptance is rejected and writes nothing", async () => {
-  const { userId, cookie } = await signUpAndSignIn(
+  const { userId, cookie } = await signUpWithSession(
     "dpa-reject@test.local",
     "127.0.3.10",
   );
@@ -136,7 +139,10 @@ test("organization/create without DPA acceptance is rejected and writes nothing"
 test("organization/create with DPA acceptance writes one evidence row for the new org", async () => {
   const ip = "203.0.113.77";
   const userAgent = "PiyazDpaGateTest/1.0";
-  const { userId, cookie } = await signUpAndSignIn("dpa-accept@test.local", ip);
+  const { userId, cookie } = await signUpWithSession(
+    "dpa-accept@test.local",
+    ip,
+  );
 
   const response = await authPost(
     "/organization/create",
@@ -160,4 +166,36 @@ test("organization/create with DPA acceptance writes one evidence row for the ne
   expect(dpa.documentVersion).toBe(LEGAL_VERSIONS.dpa);
   expect(dpa.ipAddress).toBe(ip);
   expect(dpa.userAgent).toBe(userAgent);
+});
+
+test("organization endpoints are blocked while personal re-consent is outstanding", async () => {
+  const ip = "127.0.3.11";
+  const { userId, cookie } = await signUpWithSession(
+    "reconsent-stale@test.local",
+    ip,
+  );
+  const sql = superuserPool();
+  await sql`DELETE FROM legal_acceptances WHERE user_id = ${userId}`;
+
+  const createResponse = await authPost(
+    "/organization/create",
+    { name: "Stale Team", slug: "stale-team", dpaAccepted: true },
+    ip,
+    cookie,
+  );
+  expect(createResponse.status).toBe(403);
+  const body = (await createResponse.json()) as { code?: string };
+  expect(body.code).toBe("TERMS_ACCEPTANCE_REQUIRED");
+  expect(await orgCountBySlug("stale-team")).toBe(0);
+
+  const listResponse = await auth.handler(
+    new Request("https://example.test/api/auth/organization/list", {
+      headers: {
+        "cf-connecting-ip": ip,
+        origin: "https://example.test",
+        cookie,
+      },
+    }),
+  );
+  expect(listResponse.status).toBe(403);
 });

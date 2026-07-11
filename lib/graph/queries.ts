@@ -1,5 +1,6 @@
 "use server";
 
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { getAuthContext } from "@/lib/auth/context";
 import { getSession } from "@/lib/auth/session";
 import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
@@ -84,6 +85,7 @@ export type ProjectIndexResultPayload =
  */
 export async function getProjectChrome(projectId: string) {
   const ctx = await getAuthContext();
+  await requireLegalConsent(ctx.userId);
   const access = await loadProjectAccess(ctx.userId, projectId);
   return coreGetProjectChrome(ctx, projectId, access);
 }
@@ -97,6 +99,7 @@ export async function getProjectChrome(projectId: string) {
  */
 export async function listProjectsSlim() {
   const ctx = await getAuthContext();
+  await requireLegalConsent(ctx.userId);
   return coreListProjectsSlim(ctx);
 }
 
@@ -110,6 +113,7 @@ export async function listProjectsSlim() {
  */
 export async function getProjectGraphSlim(projectId: string) {
   const ctx = await getAuthContext();
+  await requireLegalConsent(ctx.userId);
   const access = await loadProjectAccess(ctx.userId, projectId);
   return coreGetProjectGraphSlim(ctx, projectId, access);
 }
@@ -144,6 +148,7 @@ export async function searchPaletteAcrossProjects(
   if (!limit.ok) return { ok: false, code: "rate_limited" };
 
   if (!userId) return { ok: false, code: "unauthorized" };
+  await requireLegalConsent(userId);
 
   try {
     const ctx = await getAuthContext();
@@ -186,6 +191,7 @@ export async function listProjectIndex(): Promise<ProjectIndexResultPayload> {
   if (!limit.ok) return { ok: false, code: "rate_limited" };
 
   if (!userId) return { ok: false, code: "unauthorized" };
+  await requireLegalConsent(userId);
 
   try {
     const ctx = await getAuthContext();
@@ -215,6 +221,7 @@ export async function listMyTasks(): Promise<MyTasksListResultPayload> {
   if (!limit.ok) return { ok: false, code: "rate_limited" };
 
   if (!userId) return { ok: false, code: "unauthorized" };
+  await requireLegalConsent(userId);
 
   try {
     const ctx = await getAuthContext();
