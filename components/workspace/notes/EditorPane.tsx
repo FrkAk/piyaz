@@ -6,11 +6,13 @@ import {
   IconAgent,
   IconBundle,
   IconLock,
+  IconPencil,
   IconUser,
   IconUsers,
   IconX,
 } from "@/components/shared/icons";
 import { Avatar } from "@/components/shared/Avatar";
+import { Markdown } from "@/components/shared/Markdown";
 import { MonoId } from "@/components/shared/MonoId";
 import { useSession } from "@/lib/auth-client";
 import type { NoteFull } from "@/lib/data/note";
@@ -37,7 +39,7 @@ import {
   type NoteTaskTarget,
 } from "./NoteInline";
 import { useNoteDetail } from "./useNoteDetail";
-import { useNoteAutosave } from "./useNoteMutations";
+import { useNoteAutosave, useUpdateNote } from "./useNoteMutations";
 
 /** Slim project task map keyed by task id, threaded from the workspace. */
 export type TaskSlimMap = ReadonlyMap<
@@ -158,6 +160,7 @@ function EditorBody({
     queryFn: fetchNotesTree(qc, projectId),
   });
   const autosave = useNoteAutosave(projectId, noteId);
+  const updateNote = useUpdateNote(projectId);
   const session = useSession();
   const note = data?.note;
   const updaterName =
@@ -361,6 +364,18 @@ function EditorBody({
         }}
       />
 
+      <NoteSummary
+        summary={note.summary}
+        editable={editable}
+        onCommit={(next) =>
+          updateNote.mutate({
+            noteId,
+            patch: { summary: next },
+            rollbackOnStale: true,
+          })
+        }
+      />
+
       <div className="mb-6 flex flex-wrap items-center gap-1.5 border-b border-border pb-4 text-[11px] text-text-muted">
         <span>
           updated {formatRelative(note.updatedAt)}
@@ -435,6 +450,98 @@ function EditorBody({
         </NoteLinkContext.Provider>
       )}
     </div>
+  );
+}
+
+interface NoteSummaryProps {
+  /** @param summary - The note's one-line summary markdown (empty when unset). */
+  summary: string;
+  /** @param editable - Whether the summary can be edited (unlocked and loaded). */
+  editable: boolean;
+  /** @param onCommit - Persist a changed, trimmed summary. */
+  onCommit: (next: string) => void;
+}
+
+/**
+ * Summary block under the note title. Renders the one-line summary through the
+ * shared markdown renderer and, like the body, opens a raw editor on
+ * double-click. An empty summary on an editable note shows a red-ringed prompt
+ * so it never ships without one; a locked or unset read-only note renders
+ * nothing.
+ *
+ * @param props - Summary text, editability, and the commit sink.
+ * @returns The rendered summary, the empty prompt, or the raw editor.
+ */
+function NoteSummary({ summary, editable, onCommit }: NoteSummaryProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(summary);
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const begin = () => {
+    if (!editable) return;
+    setDraft(summary);
+    setEditing(true);
+  };
+
+  const commit = () => {
+    setEditing(false);
+    const next = draft.trim();
+    if (next !== summary) onCommit(next);
+  };
+
+  useEffect(() => {
+    if (!editing) return;
+    const el = ref.current;
+    if (el) {
+      el.focus({ preventScroll: true });
+      el.select();
+    }
+  }, [editing]);
+
+  if (editing) {
+    return (
+      <textarea
+        ref={ref}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === "Escape") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+        maxLength={1000}
+        rows={2}
+        placeholder="One-line summary…"
+        className="mb-3 block w-full resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-[13px] text-text-secondary outline-none placeholder:text-text-faint focus-visible:border-accent/40 focus-visible:ring-1 focus-visible:ring-accent/40"
+      />
+    );
+  }
+
+  if (summary !== "") {
+    return (
+      <div
+        onDoubleClick={begin}
+        title={editable ? "Double-click to edit the summary" : undefined}
+        className={`mb-3${editable ? " cursor-text" : ""}`}
+      >
+        <Markdown className="text-[13px] text-text-muted">{summary}</Markdown>
+      </div>
+    );
+  }
+
+  if (!editable) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={begin}
+      className="mb-3 flex w-full items-center gap-1.5 rounded-md bg-danger/5 px-2 py-1.5 text-left text-[12px] text-text-muted ring-1 ring-danger/60 transition-colors hover:bg-danger/10 hover:ring-danger focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-danger"
+    >
+      <IconPencil size={11} className="shrink-0 text-danger" />
+      Add a one-line summary so this note is easy to find.
+    </button>
   );
 }
 
