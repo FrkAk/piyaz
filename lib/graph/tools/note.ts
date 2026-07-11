@@ -101,6 +101,9 @@ const LIST_LINE_CAP = 100;
 /** Hits `search` returns at most, matching the data-layer LIMIT. */
 const SEARCH_HIT_CAP = 20;
 
+/** Refs the missing-summary hint names inline before eliding the rest. */
+const SUMMARY_HINT_REF_CAP = 5;
+
 /**
  * Compose the noteRef for any summary-shaped row.
  *
@@ -181,6 +184,31 @@ function noteLine(row: NoteTreeRow, identifier: string): string {
   const suffix = flags.length > 0 ? ` (${flags.join(", ")})` : "";
   const summary = row.summary === "" ? "" : ` — ${row.summary}`;
   return `- \`${ref}\` "${row.title}" [${row.type}]${suffix}${summary}`;
+}
+
+/**
+ * Build the hint naming notes that render without a summary. A summary-less
+ * note renders as a bare ref and title, so an agent cannot triage the hit
+ * without opening the body, and a reference or knowledge note feeds tasks as
+ * a title-only pointer.
+ *
+ * @param rows - Note rows carried by the response.
+ * @param identifier - Project identifier scoping the composed refs.
+ * @returns Hint text, or null when every row carries a summary.
+ */
+function missingSummaryHint(
+  rows: NoteTreeRow[],
+  identifier: string,
+): string | null {
+  const missing = rows.filter((row) => row.summary === "");
+  if (missing.length === 0) return null;
+  const named = missing
+    .slice(0, SUMMARY_HINT_REF_CAP)
+    .map((row) => composeNoteRef(asIdentifier(identifier), row.sequenceNumber));
+  const elided = missing.length - named.length;
+  const refs =
+    elided > 0 ? `${named.join(", ")}, +${elided} more` : named.join(", ");
+  return `${missing.length} note(s) have no summary (${refs}); summaries ride tree lists, search hits, and feed pointers. Set one with edit op='set' field='summary'.`;
 }
 
 /**
@@ -646,10 +674,14 @@ async function handleList(
     LIST_LINE_CAP,
     "narrow with piyaz_note action='search' query='...'",
   );
+  const text = [
+    `# ${projectIdentifier} notes (${rows.length})`,
+    ...budgeted.lines,
+  ];
+  const summaryHint = missingSummaryHint(rows, projectIdentifier);
+  if (summaryHint !== null) text.push(summaryHint);
   return ok(
-    [`# ${projectIdentifier} notes (${rows.length})`, ...budgeted.lines].join(
-      "\n",
-    ),
+    text.join("\n"),
     budgeted.truncated ? { truncated: true } : undefined,
   );
 }
@@ -824,14 +856,17 @@ async function handleSearch(
     const folder = row.folder === "" ? "" : ` (${row.folder}/)`;
     return `${noteLine(row, projectIdentifier)}${folder}`;
   });
+  const hints = [
+    "Chain a ref into piyaz_note action='read' (meta lists the sections; heading='...' reads one) instead of pulling full bodies.",
+  ];
+  const summaryHint = missingSummaryHint(limited, projectIdentifier);
+  if (summaryHint !== null) hints.push(summaryHint);
   return ok({
     text: [
       `# ${projectIdentifier} note search: "${p.query}" (${limited.length} hit${limited.length === 1 ? "" : "s"})`,
       ...lines,
     ].join("\n"),
-    _hints: [
-      "Chain a ref into piyaz_note action='read' (meta lists the sections; heading='...' reads one) instead of pulling full bodies.",
-    ],
+    _hints: hints,
   });
 }
 

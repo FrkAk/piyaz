@@ -963,3 +963,59 @@ test("list shows explicit empty folders; folder moves hint only when nothing mat
   expect(missing.explicitMoved).toBe(0);
   expect(missing._hints?.[0]).toContain("no explicit folder");
 });
+
+test("search hints the notes whose summary is empty", async () => {
+  const f = await seedUserOrgProject("NS20");
+  const ctx = makeAuthContext(f.userId);
+  const described = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Retry policy alpha",
+    body: "backoff rules",
+    summary: "how retries back off",
+  });
+  const bare = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Retry policy beta",
+    body: "backoff rules",
+  });
+
+  const hits = okData<{ text: string; _hints: string[] }>(
+    await handleNote(
+      { action: "search", project: "PRJNS20", query: "retry" },
+      ctx,
+    ),
+  );
+  const hints = hits._hints.join(" ");
+  expect(hints).toContain("heading");
+  expect(hints).toContain("no summary");
+  expect(hints).toContain(`PRJNS20-N${bare.sequenceNumber}`);
+  expect(hints).not.toContain(`PRJNS20-N${described.sequenceNumber}`);
+});
+
+test("list carries the summary hint only when a summary is missing", async () => {
+  const f = await seedUserOrgProject("NS21");
+  const ctx = makeAuthContext(f.userId);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Described",
+    body: "x",
+    summary: "has a summary",
+  });
+
+  const clean = okData<string>(
+    await handleNote({ action: "list", project: "PRJNS21" }, ctx),
+  );
+  expect(clean).not.toContain("no summary");
+
+  const bare = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Bare",
+    body: "y",
+  });
+  const flagged = okData<string>(
+    await handleNote({ action: "list", project: "PRJNS21" }, ctx),
+  );
+  expect(flagged).toContain("Bare");
+  expect(flagged).toContain("no summary");
+  expect(flagged).toContain(`PRJNS21-N${bare.sequenceNumber}`);
+});
