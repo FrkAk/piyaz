@@ -1,5 +1,6 @@
 "use server";
 
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { teamFail, type TeamActionResult } from "@/lib/actions/team-errors";
 import { mapTeamViews, type TeamView } from "@/lib/actions/team-list-map";
@@ -46,6 +47,7 @@ export async function listUserTeamsPagedAction(
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
 
   try {
     const { memberships, countByOrg, nextCursor } =

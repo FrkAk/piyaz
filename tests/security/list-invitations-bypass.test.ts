@@ -12,6 +12,7 @@ import { auth } from "@/lib/auth";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
+import { LEGAL_VERSIONS } from "@/lib/legal/versions";
 import { listPendingInvitationsAction } from "@/lib/actions/team-invitations";
 import type { BetterAuthInvitationRow } from "@/lib/actions/team-invitations-map";
 import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
@@ -285,6 +286,12 @@ describe("listPendingInvitationsAction (MYMR-155)", () => {
         ("organizationId", "userId", "role", "createdAt")
       VALUES
         (${targetOrg.organizationId}, ${member.id}, 'member', now())
+    `;
+    await su`
+      INSERT INTO legal_acceptances ("user_id", "document_type", "document_version")
+      VALUES
+        (${member.id}, 'terms', ${LEGAL_VERSIONS.terms}),
+        (${member.id}, 'privacy', ${LEGAL_VERSIONS.privacy})
     `;
     setSession({ user: { id: member.id } });
 

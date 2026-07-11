@@ -1,6 +1,7 @@
 import "server-only";
 
 import { redirect } from "next/navigation";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import {
   findTeamMembership,
@@ -11,7 +12,9 @@ import type { AuthContext } from "@/lib/auth/context";
 import { ForbiddenError, isUuid } from "@/lib/auth/authorization";
 
 /**
- * Workspace gate — redirect to onboarding when the caller has zero teams.
+ * Workspace gate — redirect to the legal re-acceptance interstitial when a
+ * personal document is outstanding, then to onboarding when the caller has
+ * zero teams. Consent runs first so team-less users are gated too.
  * Membership in any team is sufficient; per-resource access is gated
  * downstream by {@link assertProjectAccess} / {@link requireTeamMembership}.
  *
@@ -20,6 +23,7 @@ import { ForbiddenError, isUuid } from "@/lib/auth/authorization";
  */
 export async function requireMembership(): Promise<void> {
   const session = await requireSession();
+  await requireLegalConsent(session.user.id);
   if (!(await userHasAnyMembership(session.user.id))) {
     redirect("/onboarding/team");
   }

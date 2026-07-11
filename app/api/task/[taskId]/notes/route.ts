@@ -4,6 +4,7 @@ import { ForbiddenError } from "@/lib/auth/authorization";
 import { conditionalRespond } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /**
  * 32-bit FNV-1a hash over the sorted `id:kind` pairs, base-36 encoded.
@@ -51,6 +52,9 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   try {
     const rows = await getTaskNoteBacklinks(ctx, taskId);

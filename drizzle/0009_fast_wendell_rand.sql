@@ -1,0 +1,1 @@
+CREATE INDEX "legal_acceptances_user_type_version_idx" ON "legal_acceptances" USING btree ("user_id","document_type","document_version");

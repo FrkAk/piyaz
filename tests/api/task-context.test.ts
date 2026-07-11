@@ -188,19 +188,41 @@ test("GET context — 304 when If-None-Match matches", async () => {
   expect(await conditional.text()).toBe("");
 });
 
-test("GET context — agent kind resolves in two read batches", async () => {
+test("GET context — a stale user with a matching ETag gets 403, not 304", async () => {
+  const f = await seedUserOrgProject("ctx-stale-etag");
+  const taskId = await addTask(f.projectId, "ctx-stale-etag");
+  const first = await getContext(taskId, f.userId, "working");
+  expect(first.status).toBe(200);
+  const etag = first.headers.get("ETag");
+  expect(etag).toBeTruthy();
+
+  await superuserPool()`DELETE FROM legal_acceptances WHERE user_id = ${f.userId}`;
+
+  setSession({ user: { id: f.userId } });
+  const conditional = await GET(
+    new Request(`http://test/api/task/${taskId}/context?bundle=working`, {
+      headers: { "If-None-Match": etag! },
+    }),
+    { params: Promise.resolve({ taskId }) },
+  );
+  expect(conditional.status).toBe(403);
+  const body = (await conditional.json()) as { code: string };
+  expect(body.code).toBe("terms_acceptance_required");
+});
+
+test("GET context — agent kind resolves in two read batches plus the consent gate", async () => {
   const fx = await seedRichContextTask("ctx-counts");
   const readSpy = spyOn(rls, "withUserContextRead");
   try {
     const res = await getContext(fx.taskId, fx.userId, "agent");
     expect(res.status).toBe(200);
-    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(readSpy).toHaveBeenCalledTimes(3);
   } finally {
     readSpy.mockRestore();
   }
 });
 
-test("GET context — validator path issues no read batches", async () => {
+test("GET context — validator path issues only the consent-gate read", async () => {
   const fx = await seedRichContextTask("ctx-validator");
   const first = await getContext(fx.taskId, fx.userId, "agent");
   const etag = first.headers.get("ETag");
@@ -215,7 +237,7 @@ test("GET context — validator path issues no read batches", async () => {
       { params: Promise.resolve({ taskId: fx.taskId }) },
     );
     expect(conditional.status).toBe(304);
-    expect(readSpy).toHaveBeenCalledTimes(0);
+    expect(readSpy).toHaveBeenCalledTimes(1);
   } finally {
     readSpy.mockRestore();
   }

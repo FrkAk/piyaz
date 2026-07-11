@@ -1,7 +1,9 @@
 import "server-only";
 
+import { redirect } from "next/navigation";
 import { RateLimitError } from "@/lib/actions/rate-limit-action";
 import { ForbiddenError } from "@/lib/auth/authorization";
+import { ConsentRequiredError, RECONSENT_PATH } from "@/lib/auth/consent";
 import {
   FolderCycleError,
   NoteLockedError,
@@ -73,10 +75,15 @@ const UNKNOWN_MESSAGE = "Something went wrong. Please try again.";
  * validation; this mapper only translates them into serializable results.
  * `ForbiddenError` collapses to `not_found` (anti-enumeration).
  *
+ * `ConsentRequiredError` never returns: it redirects the caller to the
+ * re-acceptance interstitial (the thrown redirect escapes the action's
+ * catch because it is raised here, inside the handler).
+ *
  * @param err - Caught error from `authorizeWrite` or a `lib/data/note` call.
  * @returns Typed failure; `unknown` for anything unrecognized (caller logs).
  */
 export function noteFailureFrom(err: unknown): NoteActionFailure {
+  if (err instanceof ConsentRequiredError) redirect(RECONSENT_PATH);
   if (err instanceof NoteStaleWriteError) {
     return {
       ok: false,

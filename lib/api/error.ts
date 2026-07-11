@@ -1,4 +1,9 @@
+import { NextResponse } from "next/server";
 import { error } from "@/lib/api/response";
+import { describeReconsentDocuments } from "@/lib/legal/versions";
+
+/** Machine-readable code for the consent-gate 403 body. */
+export const CONSENT_REQUIRED_CODE = "terms_acceptance_required";
 
 /**
  * Whether internal errors should be returned to the client verbatim.
@@ -38,4 +43,29 @@ export function internalError(label: string, err: unknown): Response {
   const message =
     isVerboseErrors() && err instanceof Error ? err.message : "Internal error";
   return error(message, 500);
+}
+
+/**
+ * 403 emitted when the authenticated caller must re-accept updated legal
+ * documents before using the product. Deliberately 403 and not 401: the
+ * caller IS authenticated, and a 401 would send API clients into a
+ * re-authentication loop that cannot resolve a consent gap. The body is
+ * machine-actionable: `code` for branching, `outstanding` for the document
+ * list, `acceptUrl` for the page a human must visit.
+ *
+ * @param outstanding - Document types lacking current-version acceptance.
+ * @returns 403 JSON response with the consent-gate contract body.
+ */
+export function consentRequiredResponse(
+  outstanding: readonly string[],
+): NextResponse {
+  return NextResponse.json(
+    {
+      error: `The updated Piyaz ${describeReconsentDocuments(outstanding)} must be re-accepted.`,
+      code: CONSENT_REQUIRED_CODE,
+      outstanding,
+      acceptUrl: "/legal/accept",
+    },
+    { status: 403 },
+  );
 }

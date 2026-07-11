@@ -2,6 +2,7 @@ import { getAuthContext } from "@/lib/auth/context";
 import { listAccessibleProjectIds } from "@/lib/data/project";
 import { broker, type Connection } from "@/lib/realtime/broker";
 import { error } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -50,6 +51,9 @@ export async function GET(req: Request): Promise<Response> {
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   const userId = ctx.userId;
 

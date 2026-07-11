@@ -3,6 +3,7 @@ import { getAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import { internalError } from "@/lib/api/error";
 import { error, ok } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /**
  * GET handler for full-text note search within a project.
@@ -29,6 +30,9 @@ export async function GET(
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   try {
     const q = new URL(req.url).searchParams.get("q") ?? "";

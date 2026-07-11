@@ -25,6 +25,42 @@ import {
 import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
 import { isVerboseErrors } from "@/lib/api/error";
 import type { AuthContext } from "@/lib/auth/context";
+import { listOutstandingReconsent } from "@/lib/data/legal";
+import { describeReconsentDocuments } from "@/lib/legal/versions";
+
+/** Origin the hosted MCP runs on; the fallback when `BETTER_AUTH_URL` is unset. */
+const HOSTED_ORIGIN = "https://app.piyaz.ai";
+
+/**
+ * Origin for the human-facing `/legal/accept` link. Resolved at call time,
+ * not module load, so a Workers head that populates `BETTER_AUTH_URL` per
+ * request is not pinned to a stale value; defaults to the hosted origin (the
+ * primary MCP consumer) when unset or unparsable.
+ *
+ * @returns The accept-page origin.
+ */
+function acceptOrigin(): string {
+  const configured = process.env.BETTER_AUTH_URL?.trim();
+  if (!configured) return HOSTED_ORIGIN;
+  try {
+    return new URL(configured).origin;
+  } catch {
+    return HOSTED_ORIGIN;
+  }
+}
+
+/**
+ * Blocking-precondition message for a caller with outstanding re-consent.
+ * Written for the agent reading it: names the machine code, the documents,
+ * and the exact human action that unblocks the account.
+ *
+ * @param outstanding - Document types lacking current-version acceptance.
+ * @returns The tool error text.
+ */
+function reconsentMessage(outstanding: readonly string[]): string {
+  const documents = outstanding.length > 1 ? "documents" : "document";
+  return `Blocked (code: terms_acceptance_required): the updated Piyaz ${describeReconsentDocuments(outstanding)} must be re-accepted by the account holder before tools can run. Outstanding: ${outstanding.join(", ")}. No reads or writes happened. Tell the user to open ${acceptOrigin()}/legal/accept in a browser, sign in, and accept the updated ${documents}, then retry this exact call.`;
+}
 
 /**
  * Format a successful tool result as MCP content.
@@ -66,11 +102,17 @@ type McpResponse = ReturnType<typeof toMcp>;
 
 /**
  * Wrap a tool handler with the cross-cutting concerns every tool shares:
- * the heavy-tier rate check (middleware cannot see tool names, so the
- * expensive shapes are throttled here), the sanitised catch-all (mirrors
- * `internalError` in `lib/api/error.ts`: log server-side, return opaque
- * `Internal error` unless NODE_ENV is exactly `development`), and one
- * structured `mcp_tool` log line per call for observability.
+ * the legal re-consent gate (mcp-source actors with an outstanding personal
+ * document get a blocking error naming the acceptance URL; one indexed read
+ * per call — the stateless transport runs one tool call per POST, so there
+ * is nothing to memoize), the heavy-tier rate
+ * check (middleware cannot see tool names, so the expensive shapes are
+ * throttled here), the sanitised catch-all (mirrors `internalError` in
+ * `lib/api/error.ts`: log server-side, return opaque `Internal error` unless
+ * NODE_ENV is exactly `development`), and one structured `mcp_tool` log line
+ * per call for observability. The consent gate applies only to
+ * `actor.source === "mcp"` (the only actor the MCP route produces): web
+ * actors are gated at the page/route layer and system actors are internal.
  *
  * @param name - Tool name (e.g. `"piyaz_get"`).
  * @param ctx - Resolved auth context.
@@ -94,6 +136,13 @@ function wrapTool<P>(
     let truncated: boolean | undefined;
     let errName: string | undefined;
     try {
+      if (ctx.actor.source === "mcp") {
+        const outstanding = await listOutstandingReconsent(ctx.userId);
+        if (outstanding.length > 0) {
+          response = err(reconsentMessage(outstanding));
+          return response;
+        }
+      }
       if (opts.heavy?.(params)) {
         const check = await getBackend("mcpHeavy").check(
           `mcp-heavy:${ctx.userId}`,

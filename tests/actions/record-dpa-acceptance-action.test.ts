@@ -59,7 +59,9 @@ afterEach(async () => {
 
 describe("recordDpaAcceptanceAction", () => {
   test("a non-owner member cannot record a DPA acceptance", async () => {
-    const org = await seedUserOrgProject("dpa-action-forbidden");
+    const org = await seedUserOrgProject("dpa-action-forbidden", {
+      legalCurrent: false,
+    });
     const su = superuserPool();
     const [member] = await su<{ id: string }[]>`
       INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
@@ -89,7 +91,9 @@ describe("recordDpaAcceptanceAction", () => {
   });
 
   test("an owner records exactly one pinned-version DPA row", async () => {
-    const org = await seedUserOrgProject("dpa-action-owner");
+    const org = await seedUserOrgProject("dpa-action-owner", {
+      legalCurrent: false,
+    });
     setSession({ user: { id: org.userId } });
     nextHasPermission = async () => ({ success: true });
 

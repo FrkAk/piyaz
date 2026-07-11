@@ -21,12 +21,13 @@ export type OnboardResult = { ok: true } | { ok: false; message: string };
  * to home. Thin wrapper around `createTeamAction` so the form stays
  * decoupled from the canonical TeamActionResult shape.
  *
- * @param input - `{ name, slug }` from the create-team form.
+ * @param input - `{ name, slug, dpaAccepted }` from the create-team form.
  * @returns `{ ok: false }` on failure (the caller redirects on success).
  */
 export async function createTeam(input: {
   name: string;
   slug: string;
+  dpaAccepted: boolean;
 }): Promise<OnboardResult> {
   const result: TeamActionResult<{ organizationId: string }> =
     await createTeamAction(input);

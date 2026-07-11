@@ -5,6 +5,7 @@ import { getTaskFullWithEdges } from "@/lib/data/task";
 import { broker } from "@/lib/realtime/broker";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /** TTL for fetch-implicit task subscriptions — 10 minutes. */
 const TASK_SUBSCRIPTION_TTL_MS = 10 * 60_000;
@@ -37,6 +38,9 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   try {
     // Cheap timestamp probe first — gates the conditional-GET path so

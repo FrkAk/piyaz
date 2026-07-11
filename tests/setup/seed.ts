@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { LEGAL_VERSIONS } from "@/lib/legal/versions";
 import { appUserPool, serviceRolePool, superuserPool } from "./global";
 
 /**
@@ -35,10 +36,20 @@ export type Fixture = {
  * Insert a user, an organization, an owner-membership, and a project.
  * Returns the ids — every test that needs "a project I can read" starts here.
  *
+ * By default the user also gets current `terms` and `privacy` acceptance
+ * rows, mirroring the production invariant (the signup gate writes them for
+ * every account) so the legal re-consent gate does not block seeded users.
+ * Tests that count acceptance rows or exercise the stale state pass
+ * `legalCurrent: false`.
+ *
  * @param suffix - Suffix added to slug/email so multiple fixtures don't collide.
+ * @param opts - `legalCurrent: false` skips the acceptance rows.
  * @returns Created ids.
  */
-export async function seedUserOrgProject(suffix = "1"): Promise<Fixture> {
+export async function seedUserOrgProject(
+  suffix = "1",
+  opts: { legalCurrent?: boolean } = {},
+): Promise<Fixture> {
   const sql = superuserPool();
   const [u] = await sql<{ id: string }[]>`
     INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
@@ -59,5 +70,13 @@ export async function seedUserOrgProject(suffix = "1"): Promise<Fixture> {
     VALUES (${o.id}, ${"Project " + suffix}, ${"PRJ" + suffix})
     RETURNING id
   `;
+  if (opts.legalCurrent !== false) {
+    await sql`
+      INSERT INTO legal_acceptances ("user_id", "document_type", "document_version")
+      VALUES
+        (${u.id}, 'terms', ${LEGAL_VERSIONS.terms}),
+        (${u.id}, 'privacy', ${LEGAL_VERSIONS.privacy})
+    `;
+  }
   return { userId: u.id, organizationId: o.id, projectId: p.id };
 }

@@ -148,6 +148,23 @@ test("POST /api/note/[id]/presence: 400 for malformed or identity-carrying bodie
   ).toBe(400);
 });
 
+test("POST /api/note/[id]/presence: 403 terms_acceptance_required for a stale user", async () => {
+  const f = await seedUserOrgProject("presence-stale");
+  const note = await createNote(makeAuthContext(f.userId), {
+    projectId: f.projectId,
+    title: "Team note",
+    visibility: "team",
+  });
+  await superuserPool()`DELETE FROM legal_acceptances WHERE user_id = ${f.userId}`;
+  setSession({ user: { id: f.userId } });
+
+  const res = await callPresence(note.id, { state: "editing" });
+  expect(res.status).toBe(403);
+  const body = (await res.json()) as { code: string; outstanding: string[] };
+  expect(body.code).toBe("terms_acceptance_required");
+  expect(body.outstanding).toEqual(["terms", "privacy"]);
+});
+
 test("POST /api/note/[id]/presence: 429 over budget with Retry-After", async () => {
   const f = await seedUserOrgProject("presence-429");
   const note = await createNote(makeAuthContext(f.userId), {

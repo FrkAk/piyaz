@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: July 11, 2026
+Last updated: July 12, 2026
 
 This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**, operated
 by the Piyaz team. **If you self-host Piyaz, this document does not apply to your
@@ -193,9 +193,13 @@ practices of other sites.
 
 ## Changes to this policy
 
-We keep this policy under review and may update it. The date at the top
-reflects the current version. We will notify you of material changes in-app or by
-email, and where required we will ask you to re-accept.
+We keep this policy under review and may revise it periodically. The date at the
+top reflects the current version. If there are material changes to this policy,
+we will provide at least **30 days'** prior notice by posting a notice in the
+Service or sending an email to the address on your account. A material expansion
+of how we use your personal data takes effect for your account only after you
+re-accept this policy in the Service. Any other change takes effect on the date
+we post it, and your continued use of the Service constitutes acceptance.
 
 ## How to contact us
 

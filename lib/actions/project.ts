@@ -11,6 +11,7 @@ import {
 } from "@/lib/graph/mutations";
 import { deleteProject as deleteProjectCore } from "@/lib/data/project";
 import { ProjectNotFoundError } from "@/lib/graph/errors";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { getAuthContext } from "@/lib/auth/context";
 import {
   ForbiddenError,
@@ -119,18 +120,22 @@ const FORBIDDEN_MESSAGE = "You don't have access to this project.";
 
 /**
  * Resolve auth context and translate auth failures into typed error results.
+ * Signed-in callers with outstanding legal documents are redirected to the
+ * re-acceptance interstitial (thrown redirect, outside the catch).
  * @returns The resolved AuthContext, or a typed `unauthorized` failure.
  */
 async function resolveAuthOrFail(): Promise<
   | { ok: true; ctx: Awaited<ReturnType<typeof getAuthContext>> }
   | { ok: false; code: "unauthorized"; message: string }
 > {
+  let ctx: Awaited<ReturnType<typeof getAuthContext>>;
   try {
-    const ctx = await getAuthContext();
-    return { ok: true, ctx };
+    ctx = await getAuthContext();
   } catch {
     return { ok: false, code: "unauthorized", message: UNAUTHORIZED_MESSAGE };
   }
+  await requireLegalConsent(ctx.userId);
+  return { ok: true, ctx };
 }
 
 /**

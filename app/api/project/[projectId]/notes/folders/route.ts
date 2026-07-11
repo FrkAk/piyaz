@@ -4,6 +4,7 @@ import { ForbiddenError } from "@/lib/auth/authorization";
 import { conditionalRespond } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /**
  * Conditional handler for `GET` and `HEAD` on a project's explicit note
@@ -24,6 +25,9 @@ async function handle(req: Request, projectId: string): Promise<Response> {
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   try {
     const { paths, version } = await listNoteFolderPaths(ctx, projectId);

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod/v4";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
 import {
@@ -37,6 +38,7 @@ export async function listOAuthSessionsAction(): Promise<
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
 
   try {
     const rows = await listActiveOAuthSessions(userId);
@@ -81,6 +83,7 @@ export async function revokeOAuthSessionAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
 
   const parsed = parseOrFail(revokeSessionSchema, input);
   if (!parsed.ok) return parsed;
@@ -118,6 +121,7 @@ export async function revokeAllOAuthSessionsAction(): Promise<TeamActionResult> 
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
 
   const limit = await checkActionRateLimit(
     {

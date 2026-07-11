@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { Button } from "@/components/shared/Button";
+import { LEGAL_VERSIONS } from "@/lib/legal/versions";
 import { formatAbsolute } from "@/lib/ui/relative-time";
 import {
   recordDpaAcceptanceAction,
@@ -11,7 +12,7 @@ import {
 interface DpaSectionProps {
   /** Team UUID — the explicit org the owner accepts the DPA for. */
   organizationId: string;
-  /** Current acceptance state, or null when the owner has not accepted the current version. */
+  /** Latest acceptance regardless of version, or null when never accepted. */
   acceptance: DpaAcceptanceState | null;
   /** Called with the just-written state after a successful accept. */
   onAccepted: (state: DpaAcceptanceState) => void;
@@ -21,14 +22,16 @@ interface DpaSectionProps {
 
 /**
  * Data processing agreement section — owner-only. Explains the GDPR Art. 28
- * DPA, links to the full text at `/dpa`, and renders either the accept control
- * or, once the owner has accepted the current version, the accepted state.
+ * DPA, links to the full text at `/dpa`, and renders one of three states:
+ * accepted at the current version, an update notice with the re-accept
+ * control when the accepted version is stale (a `LEGAL_VERSIONS.dpa` bump is
+ * notice-only and never blocks access), or the first-accept control.
  *
  * The accept button is disabled while its action is in flight so a double
  * click cannot write a duplicate evidence row.
  *
  * @param props - Section configuration.
- * @returns Card with the DPA explanation and the accept or accepted state.
+ * @returns Card with the DPA explanation and the state-appropriate control.
  */
 export function DpaSection({
   organizationId,
@@ -72,7 +75,7 @@ export function DpaSection({
           before accepting it on behalf of your team.
         </p>
 
-        {acceptance ? (
+        {acceptance && acceptance.version === LEGAL_VERSIONS.dpa ? (
           <p className="mt-4 text-xs text-text-secondary">
             Accepted version{" "}
             <span className="font-mono text-text-primary">
@@ -80,6 +83,30 @@ export function DpaSection({
             </span>{" "}
             on {formatAbsolute(acceptance.acceptedAt)}.
           </p>
+        ) : acceptance ? (
+          <>
+            <p
+              className="mt-4 rounded-md border border-progress/25 bg-progress/10 px-3 py-2 text-xs text-progress"
+              role="status"
+            >
+              The data processing agreement was updated; the current version is{" "}
+              <span className="font-mono">{LEGAL_VERSIONS.dpa}</span>. Your team
+              accepted version{" "}
+              <span className="font-mono">{acceptance.version}</span> on{" "}
+              {formatAbsolute(acceptance.acceptedAt)}; continued use is covered
+              by the update terms, and you can accept the current version now.
+            </p>
+            <div className="mt-3">
+              <Button
+                variant="secondary"
+                onClick={handleAccept}
+                disabled={pending}
+                isLoading={pending}
+              >
+                Accept updated agreement
+              </Button>
+            </div>
+          </>
         ) : (
           <div className="mt-4">
             <Button

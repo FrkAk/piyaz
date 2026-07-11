@@ -5,6 +5,7 @@ import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 import type { NoteActivityEvent } from "@/lib/types";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /**
  * Conditional handler for `GET` and `HEAD` on a note's activity page.
@@ -32,6 +33,9 @@ async function handle(req: Request, noteId: string): Promise<Response> {
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   try {
     const url = new URL(req.url);

@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { clearOrgMembershipArtifacts } from "@/lib/data/account";
 import { revokeOrgAccess } from "@/lib/realtime/access";
@@ -30,6 +31,7 @@ import {
 
 const createTeamSchema = z.object({
   name: z.string().trim().min(1, "Team name is required").max(TEAM_NAME_MAX),
+  dpaAccepted: z.boolean(),
   slug: z
     .string()
     .trim()
@@ -121,12 +123,18 @@ function roleIncludesOwner(role: string): boolean {
  * added as `owner` of the new team. The caller does NOT need an existing
  * team membership — this is the bootstrap path used by onboarding.
  *
- * @param input - `{ name, slug }` from the form.
+ * `dpaAccepted` must be true: the owner accepts the data processing
+ * agreement on the team's behalf at creation. The `/organization/create`
+ * before-hook in `lib/auth.ts` is the sole gate and evidence writer; the
+ * raw checkbox value is forwarded unchanged so the hook decides.
+ *
+ * @param input - `{ name, slug, dpaAccepted }` from the form.
  * @returns Discriminated result; `data.organizationId` on success.
  */
 export async function createTeamAction(input: {
   name: string;
   slug: string;
+  dpaAccepted: boolean;
 }): Promise<TeamActionResult<{ organizationId: string }>> {
   let userId: string;
   try {
@@ -135,6 +143,7 @@ export async function createTeamAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
   const parsed = parseOrFail(createTeamSchema, input);
   if (!parsed.ok) return parsed;
 
@@ -146,8 +155,13 @@ export async function createTeamAction(input: {
 
   try {
     const reqHeaders = await headers();
+    const body = {
+      name: parsed.data.name,
+      slug: parsed.data.slug,
+      dpaAccepted: parsed.data.dpaAccepted,
+    };
     const created = await auth.api.createOrganization({
-      body: { name: parsed.data.name, slug: parsed.data.slug },
+      body,
       headers: reqHeaders,
     });
     if (!created) return teamFail("unknown");
@@ -191,6 +205,7 @@ export async function inviteMemberAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
   const parsed = parseOrFail(inviteMemberSchema, input);
   if (!parsed.ok) return parsed;
 
@@ -260,6 +275,7 @@ export async function removeMemberAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
   const parsed = parseOrFail(removeMemberSchema, input);
   if (!parsed.ok) return parsed;
 
@@ -351,6 +367,7 @@ export async function updateMemberRoleAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
   const parsed = parseOrFail(updateMemberRoleSchema, input);
   if (!parsed.ok) return parsed;
 
@@ -444,6 +461,7 @@ export async function leaveTeamAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
 
   const parsed = parseOrFail(leaveTeamSchema, input);
   if (!parsed.ok) return parsed;
@@ -511,6 +529,7 @@ export async function acceptEmailInvitationAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
   const parsed = parseOrFail(acceptInvitationSchema, input);
   if (!parsed.ok) return parsed;
 
@@ -581,6 +600,7 @@ export async function updateTeamAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
   const parsed = parseOrFail(updateTeamSchema, input);
   if (!parsed.ok) return parsed;
 
@@ -648,6 +668,7 @@ export async function deleteTeamAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
   const parsed = parseOrFail(deleteTeamSchema, input);
   if (!parsed.ok) return parsed;
 
@@ -717,6 +738,7 @@ export async function previewTeamDeleteAction(input: {
   } catch {
     return teamFail("unauthorized");
   }
+  await requireLegalConsent(userId);
   const parsed = parseOrFail(deleteTeamSchema, input);
   if (!parsed.ok) return parsed;
 
