@@ -7,11 +7,24 @@ import { Button } from "@/components/shared/Button";
 import { initials } from "@/lib/ui/initials";
 import { teamAvatarGradient } from "@/lib/ui/team-avatar";
 import { formatAbsolute } from "@/lib/ui/relative-time";
-import { updateProfileAction } from "@/lib/actions/profile";
+import {
+  exportAccountDataAction,
+  updateProfileAction,
+} from "@/lib/actions/profile";
 import { changePasswordAction } from "@/lib/actions/password";
+import { DeleteAccountDialog } from "./DeleteAccountDialog";
 
 const NAME_MAX = 80;
 const PASSWORD_MIN = 8;
+
+/** Legal documents linked from the account tab, opened in a new tab. */
+const LEGAL_DOC_LINKS = [
+  { href: "/terms", label: "Terms" },
+  { href: "/privacy", label: "Privacy" },
+  { href: "/impressum", label: "Legal Notice" },
+  { href: "/dpa", label: "DPA" },
+  { href: "/subprocessors", label: "Sub-processors" },
+];
 
 const INPUT_CLASS =
   "w-full rounded-md border border-border-strong bg-base px-3 py-2.5 text-[13px] text-text-primary placeholder:text-text-muted outline-none transition-colors focus:border-accent";
@@ -35,9 +48,10 @@ interface AccountTabProps {
 /**
  * Account tab — identity card (56px gradient avatar, locked email, editable
  * display name), password card (collapsed disclosure backed by
- * `changePasswordAction`), and a danger-zone card with the account-deletion
- * placeholder. Photo upload and account deletion are wired-once-backend-lands
- * placeholders — see DESIGN §11 conventions for non-functional buttons.
+ * `changePasswordAction`), and a danger-zone card wiring the data export
+ * (`exportAccountDataAction`) and account deletion (`DeleteAccountDialog`).
+ * Photo upload remains a wired-once-backend-lands placeholder — see DESIGN
+ * §11 conventions for non-functional buttons.
  *
  * @param props - Identity slice + password metadata.
  * @returns Tab body with H1, identity card, password card, danger zone.
@@ -182,7 +196,24 @@ export function AccountTab({ user, passwordUpdatedAt }: AccountTabProps) {
         <PasswordSection lastChanged={passwordUpdatedAt} />
       ) : null}
 
-      <DangerZone />
+      <DangerZone email={user.email} />
+
+      <nav
+        aria-label="Legal documents"
+        className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-[11.5px] text-text-muted"
+      >
+        {LEGAL_DOC_LINKS.map((link) => (
+          <a
+            key={link.href}
+            href={link.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="transition-colors hover:text-text-primary"
+          >
+            {link.label}
+          </a>
+        ))}
+      </nav>
     </section>
   );
 }
@@ -434,37 +465,102 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
 }
 
 /**
- * Danger-zone card — placeholder for the account-deletion flow until the
- * backend ticket lands. Disabled button + tooltip per DESIGN §11.
+ * Danger-zone card — wires the GDPR data export ("Download my data",
+ * `exportAccountDataAction`) and account deletion (typed-confirmation
+ * `DeleteAccountDialog`). The delete copy states the resolved sole-owner
+ * semantics: solely-owned teams with no other members are deleted with the
+ * account, while teams the user solely owns that still have other members
+ * block deletion until ownership is transferred or the team is deleted.
  *
- * @returns Cancelled-tinted card with a disabled delete-account control.
+ * @param props - `email` for the confirmation dialog.
+ * @returns Cancelled-tinted card with the export and delete controls.
  */
-function DangerZone() {
+function DangerZone({ email }: { email: string }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [exporting, startExport] = useTransition();
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleExport = () => {
+    setExportError(null);
+    startExport(async () => {
+      const result = await exportAccountDataAction();
+      if (!result.ok) {
+        setExportError(result.message);
+        return;
+      }
+      const blob = new Blob([JSON.stringify(result.data, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "piyaz-account-export.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+    });
+  };
+
   return (
     <section className="rounded-[10px] border border-cancelled/25 bg-cancelled/5 p-5">
       <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-cancelled">
         Danger zone
       </p>
+
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-text-primary">
+            Download my data
+          </p>
+          <p className="mt-1 text-[12px] leading-relaxed text-text-muted">
+            Export your profile, team memberships, and legal-acceptance records
+            as a JSON file.
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={handleExport}
+          isLoading={exporting}
+        >
+          Download my data
+        </Button>
+      </div>
+
+      {exportError ? (
+        <p
+          role="alert"
+          className="mt-3 rounded-md border border-cancelled/25 bg-cancelled/10 px-3 py-2 text-[12px] text-cancelled"
+        >
+          {exportError}
+        </p>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-4 border-t border-cancelled/20 pt-4">
         <div className="min-w-0 flex-1">
           <p className="text-[13px] font-semibold text-text-primary">
             Delete account
           </p>
           <p className="mt-1 text-[12px] leading-relaxed text-text-muted">
             Permanently remove your account and revoke every authorized agent.
-            Projects you own get transferred to the team or deleted with it.
+            Teams you solely own with no other members are deleted with the
+            account; a team you solely own that still has other members must
+            have ownership transferred or be deleted first.
           </p>
         </div>
         <button
           type="button"
-          disabled
-          title="Account deletion — coming soon"
-          aria-label="Delete account — coming soon"
-          className="inline-flex h-7 cursor-not-allowed items-center justify-center rounded-md border border-cancelled/30 bg-cancelled/10 px-3 text-[12px] font-semibold text-cancelled opacity-80"
+          onClick={() => setDialogOpen(true)}
+          className="inline-flex h-7 cursor-pointer items-center justify-center rounded-md border border-cancelled/30 bg-cancelled/10 px-3 text-[12px] font-semibold text-cancelled transition-colors hover:border-cancelled hover:bg-cancelled/20"
         >
           Delete account
         </button>
       </div>
+
+      <DeleteAccountDialog
+        open={dialogOpen}
+        email={email}
+        onClose={() => setDialogOpen(false)}
+      />
     </section>
   );
 }

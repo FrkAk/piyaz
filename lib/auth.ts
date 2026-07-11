@@ -6,7 +6,14 @@ import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as authSchema from "@/lib/db/auth-schema";
 import { authDb } from "@/lib/db/connection";
-import { clearOrgMembershipArtifacts } from "@/lib/data/account";
+import {
+  clearOrgMembershipArtifacts,
+  deleteSoleMemberOrgAsAdmin,
+  enumerateOwnedOrgsForDeletion,
+  planOwnedOrgDeletion,
+  scrubLegalAcceptances,
+} from "@/lib/data/account";
+import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
@@ -73,6 +80,12 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
+    // Default freshness stays enabled: deleteUser without a password
+    // requires a session younger than `freshAge` (BA throws SESSION_EXPIRED
+    // otherwise), and a supplied password bypasses the freshness check.
+    // deleteAccountAction forwards an optional password, so credential
+    // users confirm with it and social-login users rely on a recent
+    // sign-in; a stale session surfaces `session_not_fresh` to the dialog.
     // BA writes every session to Drizzle AND KV. Required for oauthProvider
     // (which throws at boot without DB-backed sessions). KV is the per-POP
     // read cache; Drizzle is the durable store. NOTE: BA's `findSession`
@@ -228,6 +241,69 @@ export const auth = betterAuth({
     // the dev server (MYMR-235).
     nextCookies(),
   ],
+  user: {
+    deleteUser: {
+      enabled: true,
+      // Runs while `user.id` is still populated (before the row is
+      // removed), which the legal-acceptance scrub requires. Ordered:
+      // (1) block deletion when the caller solely owns a team that still
+      // has other members — they must transfer or delete it first;
+      // (2) cascade-delete teams the caller is the only member of so none
+      // is orphaned; (3) anonymize retained legal-acceptance evidence.
+      // Unlike beforeDeleteOrganization (which allSettles and logs), the
+      // sole-owner guard and the scrub THROW to abort the whole delete so
+      // a failure never leaves an ownerless team or a compliance gap.
+      // These steps are not transactional with the user-row delete: a
+      // scrub failure aborts after memberless teams are already gone,
+      // which is acceptable because only the deleting user could see them.
+      beforeDelete: async (user) => {
+        const plan = planOwnedOrgDeletion(
+          await enumerateOwnedOrgsForDeletion(user.id),
+        );
+        if (plan.kind === "blocked") {
+          throw new APIError("BAD_REQUEST", {
+            message: TEAM_ACTION_MESSAGES.cannot_delete_sole_owner,
+            code: "CANNOT_DELETE_SOLE_OWNER",
+          });
+        }
+        if (plan.orgIdsToDelete.length > 0) {
+          // The reentrant auth.api.deleteOrganization path needs the request
+          // context that server-action dispatch (auth.api.deleteUser with
+          // headers only) never carries, so the cascade runs the audited
+          // pieces directly: the same per-member cleanup the org-delete hook
+          // performs (the deleting owner is the only member by
+          // planOwnedOrgDeletion's definition), then the org row, whose FK
+          // cascade wipes projects, tasks, edges, invitations, and the
+          // member row.
+          for (const organizationId of plan.orgIdsToDelete) {
+            try {
+              await clearOrgMembershipArtifacts(user.id, organizationId);
+              await revokeOrgAccess(user.id, organizationId);
+              await deleteSoleMemberOrgAsAdmin(organizationId, user.id);
+            } catch (err) {
+              console.error("deleteUser.beforeDelete cleanup failure", {
+                userId: user.id,
+                orgId: organizationId,
+                step: "deleteOwnedOrg",
+                err,
+              });
+              throw err;
+            }
+          }
+        }
+        try {
+          await scrubLegalAcceptances(user.id);
+        } catch (err) {
+          console.error("deleteUser.beforeDelete cleanup failure", {
+            userId: user.id,
+            step: "scrubLegalAcceptances",
+            err,
+          });
+          throw err;
+        }
+      },
+    },
+  },
   databaseHooks: {
     user: {
       create: {

@@ -5,9 +5,82 @@ import { seedUserOrgProject } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import {
   clearOrgMembershipArtifacts,
+  enumerateOwnedOrgsForDeletion,
+  exportAccountData,
   getPasswordUpdatedAt,
   getWhoami,
+  planOwnedOrgDeletion,
+  scrubLegalAcceptances,
 } from "@/lib/data/account";
+
+/**
+ * Insert a bare user row and return its id.
+ *
+ * @param sql - Superuser client.
+ * @param suffix - Unique suffix for name/email.
+ * @returns The new user id.
+ */
+async function insertUser(
+  sql: ReturnType<typeof superuserPool>,
+  suffix: string,
+): Promise<string> {
+  const [u] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
+    RETURNING id
+  `;
+  return u.id;
+}
+
+/**
+ * Insert a membership row.
+ *
+ * @param sql - Superuser client.
+ * @param orgId - Organization id.
+ * @param userId - Member user id.
+ * @param role - Member role string.
+ */
+async function insertMember(
+  sql: ReturnType<typeof superuserPool>,
+  orgId: string,
+  userId: string,
+  role: string,
+): Promise<void> {
+  await sql`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${orgId}, ${userId}, ${role}, now())
+  `;
+}
+
+/**
+ * Insert a legal-acceptance row.
+ *
+ * @param sql - Superuser client.
+ * @param userId - Owner user id.
+ * @param overrides - Optional field overrides.
+ */
+async function insertAcceptance(
+  sql: ReturnType<typeof superuserPool>,
+  userId: string,
+  overrides: {
+    documentType?: string;
+    documentVersion?: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  } = {},
+): Promise<void> {
+  const {
+    documentType = "terms",
+    documentVersion = "2026-01-01",
+    ipAddress = "203.0.113.7",
+    userAgent = "Mozilla/5.0 test",
+  } = overrides;
+  await sql`
+    INSERT INTO public.legal_acceptances
+      ("user_id", "document_type", "document_version", "ip_address", "user_agent")
+    VALUES (${userId}, ${documentType}, ${documentVersion}, ${ipAddress}, ${userAgent})
+  `;
+}
 
 afterEach(async () => {
   await truncateAll();
@@ -135,5 +208,172 @@ describe("getWhoami", () => {
     expect(who.userId).toBe(a.userId);
     expect(who.userId).not.toBe(b.userId);
     expect(who.email).toBe("userwhoami-a@test.local");
+  });
+});
+
+describe("scrubLegalAcceptances", () => {
+  test("nulls ip/user-agent and retains document evidence", async () => {
+    const f = await seedUserOrgProject("scrub-basic");
+    const sqlc = superuserPool();
+    await insertAcceptance(sqlc, f.userId, {
+      documentType: "terms",
+      documentVersion: "2026-02-02",
+    });
+    await insertAcceptance(sqlc, f.userId, {
+      documentType: "privacy",
+      documentVersion: "2026-02-02",
+    });
+
+    await scrubLegalAcceptances(f.userId);
+
+    const rows = await sqlc<
+      {
+        document_type: string;
+        document_version: string;
+        ip_address: string | null;
+        user_agent: string | null;
+        accepted_at: Date;
+      }[]
+    >`
+      SELECT document_type, document_version, ip_address, user_agent, accepted_at
+      FROM public.legal_acceptances
+      WHERE user_id = ${f.userId}
+      ORDER BY document_type ASC
+    `;
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      expect(row.ip_address).toBeNull();
+      expect(row.user_agent).toBeNull();
+      expect(row.document_version).toBe("2026-02-02");
+      expect(row.accepted_at).toBeInstanceOf(Date);
+    }
+    expect(rows.map((r) => r.document_type)).toEqual(["privacy", "terms"]);
+  });
+
+  test("zero acceptance rows is a valid success", async () => {
+    const f = await seedUserOrgProject("scrub-empty");
+    await expect(scrubLegalAcceptances(f.userId)).resolves.toBeUndefined();
+  });
+
+  test("only scrubs the target user's rows", async () => {
+    const a = await seedUserOrgProject("scrub-iso-a");
+    const b = await seedUserOrgProject("scrub-iso-b");
+    const sqlc = superuserPool();
+    await insertAcceptance(sqlc, a.userId, { ipAddress: "10.0.0.1" });
+    await insertAcceptance(sqlc, b.userId, { ipAddress: "10.0.0.2" });
+
+    await scrubLegalAcceptances(a.userId);
+
+    const [bRow] = await sqlc<{ ip_address: string | null }[]>`
+      SELECT ip_address FROM public.legal_acceptances WHERE user_id = ${b.userId}
+    `;
+    expect(bRow.ip_address).toBe("10.0.0.2");
+  });
+});
+
+describe("exportAccountData", () => {
+  test("returns the caller's profile, memberships, and acceptances", async () => {
+    const f = await seedUserOrgProject("export-self");
+    const sqlc = superuserPool();
+    await insertAcceptance(sqlc, f.userId, {
+      documentType: "terms",
+      ipAddress: "198.51.100.5",
+      userAgent: "ExportUA",
+    });
+
+    const data = await exportAccountData(f.userId);
+
+    expect(data.profile.userId).toBe(f.userId);
+    expect(data.profile.email).toBe("userexport-self@test.local");
+    expect(data.memberships.map((m) => m.organizationId)).toEqual([
+      f.organizationId,
+    ]);
+    expect(data.memberships[0]?.role).toBe("owner");
+    expect(data.legalAcceptances.length).toBe(1);
+    expect(data.legalAcceptances[0]).toMatchObject({
+      documentType: "terms",
+      ipAddress: "198.51.100.5",
+      userAgent: "ExportUA",
+    });
+    expect(typeof data.exportedAt).toBe("string");
+  });
+
+  test("never includes another member's data from a shared team", async () => {
+    const a = await seedUserOrgProject("export-shared-a");
+    const sqlc = superuserPool();
+    const b = await insertUser(sqlc, "export-shared-b");
+    await insertMember(sqlc, a.organizationId, b, "member");
+    await insertAcceptance(sqlc, a.userId, { ipAddress: "192.0.2.10" });
+    await insertAcceptance(sqlc, b, { ipAddress: "192.0.2.20" });
+
+    const data = await exportAccountData(a.userId);
+
+    expect(data.profile.userId).toBe(a.userId);
+    expect(data.profile.email).not.toContain("export-shared-b");
+    expect(data.legalAcceptances.length).toBe(1);
+    expect(data.legalAcceptances[0]?.ipAddress).toBe("192.0.2.10");
+  });
+});
+
+describe("enumerateOwnedOrgsForDeletion + planOwnedOrgDeletion", () => {
+  test("blocks when the caller solely owns a team with other members", async () => {
+    const f = await seedUserOrgProject("plan-sole-owner");
+    const sqlc = superuserPool();
+    const other = await insertUser(sqlc, "plan-sole-owner-member");
+    await insertMember(sqlc, f.organizationId, other, "member");
+
+    const owned = await enumerateOwnedOrgsForDeletion(f.userId);
+    expect(owned).toEqual([
+      { orgId: f.organizationId, memberCount: 2, ownerCount: 1 },
+    ]);
+    expect(planOwnedOrgDeletion(owned)).toEqual({
+      kind: "blocked",
+      orgId: f.organizationId,
+    });
+  });
+
+  test("marks a solely-owned memberless team for deletion", async () => {
+    const f = await seedUserOrgProject("plan-memberless");
+
+    const owned = await enumerateOwnedOrgsForDeletion(f.userId);
+    expect(owned).toEqual([
+      { orgId: f.organizationId, memberCount: 1, ownerCount: 1 },
+    ]);
+    expect(planOwnedOrgDeletion(owned)).toEqual({
+      kind: "ok",
+      orgIdsToDelete: [f.organizationId],
+    });
+  });
+
+  test("leaves a co-owned team untouched", async () => {
+    const f = await seedUserOrgProject("plan-co-owned");
+    const sqlc = superuserPool();
+    const coOwner = await insertUser(sqlc, "plan-co-owner-2");
+    const member = await insertUser(sqlc, "plan-co-owner-member");
+    await insertMember(sqlc, f.organizationId, coOwner, "owner");
+    await insertMember(sqlc, f.organizationId, member, "member");
+
+    const owned = await enumerateOwnedOrgsForDeletion(f.userId);
+    expect(owned).toEqual([
+      { orgId: f.organizationId, memberCount: 3, ownerCount: 2 },
+    ]);
+    expect(planOwnedOrgDeletion(owned)).toEqual({
+      kind: "ok",
+      orgIdsToDelete: [],
+    });
+  });
+
+  test("excludes teams where the caller is not an owner", async () => {
+    const owner = await seedUserOrgProject("plan-not-owner-owner");
+    const sqlc = superuserPool();
+    const member = await insertUser(sqlc, "plan-not-owner-member");
+    await insertMember(sqlc, owner.organizationId, member, "member");
+
+    const owned = await enumerateOwnedOrgsForDeletion(member);
+    expect(owned).toEqual([]);
+    expect(planOwnedOrgDeletion(owned)).toEqual({
+      kind: "ok",
+      orgIdsToDelete: [],
+    });
   });
 });
