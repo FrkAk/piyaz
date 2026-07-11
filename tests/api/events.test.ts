@@ -1,4 +1,4 @@
-import { test, expect, afterEach } from "bun:test";
+import { test, expect, afterEach, spyOn } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { broker, MAX_CONNECTIONS_PER_USER } from "@/lib/realtime/broker";
@@ -119,42 +119,48 @@ test("GET /api/events — dispatches reach the new connection (sanity check on a
 });
 
 test("GET /api/events — concurrent attaches respect the cap atomically (closes the TOCTOU race)", async () => {
-  // Regression guard: the outer `isAtConnectionLimit` check is racy —
-  // N concurrent requests can all read `current < cap` before any of
-  // them runs `attach`. The `tryAttach` call inside `start(controller)`
-  // is the authoritative gate; the (cap+1)-th stream must not exceed
-  // the cap once its `start` runs.
+  // Regression guard for the authoritative inner gate: the outer
+  // `isAtConnectionLimit` check is a racy fast-path (N concurrent requests
+  // can all read `current < cap` before any attaches), so the `tryAttach`
+  // inside `start(controller)` is the real cap. Stub the fast-path to always
+  // pass so BOTH requests deterministically contend at `tryAttach`,
+  // independent of how the async prelude interleaves; the (cap+1)-th attach
+  // must lose and close, leaving the broker at exactly cap.
   const f = await seedUserOrgProject("sse-toctou");
   setSession({ user: { id: f.userId } });
 
-  // Saturate (cap-1) so the next two requests both pass the outer check.
+  // Saturate (cap-1) so exactly one slot remains for the two requests.
   for (let i = 0; i < MAX_CONNECTIONS_PER_USER - 1; i++) {
     broker.attach(f.userId, { send() {}, close() {} });
   }
 
+  const limitSpy = spyOn(broker, "isAtConnectionLimit").mockReturnValue(false);
   const ac1 = new AbortController();
   const ac2 = new AbortController();
-  const [r1, r2] = await Promise.all([
-    GET(new Request("http://test/api/events", { signal: ac1.signal })),
-    GET(new Request("http://test/api/events", { signal: ac2.signal })),
-  ]);
-  expect(r1.status).toBe(200);
-  expect(r2.status).toBe(200);
+  try {
+    const [r1, r2] = await Promise.all([
+      GET(new Request("http://test/api/events", { signal: ac1.signal })),
+      GET(new Request("http://test/api/events", { signal: ac2.signal })),
+    ]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
 
-  // Pump both streams so each `start(controller)` runs.
-  await pumpFirstFrame(r1.body as ReadableStream<Uint8Array>);
-  await pumpFirstFrame(r2.body as ReadableStream<Uint8Array>);
+    // Pump both streams so each `start(controller)` runs its `tryAttach`.
+    await pumpFirstFrame(r1.body as ReadableStream<Uint8Array>);
+    await pumpFirstFrame(r2.body as ReadableStream<Uint8Array>);
 
-  // After both starts run, the broker must hold exactly cap connections —
-  // the second stream's `tryAttach` returned false and closed silently.
-  const set = (
-    broker as unknown as {
-      conns: Map<string, Set<unknown>>;
-    }
-  ).conns.get(f.userId);
-  expect(set?.size).toBe(MAX_CONNECTIONS_PER_USER);
-
-  ac1.abort();
-  ac2.abort();
-  await new Promise((r) => setTimeout(r, 0));
+    // Both cleared the (bypassed) outer check, but `tryAttach` admits only
+    // one: the broker must hold exactly cap, never cap+1.
+    const set = (
+      broker as unknown as {
+        conns: Map<string, Set<unknown>>;
+      }
+    ).conns.get(f.userId);
+    expect(set?.size).toBe(MAX_CONNECTIONS_PER_USER);
+  } finally {
+    limitSpy.mockRestore();
+    ac1.abort();
+    ac2.abort();
+    await new Promise((r) => setTimeout(r, 0));
+  }
 });
