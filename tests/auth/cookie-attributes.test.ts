@@ -71,6 +71,26 @@ function findSessionCookie(response: Response): string | undefined {
     .find((c) => c.toLowerCase().includes("session_token"));
 }
 
+/**
+ * Sign up a user through the BA API with Terms acceptance, which the
+ * `user.create.before` gate now requires. The body is passed as a typed
+ * variable so the transient `termsAccepted` consent flag reaches
+ * `ctx.body` without being declared as a persisted additional field.
+ *
+ * @param email - Account email.
+ * @param name - Display name.
+ * @param password - Account password.
+ * @returns Resolves once the account is created.
+ */
+async function signUpUser(
+  email: string,
+  name: string,
+  password: string,
+): Promise<void> {
+  const body = { email, name, password, termsAccepted: true };
+  await auth.api.signUpEmail({ body });
+}
+
 afterEach(async () => {
   await truncateAll();
 });
@@ -91,9 +111,7 @@ test("sign-in Set-Cookie carries Secure, HttpOnly, SameSite=Lax, Path=/ in produ
   const email = "cookie-flags@test.local";
   const password = "test-password-12345";
 
-  await auth.api.signUpEmail({
-    body: { email, name: "Cookie Flags", password },
-  });
+  await signUpUser(email, "Cookie Flags", password);
 
   const response = await auth.handler(
     signInRequest(email, password, "127.0.0.10"),
@@ -115,9 +133,7 @@ test("production cookie name carries the __Secure- prefix", async () => {
   const email = "cookie-prefix@test.local";
   const password = "test-password-12345";
 
-  await auth.api.signUpEmail({
-    body: { email, name: "Cookie Prefix", password },
-  });
+  await signUpUser(email, "Cookie Prefix", password);
 
   const response = await auth.handler(
     signInRequest(email, password, "127.0.0.11"),
@@ -137,9 +153,7 @@ test("attack: wrong password issues no session cookie", async () => {
   const email = "wrong-password@test.local";
   const password = "real-password-12345";
 
-  await auth.api.signUpEmail({
-    body: { email, name: "Wrong Password", password },
-  });
+  await signUpUser(email, "Wrong Password", password);
 
   const response = await auth.handler(
     signInRequest(email, "totally-wrong-password", "127.0.0.12"),
@@ -168,9 +182,7 @@ test("attack: missing password field issues no session cookie", async () => {
   // Pins against the class of bug where a password comparator
   // short-circuits on `undefined` and matches any account.
   const email = "no-password-field@test.local";
-  await auth.api.signUpEmail({
-    body: { email, name: "No Password", password: "real-password-12345" },
-  });
+  await signUpUser(email, "No Password", "real-password-12345");
 
   const response = await auth.handler(
     signInRequest(email, "", "127.0.0.15", JSON.stringify({ email })),

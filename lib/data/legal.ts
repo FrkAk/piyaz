@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { withUserContext } from "@/lib/db/rls";
 import {
   LEGAL_IP_MAX_CHARS,
@@ -59,5 +60,26 @@ export async function recordAcceptance(
       ipAddress: capMetadata(context.ipAddress, LEGAL_IP_MAX_CHARS),
       userAgent: capMetadata(context.userAgent, LEGAL_USER_AGENT_MAX_CHARS),
     });
+  });
+}
+
+/**
+ * Delete every acceptance row belonging to the user, under the user's own
+ * RLS scope.
+ *
+ * Compensating cleanup for the signup consent hook: when the second
+ * acceptance insert fails after the first committed, the hook deletes the
+ * just-created user, whose FK would otherwise null `user_id` on the
+ * surviving row and strand unattributable evidence. Runs before the user
+ * delete so no orphan row outlives its account.
+ *
+ * @param userId - The user whose acceptance rows are removed.
+ * @returns Resolves once the rows are deleted.
+ */
+export async function removeAcceptances(userId: string): Promise<void> {
+  await withUserContext(userId, async (tx) => {
+    await tx
+      .delete(legalAcceptances)
+      .where(eq(legalAcceptances.userId, userId));
   });
 }
