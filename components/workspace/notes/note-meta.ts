@@ -217,9 +217,10 @@ export function summarizeFolderDelete(
     survivors.length > SURVIVOR_TITLE_LIMIT
       ? `, +${survivors.length - SURVIVOR_TITLE_LIMIT} more`
       : "";
+  const noun = noteIds.length === 1 ? "note" : "notes";
   return {
     deleted,
-    failureMessage: `${survivors.length} of ${noteIds.length} notes could not be deleted: ${names}${extra}`,
+    failureMessage: `${survivors.length} of ${noteIds.length} ${noun} could not be deleted: ${names}${extra}`,
   };
 }
 

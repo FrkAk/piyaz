@@ -89,6 +89,6 @@ test("more than three survivors truncate to the first three titles", () => {
 test("an empty title reads as Untitled in the message", () => {
   const summary = summarizeFolderDelete(["n6"], [fail], titleOf);
   expect(summary.failureMessage).toBe(
-    "1 of 1 notes could not be deleted: Untitled",
+    "1 of 1 note could not be deleted: Untitled",
   );
 });
