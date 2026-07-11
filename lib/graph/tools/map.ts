@@ -87,7 +87,7 @@ export async function handleMap(
     if (p.view === "downstream" || p.view === "neighbors") {
       if (!p.task)
         return fail(
-          `task required for ${p.view}: taskRef ('PYZ-42') or UUID. Find it with piyaz_search.`,
+          `task required for ${p.view}: taskRef ('WYN-42') or UUID. Find it with piyaz_search.`,
         );
       const taskId = await requireTaskId(ctx, p.task);
       if (p.view === "downstream") {
@@ -110,7 +110,7 @@ export async function handleMap(
 
     if (!p.project)
       return fail(
-        `project required for ${p.view}: identifier ('PYZ') or UUID. Run piyaz_workspace action='projects' first.`,
+        `project required for ${p.view}: identifier ('WYN') or UUID. Run piyaz_workspace action='projects' first.`,
       );
     const projectId = await requireProjectId(ctx, p.project);
     const narrow = `narrow with piyaz_search project='${p.project}' status=[...] or raise limit`;

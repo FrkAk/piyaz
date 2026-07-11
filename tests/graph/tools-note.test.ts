@@ -963,3 +963,121 @@ test("list shows explicit empty folders; folder moves hint only when nothing mat
   expect(missing.explicitMoved).toBe(0);
   expect(missing._hints?.[0]).toContain("no explicit folder");
 });
+
+test("search hints the notes whose summary is empty, skipping unwritable ones", async () => {
+  const f = await seedUserOrgProject("NS20");
+  const ctx = makeAuthContext(f.userId);
+  const described = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Retry policy alpha",
+    body: "backoff rules",
+    summary: "how retries back off",
+  });
+  const bare = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Retry policy beta",
+    body: "backoff rules",
+  });
+  const readOnly = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Retry policy gamma",
+    body: "backoff rules",
+  });
+  const locked = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Retry policy delta",
+    body: "backoff rules",
+  });
+  await updateNote(ctx, readOnly.id, { agentWritable: false });
+  await updateNote(ctx, locked.id, { locked: true });
+
+  const hits = okData<{ text: string; _hints: string[] }>(
+    await handleNote(
+      { action: "search", project: "PRJNS20", query: "retry" },
+      ctx,
+    ),
+  );
+  const hints = hits._hints.join(" ");
+  expect(hints).toContain("heading");
+  expect(hints).toContain("no summary");
+  expect(hints).toContain(`PRJNS20-N${bare.sequenceNumber}`);
+  expect(hints).not.toContain(`PRJNS20-N${described.sequenceNumber}`);
+  expect(hints).not.toContain(`PRJNS20-N${readOnly.sequenceNumber}`);
+  expect(hints).not.toContain(`PRJNS20-N${locked.sequenceNumber}`);
+});
+
+test("search resolves a noteRef query to that note", async () => {
+  const f = await seedUserOrgProject("NS22");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Session rotation",
+    body: "unrelated body text",
+    summary: "how sessions rotate",
+  });
+  const ref = `PRJNS22-N${note.sequenceNumber}`;
+
+  const hits = okData<{ text: string; _hints: string[] }>(
+    await handleNote(
+      { action: "search", project: "PRJNS22", query: ref.toLowerCase() },
+      ctx,
+    ),
+  );
+  expect(hits.text).toContain("(1 hit)");
+  expect(hits.text).toContain(ref);
+});
+
+test("list carries the summary hint only when a summary is missing", async () => {
+  const f = await seedUserOrgProject("NS21");
+  const ctx = makeAuthContext(f.userId);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Described",
+    body: "x",
+    summary: "has a summary",
+  });
+
+  const clean = okData<string>(
+    await handleNote({ action: "list", project: "PRJNS21" }, ctx),
+  );
+  expect(clean).not.toContain("no summary");
+
+  const bare = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Bare",
+    body: "y",
+  });
+  const flagged = okData<string>(
+    await handleNote({ action: "list", project: "PRJNS21" }, ctx),
+  );
+  expect(flagged).toContain("Bare");
+  expect(flagged).toContain("no summary");
+  expect(flagged).toContain(`PRJNS21-N${bare.sequenceNumber}`);
+});
+
+test("list summary hint counts every note but names at most 5 refs", async () => {
+  const f = await seedUserOrgProject("NS23");
+  const ctx = makeAuthContext(f.userId);
+  const bare = [];
+  for (let i = 0; i < 6; i++) {
+    bare.push(
+      await createNote(ctx, {
+        projectId: f.projectId,
+        title: `Bare ${i}`,
+        body: "x",
+      }),
+    );
+  }
+
+  const listed = okData<string>(
+    await handleNote({ action: "list", project: "PRJNS23" }, ctx),
+  );
+  const hint =
+    listed.split("\n").find((line) => line.includes("no summary")) ?? "";
+  expect(hint).toContain("6 note(s) have no summary");
+  expect(hint).toContain("+1 more");
+  for (const note of bare.slice(0, 5)) {
+    expect(hint).toContain(`PRJNS23-N${note.sequenceNumber}`);
+  }
+  expect(hint).not.toContain(`PRJNS23-N${bare[5].sequenceNumber}`);
+});

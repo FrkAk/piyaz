@@ -89,7 +89,7 @@ export async function handleLink(
       case "create": {
         if (!p.source || !p.target)
           return fail(
-            "source and target required for create: taskRefs ('PYZ-42') or UUIDs.",
+            "source and target required for create: taskRefs ('TRV-42') or UUIDs.",
           );
         if (!p.type)
           return fail(

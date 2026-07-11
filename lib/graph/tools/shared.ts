@@ -107,7 +107,7 @@ export function fail(msg: string): ToolResult {
  * {@link translateError} at the handler boundary.
  *
  * @param ctx - Resolved auth context.
- * @param taskParam - taskRef ('PYZ-42') or task UUID.
+ * @param taskParam - taskRef ('KRN-42') or task UUID.
  * @returns The task UUID.
  */
 export async function requireTaskId(
@@ -121,7 +121,7 @@ export async function requireTaskId(
  * Resolve a project param (identifier or UUID) to a project UUID.
  *
  * @param ctx - Resolved auth context.
- * @param projectParam - Project identifier ('PYZ') or project UUID.
+ * @param projectParam - Project identifier ('KRN') or project UUID.
  * @returns The project UUID.
  */
 export async function requireProjectId(
@@ -136,7 +136,7 @@ export async function requireProjectId(
  * resolution requires the project param for scope.
  *
  * @param ctx - Resolved auth context.
- * @param noteParam - noteRef ('PYZ-N12'), slug, or note UUID.
+ * @param noteParam - noteRef ('KRN-N12'), slug, or note UUID.
  * @param projectId - Project UUID scoping a slug lookup.
  * @returns The note UUID.
  */
@@ -757,11 +757,11 @@ export function translateError(e: unknown): ToolResult {
   if (e instanceof MalformedRefError) {
     if (e.entity === "note") {
       return fail(
-        `'${e.input}' is not a valid note reference. Pass a noteRef like 'PYZ-N12', a note UUID, or a slug together with project='PYZ'.`,
+        `'${e.input}' is not a valid note reference. Pass a noteRef like 'KRN-N12', a note UUID, or a slug together with project='KRN'.`,
       );
     }
     return fail(
-      `'${e.input}' is not a valid reference. Pass a taskRef like 'PYZ-42' or a UUID (from piyaz_search).`,
+      `'${e.input}' is not a valid reference. Pass a taskRef like 'KRN-42' or a UUID (from piyaz_search).`,
     );
   }
   if (e instanceof RefAmbiguityError) {

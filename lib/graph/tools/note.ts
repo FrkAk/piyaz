@@ -101,11 +101,14 @@ const LIST_LINE_CAP = 100;
 /** Hits `search` returns at most, matching the data-layer LIMIT. */
 const SEARCH_HIT_CAP = 20;
 
+/** Refs the missing-summary hint names inline before eliding the rest. */
+const SUMMARY_HINT_REF_CAP = 5;
+
 /**
  * Compose the noteRef for any summary-shaped row.
  *
  * @param row - Row carrying the ref parts.
- * @returns Composed noteRef (e.g. `PYZ-N12`).
+ * @returns Composed noteRef (e.g. `DLK-N12`).
  */
 function refOf(row: {
   projectIdentifier: string;
@@ -136,7 +139,7 @@ async function resolveNoteParam(
 }
 
 /**
- * Resolve feed task refs (`PYZ-42`) to UUIDs across create items or edit
+ * Resolve feed task refs (`DLK-42`) to UUIDs across create items or edit
  * op values. UUIDs pass through; an unresolved ref fails the whole call.
  *
  * @param ctx - Resolved auth context.
@@ -181,6 +184,37 @@ function noteLine(row: NoteTreeRow, identifier: string): string {
   const suffix = flags.length > 0 ? ` (${flags.join(", ")})` : "";
   const summary = row.summary === "" ? "" : ` — ${row.summary}`;
   return `- \`${ref}\` "${row.title}" [${row.type}]${suffix}${summary}`;
+}
+
+/**
+ * Build the hint naming notes that carry no summary. A summary-less note
+ * renders as a bare ref and title, so an agent cannot triage the hit without
+ * opening the body, and a reference or knowledge note feeds tasks as a
+ * title-only pointer. Locked and agent-read-only notes are left out: the
+ * hint prescribes an edit, and those reject every agent write. A ref is
+ * actionable whether or not its line rendered, so the count covers every row
+ * passed in and only the named refs are capped.
+ *
+ * @param rows - The note rows the response covers.
+ * @param identifier - Project identifier scoping the composed refs.
+ * @returns Hint text, or null when no row is both summary-less and
+ *   agent-writable.
+ */
+function missingSummaryHint(
+  rows: NoteTreeRow[],
+  identifier: string,
+): string | null {
+  const missing = rows.filter(
+    (row) => row.summary === "" && row.agentWritable && !row.locked,
+  );
+  if (missing.length === 0) return null;
+  const named = missing
+    .slice(0, SUMMARY_HINT_REF_CAP)
+    .map((row) => composeNoteRef(asIdentifier(identifier), row.sequenceNumber));
+  const elided = missing.length - named.length;
+  const refs =
+    elided > 0 ? `${named.join(", ")}, +${elided} more` : named.join(", ");
+  return `${missing.length} note(s) have no summary (${refs}); summaries ride tree lists, search hits, and feed pointers. Set one with edit op='set' field='summary'.`;
 }
 
 /**
@@ -328,7 +362,7 @@ async function handleCreate(
 ): Promise<ToolResult> {
   if (!p.project || !p.notes || p.notes.length === 0) {
     return fail(
-      "create requires project ('PYZ' or UUID) and notes=[...] (1-10 items with at least a title).",
+      "create requires project ('DLK' or UUID) and notes=[...] (1-10 items with at least a title).",
     );
   }
   const projectId = await requireProjectId(ctx, p.project);
@@ -616,7 +650,7 @@ async function handleList(
   p: NoteParams,
   ctx: AuthContext,
 ): Promise<ToolResult> {
-  if (!p.project) return fail("list requires project ('PYZ' or UUID).");
+  if (!p.project) return fail("list requires project ('DLK' or UUID).");
   const projectId = await requireProjectId(ctx, p.project);
   const { projectIdentifier, rows, explicitFolders } =
     await getNoteTreeForAgent(ctx, projectId);
@@ -646,10 +680,14 @@ async function handleList(
     LIST_LINE_CAP,
     "narrow with piyaz_note action='search' query='...'",
   );
+  const text = [
+    `# ${projectIdentifier} notes (${rows.length})`,
+    ...budgeted.lines,
+  ];
+  const summaryHint = missingSummaryHint(rows, projectIdentifier);
+  if (summaryHint !== null) text.push(summaryHint);
   return ok(
-    [`# ${projectIdentifier} notes (${rows.length})`, ...budgeted.lines].join(
-      "\n",
-    ),
+    text.join("\n"),
     budgeted.truncated ? { truncated: true } : undefined,
   );
 }
@@ -753,7 +791,7 @@ async function handleLink(
 ): Promise<ToolResult> {
   if (!p.note || !p.task || !p.kind) {
     return fail(
-      `${direction} requires note, task ('PYZ-42' or UUID), and kind ('reference' or 'spec_of'). mention rows derive from [[refs]] in the body.`,
+      `${direction} requires note, task ('DLK-42' or UUID), and kind ('reference' or 'spec_of'). mention rows derive from [[refs]] in the body.`,
     );
   }
   const noteId = await resolveNoteParam(ctx, p);
@@ -791,7 +829,9 @@ async function handleLink(
 }
 
 /**
- * Handle the `search` action: RLS-scoped ranked full text in one project.
+ * Handle the `search` action: a full noteRef ('DLK-N12') resolves that note
+ * exactly, falling back to full text when it resolves nothing; every other
+ * query is RLS-scoped ranked full text in one project.
  *
  * @param p - Note params.
  * @param ctx - Resolved auth context.
@@ -802,7 +842,7 @@ async function handleSearch(
   ctx: AuthContext,
 ): Promise<ToolResult> {
   if (!p.project || p.query === undefined) {
-    return fail("search requires project ('PYZ' or UUID) and query.");
+    return fail("search requires project ('DLK' or UUID) and query.");
   }
   const projectId = await requireProjectId(ctx, p.project);
   const { projectIdentifier, hits } = await searchNotesForMcp(
@@ -823,14 +863,17 @@ async function handleSearch(
     const folder = row.folder === "" ? "" : ` (${row.folder}/)`;
     return `${noteLine(row, projectIdentifier)}${folder}`;
   });
+  const hints = [
+    "Chain a ref into piyaz_note action='read' (meta lists the sections; heading='...' reads one) instead of pulling full bodies.",
+  ];
+  const summaryHint = missingSummaryHint(limited, projectIdentifier);
+  if (summaryHint !== null) hints.push(summaryHint);
   return ok({
     text: [
       `# ${projectIdentifier} note search: "${p.query}" (${limited.length} hit${limited.length === 1 ? "" : "s"})`,
       ...lines,
     ].join("\n"),
-    _hints: [
-      "Chain a ref into piyaz_note action='read' (meta lists the sections; heading='...' reads one) instead of pulling full bodies.",
-    ],
+    _hints: hints,
   });
 }
 
@@ -852,14 +895,14 @@ export async function handleNote(
       case "read":
         if (!p.note) {
           return fail(
-            "read requires note ('PYZ-N12', UUID, or slug with project).",
+            "read requires note ('DLK-N12', UUID, or slug with project).",
           );
         }
         return await handleRead(p, ctx);
       case "edit":
         if (!p.note) {
           return fail(
-            "edit requires note ('PYZ-N12', UUID, or slug with project).",
+            "edit requires note ('DLK-N12', UUID, or slug with project).",
           );
         }
         return await handleEditAction(p, ctx);

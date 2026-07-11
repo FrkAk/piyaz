@@ -125,7 +125,7 @@ export async function handleWorkspace(
       case "rename_category": {
         if (!p.project)
           return fail(
-            "project required for rename_category: identifier ('PYZ') or UUID.",
+            "project required for rename_category: identifier ('PXD') or UUID.",
           );
         if (!p.category?.trim() || !p.newCategory?.trim())
           return fail(
@@ -161,7 +161,7 @@ export async function handleWorkspace(
       case "delete_category": {
         if (!p.project)
           return fail(
-            "project required for delete_category: identifier ('PYZ') or UUID.",
+            "project required for delete_category: identifier ('PXD') or UUID.",
           );
         if (!p.category?.trim())
           return fail(
@@ -218,7 +218,7 @@ export async function handleWorkspace(
       case "update": {
         if (!p.project)
           return fail(
-            "project required for update: identifier ('PYZ') or UUID. Run piyaz_workspace action='projects' to find it.",
+            "project required for update: identifier ('PXD') or UUID. Run piyaz_workspace action='projects' to find it.",
           );
         if (
           p.title === undefined &&
