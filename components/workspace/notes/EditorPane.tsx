@@ -18,6 +18,7 @@ import { Markdown } from "@/components/shared/Markdown";
 import { MonoId } from "@/components/shared/MonoId";
 import { useSession } from "@/lib/auth-client";
 import type { NoteFull } from "@/lib/data/note";
+import { NOTE_SUMMARY_MAX_CHARS } from "@/lib/types";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { noteKeys } from "@/lib/query/keys";
 import { fetchNotesTree } from "@/lib/query/queries";
@@ -550,7 +551,7 @@ function NoteSummary({
             cancel();
           }
         }}
-        maxLength={1000}
+        maxLength={NOTE_SUMMARY_MAX_CHARS}
         rows={2}
         aria-label="Note summary"
         placeholder="One-line summary…"
@@ -561,7 +562,7 @@ function NoteSummary({
 
   const errorLine = saveError !== null && (
     <p
-      role="status"
+      role="alert"
       className="mb-3 -mt-1.5 font-mono text-[10px]"
       style={{ color: "var(--color-danger)" }}
     >

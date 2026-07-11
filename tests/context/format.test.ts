@@ -25,6 +25,7 @@ function guidanceRow(title: string, body: string): NoteFeedRow {
     folder: "",
     summary: "",
     body,
+    bodyChars: [...body].length,
     sequenceNumber: 1,
     noteRef: "PYZ-N1",
     updatedAt: new Date(0),

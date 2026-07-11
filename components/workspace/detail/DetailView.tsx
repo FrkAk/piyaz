@@ -145,10 +145,9 @@ export function DetailView({
     [allTasks, taskId],
   );
 
-  // One read for both note surfaces: the Linked Notes list and the note
-  // links the bundle preview lists. Keyed on the bundle kind because the
-  // feed's admitted/overflow split is depth-dependent, so a status change
-  // that moves the task to another bundle refetches the right feed.
+  // Keyed on the bundle kind because the feed's admitted/overflow split is
+  // depth-dependent, so a status change that moves the task to another
+  // bundle refetches the right feed.
   const qc = useQueryClient();
   const bundleKind = BUNDLE_BY_STAGE[resolveStage(task.status, currentState)];
   const noteContext = useQuery({

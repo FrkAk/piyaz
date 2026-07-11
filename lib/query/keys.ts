@@ -70,7 +70,7 @@ export const noteKeys = {
   backlinks: (projectId: string, taskId: string, bundle: string) =>
     ["notes", projectId, "backlinks", taskId, bundle] as const,
   /**
-   * Every bundle kind's note context for one task — the invalidation prefix
+   * Every bundle kind's note context for one task: the invalidation prefix
    * for task edits. A task's category and tags decide which notes auto-feed
    * it, so retagging changes the feed without touching any note row.
    */

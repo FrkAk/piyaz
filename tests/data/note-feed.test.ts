@@ -1,5 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { appUserPool, superuserPool } from "@/tests/setup/global";
@@ -9,6 +10,7 @@ import {
   decodeFeedRows,
   deleteNote,
   feedFetchLimit,
+  getTaskNoteContext,
   resolveExposedNotes,
   updateNote,
   FEED_CHAR_BUDGET,
@@ -53,6 +55,23 @@ async function seedTeamNote(
 }
 
 /**
+ * Execute a raw feed query as `app_user` with the RLS GUC set, the way the
+ * data ring reaches it.
+ *
+ * @param userId - User whose row access the query runs under.
+ * @param query - Feed query to execute.
+ * @returns Raw driver rows.
+ */
+async function runAsAppUser(userId: string, query: SQL): Promise<unknown> {
+  const q = new PgDialect().sqlToQuery(query);
+  const pool = appUserPool();
+  return pool.begin(async (tx) => {
+    await tx`SELECT set_config('app.user_id', ${userId}, true)`;
+    return tx.unsafe(q.sql, q.params as string[]);
+  });
+}
+
+/**
  * Build a synthetic feed row for pure budget tests.
  *
  * @param i - Index folded into id/slug/title.
@@ -68,6 +87,7 @@ function makeRow(i: number, summaryChars: number): NoteFeedRow {
     folder: "",
     summary: "s".repeat(summaryChars),
     body: "",
+    bodyChars: 0,
     sequenceNumber: i,
     noteRef: `PRJ-N${i}`,
     updatedAt: new Date(Date.now() - i * 1000),
@@ -82,7 +102,7 @@ function makeRow(i: number, summaryChars: number): NoteFeedRow {
  * @returns A guidance feed row with an empty summary.
  */
 function makeBodyRow(i: number, bodyChars: number): NoteFeedRow {
-  return { ...makeRow(i, 0), body: "b".repeat(bodyChars) };
+  return { ...makeRow(i, 0), body: "b".repeat(bodyChars), bodyChars };
 }
 
 test("Notes spec (PYZ-264) §7 truth table: mode arms expose only matching tasks", async () => {
@@ -536,6 +556,104 @@ test("summary egress: rows past the note cap return an empty summary", async () 
   });
   expect(rows.length).toBe(3);
   expect(rows.map((r) => r.summary)).toEqual(["payload", "", ""]);
+});
+
+test("the CTE feed source resolves identically to the bound source", async () => {
+  const f = await seedUserOrgProject("feed-cte");
+  const ctx = makeAuthContext(f.userId);
+  const sql = superuserPool();
+  const [row] = await sql<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number", "category", "tags")
+    VALUES (${f.projectId}, 'CTE parity', 1, 'Backend', ${sql.json(["Alpha", "beta"])})
+    RETURNING id
+  `;
+  const taskId = row.id;
+
+  await seedTeamNote(ctx, f.projectId, "by category", {
+    feedMode: "categories",
+    feedCategories: ["backend"],
+  });
+  await seedTeamNote(ctx, f.projectId, "by tag", {
+    feedMode: "tags",
+    feedTags: ["alpha"],
+  });
+  await seedTeamNote(ctx, f.projectId, "by task", {
+    feedMode: "tasks",
+    feedTaskIds: [taskId],
+  });
+  await seedTeamNote(ctx, f.projectId, "by all", { feedMode: "all" });
+  await seedTeamNote(ctx, f.projectId, "unmatched", {
+    feedMode: "tags",
+    feedTags: ["gamma"],
+  });
+
+  const task: FeedTask = {
+    id: taskId,
+    category: "Backend",
+    tags: ["Alpha", "beta"],
+  };
+  const bound = await resolveExposedNotes(ctx, f.projectId, task);
+  const cte = (await getTaskNoteContext(ctx, taskId, true)).feed;
+
+  expect(bound.notes.map((n) => n.id).sort()).toEqual(
+    cte.notes.map((n) => n.id).sort(),
+  );
+  expect(cte.notes.length).toBe(4);
+  expect(bound.overflow.map((p) => p.id)).toEqual(
+    cte.overflow.map((p) => p.id),
+  );
+});
+
+test("the lengthsOnly feed variant admits the same rows without shipping bodies", async () => {
+  const f = await seedUserOrgProject("feed-lengths");
+  const ctx = makeAuthContext(f.userId);
+  const sql = superuserPool();
+  const [row] = await sql<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${f.projectId}, 'Lengths', 1)
+    RETURNING id
+  `;
+
+  const half = "g".repeat(Math.floor(FEED_CHAR_BUDGET * 0.6));
+  for (const title of ["G1", "G2"]) {
+    const note = await createNote(ctx, {
+      projectId: f.projectId,
+      title,
+      visibility: "team",
+      type: "guidance",
+      body: half,
+    });
+    await updateNote(ctx, note.id, { feedMode: "all" });
+  }
+
+  const bodies = {
+    rankCap: FEED_NOTE_CAP,
+    charBound: FEED_CHAR_BUDGET + 1,
+    budget: FEED_CHAR_BUDGET,
+  };
+  const fullRaw = await runAsAppUser(
+    f.userId,
+    notesFeedSql(
+      f.projectId,
+      { id: row.id, category: null, tags: [] },
+      FEED_NOTE_CAP,
+      feedFetchLimit() + 1,
+      bodies,
+    ),
+  );
+  const full = decodeFeedRows(fullRaw);
+  const lengths = (await getTaskNoteContext(ctx, row.id, true)).feed;
+
+  expect(full.notes.map((n) => n.id)).toEqual(lengths.notes.map((n) => n.id));
+  expect(full.overflow.map((p) => p.id)).toEqual(
+    lengths.overflow.map((p) => p.id),
+  );
+  expect(lengths.notes.length).toBe(1);
+  expect(lengths.overflow.length).toBe(1);
+
+  expect(full.notes[0].body).toBe(half);
+  expect(lengths.notes[0].body).toBe("");
+  expect(lengths.notes[0].bodyChars).toBe(half.length);
 });
 
 test("char budget cuts a DB-backed resolution mid-list", async () => {

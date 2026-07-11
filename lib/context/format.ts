@@ -322,7 +322,7 @@ export function formatNotePointers(
  * and `buildGuidancePart` calls in `lib/context/_core/*`: deep kinds inline
  * guidance full-body and list only reference/knowledge pointers; slim kinds
  * ship no guidance section and pointer every type. `tests/context/parity`
- * pins this against the builders — change both together.
+ * pins this against the builders: change both together.
  */
 export const NOTE_FEED_RULES: Record<
   BundleKind,

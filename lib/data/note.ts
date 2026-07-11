@@ -89,6 +89,7 @@ import {
   type NotesTreeVersionRow,
 } from "@/lib/db/raw/get-notes-max-updated-at";
 import {
+  notesFeedForTaskStmt,
   notesFeedStmt,
   type FeedTask,
   type NoteFeedBodyBound,
@@ -113,12 +114,13 @@ import {
   emitNoteFoldersEvent,
   emitProjectEvent,
 } from "@/lib/realtime/events";
-import type {
-  FeedMode,
-  NoteTaskLinkKind,
-  NoteType,
-  TaskStatus,
-  Visibility,
+import {
+  NOTE_SUMMARY_MAX_CHARS,
+  type FeedMode,
+  type NoteTaskLinkKind,
+  type NoteType,
+  type TaskStatus,
+  type Visibility,
 } from "@/lib/types";
 
 /** Revisions kept per note; older rows are pruned in the write tx. */
@@ -149,7 +151,6 @@ const FOLDER_MAX_CHARS = 512;
 const SEARCH_QUERY_MAX_CHARS = 256;
 
 /** Char cap for `summary`; it is projected on every tree-list row. */
-const SUMMARY_MAX_CHARS = 1000;
 
 /** Char cap for `category` and each tag / feed label. */
 const LABEL_MAX_CHARS = 200;
@@ -403,6 +404,12 @@ export type NoteFeedRow = {
   folder: string;
   summary: string;
   body: string;
+  /**
+   * Codepoints the body charges against the feed budget. Equals
+   * `charLen(body)` when the body shipped; on the `lengthsOnly` variant the
+   * body stays in Postgres and only this count crosses the wire.
+   */
+  bodyChars: number;
   sequenceNumber: number;
   noteRef: string;
   updatedAt: Date;
@@ -803,11 +810,11 @@ type NoteMetadataFields = Pick<
 function assertMetadataWithinCaps(fields: NoteMetadataFields): void {
   if (
     fields.summary !== undefined &&
-    fields.summary.length > SUMMARY_MAX_CHARS
+    fields.summary.length > NOTE_SUMMARY_MAX_CHARS
   ) {
     throw new NoteValidationError(
       "summary",
-      `summary exceeds ${SUMMARY_MAX_CHARS} characters`,
+      `summary exceeds ${NOTE_SUMMARY_MAX_CHARS} characters`,
     );
   }
   if (fields.category != null && fields.category.length > LABEL_MAX_CHARS) {
@@ -1936,7 +1943,7 @@ export function applyFeedBudget(
   let cut = rows.length;
   for (let i = 0; i < rows.length; i++) {
     const rowChars =
-      charLen(rows[i].title) + charLen(rows[i].summary) + charLen(rows[i].body);
+      charLen(rows[i].title) + charLen(rows[i].summary) + rows[i].bodyChars;
     if (admitted.length >= maxNotes || runningChars + rowChars > maxChars) {
       cut = i;
       break;
@@ -1963,12 +1970,16 @@ export function applyFeedBudget(
 
 /**
  * Coerce a raw feed row to its typed shape (`updated_at` arrives as a
- * string or a Date depending on the driver).
+ * string or a Date depending on the driver). The `lengthsOnly` feed
+ * variant ships `body_length` in place of the body text, so `bodyChars`
+ * takes it verbatim and `body` stays empty; otherwise it is counted off
+ * the body that shipped.
  *
  * @param row - Raw driver row.
  * @returns Typed feed row.
  */
 function mapNoteFeedRow(row: NoteFeedRawRow): NoteFeedRow {
+  const body = row.body ?? "";
   return {
     id: row.id,
     slug: row.slug,
@@ -1976,7 +1987,9 @@ function mapNoteFeedRow(row: NoteFeedRawRow): NoteFeedRow {
     type: row.type as NoteType,
     folder: row.folder,
     summary: row.summary,
-    body: row.body ?? "",
+    body,
+    bodyChars:
+      row.body_length === undefined ? charLen(body) : Number(row.body_length),
     sequenceNumber: row.sequence_number,
     noteRef: composeNoteRef(asIdentifier(row.identifier), row.sequence_number),
     updatedAt: toDate(row.updated_at),
@@ -2207,18 +2220,22 @@ export type TaskNoteContext = {
  * `linked` pointers exactly as the bundle path does.
  *
  * `deep` mirrors the bundle depth. Deep bundles (agent, planning, review)
- * fetch guidance bodies because body length is charged against the feed
- * char budget and so decides which notes are admitted rather than
- * overflowed; slim bundles select no body column at all.
+ * charge guidance body length against the feed char budget, so body length
+ * decides which notes are admitted rather than overflowed; slim bundles
+ * select no body column at all. This surface renders links only, so it
+ * takes the `lengthsOnly` variant: the budget arithmetic gets its char
+ * counts and the body text never leaves Postgres.
  *
- * Two batches: the feed statement binds the task's category and tags, so
- * it cannot ride the batch that reads them. The task row doubles as the
+ * One batch. The feed statement reads the task row in a CTE rather than
+ * binding a category and tags a prior read would have to supply, so it
+ * rides the same round trip as the backlinks. The task row doubles as the
  * access gate, so no separate gate statement runs: RLS hides rows the
- * caller cannot reach, making an empty result the 404 signal.
+ * caller cannot reach, making an empty result the 404 signal, and it hides
+ * them from the feed's CTE on the same terms.
  *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task.
- * @param deep - Whether the target bundle renders guidance full-body.
+ * @param deep - Whether the target bundle charges guidance bodies.
  * @returns Backlinks, the folded feed resolution, and the task's validator.
  * @throws ForbiddenError when the caller cannot access the task.
  */
@@ -2228,12 +2245,27 @@ export async function getTaskNoteContext(
   deep: boolean,
 ): Promise<TaskNoteContext> {
   assertValidTaskId(taskId);
-  const [taskRows, linkRows, pointerRows] = await withUserContextRead(
+  const bodies: NoteFeedBodyBound | undefined = deep
+    ? {
+        rankCap: FEED_NOTE_CAP,
+        charBound: FEED_CHAR_BUDGET + 1,
+        budget: FEED_CHAR_BUDGET,
+        lengthsOnly: true,
+      }
+    : undefined;
+  const [taskRows, linkRows, pointerRows, feedRaw] = await withUserContextRead(
     ctx.userId,
     (read) => [
       taskFeedTargetStmt(read, taskId),
       taskNoteBacklinksStmt(read, taskId),
       taskBacklinkPointersStmt(read, taskId),
+      notesFeedForTaskStmt(
+        read,
+        taskId,
+        FEED_NOTE_CAP,
+        feedFetchLimit() + 1,
+        bodies,
+      ),
     ],
   );
   const task = firstRowOrForbidden(
@@ -2241,24 +2273,6 @@ export async function getTaskNoteContext(
     taskId,
     taskRows as TaskFeedTargetRow[],
   );
-
-  const bodies: NoteFeedBodyBound | undefined = deep
-    ? {
-        rankCap: FEED_NOTE_CAP,
-        charBound: FEED_CHAR_BUDGET + 1,
-        budget: FEED_CHAR_BUDGET,
-      }
-    : undefined;
-  const [feedRaw] = await withUserContextRead(ctx.userId, (read) => [
-    notesFeedStmt(
-      read,
-      task.projectId,
-      { id: task.id, category: task.category, tags: task.tags ?? [] },
-      FEED_NOTE_CAP,
-      feedFetchLimit() + 1,
-      bodies,
-    ),
-  ]);
 
   return {
     backlinks: dedupeBacklinks(linkRows),
