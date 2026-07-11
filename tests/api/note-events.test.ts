@@ -263,6 +263,19 @@ describe("GET /api/note/[noteId]/events", () => {
 
     expect((await callEvents(noteId)).status).toBe(401);
   });
+
+  test("the validator probe 404-shapes HEAD and If-None-Match requests too", async () => {
+    const { fx, ctx, noteId } = await seedNoteWithHistory("nev-probe404");
+    const stranger = await seedUserOrgProject("nev-probe404-x");
+    setSession({ user: { id: stranger.userId } });
+    expect(
+      (await callEvents(noteId, "", { "if-none-match": '"0-x"' })).status,
+    ).toBe(404);
+
+    await deleteNote(ctx, noteId);
+    setSession({ user: { id: fx.userId } });
+    expect((await callEvents(noteId, "", {}, "HEAD")).status).toBe(404);
+  });
 });
 
 describe("GET /api/note/[noteId]/revisions", () => {
@@ -331,5 +344,18 @@ describe("GET /api/note/[noteId]/revisions", () => {
     setSession(null);
 
     expect((await callRevisions(noteId)).status).toBe(401);
+  });
+
+  test("the validator probe 404-shapes HEAD and If-None-Match requests too", async () => {
+    const { fx, ctx, noteId } = await seedNoteWithHistory("nrev-probe404");
+    const stranger = await seedUserOrgProject("nrev-probe404-x");
+    setSession({ user: { id: stranger.userId } });
+    expect(
+      (await callRevisions(noteId, { "if-none-match": '"0-0-0"' })).status,
+    ).toBe(404);
+
+    await deleteNote(ctx, noteId);
+    setSession({ user: { id: fx.userId } });
+    expect((await callRevisions(noteId, {}, "HEAD")).status).toBe(404);
   });
 });
