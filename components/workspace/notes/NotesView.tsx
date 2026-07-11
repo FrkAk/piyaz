@@ -113,7 +113,7 @@ export function NotesView({
     try {
       result = await createNote.mutateAsync({
         title: "",
-        body: "## Overview\n",
+        body: "",
         folder,
         type: "reference",
         visibility: "private",
