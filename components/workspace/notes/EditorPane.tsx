@@ -22,6 +22,7 @@ import type { TaskStatus, Visibility } from "@/lib/types";
 import { formatRelative } from "@/lib/ui/relative-time";
 import { ConflictBanner } from "./ConflictBanner";
 import { NoteEditor } from "./NoteEditor";
+import { Pill } from "./Pill";
 import { useNotePresenceHeartbeat } from "./usePresenceHeartbeat";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import {
@@ -120,10 +121,6 @@ interface EditorBodyProps {
   onSelectNote: (noteId: string | null) => void;
   taskMap: TaskSlimMap;
 }
-
-/** Shared pill chip classes for the header row. */
-const PILL_CLASS =
-  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase";
 
 /**
  * Loaded-note body: header chip row (with live presence avatars on team
@@ -285,60 +282,35 @@ function EditorBody({
             copyable={false}
           />
         )}
-        <span
-          className="inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] uppercase"
-          style={{
-            color: meta.color,
-            background: tint(meta.color, 13),
-            border: `1px solid ${tint(meta.color, 26)}`,
-          }}
+        <Pill color={meta.color}>{meta.label}</Pill>
+        <Pill
+          color={
+            note.visibility === "team"
+              ? "var(--color-done)"
+              : "var(--color-text-muted)"
+          }
+          icon={
+            note.visibility === "team" ? (
+              <IconUsers size={10} />
+            ) : (
+              <IconUser size={10} />
+            )
+          }
         >
-          {meta.label}
-        </span>
-        <span
-          className={PILL_CLASS}
-          style={{
-            color:
-              note.visibility === "team"
-                ? "var(--color-done)"
-                : "var(--color-text-muted)",
-            background:
-              note.visibility === "team"
-                ? "var(--color-done-bg)"
-                : "var(--color-surface-hover)",
-            border: "1px solid var(--color-border)",
-          }}
-        >
-          {note.visibility === "team" ? (
-            <IconUsers size={10} />
-          ) : (
-            <IconUser size={10} />
-          )}
           {note.visibility}
-        </span>
+        </Pill>
         {note.locked && (
-          <span
-            className={PILL_CLASS}
-            style={{
-              color: "var(--color-danger)",
-              background: tint("var(--color-danger)", 12),
-              border: `1px solid ${tint("var(--color-danger)", 30)}`,
-            }}
-          >
-            <IconLock size={10} /> locked
-          </span>
+          <Pill color="var(--color-danger)" icon={<IconLock size={10} />}>
+            locked
+          </Pill>
         )}
         {!note.agentWritable && (
-          <span
-            className={PILL_CLASS}
-            style={{
-              color: "var(--color-glyph-review)",
-              background: tint("var(--color-glyph-review)", 12),
-              border: `1px solid ${tint("var(--color-glyph-review)", 30)}`,
-            }}
+          <Pill
+            color="var(--color-glyph-review)"
+            icon={<IconAgent size={10} />}
           >
-            <IconAgent size={10} /> agent read-only
-          </span>
+            agent read-only
+          </Pill>
         )}
         <div className="ml-auto flex items-center gap-2">
           {note.locked && (
