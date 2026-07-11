@@ -197,6 +197,60 @@ test("searchNotes stays safe on tsquery syntax in the input", async () => {
   expect(Array.isArray(hostile)).toBe(true);
 });
 
+test("searchNotes resolves a typed note ref case-insensitively", async () => {
+  const f = await seedUserOrgProject("REFA");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Rotation policy",
+    body: "unrelated body text",
+  });
+  const ref = `${note.projectIdentifier}-N${note.sequenceNumber}`;
+
+  const upper = await searchNotes(ctx, f.projectId, ref);
+  expect(upper.map((h) => h.id)).toEqual([note.id]);
+
+  const lower = await searchNotes(ctx, f.projectId, ref.toLowerCase());
+  expect(lower.map((h) => h.id)).toEqual([note.id]);
+});
+
+test("searchNotes returns empty for a nonexistent or foreign-project ref", async () => {
+  const f = await seedUserOrgProject("REFB");
+  const other = await seedUserOrgProject("REFC");
+  const ctx = makeAuthContext(f.userId);
+  const otherCtx = makeAuthContext(other.userId);
+
+  const mine = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Here",
+    body: "content",
+  });
+  const foreign = await createNote(otherCtx, {
+    projectId: other.projectId,
+    title: "Elsewhere",
+    body: "content",
+  });
+
+  const bogus = `${mine.projectIdentifier}-N9999`;
+  expect(await searchNotes(ctx, f.projectId, bogus)).toEqual([]);
+
+  const foreignRef = `${foreign.projectIdentifier}-N${foreign.sequenceNumber}`;
+  expect(await searchNotes(ctx, f.projectId, foreignRef)).toEqual([]);
+});
+
+test("searchNotes leaves non-ref queries on the FTS path", async () => {
+  const f = await seedUserOrgProject("REFD");
+  const ctx = makeAuthContext(f.userId);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Session rotation",
+    body: "refresh tokens rotate",
+  });
+
+  expect((await searchNotes(ctx, f.projectId, "rotation")).length).toBe(1);
+  expect((await searchNotes(ctx, f.projectId, "refresh")).length).toBe(1);
+});
+
 test("tree list and search hits stay slim: no body, no search_tsv", async () => {
   const f = await seedUserOrgProject("srch5");
   const ctx = makeAuthContext(f.userId);

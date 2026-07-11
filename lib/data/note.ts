@@ -93,6 +93,7 @@ import {
   type NoteFeedRawRow,
 } from "@/lib/db/raw/notes-feed";
 import {
+  noteRefSearchStmt,
   noteSearchStmt,
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
@@ -105,6 +106,7 @@ import {
   asIdentifier,
   composeNoteRef,
   composeTaskRef,
+  NOTE_REF_PATTERN,
 } from "@/lib/graph/identifier";
 import {
   emitNoteEvent,
@@ -1670,9 +1672,17 @@ export async function searchNotes(
     assertProjectGateRows(projectId, gateRows);
     return [];
   }
+  const refMatch = trimmed.match(NOTE_REF_PATTERN);
   const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
     projectAccessGateStmt(read, projectId),
-    noteSearchStmt(read, projectId, trimmed),
+    refMatch
+      ? noteRefSearchStmt(
+          read,
+          projectId,
+          refMatch[1].toUpperCase(),
+          Number(refMatch[2]),
+        )
+      : noteSearchStmt(read, projectId, trimmed),
   ]);
   assertProjectGateRows(projectId, gateRows);
   return normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit);
@@ -1768,21 +1778,29 @@ export async function searchNotesAcrossProjects(
     const orgIds = orgRows.map((r) => r.org_id);
     if (orgIds.length === 0) return [];
 
-    const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
-    if (tokens.length === 0) return [];
-
+    const refMatch = trimmed.match(NOTE_REF_PATTERN);
     const clauses = [
       inArray(projects.organizationId, orgIds),
       isNull(notes.deletedAt),
     ];
-    for (const token of tokens) {
-      const pattern = `%${token}%`;
-      const tokenClause = or(
-        ilike(notes.title, pattern),
-        ilike(projects.title, pattern),
-        ilike(projects.identifier, pattern),
-      );
-      if (tokenClause) clauses.push(tokenClause);
+    if (refMatch) {
+      // noteRef short-circuit — match exact project identifier + sequence.
+      // No fallback to title substring when the pattern matches, so a query
+      // like "FOO-N1" that doesn't resolve returns empty rather than confusing.
+      clauses.push(eq(projects.identifier, refMatch[1].toUpperCase()));
+      clauses.push(eq(notes.sequenceNumber, Number(refMatch[2])));
+    } else {
+      const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
+      if (tokens.length === 0) return [];
+      for (const token of tokens) {
+        const pattern = `%${token}%`;
+        const tokenClause = or(
+          ilike(notes.title, pattern),
+          ilike(projects.title, pattern),
+          ilike(projects.identifier, pattern),
+        );
+        if (tokenClause) clauses.push(tokenClause);
+      }
     }
 
     const rows = await tx
