@@ -14,7 +14,7 @@ import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
 import { signupsDisabled } from "@/lib/config/env";
-import { recordAcceptance } from "@/lib/data/legal";
+import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
@@ -272,6 +272,10 @@ export const auth = betterAuth({
               err,
             });
             try {
+              // Remove any row that already committed (the FK on the user
+              // delete would only null user_id, stranding unattributable
+              // evidence), then the user itself.
+              await removeAcceptances(user.id);
               await ctx?.context.internalAdapter.deleteUser(user.id);
             } catch (cleanupErr) {
               console.error("user.create.after compensating delete failed", {
