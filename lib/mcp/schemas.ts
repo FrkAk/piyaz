@@ -195,7 +195,7 @@ export const DESCRIPTIONS = {
     "list=the project's folder tree (refs, titles, folders, types, feed modes). move=one note into a folder, or folder+destParent (+newLeaf) to re-parent or rename a whole folder subtree — keep the tree organized for humans. " +
     "delete=preview by default, re-call preview=false; restore recovers a trashed note (use the UUID from the delete response). An overwritten body is recoverable: fields=['revisions'], then revision=N, then set body. " +
     "link/unlink=deliberate note-task relations (kind reference|spec_of); mention rows derive from [[refs]] in the body — write the ref into the body instead. " +
-    "search=a full noteRef ('DLK-N12', case-insensitive) resolves that note, else ranked full text within one project: team notes plus your own private notes, any feed mode. Next: read heading='...' for the matching section instead of the full body.",
+    "search=a full noteRef ('DLK-N12', case-insensitive) resolves that note, else ranked full text within one project: team notes plus your own private notes, any feed mode. A ref that resolves nothing falls back to full text. Next: read heading='...' for the matching section instead of the full body.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -1030,7 +1030,7 @@ export const noteInputSchema = z.object({
     .max(LIMITS.noteQuery)
     .optional()
     .describe(
-      "search only: a full noteRef ('DLK-N12', case-insensitive) resolves that note; otherwise a full-text query where the last term prefix-matches.",
+      "search only: a full noteRef ('DLK-N12', case-insensitive) resolves that note, falling back to full text when it resolves nothing; otherwise a full-text query where the last term prefix-matches.",
     ),
   limit: z
     .int()

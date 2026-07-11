@@ -964,7 +964,7 @@ test("list shows explicit empty folders; folder moves hint only when nothing mat
   expect(missing._hints?.[0]).toContain("no explicit folder");
 });
 
-test("search hints the notes whose summary is empty", async () => {
+test("search hints the notes whose summary is empty, skipping unwritable ones", async () => {
   const f = await seedUserOrgProject("NS20");
   const ctx = makeAuthContext(f.userId);
   const described = await createNote(ctx, {
@@ -978,6 +978,18 @@ test("search hints the notes whose summary is empty", async () => {
     title: "Retry policy beta",
     body: "backoff rules",
   });
+  const readOnly = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Retry policy gamma",
+    body: "backoff rules",
+  });
+  const locked = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Retry policy delta",
+    body: "backoff rules",
+  });
+  await updateNote(ctx, readOnly.id, { agentWritable: false });
+  await updateNote(ctx, locked.id, { locked: true });
 
   const hits = okData<{ text: string; _hints: string[] }>(
     await handleNote(
@@ -990,6 +1002,29 @@ test("search hints the notes whose summary is empty", async () => {
   expect(hints).toContain("no summary");
   expect(hints).toContain(`PRJNS20-N${bare.sequenceNumber}`);
   expect(hints).not.toContain(`PRJNS20-N${described.sequenceNumber}`);
+  expect(hints).not.toContain(`PRJNS20-N${readOnly.sequenceNumber}`);
+  expect(hints).not.toContain(`PRJNS20-N${locked.sequenceNumber}`);
+});
+
+test("search resolves a noteRef query to that note", async () => {
+  const f = await seedUserOrgProject("NS22");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Session rotation",
+    body: "unrelated body text",
+    summary: "how sessions rotate",
+  });
+  const ref = `PRJNS22-N${note.sequenceNumber}`;
+
+  const hits = okData<{ text: string; _hints: string[] }>(
+    await handleNote(
+      { action: "search", project: "PRJNS22", query: ref.toLowerCase() },
+      ctx,
+    ),
+  );
+  expect(hits.text).toContain("(1 hit)");
+  expect(hits.text).toContain(ref);
 });
 
 test("list carries the summary hint only when a summary is missing", async () => {

@@ -128,8 +128,9 @@ export function noteSearchStmt(
  * A note ref (`PREFIX-N<seq>`) is composed at read time and never enters
  * the `search_tsv`, so {@link noteSearchStmt} can never match it. This
  * sibling resolves the ref by exact project identifier + sequence number,
- * gated to the searched project so a ref naming any other project returns
- * nothing on this single-project surface. Returns the identical slim
+ * gated to the searched project so a ref naming any other project matches
+ * nothing here (the caller then falls back to {@link noteSearchStmt}, so
+ * ref-shaped title text stays findable). Returns the identical slim
  * {@link NoteSearchRawRow} shape (no `body`, no `search_tsv`) with a
  * constant rank, and stays inside the caller's RLS scope like the FTS path.
  *

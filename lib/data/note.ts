@@ -36,6 +36,7 @@ import {
   ne,
   or,
   sql,
+  type SQL,
 } from "drizzle-orm";
 import type { AuthContext } from "@/lib/auth/context";
 import {
@@ -1640,11 +1641,33 @@ export async function composeFeedTaskRefs(
 }
 
 /**
+ * Parse a ref-shaped query into an exact note lookup key.
+ *
+ * @param query - Trimmed search text.
+ * @returns The uppercase project prefix and the in-range sequence number,
+ *   or null when the text is not ref-shaped or names a sequence no note
+ *   can carry (outside the int4 column range).
+ */
+function matchNoteRef(query: string): { prefix: string; seq: number } | null {
+  const match = query.match(NOTE_REF_PATTERN);
+  if (match === null) return null;
+  const seq = seqInRange(match[2]);
+  if (seq === null) return null;
+  return { prefix: match[1].toUpperCase(), seq };
+}
+
+/**
  * Rank-search a project's live notes over the generated `search_tsv`.
  * User text goes through `websearch_to_tsquery` (plainto fallback), never
  * raw `to_tsquery`; the last term also matches as a sanitized prefix
  * lexeme for type-ahead. Hits are the slim tree projection, never the
  * body.
+ *
+ * A noteRef (`PREFIX-N<seq>`, case-insensitive) is composed at read time
+ * and never enters `search_tsv`, so a ref-shaped query resolves by exact
+ * identifier + sequence first. A ref that resolves nothing here (unknown
+ * project, trashed or absent note) falls through to full text, so text
+ * that merely looks like a ref still finds a note titled with it.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
@@ -1673,23 +1696,21 @@ export async function searchNotes(
     assertProjectGateRows(projectId, gateRows);
     return [];
   }
-  const refMatch = trimmed.match(NOTE_REF_PATTERN);
-  const refSeq = refMatch ? seqInRange(refMatch[2]) : null;
-  if (refMatch && refSeq === null) {
-    const [gateRows] = await withUserContextRead(ctx.userId, (read) => [
-      projectAccessGateStmt(read, projectId),
-    ]);
-    assertProjectGateRows(projectId, gateRows);
-    return [];
-  }
+  const ref = matchNoteRef(trimmed);
   const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
     projectAccessGateStmt(read, projectId),
-    refMatch && refSeq !== null
-      ? noteRefSearchStmt(read, projectId, refMatch[1].toUpperCase(), refSeq)
-      : noteSearchStmt(read, projectId, trimmed),
+    ref === null
+      ? noteSearchStmt(read, projectId, trimmed)
+      : noteRefSearchStmt(read, projectId, ref.prefix, ref.seq),
   ]);
   assertProjectGateRows(projectId, gateRows);
-  return normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit);
+  const hits =
+    normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit);
+  if (ref === null || hits.length > 0) return hits;
+  const [textRaw] = await withUserContextRead(ctx.userId, (read) => [
+    noteSearchStmt(read, projectId, trimmed),
+  ]);
+  return normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit);
 }
 
 /**
@@ -1741,10 +1762,11 @@ export type CrossProjectNoteSearchResult = {
  * leak cross-tenant.
  *
  * A full noteRef (`PREFIX-N<seq>`, case-insensitive) resolves that note by
- * exact identifier + sequence instead. Identifiers are unique per org, so a
+ * exact identifier + sequence first. Identifiers are unique per org, so a
  * ref resolves within each of the caller's orgs; a colliding identifier
  * across two of them yields one hit per org, disambiguated by the project
- * crumb.
+ * crumb. A ref that resolves nothing falls through to the token match, so
+ * text that merely looks like a ref still finds a note titled with it.
  *
  * Per-token OR match: `notes.title`, `projects.title`, `projects.identifier`
  * (case-insensitive substring). Tokens AND-join. Ranked exact → prefix →
@@ -1788,59 +1810,80 @@ export async function searchNotesAcrossProjects(
     const orgIds = orgRows.map((r) => r.org_id);
     if (orgIds.length === 0) return [];
 
-    const refMatch = trimmed.match(NOTE_REF_PATTERN);
-    const clauses = [
+    const scope = [
       inArray(projects.organizationId, orgIds),
       isNull(notes.deletedAt),
     ];
-    if (refMatch) {
-      const refSeq = seqInRange(refMatch[2]);
-      if (refSeq === null) return [];
-      clauses.push(eq(projects.identifier, refMatch[1].toUpperCase()));
-      clauses.push(eq(notes.sequenceNumber, refSeq));
-    } else {
-      const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
-      if (tokens.length === 0) return [];
-      for (const token of tokens) {
-        const pattern = `%${token}%`;
-        const tokenClause = or(
-          ilike(notes.title, pattern),
-          ilike(projects.title, pattern),
-          ilike(projects.identifier, pattern),
-        );
-        if (tokenClause) clauses.push(tokenClause);
-      }
+    const select = (clauses: SQL[]) =>
+      tx
+        .select({
+          id: notes.id,
+          title: notes.title,
+          sequenceNumber: notes.sequenceNumber,
+          projectId: notes.projectId,
+          projectIdentifier: projects.identifier,
+          projectTitle: projects.title,
+          organizationId: projects.organizationId,
+        })
+        .from(notes)
+        .innerJoin(projects, eq(projects.id, notes.projectId))
+        .where(and(...clauses))
+        .orderBy(rankExpr, desc(notes.updatedAt), asc(notes.id))
+        .limit(limit);
+
+    const ref = matchNoteRef(trimmed);
+    if (ref !== null) {
+      const refRows = await select([
+        ...scope,
+        eq(projects.identifier, ref.prefix),
+        eq(notes.sequenceNumber, ref.seq),
+      ]);
+      if (refRows.length > 0) return refRows.map(toCrossProjectHit);
     }
 
-    const rows = await tx
-      .select({
-        id: notes.id,
-        title: notes.title,
-        sequenceNumber: notes.sequenceNumber,
-        projectId: notes.projectId,
-        projectIdentifier: projects.identifier,
-        projectTitle: projects.title,
-        organizationId: projects.organizationId,
-      })
-      .from(notes)
-      .innerJoin(projects, eq(projects.id, notes.projectId))
-      .where(and(...clauses))
-      .orderBy(rankExpr, desc(notes.updatedAt), asc(notes.id))
-      .limit(limit);
-
-    return rows.map((row) => ({
-      id: row.id,
-      noteRef: composeNoteRef(
-        asIdentifier(row.projectIdentifier),
-        row.sequenceNumber,
-      ),
-      title: row.title,
-      projectId: row.projectId,
-      projectIdentifier: row.projectIdentifier,
-      projectTitle: row.projectTitle,
-      organizationId: row.organizationId,
-    }));
+    const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
+    if (tokens.length === 0) return [];
+    const clauses = [...scope];
+    for (const token of tokens) {
+      const pattern = `%${token}%`;
+      const tokenClause = or(
+        ilike(notes.title, pattern),
+        ilike(projects.title, pattern),
+        ilike(projects.identifier, pattern),
+      );
+      if (tokenClause) clauses.push(tokenClause);
+    }
+    return (await select(clauses)).map(toCrossProjectHit);
   });
+}
+
+/**
+ * Map a cross-project search row to the palette result shape.
+ *
+ * @param row - Selected row carrying the note and its project crumb.
+ * @returns Palette result with the composed noteRef.
+ */
+function toCrossProjectHit(row: {
+  id: string;
+  title: string;
+  sequenceNumber: number;
+  projectId: string;
+  projectIdentifier: string;
+  projectTitle: string;
+  organizationId: string;
+}): CrossProjectNoteSearchResult {
+  return {
+    id: row.id,
+    noteRef: composeNoteRef(
+      asIdentifier(row.projectIdentifier),
+      row.sequenceNumber,
+    ),
+    title: row.title,
+    projectId: row.projectId,
+    projectIdentifier: row.projectIdentifier,
+    projectTitle: row.projectTitle,
+    organizationId: row.organizationId,
+  };
 }
 
 /** Specificity rank per backlink kind; higher wins the per-note dedupe. */
@@ -3734,6 +3777,8 @@ export async function getNoteTreeForAgent(
  * composing noteRefs per hit. RLS-scoped like {@link searchNotes}: team
  * notes regardless of feed mode plus the caller's own private notes.
  * Feed exposure gates bundle injection, never search (Notes spec §14.3).
+ * A ref-shaped query resolves the note exactly, falling through to full
+ * text when it resolves nothing, exactly as {@link searchNotes} does.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
@@ -3762,25 +3807,25 @@ export async function searchNotesForMcp(
     const gate = assertProjectGateRows(projectId, gateRows);
     return { projectIdentifier: gate.identifier, hits: [] };
   }
-  const refMatch = trimmed.match(NOTE_REF_PATTERN);
-  const refSeq = refMatch ? seqInRange(refMatch[2]) : null;
-  if (refMatch && refSeq === null) {
-    const [gateRows] = await withUserContextRead(ctx.userId, (read) => [
-      projectAccessGateStmt(read, projectId),
-    ]);
-    const gate = assertProjectGateRows(projectId, gateRows);
-    return { projectIdentifier: gate.identifier, hits: [] };
-  }
+  const ref = matchNoteRef(trimmed);
   const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
     projectAccessGateStmt(read, projectId),
-    refMatch && refSeq !== null
-      ? noteRefSearchStmt(read, projectId, refMatch[1].toUpperCase(), refSeq)
-      : noteSearchStmt(read, projectId, trimmed),
+    ref === null
+      ? noteSearchStmt(read, projectId, trimmed)
+      : noteRefSearchStmt(read, projectId, ref.prefix, ref.seq),
   ]);
   const gate = assertProjectGateRows(projectId, gateRows);
+  const hits =
+    normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit);
+  if (ref === null || hits.length > 0) {
+    return { projectIdentifier: gate.identifier, hits };
+  }
+  const [textRaw] = await withUserContextRead(ctx.userId, (read) => [
+    noteSearchStmt(read, projectId, trimmed),
+  ]);
   return {
     projectIdentifier: gate.identifier,
-    hits: normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit),
+    hits: normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit),
   };
 }
 

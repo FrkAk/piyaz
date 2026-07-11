@@ -215,7 +215,7 @@ test("searchNotes resolves a typed note ref case-insensitively", async () => {
   expect(lower.map((h) => h.id)).toEqual([note.id]);
 });
 
-test("searchNotes returns empty for a nonexistent, foreign, or out-of-range ref", async () => {
+test("searchNotes returns empty for a nonexistent, foreign, trashed, or out-of-range ref", async () => {
   const f = await seedUserOrgProject("REFB");
   const other = await seedUserOrgProject("REFC");
   const ctx = makeAuthContext(f.userId);
@@ -231,6 +231,12 @@ test("searchNotes returns empty for a nonexistent, foreign, or out-of-range ref"
     title: "Elsewhere",
     body: "content",
   });
+  const trashed = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Gone",
+    body: "content",
+  });
+  await deleteNote(ctx, trashed.id);
 
   const bogus = `${mine.projectIdentifier}-N9999`;
   expect(await searchNotes(ctx, f.projectId, bogus)).toEqual([]);
@@ -238,8 +244,27 @@ test("searchNotes returns empty for a nonexistent, foreign, or out-of-range ref"
   const foreignRef = `${foreign.projectIdentifier}-N${foreign.sequenceNumber}`;
   expect(await searchNotes(ctx, f.projectId, foreignRef)).toEqual([]);
 
+  const trashedRef = `${trashed.projectIdentifier}-N${trashed.sequenceNumber}`;
+  expect(await searchNotes(ctx, f.projectId, trashedRef)).toEqual([]);
+
   const outOfRange = `${mine.projectIdentifier}-N9999999999`;
   expect(await searchNotes(ctx, f.projectId, outOfRange)).toEqual([]);
+});
+
+test("a ref that resolves nothing falls back to full text", async () => {
+  const f = await seedUserOrgProject("REFF");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "RFC-N1 rollout",
+    body: "content",
+  });
+
+  const hits = await searchNotes(ctx, f.projectId, "RFC-N1");
+  expect(hits.map((h) => h.id)).toEqual([note.id]);
+
+  const mcp = await searchNotesForMcp(ctx, f.projectId, "RFC-N1");
+  expect(mcp.hits.map((h) => h.id)).toEqual([note.id]);
 });
 
 test("searchNotes leaves non-ref queries on the FTS path", async () => {

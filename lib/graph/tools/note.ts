@@ -190,17 +190,21 @@ function noteLine(row: NoteTreeRow, identifier: string): string {
  * Build the hint naming notes that render without a summary. A summary-less
  * note renders as a bare ref and title, so an agent cannot triage the hit
  * without opening the body, and a reference or knowledge note feeds tasks as
- * a title-only pointer.
+ * a title-only pointer. Locked and agent-read-only notes are left out: the
+ * hint prescribes an edit, and those reject every agent write.
  *
- * @param rows - Note rows carried by the response.
+ * @param rows - The note rows this response renders.
  * @param identifier - Project identifier scoping the composed refs.
- * @returns Hint text, or null when every row carries a summary.
+ * @returns Hint text, or null when no rendered row is both summary-less and
+ *   agent-writable.
  */
 function missingSummaryHint(
   rows: NoteTreeRow[],
   identifier: string,
 ): string | null {
-  const missing = rows.filter((row) => row.summary === "");
+  const missing = rows.filter(
+    (row) => row.summary === "" && row.agentWritable && !row.locked,
+  );
   if (missing.length === 0) return null;
   const named = missing
     .slice(0, SUMMARY_HINT_REF_CAP)
@@ -662,23 +666,26 @@ async function handleList(
   const folders = [
     ...new Set([...notesByFolder.keys(), ...explicitFolders]),
   ].sort();
-  const lines: string[] = [];
+  const entries: { line: string; row: NoteTreeRow | null }[] = [];
   for (const folder of folders) {
-    lines.push(folder === "" ? "(root)/" : `${folder}/`);
+    entries.push({ line: folder === "" ? "(root)/" : `${folder}/`, row: null });
     for (const row of notesByFolder.get(folder) ?? []) {
-      lines.push(`  ${noteLine(row, projectIdentifier)}`);
+      entries.push({ line: `  ${noteLine(row, projectIdentifier)}`, row });
     }
   }
   const budgeted = budgetLines(
-    lines,
+    entries.map((entry) => entry.line),
     LIST_LINE_CAP,
     "narrow with piyaz_note action='search' query='...'",
   );
+  const listed = entries
+    .slice(0, LIST_LINE_CAP)
+    .flatMap((entry) => (entry.row === null ? [] : [entry.row]));
   const text = [
     `# ${projectIdentifier} notes (${rows.length})`,
     ...budgeted.lines,
   ];
-  const summaryHint = missingSummaryHint(rows, projectIdentifier);
+  const summaryHint = missingSummaryHint(listed, projectIdentifier);
   if (summaryHint !== null) text.push(summaryHint);
   return ok(
     text.join("\n"),
@@ -823,8 +830,9 @@ async function handleLink(
 }
 
 /**
- * Handle the `search` action: a full noteRef ('DLK-N12') short-circuits to
- * exact note resolution; otherwise RLS-scoped ranked full text in one project.
+ * Handle the `search` action: a full noteRef ('DLK-N12') resolves that note
+ * exactly, falling back to full text when it resolves nothing; every other
+ * query is RLS-scoped ranked full text in one project.
  *
  * @param p - Note params.
  * @param ctx - Resolved auth context.
