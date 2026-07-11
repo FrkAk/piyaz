@@ -65,6 +65,7 @@ export async function middleware(request: NextRequest) {
     pathname === "/privacy" ||
     pathname === "/terms" ||
     pathname === "/impressum" ||
+    pathname === "/subprocessors" ||
     pathname.startsWith("/api/auth/") ||
     pathname === "/api/mcp" ||
     pathname.startsWith("/.well-known/");
