@@ -1,7 +1,7 @@
 import { getAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
-import { listNoteActivity } from "@/lib/data/activity";
-import { conditionalRespond } from "@/lib/api/conditional";
+import { getNoteActivityHead, listNoteActivity } from "@/lib/data/activity";
+import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 import type { NoteActivityEvent } from "@/lib/types";
@@ -13,10 +13,13 @@ import type { NoteActivityEvent } from "@/lib/types";
  * implies `projectId`/`taskId`/`targetRef`). The ETag folds the newest
  * event's timestamp with its id, so a same-millisecond append still moves
  * the validator; `cursor` and `limit` vary the URL, so each page caches
- * under its own validator. A non-UUID id, a missing/cross-team note,
- * another member's private note, and a trashed note are all 404-shaped
- * (`ForbiddenError` from the data ring; the non-UUID check runs before
- * any SQL).
+ * under its own validator. HEAD and `If-None-Match` requests resolve the
+ * validator via the `getNoteActivityHead` probe (access gate + one
+ * index-head row, no identity joins) so a 304 avoids the full page fetch;
+ * cold GETs skip the probe and derive the same token from the fetched
+ * page. A non-UUID id, a missing/cross-team note, another member's
+ * private note, and a trashed note are all 404-shaped (`ForbiddenError`
+ * from the data ring; the non-UUID check runs before any SQL).
  *
  * @param req - Incoming request; reads `?cursor` and `?limit`.
  * @param noteId - Note UUID from the route params.
@@ -33,6 +36,15 @@ async function handle(req: Request, noteId: string): Promise<Response> {
   try {
     const url = new URL(req.url);
     const cursor = url.searchParams.get("cursor") ?? undefined;
+
+    if (req.method === "HEAD" || req.headers.has("if-none-match")) {
+      const head = await getNoteActivityHead(ctx, noteId, { cursor });
+      const token = head ? `${head.createdAtMs}-${head.id}` : "none";
+      if (req.method === "HEAD" || etagMatches(req, token)) {
+        return conditionalRespond(req, null, token);
+      }
+    }
+
     const limitRaw = url.searchParams.get("limit");
     const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
     const page = await listNoteActivity(ctx, noteId, {

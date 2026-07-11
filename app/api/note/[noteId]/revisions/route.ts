@@ -1,7 +1,7 @@
 import { getAuthContext } from "@/lib/auth/context";
 import { ForbiddenError } from "@/lib/auth/authorization";
-import { listNoteRevisions } from "@/lib/data/note";
-import { conditionalRespond } from "@/lib/api/conditional";
+import { getNoteRevisionsVersion, listNoteRevisions } from "@/lib/data/note";
+import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
 
@@ -12,10 +12,14 @@ import { error } from "@/lib/api/response";
  * `createdAt`; never `body` or author ids) plus the live `currentVersion`.
  * The ETag folds the live version with the max stored version and the row
  * count: a body write always moves `currentVersion` even when it archived
- * no checkpoint, and pruning shrinks the count. A non-UUID id, a
- * missing/cross-team note, another member's private note, and a trashed
- * note are all 404-shaped (`ForbiddenError` from the data ring; the
- * non-UUID check runs before any SQL).
+ * no checkpoint, and pruning shrinks the count. HEAD and `If-None-Match`
+ * requests resolve the validator via the `getNoteRevisionsVersion` probe
+ * (access gate + one aggregate row) so a 304 avoids the full descriptor
+ * fetch; cold GETs skip the probe and derive the same token from the
+ * fetched rows. A non-UUID id, a missing/cross-team note, another
+ * member's private note, and a trashed note are all 404-shaped
+ * (`ForbiddenError` from the data ring; the non-UUID check runs before
+ * any SQL).
  *
  * @param req - Incoming request.
  * @param noteId - Note UUID from the route params.
@@ -30,6 +34,14 @@ async function handle(req: Request, noteId: string): Promise<Response> {
   }
 
   try {
+    if (req.method === "HEAD" || req.headers.has("if-none-match")) {
+      const version = await getNoteRevisionsVersion(ctx, noteId);
+      const token = `${version.currentVersion}-${version.maxVersion}-${version.count}`;
+      if (req.method === "HEAD" || etagMatches(req, token)) {
+        return conditionalRespond(req, null, token);
+      }
+    }
+
     const { currentVersion, revisions } = await listNoteRevisions(ctx, noteId);
     const rows = revisions.map((r) => ({
       version: r.version,

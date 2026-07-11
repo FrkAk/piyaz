@@ -10,6 +10,32 @@ import type { ActivityCursor } from "@/lib/db/raw/fetch-task-activity";
 const SUMMARY_MAX_CHARS = 160;
 
 /**
+ * Build the seek predicate for a decoded keyset cursor, or the empty
+ * fragment for the first page.
+ *
+ * @param cur - Decoded keyset cursor, or null.
+ * @returns AND-able SQL fragment over `(ae.created_at, ae.id)`.
+ */
+function keysetClause(cur: ActivityCursor | null): SQL {
+  return cur
+    ? sql`AND (ae.created_at < ${cur.createdAt}::timestamptz
+        OR (ae.created_at = ${cur.createdAt}::timestamptz
+            AND ae.id < ${cur.id}::uuid))`
+    : sql``;
+}
+
+/**
+ * Build the inclusive-exclusive lower bound (`created_at > since`), or the
+ * empty fragment.
+ *
+ * @param since - Normalized ISO lower bound, or null.
+ * @returns AND-able SQL fragment.
+ */
+function sinceLowerBound(since: string | null): SQL {
+  return since ? sql`AND ae.created_at > ${since}::timestamptz` : sql``;
+}
+
+/**
  * Build the keyset page SQL for one note's activity. Pages newest-first over
  * `(created_at, id)` and hydrates display identity inline via the
  * `activity_actors_for_project_visible` / `oauth_client_name` SECURITY
@@ -35,14 +61,8 @@ function noteActivityPageSql(
   limit: number,
   since: string | null,
 ): SQL {
-  const keyset = cur
-    ? sql`AND (ae.created_at < ${cur.createdAt}::timestamptz
-        OR (ae.created_at = ${cur.createdAt}::timestamptz
-            AND ae.id < ${cur.id}::uuid))`
-    : sql``;
-  const sinceClause = since
-    ? sql`AND ae.created_at > ${since}::timestamptz`
-    : sql``;
+  const keyset = keysetClause(cur);
+  const sinceClause = sinceLowerBound(since);
   return sql`
     WITH page AS (
       SELECT
@@ -103,4 +123,33 @@ export function noteActivityStmt(
   since: string | null = null,
 ) {
   return read.execute(noteActivityPageSql(noteId, cur, limit, since));
+}
+
+/**
+ * Lazy read statement for the newest event key of a note-activity page:
+ * `(id, created_at)` of the first row the matching {@link noteActivityStmt}
+ * would return. One partial-index head probe, no identity joins — the
+ * cheap validator resolve for `HEAD`/`If-None-Match`, so a 304 skips the
+ * full page fetch.
+ *
+ * @param read - RLS-scoped read connection from `withUserContextRead`.
+ * @param noteId - Note whose events to probe.
+ * @param cur - Decoded keyset cursor, or null for the first page.
+ * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
+ * @returns Lazy raw-SQL read statement yielding zero or one rows.
+ */
+export function noteActivityHeadStmt(
+  read: ReadConn,
+  noteId: string,
+  cur: ActivityCursor | null,
+  since: string | null = null,
+) {
+  return read.execute(sql`
+    SELECT ae.id, ae.created_at
+    FROM public.activity_events ae
+    WHERE ae.note_id = ${noteId}::uuid
+    ${sinceLowerBound(since)}
+    ${keysetClause(cur)}
+    ORDER BY ae.created_at DESC, ae.id DESC
+    LIMIT 1`);
 }

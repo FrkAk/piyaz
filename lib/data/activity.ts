@@ -9,14 +9,17 @@ import {
   assertValidNoteId,
   ForbiddenError,
 } from "@/lib/auth/authorization";
-import { noteAccessGateStmt } from "@/lib/data/access";
+import { noteAccessGateStmt, type NoteAccessGate } from "@/lib/data/access";
 import {
   taskActivityStmt,
   type ActivityCursor,
   type ActivityRawRow,
 } from "@/lib/db/raw/fetch-task-activity";
 import { projectActivityStmt } from "@/lib/db/raw/fetch-project-activity";
-import { noteActivityStmt } from "@/lib/db/raw/fetch-note-activity";
+import {
+  noteActivityHeadStmt,
+  noteActivityStmt,
+} from "@/lib/db/raw/fetch-note-activity";
 import type { ActorDescriptor, AuthContext } from "@/lib/auth/context";
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
 import { isVerifiedOAuthClient } from "@/lib/auth/verified-oauth-clients";
@@ -378,6 +381,74 @@ export async function listTaskActivity(
 }
 
 /**
+ * Assert a note's activity is readable by the caller: the gate row exists
+ * (RLS-visible), the note is not trashed, and for MCP actors the PYZ-250
+ * agent-exposure rule holds (team visibility with `feed_mode <> 'none'`).
+ * Every rejection is the same 404-shaped `ForbiddenError` a missing note
+ * throws, so no existence oracle.
+ *
+ * @param ctx - Caller auth context.
+ * @param noteId - Note being read.
+ * @param gateRows - Rows from `noteAccessGateStmt`.
+ * @throws ForbiddenError when the note is not readable.
+ */
+function assertNoteActivityReadable(
+  ctx: AuthContext,
+  noteId: string,
+  gateRows: readonly NoteAccessGate[],
+): void {
+  const gate = assertNoteGateRows(noteId, gateRows);
+  if (gate.deletedAt !== null) {
+    throw new ForbiddenError("Forbidden", "note", noteId);
+  }
+  if (
+    ctx.actor.source === "mcp" &&
+    !(gate.visibility === "team" && gate.feedMode !== "none")
+  ) {
+    throw new ForbiddenError("Forbidden", "note", noteId);
+  }
+}
+
+/**
+ * Newest event key of one note-activity page: the `(createdAtMs, id)` pair
+ * the matching {@link listNoteActivity} page would surface first, or null
+ * when the page is empty. One RLS-scoped batch (index head probe + access
+ * gate) with the same 404-shaping — the cheap validator resolve for
+ * `HEAD`/`If-None-Match`, so a 304 skips the full page fetch and its
+ * identity joins.
+ *
+ * @param ctx - Caller auth context.
+ * @param noteId - Note whose events to probe.
+ * @param opts - Optional opaque `cursor` and `since` lower bound, matching
+ *   the page read they validate.
+ * @returns The newest matching event's key, or null when none match.
+ * @throws ForbiddenError when the note is not visible to the caller, is
+ *   trashed, or is not agent-exposed for an MCP actor.
+ */
+export async function getNoteActivityHead(
+  ctx: AuthContext,
+  noteId: string,
+  opts: { cursor?: string; since?: string },
+): Promise<{ createdAtMs: number; id: string } | null> {
+  assertValidNoteId(noteId);
+  const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
+
+  const [raw, gateRows] = await withUserContextRead(ctx.userId, (read) => [
+    noteActivityHeadStmt(read, noteId, cur, since),
+    noteAccessGateStmt(read, noteId),
+  ]);
+  assertNoteActivityReadable(ctx, noteId, gateRows);
+  const [row] = normalizeExecuteResult<{
+    id: string;
+    created_at: Date | string;
+  }>(raw);
+  return row
+    ? { createdAtMs: toDate(row.created_at).getTime(), id: row.id }
+    : null;
+}
+
+/**
  * List one note's activity newest-first, keyset-paginated. One RLS-scoped
  * read batch: the page (read-time identity via
  * `activity_actors_for_project_visible` / `oauth_client_name`, no
@@ -412,16 +483,7 @@ export async function listNoteActivity(
     noteActivityStmt(read, noteId, cur, limit + 1, since),
     noteAccessGateStmt(read, noteId),
   ]);
-  const gate = assertNoteGateRows(noteId, gateRows);
-  if (gate.deletedAt !== null) {
-    throw new ForbiddenError("Forbidden", "note", noteId);
-  }
-  if (
-    ctx.actor.source === "mcp" &&
-    !(gate.visibility === "team" && gate.feedMode !== "none")
-  ) {
-    throw new ForbiddenError("Forbidden", "note", noteId);
-  }
+  assertNoteActivityReadable(ctx, noteId, gateRows);
   const rows = normalizeExecuteResult<ActivityRawRow>(raw);
 
   const hasMore = rows.length > limit;

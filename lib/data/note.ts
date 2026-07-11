@@ -3851,6 +3851,47 @@ export async function listNoteRevisions(
 }
 
 /**
+ * Resolve a live note's revision-list validator parts without fetching the
+ * descriptors: the live version plus the stored-checkpoint extent
+ * (`max(version)`, row count) the caller's RLS window can see. One
+ * RLS-scoped batch (access gate + one aggregate over the `(note_id,
+ * version)` index) — the cheap validator resolve for `HEAD`/
+ * `If-None-Match`, so a 304 skips the full descriptor fetch.
+ *
+ * @param ctx - Resolved auth context.
+ * @param noteId - UUID of the note.
+ * @returns Live version, max stored version (0 when none), and row count.
+ * @throws ForbiddenError on inaccessible or trashed notes.
+ */
+export async function getNoteRevisionsVersion(
+  ctx: AuthContext,
+  noteId: string,
+): Promise<{ currentVersion: number; maxVersion: number; count: number }> {
+  assertValidNoteId(noteId);
+  const [gateRows, extentRows] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      noteAccessGateStmt(read, noteId),
+      read
+        .select({
+          maxVersion: sql<number>`COALESCE(MAX(${noteRevisions.version}), 0)::int`,
+          count: sql<number>`COUNT(*)::int`,
+        })
+        .from(noteRevisions)
+        .where(eq(noteRevisions.noteId, noteId)),
+    ],
+  );
+  const gate = assertNoteGateRows(noteId, gateRows);
+  assertNoteLive(gate);
+  const [extent] = extentRows;
+  return {
+    currentVersion: gate.version,
+    maxVersion: extent?.maxVersion ?? 0,
+    count: extent?.count ?? 0,
+  };
+}
+
+/**
  * Read one revision snapshot of a live note. A missing version returns a
  * null snapshot plus the available version numbers, so callers can emit
  * a corrective message without a second round trip.
