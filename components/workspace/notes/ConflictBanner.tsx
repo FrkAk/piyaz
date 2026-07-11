@@ -137,7 +137,7 @@ export function ConflictBanner({
           type="button"
           onClick={onKeepMine}
           className={`${ACTION_CLASS} text-white`}
-          style={{ background: "var(--color-accent)" }}
+          style={{ background: "var(--color-accent-fill)" }}
         >
           Keep mine
         </button>

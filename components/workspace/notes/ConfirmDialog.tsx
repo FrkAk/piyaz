@@ -70,7 +70,9 @@ export function ConfirmDialog({
           className="inline-flex h-8 cursor-pointer items-center rounded-md px-3 text-[12px] font-semibold text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
           style={{
             background:
-              tone === "danger" ? "var(--color-danger)" : "var(--color-accent)",
+              tone === "danger"
+                ? "var(--color-danger-fill)"
+                : "var(--color-accent-fill)",
           }}
         >
           {confirmLabel}
