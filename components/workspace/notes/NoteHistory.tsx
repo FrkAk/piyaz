@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar } from "@/components/shared/Avatar";
 import {
@@ -70,6 +70,13 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
     getNextPageParam: (last) => last.nextCursor,
   });
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const events = data?.pages.flatMap((p) => p.events) ?? [];
   // Branching on the union flag directly narrows sibling bindings to `never`.
   const nextPageFailed: boolean = isFetchNextPageError;
@@ -115,6 +122,7 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
                 key={group.key}
                 group={group}
                 isLast={i === all.length - 1}
+                nowMs={nowMs}
               />
             ))}
           </ul>
@@ -204,6 +212,8 @@ interface NoteEventGroupProps {
   group: EventGroup;
   /** Whether this is the last group, which drops the trailing rail. */
   isLast: boolean;
+  /** Reference time for the relative tags, ticked by the panel. */
+  nowMs: number;
 }
 
 /**
@@ -211,10 +221,10 @@ interface NoteEventGroupProps {
  * to the next cluster by a vertical rail behind the avatar. Compact sibling
  * of the task detail's `ActivityGroup`, sized for the 352px ribbon.
  *
- * @param props - Group and position.
+ * @param props - Group, position, and reference time.
  * @returns List item element.
  */
-function NoteEventGroup({ group, isLast }: NoteEventGroupProps) {
+function NoteEventGroup({ group, isLast, nowMs }: NoteEventGroupProps) {
   const agentLabel =
     group.isAgent && group.agent
       ? formatOAuthClientName(group.agent, group.agentVerified)
@@ -264,7 +274,7 @@ function NoteEventGroup({ group, isLast }: NoteEventGroupProps) {
                   title={new Date(e.createdAt).toLocaleString()}
                   className="shrink-0 font-mono text-[10px] tabular-nums text-text-faint"
                 >
-                  {formatRelative(e.createdAt)}
+                  {formatRelative(e.createdAt, nowMs)}
                 </time>
               </li>
             );

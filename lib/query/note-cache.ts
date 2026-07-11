@@ -1,3 +1,4 @@
+import { useCallback, useSyncExternalStore } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import type {
   NoteFull,
@@ -60,12 +61,37 @@ export function cachedCasToken(
  */
 const dirtyNoteIds = new Set<string>();
 
+/** Subscribers notified when any note's dirty mark flips. */
+const dirtyListeners = new Set<() => void>();
+
+/**
+ * Notify dirty-mark subscribers. Callers invoke this only on an actual
+ * set change so subscribed components never re-render on no-ops.
+ */
+function notifyDirtyChanged(): void {
+  for (const listener of dirtyListeners) listener();
+}
+
+/**
+ * Subscribe to dirty-mark changes.
+ * @param onStoreChange - Notification callback from `useSyncExternalStore`.
+ * @returns Unsubscribe function.
+ */
+function subscribeNoteDirty(onStoreChange: () => void): () => void {
+  dirtyListeners.add(onStoreChange);
+  return () => {
+    dirtyListeners.delete(onStoreChange);
+  };
+}
+
 /**
  * Mark a note as holding unsaved editor content.
  * @param noteId - Note id.
  */
 export function markNoteDirty(noteId: string): void {
+  if (dirtyNoteIds.has(noteId)) return;
   dirtyNoteIds.add(noteId);
+  notifyDirtyChanged();
 }
 
 /**
@@ -73,7 +99,8 @@ export function markNoteDirty(noteId: string): void {
  * @param noteId - Note id.
  */
 export function clearNoteDirty(noteId: string): void {
-  dirtyNoteIds.delete(noteId);
+  if (!dirtyNoteIds.delete(noteId)) return;
+  notifyDirtyChanged();
 }
 
 /**
@@ -83,6 +110,21 @@ export function clearNoteDirty(noteId: string): void {
  */
 export function hasUnsavedNoteEdits(noteId: string): boolean {
   return dirtyNoteIds.has(noteId);
+}
+
+/**
+ * Reactive {@link hasUnsavedNoteEdits}: re-renders the caller when the
+ * note's dirty mark flips, so affordances gated on unsaved content (the
+ * Versions panel's restore buttons) track the editor live instead of
+ * lagging until an unrelated render. Server snapshot is always false
+ * (dirty state is a client-runtime signal).
+ *
+ * @param noteId - Note id.
+ * @returns True when the note holds unsaved editor content.
+ */
+export function useNoteDirty(noteId: string): boolean {
+  const getSnapshot = useCallback(() => dirtyNoteIds.has(noteId), [noteId]);
+  return useSyncExternalStore(subscribeNoteDirty, getSnapshot, () => false);
 }
 
 /**
@@ -103,7 +145,7 @@ const openNoteEditSessions = new Set<string>();
  */
 export function beginNoteEditSession(noteId: string): void {
   openNoteEditSessions.add(noteId);
-  dirtyNoteIds.add(noteId);
+  markNoteDirty(noteId);
 }
 
 /**
@@ -123,7 +165,7 @@ export function endNoteEditSession(noteId: string): void {
  */
 export function clearNoteDirtyUnlessEditing(noteId: string): void {
   if (openNoteEditSessions.has(noteId)) return;
-  dirtyNoteIds.delete(noteId);
+  clearNoteDirty(noteId);
 }
 
 /**

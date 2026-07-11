@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconUndo } from "@/components/shared/icons";
 import { SectionHeader } from "@/components/shared/SectionHeader";
@@ -8,7 +8,7 @@ import { formatRelative } from "@/components/workspace/structure/relativeTime";
 import type { NoteActionFailure } from "@/lib/actions/note-errors";
 import { conditionalFetch } from "@/lib/query/conditional-fetch";
 import { noteKeys } from "@/lib/query/keys";
-import { hasUnsavedNoteEdits } from "@/lib/query/note-cache";
+import { hasUnsavedNoteEdits, useNoteDirty } from "@/lib/query/note-cache";
 import { ConfirmDialog } from "./ConfirmDialog";
 import {
   useRestoreRevision,
@@ -66,6 +66,8 @@ interface VersionRowProps {
   createdAt: string | Date;
   /** @param isCurrent - Accent the chip and show the current marker. */
   isCurrent: boolean;
+  /** @param nowMs - Reference time for the relative tag, ticked by the panel. */
+  nowMs: number;
   /** @param children - Trailing control (the restore button), if any. */
   children?: React.ReactNode;
 }
@@ -74,7 +76,8 @@ interface VersionRowProps {
  * One row of the Versions list: version chip, truncated title, relative
  * time, and either the current marker or a caller-supplied control.
  *
- * @param props - Row identity, current flag, and optional trailing control.
+ * @param props - Row identity, current flag, reference time, and optional
+ *   trailing control.
  * @returns The list item element.
  */
 function VersionRow({
@@ -82,6 +85,7 @@ function VersionRow({
   title,
   createdAt,
   isCurrent,
+  nowMs,
   children,
 }: VersionRowProps) {
   const createdAtIso =
@@ -115,7 +119,7 @@ function VersionRow({
         title={new Date(createdAtIso).toLocaleString()}
         className="shrink-0 font-mono text-[10px] tabular-nums text-text-faint"
       >
-        {formatRelative(createdAtIso)}
+        {formatRelative(createdAtIso, nowMs)}
       </time>
       {isCurrent && (
         <span className="shrink-0 font-mono text-[9px] uppercase text-text-faint">
@@ -155,6 +159,12 @@ export function NoteVersions({
   const [confirmVersion, setConfirmVersion] = useState<number | null>(null);
   const [pendingVersion, setPendingVersion] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const qc = useQueryClient();
   const { data, isPending, isError, refetch } = useQuery({
@@ -168,7 +178,7 @@ export function NoteVersions({
       }),
   });
 
-  const dirty = hasUnsavedNoteEdits(noteId);
+  const dirty = useNoteDirty(noteId);
   const blocked = locked || loading || pendingVersion !== null;
 
   const runRestore = async (version: number) => {
@@ -193,7 +203,11 @@ export function NoteVersions({
     <div className="mt-6">
       <SectionHeader
         label="Versions"
-        count={data !== undefined ? data.revisions.length : undefined}
+        count={
+          data !== undefined && data.revisions.length > 0
+            ? data.revisions.length
+            : undefined
+        }
       />
       <p className="mb-2 text-[11px] leading-snug text-text-muted">
         Checkpoints from past editing sessions. Restoring is reversible: the
@@ -218,57 +232,62 @@ export function NoteVersions({
             Retry
           </button>
         </div>
-      ) : data === undefined ? (
-        <div className="py-0.5 text-[12px] text-text-faint">
-          No checkpoints yet. Versions appear as editing sessions end.
-        </div>
       ) : (
-        <ul className="flex flex-col gap-0.5">
-          {(data.revisions[0] === undefined ||
-            currentVersion > data.revisions[0].version) && (
-            <VersionRow
-              version={currentVersion}
-              title={currentTitle}
-              createdAt={currentUpdatedAt}
-              isCurrent
-            />
-          )}
-          {data.revisions.map((rev) => {
-            const isCurrent = rev.version === currentVersion;
-            const isPendingRow = pendingVersion === rev.version;
-            return (
+        <>
+          <ul className="flex flex-col gap-0.5">
+            {(data.revisions[0] === undefined ||
+              currentVersion > data.revisions[0].version) && (
               <VersionRow
-                key={rev.version}
-                version={rev.version}
-                title={rev.title}
-                createdAt={rev.createdAt}
-                isCurrent={isCurrent}
-              >
-                {!isCurrent && (
-                  <button
-                    type="button"
-                    disabled={blocked || dirty}
-                    onClick={() => setConfirmVersion(rev.version)}
-                    title={
-                      dirty
-                        ? "Save or resolve open edits first"
-                        : locked
-                          ? "Note is locked"
-                          : loading
-                            ? "Loading note"
-                            : `Restore v${rev.version}`
-                    }
-                    aria-label={`Restore version ${rev.version}`}
-                    className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-muted transition-colors hover:bg-accent-glow hover:text-accent-light focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55"
-                  >
-                    <IconUndo size={10} />
-                    {isPendingRow ? "Restoring…" : "Restore"}
-                  </button>
-                )}
-              </VersionRow>
-            );
-          })}
-        </ul>
+                version={currentVersion}
+                title={currentTitle}
+                createdAt={currentUpdatedAt}
+                isCurrent
+                nowMs={nowMs}
+              />
+            )}
+            {data.revisions.map((rev) => {
+              const isCurrent = rev.version === currentVersion;
+              const isPendingRow = pendingVersion === rev.version;
+              return (
+                <VersionRow
+                  key={rev.version}
+                  version={rev.version}
+                  title={rev.title}
+                  createdAt={rev.createdAt}
+                  isCurrent={isCurrent}
+                  nowMs={nowMs}
+                >
+                  {!isCurrent && (
+                    <button
+                      type="button"
+                      disabled={blocked || dirty}
+                      onClick={() => setConfirmVersion(rev.version)}
+                      title={
+                        dirty
+                          ? "Save or resolve open edits first"
+                          : locked
+                            ? "Note is locked"
+                            : loading
+                              ? "Loading note"
+                              : `Restore v${rev.version}`
+                      }
+                      aria-label={`Restore version ${rev.version}`}
+                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-muted transition-colors hover:bg-accent-glow hover:text-accent-light focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      <IconUndo size={10} />
+                      {isPendingRow ? "Restoring…" : "Restore"}
+                    </button>
+                  )}
+                </VersionRow>
+              );
+            })}
+          </ul>
+          {data.revisions.length === 0 && (
+            <div className="py-0.5 text-[12px] text-text-faint">
+              No checkpoints yet. Versions appear as editing sessions end.
+            </div>
+          )}
+        </>
       )}
       {error !== null && pendingVersion === null && (
         <p
