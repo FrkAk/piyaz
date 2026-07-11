@@ -27,6 +27,7 @@ import {
   requestShare,
   restoreNote,
   searchNotesForMcp,
+  NoteShareStateError,
   type CreateNoteBatchItem,
   type DeliberateNoteTaskLinkKind,
   type LinkedNoteSlim,
@@ -770,7 +771,7 @@ async function handleLink(
       ...(result.created &&
         p.kind === "spec_of" && {
           _hints: [
-            "spec_of recorded: this note is the task's spec. Keep the note current as the task evolves; agents reading the task will be pointed at it.",
+            "spec_of recorded: this note is the task's spec. It surfaces under Relevant Notes when an agent reads the task (piyaz_get lens='agent'/'planning'), which reads the note for detail. Keep it current as the task evolves.",
           ],
         }),
     });
@@ -887,13 +888,26 @@ export async function handleNote(
       case "request_share": {
         if (!p.note) return fail("request_share requires note.");
         const noteId = await resolveNoteParam(ctx, p);
-        const summary = await requestShare(ctx, noteId);
-        return ok({
-          ref: refOf(summary),
-          _hints: [
-            "Share request recorded; a human approves or declines in the web UI. The note stays private (invisible to teammates and their agents) until approved.",
-          ],
-        });
+        try {
+          const summary = await requestShare(ctx, noteId);
+          return ok({
+            ref: refOf(summary),
+            _hints: [
+              "Share request recorded; a human approves or declines in the web UI. The note stays private (invisible to teammates and their agents) until approved.",
+            ],
+          });
+        } catch (e) {
+          if (e instanceof NoteShareStateError && e.reason === "already_team") {
+            return ok({
+              note: p.note,
+              alreadyTeam: true,
+              _hints: [
+                "Note is already visible to the team; no share request is needed. Teammates' agents can already see it.",
+              ],
+            });
+          }
+          throw e;
+        }
       }
       case "link":
       case "unlink":

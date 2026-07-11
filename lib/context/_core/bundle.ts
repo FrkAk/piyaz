@@ -30,9 +30,12 @@ import { normalizeExecuteResult } from "@/lib/db/raw";
 import {
   decodeFeedRows,
   feedFetchLimit,
+  foldBacklinkPointers,
+  taskBacklinkPointersStmt,
   FEED_CHAR_BUDGET,
   FEED_NOTE_CAP,
   type NoteFeedResolution,
+  type TaskBacklinkPointerRow,
 } from "@/lib/data/note";
 import { notesFeedStmt, type NoteFeedBodyBound } from "@/lib/db/raw/notes-feed";
 import type { ReadResults } from "@/lib/db/read-guard";
@@ -196,6 +199,23 @@ function bundleFeedStmt(db: ReadConn, task: TaskFull, depth: TaskFetchDepth) {
     feedFetchLimit() + 1,
     bodies,
   );
+}
+
+/**
+ * Decode a bundle feed read and fold in the task's explicit note-task
+ * backlinks (spec_of/reference) as `linked` pointers. The backlink
+ * statement rides the same read batch as {@link bundleFeedStmt}, so
+ * surfacing explicit links adds no round trip.
+ *
+ * @param feedRaw - Raw driver result from the feed statement.
+ * @param backlinkRows - Rows from {@link taskBacklinkPointersStmt}.
+ * @returns Feed resolution with `linked` populated.
+ */
+function decodeBundleFeed(
+  feedRaw: unknown,
+  backlinkRows: readonly TaskBacklinkPointerRow[],
+): NoteFeedResolution {
+  return foldBacklinkPointers(decodeFeedRows(feedRaw), backlinkRows);
 }
 
 /** Header row produced by `projectHeaderByTaskStmt`. */
@@ -404,30 +424,38 @@ async function resolveClosureSecondaries(
   ]
 > {
   if (!closureHasSecondaries(deps, downstream, relatedEdges)) {
-    const [feedRaw] = await withUserContextRead(userId, (db) => [
+    const [feedRaw, backlinkRows] = await withUserContextRead(userId, (db) => [
       bundleFeedStmt(db, task, depth),
+      taskBacklinkPointersStmt(db, task.id),
     ]);
-    return [[], [], new Map(), [], decodeFeedRows(feedRaw)];
+    return [[], [], new Map(), [], decodeBundleFeed(feedRaw, backlinkRows)];
   }
-  const [depRows, summaryRows, tgtNotes, relatedInfoRows, feedRaw] =
-    await withUserContextRead(userId, (db) => [
-      ...secondariesBatch(
-        db,
-        task.projectId,
-        task.id,
-        deps,
-        downstream,
-        relatedEdges,
-        withDownstreamDescriptions,
-      ),
-      bundleFeedStmt(db, task, depth),
-    ]);
+  const [
+    depRows,
+    summaryRows,
+    tgtNotes,
+    relatedInfoRows,
+    feedRaw,
+    backlinkRows,
+  ] = await withUserContextRead(userId, (db) => [
+    ...secondariesBatch(
+      db,
+      task.projectId,
+      task.id,
+      deps,
+      downstream,
+      relatedEdges,
+      withDownstreamDescriptions,
+    ),
+    bundleFeedStmt(db, task, depth),
+    taskBacklinkPointersStmt(db, task.id),
+  ]);
   return [
     mapDependencyTaskRows(depRows),
     mapTaskSummaryRows(summaryRows),
     mapEdgeNoteRows(tgtNotes),
     assembleDetailedEdges(task.id, relatedEdges, relatedInfoRows),
-    decodeFeedRows(feedRaw),
+    decodeBundleFeed(feedRaw, backlinkRows),
   ];
 }
 
@@ -566,6 +594,7 @@ export async function resolvePlanningData(
     relatedInfoRows,
     cancelledRows,
     feedRaw,
+    backlinkRows,
   ] = await withUserContextRead(userId, (db) => [
     ...secondariesBatch(
       db,
@@ -578,6 +607,7 @@ export async function resolvePlanningData(
     ),
     cancelledDepRecordsStmt(db, core.task.projectId, taskId),
     bundleFeedStmt(db, core.task, "planning"),
+    taskBacklinkPointersStmt(db, taskId),
   ]);
   return {
     ...coreData,
@@ -587,7 +617,7 @@ export async function resolvePlanningData(
     related: assembleDetailedEdges(taskId, relatedEdges, relatedInfoRows),
     abandonedDeps: mapDependencyTaskRows(cancelledRows),
     project: toProjectHeader(header),
-    feed: decodeFeedRows(feedRaw),
+    feed: decodeBundleFeed(feedRaw, backlinkRows),
   };
 }
 
@@ -784,14 +814,14 @@ async function resolveDownstreamSecondaries(
   downstream: { id: string }[],
 ): Promise<[DownstreamSummary[], Map<string, string>, NoteFeedResolution]> {
   if (downstream.length === 0) {
-    const [feedRaw] = await withUserContextRead(userId, (db) => [
+    const [feedRaw, backlinkRows] = await withUserContextRead(userId, (db) => [
       bundleFeedStmt(db, task, "record"),
+      taskBacklinkPointersStmt(db, task.id),
     ]);
-    return [[], new Map(), decodeFeedRows(feedRaw)];
+    return [[], new Map(), decodeBundleFeed(feedRaw, backlinkRows)];
   }
-  const [summaryRows, tgtNotes, feedRaw] = await withUserContextRead(
-    userId,
-    (db) => [
+  const [summaryRows, tgtNotes, feedRaw, backlinkRows] =
+    await withUserContextRead(userId, (db) => [
       taskSummariesStmt(
         db,
         task.projectId,
@@ -800,12 +830,12 @@ async function resolveDownstreamSecondaries(
       ),
       edgeNotesByTargetStmt(db, task.id),
       bundleFeedStmt(db, task, "record"),
-    ],
-  );
+      taskBacklinkPointersStmt(db, task.id),
+    ]);
   return [
     mapTaskSummaryRows(summaryRows),
     mapEdgeNoteRows(tgtNotes),
-    decodeFeedRows(feedRaw),
+    decodeBundleFeed(feedRaw, backlinkRows),
   ];
 }
 
@@ -848,7 +878,7 @@ export async function resolveAgentBundleData(
       data: await finishClosure(userId, core, false, "agent"),
     };
   }
-  const [summaryRows, tgtNotes, headerRows, feedRaw] =
+  const [summaryRows, tgtNotes, headerRows, feedRaw, backlinkRows] =
     await withUserContextRead(userId, (db) => [
       taskSummariesStmt(
         db,
@@ -859,6 +889,7 @@ export async function resolveAgentBundleData(
       edgeNotesByTargetStmt(db, taskId),
       projectHeaderByTaskStmt(db, taskId, true),
       bundleFeedStmt(db, core.task, "record"),
+      taskBacklinkPointersStmt(db, taskId),
     ]);
   return {
     kind: "record",
@@ -868,7 +899,7 @@ export async function resolveAgentBundleData(
       downstream: core.downstream,
       downstreamSummaries: mapTaskSummaryRows(summaryRows),
       downstreamEdgeNotes: mapEdgeNoteRows(tgtNotes),
-      feed: decodeFeedRows(feedRaw),
+      feed: decodeBundleFeed(feedRaw, backlinkRows),
     },
   };
 }
@@ -922,18 +953,23 @@ async function resolveEdgesAndFeed(
   depth: TaskFetchDepth,
 ): Promise<{ detailedEdges: DetailedEdge[]; feed: NoteFeedResolution }> {
   if (edges.length === 0) {
-    const [feedRaw] = await withUserContextRead(userId, (db) => [
+    const [feedRaw, backlinkRows] = await withUserContextRead(userId, (db) => [
       bundleFeedStmt(db, task, depth),
+      taskBacklinkPointersStmt(db, task.id),
     ]);
-    return { detailedEdges: [], feed: decodeFeedRows(feedRaw) };
+    return { detailedEdges: [], feed: decodeBundleFeed(feedRaw, backlinkRows) };
   }
   const ids = connectedTaskIds(taskId, edges);
-  const [connectedRows, feedRaw] = await withUserContextRead(userId, (db) => [
-    connectedTaskInfoStmt(db, ids),
-    bundleFeedStmt(db, task, depth),
-  ]);
+  const [connectedRows, feedRaw, backlinkRows] = await withUserContextRead(
+    userId,
+    (db) => [
+      connectedTaskInfoStmt(db, ids),
+      bundleFeedStmt(db, task, depth),
+      taskBacklinkPointersStmt(db, task.id),
+    ],
+  );
   return {
     detailedEdges: assembleDetailedEdges(taskId, edges, connectedRows),
-    feed: decodeFeedRows(feedRaw),
+    feed: decodeBundleFeed(feedRaw, backlinkRows),
   };
 }

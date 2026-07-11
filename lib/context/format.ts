@@ -277,8 +277,8 @@ function notePointerLine(
 /**
  * Render note pointers as ref-first list lines with a read hint. Admitted
  * guidance rows are excluded when the caller renders them full-body
- * (deep bundles); overflow pointers always render. A final line flags
- * fetch-bound truncation.
+ * (deep bundles); overflow pointers and explicitly linked notes always
+ * render. A final line flags fetch-bound truncation.
  *
  * @param feed - Budgeted feed resolution.
  * @param opts - `guidanceAsPointers` includes admitted guidance rows
@@ -296,6 +296,7 @@ export function formatNotePointers(
   const lines = [
     ...pointerRows.map((row) => notePointerLine(row, row.summary)),
     ...feed.overflow.map((pointer) => notePointerLine(pointer, "")),
+    ...feed.linked.map((pointer) => notePointerLine(pointer, "")),
   ];
   if (lines.length === 0) return "";
   const capped = capLines(

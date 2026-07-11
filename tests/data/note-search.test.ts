@@ -127,6 +127,24 @@ test("searchNotes prefix-matches the last term for type-ahead", async () => {
   expect(hits.map((h) => h.title)).toEqual(["Authorization guide"]);
 });
 
+test("searchNotes prefix-matches across a hyphenated last term", async () => {
+  const f = await seedUserOrgProject("srch11");
+  const ctx = makeAuthContext(f.userId);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Cardinality",
+    body: "Notes on probe-cardinality limits.",
+  });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Unrelated",
+    body: "Nothing to see here.",
+  });
+
+  const hits = await searchNotes(ctx, f.projectId, "probe-card");
+  expect(hits.map((h) => h.title)).toEqual(["Cardinality"]);
+});
+
 test("searchNotes multi-word type-ahead still requires the head terms", async () => {
   const f = await seedUserOrgProject("srch8");
   const ctx = makeAuthContext(f.userId);
