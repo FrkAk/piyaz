@@ -6,9 +6,11 @@ import { useSession } from "@/lib/auth-client";
 import type { NoteFullResult, NoteTreeRow } from "@/lib/data/note";
 import { myTasksKeys, noteKeys, projectKeys, taskKeys } from "@/lib/query/keys";
 import {
+  clearNoteTrashedIfRestoredRemotely,
   hasUnsavedNoteEdits,
   whenNoteWritesSettle,
 } from "@/lib/query/note-cache";
+import { applyPresence } from "@/lib/realtime/presence-store";
 import type { RealtimeEvent } from "@/lib/realtime/types";
 
 const INITIAL_BACKOFF_MS = 1_000;
@@ -42,6 +44,8 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   after any in-flight local write for that note settles, so the actor's
  *   own event, which can outrun the mutation response, never triggers a
  *   redundant refetch.
+ * - `note-presence` events write the shared presence store only: no
+ *   settle await, no query invalidation, no refetch.
  * - `note-folders` events invalidate the explicit-folders list so another
  *   member's empty-folder create/rename/delete reaches every open tree.
  * - `project-list` events invalidate the home grid.
@@ -84,6 +88,9 @@ export async function applyRealtimeEvent(
     case "note":
       await handleNoteEvent(qc, ev);
       break;
+    case "note-presence":
+      applyPresence(ev);
+      break;
     case "note-folders":
       qc.invalidateQueries({ queryKey: noteKeys.folders(ev.projectId) });
       break;
@@ -114,9 +121,12 @@ function updatedAtMs(value: Date | string): number {
  * the caches already hold the merged response when the actor's own event
  * arrives. A cache entry at or past the event's `updatedAt` skips its
  * refetch; an event without `updatedAt` (delete) always invalidates the
- * list. The open note's detail additionally never refetches while the
- * note holds unsaved editor content: a refetch must not clobber the
- * optimistic autosave buffer or kept-optimistic conflict content.
+ * list. An event strictly newer than a note's stored delete baseline
+ * clears its trashed mark (a cross-client restore; the actor's own
+ * pre-delete autosave event is older-or-equal and never qualifies). The
+ * open note's detail additionally never refetches while the note holds
+ * unsaved editor content: a refetch must not clobber the optimistic
+ * autosave buffer or kept-optimistic conflict content.
  *
  * @param qc - The active QueryClient.
  * @param ev - Decoded note event.
@@ -128,6 +138,9 @@ async function handleNoteEvent(
 ): Promise<void> {
   await whenNoteWritesSettle(ev.noteId);
   const evMs = ev.updatedAt === undefined ? Infinity : Date.parse(ev.updatedAt);
+  if (ev.updatedAt !== undefined) {
+    clearNoteTrashedIfRestoredRemotely(ev.noteId, evMs);
+  }
   const rows = qc.getQueryData<NoteTreeRow[]>(noteKeys.list(ev.projectId));
   const row = rows?.find((r) => r.id === ev.noteId);
   const listCurrent = row !== undefined && updatedAtMs(row.updatedAt) >= evMs;

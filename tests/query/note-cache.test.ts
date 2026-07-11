@@ -7,9 +7,13 @@ import type {
 } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
 import {
+  beginNoteEditSession,
   cachedCasToken,
   clearNoteDirty,
+  clearNoteDirtyUnlessEditing,
   clearNoteTrashed,
+  clearNoteTrashedIfRestoredRemotely,
+  endNoteEditSession,
   hasUnsavedNoteEdits,
   isNoteTrashed,
   markNoteDirty,
@@ -367,14 +371,89 @@ describe("dirty note registry", () => {
   });
 });
 
+describe("note edit sessions", () => {
+  test("an open session marks dirty and holds the gate across a save release", () => {
+    beginNoteEditSession("s1");
+    expect(hasUnsavedNoteEdits("s1")).toBe(true);
+    clearNoteDirtyUnlessEditing("s1");
+    expect(hasUnsavedNoteEdits("s1")).toBe(true);
+    endNoteEditSession("s1");
+    clearNoteDirtyUnlessEditing("s1");
+    expect(hasUnsavedNoteEdits("s1")).toBe(false);
+  });
+
+  test("clearNoteDirtyUnlessEditing releases with no open session", () => {
+    markNoteDirty("s2");
+    clearNoteDirtyUnlessEditing("s2");
+    expect(hasUnsavedNoteEdits("s2")).toBe(false);
+  });
+
+  test("ending a session leaves the dirty mark for the caller to release", () => {
+    beginNoteEditSession("s3");
+    endNoteEditSession("s3");
+    expect(hasUnsavedNoteEdits("s3")).toBe(true);
+    clearNoteDirty("s3");
+  });
+});
+
 describe("trashed note registry", () => {
+  const deletedAt = new Date("2026-07-01T10:00:00.000Z");
+
   test("marks, reports, and clears trashed ids independently", () => {
     expect(isNoteTrashed("t1")).toBe(false);
-    markNoteTrashed("t1");
+    markNoteTrashed("t1", deletedAt);
     expect(isNoteTrashed("t1")).toBe(true);
     expect(isNoteTrashed("t2")).toBe(false);
     clearNoteTrashed("t1");
     expect(isNoteTrashed("t1")).toBe(false);
+  });
+
+  test("remote clear requires a strictly newer event than the delete baseline", () => {
+    markNoteTrashed("t1", deletedAt);
+
+    const older = deletedAt.getTime() - 1_000;
+    expect(clearNoteTrashedIfRestoredRemotely("t1", older)).toBe(false);
+    expect(isNoteTrashed("t1")).toBe(true);
+
+    expect(clearNoteTrashedIfRestoredRemotely("t1", deletedAt.getTime())).toBe(
+      false,
+    );
+    expect(isNoteTrashed("t1")).toBe(true);
+
+    const newer = deletedAt.getTime() + 1_000;
+    expect(clearNoteTrashedIfRestoredRemotely("t1", newer)).toBe(true);
+    expect(isNoteTrashed("t1")).toBe(false);
+    expect(clearNoteTrashedIfRestoredRemotely("t1", newer)).toBe(false);
+  });
+
+  test("accepts an ISO-string baseline", () => {
+    markNoteTrashed("t1", deletedAt.toISOString());
+    expect(
+      clearNoteTrashedIfRestoredRemotely("t1", deletedAt.getTime() + 1),
+    ).toBe(true);
+  });
+
+  test("re-marking a note refreshes its baseline", () => {
+    markNoteTrashed("t1", deletedAt);
+    const laterDelete = new Date(deletedAt.getTime() + 10_000);
+    markNoteTrashed("t1", laterDelete);
+    expect(
+      clearNoteTrashedIfRestoredRemotely("t1", deletedAt.getTime() + 1_000),
+    ).toBe(false);
+    expect(isNoteTrashed("t1")).toBe(true);
+    clearNoteTrashed("t1");
+  });
+
+  test("caps at 200 entries, evicting the oldest insertion", () => {
+    for (let i = 0; i < 200; i += 1) {
+      markNoteTrashed(`cap-${i}`, deletedAt);
+    }
+    expect(isNoteTrashed("cap-0")).toBe(true);
+    markNoteTrashed("cap-200", deletedAt);
+    expect(isNoteTrashed("cap-0")).toBe(false);
+    expect(isNoteTrashed("cap-1")).toBe(true);
+    expect(isNoteTrashed("cap-200")).toBe(true);
+    for (let i = 0; i <= 200; i += 1) clearNoteTrashed(`cap-${i}`);
   });
 });
 
