@@ -1,5 +1,6 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { auth } from "@/lib/auth";
+import * as legalData from "@/lib/data/legal";
 import { legalAcceptances } from "@/lib/db/schema";
 import { withUserContext } from "@/lib/db/rls";
 import { LEGAL_VERSIONS } from "@/lib/legal/versions";
@@ -112,6 +113,20 @@ async function orgCountBySlug(slug: string): Promise<number> {
   return rows.length;
 }
 
+/**
+ * Resolve the id of the organization with the given slug.
+ *
+ * @param slug - Organization slug to look up.
+ * @returns The organization id, or null when absent.
+ */
+async function orgIdBySlug(slug: string): Promise<string | null> {
+  const sql = superuserPool();
+  const rows = await sql<{ id: string }[]>`
+    SELECT id FROM piyaz_auth.organization WHERE slug = ${slug}
+  `;
+  return rows[0]?.id ?? null;
+}
+
 test("organization/create without DPA acceptance is rejected and writes nothing", async () => {
   const { userId, cookie } = await signUpWithSession(
     "dpa-reject@test.local",
@@ -153,7 +168,8 @@ test("organization/create with DPA acceptance writes one evidence row for the ne
   );
 
   expect(response.status).toBe(200);
-  expect(await orgCountBySlug("dpa-team")).toBe(1);
+  const orgId = await orgIdBySlug("dpa-team");
+  expect(orgId).not.toBeNull();
 
   const rows = await withUserContext(userId, async (tx) =>
     tx.select().from(legalAcceptances),
@@ -162,10 +178,39 @@ test("organization/create with DPA acceptance writes one evidence row for the ne
   expect(dpaRows.length).toBe(1);
   const dpa = dpaRows[0]!;
   expect(dpa.userId).toBe(userId);
-  expect(dpa.organizationId).not.toBeNull();
+  expect(dpa.organizationId).toBe(orgId);
   expect(dpa.documentVersion).toBe(LEGAL_VERSIONS.dpa);
   expect(dpa.ipAddress).toBe(ip);
   expect(dpa.userAgent).toBe(userAgent);
+});
+
+test("organization/create deletes the org when the DPA evidence write fails", async () => {
+  const ip = "127.0.3.12";
+  const { userId, cookie } = await signUpWithSession(
+    "dpa-compensate@test.local",
+    ip,
+  );
+
+  const spy = spyOn(legalData, "recordAcceptance").mockImplementation(() => {
+    throw new Error("evidence write failed");
+  });
+  try {
+    const response = await authPost(
+      "/organization/create",
+      { name: "Doomed Team", slug: "doomed-team", dpaAccepted: true },
+      ip,
+      cookie,
+    );
+    expect(response.status).toBe(500);
+    expect(await orgCountBySlug("doomed-team")).toBe(0);
+  } finally {
+    spy.mockRestore();
+  }
+
+  const rows = await withUserContext(userId, async (tx) =>
+    tx.select().from(legalAcceptances),
+  );
+  expect(rows.filter((row) => row.documentType === "dpa").length).toBe(0);
 });
 
 test("organization endpoints are blocked while personal re-consent is outstanding", async () => {

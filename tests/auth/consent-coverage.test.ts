@@ -70,29 +70,42 @@ const FUNCTION_ALLOWLIST = new Set([
 ]);
 
 /**
- * Yield each `export async function` in a source with its body sliced to the
- * next export, so a per-function assertion can inspect one entry point at a
- * time.
+ * Yield each async function declaration matching `pattern` with its body
+ * sliced to the next match, so a per-function assertion can inspect one
+ * entry point at a time.
  *
  * @param source - Module source text.
+ * @param pattern - Global regex whose first defined capture group is the name.
  * @returns Function name/body pairs in file order.
  */
-function* exportedAsyncFunctions(
+function* asyncFunctions(
   source: string,
+  pattern: RegExp,
 ): Generator<{ name: string; body: string }> {
-  const marker = "export async function ";
-  let idx = source.indexOf(marker);
-  while (idx !== -1) {
-    const nameStart = idx + marker.length;
-    const name = source.slice(nameStart, source.indexOf("(", nameStart)).trim();
-    const next = source.indexOf(marker, nameStart);
-    yield {
-      name,
-      body: next === -1 ? source.slice(idx) : source.slice(idx, next),
-    };
-    idx = next;
+  const spans: Array<{ name: string; start: number }> = [];
+  for (const match of source.matchAll(pattern)) {
+    const name = match[1] ?? match[2];
+    if (name) spans.push({ name, start: match.index });
+  }
+  for (let i = 0; i < spans.length; i++) {
+    const end = i + 1 < spans.length ? spans[i + 1].start : source.length;
+    yield { name: spans[i].name, body: source.slice(spans[i].start, end) };
   }
 }
+
+/**
+ * Exported server-action entry points, in both `export async function foo`
+ * and `export const foo = async () =>` forms, so an arrow-style action
+ * cannot slip past the per-function identity check.
+ */
+const EXPORTED_ASYNC =
+  /export\s+(?:async\s+function\s+([A-Za-z0-9_]+)|const\s+([A-Za-z0-9_]+)\s*=\s*async\b)/g;
+
+/**
+ * Every async function declaration in a route module, exported or not, so a
+ * per-method check also inspects shared handlers the HTTP methods delegate to.
+ */
+const ROUTE_ASYNC = /async\s+function\s+([A-Za-z0-9_]+)/g;
 
 describe("consent gate coverage", () => {
   test("every API route is gated or allowlisted", async () => {
@@ -106,6 +119,23 @@ describe("consent gate coverage", () => {
       if (ROUTE_ALLOWLIST.has(route)) continue;
       const source = await readFile(join(ROOT, route), "utf8");
       if (!GATE_PATTERN.test(source)) ungated.push(route);
+    }
+    expect(ungated).toEqual([]);
+  });
+
+  test("every identity-resolving route method gates or is allowlisted", async () => {
+    const routes = await collectFiles(
+      join(ROOT, "app", "api"),
+      (name) => name === "route.ts",
+    );
+    const ungated: string[] = [];
+    for (const route of routes) {
+      if (ROUTE_ALLOWLIST.has(route)) continue;
+      const source = await readFile(join(ROOT, route), "utf8");
+      for (const { name, body } of asyncFunctions(source, ROUTE_ASYNC)) {
+        if (!IDENTITY_PATTERN.test(body)) continue;
+        if (!GATE_PATTERN.test(body)) ungated.push(`${route}::${name}`);
+      }
     }
     expect(ungated).toEqual([]);
   });
@@ -143,7 +173,7 @@ describe("consent gate coverage", () => {
       if (ACTION_ALLOWLIST.has(file)) continue;
       const source = await readFile(join(ROOT, file), "utf8");
       if (!source.includes('"use server"')) continue;
-      for (const { name, body } of exportedAsyncFunctions(source)) {
+      for (const { name, body } of asyncFunctions(source, EXPORTED_ASYNC)) {
         if (!IDENTITY_PATTERN.test(body)) continue;
         if (FUNCTION_ALLOWLIST.has(`${file}::${name}`)) continue;
         if (!GATE_PATTERN.test(body)) ungated.push(`${file}::${name}`);

@@ -155,6 +155,27 @@ test("GET /api/projects — 304 when If-None-Match matches the current ETag", as
   expect(await conditional.text()).toBe("");
 });
 
+test("GET /api/projects — a stale user with a matching ETag gets 403, not 304", async () => {
+  const f = await seedUserOrgProject("projlist-stale-etag");
+  setSession({ user: { id: f.userId } });
+
+  const first = await GET(new Request("http://test/api/projects"));
+  expect(first.status).toBe(200);
+  const etag = first.headers.get("ETag");
+  expect(etag).toBeTruthy();
+
+  await superuserPool()`DELETE FROM legal_acceptances WHERE user_id = ${f.userId}`;
+
+  const conditional = await GET(
+    new Request("http://test/api/projects", {
+      headers: { "If-None-Match": etag! },
+    }),
+  );
+  expect(conditional.status).toBe(403);
+  const body = (await conditional.json()) as { code: string };
+  expect(body.code).toBe("terms_acceptance_required");
+});
+
 test("GET /api/projects — 403 terms_acceptance_required for a stale user", async () => {
   const f = await seedUserOrgProject("projlist-stale", { legalCurrent: false });
   setSession({ user: { id: f.userId } });
