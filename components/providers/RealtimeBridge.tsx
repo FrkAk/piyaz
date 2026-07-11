@@ -84,6 +84,11 @@ export async function applyRealtimeEvent(
       qc.invalidateQueries({
         queryKey: taskKeys.activity(ev.projectId, ev.taskId),
       });
+      // The task's category and tags decide which notes auto-feed it, so a
+      // task edit can change its note feed without touching any note row.
+      qc.invalidateQueries({
+        queryKey: noteKeys.backlinksTask(ev.projectId, ev.taskId),
+      });
       break;
     case "note":
       await handleNoteEvent(qc, ev);

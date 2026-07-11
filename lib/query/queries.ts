@@ -9,6 +9,7 @@ import {
 } from "@/lib/query/conditional-fetch";
 import { noteKeys, projectKeys, taskKeys } from "@/lib/query/keys";
 import type { BundleKind, BundlePart } from "@/lib/context/parts";
+import type { BundleNoteView } from "@/lib/context/format";
 import type {
   NoteFullResult,
   NoteSearchHit,
@@ -223,15 +224,25 @@ export function fetchNoteDetail(
  * @param taskId - Task id.
  * @returns Conditional-GET fetcher.
  */
+/**
+ * A task's note context: the notes linked to it, plus the note links the
+ * context bundle of one kind will carry. Both halves ride one request.
+ */
+export type TaskNoteContextResponse = {
+  backlinks: TaskNoteBacklink[];
+  feed: BundleNoteView;
+};
+
 export function fetchNoteBacklinks(
   qc: QueryClient,
   projectId: string,
   taskId: string,
-): Fn<TaskNoteBacklink[]> {
+  bundle: BundleKind,
+): Fn<TaskNoteContextResponse> {
   return (ctx) =>
-    conditionalFetch<TaskNoteBacklink[]>({
-      url: `/api/task/${taskId}/notes`,
-      queryKey: noteKeys.backlinks(projectId, taskId),
+    conditionalFetch<TaskNoteContextResponse>({
+      url: `/api/task/${taskId}/notes?bundle=${bundle}`,
+      queryKey: noteKeys.backlinks(projectId, taskId, bundle),
       queryClient: qc,
       signal: ctx.signal,
     });

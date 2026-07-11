@@ -1,21 +1,22 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { MonoId } from "@/components/shared/MonoId";
 import { IconDoc } from "@/components/shared/icons";
 import { skeletonVars } from "@/components/shared/skeleton";
-import { noteKeys } from "@/lib/query/keys";
-import { fetchNoteBacklinks } from "@/lib/query/queries";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { NOTE_TYPE_META, tint } from "@/components/workspace/notes/note-meta";
 import type { TaskNoteBacklink } from "@/lib/data/note";
 
 interface LinkedNotesSectionProps {
-  /** Project UUID: query key + fetcher argument. */
-  projectId: string;
-  /** Task UUID: query key + fetcher argument. */
-  taskId: string;
+  /** Deduped backlink rows, resolved once by the detail view. */
+  rows: TaskNoteBacklink[];
+  /** Whether the shared note-context read is still in flight. */
+  isLoading: boolean;
+  /** Whether the shared note-context read failed. */
+  isError: boolean;
+  /** Retry the shared note-context read. */
+  onRetry: () => void;
   /** Composed task reference (e.g. `MYM-12`) for the empty-state copy. */
   taskRef: string;
   /** Project prefix (e.g. `MYM`) for the linked-note ref chip. */
@@ -27,29 +28,23 @@ interface LinkedNotesSectionProps {
 /**
  * Linked-notes section for the task DetailView. Lists the notes that
  * reference this task (backlinks), each as a type-colored card that opens
- * the note on the Notes surface. Reads through the shared
- * `noteKeys.backlinks` query key so revisiting a task reuses the cache and
- * rides the route's conditional-GET 304s; note events already invalidate
- * `noteKeys.backlinksAll`, so no realtime wiring lives here.
+ * the note on the Notes surface. Presentational: the detail view resolves
+ * the note context once and threads both halves down, so this section and
+ * the bundle preview share a single read.
  *
  * @param props - Section configuration.
  * @returns Section element with the backlinks list and its loading, empty,
  *   and error states.
  */
 export function LinkedNotesSection({
-  projectId,
-  taskId,
+  rows,
+  isLoading,
+  isError,
+  onRetry,
   taskRef,
   projectIdentifier,
   onOpenNote,
 }: LinkedNotesSectionProps) {
-  const qc = useQueryClient();
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: noteKeys.backlinks(projectId, taskId),
-    queryFn: fetchNoteBacklinks(qc, projectId, taskId),
-  });
-  const rows = data ?? [];
-
   return (
     <section className="mb-7">
       <SectionHeader
@@ -64,7 +59,7 @@ export function LinkedNotesSection({
           <span>Couldn’t load linked notes.</span>
           <button
             type="button"
-            onClick={() => refetch()}
+            onClick={onRetry}
             className="text-text-faint underline hover:text-text-secondary"
           >
             Retry

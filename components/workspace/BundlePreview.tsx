@@ -12,6 +12,10 @@ import type { AcceptanceCriterion, Decision, TaskStatus } from "@/lib/types";
 import type { TaskState } from "@/lib/data/task";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import type { BundleSectionId } from "@/lib/context/parts";
+import type { BundleNoteView } from "@/lib/context/format";
+import type { BundleNoteLink, BundleNoteOrigin } from "@/lib/data/note";
+import { IconDoc } from "@/components/shared/icons";
+import { NOTE_TYPE_META, tint } from "@/components/workspace/notes/note-meta";
 import { REVIEW_LENS_PROMPTS } from "@/lib/context/lens";
 import {
   ALWAYS_RENDERED_BY_BUNDLE,
@@ -183,6 +187,14 @@ interface BundlePreviewProps {
   links: TaskLinkRef[];
   /** Execution record markdown. */
   executionRecord: string | null;
+  /**
+   * Note links the bundle of this variant will carry, resolved server-side
+   * with the same feed rules the markdown emitter uses. Undefined while the
+   * detail view's note-context read is in flight.
+   */
+  noteFeed?: BundleNoteView;
+  /** Open a note on the Notes surface from a ref chip. */
+  onOpenNote?: (noteId: string) => void;
   /** Click a neighbor row to navigate to that task. */
   onSelectTask?: (taskId: string) => void;
 }
@@ -284,8 +296,9 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
     case "blocked":
       return props.blockedBy.length > 0;
     case "guidance":
+      return (props.noteFeed?.guidance.length ?? 0) > 0;
     case "notes":
-      return false;
+      return (props.noteFeed?.notes.length ?? 0) > 0;
   }
 }
 
@@ -301,6 +314,8 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
   const len = (s: string) => s.length;
   const refLen = (xs: BundleNeighbor[]) =>
     xs.reduce((sum, n) => sum + len(`${n.taskRef} ${n.title}`), 0);
+  const noteLen = (xs: BundleNoteLink[]) =>
+    xs.reduce((sum, n) => sum + len(`${n.noteRef} ${n.title} ${n.summary}`), 0);
   switch (id) {
     case "spec":
       return Math.max(len(props.spec), 1);
@@ -354,8 +369,9 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
     case "work-so-far":
       return Math.max(len(props.executionRecord ?? ""), 1);
     case "guidance":
+      return Math.max(noteLen(props.noteFeed?.guidance ?? []), 1);
     case "notes":
-      return 1;
+      return Math.max(noteLen(props.noteFeed?.notes ?? []), 1);
   }
 }
 
@@ -734,12 +750,107 @@ function sectionSummary(
     return dead.length > 2 ? `${refs} · +${dead.length - 2} more` : refs;
   }
   if (id === "lens") return "review lens prompts";
+  if (id === "guidance" || id === "notes") {
+    const links =
+      id === "guidance"
+        ? (props.noteFeed?.guidance ?? [])
+        : (props.noteFeed?.notes ?? []);
+    const refs = links
+      .slice(0, 2)
+      .map((n) => n.noteRef)
+      .join(" · ");
+    return links.length > 2 ? `${refs} · +${links.length - 2} more` : refs;
+  }
   if (!props.executionRecord || props.executionRecord.trim().length === 0) {
     return "no execution record yet";
   }
   return props.status === "cancelled"
     ? "cancellation record"
     : "shipped record";
+}
+
+/** How the note reached the bundle, as the drawer captions it. */
+const NOTE_ORIGIN_LABEL: Record<BundleNoteOrigin, string> = {
+  fed: "auto-fed",
+  linked: "linked",
+  overflow: "over budget",
+};
+
+interface NoteLinkListProps {
+  /** Note links the bundle carries, in emit order. */
+  links: BundleNoteLink[];
+  /** Notes the bundle's width cap drops from the list. */
+  hidden?: number;
+  /** Whether matches were dropped beyond the feed's fetch bound. */
+  truncated?: boolean;
+  /** Copy for an empty section. */
+  emptyHint: string;
+  /** Open a note on the Notes surface. */
+  onOpenNote?: (noteId: string) => void;
+}
+
+/**
+ * Note-link list for the guidance and notes drawers. Lists what the bundle
+ * carries as references only: ref chip, title, type, and how the note
+ * reached the task (auto-fed, explicitly linked, or listed pointer-only
+ * after overflowing the feed's char budget). The bundle inlines guidance
+ * bodies for the agent; the preview never does.
+ *
+ * @param props - List configuration.
+ * @returns The note-link rows, or the empty hint.
+ */
+function NoteLinkList({
+  links,
+  hidden = 0,
+  truncated = false,
+  emptyHint,
+  onOpenNote,
+}: NoteLinkListProps) {
+  if (links.length === 0) {
+    return <p className="py-1 text-[12px] text-text-faint">{emptyHint}</p>;
+  }
+  return (
+    <div className="space-y-1">
+      {links.map((note) => {
+        const meta = NOTE_TYPE_META[note.type] ?? NOTE_TYPE_META.reference;
+        return (
+          <button
+            key={note.id}
+            type="button"
+            onClick={() => onOpenNote?.(note.id)}
+            title={note.summary || note.title}
+            className="group/note flex w-full cursor-pointer items-center gap-2 rounded-md border border-border/40 px-2 py-1.5 text-left transition-colors hover:border-border-strong hover:bg-surface-raised/40"
+          >
+            <IconDoc
+              size={13}
+              className="shrink-0"
+              style={{ color: meta.color }}
+            />
+            <MonoId id={note.noteRef} copyable={false} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-primary transition-colors group-hover/note:text-accent-light">
+              {note.title || "Untitled"}
+            </span>
+            <span
+              className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] uppercase"
+              style={{ color: meta.color, background: tint(meta.color, 13) }}
+            >
+              {meta.label}
+            </span>
+            <span className="shrink-0 font-mono text-[9.5px] uppercase text-text-faint">
+              {NOTE_ORIGIN_LABEL[note.origin]}
+            </span>
+          </button>
+        );
+      })}
+      {(hidden > 0 || truncated) && (
+        <p className="pt-0.5 font-mono text-[10px] text-text-faint">
+          {hidden > 0
+            ? `+${hidden} more listed to the agent as a search hint.`
+            : "More notes matched than the feed fetches."}
+        </p>
+      )}
+    </div>
+  );
 }
 
 interface SectionBodyProps {
@@ -853,6 +964,26 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
   }
   if (id === "lens") {
     return <MarkdownBody text={REVIEW_LENS_PROMPTS} emptyHint="" />;
+  }
+  if (id === "guidance") {
+    return (
+      <NoteLinkList
+        links={props.noteFeed?.guidance ?? []}
+        emptyHint="No guidance notes feed this task."
+        onOpenNote={props.onOpenNote}
+      />
+    );
+  }
+  if (id === "notes") {
+    return (
+      <NoteLinkList
+        links={props.noteFeed?.notes ?? []}
+        hidden={props.noteFeed?.hidden ?? 0}
+        truncated={props.noteFeed?.truncated ?? false}
+        emptyHint="No notes reach this task."
+        onOpenNote={props.onOpenNote}
+      />
+    );
   }
   return (
     <MarkdownBody

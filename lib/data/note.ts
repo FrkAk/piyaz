@@ -90,6 +90,7 @@ import {
 import {
   notesFeedStmt,
   type FeedTask,
+  type NoteFeedBodyBound,
   type NoteFeedRawRow,
 } from "@/lib/db/raw/notes-feed";
 import {
@@ -1845,8 +1846,21 @@ export async function getTaskNoteBacklinks(
     taskNoteBacklinksStmt(read, taskId),
   ]);
   assertTaskGateRows(taskId, gateRows);
+  return dedupeBacklinks(linkRows);
+}
+
+/**
+ * Collapse backlink rows to one row per note, keeping the most specific
+ * link kind (`spec_of` > `reference` > `mention`).
+ *
+ * @param rows - Backlink rows, one per link.
+ * @returns Deduped rows, one per note.
+ */
+function dedupeBacklinks(
+  rows: readonly TaskNoteBacklink[],
+): TaskNoteBacklink[] {
   const byNote = new Map<string, TaskNoteBacklink>();
-  for (const row of linkRows) {
+  for (const row of rows) {
     const existing = byNote.get(row.id);
     if (
       !existing ||
@@ -2040,6 +2054,212 @@ export async function resolveExposedNotes(
   ]);
   assertProjectGateRows(projectId, gateRows);
   return decodeFeedRows(rowsRaw, budget);
+}
+
+/** How a note reaches a bundle: the feed, an explicit link, or budget overflow. */
+export type BundleNoteOrigin = "fed" | "linked" | "overflow";
+
+/**
+ * One note as a bundle lists it: pointer fields only, never a body.
+ * `summary` is empty wherever the bundle itself drops it (overflow
+ * pointers render title-only).
+ */
+export type BundleNoteLink = {
+  id: string;
+  noteRef: string;
+  sequenceNumber: number;
+  title: string;
+  type: NoteType;
+  summary: string;
+  origin: BundleNoteOrigin;
+};
+
+/**
+ * Project a feed row or pointer onto the slim bundle-note link shape.
+ *
+ * @param note - Feed row or pointer.
+ * @param summary - Summary the bundle renders for it, possibly empty.
+ * @param origin - How the note reached the bundle.
+ * @returns Slim link, never carrying a body.
+ */
+function toBundleNoteLink(
+  note: {
+    id: string;
+    noteRef: string;
+    sequenceNumber: number;
+    title: string;
+    type: NoteType;
+  },
+  summary: string,
+  origin: BundleNoteOrigin,
+): BundleNoteLink {
+  return {
+    id: note.id,
+    noteRef: note.noteRef,
+    sequenceNumber: note.sequenceNumber,
+    title: note.title,
+    type: note.type,
+    summary,
+    origin,
+  };
+}
+
+/**
+ * Admitted guidance rows: the ones a deep bundle renders full-body under
+ * Project Guidance. Linked and overflow notes stay pointers even when
+ * their type is `guidance`.
+ *
+ * @param feed - Budgeted feed resolution.
+ * @returns Admitted guidance rows in emit order.
+ */
+export function selectGuidanceNotes(feed: NoteFeedResolution): NoteFeedRow[] {
+  return feed.notes.filter((row) => row.type === "guidance");
+}
+
+/**
+ * The same admitted guidance rows as {@link selectGuidanceNotes}, projected
+ * to slim links for the web preview. The preview lists what the bundle
+ * inlines; it never ships the bodies themselves.
+ *
+ * @param feed - Budgeted feed resolution.
+ * @returns Guidance links in emit order.
+ */
+export function selectGuidanceLinks(
+  feed: NoteFeedResolution,
+): BundleNoteLink[] {
+  return selectGuidanceNotes(feed).map((row) =>
+    toBundleNoteLink(row, row.summary, "fed"),
+  );
+}
+
+/**
+ * Relevant Notes entries in bundle emit order: admitted feed rows
+ * (guidance excluded when the caller renders it full-body), then linked
+ * pointers, then budget-overflow pointers. Uncapped; callers apply their
+ * own width cap. Shared by the markdown emitter and the web bundle
+ * preview so the two cannot drift on which notes a bundle carries.
+ *
+ * @param feed - Budgeted feed resolution.
+ * @param opts - `guidanceAsPointers` keeps admitted guidance rows in the list.
+ * @returns Ordered pointer entries.
+ */
+export function selectNotePointers(
+  feed: NoteFeedResolution,
+  opts: { guidanceAsPointers: boolean },
+): BundleNoteLink[] {
+  return [
+    ...feed.notes
+      .filter((row) => opts.guidanceAsPointers || row.type !== "guidance")
+      .map((row) => toBundleNoteLink(row, row.summary, "fed")),
+    ...feed.linked.map((row) =>
+      toBundleNoteLink(row, row.summary ?? "", "linked"),
+    ),
+    ...feed.overflow.map((row) => toBundleNoteLink(row, "", "overflow")),
+  ];
+}
+
+/** Task row the note feed matches against, plus the feed's cache validator. */
+type TaskFeedTargetRow = {
+  id: string;
+  projectId: string;
+  category: string | null;
+  tags: string[] | null;
+  updatedAt: Date;
+};
+
+/**
+ * The task's feed-target columns. `category` and `tags` are the task side
+ * of the feed match and appear in no other task projection this surface
+ * reads. `updatedAt` is a validator input no note or link timestamp can
+ * observe: retagging a task changes which notes feed it without touching
+ * any note row.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - Task UUID.
+ * @returns Lazy single-row statement.
+ */
+function taskFeedTargetStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({
+      id: tasks.id,
+      projectId: tasks.projectId,
+      category: tasks.category,
+      tags: tasks.tags,
+      updatedAt: tasks.updatedAt,
+    })
+    .from(tasks)
+    .where(eq(tasks.id, taskId))
+    .limit(1);
+}
+
+/** A task's note context: its linked notes plus the bundle's note feed. */
+export type TaskNoteContext = {
+  backlinks: TaskNoteBacklink[];
+  feed: NoteFeedResolution;
+  taskUpdatedAt: Date;
+};
+
+/**
+ * Resolve everything the task detail surface needs about notes: the
+ * linked-note backlinks the Linked Notes section renders, and the same
+ * feed resolution the context bundle carries, with backlinks folded in as
+ * `linked` pointers exactly as the bundle path does.
+ *
+ * `deep` mirrors the bundle depth. Deep bundles (agent, planning, review)
+ * fetch guidance bodies because body length is charged against the feed
+ * char budget and so decides which notes are admitted rather than
+ * overflowed; slim bundles select no body column at all.
+ *
+ * Two batches: the feed statement binds the task's category and tags, so
+ * it cannot ride the batch that reads them.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @param deep - Whether the target bundle renders guidance full-body.
+ * @returns Backlinks, the folded feed resolution, and the task's validator.
+ * @throws ForbiddenError when the caller cannot access the task.
+ */
+export async function getTaskNoteContext(
+  ctx: AuthContext,
+  taskId: string,
+  deep: boolean,
+): Promise<TaskNoteContext> {
+  assertValidTaskId(taskId);
+  const [gateRows, taskRows, linkRows, pointerRows] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      taskAccessGateStmt(read, taskId),
+      taskFeedTargetStmt(read, taskId),
+      taskNoteBacklinksStmt(read, taskId),
+      taskBacklinkPointersStmt(read, taskId),
+    ],
+  );
+  assertTaskGateRows(taskId, gateRows);
+  const task = (taskRows as TaskFeedTargetRow[])[0];
+
+  const bodies: NoteFeedBodyBound | undefined = deep
+    ? {
+        rankCap: FEED_NOTE_CAP,
+        charBound: FEED_CHAR_BUDGET + 1,
+        budget: FEED_CHAR_BUDGET,
+      }
+    : undefined;
+  const [feedRaw] = await withUserContextRead(ctx.userId, (read) => [
+    notesFeedStmt(
+      read,
+      task.projectId,
+      { id: task.id, category: task.category, tags: task.tags ?? [] },
+      FEED_NOTE_CAP,
+      feedFetchLimit() + 1,
+      bodies,
+    ),
+  ]);
+
+  return {
+    backlinks: dedupeBacklinks(linkRows),
+    feed: foldBacklinkPointers(decodeFeedRows(feedRaw), pointerRows),
+    taskUpdatedAt: task.updatedAt,
+  };
 }
 
 /**

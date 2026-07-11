@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   TaskEdgeRef,
   TaskFull,
@@ -18,10 +19,13 @@ import {
   type BundlePrereqRef,
 } from "@/components/workspace/BundlePreview";
 import {
+  BUNDLE_BY_STAGE,
   BUNDLE_LABEL_BY_STAGE,
   resolveStage,
 } from "@/components/workspace/bundle-tables";
 import { CLOSURE_DEPTH } from "@/lib/context/parts";
+import { noteKeys } from "@/lib/query/keys";
+import { fetchNoteBacklinks } from "@/lib/query/queries";
 import {
   effectiveDirectPrerequisiteIds,
   effectiveNeighbors,
@@ -141,6 +145,17 @@ export function DetailView({
     [allTasks, taskId],
   );
 
+  // One read for both note surfaces: the Linked Notes list and the note
+  // links the bundle preview lists. Keyed on the bundle kind because the
+  // feed's admitted/overflow split is depth-dependent, so a status change
+  // that moves the task to another bundle refetches the right feed.
+  const qc = useQueryClient();
+  const bundleKind = BUNDLE_BY_STAGE[resolveStage(task.status, currentState)];
+  const noteContext = useQuery({
+    queryKey: noteKeys.backlinks(projectId, taskId, bundleKind),
+    queryFn: fetchNoteBacklinks(qc, projectId, taskId, bundleKind),
+  });
+
   // Execution-record presence per task, for the record-gated drawer lists
   // (built / abandoned) the bundle builders filter on server-side.
   const recordFlags = useMemo(
@@ -234,6 +249,8 @@ export function DetailView({
                 decisions={task.decisions ?? []}
                 links={(task.links as TaskLinkRef[] | undefined) ?? []}
                 executionRecord={task.executionRecord}
+                noteFeed={noteContext.data?.feed}
+                onOpenNote={onOpenNote}
                 onSelectTask={onSelectNode}
               />
             </section>
@@ -259,8 +276,10 @@ export function DetailView({
             />
 
             <LinkedNotesSection
-              projectId={projectId}
-              taskId={taskId}
+              rows={noteContext.data?.backlinks ?? []}
+              isLoading={noteContext.isLoading}
+              isError={noteContext.isError}
+              onRetry={() => void noteContext.refetch()}
               taskRef={task.taskRef}
               projectIdentifier={projectIdentifier}
               onOpenNote={onOpenNote}
