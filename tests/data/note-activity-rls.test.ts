@@ -72,6 +72,20 @@ async function shareNote(noteId: string): Promise<void> {
 }
 
 /**
+ * Flip a note back to private via the superuser pool, clearing
+ * `shared_since` the way `applyVisibilityTx` does.
+ *
+ * @param noteId - Note to unshare.
+ */
+async function unshareNote(noteId: string): Promise<void> {
+  const sql = superuserPool();
+  await sql`
+    UPDATE notes SET visibility = 'private', shared_since = NULL
+    WHERE id = ${noteId}
+  `;
+}
+
+/**
  * Insert a revision snapshot via the superuser pool.
  *
  * @param noteId - Note the snapshot belongs to.
@@ -121,6 +135,8 @@ async function seedNoteEvent(
  *     fails closed through notes_member_access);
  *   - the pre-share fence: events and revisions created before the note's
  *     `shared_since` stay creator-only after a private-to-team flip;
+ *   - re-sharing after a private period fences the earlier team window too:
+ *     non-creators see only rows at or after the latest `shared_since`;
  *   - the NULL arm passes task/project rows through untouched, and the
  *     `activity_events_note_ref_check` constraint rejects a note-typed row
  *     without a note_id;
@@ -217,6 +233,46 @@ describe("activity_events RLS: note_id gate, project pin, cascade", () => {
         SELECT id FROM note_revisions WHERE note_id = ${note}
       `;
       expect(rows.map((r) => r.id)).toEqual([postShare]);
+    });
+  });
+
+  test("re-sharing fences the earlier team period: only the latest flip's window survives", async () => {
+    const fx = await seedUserOrgProject("ae-reshare");
+    const userB = await seedSecondMember(fx.organizationId, "ae-reshare-b");
+    const note = await seedNote(fx.projectId, "reshared", "team", fx.userId);
+    const firstPeriodEvent = await seedNoteEvent(fx.projectId, note, "first");
+    const firstPeriodRevision = await seedRevision(note, 1);
+    await unshareNote(note);
+    await shareNote(note);
+    const secondPeriodEvent = await seedNoteEvent(fx.projectId, note, "second");
+    const secondPeriodRevision = await seedRevision(note, 2);
+
+    const c = appUserConnect();
+    await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${fx.userId}, true)`;
+      const events = await tx<{ id: string }[]>`
+        SELECT id FROM activity_events WHERE note_id = ${note}
+      `;
+      expect(events.map((r) => r.id).sort()).toEqual(
+        [firstPeriodEvent, secondPeriodEvent].sort(),
+      );
+      const revisions = await tx<{ id: string }[]>`
+        SELECT id FROM note_revisions WHERE note_id = ${note}
+      `;
+      expect(revisions.map((r) => r.id).sort()).toEqual(
+        [firstPeriodRevision, secondPeriodRevision].sort(),
+      );
+    });
+    await c.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${userB}, true)`;
+      const events = await tx<{ id: string }[]>`
+        SELECT id FROM activity_events WHERE note_id = ${note}
+      `;
+      expect(events.map((r) => r.id)).toEqual([secondPeriodEvent]);
+      const revisions = await tx<{ id: string }[]>`
+        SELECT id FROM note_revisions WHERE note_id = ${note}
+      `;
+      expect(revisions.map((r) => r.id)).toEqual([secondPeriodRevision]);
     });
   });
 

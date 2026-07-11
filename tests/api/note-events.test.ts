@@ -195,14 +195,25 @@ describe("GET /api/note/[noteId]/events", () => {
     expect(after.headers.get("etag")).not.toBe(firstEtag);
   });
 
-  test("an oversize limit clamps and a tampered cursor falls back to page one", async () => {
+  test("an oversize limit clamps to the max page size and a tampered cursor falls back to page one", async () => {
     const { fx, noteId } = await seedNoteWithHistory("nev-clamp");
     setSession({ user: { id: fx.userId } });
+    await superuserPool()`
+      INSERT INTO activity_events
+        (project_id, note_id, type, actor_user_id, source, summary, created_at)
+      SELECT ${fx.projectId}, ${noteId}, 'note_updated', ${fx.userId}, 'web',
+             'edited note', now() - (g || ' milliseconds')::interval
+      FROM generate_series(1, 55) g
+    `;
 
     const clamped = await callEvents(noteId, "?limit=5000");
     expect(clamped.status).toBe(200);
-    const clampedBody = (await clamped.json()) as { events: unknown[] };
-    expect(clampedBody.events).toHaveLength(2);
+    const clampedBody = (await clamped.json()) as {
+      events: unknown[];
+      nextCursor: string | null;
+    };
+    expect(clampedBody.events).toHaveLength(50);
+    expect(clampedBody.nextCursor).not.toBeNull();
 
     const tampered = await callEvents(
       noteId,
@@ -210,7 +221,7 @@ describe("GET /api/note/[noteId]/events", () => {
     );
     expect(tampered.status).toBe(200);
     const tamperedBody = (await tampered.json()) as { events: unknown[] };
-    expect(tamperedBody.events).toHaveLength(2);
+    expect(tamperedBody.events).toHaveLength(20);
   });
 
   test("returns 404 for a non-uuid id before any SQL", async () => {
