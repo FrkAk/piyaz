@@ -1054,3 +1054,30 @@ test("list carries the summary hint only when a summary is missing", async () =>
   expect(flagged).toContain("no summary");
   expect(flagged).toContain(`PRJNS21-N${bare.sequenceNumber}`);
 });
+
+test("list summary hint counts every note but names at most 5 refs", async () => {
+  const f = await seedUserOrgProject("NS23");
+  const ctx = makeAuthContext(f.userId);
+  const bare = [];
+  for (let i = 0; i < 6; i++) {
+    bare.push(
+      await createNote(ctx, {
+        projectId: f.projectId,
+        title: `Bare ${i}`,
+        body: "x",
+      }),
+    );
+  }
+
+  const listed = okData<string>(
+    await handleNote({ action: "list", project: "PRJNS23" }, ctx),
+  );
+  const hint =
+    listed.split("\n").find((line) => line.includes("no summary")) ?? "";
+  expect(hint).toContain("6 note(s) have no summary");
+  expect(hint).toContain("+1 more");
+  for (const note of bare.slice(0, 5)) {
+    expect(hint).toContain(`PRJNS23-N${note.sequenceNumber}`);
+  }
+  expect(hint).not.toContain(`PRJNS23-N${bare[5].sequenceNumber}`);
+});

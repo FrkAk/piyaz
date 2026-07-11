@@ -187,15 +187,17 @@ function noteLine(row: NoteTreeRow, identifier: string): string {
 }
 
 /**
- * Build the hint naming notes that render without a summary. A summary-less
- * note renders as a bare ref and title, so an agent cannot triage the hit
- * without opening the body, and a reference or knowledge note feeds tasks as
- * a title-only pointer. Locked and agent-read-only notes are left out: the
- * hint prescribes an edit, and those reject every agent write.
+ * Build the hint naming notes that carry no summary. A summary-less note
+ * renders as a bare ref and title, so an agent cannot triage the hit without
+ * opening the body, and a reference or knowledge note feeds tasks as a
+ * title-only pointer. Locked and agent-read-only notes are left out: the
+ * hint prescribes an edit, and those reject every agent write. A ref is
+ * actionable whether or not its line rendered, so the count covers every row
+ * passed in and only the named refs are capped.
  *
- * @param rows - The note rows this response renders.
+ * @param rows - The note rows the response covers.
  * @param identifier - Project identifier scoping the composed refs.
- * @returns Hint text, or null when no rendered row is both summary-less and
+ * @returns Hint text, or null when no row is both summary-less and
  *   agent-writable.
  */
 function missingSummaryHint(
@@ -666,26 +668,23 @@ async function handleList(
   const folders = [
     ...new Set([...notesByFolder.keys(), ...explicitFolders]),
   ].sort();
-  const entries: { line: string; row: NoteTreeRow | null }[] = [];
+  const lines: string[] = [];
   for (const folder of folders) {
-    entries.push({ line: folder === "" ? "(root)/" : `${folder}/`, row: null });
+    lines.push(folder === "" ? "(root)/" : `${folder}/`);
     for (const row of notesByFolder.get(folder) ?? []) {
-      entries.push({ line: `  ${noteLine(row, projectIdentifier)}`, row });
+      lines.push(`  ${noteLine(row, projectIdentifier)}`);
     }
   }
   const budgeted = budgetLines(
-    entries.map((entry) => entry.line),
+    lines,
     LIST_LINE_CAP,
     "narrow with piyaz_note action='search' query='...'",
   );
-  const listed = entries
-    .slice(0, LIST_LINE_CAP)
-    .flatMap((entry) => (entry.row === null ? [] : [entry.row]));
   const text = [
     `# ${projectIdentifier} notes (${rows.length})`,
     ...budgeted.lines,
   ];
-  const summaryHint = missingSummaryHint(listed, projectIdentifier);
+  const summaryHint = missingSummaryHint(rows, projectIdentifier);
   if (summaryHint !== null) text.push(summaryHint);
   return ok(
     text.join("\n"),
