@@ -406,7 +406,11 @@ export type NoteFeedRow = {
   updatedAt: Date;
 };
 
-/** Pointer to an exposed note that overflowed the feed budget. */
+/**
+ * Pointer to an exposed note that overflowed the feed budget, or to an
+ * explicitly linked note. `summary` is carried only by linked pointers;
+ * overflow pointers omit it and render title-only.
+ */
 export type NoteFeedPointer = {
   id: string;
   slug: string;
@@ -414,16 +418,21 @@ export type NoteFeedPointer = {
   type: NoteType;
   sequenceNumber: number;
   noteRef: string;
+  summary?: string;
 };
 
 /**
  * Budgeted feed resolution: admitted rows plus overflow pointers.
  * `truncated` is true when exposed notes beyond the fetch or pointer
- * bound were dropped, so the pointer list may be incomplete.
+ * bound were dropped, so the pointer list may be incomplete. `linked`
+ * carries notes reached through a `note_task_links` backlink of any kind
+ * (spec_of/reference/mention) rather than the feed, rendered as pointers;
+ * the bundle path folds them in, standalone feed reads leave it empty.
  */
 export type NoteFeedResolution = {
   notes: NoteFeedRow[];
   overflow: NoteFeedPointer[];
+  linked: NoteFeedPointer[];
   truncated: boolean;
 };
 
@@ -1269,6 +1278,98 @@ export function taskNoteBacklinksStmt(read: ReadConn, taskId: string) {
     .orderBy(notes.title, noteTaskLinks.kind);
 }
 
+/** Pointer row from {@link taskBacklinkPointersStmt}. */
+export type TaskBacklinkPointerRow = {
+  id: string;
+  slug: string;
+  sequenceNumber: number;
+  title: string;
+  type: NoteType;
+  summary: string;
+  identifier: string;
+};
+
+/**
+ * Build the agent-facing task-backlinks read: live, team-visible notes
+ * linked to the task via `note_task_links` under any kind
+ * (spec_of/reference/mention), projected to pointer fields plus the
+ * summary and the project identifier for the noteRef. Unlike
+ * {@link taskNoteBacklinksStmt} (the human web read, which returns a
+ * member's own private notes too), this enforces `visibility = 'team'`
+ * so a private linked note never reaches an agent bundle, the same fence
+ * the feed query applies. Feed mode is irrelevant here: a backlink
+ * surfaces the note regardless of `feed_mode`. A note linked under
+ * several kinds yields one row per kind; {@link foldBacklinkPointers}
+ * dedupes to one pointer. Batch it into the bundle's feed read; the
+ * extra statement adds no round trip.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task.
+ * @returns Lazy select statement yielding {@link TaskBacklinkPointerRow}s.
+ */
+export function taskBacklinkPointersStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({
+      id: notes.id,
+      slug: notes.slug,
+      sequenceNumber: notes.sequenceNumber,
+      title: notes.title,
+      type: notes.type,
+      summary: notes.summary,
+      identifier: projects.identifier,
+    })
+    .from(noteTaskLinks)
+    .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
+    .innerJoin(projects, eq(projects.id, notes.projectId))
+    .where(
+      and(
+        eq(noteTaskLinks.taskId, taskId),
+        isNull(notes.deletedAt),
+        eq(notes.visibility, "team"),
+      ),
+    )
+    .orderBy(notes.title);
+}
+
+/**
+ * Fold task-backlink rows into a feed resolution as `linked` pointers:
+ * notes reached through a `note_task_links` backlink of any kind
+ * (spec_of/reference/mention), deduped against feed-injected notes and
+ * overflow so a note that both feeds and is linked lists once, and by id
+ * so a note linked under several kinds lists once. Each carries its
+ * summary; rendered under Relevant Notes as pointers regardless of type,
+ * and a backlink never injects a body.
+ *
+ * @param resolution - The budgeted feed resolution to extend.
+ * @param backlinks - Backlink pointer rows from
+ *   {@link taskBacklinkPointersStmt}.
+ * @returns The resolution with `linked` populated.
+ */
+export function foldBacklinkPointers(
+  resolution: NoteFeedResolution,
+  backlinks: readonly TaskBacklinkPointerRow[],
+): NoteFeedResolution {
+  if (backlinks.length === 0) return resolution;
+  const seen = new Set<string>();
+  for (const note of resolution.notes) seen.add(note.id);
+  for (const pointer of resolution.overflow) seen.add(pointer.id);
+  const linked: NoteFeedPointer[] = [];
+  for (const row of backlinks) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    linked.push({
+      id: row.id,
+      slug: row.slug,
+      title: row.title,
+      type: row.type,
+      sequenceNumber: row.sequenceNumber,
+      noteRef: composeNoteRef(asIdentifier(row.identifier), row.sequenceNumber),
+      summary: row.summary,
+    });
+  }
+  return { ...resolution, linked };
+}
+
 /**
  * Shared core of the linked-note reads: live notes on the far end of a
  * `note_links` row, slim projection.
@@ -1837,7 +1938,12 @@ export function applyFeedBudget(
     sequenceNumber: row.sequenceNumber,
     noteRef: row.noteRef,
   }));
-  return { notes: admitted, overflow, truncated: pointerEnd < rows.length };
+  return {
+    notes: admitted,
+    overflow,
+    linked: [],
+    truncated: pointerEnd < rows.length,
+  };
 }
 
 /**

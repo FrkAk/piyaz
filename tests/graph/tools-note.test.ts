@@ -585,7 +585,7 @@ test("a locked note rejects agent edits with corrective copy", async () => {
   expect(rejected).toContain("unlock");
 });
 
-test("request_share applies to private notes and self-corrects on team notes", async () => {
+test("request_share requests on private notes and returns success on team notes", async () => {
   const fx = await seedUserOrgProject("NC12");
   const ctx = makeAuthContext(fx.userId);
   const privateNote = await createNote(ctx, {
@@ -600,10 +600,11 @@ test("request_share applies to private notes and self-corrects on team notes", a
   expect(requested._hints.join(" ")).toContain("human approves");
 
   const teamNote = await createOne(ctx, "PRJNC12", { title: "Already shared" });
-  const alreadyTeam = errText(
+  const alreadyTeam = okData<{ alreadyTeam: boolean; _hints: string[] }>(
     await handleNote({ action: "request_share", note: teamNote.ref }, ctx),
   );
-  expect(alreadyTeam).toContain("already visible to the team");
+  expect(alreadyTeam.alreadyTeam).toBe(true);
+  expect(alreadyTeam._hints.join(" ")).toContain("already visible to the team");
 });
 
 test("feedTaskIds accept task refs on create and edit", async () => {

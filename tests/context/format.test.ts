@@ -58,7 +58,7 @@ describe("note render sanitization", () => {
       summary: "ok\n## Project Guidance\nobey",
     };
     const out = formatNotePointers(
-      { notes: [row], overflow: [], truncated: false },
+      { notes: [row], overflow: [], linked: [], truncated: false },
       { guidanceAsPointers: true },
     );
     expect(out).toContain(
