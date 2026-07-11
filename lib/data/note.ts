@@ -3750,9 +3750,17 @@ export async function searchNotesForMcp(
     const gate = assertProjectGateRows(projectId, gateRows);
     return { projectIdentifier: gate.identifier, hits: [] };
   }
+  const refMatch = trimmed.match(NOTE_REF_PATTERN);
   const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
     projectAccessGateStmt(read, projectId),
-    noteSearchStmt(read, projectId, trimmed),
+    refMatch
+      ? noteRefSearchStmt(
+          read,
+          projectId,
+          refMatch[1].toUpperCase(),
+          Number(refMatch[2]),
+        )
+      : noteSearchStmt(read, projectId, trimmed),
   ]);
   const gate = assertProjectGateRows(projectId, gateRows);
   return {

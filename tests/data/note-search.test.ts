@@ -6,6 +6,7 @@ import {
   deleteNote,
   getNoteTreeList,
   searchNotes,
+  searchNotesForMcp,
   NoteValidationError,
 } from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
@@ -249,6 +250,67 @@ test("searchNotes leaves non-ref queries on the FTS path", async () => {
 
   expect((await searchNotes(ctx, f.projectId, "rotation")).length).toBe(1);
   expect((await searchNotes(ctx, f.projectId, "refresh")).length).toBe(1);
+});
+
+test("searchNotesForMcp resolves a typed note ref case-insensitively", async () => {
+  const f = await seedUserOrgProject("MREFA");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Rotation policy",
+    body: "unrelated body text",
+  });
+  const ref = `${note.projectIdentifier}-N${note.sequenceNumber}`;
+
+  const upper = await searchNotesForMcp(ctx, f.projectId, ref);
+  expect(upper.hits.map((h) => h.id)).toEqual([note.id]);
+  expect(upper.projectIdentifier).toBe(note.projectIdentifier);
+
+  const lower = await searchNotesForMcp(ctx, f.projectId, ref.toLowerCase());
+  expect(lower.hits.map((h) => h.id)).toEqual([note.id]);
+});
+
+test("searchNotesForMcp returns empty for a nonexistent or foreign-project ref", async () => {
+  const f = await seedUserOrgProject("MREFB");
+  const other = await seedUserOrgProject("MREFC");
+  const ctx = makeAuthContext(f.userId);
+  const otherCtx = makeAuthContext(other.userId);
+
+  const mine = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Here",
+    body: "content",
+  });
+  const foreign = await createNote(otherCtx, {
+    projectId: other.projectId,
+    title: "Elsewhere",
+    body: "content",
+  });
+
+  const bogus = `${mine.projectIdentifier}-N9999`;
+  expect((await searchNotesForMcp(ctx, f.projectId, bogus)).hits).toEqual([]);
+
+  const foreignRef = `${foreign.projectIdentifier}-N${foreign.sequenceNumber}`;
+  expect((await searchNotesForMcp(ctx, f.projectId, foreignRef)).hits).toEqual(
+    [],
+  );
+});
+
+test("searchNotesForMcp leaves non-ref queries on the FTS path", async () => {
+  const f = await seedUserOrgProject("MREFD");
+  const ctx = makeAuthContext(f.userId);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Session rotation",
+    body: "refresh tokens rotate",
+  });
+
+  expect(
+    (await searchNotesForMcp(ctx, f.projectId, "rotation")).hits.length,
+  ).toBe(1);
+  expect(
+    (await searchNotesForMcp(ctx, f.projectId, "refresh")).hits.length,
+  ).toBe(1);
 });
 
 test("tree list and search hits stay slim: no body, no search_tsv", async () => {
