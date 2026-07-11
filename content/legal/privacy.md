@@ -104,9 +104,9 @@ We do not sell your personal data and we do not share it for advertising. We dis
 personal data only:
 
 - **to the sub-processors above**, who process it on our behalf under contract;
-- **at your direction**: when you or the agents and tools you authorize access or retrieve data through the Service's interfaces (see "Agents and connected tools" below);
-- **to comply with the law** or respond to valid legal requests, and to protect the rights, safety, and security of our users, the public, or the Service;
-- **in a business transfer**: if the Service or its assets move to the operating entity once it is formed, or as part of a merger, acquisition, or reorganization, your data may transfer with it. We will notify you, and the receiving party will remain bound by this policy or one at least as protective.
+- **at your direction**: when you or the agents and tools you authorize access or retrieve data through the service's interfaces (see "Agents and connected tools" below);
+- **to comply with the law** or respond to valid legal requests, and to protect the rights, safety, and security of our users, the public, or the service;
+- **in a business transfer**: if the service or its assets move to the operating entity once it is formed, or as part of a merger, acquisition, or reorganization, your data may transfer with it. We will notify you, and the receiving party will remain bound by this policy or one at least as protective.
 
 ## Agents and connected tools
 
@@ -120,7 +120,7 @@ MCP/OAuth. When you authorize such a tool:
 
 We process the requests your tools send to our API and record metadata about connected
 clients (see "Integration data" above), but we do not receive or store the
-conversations, prompts, or model outputs your tools handle outside the Service.
+conversations, prompts, or model outputs your tools handle outside the service.
 
 ## How we protect your data
 
@@ -154,7 +154,7 @@ Under the GDPR you have the right to:
 - **Rectification**: have inaccurate or incomplete data corrected.
 - **Erasure**: ask us to delete your personal data ("right to be forgotten").
 - **Restriction**: ask us to limit how we process your data.
-- **Data portability**: receive the personal data you provided to us in a structured, machine-readable format. Our self-serve export covers your account data (profile, team memberships, and your acceptance records); shared workspace content remains accessible through the Service itself.
+- **Data portability**: receive the personal data you provided to us in a structured, machine-readable format. Our self-serve export covers your account data (profile, team memberships, and your acceptance records); shared workspace content remains accessible through the service itself.
 - **Object**: object to processing based on our legitimate interests.
 - **Withdraw consent**: where we rely on consent, withdraw it at any time (this does not affect prior processing).
 
