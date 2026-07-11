@@ -791,7 +791,8 @@ async function handleLink(
 }
 
 /**
- * Handle the `search` action: RLS-scoped ranked full text in one project.
+ * Handle the `search` action: a full noteRef ('PYZ-N12') short-circuits to
+ * exact note resolution; otherwise RLS-scoped ranked full text in one project.
  *
  * @param p - Note params.
  * @param ctx - Resolved auth context.
