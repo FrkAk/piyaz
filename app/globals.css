@@ -581,15 +581,21 @@ html.light .prose-spec pre {
 }
 
 /* Tables (GFM) */
+/* Horizontal scroll comes from the `.prose-scroll` wrapper the markdown
+   renderer emits: `display: block` here would strip the table's implicit
+   ARIA role. */
 .prose-spec table {
-  display: block;
   width: 100%;
-  overflow-x: auto;
   border-collapse: collapse;
   margin: 0.5em 0;
   font-size: 0.95em;
   border: 1px solid var(--color-border);
   border-radius: 6px;
+  overflow: hidden;
+}
+.prose-spec .prose-scroll {
+  overflow-x: auto;
+  max-width: 100%;
 }
 .prose-spec th,
 .prose-spec td {
@@ -667,8 +673,6 @@ html.light .prose-spec pre {
   margin: 1.6em 0;
 }
 .legal-doc .prose-spec table {
-  display: block;
-  overflow-x: auto;
   margin: 0.8em 0 1.2em;
 }
 

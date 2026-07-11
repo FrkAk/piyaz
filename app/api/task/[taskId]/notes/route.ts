@@ -18,6 +18,9 @@ import { NOTE_FEED_RULES, buildBundleNoteView } from "@/lib/context/format";
  * from the rows a max-`updated_at` probe would see). Hashing what is
  * actually returned is the only validator that observes every input.
  *
+ * The caller pairs this with the task's `updated_at` and the row counts,
+ * so a 32-bit collision alone cannot serve a stale 304.
+ *
  * @param payload - The response body about to be sent.
  * @returns Fingerprint within the `[A-Za-z0-9._-]` ETag token alphabet.
  */
@@ -71,7 +74,14 @@ async function handle(req: Request, taskId: string): Promise<Response> {
       backlinks: context.backlinks,
       feed: buildBundleNoteView(context.feed, bundle),
     };
-    return conditionalRespond(req, payload, payloadFingerprint(payload));
+    const token = [
+      context.taskUpdatedAt.getTime(),
+      payload.backlinks.length,
+      payload.feed.notes.length,
+      payload.feed.guidance.length,
+      payloadFingerprint(payload),
+    ].join("-");
+    return conditionalRespond(req, payload, token);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return error("Task not found", 404);

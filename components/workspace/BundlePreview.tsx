@@ -15,6 +15,7 @@ import type { BundleSectionId } from "@/lib/context/parts";
 import type { BundleNoteView } from "@/lib/context/format";
 import type { BundleNoteLink, BundleNoteOrigin } from "@/lib/data/note";
 import { IconDoc } from "@/components/shared/icons";
+import { skeletonVars } from "@/components/shared/skeleton";
 import { NOTE_TYPE_META, tint } from "@/components/workspace/notes/note-meta";
 import { REVIEW_LENS_PROMPTS } from "@/lib/context/lens";
 import {
@@ -189,10 +190,16 @@ interface BundlePreviewProps {
   executionRecord: string | null;
   /**
    * Note links the bundle of this variant will carry, resolved server-side
-   * with the same feed rules the markdown emitter uses. Undefined while the
-   * detail view's note-context read is in flight.
+   * with the same feed rules the markdown emitter uses. Undefined until the
+   * detail view's note-context read resolves.
    */
   noteFeed?: BundleNoteView;
+  /** Whether the note-context read is still in flight. */
+  noteFeedLoading?: boolean;
+  /** Whether the note-context read failed. */
+  noteFeedError?: boolean;
+  /** Retry the note-context read. */
+  onRetryNoteFeed?: () => void;
   /** Open a note on the Notes surface from a ref chip. */
   onOpenNote?: (noteId: string) => void;
   /** Click a neighbor row to navigate to that task. */
@@ -295,11 +302,31 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
       return (props.executionRecord ?? "").trim().length > 0;
     case "blocked":
       return props.blockedBy.length > 0;
+    // Unresolved is not the same as empty: hiding these while the read is in
+    // flight or after it failed would assert the bundle carries no notes.
     case "guidance":
-      return (props.noteFeed?.guidance.length ?? 0) > 0;
+      return (
+        noteFeedUnresolved(props) || (props.noteFeed?.guidance.length ?? 0) > 0
+      );
     case "notes":
-      return (props.noteFeed?.notes.length ?? 0) > 0;
+      return (
+        noteFeedUnresolved(props) || (props.noteFeed?.notes.length ?? 0) > 0
+      );
   }
+}
+
+/**
+ * Whether the note feed is still unknown: in flight, failed, or absent.
+ *
+ * @param props - Bundle props.
+ * @returns True when the feed's contents cannot yet be asserted.
+ */
+function noteFeedUnresolved(props: BundlePreviewProps): boolean {
+  return (
+    props.noteFeedLoading === true ||
+    props.noteFeedError === true ||
+    props.noteFeed === undefined
+  );
 }
 
 /**
@@ -751,6 +778,8 @@ function sectionSummary(
   }
   if (id === "lens") return "review lens prompts";
   if (id === "guidance" || id === "notes") {
+    if (props.noteFeedError === true) return "could not load notes";
+    if (noteFeedUnresolved(props)) return "loading notes…";
     const links =
       id === "guidance"
         ? (props.noteFeed?.guidance ?? [])
@@ -783,8 +812,12 @@ interface NoteLinkListProps {
   hidden?: number;
   /** Whether matches were dropped beyond the feed's fetch bound. */
   truncated?: boolean;
-  /** Copy for an empty section. */
-  emptyHint: string;
+  /** Whether the note-context read is still in flight. */
+  loading?: boolean;
+  /** Whether the note-context read failed. */
+  error?: boolean;
+  /** Retry the note-context read. */
+  onRetry?: () => void;
   /** Open a note on the Notes surface. */
   onOpenNote?: (noteId: string) => void;
 }
@@ -796,18 +829,49 @@ interface NoteLinkListProps {
  * after overflowing the feed's char budget). The bundle inlines guidance
  * bodies for the agent; the preview never does.
  *
+ * A failed read reports itself rather than rendering as an empty section:
+ * an empty list here would claim the agent receives no notes. The section
+ * itself is hidden once the read resolves empty, mirroring the builders,
+ * which emit no part at all when nothing feeds the task.
+ *
  * @param props - List configuration.
- * @returns The note-link rows, or the empty hint.
+ * @returns The note-link rows, a skeleton, or the error state.
  */
 function NoteLinkList({
   links,
   hidden = 0,
   truncated = false,
-  emptyHint,
+  loading = false,
+  error = false,
+  onRetry,
   onOpenNote,
 }: NoteLinkListProps) {
-  if (links.length === 0) {
-    return <p className="py-1 text-[12px] text-text-faint">{emptyHint}</p>;
+  if (error) {
+    return (
+      <div className="flex items-center gap-2 py-1 text-[12px] text-text-secondary">
+        <span>Couldn’t load this task’s notes.</span>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="cursor-pointer text-text-faint underline hover:text-text-secondary"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="space-y-1" role="status" aria-label="Loading notes">
+        {[0, 1].map((i) => (
+          <span
+            key={i}
+            className="skeleton-bar block h-7 w-full"
+            style={skeletonVars({ "--skeleton-delay": `${i * 70}ms` })}
+          />
+        ))}
+      </div>
+    );
   }
   return (
     <div className="space-y-1">
@@ -965,22 +1029,17 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
   if (id === "lens") {
     return <MarkdownBody text={REVIEW_LENS_PROMPTS} emptyHint="" />;
   }
-  if (id === "guidance") {
+  if (id === "guidance" || id === "notes") {
+    const feed = props.noteFeed;
+    const guidance = id === "guidance";
     return (
       <NoteLinkList
-        links={props.noteFeed?.guidance ?? []}
-        emptyHint="No guidance notes feed this task."
-        onOpenNote={props.onOpenNote}
-      />
-    );
-  }
-  if (id === "notes") {
-    return (
-      <NoteLinkList
-        links={props.noteFeed?.notes ?? []}
-        hidden={props.noteFeed?.hidden ?? 0}
-        truncated={props.noteFeed?.truncated ?? false}
-        emptyHint="No notes reach this task."
+        links={(guidance ? feed?.guidance : feed?.notes) ?? []}
+        hidden={guidance ? 0 : (feed?.hidden ?? 0)}
+        truncated={guidance ? false : (feed?.truncated ?? false)}
+        loading={props.noteFeedLoading === true || feed === undefined}
+        error={props.noteFeedError === true}
+        onRetry={props.onRetryNoteFeed}
         onOpenNote={props.onOpenNote}
       />
     );

@@ -279,9 +279,10 @@ export async function runOptimisticNoteWrite(
         }),
       );
       mergeRevisionIntoCache(qc, projectId, noteId, result.data);
-      if (result.data.links !== undefined) {
-        qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(projectId) });
-      }
+      // Any note write can change a task's note context: the payload carries
+      // the note's title, summary and type, and its feed settings decide
+      // which tasks it auto-feeds. Unchanged contexts cost a bodiless 304.
+      qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(projectId) });
       return result;
     }
     if (result.code === "stale_write" && !rollbackOnStale) return result;

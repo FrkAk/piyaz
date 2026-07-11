@@ -48,6 +48,7 @@ import {
   assertValidNoteId,
   assertValidProjectId,
   assertValidTaskId,
+  firstRowOrForbidden,
   ForbiddenError,
   isUuid,
 } from "@/lib/auth/authorization";
@@ -2211,7 +2212,9 @@ export type TaskNoteContext = {
  * overflowed; slim bundles select no body column at all.
  *
  * Two batches: the feed statement binds the task's category and tags, so
- * it cannot ride the batch that reads them.
+ * it cannot ride the batch that reads them. The task row doubles as the
+ * access gate, so no separate gate statement runs: RLS hides rows the
+ * caller cannot reach, making an empty result the 404 signal.
  *
  * @param ctx - Resolved auth context.
  * @param taskId - UUID of the task.
@@ -2225,17 +2228,19 @@ export async function getTaskNoteContext(
   deep: boolean,
 ): Promise<TaskNoteContext> {
   assertValidTaskId(taskId);
-  const [gateRows, taskRows, linkRows, pointerRows] = await withUserContextRead(
+  const [taskRows, linkRows, pointerRows] = await withUserContextRead(
     ctx.userId,
     (read) => [
-      taskAccessGateStmt(read, taskId),
       taskFeedTargetStmt(read, taskId),
       taskNoteBacklinksStmt(read, taskId),
       taskBacklinkPointersStmt(read, taskId),
     ],
   );
-  assertTaskGateRows(taskId, gateRows);
-  const task = (taskRows as TaskFeedTargetRow[])[0];
+  const task = firstRowOrForbidden(
+    "task",
+    taskId,
+    taskRows as TaskFeedTargetRow[],
+  );
 
   const bodies: NoteFeedBodyBound | undefined = deep
     ? {

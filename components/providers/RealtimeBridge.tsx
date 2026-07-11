@@ -253,8 +253,11 @@ async function handleNoteEvent(
   const listCurrent = row !== undefined && updatedAtMs(row.updatedAt) >= evMs;
   if (!listCurrent) {
     qc.invalidateQueries({ queryKey: noteKeys.list(ev.projectId) });
-    qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(ev.projectId) });
   }
+  // Not gated on `listCurrent`: that guard tracks the tree row, which an
+  // optimistic write already advanced, but a note's feed settings decide
+  // which tasks it auto-feeds and leave no trace on the tree row.
+  qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(ev.projectId) });
   if (!hasUnsavedNoteEdits(ev.noteId)) {
     const detail = qc.getQueryData<NoteFullResult>(
       noteKeys.detail(ev.projectId, ev.noteId),
