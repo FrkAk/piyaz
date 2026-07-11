@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { error } from "@/lib/api/response";
+import { describeReconsentDocuments } from "@/lib/legal/versions";
 
 /** Machine-readable code for the consent-gate 403 body. */
 export const CONSENT_REQUIRED_CODE = "terms_acceptance_required";
@@ -60,8 +61,7 @@ export function consentRequiredResponse(
 ): NextResponse {
   return NextResponse.json(
     {
-      error:
-        "The Piyaz Terms of Service and Privacy Policy were updated and must be re-accepted.",
+      error: `The updated Piyaz ${describeReconsentDocuments(outstanding)} must be re-accepted.`,
       code: CONSENT_REQUIRED_CODE,
       outstanding,
       acceptUrl: "/legal/accept",

@@ -15,3 +15,27 @@ export const LEGAL_VERSIONS: Record<LegalDocumentType, string> = {
   privacy: "beta-2026-07-12",
   dpa: "beta-2026-07-12",
 };
+
+/** Human-facing name per legal document, for re-consent messaging. */
+export const LEGAL_DOCUMENT_LABELS: Record<LegalDocumentType, string> = {
+  terms: "Terms of Service",
+  privacy: "Privacy Policy",
+  dpa: "Data Processing Agreement",
+};
+
+/**
+ * Join outstanding document types into a human phrase naming exactly those
+ * documents, so a single-document block never claims both were updated.
+ *
+ * @param outstanding - Document types lacking current-version acceptance.
+ * @returns e.g. `"Terms of Service"` or `"Terms of Service and Privacy Policy"`.
+ */
+export function describeReconsentDocuments(
+  outstanding: readonly string[],
+): string {
+  const labels = outstanding.map(
+    (type) => LEGAL_DOCUMENT_LABELS[type as LegalDocumentType] ?? type,
+  );
+  if (labels.length <= 1) return labels[0] ?? "";
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+}

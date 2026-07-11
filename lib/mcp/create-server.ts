@@ -26,9 +26,28 @@ import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
 import { isVerboseErrors } from "@/lib/api/error";
 import type { AuthContext } from "@/lib/auth/context";
 import { listOutstandingReconsent } from "@/lib/data/legal";
+import { describeReconsentDocuments } from "@/lib/legal/versions";
 
-const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
-const acceptOrigin = new URL(baseUrl).origin;
+/** Origin the hosted MCP runs on; the fallback when `BETTER_AUTH_URL` is unset. */
+const HOSTED_ORIGIN = "https://app.piyaz.ai";
+
+/**
+ * Origin for the human-facing `/legal/accept` link. Resolved at call time,
+ * not module load, so a Workers head that populates `BETTER_AUTH_URL` per
+ * request is not pinned to a stale value; defaults to the hosted origin (the
+ * primary MCP consumer) when unset or unparsable.
+ *
+ * @returns The accept-page origin.
+ */
+function acceptOrigin(): string {
+  const configured = process.env.BETTER_AUTH_URL?.trim();
+  if (!configured) return HOSTED_ORIGIN;
+  try {
+    return new URL(configured).origin;
+  } catch {
+    return HOSTED_ORIGIN;
+  }
+}
 
 /**
  * Blocking-precondition message for a caller with outstanding re-consent.
@@ -39,7 +58,8 @@ const acceptOrigin = new URL(baseUrl).origin;
  * @returns The tool error text.
  */
 function reconsentMessage(outstanding: readonly string[]): string {
-  return `Blocked (code: terms_acceptance_required): the Piyaz Terms of Service and Privacy Policy were updated and the account holder must re-accept them before tools can run. Outstanding: ${outstanding.join(", ")}. No reads or writes happened. Tell the user to open ${acceptOrigin}/legal/accept in a browser, sign in, and accept the updated documents, then retry this exact call.`;
+  const documents = outstanding.length > 1 ? "documents" : "document";
+  return `Blocked (code: terms_acceptance_required): the updated Piyaz ${describeReconsentDocuments(outstanding)} must be re-accepted by the account holder before tools can run. Outstanding: ${outstanding.join(", ")}. No reads or writes happened. Tell the user to open ${acceptOrigin()}/legal/accept in a browser, sign in, and accept the updated ${documents}, then retry this exact call.`;
 }
 
 /**

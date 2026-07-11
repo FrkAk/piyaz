@@ -145,14 +145,14 @@ export async function acceptUpdatedLegalAction(): Promise<TeamActionResult> {
 }
 
 /**
- * Read the caller's own current-version DPA acceptance state for one team. No
- * owner gate: it reads only the caller's rows under RLS. The client calls it
- * in the owner branch to decide between the accept control and the accepted
- * state.
+ * Read the caller's own latest DPA acceptance state for one team, regardless
+ * of version. No owner gate: it reads only the caller's rows under RLS. The
+ * client compares `version` against `LEGAL_VERSIONS.dpa` to pick between the
+ * accepted state, the update notice, and the first-accept control.
  *
  * @param input - `{ organizationId }` naming the team whose state is read.
- * @returns Discriminated result; `data` is the acceptance state, or `null` when
- *   the caller has not accepted the current version for that team.
+ * @returns Discriminated result; `data` is the latest acceptance state, or
+ *   `null` when the caller never accepted any DPA version for that team.
  */
 export async function getDpaAcceptanceAction(input: {
   organizationId: string;

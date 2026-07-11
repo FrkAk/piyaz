@@ -54,7 +54,45 @@ const ACTION_ALLOWLIST = new Set([
 ]);
 
 const GATE_PATTERN =
-  /consentGateResponse|consentRequiredResponse|requireLegalConsent|assertLegalConsent|authorizeWrite/;
+  /consentGateResponse|consentRequiredResponse|requireLegalConsent|assertLegalConsent|authorizeWrite|authorizeConsentedWrite/;
+
+/** A function that establishes caller identity; the trigger for a gate. */
+const IDENTITY_PATTERN = /requireSession\(|getAuthContext\(|getSession\(/;
+
+/**
+ * Individual `module::function` entry points that resolve identity yet
+ * legitimately skip the gate: account exits reachable from the locked
+ * interstitial. Whole-module exemptions stay in `ACTION_ALLOWLIST`.
+ */
+const FUNCTION_ALLOWLIST = new Set([
+  "lib/actions/profile.ts::deleteAccountAction",
+  "lib/actions/profile.ts::exportAccountDataAction",
+]);
+
+/**
+ * Yield each `export async function` in a source with its body sliced to the
+ * next export, so a per-function assertion can inspect one entry point at a
+ * time.
+ *
+ * @param source - Module source text.
+ * @returns Function name/body pairs in file order.
+ */
+function* exportedAsyncFunctions(
+  source: string,
+): Generator<{ name: string; body: string }> {
+  const marker = "export async function ";
+  let idx = source.indexOf(marker);
+  while (idx !== -1) {
+    const nameStart = idx + marker.length;
+    const name = source.slice(nameStart, source.indexOf("(", nameStart)).trim();
+    const next = source.indexOf(marker, nameStart);
+    yield {
+      name,
+      body: next === -1 ? source.slice(idx) : source.slice(idx, next),
+    };
+    idx = next;
+  }
+}
 
 describe("consent gate coverage", () => {
   test("every API route is gated or allowlisted", async () => {
@@ -87,6 +125,29 @@ describe("consent gate coverage", () => {
       const source = await readFile(join(ROOT, file), "utf8");
       if (!source.includes('"use server"')) continue;
       if (!GATE_PATTERN.test(source)) ungated.push(file);
+    }
+    expect(ungated).toEqual([]);
+  });
+
+  test("every identity-resolving server action gates or is allowlisted", async () => {
+    const files = [
+      ...(await collectFiles(join(ROOT, "app"), (name) =>
+        /\.tsx?$/.test(name),
+      )),
+      ...(await collectFiles(join(ROOT, "lib"), (name) =>
+        /\.tsx?$/.test(name),
+      )),
+    ];
+    const ungated: string[] = [];
+    for (const file of files) {
+      if (ACTION_ALLOWLIST.has(file)) continue;
+      const source = await readFile(join(ROOT, file), "utf8");
+      if (!source.includes('"use server"')) continue;
+      for (const { name, body } of exportedAsyncFunctions(source)) {
+        if (!IDENTITY_PATTERN.test(body)) continue;
+        if (FUNCTION_ALLOWLIST.has(`${file}::${name}`)) continue;
+        if (!GATE_PATTERN.test(body)) ungated.push(`${file}::${name}`);
+      }
     }
     expect(ungated).toEqual([]);
   });

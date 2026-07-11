@@ -25,11 +25,9 @@ import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
 import { signupsDisabled } from "@/lib/config/env";
-import {
-  listOutstandingReconsent,
-  recordAcceptance,
-  removeAcceptances,
-} from "@/lib/data/legal";
+import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
+import { getOutstandingConsent } from "@/lib/auth/consent";
+import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
@@ -400,7 +398,9 @@ export const auth = betterAuth({
     // 1. Re-consent: every /organization/* endpoint is real tenant
     //    read/write surface (list, members, invites, update, delete); a
     //    caller with outstanding personal documents is blocked like on
-    //    /api routes.
+    //    /api routes. Reads through the request-cached `getOutstandingConsent`
+    //    so the web-action path (createTeamAction already gated its own read)
+    //    shares one query; a raw POST outside a React scope pays one read.
     // 2. DPA at create: `dpaAccepted` is a transient consent signal read
     //    off the request body; the durable evidence is the
     //    `legal_acceptances` row written in `after`.
@@ -408,11 +408,10 @@ export const auth = betterAuth({
       if (!ctx.path.startsWith("/organization/")) return;
       const session = await getSessionFromCtx(ctx);
       if (session) {
-        const outstanding = await listOutstandingReconsent(session.user.id);
+        const outstanding = await getOutstandingConsent(session.user.id);
         if (outstanding.length > 0) {
           throw new APIError("FORBIDDEN", {
-            message:
-              "The Piyaz Terms of Service and Privacy Policy were updated and must be re-accepted before continuing. Open /legal/accept to review and accept them.",
+            message: `The updated Piyaz ${describeReconsentDocuments(outstanding)} must be re-accepted before continuing. Open /legal/accept to review and accept ${outstanding.length > 1 ? "them" : "it"}.`,
             code: "TERMS_ACCEPTANCE_REQUIRED",
           });
         }
