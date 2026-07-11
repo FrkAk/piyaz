@@ -8,6 +8,7 @@ import * as authSchema from "@/lib/db/auth-schema";
 import { authDb } from "@/lib/db/connection";
 import {
   clearOrgMembershipArtifacts,
+  deleteSoleMemberOrgAsAdmin,
   enumerateOwnedOrgsForDeletion,
   planOwnedOrgDeletion,
   scrubLegalAcceptances,
@@ -252,7 +253,10 @@ export const auth = betterAuth({
       // Unlike beforeDeleteOrganization (which allSettles and logs), the
       // sole-owner guard and the scrub THROW to abort the whole delete so
       // a failure never leaves an ownerless team or a compliance gap.
-      beforeDelete: async (user, request) => {
+      // These steps are not transactional with the user-row delete: a
+      // scrub failure aborts after memberless teams are already gone,
+      // which is acceptable because only the deleting user could see them.
+      beforeDelete: async (user) => {
         const plan = planOwnedOrgDeletion(
           await enumerateOwnedOrgsForDeletion(user.id),
         );
@@ -263,26 +267,19 @@ export const auth = betterAuth({
           });
         }
         if (plan.orgIdsToDelete.length > 0) {
-          if (!request) {
-            console.error("deleteUser.beforeDelete cleanup failure", {
-              userId: user.id,
-              step: "deleteOwnedOrg",
-              err: "no request to authorize owned-team cascade",
-            });
-            throw new APIError("INTERNAL_SERVER_ERROR", {
-              message: "Could not delete your account. Please try again.",
-            });
-          }
-          // Reuse the audited org-delete path so its own
-          // beforeDeleteOrganization hook clears each member's OAuth
-          // artifacts and revokes realtime access, and the FK cascade
-          // wipes projects, tasks, edges, invitations, and the member row.
+          // The reentrant auth.api.deleteOrganization path needs the request
+          // context that server-action dispatch (auth.api.deleteUser with
+          // headers only) never carries, so the cascade runs the audited
+          // pieces directly: the same per-member cleanup the org-delete hook
+          // performs (the deleting owner is the only member by
+          // planOwnedOrgDeletion's definition), then the org row, whose FK
+          // cascade wipes projects, tasks, edges, invitations, and the
+          // member row.
           for (const organizationId of plan.orgIdsToDelete) {
             try {
-              await auth.api.deleteOrganization({
-                body: { organizationId },
-                headers: request.headers,
-              });
+              await clearOrgMembershipArtifacts(user.id, organizationId);
+              await revokeOrgAccess(user.id, organizationId);
+              await deleteSoleMemberOrgAsAdmin(organizationId, user.id);
             } catch (err) {
               console.error("deleteUser.beforeDelete cleanup failure", {
                 userId: user.id,

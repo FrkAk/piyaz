@@ -280,6 +280,38 @@ export async function scrubLegalAcceptances(userId: string): Promise<void> {
   );
 }
 
+/**
+ * Delete an organization the user is the sole member of, letting the FK
+ * cascade wipe member rows, invitations, and every project with its tasks
+ * and edges.
+ *
+ * Exists for the account-deletion hook's memberless-owned-team cascade: the
+ * reentrant `auth.api.deleteOrganization` path requires a request context
+ * that server-action dispatch (`auth.api.deleteUser` with headers only)
+ * never carries. Routes through the `delete_sole_member_org_as_admin`
+ * SECURITY DEFINER function, which refuses unless the org's only member row
+ * belongs to `userId`, so no other member can ever lose access through this
+ * path. Ownership is verified by the caller via `planOwnedOrgDeletion`.
+ *
+ * @param organizationId - Organization to delete.
+ * @param userId - The deleting user; must be the org's sole member.
+ * @throws Error when the database refuses the delete (invariant not met).
+ */
+export async function deleteSoleMemberOrgAsAdmin(
+  organizationId: string,
+  userId: string,
+): Promise<void> {
+  const rows = await executeRaw<{ deleted: boolean }>(
+    serviceRoleDb,
+    sql`SELECT public.delete_sole_member_org_as_admin(${organizationId}::uuid, ${userId}::uuid) AS deleted`,
+  );
+  if (rows[0]?.deleted !== true) {
+    throw new Error(
+      `deleteSoleMemberOrgAsAdmin: refused for org ${organizationId}; the user is not its sole member`,
+    );
+  }
+}
+
 /** A single team membership in the account export. */
 export type AccountExportMembership = {
   /** Organization UUID. */

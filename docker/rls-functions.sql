@@ -1118,6 +1118,43 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.find_user_org_memberships_as_admin(uuid) FROM public;
 GRANT EXECUTE ON FUNCTION public.find_user_org_memberships_as_admin(uuid) TO service_role;
 
+-- Deletes an organization only when the target user is its sole member.
+-- Exists for the account-delete cascade, which runs with no app.user_id GUC
+-- and no request context (auth.api.deleteUser dispatched from a server
+-- action carries headers only), so the reentrant deleteOrganization API
+-- path is unavailable. Ownership is verified by the TS caller via
+-- parseMemberRoles over find_user_org_memberships_as_admin (role
+-- interpretation stays in one place; this function never parses roles).
+-- The structural invariant enforced here is that no other member can lose
+-- access: the delete refuses unless the org's only member row belongs to
+-- p_user_id. The FK cascade wipes member, invitation, and project rows
+-- (and their tasks, edges, and notes).
+CREATE OR REPLACE FUNCTION public.delete_sole_member_org_as_admin(p_org_id uuid, p_user_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = piyaz_auth, pg_catalog, pg_temp
+AS $$
+DECLARE
+  other_members integer;
+  caller_members integer;
+BEGIN
+  SELECT
+    count(*) FILTER (WHERE m."userId" <> p_user_id),
+    count(*) FILTER (WHERE m."userId" = p_user_id)
+  INTO other_members, caller_members
+  FROM piyaz_auth."member" m
+  WHERE m."organizationId" = p_org_id;
+  IF other_members > 0 OR caller_members = 0 THEN
+    RETURN false;
+  END IF;
+  DELETE FROM piyaz_auth.organization WHERE id = p_org_id;
+  RETURN true;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.delete_sole_member_org_as_admin(uuid, uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.delete_sole_member_org_as_admin(uuid, uuid) TO service_role;
+
 -- ---------------------------------------------------------------------------
 -- Activity propagation — bump projects.updated_at when tasks/edges change.
 --
