@@ -88,9 +88,13 @@ async function signUpAndSignIn(
   password: string,
   ip: string,
 ): Promise<string> {
-  await auth.api.signUpEmail({
-    body: { email, name: "Change Password", password },
-  });
+  const signUpBody = {
+    email,
+    name: "Change Password",
+    password,
+    termsAccepted: true,
+  };
+  await auth.api.signUpEmail({ body: signUpBody });
   const response = await authPost("/sign-in/email", { email, password }, ip);
   expect(response.status).toBe(200);
   const cookie = sessionCookiePair(response);

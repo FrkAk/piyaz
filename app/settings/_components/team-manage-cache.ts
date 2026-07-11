@@ -13,6 +13,7 @@
 import type { MemberView } from "@/lib/actions/team-members-map";
 import type { InvitationView } from "@/lib/actions/team-invitations-map";
 import type { InviteCodeMetadata } from "@/lib/actions/team-invite-code";
+import type { DpaAcceptanceState } from "@/lib/actions/legal";
 
 /** Fresh-window beyond which the cache is shown but a background refetch fires. */
 const FRESH_WINDOW_MS = 30_000;
@@ -29,6 +30,8 @@ export interface TeamManagePayload {
   teamName: string;
   /** Latest known team slug. */
   teamSlug: string;
+  /** Owner's DPA acceptance state — null for non-owners or when not yet accepted. */
+  dpaAcceptance: DpaAcceptanceState | null;
 }
 
 interface CacheEntry {

@@ -33,9 +33,13 @@ afterEach(async () => {
 
 test("attack: 10 sign-in attempts from one IP hit the 5/60s rate limit", async () => {
   const email = "rate-limit-victim@test.local";
-  await auth.api.signUpEmail({
-    body: { email, name: "Rate Limit Victim", password: "real-password-12345" },
-  });
+  const signUpBody = {
+    email,
+    name: "Rate Limit Victim",
+    password: "real-password-12345",
+    termsAccepted: true,
+  };
+  await auth.api.signUpEmail({ body: signUpBody });
 
   // Send 10 attempts with a WRONG password from the same IP. Wrong
   // passwords keep the test independent of session-row state and

@@ -376,6 +376,19 @@ CREATE POLICY "note_folders_insert_author_only" ON "note_folders"
   AS RESTRICTIVE FOR INSERT TO app_user
   WITH CHECK (created_by = (SELECT public.current_app_user_id()));
 
+-- Each row is one user's acceptance of a legal document, scoped to its owner by
+-- strict equality on user_id. The (SELECT public.current_app_user_id()) wrap
+-- runs the caller lookup once per statement as an InitPlan. No RESTRICTIVE
+-- insert floor is needed: the predicate has no OR, so WITH CHECK already pins
+-- user_id to the caller. A null-user_id row (post-anonymization, PYZ-294) is
+-- invisible to every app_user under the USING predicate — the intended
+-- retained-but-unreadable evidence state.
+DROP POLICY IF EXISTS "legal_acceptances_self_access" ON "legal_acceptances";
+CREATE POLICY "legal_acceptances_self_access" ON "legal_acceptances"
+  AS PERMISSIVE FOR ALL TO app_user
+  USING (user_id = (SELECT public.current_app_user_id()))
+  WITH CHECK (user_id = (SELECT public.current_app_user_id()));
+
 
 -- ENABLE explicitly: testcontainer/self-host get this from `drizzle-kit
 -- push` reading `.enableRLS()`, but `drizzle-kit migrate` does not emit
@@ -394,6 +407,7 @@ ALTER TABLE "note_task_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_folders" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "legal_acceptances" ENABLE ROW LEVEL SECURITY;
 
 -- FORCE subjects the table owner to RLS. BYPASSRLS roles and real
 -- superusers still sidestep.
@@ -411,3 +425,4 @@ ALTER TABLE "note_task_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_folders" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "legal_acceptances" FORCE ROW LEVEL SECURITY;

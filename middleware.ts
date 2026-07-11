@@ -62,6 +62,11 @@ export async function middleware(request: NextRequest) {
     pathname === "/sign-in" ||
     pathname === "/sign-up" ||
     pathname === "/consent" ||
+    pathname === "/privacy" ||
+    pathname === "/terms" ||
+    pathname === "/impressum" ||
+    pathname === "/subprocessors" ||
+    pathname === "/dpa" ||
     pathname.startsWith("/api/auth/") ||
     pathname === "/api/mcp" ||
     pathname.startsWith("/.well-known/");

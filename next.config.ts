@@ -83,7 +83,7 @@ async function buildNextConfig(): Promise<NextConfig> {
       },
     },
     webpack(
-      config: { plugins?: unknown[] },
+      config: { plugins?: unknown[]; module: { rules: unknown[] } },
       ctx: {
         webpack: {
           NormalModuleReplacementPlugin: new (
@@ -101,6 +101,7 @@ async function buildNextConfig(): Promise<NextConfig> {
         ),
       );
       config.plugins = plugins;
+      config.module.rules.push({ test: /\.md$/, type: "asset/source" });
       return config;
     },
     async headers() {
