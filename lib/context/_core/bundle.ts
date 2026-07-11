@@ -202,10 +202,10 @@ function bundleFeedStmt(db: ReadConn, task: TaskFull, depth: TaskFetchDepth) {
 }
 
 /**
- * Decode a bundle feed read and fold in the task's explicit note-task
- * backlinks (spec_of/reference) as `linked` pointers. The backlink
- * statement rides the same read batch as {@link bundleFeedStmt}, so
- * surfacing explicit links adds no round trip.
+ * Decode a bundle feed read and fold in the task's note-task backlinks
+ * of any kind (spec_of/reference/mention) as `linked` pointers. The
+ * backlink statement rides the same read batch as {@link bundleFeedStmt},
+ * so surfacing links adds no round trip.
  *
  * @param feedRaw - Raw driver result from the feed statement.
  * @param backlinkRows - Rows from {@link taskBacklinkPointersStmt}.

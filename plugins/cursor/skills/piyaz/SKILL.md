@@ -122,11 +122,11 @@ On "duplicate edge": the edge already exists — treat as success.
 
 ### `piyaz_activity`: what changed
 
-Keyset-paginated event feed per project, task, or note, newest first. `since='<ISO instant>'` answers "what changed while I was away" — the resume primitive (resilience §7). Events carry actor, type, summary, and target ref; follow up with `piyaz_get`. `note_*` events ride the same feed, so resume covers notes too. `note='PYZ-N12'` (or UUID; slug form also needs `project`) scopes to one note's history (edits, moves, links, restores) and requires the note to be agent-exposed: team visibility, feed enabled. A non-exposed note reads as not found, and project/task feeds silently exclude non-exposed notes' events.
+Keyset-paginated event feed per project, task, or note, newest first. `since='<ISO instant>'` answers "what changed while I was away" — the resume primitive (resilience §7). Events carry actor, type, summary, and target ref; follow up with `piyaz_get`. `note_*` events ride the same feed, so resume covers notes too. `note='WQN-N8'` (or UUID; slug form also needs `project`) scopes to one note's history (edits, moves, links, restores) and requires the note to be agent-exposed: team visibility, feed enabled. A non-exposed note reads as not found, and project/task feeds silently exclude non-exposed notes' events.
 
 ### `piyaz_note`: the project knowledge base
 
-Notes live in the same folder tree humans see in the web UI and are ref-first (`PYZ-N12`; a slug works with `project`). Three types with distinct delivery: `guidance` (short constraints block auto-injected into matching task bundles), `reference` (specs and docs, read on demand by heading), `knowledge` (agent-maintained wiki and memory). When a note feeds a task (via `feedMode`), the injection shape depends on type: `guidance` injects its full body, `reference` and `knowledge` inject as a title+summary pointer the agent reads on demand. **Write back what you learn**: when you discover a gotcha, settle a convention, or finish work the next agent builds on, record it as a note instead of letting it die with the session.
+Notes live in the same folder tree humans see in the web UI and are ref-first (e.g. `TRV-N3`; a slug works with `project`). Three types with distinct delivery: `guidance` (short constraints block auto-injected into matching task bundles), `reference` (specs and docs, read on demand by heading), `knowledge` (agent-maintained wiki and memory). When a note feeds a task (via `feedMode`), the injection shape depends on type: `guidance` injects its full body, `reference` and `knowledge` inject as a title+summary pointer the agent reads on demand. **Write back what you learn**: when you discover a gotcha, settle a convention, or finish work the next agent builds on, record it as a note instead of letting it die with the session.
 
 | Action | Cost | Use when |
 |---|---|---|
@@ -137,7 +137,7 @@ Notes live in the same folder tree humans see in the web UI and are ref-first (`
 | `move` | mutation | `note`+`folder` moves one note; `folder`+`destParent` (+`newLeaf`) re-parents or renames a whole folder subtree. |
 | `delete` / `restore` | mutation | delete previews by default (re-call `preview=false`); restore recovers a trashed note by UUID (a trashed ref no longer resolves). An overwritten body recovers via `revision=N` then `set body`. |
 | `request_share` | mutation | ask a human to make a private note team-visible. The only way an agent influences visibility. |
-| `link` / `unlink` | mutation | deliberate note-task relations, kind `reference` or `spec_of` (this note IS the task's spec). A linked note surfaces under Relevant Notes when an agent reads the task (`piyaz_get` lens=`agent`/`planning`), independent of `feedMode`. `mention` rows derive from `[[PYZ-42]]` / `[[Note Title]]` refs in the body — write the ref into the body instead. |
+| `link` / `unlink` | mutation | deliberate note-task relations, kind `reference` or `spec_of` (this note IS the task's spec). Any team-visible backlink surfaces under Relevant Notes as a title+summary pointer when an agent reads the task (`piyaz_get` lens=`agent`/`planning`), independent of `feedMode`. `mention` rows derive from body refs (e.g. `[[JYG-14]]` or `[[Note Title]]`), not this action; write the ref into the body instead. |
 | `search` | heavy | ranked full text in one project: team notes plus your own private notes, regardless of feed mode. Chain a hit into `read heading='...'`. |
 
 ### Heuristic

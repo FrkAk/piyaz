@@ -258,7 +258,8 @@ export function formatGuidanceNotes(rows: NoteFeedRow[]): string {
 /**
  * Render one note-pointer list line: `` - `PYZ-N3` [type] title ``, with
  * the ` — summary` suffix only when a summary shipped (the feed blanks
- * summaries past the admission rank, and overflow pointers carry none).
+ * summaries past the admission rank, and overflow pointers carry none;
+ * backlinked pointers carry theirs).
  *
  * @param note - Pointer fields shared by rows and overflow stubs.
  * @param summary - Summary text, possibly empty.
@@ -277,8 +278,10 @@ function notePointerLine(
 /**
  * Render note pointers as ref-first list lines with a read hint. Admitted
  * guidance rows are excluded when the caller renders them full-body
- * (deep bundles); overflow pointers and explicitly linked notes always
- * render. A final line flags fetch-bound truncation.
+ * (deep bundles). Order is admitted rows, then backlinked notes (with
+ * their summaries), then budget-overflow pointers, so an explicit link is
+ * not the first line dropped under the cap. A final line flags fetch-bound
+ * truncation.
  *
  * @param feed - Budgeted feed resolution.
  * @param opts - `guidanceAsPointers` includes admitted guidance rows
@@ -295,8 +298,10 @@ export function formatNotePointers(
   );
   const lines = [
     ...pointerRows.map((row) => notePointerLine(row, row.summary)),
+    ...feed.linked.map((pointer) =>
+      notePointerLine(pointer, pointer.summary ?? ""),
+    ),
     ...feed.overflow.map((pointer) => notePointerLine(pointer, "")),
-    ...feed.linked.map((pointer) => notePointerLine(pointer, "")),
   ];
   if (lines.length === 0) return "";
   const capped = capLines(
