@@ -30,7 +30,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import { notes } from "@/lib/db/schema";
+import { notes, projects } from "@/lib/db/schema";
 import { type ReadConn } from "@/lib/db/raw";
 
 /** Maximum hits one search returns. */
@@ -119,5 +119,43 @@ export function noteSearchStmt(
       AND n.search_tsv @@ q.tsq
     ORDER BY rank DESC, n.updated_at DESC
     LIMIT ${NOTE_SEARCH_LIMIT}
+  `);
+}
+
+/**
+ * Resolve a typed note ref to a single live note, bypassing FTS.
+ *
+ * A note ref (`PREFIX-N<seq>`) is composed at read time and never enters
+ * the `search_tsv`, so {@link noteSearchStmt} can never match it. This
+ * sibling resolves the ref by exact project identifier + sequence number,
+ * gated to the searched project so a ref naming any other project matches
+ * nothing here (the caller then falls back to {@link noteSearchStmt}, so
+ * ref-shaped title text stays findable). Returns the identical slim
+ * {@link NoteSearchRawRow} shape (no `body`, no `search_tsv`) with a
+ * constant rank, and stays inside the caller's RLS scope like the FTS path.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project to search in.
+ * @param prefix - Uppercased ref prefix; must equal the project identifier.
+ * @param seq - Parsed note sequence number.
+ * @returns Lazy raw statement yielding at most one {@link NoteSearchRawRow}.
+ */
+export function noteRefSearchStmt(
+  read: ReadConn,
+  projectId: string,
+  prefix: string,
+  seq: number,
+) {
+  return read.execute(sql`
+    SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
+           n.summary, n.visibility, n.feed_mode, n.agent_writable, n.locked,
+           n.updated_at, 1 AS rank
+    FROM ${notes} n
+    JOIN ${projects} p ON p.id = n.project_id
+    WHERE n.project_id = ${projectId}
+      AND p.identifier = ${prefix}
+      AND n.sequence_number = ${seq}
+      AND n.deleted_at IS NULL
+    LIMIT 1
   `);
 }

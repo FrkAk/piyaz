@@ -138,7 +138,7 @@ Notes live in the same folder tree humans see in the web UI and are ref-first (e
 | `delete` / `restore` | mutation | delete previews by default (re-call `preview=false`); restore recovers a trashed note by UUID (a trashed ref no longer resolves). An overwritten body recovers via `revision=N` then `set body`. |
 | `request_share` | mutation | ask a human to make a private note team-visible. The only way an agent influences visibility. |
 | `link` / `unlink` | mutation | deliberate note-task relations, kind `reference` or `spec_of` (this note IS the task's spec). Any team-visible backlink surfaces under Relevant Notes as a title+summary pointer when an agent reads the task (`piyaz_get` lens=`agent`/`planning`), independent of `feedMode`. `mention` rows derive from body refs (e.g. `[[JYG-14]]` or `[[Note Title]]`), not this action; write the ref into the body instead. |
-| `search` | heavy | ranked full text in one project: team notes plus your own private notes, regardless of feed mode. Chain a hit into `read heading='...'`. |
+| `search` | heavy | a full noteRef (e.g. `TRV-N3`, case-insensitive) resolves that note directly, falling back to full text when it resolves nothing; every other query is ranked full text in one project: team notes plus your own private notes, regardless of feed mode. Chain a hit into `read heading='...'`. |
 
 ### Heuristic
 

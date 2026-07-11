@@ -169,7 +169,7 @@ export async function handleGet(
   try {
     if (Boolean(p.task) === Boolean(p.project)) {
       return fail(
-        "Pass exactly one of task ('PYZ-42' or UUID) or project ('PYZ' or UUID).",
+        "Pass exactly one of task ('QFN-42' or UUID) or project ('QFN' or UUID).",
       );
     }
 
