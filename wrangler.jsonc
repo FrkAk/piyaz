@@ -78,6 +78,12 @@
           "simple": { "limit": 20, "period": 60 }
         }
       ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": ["noreply@piyaz.ai", "hello@piyaz.ai"]
+        }
+      ],
       "routes": [{ "pattern": "app.piyaz.ai", "custom_domain": true }],
       "observability": {
         "enabled": true,
@@ -96,7 +102,15 @@
       },
       "vars": {
         "DEPLOY_TARGET": "cloudflare",
-        "BETTER_AUTH_URL": "https://app.piyaz.ai"
+        "BETTER_AUTH_URL": "https://app.piyaz.ai",
+        "EMAIL_FROM": "noreply@piyaz.ai",
+        "EMAIL_FROM_NOREPLY": "noreply@piyaz.ai",
+        "EMAIL_FROM_SUPPORT": "hello@piyaz.ai",
+        "EMAIL_REPLY_TO": "hello@piyaz.ai",
+        "APP_NAME": "Piyaz",
+        "BRAND_LOGO_URL": "https://app.piyaz.ai/piyaz-mark.png",
+        "BRAND_COLOR": "#818cf8",
+        "BRAND_FOOTER_LINKS": "[{\"label\":\"Privacy\",\"url\":\"https://app.piyaz.ai/privacy\"},{\"label\":\"Terms\",\"url\":\"https://app.piyaz.ai/terms\"}]"
       }
     },
     "dev": {
@@ -162,6 +176,12 @@
           "simple": { "limit": 20, "period": 60 }
         }
       ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": ["noreply@piyaz.ai", "hello@piyaz.ai"]
+        }
+      ],
       "routes": [{ "pattern": "dev.app.piyaz.ai", "custom_domain": true }],
       "observability": {
         "enabled": true,
@@ -180,7 +200,15 @@
       },
       "vars": {
         "DEPLOY_TARGET": "cloudflare",
-        "BETTER_AUTH_URL": "https://dev.app.piyaz.ai"
+        "BETTER_AUTH_URL": "https://dev.app.piyaz.ai",
+        "EMAIL_FROM": "noreply@piyaz.ai",
+        "EMAIL_FROM_NOREPLY": "noreply@piyaz.ai",
+        "EMAIL_FROM_SUPPORT": "hello@piyaz.ai",
+        "EMAIL_REPLY_TO": "hello@piyaz.ai",
+        "APP_NAME": "Piyaz",
+        "BRAND_LOGO_URL": "https://app.piyaz.ai/piyaz-mark.png",
+        "BRAND_COLOR": "#818cf8",
+        "BRAND_FOOTER_LINKS": "[{\"label\":\"Privacy\",\"url\":\"https://dev.app.piyaz.ai/privacy\"},{\"label\":\"Terms\",\"url\":\"https://dev.app.piyaz.ai/terms\"}]"
       }
     }
   }
