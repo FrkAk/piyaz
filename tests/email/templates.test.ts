@@ -234,6 +234,35 @@ describe("hostile input is neutralized (AC #4)", () => {
     expect(html).not.toContain("call now");
     expect(text).not.toContain("call now");
   });
+
+  test("params smuggling newlines cannot forge lines in the text part", () => {
+    const { text } = newSignInEmail(neutral, {
+      recipientName: "Dana\nYour account is locked, call now",
+      device: "Firefox\n\nYour session expired: https://evil.example",
+    });
+    expect(text).not.toContain("\nYour account is locked");
+    expect(text).not.toContain("\nYour session expired");
+    expect(text).not.toContain("\nhttps://evil.example");
+  });
+
+  test("footer labels and appName smuggling newlines cannot forge text lines", () => {
+    const { text } = verificationEmail(
+      {
+        appName: "Acme\nUrgent: verify at https://evil.example",
+        appUrl: "https://tasks.acme.example",
+        footerLinks: [
+          {
+            label: "Help\nSign in: https://evil.example",
+            url: "https://ok.example",
+          },
+        ],
+      },
+      { verifyUrl: "https://app.example/v" },
+    );
+    expect(text).not.toContain("\nUrgent:");
+    expect(text).not.toContain("\nSign in:");
+    expect(text).not.toContain("\nhttps://evil.example");
+  });
 });
 
 describe("branded vs neutral snapshots (AC #2)", () => {

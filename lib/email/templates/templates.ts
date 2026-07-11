@@ -18,10 +18,12 @@ export interface RenderedEmail {
   text: string;
 }
 
+/** Opening line, personalized when a recipient name is known. */
 function greeting(recipientName?: string): string {
   return recipientName ? `Hi ${recipientName},` : "Hi,";
 }
 
+/** Run one content definition through both shell renderers into a matched pair. */
 function render(
   brand: BrandConfig,
   preheader: string,
@@ -35,11 +37,13 @@ function render(
   };
 }
 
+/** Params for the email-verification email. */
 export interface VerificationParams {
   verifyUrl: string;
   recipientName?: string;
 }
 
+/** Sign-up email verification: one action link to confirm the address. */
 export function verificationEmail(
   brand: BrandConfig,
   params: VerificationParams,
@@ -63,6 +67,7 @@ export function verificationEmail(
   );
 }
 
+/** Params for the password-reset email. */
 export interface PasswordResetParams {
   resetUrl: string;
   recipientName?: string;
@@ -70,6 +75,7 @@ export interface PasswordResetParams {
   expiresLabel?: string;
 }
 
+/** Password reset: reset action link, optional expiry note, didn't-request reassurance. */
 export function passwordResetEmail(
   brand: BrandConfig,
   params: PasswordResetParams,
@@ -95,11 +101,13 @@ export function passwordResetEmail(
   return render(brand, "Reset your password", "Reset your password", blocks);
 }
 
+/** Params for the email-change confirmation email, sent to the new address. */
 export interface EmailChangeParams {
   confirmUrl: string;
   newEmail: string;
 }
 
+/** Email-change confirmation: names the new address and links its confirmation. */
 export function emailChangeEmail(
   brand: BrandConfig,
   params: EmailChangeParams,
@@ -122,10 +130,12 @@ export function emailChangeEmail(
   );
 }
 
+/** Params for the password-changed notification. */
 export interface PasswordChangedParams {
   recipientName?: string;
 }
 
+/** Password-changed notice: no action link; wasn't-you pointer gated on `supportEmail`. */
 export function passwordChangedEmail(
   brand: BrandConfig,
   params: PasswordChangedParams,
@@ -151,12 +161,14 @@ export function passwordChangedEmail(
   );
 }
 
+/** Params for the new-sign-in notification; `timestamp` and `device` are display strings. */
 export interface NewSignInParams {
   recipientName?: string;
   timestamp?: string;
   device?: string;
 }
 
+/** New-sign-in notice: optional when/device notes; wasn't-you pointer gated on `supportEmail`. */
 export function newSignInEmail(
   brand: BrandConfig,
   params: NewSignInParams,

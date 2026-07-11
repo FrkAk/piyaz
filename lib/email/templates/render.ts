@@ -118,6 +118,16 @@ function buttonTextColor(accent: string): string {
   return (r * 299 + g * 587 + b * 114) / 1000 >= 128 ? TEXT : "#ffffff";
 }
 
+/**
+ * Collapse C0 control characters (including CR/LF) and DEL to a single space,
+ * so an interpolated value cannot smuggle extra lines into the plain-text
+ * part. The text-part counterpart of `escapeHtml`: newlines are inert in HTML
+ * but structural in plain text.
+ */
+function textLine(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f]+/g, " ");
+}
+
 /** Footer links whose URL passes the https/mailto scheme check; invalid links are dropped individually. */
 function safeFooterLinks(brand: BrandConfig): { label: string; url: string }[] {
   return (brand.footerLinks ?? []).flatMap((link) => {
@@ -126,6 +136,11 @@ function safeFooterLinks(brand: BrandConfig): { label: string; url: string }[] {
   });
 }
 
+/**
+ * Header cell: the logo image when `logoUrl` survives the https-only check,
+ * otherwise the app name as styled text, so an unset or unsafe logo degrades
+ * to the neutral wordmark.
+ */
 function renderHeader(brand: BrandConfig): string {
   const name = escapeHtml(brand.appName);
   const logo = brand.logoUrl ? safeUrl(brand.logoUrl, LOGO_SCHEMES) : undefined;
@@ -135,6 +150,11 @@ function renderHeader(brand: BrandConfig): string {
   return `<td style="padding:24px 32px;border-bottom:1px solid ${BORDER};">${inner}</td>`;
 }
 
+/**
+ * One content block as HTML: paragraph and note as styled `<p>`, action as a
+ * bulletproof button plus a paste-this-link fallback. An action whose URL
+ * fails the scheme check renders as a dead label, matching `renderText`.
+ */
 function renderBlock(block: EmailBlock, accent: string): string {
   if (block.kind === "paragraph") {
     return `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:${TEXT};">${escapeHtml(block.text)}</p>`;
@@ -157,6 +177,11 @@ function renderBlock(block: EmailBlock, accent: string): string {
   );
 }
 
+/**
+ * Footer cell: the app name (linked to `appUrl` when its scheme survives) and
+ * the footer links that pass `safeFooterLinks`, so a footer with no valid
+ * links collapses to the identity line alone.
+ */
 function renderFooter(brand: BrandConfig): string {
   const name = escapeHtml(brand.appName);
   const appUrl = safeUrl(brand.appUrl, WEB_SCHEMES);
@@ -217,25 +242,28 @@ export function renderShell(brand: BrandConfig, content: EmailContent): string {
  * Build the plain-text part mirroring the HTML content. Each action URL sits on
  * its own line with no punctuation glued to it, keeping `LogSender`'s text-URL
  * extractor clean. Degrades an unsafe action to its label with no URL, matching
- * the HTML shell.
+ * the HTML shell. Every interpolated value passes through `textLine`, so a
+ * param carrying newlines cannot forge extra lines here (URLs are already
+ * control-character-free via `safeUrl`).
  */
 export function renderText(brand: BrandConfig, content: EmailContent): string {
-  const lines: string[] = [brand.appName, "", content.heading, ""];
+  const appName = textLine(brand.appName);
+  const lines: string[] = [appName, "", textLine(content.heading), ""];
   for (const block of content.blocks) {
     if (block.kind === "action") {
       const url = safeUrl(block.url, WEB_SCHEMES);
-      lines.push(`${block.label}:`);
+      lines.push(`${textLine(block.label)}:`);
       if (url) lines.push(url);
       lines.push("");
     } else {
-      lines.push(block.text, "");
+      lines.push(textLine(block.text), "");
     }
   }
-  lines.push("--", brand.appName);
+  lines.push("--", appName);
   const appUrl = safeUrl(brand.appUrl, WEB_SCHEMES);
   if (appUrl) lines.push(appUrl);
   for (const link of safeFooterLinks(brand)) {
-    lines.push(`${link.label}: ${link.url}`);
+    lines.push(`${textLine(link.label)}: ${link.url}`);
   }
   return `${lines
     .join("\n")
