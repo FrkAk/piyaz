@@ -44,22 +44,32 @@ export type ActionRateLimitOutcome =
   | { ok: false; retryAfter: number };
 
 /**
- * Pull the client IP from request headers in a server action. Mirrors
- * the order in `lib/auth.ts:advanced.ipAddress.ipAddressHeaders` so a
- * single proxy chain controls both BA and our action limiter. Falls
- * back to `"unknown"` so two unattributable callers share one bucket.
+ * Resolve the client IP from a `Headers` object, mirroring the order in
+ * `lib/auth.ts:advanced.ipAddress.ipAddressHeaders` so a single proxy
+ * chain controls every IP consumer (the action limiter and the better-auth
+ * signup-acceptance hook). Pure and header-source agnostic, so it is safe
+ * to call from a better-auth database hook where `next/headers` is not.
+ *
+ * @param headers - Request headers to read the proxy chain from.
+ * @returns Client IP string, or `null` when no known header carries one.
+ */
+export function clientIpFromHeaders(headers: Headers): string | null {
+  return (
+    headers.get("cf-connecting-ip") ??
+    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    headers.get("x-real-ip") ??
+    null
+  );
+}
+
+/**
+ * Pull the client IP from request headers in a server action. Falls back
+ * to `"unknown"` so two unattributable callers share one bucket.
  *
  * @returns Client IP string or `"unknown"`.
  */
 async function getActionClientIp(): Promise<string> {
-  const reqHeaders = await headers();
-  const forwarded = reqHeaders.get("x-forwarded-for");
-  return (
-    reqHeaders.get("cf-connecting-ip") ??
-    forwarded?.split(",")[0]?.trim() ??
-    reqHeaders.get("x-real-ip") ??
-    "unknown"
-  );
+  return clientIpFromHeaders(await headers()) ?? "unknown";
 }
 
 /**

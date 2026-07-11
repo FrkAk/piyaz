@@ -619,6 +619,55 @@ html.light .prose-spec pre {
 }
 
 /* ===========================================
+   LEGAL DOCUMENT pages
+   ===========================================
+   Document-scale hierarchy layered over the compact in-app prose-spec:
+   the legal pages render whole documents, so they need a real title,
+   section rhythm, and a longer reading measure. */
+.legal-doc .prose-spec {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--color-text-secondary);
+}
+.legal-doc .prose-spec h1 {
+  font-size: 1.7em;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  margin: 0 0 0.5em;
+}
+.legal-doc .prose-spec h2 {
+  font-size: 1.25em;
+  letter-spacing: -0.01em;
+  margin: 1.7em 0 0.5em;
+}
+.legal-doc .prose-spec h3 {
+  font-size: 1.05em;
+  margin: 1.3em 0 0.4em;
+}
+.legal-doc .prose-spec p {
+  margin: 0 0 0.8em;
+}
+.legal-doc .prose-spec ul,
+.legal-doc .prose-spec ol {
+  margin: 0.4em 0 0.9em;
+}
+.legal-doc .prose-spec li {
+  margin: 0.3em 0;
+}
+.legal-doc .prose-spec blockquote {
+  margin: 0 0 1.2em;
+  padding: 0.6em 1em;
+}
+.legal-doc .prose-spec hr {
+  margin: 1.6em 0;
+}
+.legal-doc .prose-spec table {
+  display: block;
+  overflow-x: auto;
+  margin: 0.8em 0 1.2em;
+}
+
+/* ===========================================
    SECTION LABELS
    =========================================== */
 .section-label {

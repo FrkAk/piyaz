@@ -1,11 +1,19 @@
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { organization, jwt } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as authSchema from "@/lib/db/auth-schema";
 import { authDb } from "@/lib/db/connection";
-import { clearOrgMembershipArtifacts } from "@/lib/data/account";
+import {
+  clearOrgMembershipArtifacts,
+  deleteSoleMemberOrgAsAdmin,
+  enumerateOwnedOrgsForDeletion,
+  planOwnedOrgDeletion,
+  scrubLegalAcceptances,
+} from "@/lib/data/account";
+import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
@@ -13,6 +21,8 @@ import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
 import { signupsDisabled } from "@/lib/config/env";
+import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
+import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -70,6 +80,12 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
+    // Default freshness stays enabled: deleteUser without a password
+    // requires a session younger than `freshAge` (BA throws SESSION_EXPIRED
+    // otherwise), and a supplied password bypasses the freshness check.
+    // deleteAccountAction forwards an optional password, so credential
+    // users confirm with it and social-login users rely on a recent
+    // sign-in; a stale session surfaces `session_not_fresh` to the dialog.
     // BA writes every session to Drizzle AND KV. Required for oauthProvider
     // (which throws at boot without DB-backed sessions). KV is the per-POP
     // read cache; Drizzle is the durable store. NOTE: BA's `findSession`
@@ -225,7 +241,131 @@ export const auth = betterAuth({
     // the dev server (MYMR-235).
     nextCookies(),
   ],
+  user: {
+    deleteUser: {
+      enabled: true,
+      // Runs while `user.id` is still populated (before the row is
+      // removed), which the legal-acceptance scrub requires. Ordered:
+      // (1) block deletion when the caller solely owns a team that still
+      // has other members — they must transfer or delete it first;
+      // (2) cascade-delete teams the caller is the only member of so none
+      // is orphaned; (3) anonymize retained legal-acceptance evidence.
+      // Unlike beforeDeleteOrganization (which allSettles and logs), the
+      // sole-owner guard and the scrub THROW to abort the whole delete so
+      // a failure never leaves an ownerless team or a compliance gap.
+      // These steps are not transactional with the user-row delete: a
+      // scrub failure aborts after memberless teams are already gone,
+      // which is acceptable because only the deleting user could see them.
+      beforeDelete: async (user) => {
+        const plan = planOwnedOrgDeletion(
+          await enumerateOwnedOrgsForDeletion(user.id),
+        );
+        if (plan.kind === "blocked") {
+          throw new APIError("BAD_REQUEST", {
+            message: TEAM_ACTION_MESSAGES.cannot_delete_sole_owner,
+            code: "CANNOT_DELETE_SOLE_OWNER",
+          });
+        }
+        if (plan.orgIdsToDelete.length > 0) {
+          // The reentrant auth.api.deleteOrganization path needs the request
+          // context that server-action dispatch (auth.api.deleteUser with
+          // headers only) never carries, so the cascade runs the audited
+          // pieces directly: the same per-member cleanup the org-delete hook
+          // performs (the deleting owner is the only member by
+          // planOwnedOrgDeletion's definition), then the org row, whose FK
+          // cascade wipes projects, tasks, edges, invitations, and the
+          // member row.
+          for (const organizationId of plan.orgIdsToDelete) {
+            try {
+              await clearOrgMembershipArtifacts(user.id, organizationId);
+              await revokeOrgAccess(user.id, organizationId);
+              await deleteSoleMemberOrgAsAdmin(organizationId, user.id);
+            } catch (err) {
+              console.error("deleteUser.beforeDelete cleanup failure", {
+                userId: user.id,
+                orgId: organizationId,
+                step: "deleteOwnedOrg",
+                err,
+              });
+              throw err;
+            }
+          }
+        }
+        try {
+          await scrubLegalAcceptances(user.id);
+        } catch (err) {
+          console.error("deleteUser.beforeDelete cleanup failure", {
+            userId: user.id,
+            step: "scrubLegalAcceptances",
+            err,
+          });
+          throw err;
+        }
+      },
+    },
+  },
   databaseHooks: {
+    user: {
+      create: {
+        // Gate every account-creation path on affirmative Terms consent.
+        // Runs for `auth.api.signUpEmail` and a raw POST to
+        // `/api/auth/sign-up/email` alike, so the gate cannot be bypassed by
+        // skipping the client checkbox. `termsAccepted` is a transient consent
+        // signal read off the request body; the durable evidence is the
+        // `legal_acceptances` rows written in `after`.
+        before: async (_user, ctx) => {
+          const body = ctx?.body as { termsAccepted?: unknown } | undefined;
+          if (body?.termsAccepted !== true) {
+            throw new APIError("BAD_REQUEST", {
+              message:
+                "You must accept the Terms of Service to create an account.",
+              code: "TERMS_NOT_ACCEPTED",
+            });
+          }
+        },
+        // Persist compliance evidence: one `terms` and one `privacy` row, each
+        // carrying the current LEGAL_VERSIONS version, timestamp, resolved IP,
+        // and user-agent. Must be `after` (not `before`): the rows FK to the
+        // user, which does not exist until creation commits. On write failure,
+        // compensate by deleting the just-created user so no account survives
+        // without its acceptance evidence; a throw here does NOT roll the user
+        // back (the row is already committed when `after` runs).
+        after: async (user, ctx) => {
+          const requestHeaders = ctx?.headers;
+          const ipAddress = requestHeaders
+            ? clientIpFromHeaders(requestHeaders)
+            : null;
+          const userAgent = requestHeaders?.get("user-agent") ?? null;
+          try {
+            await recordAcceptance(user.id, "terms", { ipAddress, userAgent });
+            await recordAcceptance(user.id, "privacy", {
+              ipAddress,
+              userAgent,
+            });
+          } catch (err) {
+            console.error("user.create.after acceptance-write failure", {
+              userId: user.id,
+              err,
+            });
+            try {
+              // Remove any row that already committed (the FK on the user
+              // delete would only null user_id, stranding unattributable
+              // evidence), then the user itself.
+              await removeAcceptances(user.id);
+              await ctx?.context.internalAdapter.deleteUser(user.id);
+            } catch (cleanupErr) {
+              console.error("user.create.after compensating delete failed", {
+                userId: user.id,
+                err: cleanupErr,
+              });
+            }
+            throw new APIError("INTERNAL_SERVER_ERROR", {
+              message: "Could not record your acceptance. Please try again.",
+            });
+          }
+        },
+      },
+    },
     account: {
       update: {
         after: async (account) => {

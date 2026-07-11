@@ -96,7 +96,7 @@ const eslintConfig = [
           selector:
             "CallExpression[callee.object.name='serviceRoleDb'][callee.property.name=/^(select|insert|update|delete)$/]",
           message:
-            "serviceRoleDb.<verb> is BYPASSRLS. Allowed sites: lib/data/oauth-session.ts (oauth tables), lib/data/account.ts (clearOrgMembershipArtifacts), lib/data/membership.ts (admin lookups). Consider whether a SECURITY DEFINER function in docker/rls-functions.sql can replace this call site.",
+            "serviceRoleDb.<verb> is BYPASSRLS. Allowed sites: lib/data/oauth-session.ts (oauth tables), lib/data/account.ts (clearOrgMembershipArtifacts, scrubLegalAcceptances, enumerateOwnedOrgsForDeletion), lib/data/membership.ts (admin lookups). Consider whether a SECURITY DEFINER function in docker/rls-functions.sql can replace this call site.",
         },
         {
           selector: "MemberExpression[object.name='db'][property.name='query']",
