@@ -89,8 +89,10 @@ export function DpaSection({
               className="mt-4 rounded-md border border-progress/25 bg-progress/10 px-3 py-2 text-xs text-progress"
               role="status"
             >
-              The data processing agreement was updated. Your team accepted
-              version <span className="font-mono">{acceptance.version}</span> on{" "}
+              The data processing agreement was updated; the current version is{" "}
+              <span className="font-mono">{LEGAL_VERSIONS.dpa}</span>. Your team
+              accepted version{" "}
+              <span className="font-mono">{acceptance.version}</span> on{" "}
               {formatAbsolute(acceptance.acceptedAt)}; continued use is covered
               by the update terms, and you can accept the current version now.
             </p>
