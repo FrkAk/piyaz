@@ -129,16 +129,31 @@ test("footer links are trimmed and stripped to label and url", () => {
   ]);
 });
 
-test("footer links with a non-http(s) url are dropped", () => {
+test("footer links keep only https and mailto urls", () => {
   process.env.BRAND_FOOTER_LINKS = JSON.stringify([
     { label: "Home", url: "javascript:alert(1)" },
     { label: "Docs", url: "ftp://acme.example" },
+    { label: "Plain", url: "http://acme.example" },
   ]);
   expect(resolveBrandConfig().footerLinks).toBeUndefined();
+
+  process.env.BRAND_FOOTER_LINKS = JSON.stringify([
+    { label: "Support", url: "mailto:help@acme.example" },
+  ]);
+  expect(resolveBrandConfig().footerLinks).toEqual([
+    { label: "Support", url: "mailto:help@acme.example" },
+  ]);
 });
 
 test("invalid BRAND_COLOR degrades to undefined", () => {
-  for (const color of ["red", "#12345g", "#12345", "0f172a"]) {
+  for (const color of [
+    "red",
+    "#12345g",
+    "#12345",
+    "0f172a",
+    "#abcd",
+    "#12345678",
+  ]) {
     process.env.BRAND_COLOR = color;
     expect(resolveBrandConfig().brandColor).toBeUndefined();
   }
@@ -147,11 +162,12 @@ test("invalid BRAND_COLOR degrades to undefined", () => {
   expect(resolveBrandConfig().brandColor).toBe("#abc");
 });
 
-test("non-http(s) BRAND_LOGO_URL degrades to undefined", () => {
+test("non-https BRAND_LOGO_URL degrades to undefined", () => {
   for (const url of [
     "javascript:alert(1)",
     "not a url",
     "data:image/png;base64,x",
+    "http://cdn.acme.example/logo.png",
   ]) {
     process.env.BRAND_LOGO_URL = url;
     expect(resolveBrandConfig().logoUrl).toBeUndefined();

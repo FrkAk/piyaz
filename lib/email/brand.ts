@@ -10,8 +10,15 @@
  * `@piyaz.ai` address or the `Piyaz` name, so a self-host `From` stays on a
  * domain the operator controls and can SPF/DKIM-authenticate, and self-host
  * cannot emit Piyaz-branded mail. Pure `process.env` reads: no imports beyond
- * the shared type, no side effects, compiles identically into both bundles.
+ * the shared type and the template sanitizers, no side effects, compiles
+ * identically into both bundles.
  */
+import {
+  FOOTER_SCHEMES,
+  LOGO_SCHEMES,
+  safeBrandColor,
+  safeUrl,
+} from "./templates/render";
 import type { BrandConfig } from "./types";
 
 /**
@@ -41,35 +48,9 @@ function hostOf(appUrl: string): string | undefined {
 }
 
 /**
- * Return `url` only when it parses as `http:` or `https:`, else `undefined`,
- * so a non-web value never lands in an email `src`/`href`.
- */
-function httpUrl(url: string | undefined): string | undefined {
-  if (url === undefined) return undefined;
-  try {
-    const protocol = new URL(url).protocol;
-    return protocol === "http:" || protocol === "https:" ? url : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Return `color` only when it is a CSS hex color (`#` plus 3, 4, 6, or 8 hex
- * digits), else `undefined`, so a garbage `BRAND_COLOR` degrades to the
- * neutral render instead of broken inline styles.
- */
-function hexColor(color: string | undefined): string | undefined {
-  if (color === undefined) return undefined;
-  return /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color)
-    ? color
-    : undefined;
-}
-
-/**
  * Parse `BRAND_FOOTER_LINKS` as a JSON array of `{ label, url }`. Entries are
  * remapped to trimmed `label`/`url` only (unknown JSON fields never reach the
- * `BrandConfig`) and dropped when blank or when `url` is not http(s). Returns
+ * `BrandConfig`) and dropped when blank or when `url` is not https/mailto. Returns
  * `undefined` for unset, malformed, non-array, or empty-after-filtering input;
  * never throws, so a bad value yields a neutral footer instead of a crash.
  */
@@ -93,7 +74,7 @@ function parseFooterLinks(raw: string | undefined): BrandConfig["footerLinks"] {
         (entry as { url: string }).url.trim() !== "",
     )
     .map((entry) => ({ label: entry.label.trim(), url: entry.url.trim() }))
-    .filter((entry) => httpUrl(entry.url) !== undefined);
+    .filter((entry) => safeUrl(entry.url, FOOTER_SCHEMES) !== undefined);
   return links.length > 0 ? links : undefined;
 }
 
@@ -102,10 +83,11 @@ function parseFooterLinks(raw: string | undefined): BrandConfig["footerLinks"] {
  * `BETTER_AUTH_URL`, else `http://localhost:3000` when unset or unparsable, so
  * a malformed value never reaches template hrefs. `appName` comes from
  * `APP_NAME`, else the `appUrl` host (never `Piyaz`). The presentation fields
- * (`logoUrl` from `BRAND_LOGO_URL`, `brandColor` from `BRAND_COLOR`,
- * `footerLinks` from `BRAND_FOOTER_LINKS`, `supportEmail` from
- * `EMAIL_REPLY_TO`) default to `undefined` when their var is unset or
- * malformed, keeping self-host neutral.
+ * (`logoUrl` from `BRAND_LOGO_URL`, https only; `brandColor` from
+ * `BRAND_COLOR`, 3- or 6-digit hex only; `footerLinks` from
+ * `BRAND_FOOTER_LINKS`; `supportEmail` from `EMAIL_REPLY_TO`) default to
+ * `undefined` when their var is unset or malformed, keeping the unconfigured
+ * render neutral.
  */
 export function resolveBrandConfig(): BrandConfig {
   const configuredUrl = brandString("BETTER_AUTH_URL");
@@ -114,11 +96,14 @@ export function resolveBrandConfig(): BrandConfig {
       ? configuredUrl
       : "http://localhost:3000";
   const appName = brandString("APP_NAME") ?? hostOf(appUrl) ?? "localhost";
+  const logoUrl = brandString("BRAND_LOGO_URL");
+  const brandColor = brandString("BRAND_COLOR");
   return {
     appName,
     appUrl,
-    logoUrl: httpUrl(brandString("BRAND_LOGO_URL")),
-    brandColor: hexColor(brandString("BRAND_COLOR")),
+    logoUrl: logoUrl === undefined ? undefined : safeUrl(logoUrl, LOGO_SCHEMES),
+    brandColor:
+      brandColor === undefined ? undefined : safeBrandColor(brandColor),
     footerLinks: parseFooterLinks(brandString("BRAND_FOOTER_LINKS")),
     supportEmail: brandString("EMAIL_REPLY_TO"),
   };
