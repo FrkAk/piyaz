@@ -128,7 +128,7 @@ export function noteActivityStmt(
 /**
  * Lazy read statement for the newest event key of a note-activity page:
  * `(id, created_at)` of the first row the matching {@link noteActivityStmt}
- * would return. One partial-index head probe, no identity joins — the
+ * would return. One partial-index head probe, no identity joins: the
  * cheap validator resolve for `HEAD`/`If-None-Match`, so a 304 skips the
  * full page fetch.
  *

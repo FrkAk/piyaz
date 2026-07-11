@@ -122,7 +122,7 @@ On "duplicate edge": the edge already exists — treat as success.
 
 ### `piyaz_activity`: what changed
 
-Keyset-paginated event feed per project, task, or note, newest first. `since='<ISO instant>'` answers "what changed while I was away" — the resume primitive (resilience §7). Events carry actor, type, summary, and target ref; follow up with `piyaz_get`. `note_*` events ride the same feed, so resume covers notes too. `note='PYZ-N12'` (or UUID; slug form also needs `project`) scopes to one note's history — edits, moves, links, restores — and requires the note to be agent-exposed (team visibility, feed enabled): a non-exposed note reads as not found, and project/task feeds silently exclude non-exposed notes' events.
+Keyset-paginated event feed per project, task, or note, newest first. `since='<ISO instant>'` answers "what changed while I was away" — the resume primitive (resilience §7). Events carry actor, type, summary, and target ref; follow up with `piyaz_get`. `note_*` events ride the same feed, so resume covers notes too. `note='PYZ-N12'` (or UUID; slug form also needs `project`) scopes to one note's history (edits, moves, links, restores) and requires the note to be agent-exposed: team visibility, feed enabled. A non-exposed note reads as not found, and project/task feeds silently exclude non-exposed notes' events.
 
 ### `piyaz_note`: the project knowledge base
 

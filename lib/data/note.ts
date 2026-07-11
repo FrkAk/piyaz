@@ -3855,7 +3855,7 @@ export async function listNoteRevisions(
  * descriptors: the live version plus the stored-checkpoint extent
  * (`max(version)`, row count) the caller's RLS window can see. One
  * RLS-scoped batch (access gate + one aggregate over the `(note_id,
- * version)` index) — the cheap validator resolve for `HEAD`/
+ * version)` index): the cheap validator resolve for `HEAD`/
  * `If-None-Match`, so a 304 skips the full descriptor fetch.
  *
  * @param ctx - Resolved auth context.

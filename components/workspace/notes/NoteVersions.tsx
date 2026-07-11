@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconUndo } from "@/components/shared/icons";
 import { SectionHeader } from "@/components/shared/SectionHeader";
@@ -10,6 +10,7 @@ import { conditionalFetch } from "@/lib/query/conditional-fetch";
 import { noteKeys } from "@/lib/query/keys";
 import { hasUnsavedNoteEdits, useNoteDirty } from "@/lib/query/note-cache";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { useNowTick } from "./useNowTick";
 import {
   useRestoreRevision,
   type NoteRevisionsCache,
@@ -159,12 +160,7 @@ export function NoteVersions({
   const [confirmVersion, setConfirmVersion] = useState<number | null>(null);
   const [pendingVersion, setPendingVersion] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
+  const nowMs = useNowTick();
 
   const qc = useQueryClient();
   const { data, isPending, isError, refetch } = useQuery({

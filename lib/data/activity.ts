@@ -413,7 +413,7 @@ function assertNoteActivityReadable(
  * Newest event key of one note-activity page: the `(createdAtMs, id)` pair
  * the matching {@link listNoteActivity} page would surface first, or null
  * when the page is empty. One RLS-scoped batch (index head probe + access
- * gate) with the same 404-shaping — the cheap validator resolve for
+ * gate) with the same 404-shaping: the cheap validator resolve for
  * `HEAD`/`If-None-Match`, so a 304 skips the full page fetch and its
  * identity joins.
  *

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar } from "@/components/shared/Avatar";
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/components/shared/icons";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { formatRelative } from "@/components/workspace/structure/relativeTime";
+import { useNowTick } from "./useNowTick";
 import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
 import { conditionalFetchPage } from "@/lib/query/conditional-fetch";
 import { noteKeys } from "@/lib/query/keys";
@@ -70,13 +71,7 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
     getNextPageParam: (last) => last.nextCursor,
   });
 
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-
+  const nowMs = useNowTick();
   const events = data?.pages.flatMap((p) => p.events) ?? [];
   // Branching on the union flag directly narrows sibling bindings to `never`.
   const nextPageFailed: boolean = isFetchNextPageError;
