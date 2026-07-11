@@ -105,7 +105,7 @@ const SEARCH_HIT_CAP = 20;
  * Compose the noteRef for any summary-shaped row.
  *
  * @param row - Row carrying the ref parts.
- * @returns Composed noteRef (e.g. `PYZ-N12`).
+ * @returns Composed noteRef (e.g. `DLK-N12`).
  */
 function refOf(row: {
   projectIdentifier: string;
@@ -136,7 +136,7 @@ async function resolveNoteParam(
 }
 
 /**
- * Resolve feed task refs (`PYZ-42`) to UUIDs across create items or edit
+ * Resolve feed task refs (`DLK-42`) to UUIDs across create items or edit
  * op values. UUIDs pass through; an unresolved ref fails the whole call.
  *
  * @param ctx - Resolved auth context.
@@ -328,7 +328,7 @@ async function handleCreate(
 ): Promise<ToolResult> {
   if (!p.project || !p.notes || p.notes.length === 0) {
     return fail(
-      "create requires project ('PYZ' or UUID) and notes=[...] (1-10 items with at least a title).",
+      "create requires project ('DLK' or UUID) and notes=[...] (1-10 items with at least a title).",
     );
   }
   const projectId = await requireProjectId(ctx, p.project);
@@ -616,7 +616,7 @@ async function handleList(
   p: NoteParams,
   ctx: AuthContext,
 ): Promise<ToolResult> {
-  if (!p.project) return fail("list requires project ('PYZ' or UUID).");
+  if (!p.project) return fail("list requires project ('DLK' or UUID).");
   const projectId = await requireProjectId(ctx, p.project);
   const { projectIdentifier, rows, explicitFolders } =
     await getNoteTreeForAgent(ctx, projectId);
@@ -753,7 +753,7 @@ async function handleLink(
 ): Promise<ToolResult> {
   if (!p.note || !p.task || !p.kind) {
     return fail(
-      `${direction} requires note, task ('PYZ-42' or UUID), and kind ('reference' or 'spec_of'). mention rows derive from [[refs]] in the body.`,
+      `${direction} requires note, task ('DLK-42' or UUID), and kind ('reference' or 'spec_of'). mention rows derive from [[refs]] in the body.`,
     );
   }
   const noteId = await resolveNoteParam(ctx, p);
@@ -791,7 +791,7 @@ async function handleLink(
 }
 
 /**
- * Handle the `search` action: a full noteRef ('PYZ-N12') short-circuits to
+ * Handle the `search` action: a full noteRef ('DLK-N12') short-circuits to
  * exact note resolution; otherwise RLS-scoped ranked full text in one project.
  *
  * @param p - Note params.
@@ -803,7 +803,7 @@ async function handleSearch(
   ctx: AuthContext,
 ): Promise<ToolResult> {
   if (!p.project || p.query === undefined) {
-    return fail("search requires project ('PYZ' or UUID) and query.");
+    return fail("search requires project ('DLK' or UUID) and query.");
   }
   const projectId = await requireProjectId(ctx, p.project);
   const { projectIdentifier, hits } = await searchNotesForMcp(
@@ -853,14 +853,14 @@ export async function handleNote(
       case "read":
         if (!p.note) {
           return fail(
-            "read requires note ('PYZ-N12', UUID, or slug with project).",
+            "read requires note ('DLK-N12', UUID, or slug with project).",
           );
         }
         return await handleRead(p, ctx);
       case "edit":
         if (!p.note) {
           return fail(
-            "edit requires note ('PYZ-N12', UUID, or slug with project).",
+            "edit requires note ('DLK-N12', UUID, or slug with project).",
           );
         }
         return await handleEditAction(p, ctx);
