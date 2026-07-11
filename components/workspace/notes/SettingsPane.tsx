@@ -235,7 +235,10 @@ export function SettingsPane({
   onCollapse,
   onClose,
 }: SettingsPaneProps) {
-  const { data, isPlaceholderData, isError } = useNoteDetail(projectId, noteId);
+  const { data, isPlaceholderData, isError, refetch } = useNoteDetail(
+    projectId,
+    noteId,
+  );
   const updateNote = useUpdateNote(projectId);
   const approveShare = useApproveShareRequest(projectId);
   const declineShare = useDeclineShareRequest(projectId);
@@ -299,7 +302,16 @@ export function SettingsPane({
     return (
       <RibbonShell fill={fill} onCollapse={onCollapse} onClose={onClose}>
         {isError ? (
-          <div className="p-4 text-[12px] text-text-muted">Note not found</div>
+          <div className="flex items-center gap-2 p-4 text-[12px] text-text-muted">
+            <span>Note not found.</span>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="cursor-pointer text-text-secondary underline hover:text-text-primary"
+            >
+              Retry
+            </button>
+          </div>
         ) : (
           <RibbonSkeleton />
         )}
@@ -497,8 +509,8 @@ export function SettingsPane({
         <Section label="Auto-feed into tasks">
           <p className="mb-2 text-[11px] leading-snug text-text-muted">
             Controls whether agents can see this note. Off hides it entirely.
-            Any other option mentions it in the agent&rsquo;s MCP prompt for the
-            chosen scope.
+            Any other option mentions it in the agent&rsquo;s context bundle for
+            the chosen scope.
           </p>
           <div style={{ opacity: dimmed("feed") }}>
             <FeedEditor
@@ -883,7 +895,7 @@ function FeedEditor({
               onClick={() => {
                 if (m.id !== note.feedMode) onSetMode(m.id);
               }}
-              className="rounded-full px-2.5 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
+              className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer pointer-coarse:min-h-6 pointer-coarse:px-3"
               style={{
                 color: active ? "#fff" : "var(--color-text-muted)",
                 fontWeight: active ? 500 : 400,
@@ -1182,7 +1194,7 @@ function ChipToggle({ label, active, disabled, onClick }: ChipToggleProps) {
       disabled={disabled}
       aria-pressed={active}
       onClick={onClick}
-      className="inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
+      className="inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer pointer-coarse:min-h-6 pointer-coarse:px-2.5"
       style={{
         color: active ? "var(--color-accent-light)" : "var(--color-text-muted)",
         background: active ? tint("var(--color-accent)", 16) : "transparent",

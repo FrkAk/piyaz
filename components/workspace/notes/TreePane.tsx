@@ -225,7 +225,7 @@ function RowActionsMenu({
         }}
         renderTrigger={(_active, open) => (
           <span
-            className={`inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary in-focus-visible:bg-surface-hover in-focus-visible:text-text-primary ${
+            className={`inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary in-focus-visible:bg-surface-hover in-focus-visible:text-text-primary pointer-coarse:h-7 pointer-coarse:w-7 ${
               coarse || open
                 ? ""
                 : "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
@@ -275,7 +275,7 @@ const NoteRow = memo(function NoteRow({
   onMove,
 }: NoteRowProps) {
   const color = NOTE_TYPE_META[row.type].color;
-  const draggable = onDragStart !== undefined;
+  const draggable = onDragStart !== undefined && !coarse;
 
   if (renaming) {
     return (
@@ -554,8 +554,8 @@ const FolderRow = memo(function FolderRow({
     <div className="group relative flex w-full items-center">
       <button
         type="button"
-        draggable
-        aria-roledescription="Draggable folder"
+        draggable={!coarse}
+        aria-roledescription={coarse ? undefined : "Draggable folder"}
         aria-current={selected ? "true" : undefined}
         onClick={() => onClick(path)}
         onDoubleClick={() => onBeginRename(path)}
@@ -935,6 +935,7 @@ export function TreePane({
   }, [search.data, typeFilter]);
 
   const count = searching ? hits.length : visibleRows.length;
+  const countReady = searching ? !search.isPending : !list.isPending;
 
   /**
    * Folder row click: toggle collapse and select the folder as the
@@ -1579,7 +1580,7 @@ export function TreePane({
         style={{ height: 40 }}
       >
         <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-          Notes · {count}
+          Notes{countReady ? ` · ${count}` : ""}
         </span>
         <div className="flex items-center gap-0.5">
           <UndoButton canUndo={canUndo} onUndo={undo} className="mr-0.5" />
@@ -1664,7 +1665,7 @@ export function TreePane({
               onClick={() => setRawQuery("")}
               aria-label="Clear search"
               title="Clear search"
-              className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-faint hover:text-text-primary"
+              className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-faint hover:text-text-primary pointer-coarse:h-6 pointer-coarse:w-6"
             >
               <IconX size={11} />
             </button>
@@ -1686,7 +1687,7 @@ export function TreePane({
               active={active}
               ariaPressed={active}
               onClick={() => setTypeFilter(c)}
-              className="shrink-0 whitespace-nowrap"
+              className="shrink-0 whitespace-nowrap pointer-coarse:min-h-6 pointer-coarse:px-2.5"
             >
               {c === "all" ? "All" : NOTE_TYPE_META[c].label}
             </Pill>
@@ -1730,12 +1731,23 @@ export function TreePane({
       </div>
 
       {(treeError ?? createError ?? foldersError) !== null && (
-        <p
-          className="px-3 pb-1.5 font-mono text-[10.5px]"
+        <div
+          className="flex items-center gap-2 px-3 pb-1.5 font-mono text-[10.5px]"
           style={{ color: "var(--color-danger)" }}
         >
-          {treeError ?? createError ?? foldersError}
-        </p>
+          <span>{treeError ?? createError ?? foldersError}</span>
+          {treeError === null &&
+            createError === null &&
+            foldersError !== null && (
+              <button
+                type="button"
+                onClick={() => void folders.refetch()}
+                className="cursor-pointer text-text-muted underline hover:text-text-secondary"
+              >
+                Retry
+              </button>
+            )}
+        </div>
       )}
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">

@@ -12,6 +12,8 @@ import {
   IconX,
 } from "@/components/shared/icons";
 import { Avatar } from "@/components/shared/Avatar";
+import { EditButton } from "@/components/shared/EditButton";
+import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
 import { MonoId } from "@/components/shared/MonoId";
 import { useSession } from "@/lib/auth-client";
@@ -154,7 +156,10 @@ function EditorBody({
   taskMap,
 }: EditorBodyProps) {
   const qc = useQueryClient();
-  const { data, isPlaceholderData, isError } = useNoteDetail(projectId, noteId);
+  const { data, isPlaceholderData, isError, refetch } = useNoteDetail(
+    projectId,
+    noteId,
+  );
   const noteList = useQuery({
     queryKey: noteKeys.list(projectId),
     queryFn: fetchNotesTree(qc, projectId),
@@ -264,14 +269,27 @@ function EditorBody({
   if (note === undefined) {
     if (!isError) return null;
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-[12px] text-text-muted">Note not found</p>
+      <div className="flex h-full items-center justify-center gap-2 text-[12px] text-text-muted">
+        <span>Note not found.</span>
+        <button
+          type="button"
+          onClick={() => void refetch()}
+          className="cursor-pointer text-text-secondary underline hover:text-text-primary"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   const meta = NOTE_TYPE_META[note.type];
   const editable = !note.locked && !isPlaceholderData;
+  const summaryResult = updateNote.data;
+  const summaryError = updateNote.isError
+    ? "Couldn't save summary."
+    : summaryResult && !summaryResult.ok
+      ? summaryResult.message
+      : null;
 
   return (
     <div className="mx-auto max-w-[760px] px-4 pb-16 pt-6 sm:px-[34px] sm:pt-8">
@@ -367,6 +385,7 @@ function EditorBody({
       <NoteSummary
         summary={note.summary}
         editable={editable}
+        saveError={summaryError}
         onCommit={(next) =>
           updateNote.mutate({
             noteId,
@@ -458,6 +477,8 @@ interface NoteSummaryProps {
   summary: string;
   /** @param editable - Whether the summary can be edited (unlocked and loaded). */
   editable: boolean;
+  /** @param saveError - Message for the last failed summary write, else null. */
+  saveError: string | null;
   /** @param onCommit - Persist a changed, trimmed summary. */
   onCommit: (next: string) => void;
 }
@@ -465,28 +486,43 @@ interface NoteSummaryProps {
 /**
  * Summary block under the note title. Renders the one-line summary through the
  * shared markdown renderer and, like the body, opens a raw editor on
- * double-click. An empty summary on an editable note shows a red-ringed prompt
- * so it never ships without one; a locked or unset read-only note renders
- * nothing.
+ * double-click, keyboard (Enter/Space), or the touch edit button. Enter or
+ * blur commits; Escape cancels without saving. An empty summary on an editable
+ * note shows a dashed accent prompt so it never ships without one; a locked or
+ * unset read-only note renders nothing. A failed write surfaces inline instead
+ * of reverting silently.
  *
- * @param props - Summary text, editability, and the commit sink.
+ * @param props - Summary text, editability, last write error, and commit sink.
  * @returns The rendered summary, the empty prompt, or the raw editor.
  */
-function NoteSummary({ summary, editable, onCommit }: NoteSummaryProps) {
+function NoteSummary({
+  summary,
+  editable,
+  saveError,
+  onCommit,
+}: NoteSummaryProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(summary);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const cancelledRef = useRef(false);
 
   const begin = () => {
     if (!editable) return;
+    cancelledRef.current = false;
     setDraft(summary);
     setEditing(true);
   };
 
   const commit = () => {
+    if (cancelledRef.current) return;
     setEditing(false);
     const next = draft.trim();
     if (next !== summary) onCommit(next);
+  };
+
+  const cancel = () => {
+    cancelledRef.current = true;
+    setEditing(false);
   };
 
   useEffect(() => {
@@ -506,42 +542,82 @@ function NoteSummary({ summary, editable, onCommit }: NoteSummaryProps) {
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === "Escape") {
+          if (e.key === "Enter") {
             e.preventDefault();
             commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
           }
         }}
         maxLength={1000}
         rows={2}
+        aria-label="Note summary"
         placeholder="One-line summary…"
         className="mb-3 block w-full resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-[13px] text-text-secondary outline-none placeholder:text-text-faint focus-visible:border-accent/40 focus-visible:ring-1 focus-visible:ring-accent/40"
       />
     );
   }
 
+  const errorLine = saveError !== null && (
+    <p
+      role="status"
+      className="mb-3 -mt-1.5 font-mono text-[10px]"
+      style={{ color: "var(--color-danger)" }}
+    >
+      {saveError}
+    </p>
+  );
+
   if (summary !== "") {
     return (
-      <div
-        onDoubleClick={begin}
-        title={editable ? "Double-click to edit the summary" : undefined}
-        className={`mb-3${editable ? " cursor-text" : ""}`}
-      >
-        <Markdown className="text-[13px] text-text-muted">{summary}</Markdown>
-      </div>
+      <>
+        <div
+          tabIndex={editable ? 0 : undefined}
+          onDoubleClick={begin}
+          onKeyDown={
+            editable
+              ? (e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    begin();
+                  }
+                }
+              : undefined
+          }
+          title={editable ? "Double-click to edit the summary" : undefined}
+          className={`group/edit relative mb-3${editable ? " cursor-text rounded outline-none focus-visible:ring-1 focus-visible:ring-accent/40" : ""}`}
+        >
+          {editable && <EditHint />}
+          {editable && (
+            <EditButton
+              onClick={begin}
+              label="Edit summary"
+              className="absolute right-0 top-0 z-10 bg-base/80"
+            />
+          )}
+          <Markdown className="text-[13px] text-text-muted">{summary}</Markdown>
+        </div>
+        {errorLine}
+      </>
     );
   }
 
   if (!editable) return null;
 
   return (
-    <button
-      type="button"
-      onClick={begin}
-      className="mb-3 flex w-full items-center gap-1.5 rounded-md bg-danger/5 px-2 py-1.5 text-left text-[12px] text-text-muted ring-1 ring-danger/60 transition-colors hover:bg-danger/10 hover:ring-danger focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-danger"
-    >
-      <IconPencil size={11} className="shrink-0 text-danger" />
-      Add a one-line summary so this note is easy to find.
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={begin}
+        className="mb-3 flex w-full items-center gap-1.5 rounded-md border border-dashed border-accent/50 bg-accent/5 px-2 py-1.5 text-left text-[12px] text-text-muted transition-colors hover:border-accent hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+      >
+        <IconPencil size={11} className="shrink-0 text-accent" />
+        Add a one-line summary so this note is easy to find.
+      </button>
+      {errorLine}
+    </>
   );
 }
 
