@@ -30,10 +30,21 @@ import type {
 } from "@/lib/data/note";
 import { noteKeys } from "@/lib/query/keys";
 import {
+  conflictFields,
+  mergeConflictStash,
+  resolveNoteConflictDrop,
+  resolveNoteConflictReapply,
+  type NoteConflictState,
+  type NotePendingPatch,
+} from "@/components/workspace/notes/note-conflict";
+import {
+  beginNoteEditSession,
   cachedCasToken,
   casToken,
   clearNoteDirty,
+  clearNoteDirtyUnlessEditing,
   clearNoteTrashed,
+  endNoteEditSession,
   enqueueNoteWrite,
   isNoteTrashed,
   markNoteDirty,
@@ -138,6 +149,8 @@ function pickFields<T extends object>(
  * exposure is a brief flicker, accepted over tracking per-field
  * optimistic ownership.
  *
+ * Exported for tests.
+ *
  * @param qc - QueryClient.
  * @param projectId - Owning project id.
  * @param noteId - Note id.
@@ -146,7 +159,7 @@ function pickFields<T extends object>(
  * @param rollbackOnStale - Revert the optimistic patch on `stale_write`.
  * @returns The typed action result; thrown transport errors revert first.
  */
-async function runOptimisticNoteWrite(
+export async function runOptimisticNoteWrite(
   qc: QueryClient,
   projectId: string,
   noteId: string,
@@ -419,7 +432,7 @@ export async function runDeleteNoteWrite(
     }
     if (result.ok) {
       clearNoteDirty(noteId);
-      markNoteTrashed(noteId);
+      markNoteTrashed(noteId, result.data.updatedAt);
       qc.invalidateQueries({ queryKey: listKey });
       qc.removeQueries({ queryKey: detailKey });
     } else {
@@ -631,7 +644,7 @@ export function useDeclineShareRequest(projectId: string) {
 }
 
 /** Body/title content buffered between block commits and the next flush. */
-type PendingPatch = { body?: string; title?: string };
+type PendingPatch = NotePendingPatch;
 
 /**
  * Add an id to a pending-id set without mutating the original.
@@ -665,10 +678,15 @@ function removePendingId(
   return next;
 }
 
-/** Live conflict payload surfaced after a `stale_write` autosave failure. */
+/**
+ * Live conflict payload surfaced after a `stale_write` autosave failure.
+ * `fields` names the conflicted fields (derived from the stashed failed
+ * patch) for banner copy.
+ */
 export type NoteAutosaveConflict = {
   currentUpdatedAt: string;
   currentVersion: number;
+  fields: Array<"title" | "body">;
 };
 
 /**
@@ -691,29 +709,46 @@ export type NoteAutosaveError = {
  * never displaces another's unsaved content; the flush drains one write
  * at a time under a single-flight guard.
  *
- * Failure semantics: `stale_write` keeps the optimistic cache content
- * (the server applied no write) and surfaces `conflict` with the live
- * `updatedAt`/`version`. A thrown transport error re-buffers and retries
- * with exponential backoff capped at {@link AUTOSAVE_RETRY_MAX_MS};
- * `rate_limited` re-buffers with the server's `retryAfter`. Retries stop
- * at unmount, with the unmount flush as the final attempt. Every other
- * typed failure is deterministic: the buffer is dropped and `saveError`
- * surfaces until the note's next successful save, with the committed
- * content still in the detail cache so the next commit re-buffers it.
- * Callers must gate `commit` on `isPlaceholderData` from
- * {@link useNoteDetail}: a placeholder's empty body must never be
- * autosaved. The dirty mark clears only on a confirmed save with an
- * empty buffer. Notes marked trashed (a confirmed delete whose restore
- * has not yet succeeded) are excluded on both ends: `commit` drops the
- * edit before touching the buffer or the removed detail entry, and the
- * flush discards a buffered edit instead of sending a doomed write.
+ * Failure semantics: `stale_write` is terminal for the flush. It keeps
+ * the optimistic cache content (the server applied no write), stashes the
+ * failed patch, and surfaces `conflict` with the live
+ * `updatedAt`/`version`; the conflict banner owns recovery via
+ * {@link resolveNoteConflictDrop} / {@link resolveNoteConflictReapply},
+ * there is no automatic retry. A thrown transport error re-buffers and
+ * retries with exponential backoff capped at
+ * {@link AUTOSAVE_RETRY_MAX_MS}; `rate_limited` re-buffers with the
+ * server's `retryAfter`. Retries stop at unmount, with the unmount flush
+ * as the final attempt. Every other typed failure is deterministic: the
+ * buffer is dropped and `saveError` surfaces until the note's next
+ * successful save, with the committed content still in the detail cache
+ * so the next commit re-buffers it. Callers must gate `commit` on
+ * `isPlaceholderData` from {@link useNoteDetail}: a placeholder's empty
+ * body must never be autosaved. The dirty mark clears only on a confirmed
+ * save with an empty buffer outside an open edit session, or on an idle
+ * `endEditSession`. Notes marked
+ * trashed (a confirmed delete whose restore has not yet succeeded) are
+ * excluded on both ends: `commit` drops the edit before touching the
+ * buffer or the removed detail entry, and the flush discards a buffered
+ * edit instead of sending a doomed write.
+ *
+ * Edit sessions: `beginEditSession` records an open session (focused
+ * title input or open body textarea) and marks the note dirty, so a
+ * mid-edit remote event never refetches the detail (a refetch would
+ * refresh the CAS token and let the eventual commit silently clobber the
+ * remote change). The session is recorded module-level so a save
+ * confirmed mid-session releases nothing: the flush clears the dirty
+ * mark only outside an open session. `endEditSession` releases the gate
+ * only when nothing is buffered, no flush is in flight for the note, and
+ * no conflict is live; unmount ends any dangling session the same way.
  *
  * @param projectId - Owning project id.
  * @param noteId - Note being edited.
  * @returns `commit` (buffer a block commit), `flush` (save now), `pending`
  *   (unsaved buffered content exists for this note), `conflict` (live
  *   conflict payload, or `null`), `saveError` (terminal failure for this
- *   note's last dropped save, or `null`).
+ *   note's last dropped save, or `null`), `beginEditSession` /
+ *   `endEditSession` (dirty-gate holds for the textarea session), and
+ *   `resolveConflictDrop` / `resolveConflictReapply` (banner recovery).
  */
 export function useNoteAutosave(projectId: string, noteId: string) {
   const qc = useQueryClient();
@@ -724,15 +759,22 @@ export function useNoteAutosave(projectId: string, noteId: string) {
   const flushRef = useRef<() => Promise<void>>(async () => {});
   const mountedRef = useRef(true);
   const transportFailuresRef = useRef(0);
+  const inFlightNoteRef = useRef<string | null>(null);
+  const conflictRef = useRef<NoteConflictState | null>(null);
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [conflictState, setConflictState] = useState<
-    (NoteAutosaveConflict & { noteId: string }) | null
-  >(null);
+  const [conflictState, setConflictState] = useState<NoteConflictState | null>(
+    null,
+  );
   const [saveErrorState, setSaveErrorState] = useState<
     (NoteAutosaveError & { noteId: string }) | null
   >(null);
+
+  const setConflict = useCallback((next: NoteConflictState | null) => {
+    conflictRef.current = next;
+    setConflictState(next);
+  }, []);
 
   const flush = useCallback(async () => {
     if (timerRef.current !== null) {
@@ -754,50 +796,58 @@ export function useNoteAutosave(projectId: string, noteId: string) {
           clearNoteDirty(target);
           continue;
         }
-        let result: NoteActionResult<NoteSummary> | null = null;
+        inFlightNoteRef.current = target;
         try {
-          result = await mutateAsync({ noteId: target, patch });
-        } catch {
-          result = null;
-        }
-        if (result === null || result.ok === false) {
-          if (result === null || result.code === "rate_limited") {
-            const newer = buffers.get(target);
-            buffers.set(target, newer ? { ...patch, ...newer } : patch);
-            setPendingIds((ids) => addPendingId(ids, target));
-            if (result === null) {
-              transportFailuresRef.current += 1;
-              retryDelayMs = Math.max(
-                retryDelayMs,
-                Math.min(
-                  AUTOSAVE_DEBOUNCE_MS * 2 ** transportFailuresRef.current,
-                  AUTOSAVE_RETRY_MAX_MS,
-                ),
-              );
-            } else {
-              retryDelayMs = Math.max(retryDelayMs, result.retryAfter * 1000);
-            }
-            continue;
+          let result: NoteActionResult<NoteSummary> | null = null;
+          try {
+            result = await mutateAsync({ noteId: target, patch });
+          } catch {
+            result = null;
           }
-          if (result.code === "stale_write") {
-            setConflictState({
+          if (result === null || result.ok === false) {
+            if (result === null || result.code === "rate_limited") {
+              const newer = buffers.get(target);
+              buffers.set(target, newer ? { ...patch, ...newer } : patch);
+              setPendingIds((ids) => addPendingId(ids, target));
+              if (result === null) {
+                transportFailuresRef.current += 1;
+                retryDelayMs = Math.max(
+                  retryDelayMs,
+                  Math.min(
+                    AUTOSAVE_DEBOUNCE_MS * 2 ** transportFailuresRef.current,
+                    AUTOSAVE_RETRY_MAX_MS,
+                  ),
+                );
+              } else {
+                retryDelayMs = Math.max(retryDelayMs, result.retryAfter * 1000);
+              }
+              continue;
+            }
+            if (result.code === "stale_write") {
+              setConflict(
+                mergeConflictStash(conflictRef.current, {
+                  noteId: target,
+                  currentUpdatedAt: result.currentUpdatedAt,
+                  currentVersion: result.currentVersion,
+                  patch,
+                }),
+              );
+              continue;
+            }
+            setSaveErrorState({
               noteId: target,
-              currentUpdatedAt: result.currentUpdatedAt,
-              currentVersion: result.currentVersion,
+              code: result.code,
+              message: result.message,
             });
             continue;
           }
-          setSaveErrorState({
-            noteId: target,
-            code: result.code,
-            message: result.message,
-          });
-          continue;
+          transportFailuresRef.current = 0;
+          if (!buffers.has(target)) clearNoteDirtyUnlessEditing(target);
+          if (conflictRef.current?.noteId === target) setConflict(null);
+          setSaveErrorState((e) => (e?.noteId === target ? null : e));
+        } finally {
+          inFlightNoteRef.current = null;
         }
-        transportFailuresRef.current = 0;
-        if (!buffers.has(target)) clearNoteDirty(target);
-        setConflictState((c) => (c?.noteId === target ? null : c));
-        setSaveErrorState((e) => (e?.noteId === target ? null : e));
       }
     } finally {
       inFlightRef.current = false;
@@ -812,7 +862,7 @@ export function useNoteAutosave(projectId: string, noteId: string) {
         );
       }
     }
-  }, [mutateAsync]);
+  }, [mutateAsync, setConflict]);
 
   useEffect(() => {
     flushRef.current = flush;
@@ -850,11 +900,45 @@ export function useNoteAutosave(projectId: string, noteId: string) {
     [noteId, projectId, qc],
   );
 
+  const beginEditSession = useCallback(() => {
+    if (isNoteTrashed(noteId)) return;
+    beginNoteEditSession(noteId);
+  }, [noteId]);
+
+  const endEditSession = useCallback(() => {
+    endNoteEditSession(noteId);
+    if (
+      buffersRef.current.has(noteId) ||
+      inFlightNoteRef.current === noteId ||
+      conflictRef.current?.noteId === noteId
+    ) {
+      return;
+    }
+    clearNoteDirty(noteId);
+  }, [noteId]);
+
   useEffect(() => {
     return () => {
+      endEditSession();
       void flushRef.current();
     };
-  }, [noteId]);
+  }, [endEditSession]);
+
+  const resolveConflictDrop = useCallback(() => {
+    if (conflictRef.current?.noteId !== noteId) return;
+    resolveNoteConflictDrop(qc, projectId, noteId, buffersRef.current);
+    setPendingIds((ids) => removePendingId(ids, noteId));
+    setConflict(null);
+  }, [noteId, projectId, qc, setConflict]);
+
+  const resolveConflictReapply = useCallback(() => {
+    const conflict = conflictRef.current;
+    if (conflict?.noteId !== noteId) return;
+    resolveNoteConflictReapply(qc, projectId, conflict, buffersRef.current);
+    setPendingIds((ids) => addPendingId(ids, noteId));
+    setConflict(null);
+    void flushRef.current();
+  }, [noteId, projectId, qc, setConflict]);
 
   return {
     commit,
@@ -865,11 +949,16 @@ export function useNoteAutosave(projectId: string, noteId: string) {
         ? {
             currentUpdatedAt: conflictState.currentUpdatedAt,
             currentVersion: conflictState.currentVersion,
+            fields: conflictFields(conflictState.patch),
           }
         : null,
     saveError:
       saveErrorState?.noteId === noteId
         ? { code: saveErrorState.code, message: saveErrorState.message }
         : null,
+    beginEditSession,
+    endEditSession,
+    resolveConflictDrop,
+    resolveConflictReapply,
   };
 }

@@ -10,14 +10,19 @@ import {
   IconUsers,
   IconX,
 } from "@/components/shared/icons";
+import { Avatar } from "@/components/shared/Avatar";
 import { MonoId } from "@/components/shared/MonoId";
+import { useSession } from "@/lib/auth-client";
 import type { NoteFull } from "@/lib/data/note";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { noteKeys } from "@/lib/query/keys";
 import { fetchNotesTree } from "@/lib/query/queries";
-import type { TaskStatus } from "@/lib/types";
+import { useNotePresence } from "@/lib/realtime/presence-store";
+import type { TaskStatus, Visibility } from "@/lib/types";
 import { formatRelative } from "@/lib/ui/relative-time";
+import { ConflictBanner } from "./ConflictBanner";
 import { NoteEditor } from "./NoteEditor";
+import { useNotePresenceHeartbeat } from "./usePresenceHeartbeat";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import {
   shouldAdoptServerTitle,
@@ -121,8 +126,11 @@ const PILL_CLASS =
   "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase";
 
 /**
- * Loaded-note body: header chip row, editable H1 title, meta line with
- * save status, feed banner, and the live block editor. Mounted only with
+ * Loaded-note body: header chip row (with live presence avatars on team
+ * notes), editable H1 title, meta line with save status (priority
+ * saving > conflict > save failed), the conflict banner when a
+ * `stale_write` flush surfaced one, feed banner, and the live block
+ * editor. Mounted only with
  * a live selection so the detail query is never keyed on an empty id;
  * remounted per note via `key`. An uncommitted title is flushed on
  * unmount so a selection change without a blur never drops the edit; the
@@ -154,6 +162,10 @@ function EditorBody({
   });
   const autosave = useNoteAutosave(projectId, noteId);
   const note = data?.note;
+  useNotePresenceHeartbeat(
+    noteId,
+    note !== undefined && !isPlaceholderData && note.visibility === "team",
+  );
   const [title, setTitle] = useState<string | null>(null);
   const [seenServerTitle, setSeenServerTitle] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
@@ -327,6 +339,7 @@ function EditorBody({
               locked — unlock to edit
             </span>
           )}
+          <PresenceAvatars noteId={noteId} visibility={note.visibility} />
           <button
             type="button"
             onClick={() => onSelectNote(null)}
@@ -346,10 +359,14 @@ function EditorBody({
           setTitle(e.target.value);
           setDirty(true);
         }}
-        onFocus={() => setFocused(true)}
+        onFocus={() => {
+          setFocused(true);
+          if (!note.locked) autosave.beginEditSession();
+        }}
         onBlur={() => {
           setFocused(false);
           commitRef.current();
+          autosave.endEditSession();
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") commitRef.current();
@@ -371,6 +388,13 @@ function EditorBody({
           <span className="ml-auto font-mono text-[10px] text-text-faint">
             saving…
           </span>
+        ) : autosave.conflict !== null ? (
+          <span
+            className="ml-auto font-mono text-[10px]"
+            style={{ color: "var(--color-danger)" }}
+          >
+            conflict · changed elsewhere
+          </span>
         ) : autosave.saveError !== null ? (
           <span
             className="ml-auto font-mono text-[10px]"
@@ -380,6 +404,21 @@ function EditorBody({
           </span>
         ) : null}
       </div>
+
+      {autosave.conflict !== null && (
+        <ConflictBanner
+          noteId={noteId}
+          conflict={autosave.conflict}
+          identifier={projectIdentifier}
+          localTitle={title ?? note.title}
+          onDiscard={() => {
+            autosave.resolveConflictDrop();
+            setDirty(false);
+            setSeenServerTitle(null);
+          }}
+          onKeepMine={autosave.resolveConflictReapply}
+        />
+      )}
 
       {note.feedMode !== "none" && (
         <Banner color={meta.color} icon={<IconBundle size={13} />}>
@@ -401,10 +440,65 @@ function EditorBody({
             editable={editable}
             identifier={projectIdentifier}
             onCommitBody={(next) => autosave.commit({ body: next })}
+            onEditingChange={(editing) => {
+              if (editing) autosave.beginEditSession();
+              else autosave.endEditSession();
+            }}
           />
         </NoteLinkContext.Provider>
       )}
     </div>
+  );
+}
+
+interface PresenceAvatarsProps {
+  /** @param noteId - Open note id. */
+  noteId: string;
+  /** @param visibility - The note's visibility; presence renders only on team notes. */
+  visibility: Visibility;
+}
+
+/** How many presence avatars render before collapsing into a `+N` chip. */
+const PRESENCE_AVATAR_CAP = 3;
+
+/**
+ * Overlap-stacked avatars of the other users currently editing the note,
+ * fed by the shared presence store. The caller's own presence (any tab)
+ * is filtered out; renders nothing on private notes or with no remote
+ * editors. Caps at {@link PRESENCE_AVATAR_CAP} avatars plus a `+N` chip.
+ *
+ * @param props - Note id and visibility.
+ * @returns The avatar row, or null.
+ */
+function PresenceAvatars({ noteId, visibility }: PresenceAvatarsProps) {
+  const editors = useNotePresence(noteId);
+  const session = useSession();
+  const ownUserId = session.data?.user.id;
+  const others = editors.filter((e) => e.userId !== ownUserId);
+  if (visibility !== "team" || others.length === 0) return null;
+  const shown = others.slice(0, PRESENCE_AVATAR_CAP);
+  const overflow = others.length - shown.length;
+  return (
+    <span className="flex shrink-0 items-center">
+      {shown.map((editor, i) => (
+        <span
+          key={editor.userId}
+          role="img"
+          aria-label={`${editor.name} is editing`}
+          title={`${editor.name} is editing`}
+          className={i > 0 ? "-ml-1.5" : ""}
+        >
+          <span aria-hidden="true">
+            <Avatar name={editor.name} src={editor.image} size={18} ring />
+          </span>
+        </span>
+      ))}
+      {overflow > 0 && (
+        <span className="ml-1 font-mono text-[10px] text-text-muted">
+          +{overflow}
+        </span>
+      )}
+    </span>
   );
 }
 

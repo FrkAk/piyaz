@@ -86,29 +86,96 @@ export function hasUnsavedNoteEdits(noteId: string): boolean {
 }
 
 /**
- * Note ids confirmed soft-deleted whose restore has not yet succeeded.
- * The autosave hook checks this so a buffered or in-flight edit for a
- * deleted note is dropped instead of hitting the server's trashed-note
- * rejection, and so a post-delete block commit never resurrects a ghost
- * detail entry. Module-level because autosave buffers are per-hook refs
- * the delete mutation cannot reach.
- *
- * Invariant: every restore surface must clear the mark via
- * {@link clearNoteTrashed} on confirmation; today the only surface is the
- * delete-undo restore. A stale mark silently drops the note's edits, so
- * any future restore path (trash view, MCP action, cross-client restore)
- * must clear it. The realtime bridge must NOT clear it from note events:
- * the actor's own pre-delete autosave event settles after the delete and
- * would wrongly unmark the note.
+ * Notes with an open editor session (focused title input or open body
+ * textarea). A session holds the dirty gate for its whole lifetime:
+ * {@link clearNoteDirtyUnlessEditing} skips the release while the session
+ * is open, so a mid-session save can never let a realtime event refetch
+ * the detail, refresh the CAS baseline under the editor, and turn the
+ * session's eventual commit into a silent overwrite of a remote change.
+ * Focus exclusivity keeps the title and body sessions from overlapping
+ * for the same note.
  */
-const trashedNoteIds = new Set<string>();
+const openNoteEditSessions = new Set<string>();
+
+/**
+ * Open an edit session: record it and mark the note dirty.
+ * @param noteId - Note id.
+ */
+export function beginNoteEditSession(noteId: string): void {
+  openNoteEditSessions.add(noteId);
+  dirtyNoteIds.add(noteId);
+}
+
+/**
+ * Close an edit session. Leaves the dirty mark in place: buffered
+ * content, an in-flight flush, or a live conflict may still hold the
+ * gate, so the caller decides the release.
+ * @param noteId - Note id.
+ */
+export function endNoteEditSession(noteId: string): void {
+  openNoteEditSessions.delete(noteId);
+}
+
+/**
+ * Release the dirty mark unless an open edit session still holds it. The
+ * autosave flush calls this on a confirmed save with an empty buffer.
+ * @param noteId - Note id.
+ */
+export function clearNoteDirtyUnlessEditing(noteId: string): void {
+  if (openNoteEditSessions.has(noteId)) return;
+  dirtyNoteIds.delete(noteId);
+}
+
+/**
+ * Hard cap on tracked trashed notes. Map insertion order gives
+ * oldest-first eviction; an evicted mark degrades safely to the server's
+ * typed trashed-write rejection.
+ */
+const TRASHED_REGISTRY_MAX = 200;
+
+/**
+ * Notes confirmed soft-deleted whose restore has not yet succeeded,
+ * keyed to the delete's post-delete `updatedAt` in epoch ms. The autosave
+ * hook checks this so a buffered or in-flight edit for a deleted note is
+ * dropped instead of hitting the server's trashed-note rejection, and so
+ * a post-delete block commit never resurrects a ghost detail entry.
+ * Module-level because autosave buffers are per-hook refs the delete
+ * mutation cannot reach.
+ *
+ * Invariant: every local restore surface must clear the mark via
+ * {@link clearNoteTrashed} on confirmation; today the only local surface
+ * is the delete-undo restore. A stale mark silently drops the note's
+ * edits, so any future restore path (trash view, MCP action) must clear
+ * it. The realtime bridge may clear the mark ONLY through
+ * {@link clearNoteTrashedIfRestoredRemotely}: a cross-client restore
+ * bumps `updatedAt` past the stored delete baseline, while the actor's
+ * own pre-delete autosave event carries an older-or-equal timestamp and
+ * can never satisfy the strict compare.
+ */
+const trashedNoteIds = new Map<string, number>();
 
 /**
  * Mark a note as soft-deleted after a confirmed delete.
+ *
  * @param noteId - Note id.
+ * @param deletedUpdatedAt - The delete's returned post-delete `updatedAt`,
+ *   the baseline a remote restore must strictly exceed to unmark.
  */
-export function markNoteTrashed(noteId: string): void {
-  trashedNoteIds.add(noteId);
+export function markNoteTrashed(
+  noteId: string,
+  deletedUpdatedAt: Date | string,
+): void {
+  trashedNoteIds.delete(noteId);
+  if (trashedNoteIds.size >= TRASHED_REGISTRY_MAX) {
+    const oldest = trashedNoteIds.keys().next().value;
+    if (oldest !== undefined) trashedNoteIds.delete(oldest);
+  }
+  trashedNoteIds.set(
+    noteId,
+    typeof deletedUpdatedAt === "string"
+      ? Date.parse(deletedUpdatedAt)
+      : deletedUpdatedAt.getTime(),
+  );
 }
 
 /**
@@ -117,6 +184,26 @@ export function markNoteTrashed(noteId: string): void {
  */
 export function clearNoteTrashed(noteId: string): void {
   trashedNoteIds.delete(noteId);
+}
+
+/**
+ * Clear a note's trashed mark from a realtime event, but only when the
+ * event's `updatedAt` is strictly newer than the stored delete baseline:
+ * a cross-client restore bumps `updatedAt`, while the actor's own
+ * pre-delete autosave event carries an older-or-equal timestamp.
+ *
+ * @param noteId - Note id from the event.
+ * @param eventMs - The event's `updatedAt` in epoch ms.
+ * @returns True when the mark was cleared.
+ */
+export function clearNoteTrashedIfRestoredRemotely(
+  noteId: string,
+  eventMs: number,
+): boolean {
+  const storedMs = trashedNoteIds.get(noteId);
+  if (storedMs === undefined || !(eventMs > storedMs)) return false;
+  trashedNoteIds.delete(noteId);
+  return true;
 }
 
 /**
