@@ -16,10 +16,14 @@
  * against `lin` as a prefix). Plain OR of the bare prefix would let the
  * partial last word alone match; plain AND of the full parse would
  * demand the partial word as a complete lexeme and kill type-ahead.
- * The prefix lexeme is sanitized to strict alphanumerics in TS and
- * bound as a parameter, so no user text ever reaches `to_tsquery`
- * syntax. GIN `tsvector_ops` supports prefix lexemes via partial
- * match, so the arm stays on `notes_search_idx`.
+ * A hyphenated or otherwise punctuated last term splits into its
+ * alphanumeric sub-tokens, ANDed together with only the final sub-token
+ * prefix-matched (`probe-card` becomes `probe & card:*`), so it matches
+ * a compound like `probe-cardinality` that Postgres tokenizes into
+ * separate lexemes. Each sub-token is strict alphanumerics and the `&`
+ * and `:*` operators are inserted here, so no user text ever reaches
+ * `to_tsquery` syntax. GIN `tsvector_ops` supports prefix lexemes via
+ * partial match, so the arm stays on `notes_search_idx`.
  *
  * Ranked on the GIN index and capped at `NOTE_SEARCH_LIMIT`; the raw
  * `body` and `search_tsv` are never selected.
@@ -54,21 +58,26 @@ export type NoteSearchRawRow = {
  *
  * The arm is skipped when the query ends with a quote (the user closed
  * a phrase), when the last term is websearch-negated (`-draft` must not
- * prefix-match `draft`), or when the term sanitizes to fewer than 2
- * alphanumeric chars.
+ * prefix-match `draft`), or when the final alphanumeric sub-token is
+ * fewer than 2 chars (a 1-char prefix matches too much).
  *
  * @param query - Trimmed, non-empty user search text.
- * @returns The query text before the last term plus the `lexeme:*`
- *   prefix term, or `null` when the arm does not apply.
+ * @returns The query text before the last term plus the ANDed sub-token
+ *   prefix expression (final sub-token as `token:*`), or `null` when the
+ *   arm does not apply.
  */
 function typeaheadArm(query: string): { head: string; prefix: string } | null {
   if (query.endsWith('"')) return null;
   const start = query.search(/\S+$/);
   const lastTerm = query.slice(start);
   if (lastTerm.startsWith("-")) return null;
-  const lexeme = lastTerm.replace(/[^a-zA-Z0-9]/g, "");
-  if (lexeme.length < 2) return null;
-  return { head: query.slice(0, start).trim(), prefix: `${lexeme}:*` };
+  const subTokens = lastTerm.split(/[^a-zA-Z0-9]+/).filter((t) => t.length > 0);
+  const lastSub = subTokens.at(-1);
+  if (lastSub === undefined || lastSub.length < 2) return null;
+  const prefix = subTokens
+    .map((token, i) => (i === subTokens.length - 1 ? `${token}:*` : token))
+    .join(" & ");
+  return { head: query.slice(0, start).trim(), prefix };
 }
 
 /**

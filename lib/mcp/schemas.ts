@@ -819,7 +819,7 @@ const noteCreateItemSchema = z.object({
     .enum(["reference", "guidance", "knowledge"])
     .optional()
     .describe(
-      "guidance=short constraints block auto-injected into matching task bundles (keep it tight). reference=specs and docs, read on demand. knowledge=agent-maintained wiki and memory. Default reference.",
+      "guidance=short constraints block, injected full-body into matching task bundles (keep it tight). reference=specs and docs. knowledge=agent-maintained wiki and memory. reference/knowledge inject only as a title+summary pointer the agent reads on demand, never full-body. Default reference.",
     ),
   summary: z
     .string()
@@ -840,7 +840,7 @@ const noteCreateItemSchema = z.object({
     .enum(["none", "all", "categories", "tags", "tasks"])
     .optional()
     .describe(
-      "When this note auto-injects into task bundles: none (default; searchable only), all, categories/tags (match via feedCategories/feedTags), tasks (match via feedTaskIds).",
+      "When this note auto-injects into task bundles: none (default; searchable only), all, categories/tags (match via feedCategories/feedTags), tasks (match via feedTaskIds). Injection shape depends on type: guidance injects its full body, reference/knowledge inject as a title+summary pointer only.",
     ),
   feedCategories: noteFeedLabelsSchema
     .optional()
