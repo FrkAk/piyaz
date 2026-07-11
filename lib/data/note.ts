@@ -1784,7 +1784,7 @@ export async function searchNotesAcrossProjects(
       isNull(notes.deletedAt),
     ];
     if (refMatch) {
-      // noteRef short-circuit — match exact project identifier + sequence.
+      // noteRef short-circuit: match exact project identifier + sequence.
       // No fallback to title substring when the pattern matches, so a query
       // like "FOO-N1" that doesn't resolve returns empty rather than confusing.
       clauses.push(eq(projects.identifier, refMatch[1].toUpperCase()));
