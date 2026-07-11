@@ -1,43 +1,58 @@
 # Data Processing Agreement
 
-> **Status: DRAFT, pending review by qualified legal counsel. Not yet in effect.**
-> Version: `draft-unpublished` · Effective date: `[EFFECTIVE DATE]`
->
-> **Placeholders** in `[BRACKETS]` are values the operators and counsel must
-> confirm before this agreement goes live. They are intentionally not filled in,
-> and nothing on this page is a binding term yet.
+Last updated: July 11, 2026
 
 ---
 
-This Data Processing Agreement ("DPA") forms part of the agreement between
-`[CUSTOMER]` (the **controller**) and `[PROVIDER]` (the **processor**) for the
-**hosted Piyaz service at `app.piyaz.ai`**. It governs the processing of personal
-data that the controller places into Piyaz workspaces, under **Article 28 GDPR**.
-If you self-host Piyaz, this DPA does not apply to your deployment: you are the
-controller and the processor for your own instance.
+This Data Processing Agreement ("DPA") forms part of the agreement between the
+customer organization whose owner accepts it in the team settings (the
+**controller**) and Piyaz, the team operating the **hosted Piyaz service at
+`app.piyaz.ai`** (the **processor**; the operating entity is in formation, see the
+[Legal Notice](/impressum)). It governs the processing of personal data that the
+controller places into Piyaz workspaces, under **Article 28 GDPR**. If you
+self-host Piyaz, this DPA does not apply to your deployment: you are the
+controller and the processor for your own instance. A revised version naming the
+operating entity as the contracting processor will be offered once that entity is
+established.
 
-## Subject matter and duration
+## Definitions
 
-- **Subject matter:** `[SUBJECT MATTER OF PROCESSING]`
-- **Duration:** for the term of the underlying service agreement, plus the
-  retention period at `[RETENTION PERIOD]`.
-- **Nature and purpose:** `[NATURE AND PURPOSE OF PROCESSING]`
-- **Categories of data subjects:** `[CATEGORIES OF DATA SUBJECTS]`
-- **Categories of personal data:** `[CATEGORIES OF PERSONAL DATA]`
+"Controller", "processor", "personal data", "processing", "data subject",
+"sub-processor", and "personal data breach" have the meanings given in the GDPR.
+"GDPR" means Regulation (EU) 2016/679. The subject matter, duration, nature and
+purpose of processing, and the categories of data subjects and personal data are
+set out in **Annex I**.
 
 ## Processor obligations
 
-The processor `[PROCESSES PERSONAL DATA ONLY ON DOCUMENTED INSTRUCTIONS]`, ensures
-personnel are bound by confidentiality, implements the technical and organisational
-measures at `[SECURITY MEASURES]`, assists the controller with data-subject
-requests, and `[DELETES OR RETURNS PERSONAL DATA]` at the end of processing.
+The processor processes personal data only on the controller's documented
+instructions (the service agreement, these terms, and the controller's use of the
+service settings), ensures personnel are bound by confidentiality, and implements
+the technical and organizational measures in **Annex II**. Taking into
+account the nature of processing and the information available to it, the
+processor assists the controller with data-subject requests and with the
+controller's obligations under **Articles 32 to 36 GDPR** (security,
+personal-data-breach notification, data protection impact assessments, and prior
+consultation). The processor deletes personal data at the end of processing
+within the retention windows in **Annex I** (export is available to the controller
+at any time before deletion).
+
+The processor immediately informs the controller if, in its opinion, an
+instruction from the controller infringes the GDPR or other applicable
+data-protection law.
 
 ## Sub-processors
 
-The controller authorises the processor to engage the sub-processors listed on the
+The controller authorizes the processor to engage the sub-processors listed on the
 [sub-processor list](/subprocessors). That page names each sub-processor, its
-processing purpose, and its data region, and is incorporated into this DPA by
-reference.
+processing purpose, its data region, and its transfer mechanism, and is
+incorporated into this DPA by reference.
+
+Agents, harnesses, and other tools that the controller or its users connect to the
+Service act on the controller's instructions and receive data at the controller's
+direction; they are recipients chosen by the controller, not sub-processors engaged
+by the processor, and the processor has no access to or influence over their
+behavior.
 
 ### Changes to sub-processors
 
@@ -45,15 +60,59 @@ Under **Article 28(2) GDPR**, the controller receives advance notice before the
 processor adds or replaces a sub-processor, so the controller can object. To
 subscribe to sub-processor change notices, email **privacy@piyaz.ai** with the
 subject line **"Subscribe: sub-processor changes"**. Subscribed controllers
-receive at least `[NOTICE PERIOD]` days' advance notice before a new or replacement
+receive at least **30 days'** advance notice before a new or replacement
 sub-processor begins processing personal data.
 
 ## International transfers
 
-Where personal data is transferred outside the `[TRANSFER REGION]`, the transfer
-relies on `[TRANSFER MECHANISM]`.
+Personal data is stored at rest in the EU (AWS `eu-central-1`, Frankfurt).
+Application compute runs on Cloudflare's global edge network, so transient
+processing may occur outside the European Economic Area. Where personal data is
+transferred outside the EEA, the transfer relies on the sub-processor's Data
+Processing Agreement incorporating the **EU Standard Contractual Clauses**, with
+the sub-processor's **EU-US Data Privacy Framework** certification as an
+additional safeguard.
+
+## Breach notification
+
+The processor notifies the controller without undue delay after becoming aware of
+a personal-data breach affecting the controller's data, with the information
+required by **Article 33(3) GDPR** as it becomes available, so the controller can
+meet its own notification duties.
 
 ## Audit
 
-The processor makes available the information necessary to demonstrate compliance
-with Article 28 and allows for audits as described at `[AUDIT TERMS]`.
+The processor makes available the information reasonably necessary to demonstrate
+compliance with Article 28. The controller may request an audit in writing to
+**privacy@piyaz.ai** no more than once per year; audits are conducted with
+reasonable notice, during business hours, without disrupting the service, and
+subject to confidentiality.
+
+## Liability and precedence
+
+This DPA forms part of, and is subject to, the [Beta Terms of Service](/terms),
+including their limitation of liability, which applies to the parties' obligations
+under this DPA. If this DPA conflicts with the Beta Terms of Service on the
+processing of personal data, this DPA prevails. Where the Standard Contractual
+Clauses referenced above apply, they prevail over this DPA to the extent of any
+conflict.
+
+## Annex I: Details of processing
+
+| Item | Detail |
+| --- | --- |
+| Subject matter | Hosting and processing of the personal data the controller's team places into its Piyaz workspaces (projects, tasks, notes, decisions, execution records), and the account data of its team members. |
+| Duration | For the term of the underlying service agreement. On account or team deletion, data is removed within 30 days and backup copies are purged within 90 days, as described in the [Privacy Policy](/privacy). |
+| Nature and purpose | Storage, retrieval, display, search, and transmission of workspace content solely to provide the project-management service to the controller. The processor does not use the data for its own purposes. |
+| Categories of data subjects | The controller's team members, invitees, and any individuals referenced in workspace content the controller chooses to store. |
+| Categories of personal data | Account and contact data (name, email address), technical and session data, and workspace content that may contain personal data. |
+| Special categories | None. The controller must not place special-category data (Art. 9 GDPR) into workspace content. |
+| Frequency of transfer | On a continuous basis for the term of the service agreement. |
+
+## Annex II: Technical and organizational measures
+
+The processor implements the measures described in the [Privacy Policy](/privacy),
+section "How we protect your data": encryption in transit (TLS), provider
+encryption at rest, row-level security for tenant isolation, salted password
+hashing, short-lived and revocable sessions, restricted production access, and
+rate-limiting of API surfaces.

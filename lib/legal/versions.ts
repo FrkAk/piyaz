@@ -4,13 +4,14 @@ import type { LegalDocumentType } from "@/lib/types";
  * Current version identifier per legal document, the single source of truth for
  * acceptance records and public page display.
  *
- * `terms` and `privacy` mirror the `Version:` line of `content/legal/terms.md`
- * and `content/legal/privacy.md`. `dpa` is a placeholder until the DPA text is
- * finalized in PYZ-298; downstream code reads `LEGAL_VERSIONS.dpa`
- * symbolically so the value can be bumped without touching call sites.
+ * Each entry encodes the "Last updated" date of its document under
+ * `content/legal/` (`terms.md`, `privacy.md`, `dpa.md`) as `beta-YYYY-MM-DD`;
+ * update both together. Bumping a version re-offers the document for
+ * acceptance; downstream code reads the values symbolically so a bump never
+ * touches call sites.
  */
 export const LEGAL_VERSIONS: Record<LegalDocumentType, string> = {
-  terms: "draft-2026-06-23",
-  privacy: "draft-2026-06-23",
-  dpa: "draft-unpublished",
+  terms: "beta-2026-07-11",
+  privacy: "beta-2026-07-11",
+  dpa: "beta-2026-07-11",
 };

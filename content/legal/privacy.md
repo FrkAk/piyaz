@@ -1,46 +1,44 @@
 # Privacy Policy
 
-> **Status: DRAFT, pending review by qualified legal counsel. Not yet in effect.**
-> Version: `draft-2026-06-23` · Effective date: `[EFFECTIVE DATE]`
->
-> **Scope:** This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**,
-> operated by the Piyaz founders. **If you self-host Piyaz, this document does not
-> apply to your deployment**: you are the data controller for your own instance and
-> must provide your own privacy policy.
->
-> **Placeholders** in `[BRACKETS]` are values the operators must confirm before this
-> policy goes live. They are intentionally not filled in.
+Last updated: July 11, 2026
+
+This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**, operated
+by the Piyaz team. **If you self-host Piyaz, this document does not apply to your
+deployment**: you are the data controller for your own instance and must provide your
+own privacy policy.
 
 ---
 
 ## Who we are (data controller)
 
-Piyaz ("Piyaz", "we", "us", "our") is currently operated by its founders pending
-incorporation. Because the founders jointly decide why and how your personal data is
-processed, they act as **joint controllers** under Article 26 GDPR. The responsible
-primary contact is:
+Piyaz ("Piyaz", "we", "us", "our") is operated by its team. A formal operating entity
+has not yet been established; the team members jointly decide why and how your personal
+data is processed and act as **joint controllers** under Art. 26 GDPR. As joint
+controllers, the team members are jointly responsible for your rights under this
+policy: regardless of any internal allocation, you may exercise your GDPR rights
+against any of us through the single designated contact point below. The essence of
+the joint-controller arrangement will be published in full once the operating entity
+is formed. Contact for all data-protection matters:
 
-- **Furkan Akbulutlar** (primary data-protection contact)
-- Co-founders: `[CO-FOUNDER NAME 2]`, `[CO-FOUNDER NAME 3]`
-- Postal address: `[POSTAL ADDRESS, GERMANY]`
 - Email: **privacy@piyaz.ai**
 
 We have not appointed a Data Protection Officer (a DPO is not mandatory for an
-operation of our current size under Art. 37 GDPR). This policy will be updated to name
-the incorporated entity once it is formed.
+operation of our current size under Art. 37 GDPR). This policy is in effect for the
+beta period and will be updated to name the operating entity and its full contact
+details once it is formed (see the [Legal Notice](/impressum)).
 
 ## What data we collect
 
 We collect the following categories of personal data:
 
 - **Account data**: your name and email address.
-- **Credentials**: a salted, hashed password (we never store your password in plain text). If you sign in with a third-party provider in future, we receive your basic profile from that provider instead.
+- **Credentials**: a salted, hashed password (we never store your password in plain text). If you sign in with a third-party provider in the future, we receive your basic profile from that provider instead.
 - **Profile data**: an optional avatar image URL.
 - **Technical and session data**: your IP address, browser user-agent, session identifiers, and timestamps.
 - **Workspace data**: team/organization names, membership roles, and the email addresses of people you invite.
 - **Integration data**: metadata about coding-agent clients you connect over MCP/OAuth (client name, identifiers, and the access you grant them).
 - **Content you create**: projects, tasks, decisions, execution records, and related notes. This content may contain personal data if you choose to put it there.
-- **Acceptance records**: a record that you accepted the Beta Terms and acknowledged this Privacy Policy, including the document version, timestamp, and IP address.
+- **Acceptance records**: a record that you accepted the Beta Terms and acknowledged this Privacy Policy, including the document version, timestamp, IP address, and browser user-agent.
 
 We do **not** collect special-category data (Art. 9 GDPR) and ask that you do not place it in your workspace content.
 
@@ -49,6 +47,7 @@ We do **not** collect special-category data (Art. 9 GDPR) and ask that you do no
 We collect personal data when you:
 
 - register for and use an account;
+- sign in through a third-party provider you choose (if offered), in which case we receive your basic profile from that provider;
 - create teams, invite collaborators, and produce workspace content;
 - connect a coding agent or other client over MCP/OAuth;
 - interact with the service, which automatically records technical and session data needed to operate and secure it.
@@ -79,24 +78,73 @@ Your data is stored in the **European Union**. We use the following sub-processo
 - **Amazon Web Services (AWS)**: underlying cloud infrastructure for the Neon database, Frankfurt region (EU).
 - **Cloudflare, Inc.**: application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging across its global edge network.
 
-A current sub-processor list is maintained at `https://app.piyaz.ai/subprocessors`.
+A current [sub-processor list](/subprocessors) is maintained and incorporated here by
+reference.
 
 ### International transfers
 
-Your data is primarily stored and processed in the EU. Some sub-processors
-(Neon, LLC and Cloudflare, Inc.) are headquartered in the United States and may access
-data from outside the European Economic Area for support and operational purposes. Such
-transfers are governed by the **EU Standard Contractual Clauses (SCCs)** and the
-providers' Data Processing Agreements. `[CONFIRM DPAs/SCCs ARE IN PLACE WITH EACH SUB-PROCESSOR.]`
+Where your data is stored and where it is processed are different, and both matter:
+
+- **Data at rest** lives in the EU: the database runs in AWS `eu-central-1`
+  (Frankfurt, Germany).
+- **Compute is global**: the application runs on Cloudflare Workers, a global edge
+  network, so requests (including TLS termination) are processed at the Cloudflare
+  location nearest to you, which may be outside the European Economic Area.
+
+Our US-headquartered sub-processors (Neon, LLC; Amazon Web Services, Inc.; and
+Cloudflare, Inc.) may also access data from outside the EEA for support and
+operational purposes. All such transfers are governed by each sub-processor's Data
+Processing Agreement incorporating the **EU Standard Contractual Clauses (SCCs)**,
+with the sub-processor's certification under the **EU-US Data Privacy Framework** as
+an additional safeguard.
+
+## When we share or disclose your data
+
+We do not sell your personal data and we do not share it for advertising. We disclose
+personal data only:
+
+- **to the sub-processors above**, who process it on our behalf under contract;
+- **at your direction**: when you or the agents and tools you authorize access or retrieve data through the Service's interfaces (see "Agents and connected tools" below);
+- **to comply with the law** or respond to valid legal requests, and to protect the rights, safety, and security of our users, the public, or the Service;
+- **in a business transfer**: if the Service or its assets move to the operating entity once it is formed, or as part of a merger, acquisition, or reorganization, your data may transfer with it. We will notify you, and the receiving party will remain bound by this policy or one at least as protective.
+
+## Agents and connected tools
+
+Piyaz is designed to be used by coding agents and other tools you connect over
+MCP/OAuth. When you authorize such a tool:
+
+- it can read and write your workspace data on your instruction, within the access you grant;
+- data it retrieves is transmitted from our systems to that tool and, typically, to the AI provider behind it. That transfer happens **at your direction**: we do not send your data to AI providers ourselves, and we have no access to, or influence over, what the tool or its provider does with it;
+- the tool's and its AI provider's own privacy policies govern their processing of that data;
+- you can revoke a tool's access at any time in your settings (see also the [Beta Terms](/terms), section 6).
+
+We process the requests your tools send to our API and record metadata about connected
+clients (see "Integration data" above), but we do not receive or store the
+conversations, prompts, or model outputs your tools handle outside the Service.
+
+## How we protect your data
+
+We take voluntary, best-effort technical and organizational measures appropriate to the
+risk and the state of the art:
+
+- all traffic is encrypted in transit (HTTPS/TLS);
+- data at rest is protected by the storage provider's encryption (Neon/AWS);
+- tenant isolation is enforced inside the database itself with row-level security, so
+  one team's data is not readable from another team's context;
+- passwords are stored only as salted hashes; sessions are short-lived and revocable;
+- access to production systems is restricted, and API surfaces are rate-limited.
+
+We do not currently apply application-level (field) encryption on top of the provider's
+storage encryption. No internet service can guarantee absolute security, and we make no
+such guarantee; we commit to maintaining and improving these measures as the service
+grows.
 
 ## How long we keep your data
 
-- **Account and workspace data**: for as long as your account is active. After you delete your account, data is removed within `[30 DAYS]`, and residual copies in backups are purged within `[90 DAYS]`.
+- **Account and workspace data**: for as long as your account is active. After you delete your account, data is removed within **30 days**, and residual copies in backups are purged within **90 days**.
 - **Session records**: expire automatically after **7 days**.
-- **Acceptance records**: retained for the life of your account plus `[RETENTION PERIOD]` to evidence your agreement.
-- **Operational logs and traces**: retained for `[LOG RETENTION PERIOD]` and then deleted or anonymized.
-
-`[CONFIRM ALL RETENTION PERIODS WITH COUNSEL.]`
+- **Acceptance records**: anonymized when your account is deleted (the link to you, your IP address, and your user-agent are removed) and retained in that anonymized form as evidence that the agreement existed.
+- **Operational logs and traces**: retained for up to **90 days** and then deleted or anonymized.
 
 ## Your data protection rights
 
@@ -106,7 +154,7 @@ Under the GDPR you have the right to:
 - **Rectification**: have inaccurate or incomplete data corrected.
 - **Erasure**: ask us to delete your personal data ("right to be forgotten").
 - **Restriction**: ask us to limit how we process your data.
-- **Data portability**: receive your data in a structured, machine-readable format.
+- **Data portability**: receive the personal data you provided to us in a structured, machine-readable format. Our self-serve export covers your account data (profile, team memberships, and your acceptance records); shared workspace content remains accessible through the Service itself.
 - **Object**: object to processing based on our legitimate interests.
 - **Withdraw consent**: where we rely on consent, withdraw it at any time (this does not affect prior processing).
 
@@ -119,7 +167,17 @@ We use only **strictly necessary cookies** required to operate the service, chie
 authentication session cookie, which is `httpOnly`, `SameSite=Lax`, and `Secure` in
 production. We do **not** use analytics, advertising, or tracking cookies. Because our
 cookies are strictly necessary, no cookie-consent banner is required under the ePrivacy
-Directive. `[CONFIRM no analytics/tracking cookies ship before launch.]`
+Directive.
+
+## Analytics we may add later
+
+Today the service ships **no analytics**. To keep the service reliable we may later
+introduce tooling for **performance monitoring, error and crash tracking, and
+aggregated usage reporting**. When we do, we will prefer privacy-preserving,
+server-side, aggregated approaches under our legitimate interest in running a reliable
+service. If any such tool stores or reads information on your device or sends data to a
+third-party analytics processor, we will **update this policy first and ask for your
+consent where required** before enabling it.
 
 ## Children
 
@@ -135,9 +193,9 @@ practices of other sites.
 
 ## Changes to this policy
 
-We keep this policy under review and may update it. The version identifier and effective
-date at the top reflect the current version. We will notify you of material changes
-`[in-app and/or by email]`, and where required we will ask you to re-accept.
+We keep this policy under review and may update it. The date at the top
+reflects the current version. We will notify you of material changes in-app or by
+email, and where required we will ask you to re-accept.
 
 ## How to contact us
 
@@ -146,7 +204,6 @@ Questions about this policy or your data: **privacy@piyaz.ai**.
 ## How to contact the supervisory authority
 
 If you believe we have not handled your data lawfully, you have the right to lodge a
-complaint with a data protection supervisory authority. In Germany this is the data
-protection authority of the relevant federal state (`[LANDESDATENSCHUTZBEHÖRDE]`) or the
-Federal Commissioner for Data Protection and Freedom of Information (BfDI).
-`[CONFIRM the competent lead authority based on the controllers' place of establishment.]`
+complaint with a data protection supervisory authority, in particular in the EU member
+state of your habitual residence, your place of work, or the place of the alleged
+infringement (Art. 77 GDPR).
