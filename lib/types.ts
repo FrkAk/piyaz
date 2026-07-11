@@ -156,3 +156,6 @@ export type NoteTaskLinkKind = "mention" | "reference" | "spec_of";
 
 /** Lifecycle state of a note's semantic embedding. */
 export type EmbeddingStatus = "none" | "pending" | "ready" | "failed" | "stale";
+
+/** Legal document whose acceptance is recorded per user for compliance evidence. */
+export type LegalDocumentType = "terms" | "privacy" | "dpa";

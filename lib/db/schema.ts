@@ -29,6 +29,7 @@ import type {
   FeedMode,
   NoteTaskLinkKind,
   EmbeddingStatus,
+  LegalDocumentType,
 } from "@/lib/types";
 
 /**
@@ -639,6 +640,59 @@ export const noteRevisions = pgTable(
 
 export type NoteRevision = typeof noteRevisions.$inferSelect;
 export type NewNoteRevision = typeof noteRevisions.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Legal Acceptances
+// ---------------------------------------------------------------------------
+
+/** Longest storable client IP; IPv6 maxes at 45 chars, margin for zone ids. */
+export const LEGAL_IP_MAX_CHARS = 64;
+
+/** Cap for the attacker-controlled User-Agent header stored as evidence. */
+export const LEGAL_USER_AGENT_MAX_CHARS = 1024;
+
+export const legalAcceptances = pgTable(
+  "legal_acceptances",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    // Which organization entered the agreement; set for org-scoped documents
+    // (dpa), null for personal ones (terms, privacy). "set null" keeps the
+    // row as contract evidence when the organization is deleted.
+    organizationId: uuid("organization_id").references(() => organization.id, {
+      onDelete: "set null",
+    }),
+    documentType: text("document_type").$type<LegalDocumentType>().notNull(),
+    documentVersion: text("document_version").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+  },
+  (t) => [
+    check(
+      "legal_acceptances_document_type_check",
+      sql`${t.documentType} IN ('terms', 'privacy', 'dpa')`,
+    ),
+    // Both values are client-controlled request metadata landing in a
+    // permanent evidence table; recordAcceptance truncates before insert and
+    // these checks are the backstop.
+    check(
+      "legal_acceptances_ip_len_check",
+      sql`char_length(${t.ipAddress}) <= ${sqlInt(LEGAL_IP_MAX_CHARS)}`,
+    ),
+    check(
+      "legal_acceptances_user_agent_len_check",
+      sql`char_length(${t.userAgent}) <= ${sqlInt(LEGAL_USER_AGENT_MAX_CHARS)}`,
+    ),
+  ],
+).enableRLS();
+
+export type LegalAcceptance = typeof legalAcceptances.$inferSelect;
+export type NewLegalAcceptance = typeof legalAcceptances.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Team Invite Codes (separate file, re-exported here for drizzle-kit)
