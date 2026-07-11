@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
+import { superuserPool } from "@/tests/setup/global";
 import { makeAuthContext, type AuthContext } from "@/lib/auth/context";
 import {
   createNote,
@@ -25,6 +26,30 @@ afterEach(async () => {
  */
 function mcpContext(userId: string): AuthContext {
   return makeAuthContext(userId, { source: "mcp", userId, clientId: null });
+}
+
+/**
+ * Insert a new user and add them to an existing org as a plain member.
+ *
+ * @param organizationId - Org the new member joins.
+ * @param suffix - Unique suffix for the user's name and email.
+ * @returns The new user's id.
+ */
+async function seedSecondMember(
+  organizationId: string,
+  suffix: string,
+): Promise<string> {
+  const sql = superuserPool();
+  const [u] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
+    RETURNING id
+  `;
+  await sql`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${organizationId}, ${u.id}, 'member', now())
+  `;
+  return u.id;
 }
 
 /**
@@ -148,5 +173,34 @@ describe("restoreNoteRevision: append-only revert through updateNote", () => {
     expect(restored.version).toBe(2);
     const after = await listNoteRevisions(ctx, note.id);
     expect(after.revisions.map((r) => r.version)).toEqual([2, 1]);
+  });
+
+  test("pre-share revisions are creator-only: hidden from a member's list and restore", async () => {
+    const fx = await seedUserOrgProject("rev-fence");
+    const userB = await seedSecondMember(fx.organizationId, "rev-fence-b");
+    const ctxA = makeAuthContext(fx.userId);
+    const note = await createNote(ctxA, {
+      projectId: fx.projectId,
+      title: "Draft",
+      body: "private v1",
+      visibility: "private",
+    });
+    await updateNote(ctxA, note.id, { body: "private v2" });
+    await updateNote(ctxA, note.id, { visibility: "team" });
+    await updateNote(ctxA, note.id, { body: "shared v3" });
+
+    const ctxB = makeAuthContext(userB);
+    const listB = await listNoteRevisions(ctxB, note.id);
+    expect(listB.currentVersion).toBe(3);
+    expect(listB.revisions.map((r) => r.version)).toEqual([3]);
+
+    await expect(restoreNoteRevision(ctxB, note.id, 1)).rejects.toBeInstanceOf(
+      NoteValidationError,
+    );
+
+    const listA = await listNoteRevisions(ctxA, note.id);
+    expect(listA.revisions.map((r) => r.version)).toEqual([3, 2, 1]);
+    const restored = await restoreNoteRevision(ctxA, note.id, 1);
+    expect(restored.version).toBe(4);
   });
 });

@@ -519,8 +519,8 @@ describe("Notes RLS — visibility, isolation, cascade, hardening", () => {
     );
     const su = superuserPool();
     const [note] = await su<{ id: string }[]>`
-      INSERT INTO notes (project_id, title, slug, visibility, created_by)
-      VALUES (${fx.projectId}, 'Team', 'team', 'team', ${fx.userId}) RETURNING id
+      INSERT INTO notes (project_id, title, slug, visibility, created_by, shared_since)
+      VALUES (${fx.projectId}, 'Team', 'team', 'team', ${fx.userId}, now()) RETURNING id
     `;
 
     // Member B forges a snapshot attributed to A → WITH CHECK rejects (42501).

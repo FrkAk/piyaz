@@ -55,7 +55,7 @@ mock.module("@/lib/actions/note", () => ({
   updateNoteAction: unexpectedActionCall,
 }));
 
-const { runRestoreRevisionWrite } = await import(
+const { runOptimisticNoteWrite, runRestoreRevisionWrite } = await import(
   "@/components/workspace/notes/useNoteMutations"
 );
 
@@ -171,5 +171,84 @@ describe("runRestoreRevisionWrite", () => {
     expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
     expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(false);
     expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(false);
+  });
+});
+
+describe("runOptimisticNoteWrite revisions cache maintenance", () => {
+  test("a body-changing success prepends the new revision and bumps currentVersion", async () => {
+    const qc = seededClient();
+    qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
+      currentVersion: 2,
+      revisions: [
+        { version: 2, title: "Old", createdAt: "2026-07-01T09:00:00.000Z" },
+      ],
+    });
+    const updatedAt = new Date("2026-07-02T10:00:00.000Z");
+
+    await runOptimisticNoteWrite(
+      qc,
+      PROJECT,
+      NOTE,
+      { body: "new body" },
+      async () => ({
+        ok: true as const,
+        data: {
+          id: NOTE,
+          slug: "slug-n1",
+          sequenceNumber: 1,
+          title: "New title",
+          projectId: PROJECT,
+          folder: "",
+          version: 3,
+          updatedAt,
+          projectIdentifier: "PYZ",
+        },
+      }),
+      false,
+    );
+
+    const cache = qc.getQueryData<{
+      currentVersion: number;
+      revisions: { version: number; title: string; createdAt: string | Date }[];
+    }>(noteKeys.revisions(PROJECT, NOTE));
+    expect(cache?.currentVersion).toBe(3);
+    expect(cache?.revisions.map((r) => r.version)).toEqual([3, 2]);
+    expect(cache?.revisions[0].title).toBe("New title");
+    expect(cache?.revisions[0].createdAt).toBe(updatedAt);
+  });
+
+  test("a metadata-only success (version unchanged) leaves the revisions cache untouched", async () => {
+    const qc = seededClient();
+    const before = qc.getQueryData<{ currentVersion: number }>(
+      noteKeys.revisions(PROJECT, NOTE),
+    );
+
+    await runOptimisticNoteWrite(
+      qc,
+      PROJECT,
+      NOTE,
+      { title: "Renamed" },
+      async () => ({
+        ok: true as const,
+        data: {
+          id: NOTE,
+          slug: "slug-n1",
+          sequenceNumber: 1,
+          title: "Renamed",
+          projectId: PROJECT,
+          folder: "",
+          version: 2,
+          updatedAt: new Date("2026-07-02T10:00:00.000Z"),
+          projectIdentifier: "PYZ",
+        },
+      }),
+      false,
+    );
+
+    expect(
+      qc.getQueryData<{ currentVersion: number }>(
+        noteKeys.revisions(PROJECT, NOTE),
+      ),
+    ).toBe(before);
   });
 });

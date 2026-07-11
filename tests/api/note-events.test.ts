@@ -164,6 +164,55 @@ describe("GET /api/note/[noteId]/events", () => {
     expect(secondBody.events[0].id).not.toBe(firstBody.events[0].id);
   });
 
+  test("event rows carry only the slim note-scoped fields", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nev-slim");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await callEvents(noteId);
+    const body = (await res.json()) as { events: Record<string, unknown>[] };
+    for (const event of body.events) {
+      expect(event).not.toContainKey("projectId");
+      expect(event).not.toContainKey("taskId");
+      expect(event).not.toContainKey("targetRef");
+      expect(event).toContainKeys(["id", "type", "createdAt", "summary"]);
+    }
+  });
+
+  test("the ETag folds the newest event id, so a same-count append moves it", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nev-etag-id");
+    setSession({ user: { id: fx.userId } });
+
+    const first = await callEvents(noteId, "?limit=1");
+    const firstEtag = first.headers.get("etag") as string;
+    const firstBody = (await first.json()) as { events: { id: string }[] };
+    expect(firstEtag).toContain(firstBody.events[0].id);
+
+    await updateNote(makeAuthContext(fx.userId), noteId, { body: "three" });
+    const after = await callEvents(noteId, "?limit=1", {
+      "if-none-match": firstEtag,
+    });
+    expect(after.status).toBe(200);
+    expect(after.headers.get("etag")).not.toBe(firstEtag);
+  });
+
+  test("an oversize limit clamps and a tampered cursor falls back to page one", async () => {
+    const { fx, noteId } = await seedNoteWithHistory("nev-clamp");
+    setSession({ user: { id: fx.userId } });
+
+    const clamped = await callEvents(noteId, "?limit=5000");
+    expect(clamped.status).toBe(200);
+    const clampedBody = (await clamped.json()) as { events: unknown[] };
+    expect(clampedBody.events).toHaveLength(2);
+
+    const tampered = await callEvents(
+      noteId,
+      `?cursor=${encodeURIComponent("garbage|not-a-cursor")}`,
+    );
+    expect(tampered.status).toBe(200);
+    const tamperedBody = (await tampered.json()) as { events: unknown[] };
+    expect(tamperedBody.events).toHaveLength(2);
+  });
+
   test("returns 404 for a non-uuid id before any SQL", async () => {
     const { fx } = await seedNoteWithHistory("nev-uuid");
     setSession({ user: { id: fx.userId } });
@@ -219,6 +268,7 @@ describe("GET /api/note/[noteId]/revisions", () => {
     expect(body.currentVersion).toBe(2);
     expect(body.revisions.map((r) => r.version)).toEqual([2, 1]);
     expect(JSON.stringify(body)).not.toContain('"body"');
+    expect(JSON.stringify(body)).not.toContain('"createdBy"');
   });
 
   test("a second request with the matching ETag returns 304; a new revision moves it", async () => {

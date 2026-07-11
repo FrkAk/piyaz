@@ -116,7 +116,16 @@ function updatedAtMs(value: Date | string): number {
 }
 
 /** Quiet window that coalesces per-note history refetches across an autosave burst. */
-const NOTE_EVENTS_INVALIDATE_QUIET_MS = 2_000;
+let noteEventsInvalidateQuietMs = 2_000;
+
+/**
+ * Test-only override of the events-invalidation quiet window.
+ *
+ * @param ms - Replacement window in milliseconds.
+ */
+export function _setNoteEventsQuietMsForTests(ms: number): void {
+  noteEventsInvalidateQuietMs = ms;
+}
 
 /** Pending per-note history invalidation timers, keyed by note id. */
 const noteEventsInvalidateTimers = new Map<
@@ -157,7 +166,7 @@ function scheduleNoteEventsInvalidation(
             : data,
       );
       qc.invalidateQueries({ queryKey: key });
-    }, NOTE_EVENTS_INVALIDATE_QUIET_MS),
+    }, noteEventsInvalidateQuietMs),
   );
 }
 

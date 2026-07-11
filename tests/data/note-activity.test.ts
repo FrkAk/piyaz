@@ -12,6 +12,7 @@ import {
   createNote,
   createNoteTaskLink,
   deleteNote,
+  restoreNote,
   updateNote,
 } from "@/lib/data/note";
 import { ForbiddenError } from "@/lib/auth/authorization";
@@ -257,12 +258,12 @@ describe("feed exposure: project and task scopes", () => {
     expect(JSON.stringify(mcpFeed.events)).toContain("Loud team note");
   });
 
-  test("legacy note events with a NULL note_id keep flowing in the feed", async () => {
-    const fx = await seedUserOrgProject("na-legacy");
+  test("task events with a NULL note_id keep flowing in the feed", async () => {
+    const fx = await seedUserOrgProject("na-null-arm");
     const su = superuserPool();
     await su`
       INSERT INTO activity_events (project_id, type, source, summary)
-      VALUES (${fx.projectId}, 'note_created', 'web', 'created note "Legacy"')
+      VALUES (${fx.projectId}, 'status_changed', 'web', 'moved task to doing')
     `;
 
     const feed = await listProjectActivity(
@@ -270,6 +271,68 @@ describe("feed exposure: project and task scopes", () => {
       fx.projectId,
       {},
     );
-    expect(JSON.stringify(feed.events)).toContain("Legacy");
+    expect(JSON.stringify(feed.events)).toContain("moved task to doing");
+  });
+
+  test("sharing a private note exposes only post-share events in the feed and history", async () => {
+    const fx = await seedUserOrgProject("na-share-fence");
+    const userB = await seedSecondMember(fx.organizationId, "na-share-b");
+    const ctxA = makeAuthContext(fx.userId);
+    const note = await createNote(ctxA, {
+      projectId: fx.projectId,
+      title: "Draft thoughts",
+      body: "private era",
+      visibility: "private",
+    });
+    await updateNote(ctxA, note.id, { title: "Roadmap" });
+    await updateNote(ctxA, note.id, { visibility: "team" });
+    await updateNote(ctxA, note.id, { body: "shared era" });
+
+    const ctxB = makeAuthContext(userB);
+    const feedB = await listProjectActivity(ctxB, fx.projectId, {});
+    const feedText = JSON.stringify(feedB.events);
+    expect(feedText).not.toContain("created note");
+    expect(feedText).toContain("updated note");
+
+    const historyB = await listNoteActivity(ctxB, note.id, {});
+    const historyText = JSON.stringify(historyB.events);
+    expect(historyText).not.toContain("created note");
+    const preShareCount = historyB.events.filter(
+      (e) => e.type === "note_created",
+    ).length;
+    expect(preShareCount).toBe(0);
+
+    const historyA = await listNoteActivity(ctxA, note.id, {});
+    expect(
+      historyA.events.filter((e) => e.type === "note_created").length,
+    ).toBe(1);
+  });
+
+  test("a trashed team note keeps only its trash event in the feed until restored", async () => {
+    const fx = await seedUserOrgProject("na-trash-feed");
+    const ctx = makeAuthContext(fx.userId);
+    const note = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "Doomed",
+      body: "content",
+      visibility: "team",
+    });
+    await updateNote(ctx, note.id, { body: "edited" });
+    await deleteNote(ctx, note.id);
+
+    const trashedFeed = await listProjectActivity(ctx, fx.projectId, {});
+    const trashedTypes = trashedFeed.events
+      .filter((e) => e.type.startsWith("note_"))
+      .map((e) => e.type);
+    expect(trashedTypes).toEqual(["note_deleted"]);
+
+    await restoreNote(ctx, note.id);
+    const restoredFeed = await listProjectActivity(ctx, fx.projectId, {});
+    const restoredTypes = restoredFeed.events
+      .filter((e) => e.type.startsWith("note_"))
+      .map((e) => e.type);
+    expect(restoredTypes).toContain("note_created");
+    expect(restoredTypes).toContain("note_updated");
+    expect(restoredTypes).toContain("note_restored");
   });
 });

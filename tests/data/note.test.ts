@@ -303,6 +303,47 @@ test("moveFolder re-parents the subtree in one update with a cycle guard", async
   );
 });
 
+test("moveFolder records one note-keyed note_moved event per moved note", async () => {
+  const f = await seedUserOrgProject("notemove-ev");
+  const ctx = makeAuthContext(f.userId);
+  const privateNote = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Private in folder",
+    folder: "docs",
+    visibility: "private",
+  });
+  const teamNote = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Team in folder",
+    folder: "docs/deep",
+    visibility: "team",
+  });
+
+  await moveFolder(ctx, f.projectId, "docs", "archive");
+
+  const su = superuserPool();
+  const events = await su<
+    { note_id: string; metadata: { from: string; to: string } }[]
+  >`
+    SELECT note_id, metadata FROM activity_events
+    WHERE type = 'note_moved' AND project_id = ${f.projectId}
+    ORDER BY note_id
+  `;
+  expect(events.length).toBe(2);
+  expect(events.map((e) => e.note_id).sort()).toEqual(
+    [privateNote.id, teamNote.id].sort(),
+  );
+  const byNote = new Map(events.map((e) => [e.note_id, e.metadata]));
+  expect(byNote.get(privateNote.id)).toEqual({
+    from: "docs",
+    to: "archive/docs",
+  });
+  expect(byNote.get(teamNote.id)).toEqual({
+    from: "docs/deep",
+    to: "archive/docs/deep",
+  });
+});
+
 test("moveFolder rewrites paths containing non-BMP characters correctly", async () => {
   const f = await seedUserOrgProject("notemoji");
   const ctx = makeAuthContext(f.userId);
