@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AuthFooter } from "@/components/auth/AuthFooter";
 
 interface AuthShellProps {
   /** Left column content — branding, headline, and the form stack. */
@@ -23,6 +24,7 @@ export function AuthShell({ form, hero }: AuthShellProps) {
     <div className="grid min-h-[100dvh] grid-cols-1 lg:grid-cols-2">
       <section className="relative flex items-center justify-center px-6 py-10 sm:px-10 lg:px-12">
         <div className="w-full max-w-[360px]">{form}</div>
+        <AuthFooter />
       </section>
       <aside
         aria-hidden="true"
