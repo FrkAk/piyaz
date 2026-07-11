@@ -215,7 +215,7 @@ test("searchNotes resolves a typed note ref case-insensitively", async () => {
   expect(lower.map((h) => h.id)).toEqual([note.id]);
 });
 
-test("searchNotes returns empty for a nonexistent or foreign-project ref", async () => {
+test("searchNotes returns empty for a nonexistent, foreign, or out-of-range ref", async () => {
   const f = await seedUserOrgProject("REFB");
   const other = await seedUserOrgProject("REFC");
   const ctx = makeAuthContext(f.userId);
@@ -237,6 +237,9 @@ test("searchNotes returns empty for a nonexistent or foreign-project ref", async
 
   const foreignRef = `${foreign.projectIdentifier}-N${foreign.sequenceNumber}`;
   expect(await searchNotes(ctx, f.projectId, foreignRef)).toEqual([]);
+
+  const outOfRange = `${mine.projectIdentifier}-N9999999999`;
+  expect(await searchNotes(ctx, f.projectId, outOfRange)).toEqual([]);
 });
 
 test("searchNotes leaves non-ref queries on the FTS path", async () => {
@@ -270,7 +273,7 @@ test("searchNotesForMcp resolves a typed note ref case-insensitively", async () 
   expect(lower.hits.map((h) => h.id)).toEqual([note.id]);
 });
 
-test("searchNotesForMcp returns empty for a nonexistent or foreign-project ref", async () => {
+test("searchNotesForMcp returns empty for a nonexistent, foreign, or out-of-range ref", async () => {
   const f = await seedUserOrgProject("MREFB");
   const other = await seedUserOrgProject("MREFC");
   const ctx = makeAuthContext(f.userId);
@@ -292,6 +295,11 @@ test("searchNotesForMcp returns empty for a nonexistent or foreign-project ref",
 
   const foreignRef = `${foreign.projectIdentifier}-N${foreign.sequenceNumber}`;
   expect((await searchNotesForMcp(ctx, f.projectId, foreignRef)).hits).toEqual(
+    [],
+  );
+
+  const outOfRange = `${mine.projectIdentifier}-N9999999999`;
+  expect((await searchNotesForMcp(ctx, f.projectId, outOfRange)).hits).toEqual(
     [],
   );
 });

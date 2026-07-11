@@ -110,7 +110,7 @@ test("resolves a typed note ref case-insensitively", async () => {
   expect(lower.map((h) => h.id)).toEqual([note.id]);
 });
 
-test("returns empty for a nonexistent note ref", async () => {
+test("returns empty for a nonexistent or out-of-range note ref", async () => {
   const f = await seedUserOrgProject("XREFB");
   const ctx = makeAuthContext(f.userId);
   const note = await createNote(ctx, {
@@ -122,6 +122,9 @@ test("returns empty for a nonexistent note ref", async () => {
 
   const bogus = `${note.projectIdentifier}-N9999`;
   expect(await searchNotesAcrossProjects(ctx, bogus)).toEqual([]);
+
+  const outOfRange = `${note.projectIdentifier}-N9999999999`;
+  expect(await searchNotesAcrossProjects(ctx, outOfRange)).toEqual([]);
 });
 
 test("never resolves another tenant's note ref", async () => {

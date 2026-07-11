@@ -98,6 +98,7 @@ import {
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
+import { seqInRange } from "@/lib/data/resolve-ref";
 import { BatchInputError } from "@/lib/data/task-batch";
 import { InvalidEditOpError } from "@/lib/data/task-edit";
 import { foldTextOp, type TextOp } from "@/lib/data/text-ops";
@@ -1673,15 +1674,18 @@ export async function searchNotes(
     return [];
   }
   const refMatch = trimmed.match(NOTE_REF_PATTERN);
+  const refSeq = refMatch ? seqInRange(refMatch[2]) : null;
+  if (refMatch && refSeq === null) {
+    const [gateRows] = await withUserContextRead(ctx.userId, (read) => [
+      projectAccessGateStmt(read, projectId),
+    ]);
+    assertProjectGateRows(projectId, gateRows);
+    return [];
+  }
   const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
     projectAccessGateStmt(read, projectId),
-    refMatch
-      ? noteRefSearchStmt(
-          read,
-          projectId,
-          refMatch[1].toUpperCase(),
-          Number(refMatch[2]),
-        )
+    refMatch && refSeq !== null
+      ? noteRefSearchStmt(read, projectId, refMatch[1].toUpperCase(), refSeq)
       : noteSearchStmt(read, projectId, trimmed),
   ]);
   assertProjectGateRows(projectId, gateRows);
@@ -1736,6 +1740,12 @@ export type CrossProjectNoteSearchResult = {
  * by the `notes` RLS policy under `withUserContext`, so private notes never
  * leak cross-tenant.
  *
+ * A full noteRef (`PREFIX-N<seq>`, case-insensitive) resolves that note by
+ * exact identifier + sequence instead. Identifiers are unique per org, so a
+ * ref resolves within each of the caller's orgs; a colliding identifier
+ * across two of them yields one hit per org, disambiguated by the project
+ * crumb.
+ *
  * Per-token OR match: `notes.title`, `projects.title`, `projects.identifier`
  * (case-insensitive substring). Tokens AND-join. Ranked exact → prefix →
  * substring on title, then `updated_at` desc. Live notes only; `body` is
@@ -1784,8 +1794,10 @@ export async function searchNotesAcrossProjects(
       isNull(notes.deletedAt),
     ];
     if (refMatch) {
+      const refSeq = seqInRange(refMatch[2]);
+      if (refSeq === null) return [];
       clauses.push(eq(projects.identifier, refMatch[1].toUpperCase()));
-      clauses.push(eq(notes.sequenceNumber, Number(refMatch[2])));
+      clauses.push(eq(notes.sequenceNumber, refSeq));
     } else {
       const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
       if (tokens.length === 0) return [];
@@ -3751,15 +3763,18 @@ export async function searchNotesForMcp(
     return { projectIdentifier: gate.identifier, hits: [] };
   }
   const refMatch = trimmed.match(NOTE_REF_PATTERN);
+  const refSeq = refMatch ? seqInRange(refMatch[2]) : null;
+  if (refMatch && refSeq === null) {
+    const [gateRows] = await withUserContextRead(ctx.userId, (read) => [
+      projectAccessGateStmt(read, projectId),
+    ]);
+    const gate = assertProjectGateRows(projectId, gateRows);
+    return { projectIdentifier: gate.identifier, hits: [] };
+  }
   const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
     projectAccessGateStmt(read, projectId),
-    refMatch
-      ? noteRefSearchStmt(
-          read,
-          projectId,
-          refMatch[1].toUpperCase(),
-          Number(refMatch[2]),
-        )
+    refMatch && refSeq !== null
+      ? noteRefSearchStmt(read, projectId, refMatch[1].toUpperCase(), refSeq)
       : noteSearchStmt(read, projectId, trimmed),
   ]);
   const gate = assertProjectGateRows(projectId, gateRows);
