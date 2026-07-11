@@ -1657,6 +1657,60 @@ function matchNoteRef(query: string): { prefix: string; seq: number } | null {
 }
 
 /**
+ * Search one project's live notes in a single round trip.
+ *
+ * A ref-shaped query batches the exact ref lookup alongside the full-text
+ * scan, so the fallback a ref resolving nothing needs costs no second trip;
+ * a resolved ref still wins outright and never blends with text hits. Every
+ * other query batches full text alone.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project to search in.
+ * @param trimmed - Non-empty trimmed search text.
+ * @returns The project identifier and the winning hits.
+ * @throws ForbiddenError when the caller cannot access the project.
+ */
+async function searchProjectNotes(
+  ctx: AuthContext,
+  projectId: string,
+  trimmed: string,
+): Promise<{ projectIdentifier: string; hits: NoteSearchHit[] }> {
+  const ref = matchNoteRef(trimmed);
+  if (ref === null) {
+    const [gateRows, textRaw] = await withUserContextRead(
+      ctx.userId,
+      (read) => [
+        projectAccessGateStmt(read, projectId),
+        noteSearchStmt(read, projectId, trimmed),
+      ],
+    );
+    const gate = assertProjectGateRows(projectId, gateRows);
+    return {
+      projectIdentifier: gate.identifier,
+      hits: normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit),
+    };
+  }
+  const [gateRows, refRaw, textRaw] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      projectAccessGateStmt(read, projectId),
+      noteRefSearchStmt(read, projectId, ref.prefix, ref.seq),
+      noteSearchStmt(read, projectId, trimmed),
+    ],
+  );
+  const gate = assertProjectGateRows(projectId, gateRows);
+  const refHits =
+    normalizeExecuteResult<NoteSearchRawRow>(refRaw).map(toSearchHit);
+  return {
+    projectIdentifier: gate.identifier,
+    hits:
+      refHits.length > 0
+        ? refHits
+        : normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit),
+  };
+}
+
+/**
  * Rank-search a project's live notes over the generated `search_tsv`.
  * User text goes through `websearch_to_tsquery` (plainto fallback), never
  * raw `to_tsquery`; the last term also matches as a sanitized prefix
@@ -1696,21 +1750,8 @@ export async function searchNotes(
     assertProjectGateRows(projectId, gateRows);
     return [];
   }
-  const ref = matchNoteRef(trimmed);
-  const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
-    projectAccessGateStmt(read, projectId),
-    ref === null
-      ? noteSearchStmt(read, projectId, trimmed)
-      : noteRefSearchStmt(read, projectId, ref.prefix, ref.seq),
-  ]);
-  assertProjectGateRows(projectId, gateRows);
-  const hits =
-    normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit);
-  if (ref === null || hits.length > 0) return hits;
-  const [textRaw] = await withUserContextRead(ctx.userId, (read) => [
-    noteSearchStmt(read, projectId, trimmed),
-  ]);
-  return normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit);
+  const { hits } = await searchProjectNotes(ctx, projectId, trimmed);
+  return hits;
 }
 
 /**
@@ -3807,26 +3848,7 @@ export async function searchNotesForMcp(
     const gate = assertProjectGateRows(projectId, gateRows);
     return { projectIdentifier: gate.identifier, hits: [] };
   }
-  const ref = matchNoteRef(trimmed);
-  const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
-    projectAccessGateStmt(read, projectId),
-    ref === null
-      ? noteSearchStmt(read, projectId, trimmed)
-      : noteRefSearchStmt(read, projectId, ref.prefix, ref.seq),
-  ]);
-  const gate = assertProjectGateRows(projectId, gateRows);
-  const hits =
-    normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit);
-  if (ref === null || hits.length > 0) {
-    return { projectIdentifier: gate.identifier, hits };
-  }
-  const [textRaw] = await withUserContextRead(ctx.userId, (read) => [
-    noteSearchStmt(read, projectId, trimmed),
-  ]);
-  return {
-    projectIdentifier: gate.identifier,
-    hits: normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit),
-  };
+  return await searchProjectNotes(ctx, projectId, trimmed);
 }
 
 /** The deliberate (caller-managed) note-task link kinds; `mention` is derivation-owned. */
