@@ -78,6 +78,7 @@ import {
   type ReadConn,
 } from "@/lib/db/raw";
 import { acquireProjectLock } from "@/lib/db/raw/acquire-project-lock";
+import { noteUpdaterNameStmt } from "@/lib/db/raw/fetch-note-updater";
 import {
   noteFoldersVersionStmt,
   type NoteFoldersVersionRow,
@@ -374,6 +375,8 @@ export type NoteFull = Omit<Note, "searchTsv" | "sharedSince">;
 export type NoteFullResult = {
   note: NoteFull;
   projectIdentifier: string;
+  /** Last editor's org-visible display name, or null when unresolvable. */
+  updatedByName: string | null;
   mentions: NoteMention[];
   linksOut: LinkedNoteSlim[];
   linksIn: LinkedNoteSlim[];
@@ -460,6 +463,7 @@ export type NoteSummary = {
   folder: string;
   version: number;
   updatedAt: Date;
+  updatedBy: string | null;
 };
 
 /**
@@ -549,6 +553,7 @@ const noteSummaryColumns = {
   folder: notes.folder,
   version: notes.version,
   updatedAt: notes.updatedAt,
+  updatedBy: notes.updatedBy,
 } as const;
 
 /** Slim tree-list projection; excludes `body` and `search_tsv` by design. */
@@ -927,6 +932,7 @@ function gateSummary(
     | "folder"
     | "version"
     | "updatedAt"
+    | "updatedBy"
   >,
 ): NoteSummary {
   return {
@@ -938,6 +944,7 @@ function gateSummary(
     projectIdentifier: gate.projectIdentifier,
     folder: gate.folder,
     version: gate.version,
+    updatedBy: gate.updatedBy,
     updatedAt: gate.updatedAt,
   };
 }
@@ -1432,20 +1439,25 @@ export async function getNoteFull(
   noteId: string,
 ): Promise<NoteFullResult> {
   assertValidNoteId(noteId);
-  const [gateRows, noteRows, mentionRows, linksOut, linksIn] =
+  const [gateRows, noteRows, mentionRows, linksOut, linksIn, updaterRows] =
     await withUserContextRead(ctx.userId, (read) => [
       noteAccessGateStmt(read, noteId),
       noteRowStmt(read, noteId),
       noteMentionsStmt(read, noteId),
       noteLinksOutStmt(read, noteId),
       noteLinksInStmt(read, noteId),
+      noteUpdaterNameStmt(read, noteId),
     ]);
   const gate = assertNoteGateRows(noteId, gateRows);
   const [note] = noteRows;
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
+  const updaterName =
+    normalizeExecuteResult<{ name: string | null }>(updaterRows)[0]?.name ??
+    null;
   return {
     note,
     projectIdentifier: gate.projectIdentifier,
+    updatedByName: updaterName,
     mentions: mentionRows.map(toNoteMention),
     linksOut,
     linksIn,
@@ -1483,6 +1495,7 @@ export async function getNoteScalarFields(
   return {
     note: { ...row, body: "" },
     projectIdentifier: gate.projectIdentifier,
+    updatedByName: null,
     mentions: [],
     linksOut: [],
     linksIn: [],

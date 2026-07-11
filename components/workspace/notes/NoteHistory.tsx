@@ -75,7 +75,7 @@ export function NoteHistory({ projectId, noteId }: NoteHistoryProps) {
   const nextPageFailed: boolean = isFetchNextPageError;
 
   return (
-    <div className="mt-6 border-t border-border pt-4">
+    <div className="mt-6">
       <SectionHeader
         label="History"
         count={events.length > 0 ? events.length : undefined}

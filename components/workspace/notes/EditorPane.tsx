@@ -161,7 +161,14 @@ function EditorBody({
     queryFn: fetchNotesTree(qc, projectId),
   });
   const autosave = useNoteAutosave(projectId, noteId);
+  const session = useSession();
   const note = data?.note;
+  const updaterName =
+    note === undefined || note.updatedBy === null
+      ? null
+      : note.updatedBy === session.data?.user.id
+        ? "you"
+        : (data?.updatedByName ?? null);
   useNotePresenceHeartbeat(
     noteId,
     note !== undefined && !isPlaceholderData && note.visibility === "team",
@@ -383,7 +390,15 @@ function EditorBody({
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-1.5 border-b border-border pb-4 text-[11px] text-text-muted">
-        <span>updated {formatRelative(note.updatedAt)}</span>
+        <span>
+          updated {formatRelative(note.updatedAt)}
+          {updaterName !== null && (
+            <>
+              {" by "}
+              <span className="text-text-secondary">{updaterName}</span>
+            </>
+          )}
+        </span>
         {autosave.pending ? (
           <span className="ml-auto font-mono text-[10px] text-text-faint">
             saving…

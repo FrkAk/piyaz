@@ -202,6 +202,7 @@ describe("runOptimisticNoteWrite revisions cache maintenance", () => {
           version: 3,
           updatedAt: new Date("2026-07-02T10:00:00.000Z"),
           projectIdentifier: "PYZ",
+          updatedBy: null,
           revisionCheckpoint: {
             version: 2,
             title: "Archived title",
@@ -249,6 +250,7 @@ describe("runOptimisticNoteWrite revisions cache maintenance", () => {
           version: 3,
           updatedAt: new Date("2026-07-02T10:00:00.000Z"),
           projectIdentifier: "PYZ",
+          updatedBy: null,
         },
       }),
       false,
@@ -285,6 +287,7 @@ describe("runOptimisticNoteWrite revisions cache maintenance", () => {
           version: 2,
           updatedAt: new Date("2026-07-02T10:00:00.000Z"),
           projectIdentifier: "PYZ",
+          updatedBy: null,
         },
       }),
       false,

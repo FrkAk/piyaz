@@ -190,7 +190,7 @@ export function NoteVersions({
   };
 
   return (
-    <div className="mt-6 border-t border-border pt-4">
+    <div className="mt-6">
       <SectionHeader
         label="Versions"
         count={data !== undefined ? data.revisions.length : undefined}

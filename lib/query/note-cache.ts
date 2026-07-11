@@ -280,6 +280,7 @@ export function notePlaceholderFromRow(
   row: NoteTreeRow,
 ): NoteFullResult {
   return {
+    updatedByName: null,
     note: {
       id: row.id,
       projectId,
@@ -442,7 +443,8 @@ export function mergeSummaryIntoDetail(
     note.title === summary.title &&
     note.folder === summary.folder &&
     note.version === summary.version &&
-    note.updatedAt === summary.updatedAt
+    note.updatedAt === summary.updatedAt &&
+    note.updatedBy === summary.updatedBy
   ) {
     return detail;
   }
@@ -455,6 +457,7 @@ export function mergeSummaryIntoDetail(
       folder: summary.folder,
       version: summary.version,
       updatedAt: summary.updatedAt,
+      updatedBy: summary.updatedBy,
     },
   };
 }

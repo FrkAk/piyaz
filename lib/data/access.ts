@@ -203,6 +203,7 @@ const noteGateColumns = {
   embeddingStatus: notes.embeddingStatus,
   shareRequestedBy: notes.shareRequestedBy,
   createdBy: notes.createdBy,
+  updatedBy: notes.updatedBy,
   updatedAt: notes.updatedAt,
   deletedAt: notes.deletedAt,
   projectStatus: projects.status,
@@ -231,6 +232,7 @@ export type NoteAccessGate = Pick<
   | "embeddingStatus"
   | "shareRequestedBy"
   | "createdBy"
+  | "updatedBy"
   | "updatedAt"
   | "deletedAt"
 > & { projectStatus: ProjectStatus; projectIdentifier: string };
