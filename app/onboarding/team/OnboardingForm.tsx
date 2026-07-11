@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { TabSwitcher } from "@/components/shared/TabSwitcher";
 import { AuthInput } from "@/components/auth/AuthInput";
 import { AuthSubmit } from "@/components/auth/AuthSubmit";
+import { ConsentCheckbox } from "@/components/shared/ConsentCheckbox";
 import {
   INVITE_CODE_ALPHABET_PATTERN_SOURCE,
   INVITE_CODE_LENGTH,
@@ -61,6 +62,7 @@ export function OnboardingForm({ userName }: OnboardingFormProps = {}) {
   const [tab, setTab] = useState<TabId>("create");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [dpaAccepted, setDpaAccepted] = useState(false);
 
   /**
    * Switch tabs and clear any stale error from the previous tab.
@@ -99,8 +101,14 @@ export function OnboardingForm({ userName }: OnboardingFormProps = {}) {
             action={(formData) => {
               const name = String(formData.get("name") ?? "");
               const slug = String(formData.get("slug") ?? "");
+              if (!dpaAccepted) {
+                setError(
+                  "You must accept the data processing agreement to create a team.",
+                );
+                return;
+              }
               startTransition(async () => {
-                const result = await createTeam({ name, slug });
+                const result = await createTeam({ name, slug, dpaAccepted });
                 if (!result.ok) setError(result.message);
               });
             }}
@@ -124,6 +132,28 @@ export function OnboardingForm({ userName }: OnboardingFormProps = {}) {
               hint="Lowercase letters, digits, hyphens. 2–32 characters."
               className="font-mono"
             />
+            <div className="mt-0.5">
+              <ConsentCheckbox
+                id="onboarding-dpa-accept"
+                checked={dpaAccepted}
+                onChange={(checked) => {
+                  setDpaAccepted(checked);
+                  if (checked) setError(null);
+                }}
+              >
+                I accept the{" "}
+                <a
+                  href="/dpa"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:underline"
+                  style={{ color: "var(--color-accent-light)" }}
+                >
+                  data processing agreement
+                </a>{" "}
+                on behalf of this team.
+              </ConsentCheckbox>
+            </div>
             <AuthSubmit isLoading={pending}>Create team</AuthSubmit>
           </form>
         ) : (

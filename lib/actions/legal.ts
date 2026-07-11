@@ -13,7 +13,11 @@ import {
   checkActionRateLimit,
   clientIpFromHeaders,
 } from "@/lib/actions/rate-limit-action";
-import { getDpaAcceptance, recordAcceptance } from "@/lib/data/legal";
+import {
+  getDpaAcceptance,
+  listOutstandingReconsent,
+  recordAcceptance,
+} from "@/lib/data/legal";
 
 /**
  * Serializable DPA acceptance state. `acceptedAt` is an ISO string so the
@@ -93,6 +97,51 @@ export async function recordDpaAcceptanceAction(input: {
       acceptedAt: state.acceptedAt.toISOString(),
     },
   };
+}
+
+/**
+ * Record the caller's re-acceptance of every outstanding personal legal
+ * document (terms, privacy). Takes no client input: the server derives the
+ * outstanding set via `listOutstandingReconsent`, so a forged document list
+ * cannot mark anything accepted. One `legal_acceptances` row per outstanding
+ * document, version pinned by `recordAcceptance`. Idempotent: with nothing
+ * outstanding (already accepted in another tab) it succeeds without writing.
+ *
+ * @returns Discriminated result; `ok` once the caller is current on every
+ *   personal document.
+ */
+export async function acceptUpdatedLegalAction(): Promise<TeamActionResult> {
+  let userId: string;
+  try {
+    const session = await requireSession();
+    userId = session.user.id;
+  } catch {
+    return teamFail("unauthorized");
+  }
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "legal.reconsent.accept",
+      windowSeconds: 60,
+      perUserMax: 5,
+      perIpMax: 10,
+    },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
+
+  const outstanding = await listOutstandingReconsent(userId);
+  if (outstanding.length === 0) return { ok: true };
+
+  const h = await headers();
+  const context = {
+    ipAddress: clientIpFromHeaders(h),
+    userAgent: h.get("user-agent"),
+  };
+  for (const documentType of outstanding) {
+    await recordAcceptance(userId, documentType, context);
+  }
+  return { ok: true };
 }
 
 /**

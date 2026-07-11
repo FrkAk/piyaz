@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { userHasAnyMembership } from "@/lib/data/membership";
 import { AuthBrand } from "@/components/auth/AuthBrand";
@@ -20,6 +21,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function OnboardingTeamPage() {
   const session = await requireSession();
+  await requireLegalConsent(session.user.id);
 
   if (await userHasAnyMembership(session.user.id)) redirect("/");
 

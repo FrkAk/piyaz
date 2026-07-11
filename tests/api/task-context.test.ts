@@ -188,19 +188,19 @@ test("GET context — 304 when If-None-Match matches", async () => {
   expect(await conditional.text()).toBe("");
 });
 
-test("GET context — agent kind resolves in two read batches", async () => {
+test("GET context — agent kind resolves in two read batches plus the consent gate", async () => {
   const fx = await seedRichContextTask("ctx-counts");
   const readSpy = spyOn(rls, "withUserContextRead");
   try {
     const res = await getContext(fx.taskId, fx.userId, "agent");
     expect(res.status).toBe(200);
-    expect(readSpy).toHaveBeenCalledTimes(2);
+    expect(readSpy).toHaveBeenCalledTimes(3);
   } finally {
     readSpy.mockRestore();
   }
 });
 
-test("GET context — validator path issues no read batches", async () => {
+test("GET context — validator path issues only the consent-gate read", async () => {
   const fx = await seedRichContextTask("ctx-validator");
   const first = await getContext(fx.taskId, fx.userId, "agent");
   const etag = first.headers.get("ETag");
@@ -215,7 +215,7 @@ test("GET context — validator path issues no read batches", async () => {
       { params: Promise.resolve({ taskId: fx.taskId }) },
     );
     expect(conditional.status).toBe(304);
-    expect(readSpy).toHaveBeenCalledTimes(0);
+    expect(readSpy).toHaveBeenCalledTimes(1);
   } finally {
     readSpy.mockRestore();
   }

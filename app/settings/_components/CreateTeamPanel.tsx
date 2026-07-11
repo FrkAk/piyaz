@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/shared/Button";
+import { ConsentCheckbox } from "@/components/shared/ConsentCheckbox";
 import { createTeamAction } from "@/lib/actions/team";
 import { deriveTeamSlug } from "@/lib/team/derive-slug";
 import { TEAM_NAME_MAX } from "@/lib/team/slug-rules";
@@ -40,9 +41,10 @@ export function CreateTeamPanel({
   const [name, setName] = useState("");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [dpaAccepted, setDpaAccepted] = useState(false);
 
   const trimmed = name.trim();
-  const canSubmit = trimmed.length > 0 && !pending;
+  const canSubmit = trimmed.length > 0 && dpaAccepted && !pending;
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -51,7 +53,11 @@ export function CreateTeamPanel({
     const slug = deriveTeamSlug(trimmed);
     startTransition(async () => {
       try {
-        const result = await createTeamAction({ name: trimmed, slug });
+        const result = await createTeamAction({
+          name: trimmed,
+          slug,
+          dpaAccepted,
+        });
         if (!result.ok) {
           setError(result.message);
           return;
@@ -87,6 +93,25 @@ export function CreateTeamPanel({
           className={INPUT_CLASS}
         />
       </label>
+      <div className="mt-3">
+        <ConsentCheckbox
+          id="settings-dpa-accept"
+          checked={dpaAccepted}
+          onChange={setDpaAccepted}
+        >
+          I accept the{" "}
+          <a
+            href="/dpa"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:underline"
+            style={{ color: "var(--color-accent-light)" }}
+          >
+            data processing agreement
+          </a>{" "}
+          on behalf of this team.
+        </ConsentCheckbox>
+      </div>
       {error ? (
         <p
           role="alert"

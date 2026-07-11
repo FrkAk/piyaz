@@ -4,6 +4,7 @@ import {
   type ActionRateLimitConfig,
 } from "@/lib/actions/rate-limit-action";
 import { ForbiddenError, assertNoteAccess } from "@/lib/auth/authorization";
+import { consentGateResponse } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
@@ -84,6 +85,9 @@ export async function POST(
     }
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   let body: PresenceBody | null;
   try {

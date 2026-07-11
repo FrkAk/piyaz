@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization, jwt } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
@@ -381,6 +381,72 @@ export const auth = betterAuth({
         },
       },
     },
+  },
+  hooks: {
+    // Gate every organization-creation path on affirmative DPA consent.
+    // Global endpoint hooks (unlike organizationHooks) receive the full
+    // request ctx (body, headers, returned value) and run for
+    // `auth.api.createOrganization` and a raw POST to
+    // `/api/auth/organization/create` alike, so the gate cannot be bypassed
+    // by skipping the client checkbox. `dpaAccepted` is a transient consent
+    // signal read off the request body; the durable evidence is the
+    // `legal_acceptances` row written in `after`.
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/organization/create") return;
+      const body = ctx.body as { dpaAccepted?: unknown } | undefined;
+      if (body?.dpaAccepted !== true) {
+        throw new APIError("BAD_REQUEST", {
+          message: TEAM_ACTION_MESSAGES.dpa_not_accepted,
+          code: "DPA_NOT_ACCEPTED",
+        });
+      }
+    }),
+    // Persist the DPA evidence row once the organization exists (the row FKs
+    // to it). On write failure, compensate by removing the just-created org
+    // (same audited sequence as deleteUser.beforeDelete: membership
+    // artifacts, realtime grant, then the org row) so no team survives
+    // without its acceptance evidence.
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/organization/create") return;
+      const returned = ctx.context.returned as
+        | { id?: unknown; members?: Array<{ userId?: unknown }> }
+        | undefined;
+      const organizationId =
+        typeof returned?.id === "string" ? returned.id : null;
+      const ownerUserId = returned?.members?.[0]?.userId;
+      const userId = typeof ownerUserId === "string" ? ownerUserId : null;
+      if (!organizationId || !userId) return;
+      const requestHeaders = ctx.headers;
+      try {
+        await recordAcceptance(userId, "dpa", {
+          ipAddress: requestHeaders
+            ? clientIpFromHeaders(requestHeaders)
+            : null,
+          userAgent: requestHeaders?.get("user-agent") ?? null,
+          organizationId,
+        });
+      } catch (err) {
+        console.error("organization/create dpa acceptance-write failure", {
+          userId,
+          organizationId,
+          err,
+        });
+        try {
+          await clearOrgMembershipArtifacts(userId, organizationId);
+          await revokeOrgAccess(userId, organizationId);
+          await deleteSoleMemberOrgAsAdmin(organizationId, userId);
+        } catch (cleanupErr) {
+          console.error("organization/create compensating delete failed", {
+            userId,
+            organizationId,
+            err: cleanupErr,
+          });
+        }
+        throw new APIError("INTERNAL_SERVER_ERROR", {
+          message: "Could not record your acceptance. Please try again.",
+        });
+      }
+    }),
   },
 });
 

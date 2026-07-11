@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { TopBar } from "@/components/layout/TopBar";
 import { AppShell } from "@/components/layout/AppShell";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { getSession } from "@/lib/auth/session";
 import { listOAuthSessionsAction } from "@/lib/actions/oauth-session";
 import { getPasswordUpdatedAt } from "@/lib/data/account";
@@ -21,6 +22,7 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const session = await getSession();
   if (!session) redirect("/sign-in");
+  await requireLegalConsent(session.user.id);
 
   // getPasswordUpdatedAt rejects loudly on DB failure (no .ok wrapper):
   // null is semantic ("no credential account" hides the password card),

@@ -30,6 +30,7 @@ import {
 
 const createTeamSchema = z.object({
   name: z.string().trim().min(1, "Team name is required").max(TEAM_NAME_MAX),
+  dpaAccepted: z.boolean(),
   slug: z
     .string()
     .trim()
@@ -121,12 +122,19 @@ function roleIncludesOwner(role: string): boolean {
  * added as `owner` of the new team. The caller does NOT need an existing
  * team membership — this is the bootstrap path used by onboarding.
  *
- * @param input - `{ name, slug }` from the form.
+ * `dpaAccepted` must be true: the owner accepts the data processing
+ * agreement on the team's behalf at creation. The authoritative gate and
+ * the evidence write live in the `/organization/create` hooks in
+ * `lib/auth.ts`; the check here only produces the friendly failure before
+ * the endpoint round trip.
+ *
+ * @param input - `{ name, slug, dpaAccepted }` from the form.
  * @returns Discriminated result; `data.organizationId` on success.
  */
 export async function createTeamAction(input: {
   name: string;
   slug: string;
+  dpaAccepted: boolean;
 }): Promise<TeamActionResult<{ organizationId: string }>> {
   let userId: string;
   try {
@@ -137,6 +145,7 @@ export async function createTeamAction(input: {
   }
   const parsed = parseOrFail(createTeamSchema, input);
   if (!parsed.ok) return parsed;
+  if (!parsed.data.dpaAccepted) return teamFail("dpa_not_accepted");
 
   const limit = await checkActionRateLimit(
     { action: "team.create", windowSeconds: 60, perUserMax: 5, perIpMax: 10 },
@@ -146,8 +155,13 @@ export async function createTeamAction(input: {
 
   try {
     const reqHeaders = await headers();
+    const body = {
+      name: parsed.data.name,
+      slug: parsed.data.slug,
+      dpaAccepted: true,
+    };
     const created = await auth.api.createOrganization({
-      body: { name: parsed.data.name, slug: parsed.data.slug },
+      body,
       headers: reqHeaders,
     });
     if (!created) return teamFail("unknown");

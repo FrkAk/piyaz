@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { withUserContext, withUserContextRead } from "@/lib/db/rls";
 import {
   LEGAL_IP_MAX_CHARS,
@@ -85,22 +85,21 @@ export async function removeAcceptances(userId: string): Promise<void> {
 }
 
 /**
- * Read the caller's latest `dpa` acceptance for one organization, pinned to
- * the current `LEGAL_VERSIONS.dpa`. Returns `null` when the caller has never
- * accepted the current version for that organization, so a version bump
- * re-offers the DPA and each team carries its own acceptance evidence. Routes
- * through `withUserContextRead(userId)`, so RLS scopes the read to the
- * caller's own rows.
+ * Read the caller's latest `dpa` acceptance for one organization, regardless
+ * of version. Callers compare `version` against `LEGAL_VERSIONS.dpa` to tell
+ * a current acceptance from a stale one (version bump = update notice), and
+ * `null` from never-accepted. Routes through `withUserContextRead(userId)`,
+ * so RLS scopes the read to the caller's own rows.
  *
  * @param userId - The caller's id; the RLS scope for the read.
  * @param organizationId - The team whose DPA acceptance is read.
- * @returns The pinned-version acceptance (`version` + `acceptedAt`), or `null`.
+ * @returns The latest acceptance (`version` + `acceptedAt`), or `null` when
+ * the caller never accepted any DPA version for that organization.
  */
 export async function getDpaAcceptance(
   userId: string,
   organizationId: string,
 ): Promise<{ version: string; acceptedAt: Date } | null> {
-  const version = LEGAL_VERSIONS.dpa;
   const [rows] = await withUserContextRead(userId, (read) => [
     read
       .select({
@@ -111,7 +110,6 @@ export async function getDpaAcceptance(
       .where(
         and(
           eq(legalAcceptances.documentType, "dpa"),
-          eq(legalAcceptances.documentVersion, version),
           eq(legalAcceptances.organizationId, organizationId),
         ),
       )
@@ -122,4 +120,48 @@ export async function getDpaAcceptance(
   return row
     ? { version: row.documentVersion, acceptedAt: row.acceptedAt }
     : null;
+}
+
+/** Personal documents whose version bump forces re-acceptance. */
+export type ReconsentDocumentType = Exclude<LegalDocumentType, "dpa">;
+
+/** All personal documents covered by the re-consent gate, in display order. */
+export const RECONSENT_DOCUMENT_TYPES: readonly ReconsentDocumentType[] = [
+  "terms",
+  "privacy",
+];
+
+/**
+ * List the personal legal documents the user has not accepted at their
+ * current `LEGAL_VERSIONS` entry. One index-backed query fetches the user's
+ * current-version rows for both document types; a type with no row is
+ * outstanding. Routes through `withUserContextRead(userId)`, so RLS scopes
+ * the read to the caller's own rows.
+ *
+ * @param userId - The caller's id; the RLS scope for the read.
+ * @returns Outstanding document types in display order; empty when the user
+ * is current on every personal document.
+ */
+export async function listOutstandingReconsent(
+  userId: string,
+): Promise<ReconsentDocumentType[]> {
+  const [rows] = await withUserContextRead(userId, (read) => [
+    read
+      .select({ documentType: legalAcceptances.documentType })
+      .from(legalAcceptances)
+      .where(
+        or(
+          and(
+            eq(legalAcceptances.documentType, "terms"),
+            eq(legalAcceptances.documentVersion, LEGAL_VERSIONS.terms),
+          ),
+          and(
+            eq(legalAcceptances.documentType, "privacy"),
+            eq(legalAcceptances.documentVersion, LEGAL_VERSIONS.privacy),
+          ),
+        ),
+      ),
+  ]);
+  const accepted = new Set(rows.map((row) => row.documentType));
+  return RECONSENT_DOCUMENT_TYPES.filter((type) => !accepted.has(type));
 }

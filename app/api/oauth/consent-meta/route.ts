@@ -43,6 +43,11 @@ type ConsentMeta = {
  * token rotation or expiry never resurfaces a previously-approved
  * client as first-time.
  *
+ * Deliberately exempt from the legal re-consent gate: this route serves
+ * the OAuth consent page, which stays reachable while pages are gated;
+ * every MCP call made with a resulting token is independently gated in
+ * `wrapTool`.
+ *
  * @param request - Incoming GET with `?client_id=<id>`.
  * @returns Metadata JSON, 400 on missing param, 401 on no session,
  *   404 when the client is unknown / disabled, 500 on infrastructure

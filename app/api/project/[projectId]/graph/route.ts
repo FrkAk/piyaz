@@ -7,6 +7,7 @@ import { ForbiddenError } from "@/lib/auth/authorization";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /**
  * Conditional handler for `GET` and `HEAD` on the project slim graph.
@@ -33,6 +34,9 @@ async function handle(req: Request, projectId: string): Promise<Response> {
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   try {
     const max = await getProjectMaxUpdatedAt(ctx, projectId);

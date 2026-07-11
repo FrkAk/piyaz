@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
+import { LEGAL_VERSIONS } from "@/lib/legal/versions";
 import { broker } from "@/lib/realtime/broker";
 import {
   GET as getEvents,
@@ -60,6 +61,12 @@ async function seedSecondMember(
   await sql`
     INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
     VALUES (${organizationId}, ${u.id}, 'member', now())
+  `;
+  await sql`
+    INSERT INTO legal_acceptances ("user_id", "document_type", "document_version")
+    VALUES
+      (${u.id}, 'terms', ${LEGAL_VERSIONS.terms}),
+      (${u.id}, 'privacy', ${LEGAL_VERSIONS.privacy})
   `;
   return u.id;
 }
