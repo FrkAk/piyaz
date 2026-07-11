@@ -65,6 +65,7 @@ import {
   planFolderRename,
   resolveCreateTarget,
   sortNoteRows,
+  summarizeFolderDelete,
   tint,
   type TypeFilter,
 } from "./note-meta";
@@ -835,7 +836,8 @@ export function TreePane({
     useDeleteNote(projectId);
   const { mutateAsync: restoreNoteAsync } = useRestoreNote(projectId);
   const { mutate: mutateCreateFolder } = useCreateFolder(projectId);
-  const { mutate: mutateDeleteFolder } = useDeleteFolder(projectId);
+  const { mutate: mutateDeleteFolder, mutateAsync: deleteFolderAsync } =
+    useDeleteFolder(projectId);
 
   const {
     canUndo,
@@ -1311,8 +1313,10 @@ export function TreePane({
    * Confirm a non-empty folder delete: clear the selection when the open
    * note is inside, drop the subtree's explicit folder rows, await the
    * soft-delete of every note under the folder, then push one undo entry
-   * that restores the notes (explicit empty subfolders are not
-   * resurrected by the undo).
+   * covering only the notes actually deleted (explicit empty subfolders
+   * are not resurrected by the undo). Failed deletes surface as one
+   * message counting and naming the surviving notes; when every delete
+   * fails no undo entry is pushed.
    */
   async function confirmFolderDelete() {
     const pending = pendingFolderDelete;
@@ -1322,28 +1326,34 @@ export function TreePane({
       onSelect(null);
     }
     clearSelectionUnder(pending.path);
-    mutateDeleteFolder(pending.path, {
-      onSuccess: (result) => {
-        if (!result.ok) setTreeError(result.message);
-      },
-      onError: () => setTreeError("Delete failed"),
-    });
+    const folderPromise = deleteFolderAsync(pending.path).catch(() => null);
     const results = await Promise.all(
       pending.noteIds.map((id) => deleteNoteAsync(id).catch(() => null)),
     );
-    for (const result of results) {
-      if (result === null) setTreeError("Delete failed");
-      else if (!result.ok) setTreeError(result.message);
+    const folderResult = await folderPromise;
+    const titles = new Map((rows ?? []).map((r) => [r.id, r.title]));
+    const { deleted, failureMessage } = summarizeFolderDelete(
+      pending.noteIds,
+      results,
+      (id) => titles.get(id) || "Untitled",
+    );
+    const folderMessage =
+      folderResult === null
+        ? "Delete failed"
+        : folderResult.ok
+          ? null
+          : folderResult.message;
+    const message = failureMessage ?? folderMessage;
+    if (message !== null) setTreeError(message);
+    if (deleted.length > 0) {
+      pushUndo({
+        notes: deleted.map((d) => ({
+          id: d.id,
+          token: casToken(d.updatedAt),
+        })),
+        label: leafOf(pending.path),
+      });
     }
-    pushUndo({
-      notes: pending.noteIds.map((id, i) => {
-        const result = results[i];
-        return result?.ok
-          ? { id, token: casToken(result.data.updatedAt) }
-          : { id };
-      }),
-      label: leafOf(pending.path),
-    });
   }
 
   /**
