@@ -56,8 +56,9 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
  *
  * `updatedAt` lets the consumer skip refetches its caches already reflect
  * (the actor's own write, merged from the mutation response); `version`
- * does the same for the revisions query, which only moves on a body
- * change.
+ * and `revisionCheckpointed` let it maintain the revisions query without a
+ * refetch: the version bumps on every body change, but the stored revision
+ * list only changes when a write archived a pre-image checkpoint.
  *
  * @param projectId - Owning project id.
  * @param noteId - Note that changed.
@@ -66,6 +67,8 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
  *   note no longer has one (delete).
  * @param version - The note's post-mutation `version`; omit when unknown
  *   (delete).
+ * @param revisionCheckpointed - Whether the write archived a revision
+ *   checkpoint (the stored revision list changed).
  */
 export function emitNoteEvent(
   projectId: string,
@@ -73,6 +76,7 @@ export function emitNoteEvent(
   visibility: Visibility,
   updatedAt?: Date,
   version?: number,
+  revisionCheckpointed?: boolean,
 ): void {
   const payload = {
     kind: "note",
@@ -80,6 +84,7 @@ export function emitNoteEvent(
     noteId,
     ...(updatedAt !== undefined ? { updatedAt: updatedAt.toISOString() } : {}),
     ...(version !== undefined ? { version } : {}),
+    ...(revisionCheckpointed !== undefined ? { revisionCheckpointed } : {}),
   } satisfies RealtimeEvent;
   broker.dispatch(
     visibility === "team" ? `project:${projectId}` : `note:${noteId}`,

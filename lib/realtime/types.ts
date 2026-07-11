@@ -16,6 +16,7 @@ export type RealtimeEvent =
       noteId: string;
       updatedAt?: string;
       version?: number;
+      revisionCheckpointed?: boolean;
     }
   | {
       kind: "note-presence";

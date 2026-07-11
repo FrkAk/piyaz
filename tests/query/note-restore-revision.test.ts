@@ -175,15 +175,15 @@ describe("runRestoreRevisionWrite", () => {
 });
 
 describe("runOptimisticNoteWrite revisions cache maintenance", () => {
-  test("a body-changing success prepends the new revision and bumps currentVersion", async () => {
+  test("a checkpointing success prepends the archived pre-image and bumps currentVersion", async () => {
     const qc = seededClient();
     qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
       currentVersion: 2,
       revisions: [
-        { version: 2, title: "Old", createdAt: "2026-07-01T09:00:00.000Z" },
+        { version: 1, title: "Old", createdAt: "2026-07-01T09:00:00.000Z" },
       ],
     });
-    const updatedAt = new Date("2026-07-02T10:00:00.000Z");
+    const archivedAt = new Date("2026-07-02T09:30:00.000Z");
 
     await runOptimisticNoteWrite(
       qc,
@@ -200,8 +200,13 @@ describe("runOptimisticNoteWrite revisions cache maintenance", () => {
           projectId: PROJECT,
           folder: "",
           version: 3,
-          updatedAt,
+          updatedAt: new Date("2026-07-02T10:00:00.000Z"),
           projectIdentifier: "PYZ",
+          revisionCheckpoint: {
+            version: 2,
+            title: "Archived title",
+            createdAt: archivedAt,
+          },
         },
       }),
       false,
@@ -212,9 +217,49 @@ describe("runOptimisticNoteWrite revisions cache maintenance", () => {
       revisions: { version: number; title: string; createdAt: string | Date }[];
     }>(noteKeys.revisions(PROJECT, NOTE));
     expect(cache?.currentVersion).toBe(3);
-    expect(cache?.revisions.map((r) => r.version)).toEqual([3, 2]);
-    expect(cache?.revisions[0].title).toBe("New title");
-    expect(cache?.revisions[0].createdAt).toBe(updatedAt);
+    expect(cache?.revisions.map((r) => r.version)).toEqual([2, 1]);
+    expect(cache?.revisions[0].title).toBe("Archived title");
+    expect(cache?.revisions[0].createdAt).toBe(archivedAt);
+  });
+
+  test("a checkpoint-free body success bumps currentVersion without touching the rows", async () => {
+    const qc = seededClient();
+    const rows = [
+      { version: 1, title: "Old", createdAt: "2026-07-01T09:00:00.000Z" },
+    ];
+    qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
+      currentVersion: 2,
+      revisions: rows,
+    });
+
+    await runOptimisticNoteWrite(
+      qc,
+      PROJECT,
+      NOTE,
+      { body: "new body" },
+      async () => ({
+        ok: true as const,
+        data: {
+          id: NOTE,
+          slug: "slug-n1",
+          sequenceNumber: 1,
+          title: "New title",
+          projectId: PROJECT,
+          folder: "",
+          version: 3,
+          updatedAt: new Date("2026-07-02T10:00:00.000Z"),
+          projectIdentifier: "PYZ",
+        },
+      }),
+      false,
+    );
+
+    const cache = qc.getQueryData<{
+      currentVersion: number;
+      revisions: unknown[];
+    }>(noteKeys.revisions(PROJECT, NOTE));
+    expect(cache?.currentVersion).toBe(3);
+    expect(cache?.revisions).toEqual(rows);
   });
 
   test("a metadata-only success (version unchanged) leaves the revisions cache untouched", async () => {

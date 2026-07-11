@@ -266,7 +266,7 @@ describe("GET /api/note/[noteId]/revisions", () => {
       revisions: { version: number; title: string }[];
     };
     expect(body.currentVersion).toBe(2);
-    expect(body.revisions.map((r) => r.version)).toEqual([2, 1]);
+    expect(body.revisions.map((r) => r.version)).toEqual([1]);
     expect(JSON.stringify(body)).not.toContain('"body"');
     expect(JSON.stringify(body)).not.toContain('"createdBy"');
   });

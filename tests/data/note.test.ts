@@ -246,16 +246,21 @@ test("updateNote drops unchanged fields and no-ops equal-value patches", async (
   expect(rows[1].metadata?.fields).toEqual(["title"]);
 });
 
-test("body writes snapshot revisions and prune past the retention cap", async () => {
+test("checkpointed body writes prune past the retention cap; web bursts coalesce", async () => {
   const f = await seedUserOrgProject("noterev");
   const ctx = makeAuthContext(f.userId);
+  const mcp = makeAuthContext(f.userId, {
+    source: "mcp",
+    userId: f.userId,
+    clientId: null,
+  });
   const note = await createNote(ctx, {
     projectId: f.projectId,
     title: "N",
     body: "v1",
   });
-  for (let i = 2; i <= 55; i++) {
-    await updateNote(ctx, note.id, { body: `v${i}` });
+  for (let i = 2; i <= 56; i++) {
+    await updateNote(mcp, note.id, { body: `v${i}` });
   }
 
   const sr = serviceRoleConnect();
@@ -265,6 +270,13 @@ test("body writes snapshot revisions and prune past the retention cap", async ()
   expect(rows.length).toBe(50);
   expect(rows[0].version).toBe(6);
   expect(rows.at(-1)?.version).toBe(55);
+
+  await updateNote(ctx, note.id, { body: "web burst a" });
+  await updateNote(ctx, note.id, { body: "web burst b" });
+  const afterWeb = await sr<{ version: number }[]>`
+    SELECT version FROM note_revisions WHERE note_id = ${note.id}
+    ORDER BY version DESC LIMIT 1`;
+  expect(afterWeb[0].version).toBe(55);
 });
 
 test("moveFolder re-parents the subtree in one update with a cycle guard", async () => {

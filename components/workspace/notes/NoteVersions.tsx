@@ -24,6 +24,12 @@ interface NoteVersionsProps {
   locked: boolean;
   /** @param loading - Whether the detail is still placeholder data. */
   loading: boolean;
+  /** @param currentVersion - Live note version from the detail. */
+  currentVersion: number;
+  /** @param currentTitle - Live note title for the current row. */
+  currentTitle: string;
+  /** @param currentUpdatedAt - Live `updatedAt` for the current row. */
+  currentUpdatedAt: string | Date;
 }
 
 /**
@@ -51,17 +57,89 @@ function restoreFailureCopy(failure: NoteActionFailure): string {
   }
 }
 
+interface VersionRowProps {
+  /** @param version - Version number for the chip. */
+  version: number;
+  /** @param title - Note title at this version. */
+  title: string;
+  /** @param createdAt - When this version's content was written. */
+  createdAt: string | Date;
+  /** @param isCurrent - Accent the chip and show the current marker. */
+  isCurrent: boolean;
+  /** @param children - Trailing control (the restore button), if any. */
+  children?: React.ReactNode;
+}
+
 /**
- * Versions panel for the settings ribbon: the note's revision snapshots
- * newest-first, the live version pinned as `current`, and a restore
- * control per older row. Restore is append-only (it writes the snapshot
- * back through the note-update path, so a new revision is snapshotted and
- * nothing is destroyed) and is confirmed through the shared
- * {@link ConfirmDialog}. The control is disabled while the note is locked,
- * still loading, or holds unsaved editor content (a restore under a dirty
- * buffer would race the autosave; the server CAS is the backstop).
+ * One row of the Versions list: version chip, truncated title, relative
+ * time, and either the current marker or a caller-supplied control.
  *
- * @param props - Project scope, the open note, and its gate flags.
+ * @param props - Row identity, current flag, and optional trailing control.
+ * @returns The list item element.
+ */
+function VersionRow({
+  version,
+  title,
+  createdAt,
+  isCurrent,
+  children,
+}: VersionRowProps) {
+  const createdAtIso =
+    typeof createdAt === "string" ? createdAt : createdAt.toISOString();
+  return (
+    <li className="group/version flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-surface-hover">
+      <span
+        className="shrink-0 rounded px-1 font-mono text-[10px] tabular-nums"
+        style={{
+          color: isCurrent
+            ? "var(--color-accent-light)"
+            : "var(--color-text-faint)",
+          background: isCurrent
+            ? "var(--color-accent-glow)"
+            : "var(--color-surface)",
+          border: `1px solid ${
+            isCurrent ? "var(--color-accent)" : "var(--color-border)"
+          }`,
+        }}
+      >
+        v{version}
+      </span>
+      <span
+        className="min-w-0 flex-1 truncate text-[12px] text-text-secondary"
+        title={title}
+      >
+        {title}
+      </span>
+      <time
+        dateTime={createdAtIso}
+        title={new Date(createdAtIso).toLocaleString()}
+        className="shrink-0 font-mono text-[10px] tabular-nums text-text-faint"
+      >
+        {formatRelative(createdAtIso)}
+      </time>
+      {isCurrent && (
+        <span className="shrink-0 font-mono text-[9px] uppercase text-text-faint">
+          current
+        </span>
+      )}
+      {children}
+    </li>
+  );
+}
+
+/**
+ * Versions panel for the settings ribbon: the live state pinned as
+ * `current` on top (from the detail, since checkpoints archive pre-images
+ * and the newest content lives only on the note), then the stored
+ * checkpoints newest-first with a restore control each. Restore is
+ * append-only (the pre-restore state is checkpointed first, so nothing is
+ * destroyed) and is confirmed through the shared {@link ConfirmDialog}.
+ * The control is disabled while the note is locked, still loading, or
+ * holds unsaved editor content (a restore under a dirty buffer would race
+ * the autosave; the server CAS is the backstop).
+ *
+ * @param props - Project scope, the open note, its gate flags, and the
+ *   live version identity for the current row.
  * @returns The Versions ribbon section.
  */
 export function NoteVersions({
@@ -69,6 +147,9 @@ export function NoteVersions({
   noteId,
   locked,
   loading,
+  currentVersion,
+  currentTitle,
+  currentUpdatedAt,
 }: NoteVersionsProps) {
   const restore = useRestoreRevision(projectId);
   const [confirmVersion, setConfirmVersion] = useState<number | null>(null);
@@ -115,8 +196,8 @@ export function NoteVersions({
         count={data !== undefined ? data.revisions.length : undefined}
       />
       <p className="mb-2 text-[11px] leading-snug text-text-muted">
-        Snapshots of past saves. Restoring is reversible: the current content is
-        kept as its own version.
+        Checkpoints from past editing sessions. Restoring is reversible: the
+        current content is checkpointed first.
       </p>
       {isPending ? (
         <div className="space-y-2" role="status" aria-label="Loading versions">
@@ -137,58 +218,33 @@ export function NoteVersions({
             Retry
           </button>
         </div>
-      ) : data === undefined || data.revisions.length === 0 ? (
+      ) : data === undefined ? (
         <div className="py-0.5 text-[12px] text-text-faint">
-          No snapshots yet. Versions appear as the body changes.
+          No checkpoints yet. Versions appear as editing sessions end.
         </div>
       ) : (
         <ul className="flex flex-col gap-0.5">
+          {(data.revisions[0] === undefined ||
+            currentVersion > data.revisions[0].version) && (
+            <VersionRow
+              version={currentVersion}
+              title={currentTitle}
+              createdAt={currentUpdatedAt}
+              isCurrent
+            />
+          )}
           {data.revisions.map((rev) => {
-            const isCurrent = rev.version === data.currentVersion;
+            const isCurrent = rev.version === currentVersion;
             const isPendingRow = pendingVersion === rev.version;
-            const createdAtIso =
-              typeof rev.createdAt === "string"
-                ? rev.createdAt
-                : rev.createdAt.toISOString();
             return (
-              <li
+              <VersionRow
                 key={rev.version}
-                className="group/version flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-surface-hover"
+                version={rev.version}
+                title={rev.title}
+                createdAt={rev.createdAt}
+                isCurrent={isCurrent}
               >
-                <span
-                  className="shrink-0 rounded px-1 font-mono text-[10px] tabular-nums"
-                  style={{
-                    color: isCurrent
-                      ? "var(--color-accent-light)"
-                      : "var(--color-text-faint)",
-                    background: isCurrent
-                      ? "var(--color-accent-glow)"
-                      : "var(--color-surface)",
-                    border: `1px solid ${
-                      isCurrent ? "var(--color-accent)" : "var(--color-border)"
-                    }`,
-                  }}
-                >
-                  v{rev.version}
-                </span>
-                <span
-                  className="min-w-0 flex-1 truncate text-[12px] text-text-secondary"
-                  title={rev.title}
-                >
-                  {rev.title}
-                </span>
-                <time
-                  dateTime={createdAtIso}
-                  title={new Date(createdAtIso).toLocaleString()}
-                  className="shrink-0 font-mono text-[10px] tabular-nums text-text-faint"
-                >
-                  {formatRelative(createdAtIso)}
-                </time>
-                {isCurrent ? (
-                  <span className="shrink-0 font-mono text-[9px] uppercase text-text-faint">
-                    current
-                  </span>
-                ) : (
+                {!isCurrent && (
                   <button
                     type="button"
                     disabled={blocked || dirty}
@@ -209,7 +265,7 @@ export function NoteVersions({
                     {isPendingRow ? "Restoring…" : "Restore"}
                   </button>
                 )}
-              </li>
+              </VersionRow>
             );
           })}
         </ul>

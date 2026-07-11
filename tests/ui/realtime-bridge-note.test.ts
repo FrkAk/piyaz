@@ -95,13 +95,18 @@ function invalidated(qc: QueryClient, key: readonly unknown[]): boolean {
  * @param updatedAt - Optional event timestamp.
  * @returns JSON payload string.
  */
-function noteEvent(updatedAt?: Date, version?: number): string {
+function noteEvent(
+  updatedAt?: Date,
+  version?: number,
+  revisionCheckpointed?: boolean,
+): string {
   return JSON.stringify({
     kind: "note",
     projectId: PROJECT,
     noteId: NOTE,
     ...(updatedAt ? { updatedAt: updatedAt.toISOString() } : {}),
     ...(version !== undefined ? { version } : {}),
+    ...(revisionCheckpointed !== undefined ? { revisionCheckpointed } : {}),
   });
 }
 
@@ -297,7 +302,7 @@ describe("applyRealtimeEvent note case", () => {
     expect(hasUnsavedNoteEdits(NOTE)).toBe(true);
   });
 
-  test("a note event invalidates events (debounced) and revisions even while dirty", async () => {
+  test("a checkpointed note event invalidates revisions and debounces events, even while dirty", async () => {
     _setNoteEventsQuietMsForTests(5);
     const qc = seededClient(when);
     qc.setQueryData(noteKeys.events(PROJECT, NOTE), {
@@ -310,13 +315,33 @@ describe("applyRealtimeEvent note case", () => {
     });
     markNoteDirty(NOTE);
 
-    await applyRealtimeEvent(qc, noteEvent(when, 2));
+    await applyRealtimeEvent(qc, noteEvent(when, 2, true));
 
     expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(true);
     expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(false);
     await wait(20);
     expect(invalidated(qc, noteKeys.events(PROJECT, NOTE))).toBe(true);
     expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+  });
+
+  test("a checkpoint-free body event bumps cached currentVersion in place, no refetch", async () => {
+    _setNoteEventsQuietMsForTests(5);
+    const qc = seededClient(when);
+    const rows = [{ version: 1, title: "Old", createdAt: "2026-07-01" }];
+    qc.setQueryData(noteKeys.revisions(PROJECT, NOTE), {
+      currentVersion: 2,
+      revisions: rows,
+    });
+
+    await applyRealtimeEvent(qc, noteEvent(when, 3, false));
+
+    expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(false);
+    const cache = qc.getQueryData<{
+      currentVersion: number;
+      revisions: unknown[];
+    }>(noteKeys.revisions(PROJECT, NOTE));
+    expect(cache?.currentVersion).toBe(3);
+    expect(cache?.revisions).toEqual(rows);
   });
 
   test("a note event whose version the revisions cache already covers skips that refetch", async () => {
@@ -327,10 +352,10 @@ describe("applyRealtimeEvent note case", () => {
       revisions: [],
     });
 
-    await applyRealtimeEvent(qc, noteEvent(when, 3));
+    await applyRealtimeEvent(qc, noteEvent(when, 3, true));
     expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(false);
 
-    await applyRealtimeEvent(qc, noteEvent(when, 4));
+    await applyRealtimeEvent(qc, noteEvent(when, 4, true));
     expect(invalidated(qc, noteKeys.revisions(PROJECT, NOTE))).toBe(true);
   });
 

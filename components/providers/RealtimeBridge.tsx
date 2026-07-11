@@ -183,11 +183,12 @@ function scheduleNoteEventsInvalidation(
  * unsaved editor content: a refetch must not clobber the optimistic
  * autosave buffer or kept-optimistic conflict content. The note's events
  * query invalidates through {@link scheduleNoteEventsInvalidation}, which
- * coalesces autosave bursts; the revisions query invalidates only when the
- * event's `version` outruns the cached `currentVersion` (the actor's own
- * body writes land in that cache from the mutation response, and
- * metadata-only events never move it). Neither touches the editor buffer,
- * so no dirty gating applies.
+ * coalesces autosave bursts. The revisions query refetches only when the
+ * write archived a checkpoint (`revisionCheckpointed`): a checkpoint-free
+ * body save moves `currentVersion` alone, patched into the cache in place,
+ * and the actor's own writes land from the mutation response so the
+ * version gate skips them entirely. Neither touches the editor buffer, so
+ * no dirty gating applies.
  *
  * @param qc - The active QueryClient.
  * @param ev - Decoded note event.
@@ -200,21 +201,35 @@ async function handleNoteEvent(
     noteId: string;
     updatedAt?: string;
     version?: number;
+    revisionCheckpointed?: boolean;
   },
 ): Promise<void> {
   await whenNoteWritesSettle(ev.noteId);
   scheduleNoteEventsInvalidation(qc, ev.projectId, ev.noteId);
-  const revisions = qc.getQueryData<{ currentVersion: number }>(
-    noteKeys.revisions(ev.projectId, ev.noteId),
-  );
+  const revisionsKey = noteKeys.revisions(ev.projectId, ev.noteId);
+  const revisions = qc.getQueryData<{
+    currentVersion: number;
+    revisions: unknown[];
+  }>(revisionsKey);
   const revisionsCurrent =
     ev.version !== undefined &&
     revisions !== undefined &&
     revisions.currentVersion >= ev.version;
   if (!revisionsCurrent) {
-    qc.invalidateQueries({
-      queryKey: noteKeys.revisions(ev.projectId, ev.noteId),
-    });
+    if (
+      ev.version !== undefined &&
+      revisions !== undefined &&
+      ev.revisionCheckpointed !== true
+    ) {
+      const version = ev.version;
+      qc.setQueryData<{ currentVersion: number; revisions: unknown[] }>(
+        revisionsKey,
+        (data) =>
+          data === undefined ? data : { ...data, currentVersion: version },
+      );
+    } else {
+      qc.invalidateQueries({ queryKey: revisionsKey });
+    }
   }
   const evMs = ev.updatedAt === undefined ? Infinity : Date.parse(ev.updatedAt);
   if (ev.updatedAt !== undefined) {

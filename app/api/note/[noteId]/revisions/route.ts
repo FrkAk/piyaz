@@ -8,13 +8,14 @@ import { error } from "@/lib/api/response";
 /**
  * Conditional handler for `GET` and `HEAD` on a note's revision list.
  *
- * Returns slim revision descriptors newest-first (`version`, `title`,
+ * Returns slim checkpoint descriptors newest-first (`version`, `title`,
  * `createdAt`; never `body` or author ids) plus the live `currentVersion`.
- * The ETag folds the max version with the row count: pruning shrinks the
- * count while a body write grows the max version, so the composite always
- * moves. A non-UUID id, a missing/cross-team note, another member's
- * private note, and a trashed note are all 404-shaped (`ForbiddenError`
- * from the data ring; the non-UUID check runs before any SQL).
+ * The ETag folds the live version with the max stored version and the row
+ * count: a body write always moves `currentVersion` even when it archived
+ * no checkpoint, and pruning shrinks the count. A non-UUID id, a
+ * missing/cross-team note, another member's private note, and a trashed
+ * note are all 404-shaped (`ForbiddenError` from the data ring; the
+ * non-UUID check runs before any SQL).
  *
  * @param req - Incoming request.
  * @param noteId - Note UUID from the route params.
@@ -39,7 +40,7 @@ async function handle(req: Request, noteId: string): Promise<Response> {
     return conditionalRespond(
       req,
       { currentVersion, revisions: rows },
-      `${maxVersion}-${rows.length}`,
+      `${currentVersion}-${maxVersion}-${rows.length}`,
     );
   } catch (err) {
     if (err instanceof ForbiddenError) return error("Note not found", 404);

@@ -329,7 +329,7 @@ test("read serves meta with sections, one heading, and no stray body", async () 
 
 test("an overwritten body recovers through a revision snapshot", async () => {
   const fx = await seedUserOrgProject("NC6");
-  const ctx = makeAuthContext(fx.userId);
+  const ctx = agentCtx(fx.userId);
   const created = await createOne(ctx, "PRJNC6", {
     title: "Precious",
     body: "the original body",
@@ -351,7 +351,7 @@ test("an overwritten body recovers through a revision snapshot", async () => {
     ),
   );
   expect(list).toContain("v1");
-  expect(list).toContain("v2");
+  expect(list).not.toContain("v2");
 
   const snapshot = okData<string>(
     await handleNote({ action: "read", note: created.ref, revision: 1 }, ctx),
@@ -361,7 +361,7 @@ test("an overwritten body recovers through a revision snapshot", async () => {
   const missing = errText(
     await handleNote({ action: "read", note: created.ref, revision: 9 }, ctx),
   );
-  expect(missing).toContain("Available versions: 2, 1");
+  expect(missing).toContain("Available versions: 1");
 
   await handleNote(
     {
@@ -373,6 +373,18 @@ test("an overwritten body recovers through a revision snapshot", async () => {
   );
   const noteId = await resolveId(ctx, fx, created.ref);
   expect((await getNoteFull(ctx, noteId)).note.body).toBe("the original body");
+
+  const afterRecovery = okData<string>(
+    await handleNote(
+      { action: "read", note: created.ref, fields: ["revisions"] },
+      ctx,
+    ),
+  );
+  expect(afterRecovery).toContain("v2");
+  const clobberedSnapshot = okData<string>(
+    await handleNote({ action: "read", note: created.ref, revision: 2 }, ctx),
+  );
+  expect(clobberedSnapshot).toContain("clobbered");
 });
 
 test("list renders the folder tree; move handles notes and folder subtrees", async () => {

@@ -26,6 +26,7 @@ import type {
   NoteFullResult,
   NoteLinksRefresh,
   NotePatch,
+  NoteRevisionCheckpoint,
   NoteSummary,
   NoteTreeRow,
 } from "@/lib/data/note";
@@ -69,7 +70,10 @@ const AUTOSAVE_RETRY_MAX_MS = 30_000;
 
 /** Write result shared by every note patch path. */
 type NoteWriteResult = NoteActionResult<
-  NoteSummary & { links?: NoteLinksRefresh }
+  NoteSummary & {
+    links?: NoteLinksRefresh;
+    revisionCheckpoint?: NoteRevisionCheckpoint;
+  }
 >;
 
 /**
@@ -139,22 +143,24 @@ export type NoteRevisionsCache = {
 };
 
 /**
- * Fold a body-changing write's new revision into the cached revisions
- * query, so the actor's own autosaves and restores never trigger a
- * revisions refetch (the realtime bridge skips invalidation when the
- * cached `currentVersion` already covers the event's `version`).
+ * Fold a body-changing write into the cached revisions query, so the
+ * actor's own autosaves and restores never trigger a revisions refetch
+ * (the realtime bridge skips invalidation when the cached `currentVersion`
+ * already covers the event's `version`). `currentVersion` always follows
+ * the response; a row is prepended only when the write archived a
+ * pre-image checkpoint.
  *
  * @param qc - QueryClient.
  * @param projectId - Owning project id.
  * @param noteId - Note id.
- * @param summary - Success response summary carrying `version`, `title`,
- *   and `updatedAt` (the revision snapshot's own timestamp).
+ * @param summary - Success response summary carrying `version` and the
+ *   optional `revisionCheckpoint` the write archived.
  */
 function mergeRevisionIntoCache(
   qc: QueryClient,
   projectId: string,
   noteId: string,
-  summary: NoteSummary,
+  summary: NoteSummary & { revisionCheckpoint?: NoteRevisionCheckpoint },
 ): void {
   qc.setQueryData<NoteRevisionsCache>(
     noteKeys.revisions(projectId, noteId),
@@ -162,16 +168,23 @@ function mergeRevisionIntoCache(
       if (data === undefined || summary.version <= data.currentVersion) {
         return data;
       }
+      const checkpoint = summary.revisionCheckpoint;
+      const prepend =
+        checkpoint !== undefined &&
+        (data.revisions.length === 0 ||
+          data.revisions[0].version < checkpoint.version);
       return {
         currentVersion: summary.version,
-        revisions: [
-          {
-            version: summary.version,
-            title: summary.title,
-            createdAt: summary.updatedAt,
-          },
-          ...data.revisions,
-        ],
+        revisions: prepend
+          ? [
+              {
+                version: checkpoint.version,
+                title: checkpoint.title,
+                createdAt: checkpoint.createdAt,
+              },
+              ...data.revisions,
+            ]
+          : data.revisions,
       };
     },
   );

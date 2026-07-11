@@ -121,6 +121,21 @@ import type {
 /** Revisions kept per note; older rows are pruned in the write tx. */
 const NOTE_REVISION_KEEP = 50;
 
+/**
+ * Same-author quiet window between revision checkpoints. A body write
+ * archives the pre-image only when the newest snapshot is at least this
+ * old; MCP writes, a change of author, and restores checkpoint
+ * unconditionally.
+ */
+const NOTE_REVISION_CHECKPOINT_MS = 10 * 60_000;
+
+/** Pre-image snapshot descriptor a body-changing write archived, when it did. */
+export type NoteRevisionCheckpoint = {
+  version: number;
+  title: string;
+  createdAt: Date;
+};
+
 /** Byte cap for generated slugs; leaves suffix headroom under the CHECK. */
 const SLUG_MAX_BYTES = 240;
 
@@ -1090,8 +1105,8 @@ async function replaceDerivedLinks(
 
 /**
  * Snapshot a note body into `note_revisions` and prune past the retention
- * cap. Runs in the body-write transaction; `created_by` is pinned to the
- * caller by the table's RLS WITH CHECK, and DELETE (not UPDATE) is the
+ * cap. Runs in the body-write transaction; `created_by` must be the caller
+ * or NULL (the table's RLS WITH CHECK pin), and DELETE (not UPDATE) is the
  * grant the prune relies on.
  *
  * @param tx - Active RLS transaction handle.
@@ -1099,7 +1114,11 @@ async function replaceDerivedLinks(
  * @param version - Revision counter value being snapshotted.
  * @param title - Note title at this revision.
  * @param body - Note body at this revision.
- * @param userId - Acting user attributed as `created_by`.
+ * @param userId - `created_by` attribution: the caller when they authored
+ *   the snapshotted content, NULL when archiving another author's state.
+ * @param createdAt - Snapshot timestamp; pre-image checkpoints pass the
+ *   note's pre-write `updatedAt` so the row dates the content, not the
+ *   archive write. Defaults to DB `now()`.
  */
 async function insertRevisionWithPrune(
   tx: Tx,
@@ -1107,7 +1126,8 @@ async function insertRevisionWithPrune(
   version: number,
   title: string,
   body: string,
-  userId: string,
+  userId: string | null,
+  createdAt?: Date,
 ): Promise<void> {
   await tx.insert(noteRevisions).values({
     noteId,
@@ -1115,6 +1135,7 @@ async function insertRevisionWithPrune(
     title,
     body,
     createdBy: userId,
+    ...(createdAt !== undefined ? { createdAt } : {}),
   });
   await tx
     .delete(noteRevisions)
@@ -2257,7 +2278,7 @@ export async function createNotesBatch(
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
  * @param opts - `restoredFromVersion` marks the write as a revision
  *   restore: the emitted event's summary and metadata name the source
- *   version; the write path itself is unchanged.
+ *   version, and the pre-restore state is checkpointed unconditionally.
  * @returns Slim summary of the updated note; a body change also carries
  *   the re-derived link context as `links`.
  * @throws ForbiddenError on inaccessible or trashed notes, or when a
@@ -2279,7 +2300,12 @@ export async function updateNote(
   patch: NotePatch,
   ifUpdatedAt?: string,
   opts?: { restoredFromVersion?: number },
-): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
+): Promise<
+  NoteSummary & {
+    links?: NoteLinksRefresh;
+    revisionCheckpoint?: NoteRevisionCheckpoint;
+  }
+> {
   return updateNoteCore(
     ctx,
     noteId,
@@ -2499,7 +2525,8 @@ export async function applyNoteEditOps(
  * @param ifUpdatedAt - Optional CAS precondition from a prior read.
  * @param bodyOps - Ordered body text ops to fold in-transaction.
  * @param restoredFromVersion - Source revision version when the write is a
- *   restore; alters only the emitted event's summary and metadata.
+ *   restore; names the source version in the emitted event and forces the
+ *   pre-image checkpoint.
  * @returns Slim summary; a body change also carries the re-derived links.
  */
 async function updateNoteCore(
@@ -2509,7 +2536,12 @@ async function updateNoteCore(
   ifUpdatedAt?: string,
   bodyOps?: TextOp[],
   restoredFromVersion?: number,
-): Promise<NoteSummary & { links?: NoteLinksRefresh }> {
+): Promise<
+  NoteSummary & {
+    links?: NoteLinksRefresh;
+    revisionCheckpoint?: NoteRevisionCheckpoint;
+  }
+> {
   assertValidNoteId(noteId);
   const applied: NotePatch = {};
   for (const field of PATCHABLE_NOTE_FIELDS) {
@@ -2557,6 +2589,7 @@ async function updateNoteCore(
         embeddingStatus: notes.embeddingStatus,
         deletedAt: notes.deletedAt,
         createdBy: notes.createdBy,
+        updatedBy: notes.updatedBy,
         projectStatus: projects.status,
         projectIdentifier: projects.identifier,
         body: needsBody ? notes.body : sql<string>`''`,
@@ -2597,6 +2630,7 @@ async function updateNoteCore(
         wasNoOp: true,
         visibility: current.visibility,
         links: undefined,
+        revisionCheckpoint: undefined,
       };
     }
 
@@ -2608,6 +2642,7 @@ async function updateNoteCore(
         wasNoOp: true,
         visibility: current.visibility,
         links: undefined,
+        revisionCheckpoint: undefined,
       };
     }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
@@ -2637,16 +2672,44 @@ async function updateNoteCore(
       .returning(noteSummaryColumns);
 
     let links: NoteLinksRefresh | undefined;
+    let revisionCheckpoint: NoteRevisionCheckpoint | undefined;
     if (bodyChanged) {
       const newBody = applied.body ?? "";
-      await insertRevisionWithPrune(
-        tx,
-        noteId,
-        newVersion,
-        applied.title ?? current.title,
-        newBody,
-        ctx.userId,
-      );
+      const [newestRevision] = await tx
+        .select({
+          version: noteRevisions.version,
+          createdAt: noteRevisions.createdAt,
+        })
+        .from(noteRevisions)
+        .where(eq(noteRevisions.noteId, noteId))
+        .orderBy(desc(noteRevisions.version))
+        .limit(1);
+      const preImageUnsnapshotted =
+        newestRevision === undefined ||
+        newestRevision.version < current.version;
+      const mustCheckpoint =
+        newestRevision === undefined ||
+        restoredFromVersion !== undefined ||
+        ctx.actor.source === "mcp" ||
+        current.updatedBy !== ctx.userId ||
+        Date.now() - newestRevision.createdAt.getTime() >=
+          NOTE_REVISION_CHECKPOINT_MS;
+      if (preImageUnsnapshotted && mustCheckpoint) {
+        await insertRevisionWithPrune(
+          tx,
+          noteId,
+          current.version,
+          current.title,
+          current.body,
+          current.updatedBy === ctx.userId ? ctx.userId : null,
+          current.updatedAt,
+        );
+        revisionCheckpoint = {
+          version: current.version,
+          title: current.title,
+          createdAt: current.updatedAt,
+        };
+      }
       await replaceDerivedLinks(
         tx,
         noteId,
@@ -2708,6 +2771,7 @@ async function updateNoteCore(
       wasNoOp: false,
       visibility: nextVisibility,
       links,
+      revisionCheckpoint,
     };
   });
 
@@ -2718,11 +2782,16 @@ async function updateNoteCore(
       result.visibility,
       result.summary.updatedAt,
       result.summary.version,
+      result.revisionCheckpoint !== undefined,
     );
   }
-  return result.links
-    ? { ...result.summary, links: result.links }
-    : result.summary;
+  return {
+    ...result.summary,
+    ...(result.links !== undefined ? { links: result.links } : {}),
+    ...(result.revisionCheckpoint !== undefined
+      ? { revisionCheckpoint: result.revisionCheckpoint }
+      : {}),
+  };
 }
 
 /**
@@ -3829,12 +3898,12 @@ export async function getNoteRevision(
 
 /**
  * Restore a note's title and body to a stored revision snapshot by writing
- * through {@link updateNote}, an append-only revert: the write snapshots a NEW
- * revision and bumps `version`; nothing is destroyed. The snapshot read and
- * the write are separate transactions by design: revisions are
- * append-only-immutable (`note_revisions` is UPDATE-revoked), so the read
- * cannot go stale, and note concurrency is owned by `updateNote`'s CAS +
- * `FOR UPDATE` lock. Locked, agent-read-only, and archived-project
+ * through {@link updateNote}, an append-only revert: the pre-restore live
+ * state is checkpointed unconditionally and `version` bumps, so nothing is
+ * destroyed. The snapshot read and the write are separate transactions by
+ * design: revisions are append-only-immutable (`note_revisions` is
+ * UPDATE-revoked), so the read cannot go stale, and note concurrency is
+ * owned by `updateNote`'s CAS + `FOR UPDATE` lock. Locked, agent-read-only, and archived-project
  * rejections are inherited; restoring content identical to the live note is
  * a no-op (no event, no version bump).
  *

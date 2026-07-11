@@ -570,6 +570,9 @@ export function SettingsPane({
           noteId={noteId}
           locked={note.locked}
           loading={loading}
+          currentVersion={note.version}
+          currentTitle={note.title}
+          currentUpdatedAt={note.updatedAt}
         />
         <NoteHistory projectId={projectId} noteId={noteId} />
       </div>
