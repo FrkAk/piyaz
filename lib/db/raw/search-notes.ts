@@ -160,52 +160,61 @@ export function noteRefSearchStmt(
   `);
 }
 
-/**
- * Rows a ref-fragment scan may return before the caller merges text hits.
- * A scan that fills this bound is saturated: the fragment matched at least
- * this many refs, so it carries no ref-selection signal and the caller
- * ranks text hits ahead of it.
- */
-export const REF_FRAGMENT_LIMIT = 20;
+/** Rows the substring scan may return before the caller merges FTS hits. */
+const NOTE_SUBSTRING_LIMIT = 20;
 
 /**
- * Match notes in the searched project whose composed ref contains the
- * fragment, the way the task list filters on its `taskRef` substring: `1`
- * finds `N1`, `N11`, and `N111`; `N1` and the project prefix do the same.
- * The ref is composed at read time and never enters `search_tsv`, so the FTS
- * path can never match it.
+ * Escape the LIKE metacharacters in user text so `%`, `_`, and `\` match
+ * themselves. Pair the pattern with `ESCAPE '\'` in the predicate.
  *
- * The caller merges these ahead of the text hits when the scan stays under
- * {@link REF_FRAGMENT_LIMIT}, and behind them when it saturates: a fragment
- * matching that many refs (`N`, `-`, the bare prefix) selects nothing, so
- * text relevance leads. Only a whole-ref query short-circuits, through
- * {@link noteRefSearchStmt}.
+ * @param text - Raw user text.
+ * @returns Text safe to wrap in `%...%`.
+ */
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/**
+ * Substring-match notes in the searched project the way task search
+ * matches tasks: case-insensitive `%query%` over `title`, `summary`, and
+ * each tag (the fuzzy tier FTS stemming cannot serve: `boarding` finds
+ * "Onboarding", which shares no lexeme). With `matchRef`, the composed ref
+ * joins the match so `1` finds `N1`, `N11`, and `N111` as the task list's
+ * `taskRef` filter does; ref matches order first by sequence, then title
+ * matches by recency. The ref is composed at read time and never enters
+ * `search_tsv`, so the FTS path can never match it.
  *
- * The composed predicate is not indexable, so this scans the project's live
+ * The caller merges these ahead of the FTS hits, deduped. Only a whole-ref
+ * query short-circuits, through {@link noteRefSearchStmt}.
+ *
+ * The predicates are not indexable, so this scans the project's live
  * notes. It stays a separate statement rather than an `OR` arm on
  * {@link noteSearchStmt} precisely so the FTS query keeps using its GIN
  * index, and it rides the caller's existing read batch, costing no round
  * trip.
- *
- * The pattern needs no LIKE escaping: the caller admits only
- * `REF_FRAGMENT_PATTERN` tokens (the `[A-Z0-9-]` ref alphabet), which
- * excludes `%`, `_`, and `\`, and a composed ref cannot contain them either.
  *
  * Returns the identical slim {@link NoteSearchRawRow} shape (no `body`, no
  * `search_tsv`) and stays inside the caller's RLS scope like the FTS path.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project to search in.
- * @param fragment - Non-empty single token of the ref alphabet (`[A-Z0-9-]`).
- * @returns Lazy raw statement yielding up to {@link REF_FRAGMENT_LIMIT} rows,
- *   lowest sequence number first.
+ * @param query - Non-empty trimmed search text; LIKE metacharacters match
+ *   literally.
+ * @param matchRef - Whether the composed ref joins the match (the notes
+ *   rail); MCP search mirrors task search and resolves refs whole only.
+ * @returns Lazy raw statement yielding up to {@link NOTE_SUBSTRING_LIMIT}
+ *   rows.
  */
-export function noteRefFragmentSearchStmt(
+export function noteSubstringSearchStmt(
   read: ReadConn,
   projectId: string,
-  fragment: string,
+  query: string,
+  matchRef: boolean,
 ) {
-  const pattern = `%${fragment}%`;
+  const pattern = `%${escapeLike(query)}%`;
+  const refArm = matchRef
+    ? sql`(p.identifier || '-N' || n.sequence_number::text) ILIKE ${pattern} ESCAPE '\\'`
+    : sql`false`;
   return read.execute(sql`
     SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
            n.summary, n.visibility, n.feed_mode, n.agent_writable, n.locked,
@@ -214,8 +223,18 @@ export function noteRefFragmentSearchStmt(
     JOIN ${projects} p ON p.id = n.project_id
     WHERE n.project_id = ${projectId}
       AND n.deleted_at IS NULL
-      AND (p.identifier || '-N' || n.sequence_number::text) ILIKE ${pattern}
-    ORDER BY n.sequence_number ASC
-    LIMIT ${REF_FRAGMENT_LIMIT}
+      AND (
+        ${refArm}
+        OR n.title ILIKE ${pattern} ESCAPE '\\'
+        OR n.summary ILIKE ${pattern} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(n.tags) AS tag
+          WHERE tag ILIKE ${pattern} ESCAPE '\\'
+        )
+      )
+    ORDER BY CASE WHEN ${refArm} THEN 0 ELSE 1 END,
+             CASE WHEN ${refArm} THEN n.sequence_number END ASC,
+             n.updated_at DESC
+    LIMIT ${NOTE_SUBSTRING_LIMIT}
   `);
 }

@@ -5,6 +5,7 @@ import { superuserPool } from "@/tests/setup/global";
 import {
   createNote,
   searchNotesAcrossProjects,
+  updateNote,
   NoteValidationError,
 } from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
@@ -241,6 +242,34 @@ test("the palette resolves a note by the sequence half of its ref", async () => 
 
   const withN = await searchNotesAcrossProjects(ctx, `N${note.sequenceNumber}`);
   expect(withN.map((h) => h.id)).toContain(note.id);
+});
+
+test("the palette matches note tags and summary per token", async () => {
+  const f = await seedUserOrgProject("XTAG");
+  const ctx = makeAuthContext(f.userId);
+  const tagged = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Deploy runbook",
+    body: "content",
+  });
+  await updateNote(ctx, tagged.id, { tags: ["infra"] });
+  const summarized = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Q3",
+    body: "content",
+  });
+  await updateNote(ctx, summarized.id, { summary: "billing overhaul plan" });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Unrelated",
+    body: "content",
+  });
+
+  const byTag = await searchNotesAcrossProjects(ctx, "infra");
+  expect(byTag.map((h) => h.id)).toEqual([tagged.id]);
+
+  const bySummary = await searchNotesAcrossProjects(ctx, "billing");
+  expect(bySummary.map((h) => h.id)).toEqual([summarized.id]);
 });
 
 test("keeps non-ref token search intact", async () => {

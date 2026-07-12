@@ -138,10 +138,11 @@ export const NOTE_SEQ_TOKEN_PATTERN = /^N?(\d+)$/i;
 
 /**
  * A query that could be part of a composed ref: one token drawn from the ref
- * alphabet. Project-scoped note search substring-matches these against the
- * composed ref, so `1` finds `N1`, `N11`, and `N111` exactly as the task
- * list's `taskRef` substring filter does. Anything with whitespace or
- * punctuation is prose, and skips that scan.
+ * alphabet. The notes rail substring-matches these against the composed ref,
+ * so `1` finds `N1`, `N11`, and `N111` exactly as the task list's `taskRef`
+ * substring filter does. Anything with whitespace or punctuation is prose
+ * and skips that arm. MCP note search never matches fragments; it resolves
+ * refs whole only, as task MCP search does.
  */
 export const REF_FRAGMENT_PATTERN = /^[A-Z0-9-]+$/i;
 

@@ -97,8 +97,7 @@ import {
 import {
   noteRefSearchStmt,
   noteSearchStmt,
-  noteRefFragmentSearchStmt,
-  REF_FRAGMENT_LIMIT,
+  noteSubstringSearchStmt,
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
@@ -1680,28 +1679,27 @@ function matchNoteSeqToken(token: string): number | null {
 }
 
 /**
- * Search one project's live notes in a single round trip.
+ * Search one project's live notes in a single round trip, structured as
+ * task search is: a whole ref resolves exactly, everything else is fuzzy.
  *
- * A ref-shaped query batches the exact ref lookup alongside the full-text
- * scan, so the fallback a ref resolving nothing needs costs no second trip;
- * a resolved ref still wins outright and never blends with text hits.
+ * A ref-shaped query batches the exact ref lookup alongside the fuzzy
+ * statements, so the fallback a ref resolving nothing needs costs no second
+ * trip; a resolved ref still wins outright and never blends with text hits.
  *
- * A ref-fragment query (one token of the ref alphabet: `1`, `N1`, `SCX`)
- * batches a substring scan over the composed ref the same way, so `1` finds
- * `N1`, `N11`, and `N111` as the task list's `taskRef` filter does. Those
- * hits merge ahead of the text hits rather than winning outright: a fragment
- * is also ordinary search text, so a note numbered 8 and a note titled
- * "8 invariants" both surface. A scan that saturates its fetch bound
- * (`N`, `-`, the bare prefix) selects nothing, so its hits merge behind the
- * text hits instead: a broad fragment must not bury every ranked text hit
- * under {@link REF_FRAGMENT_LIMIT} rows of oldest-first refs and push them
- * past downstream hit caps.
- *
- * Every other query batches full text alone.
+ * Every other query batches two fuzzy tiers: a substring scan over
+ * `title`/`summary`/tags (the tier task search serves with `ILIKE`, which
+ * FTS stemming cannot: `boarding` finds "Onboarding"), then ranked full
+ * text over `search_tsv`, deduped behind the substring hits. With
+ * `matchRefFragments` (the notes rail), a query of the ref alphabet also
+ * substring-matches the composed ref inside the same scan, so `1` finds
+ * `N1`, `N11`, and `N111` as the task list's `taskRef` filter does; MCP
+ * search passes false and resolves refs whole only, as task MCP search
+ * does.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
  * @param trimmed - Non-empty trimmed search text.
+ * @param matchRefFragments - Whether ref fragments join the substring tier.
  * @returns The project identifier and the winning hits.
  * @throws ForbiddenError when the caller cannot access the project.
  */
@@ -1709,83 +1707,70 @@ async function searchProjectNotes(
   ctx: AuthContext,
   projectId: string,
   trimmed: string,
+  matchRefFragments: boolean,
 ): Promise<{ projectIdentifier: string; hits: NoteSearchHit[] }> {
   const ref = matchNoteRef(trimmed);
-  if (ref === null) {
-    if (REF_FRAGMENT_PATTERN.test(trimmed)) {
-      const [gateRows, fragmentRaw, textRaw] = await withUserContextRead(
-        ctx.userId,
-        (read) => [
-          projectAccessGateStmt(read, projectId),
-          noteRefFragmentSearchStmt(read, projectId, trimmed),
-          noteSearchStmt(read, projectId, trimmed),
-        ],
-      );
-      const gate = assertProjectGateRows(projectId, gateRows);
-      const fragmentHits =
-        normalizeExecuteResult<NoteSearchRawRow>(fragmentRaw).map(toSearchHit);
-      const textHits =
-        normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit);
-      const saturated = fragmentHits.length >= REF_FRAGMENT_LIMIT;
-      const [lead, tail] = saturated
-        ? [textHits, fragmentHits]
-        : [fragmentHits, textHits];
-      const seen = new Set(lead.map((hit) => hit.id));
-      return {
-        projectIdentifier: gate.identifier,
-        hits: [...lead, ...tail.filter((hit) => !seen.has(hit.id))],
-      };
-    }
-    const [gateRows, textRaw] = await withUserContextRead(
+  if (ref !== null) {
+    const [gateRows, refRaw, textRaw] = await withUserContextRead(
       ctx.userId,
       (read) => [
         projectAccessGateStmt(read, projectId),
+        noteRefSearchStmt(read, projectId, ref.prefix, ref.seq),
         noteSearchStmt(read, projectId, trimmed),
       ],
     );
     const gate = assertProjectGateRows(projectId, gateRows);
+    const refHits =
+      normalizeExecuteResult<NoteSearchRawRow>(refRaw).map(toSearchHit);
     return {
       projectIdentifier: gate.identifier,
-      hits: normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit),
+      hits:
+        refHits.length > 0
+          ? refHits
+          : normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit),
     };
   }
-  const [gateRows, refRaw, textRaw] = await withUserContextRead(
+  const matchRef = matchRefFragments && REF_FRAGMENT_PATTERN.test(trimmed);
+  const [gateRows, substringRaw, textRaw] = await withUserContextRead(
     ctx.userId,
     (read) => [
       projectAccessGateStmt(read, projectId),
-      noteRefSearchStmt(read, projectId, ref.prefix, ref.seq),
+      noteSubstringSearchStmt(read, projectId, trimmed, matchRef),
       noteSearchStmt(read, projectId, trimmed),
     ],
   );
   const gate = assertProjectGateRows(projectId, gateRows);
-  const refHits =
-    normalizeExecuteResult<NoteSearchRawRow>(refRaw).map(toSearchHit);
+  const substringHits =
+    normalizeExecuteResult<NoteSearchRawRow>(substringRaw).map(toSearchHit);
+  const textHits =
+    normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit);
+  const seen = new Set(substringHits.map((hit) => hit.id));
   return {
     projectIdentifier: gate.identifier,
-    hits:
-      refHits.length > 0
-        ? refHits
-        : normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit),
+    hits: [...substringHits, ...textHits.filter((hit) => !seen.has(hit.id))],
   };
 }
 
 /**
- * Rank-search a project's live notes over the generated `search_tsv`.
- * User text goes through `websearch_to_tsquery` (plainto fallback), never
- * raw `to_tsquery`; the last term also matches as a sanitized prefix
+ * Search a project's live notes for the notes rail: exact ref, then
+ * title/summary/tag substring (which also matches ref fragments, so `1`
+ * finds `N1`, `N11`, and `N111` as the task list's `taskRef` filter does),
+ * then ranked full text over `search_tsv` deduped behind the substring
+ * hits. User text goes through `websearch_to_tsquery` (plainto fallback),
+ * never raw `to_tsquery`; the last term also matches as a sanitized prefix
  * lexeme for type-ahead. Hits are the slim tree projection, never the
  * body.
  *
  * A noteRef (`PREFIX-N<seq>`, case-insensitive) is composed at read time
  * and never enters `search_tsv`, so a ref-shaped query resolves by exact
  * identifier + sequence first. A ref that resolves nothing here (unknown
- * project, trashed or absent note) falls through to full text, so text
- * that merely looks like a ref still finds a note titled with it.
+ * project, trashed or absent note) falls through to the fuzzy tiers, so
+ * text that merely looks like a ref still finds a note titled with it.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
  * @param query - User search text.
- * @returns Up to 20 hits, best rank first; empty for a blank query.
+ * @returns Merged hits, substring tier first; empty for a blank query.
  * @throws ForbiddenError when the caller cannot access the project.
  * @throws NoteValidationError when the query exceeds the length cap.
  */
@@ -1809,7 +1794,7 @@ export async function searchNotes(
     assertProjectGateRows(projectId, gateRows);
     return [];
   }
-  const { hits } = await searchProjectNotes(ctx, projectId, trimmed);
+  const { hits } = await searchProjectNotes(ctx, projectId, trimmed, true);
   return hits;
 }
 
@@ -1868,10 +1853,12 @@ export type CrossProjectNoteSearchResult = {
  * crumb. A ref that resolves nothing falls through to the token match, so
  * text that merely looks like a ref still finds a note titled with it.
  *
- * Per-token OR match: `notes.title`, `projects.title`, `projects.identifier`
- * (case-insensitive substring), plus `notes.sequence_number` for a token
- * that is the sequence half of a ref (`8` or `N8`), so a note resolves by
- * its number alone as a task does. Tokens AND-join. Ranked exact → prefix →
+ * Per-token OR match: `notes.title`, `notes.summary`, each note tag,
+ * `projects.title`, `projects.identifier` (case-insensitive substring),
+ * plus `notes.sequence_number` for a token that is the sequence half of a
+ * ref (`8` or `N8`), so a note resolves by its number alone as a task
+ * does. The arms mirror task palette search, with `summary` standing in
+ * as the note's second line. Tokens AND-join. Ranked exact → prefix →
  * substring on title, then `updated_at` desc. Live notes only; `body` is
  * never selected.
  *
@@ -1950,6 +1937,8 @@ export async function searchNotesAcrossProjects(
       const pattern = `%${token}%`;
       const orClauses = [
         ilike(notes.title, pattern),
+        ilike(notes.summary, pattern),
+        sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${notes.tags}) AS t WHERE t ILIKE ${pattern})`,
         ilike(projects.title, pattern),
         ilike(projects.identifier, pattern),
       ];
@@ -4082,17 +4071,19 @@ export async function getNoteTreeForAgent(
 }
 
 /**
- * Ranked note search plus the owning project identifier, for callers
- * composing noteRefs per hit. RLS-scoped like {@link searchNotes}: team
- * notes regardless of feed mode plus the caller's own private notes.
- * Feed exposure gates bundle injection, never search (Notes spec §14.3).
- * A ref-shaped query resolves the note exactly, falling through to full
- * text when it resolves nothing, exactly as {@link searchNotes} does.
+ * Note search for MCP, structured as task MCP search is: a whole noteRef
+ * resolves exactly, everything else is fuzzy (title/summary/tag substring,
+ * then ranked full text). Ref fragments do not match here; agents resolve
+ * refs whole, as `piyaz_search` does for tasks. Returns the owning project
+ * identifier for callers composing noteRefs per hit. RLS-scoped like
+ * {@link searchNotes}: team notes regardless of feed mode plus the
+ * caller's own private notes. Feed exposure gates bundle injection, never
+ * search (Notes spec §14.3).
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
  * @param query - User search text.
- * @returns The project identifier and up to 20 hits, best rank first.
+ * @returns The project identifier and merged hits, substring tier first.
  * @throws ForbiddenError when the caller cannot access the project.
  * @throws NoteValidationError when the query exceeds the length cap.
  */
@@ -4116,7 +4107,7 @@ export async function searchNotesForMcp(
     const gate = assertProjectGateRows(projectId, gateRows);
     return { projectIdentifier: gate.identifier, hits: [] };
   }
-  return await searchProjectNotes(ctx, projectId, trimmed);
+  return await searchProjectNotes(ctx, projectId, trimmed, false);
 }
 
 /** The deliberate (caller-managed) note-task link kinds; `mention` is derivation-owned. */

@@ -831,10 +831,9 @@ async function handleLink(
 
 /**
  * Handle the `search` action: a full noteRef ('DLK-N12') resolves that note
- * exactly, falling back to full text when it resolves nothing; a single
- * ref-alphabet token ('8', 'N8', 'DLK') also substring-matches composed
- * refs, merged before the text hits unless it matches broadly; every other
- * query is RLS-scoped ranked full text in one project.
+ * exactly, falling back to the fuzzy tiers when it resolves nothing; every
+ * other query is RLS-scoped fuzzy search in one project, structured as task
+ * search is: title/summary/tag substring first, then ranked full text.
  *
  * @param p - Note params.
  * @param ctx - Resolved auth context.
