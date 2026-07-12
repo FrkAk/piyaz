@@ -99,7 +99,7 @@ import {
 import {
   noteRefSearchStmt,
   noteSearchStmt,
-  noteSeqSearchStmt,
+  noteRefFragmentSearchStmt,
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
@@ -114,6 +114,7 @@ import {
   composeTaskRef,
   NOTE_REF_PATTERN,
   NOTE_SEQ_TOKEN_PATTERN,
+  REF_FRAGMENT_PATTERN,
 } from "@/lib/graph/identifier";
 import {
   emitNoteEvent,
@@ -1688,10 +1689,12 @@ function matchNoteSeqToken(token: string): number | null {
  * scan, so the fallback a ref resolving nothing needs costs no second trip;
  * a resolved ref still wins outright and never blends with text hits.
  *
- * The sequence half of a ref (`8` or `N8`) batches a sequence lookup the
- * same way, but its hit is merged ahead of the text hits rather than
- * winning outright: a bare number is also ordinary search text, so a note
- * numbered 8 and a note titled "8 invariants" both surface.
+ * A ref-fragment query (one token of the ref alphabet: `1`, `N1`, `SCX`)
+ * batches a substring scan over the composed ref the same way, so `1` finds
+ * `N1`, `N11`, and `N111` as the task list's `taskRef` filter does. Those
+ * hits merge ahead of the text hits rather than winning outright: a fragment
+ * is also ordinary search text, so a note numbered 8 and a note titled
+ * "8 invariants" both surface.
  *
  * Every other query batches full text alone.
  *
@@ -1708,25 +1711,24 @@ async function searchProjectNotes(
 ): Promise<{ projectIdentifier: string; hits: NoteSearchHit[] }> {
   const ref = matchNoteRef(trimmed);
   if (ref === null) {
-    const seq = matchNoteSeqToken(trimmed);
-    if (seq !== null) {
-      const [gateRows, seqRaw, textRaw] = await withUserContextRead(
+    if (REF_FRAGMENT_PATTERN.test(trimmed)) {
+      const [gateRows, fragmentRaw, textRaw] = await withUserContextRead(
         ctx.userId,
         (read) => [
           projectAccessGateStmt(read, projectId),
-          noteSeqSearchStmt(read, projectId, seq),
+          noteRefFragmentSearchStmt(read, projectId, trimmed),
           noteSearchStmt(read, projectId, trimmed),
         ],
       );
       const gate = assertProjectGateRows(projectId, gateRows);
-      const seqHits =
-        normalizeExecuteResult<NoteSearchRawRow>(seqRaw).map(toSearchHit);
+      const fragmentHits =
+        normalizeExecuteResult<NoteSearchRawRow>(fragmentRaw).map(toSearchHit);
       const textHits =
         normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit);
-      const seen = new Set(seqHits.map((hit) => hit.id));
+      const seen = new Set(fragmentHits.map((hit) => hit.id));
       return {
         projectIdentifier: gate.identifier,
-        hits: [...seqHits, ...textHits.filter((hit) => !seen.has(hit.id))],
+        hits: [...fragmentHits, ...textHits.filter((hit) => !seen.has(hit.id))],
       };
     }
     const [gateRows, textRaw] = await withUserContextRead(

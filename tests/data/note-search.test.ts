@@ -267,39 +267,43 @@ test("a ref that resolves nothing falls back to full text", async () => {
   expect(mcp.hits.map((h) => h.id)).toEqual([note.id]);
 });
 
-test("searchNotes resolves a note by the sequence half of its ref", async () => {
+test("a ref fragment substring-matches the composed ref, as the task list does", async () => {
   const f = await seedUserOrgProject("SEQA");
   const ctx = makeAuthContext(f.userId);
-  const first = await createNote(ctx, {
-    projectId: f.projectId,
-    title: "Preemption and the tick",
-    body: "content",
-  });
-  const second = await createNote(ctx, {
-    projectId: f.projectId,
-    title: "Scheduler fairness",
-    body: "content",
-  });
+  const made: Awaited<ReturnType<typeof createNote>>[] = [];
+  for (let i = 0; i < 11; i++) {
+    made.push(
+      await createNote(ctx, {
+        projectId: f.projectId,
+        title: `Note ${String.fromCharCode(97 + i)}`,
+        body: "content",
+      }),
+    );
+  }
+  const at = (seq: number) => {
+    const note = made.find((n) => n.sequenceNumber === seq);
+    if (note === undefined) throw new Error(`seeded no note at ${seq}`);
+    return note;
+  };
 
-  const byBareSeq = await searchNotes(
-    ctx,
-    f.projectId,
-    String(second.sequenceNumber),
-  );
-  expect(byBareSeq.map((h) => h.id)).toEqual([second.id]);
+  const one = await searchNotes(ctx, f.projectId, "1");
+  const oneIds = one.map((h) => h.id);
+  expect(oneIds).toContain(at(1).id);
+  expect(oneIds).toContain(at(10).id);
+  expect(oneIds).toContain(at(11).id);
+  expect(oneIds).not.toContain(at(2).id);
 
-  const byNSeq = await searchNotes(
-    ctx,
-    f.projectId,
-    `N${second.sequenceNumber}`,
-  );
-  expect(byNSeq.map((h) => h.id)).toEqual([second.id]);
+  const withN = await searchNotes(ctx, f.projectId, "N1");
+  expect(withN.map((h) => h.id)).toEqual(oneIds);
 
-  const lower = await searchNotes(ctx, f.projectId, `n${first.sequenceNumber}`);
-  expect(lower.map((h) => h.id)).toEqual([first.id]);
+  const lower = await searchNotes(ctx, f.projectId, "n11");
+  expect(lower.map((h) => h.id)).toEqual([at(11).id]);
+
+  const prefix = await searchNotes(ctx, f.projectId, at(1).projectIdentifier);
+  expect(prefix.length).toBe(made.length);
 });
 
-test("a sequence query merges its note ahead of text hits, and never 404s the number", async () => {
+test("a ref fragment merges ahead of text hits, deduped, and never 404s a number", async () => {
   const f = await seedUserOrgProject("SEQB");
   const ctx = makeAuthContext(f.userId);
   const numbered = await createNote(ctx, {
@@ -323,7 +327,19 @@ test("a sequence query merges its note ahead of text hits, and never 404s the nu
   expect(new Set(hits.map((h) => h.id)).size).toBe(hits.length);
 
   expect(await searchNotes(ctx, f.projectId, "9999")).toEqual([]);
-  expect(await searchNotes(ctx, f.projectId, "N9999999999")).toEqual([]);
+});
+
+test("a ref fragment treats LIKE metacharacters as literal text", async () => {
+  const f = await seedUserOrgProject("SEQC");
+  const ctx = makeAuthContext(f.userId);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Only note",
+    body: "content",
+  });
+
+  expect(await searchNotes(ctx, f.projectId, "%")).toEqual([]);
+  expect(await searchNotes(ctx, f.projectId, "_")).toEqual([]);
 });
 
 test("searchNotes leaves non-ref queries on the FTS path", async () => {

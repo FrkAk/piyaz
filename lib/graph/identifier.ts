@@ -136,6 +136,15 @@ export const NOTE_REF_PATTERN = /^([A-Z0-9]{2,12})-N(\d+)$/i;
  */
 export const NOTE_SEQ_TOKEN_PATTERN = /^N?(\d+)$/i;
 
+/**
+ * A query that could be part of a composed ref: one token drawn from the ref
+ * alphabet. Project-scoped note search substring-matches these against the
+ * composed ref, so `1` finds `N1`, `N11`, and `N111` exactly as the task
+ * list's `taskRef` substring filter does. Anything with whitespace or
+ * punctuation is prose, and skips that scan.
+ */
+export const REF_FRAGMENT_PATTERN = /^[A-Z0-9-]+$/i;
+
 /** A task enriched with its composed taskRef. */
 export type TaskWithRef<T = { sequenceNumber: number }> = T & {
   taskRef: TaskRef;

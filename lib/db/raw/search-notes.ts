@@ -160,35 +160,62 @@ export function noteRefSearchStmt(
   `);
 }
 
+/** Rows a ref-fragment scan may return before the caller merges text hits. */
+const REF_FRAGMENT_LIMIT = 20;
+
 /**
- * Resolve a note in the searched project by sequence number alone, for a
- * query that is the sequence half of a ref (`8` or `N8`). The project scope
- * supplies the prefix {@link noteRefSearchStmt} matches explicitly, so no
- * identifier predicate is needed. Unlike the full-ref path, the caller
- * merges this hit with the text hits rather than letting it win outright: a
- * bare number is also ordinary search text.
+ * Escape the LIKE metacharacters in a user fragment so `%` and `_` match
+ * themselves rather than acting as wildcards.
+ *
+ * @param fragment - Raw user text.
+ * @returns Fragment safe to wrap in `%...%`, escaping on backslash.
+ */
+function escapeLike(fragment: string): string {
+  return fragment.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/**
+ * Match notes in the searched project whose composed ref contains the
+ * fragment, the way the task list filters on its `taskRef` substring: `1`
+ * finds `N1`, `N11`, and `N111`; `N1` and the project prefix do the same.
+ * The ref is composed at read time and never enters `search_tsv`, so the FTS
+ * path can never match it.
+ *
+ * The caller merges these ahead of the text hits rather than letting them
+ * win outright: a fragment is also ordinary search text. Only a whole-ref
+ * query short-circuits, through {@link noteRefSearchStmt}.
+ *
+ * The composed predicate is not indexable, so this scans the project's live
+ * notes. It stays a separate statement rather than an `OR` arm on
+ * {@link noteSearchStmt} precisely so the FTS query keeps using its GIN
+ * index, and it rides the caller's existing read batch, costing no round
+ * trip. Bounded by {@link REF_FRAGMENT_LIMIT}.
  *
  * Returns the identical slim {@link NoteSearchRawRow} shape (no `body`, no
  * `search_tsv`) and stays inside the caller's RLS scope like the FTS path.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project to search in.
- * @param seq - Parsed note sequence number.
- * @returns Lazy raw statement yielding at most one {@link NoteSearchRawRow}.
+ * @param fragment - Non-empty, whitespace-free ref fragment.
+ * @returns Lazy raw statement yielding up to {@link REF_FRAGMENT_LIMIT} rows,
+ *   lowest sequence number first.
  */
-export function noteSeqSearchStmt(
+export function noteRefFragmentSearchStmt(
   read: ReadConn,
   projectId: string,
-  seq: number,
+  fragment: string,
 ) {
+  const pattern = `%${escapeLike(fragment)}%`;
   return read.execute(sql`
     SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
            n.summary, n.visibility, n.feed_mode, n.agent_writable, n.locked,
            n.updated_at, 1 AS rank
     FROM ${notes} n
+    JOIN ${projects} p ON p.id = n.project_id
     WHERE n.project_id = ${projectId}
-      AND n.sequence_number = ${seq}
       AND n.deleted_at IS NULL
-    LIMIT 1
+      AND (p.identifier || '-N' || n.sequence_number::text) ILIKE ${pattern} ESCAPE '\'
+    ORDER BY n.sequence_number ASC
+    LIMIT ${REF_FRAGMENT_LIMIT}
   `);
 }
