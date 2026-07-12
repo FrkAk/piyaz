@@ -164,7 +164,9 @@ function boundFeedSource(projectId: string, task: FeedTask): FeedSource {
  * Match values read from the task row in a CTE, for a caller holding only
  * a task id. The CTE selects from `tasks` under RLS, so an inaccessible
  * task yields no row, the join drops every note, and the feed comes back
- * empty. Canonicalization mirrors {@link canonicalMatchValue} in SQL, and
+ * empty. Canonicalization mirrors {@link canonicalMatchValue} in SQL
+ * (`lower(btrim(...))` trims ASCII whitespace where JS `trim()` also
+ * strips Unicode whitespace; realistic labels resolve identically), and
  * a blank category or tag is filtered rather than probed.
  *
  * @param taskId - UUID of the task the feed targets.

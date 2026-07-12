@@ -160,19 +160,13 @@ export function noteRefSearchStmt(
   `);
 }
 
-/** Rows a ref-fragment scan may return before the caller merges text hits. */
-const REF_FRAGMENT_LIMIT = 20;
-
 /**
- * Escape the LIKE metacharacters in a user fragment so `%` and `_` match
- * themselves rather than acting as wildcards.
- *
- * @param fragment - Raw user text.
- * @returns Fragment safe to wrap in `%...%`, escaping on backslash.
+ * Rows a ref-fragment scan may return before the caller merges text hits.
+ * A scan that fills this bound is saturated: the fragment matched at least
+ * this many refs, so it carries no ref-selection signal and the caller
+ * ranks text hits ahead of it.
  */
-function escapeLike(fragment: string): string {
-  return fragment.replace(/[\\%_]/g, (char) => `\\${char}`);
-}
+export const REF_FRAGMENT_LIMIT = 20;
 
 /**
  * Match notes in the searched project whose composed ref contains the
@@ -181,22 +175,28 @@ function escapeLike(fragment: string): string {
  * The ref is composed at read time and never enters `search_tsv`, so the FTS
  * path can never match it.
  *
- * The caller merges these ahead of the text hits rather than letting them
- * win outright: a fragment is also ordinary search text. Only a whole-ref
- * query short-circuits, through {@link noteRefSearchStmt}.
+ * The caller merges these ahead of the text hits when the scan stays under
+ * {@link REF_FRAGMENT_LIMIT}, and behind them when it saturates: a fragment
+ * matching that many refs (`N`, `-`, the bare prefix) selects nothing, so
+ * text relevance leads. Only a whole-ref query short-circuits, through
+ * {@link noteRefSearchStmt}.
  *
  * The composed predicate is not indexable, so this scans the project's live
  * notes. It stays a separate statement rather than an `OR` arm on
  * {@link noteSearchStmt} precisely so the FTS query keeps using its GIN
  * index, and it rides the caller's existing read batch, costing no round
- * trip. Bounded by {@link REF_FRAGMENT_LIMIT}.
+ * trip.
+ *
+ * The pattern needs no LIKE escaping: the caller admits only
+ * `REF_FRAGMENT_PATTERN` tokens (the `[A-Z0-9-]` ref alphabet), which
+ * excludes `%`, `_`, and `\`, and a composed ref cannot contain them either.
  *
  * Returns the identical slim {@link NoteSearchRawRow} shape (no `body`, no
  * `search_tsv`) and stays inside the caller's RLS scope like the FTS path.
  *
  * @param read - Read statement-building handle.
  * @param projectId - UUID of the project to search in.
- * @param fragment - Non-empty, whitespace-free ref fragment.
+ * @param fragment - Non-empty single token of the ref alphabet (`[A-Z0-9-]`).
  * @returns Lazy raw statement yielding up to {@link REF_FRAGMENT_LIMIT} rows,
  *   lowest sequence number first.
  */
@@ -205,7 +205,7 @@ export function noteRefFragmentSearchStmt(
   projectId: string,
   fragment: string,
 ) {
-  const pattern = `%${escapeLike(fragment)}%`;
+  const pattern = `%${fragment}%`;
   return read.execute(sql`
     SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
            n.summary, n.visibility, n.feed_mode, n.agent_writable, n.locked,
@@ -214,7 +214,7 @@ export function noteRefFragmentSearchStmt(
     JOIN ${projects} p ON p.id = n.project_id
     WHERE n.project_id = ${projectId}
       AND n.deleted_at IS NULL
-      AND (p.identifier || '-N' || n.sequence_number::text) ILIKE ${pattern} ESCAPE '\'
+      AND (p.identifier || '-N' || n.sequence_number::text) ILIKE ${pattern}
     ORDER BY n.sequence_number ASC
     LIMIT ${REF_FRAGMENT_LIMIT}
   `);

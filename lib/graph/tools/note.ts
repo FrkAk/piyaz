@@ -386,7 +386,8 @@ async function handleCreate(
   });
 
   const hints: string[] = [];
-  const createdKey = (folder: string, title: string) => `${folder} ${title}`;
+  const createdKey = (folder: string, title: string) =>
+    `${folder}\u0000${title}`;
   const createdKeys = new Set(
     result.created.map((s) => createdKey(s.folder, s.title)),
   );
@@ -830,7 +831,9 @@ async function handleLink(
 
 /**
  * Handle the `search` action: a full noteRef ('DLK-N12') resolves that note
- * exactly, falling back to full text when it resolves nothing; every other
+ * exactly, falling back to full text when it resolves nothing; a single
+ * ref-alphabet token ('8', 'N8', 'DLK') also substring-matches composed
+ * refs, merged before the text hits unless it matches broadly; every other
  * query is RLS-scoped ranked full text in one project.
  *
  * @param p - Note params.

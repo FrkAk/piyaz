@@ -45,7 +45,6 @@ import {
   assertProjectAccessTx,
   assertProjectGateRows,
   assertTaskAccessTx,
-  assertTaskGateRows,
   assertValidNoteId,
   assertValidProjectId,
   assertValidTaskId,
@@ -56,7 +55,6 @@ import {
 import {
   noteAccessGateStmt,
   projectAccessGateStmt,
-  taskAccessGateStmt,
   type NoteAccessGate,
 } from "@/lib/data/access";
 import { insertActivityEvents } from "@/lib/data/activity";
@@ -100,6 +98,7 @@ import {
   noteRefSearchStmt,
   noteSearchStmt,
   noteRefFragmentSearchStmt,
+  REF_FRAGMENT_LIMIT,
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
@@ -156,8 +155,6 @@ const FOLDER_MAX_CHARS = 512;
 
 /** Char cap for a search query string. */
 const SEARCH_QUERY_MAX_CHARS = 256;
-
-/** Char cap for `summary`; it is projected on every tree-list row. */
 
 /** Char cap for `category` and each tag / feed label. */
 const LABEL_MAX_CHARS = 200;
@@ -1275,8 +1272,8 @@ function toNoteMention(row: {
  * linked to the task via `note_task_links`, slim tree projection plus the
  * link `kind` and the note `sequenceNumber` (for the ref chip); never
  * selects `body`/`search_tsv`. Served by
- * `note_task_links_task_id_idx`. Batch alongside `taskAccessGateStmt`
- * and evaluate the gate rows first.
+ * `note_task_links_task_id_idx`. Batch alongside a task-gating read and
+ * evaluate the gate first, as {@link getTaskNoteContext} does.
  *
  * @param read - Read statement-building handle.
  * @param taskId - UUID of the task.
@@ -1694,7 +1691,11 @@ function matchNoteSeqToken(token: string): number | null {
  * `N1`, `N11`, and `N111` as the task list's `taskRef` filter does. Those
  * hits merge ahead of the text hits rather than winning outright: a fragment
  * is also ordinary search text, so a note numbered 8 and a note titled
- * "8 invariants" both surface.
+ * "8 invariants" both surface. A scan that saturates its fetch bound
+ * (`N`, `-`, the bare prefix) selects nothing, so its hits merge behind the
+ * text hits instead: a broad fragment must not bury every ranked text hit
+ * under {@link REF_FRAGMENT_LIMIT} rows of oldest-first refs and push them
+ * past downstream hit caps.
  *
  * Every other query batches full text alone.
  *
@@ -1725,10 +1726,14 @@ async function searchProjectNotes(
         normalizeExecuteResult<NoteSearchRawRow>(fragmentRaw).map(toSearchHit);
       const textHits =
         normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit);
-      const seen = new Set(fragmentHits.map((hit) => hit.id));
+      const saturated = fragmentHits.length >= REF_FRAGMENT_LIMIT;
+      const [lead, tail] = saturated
+        ? [textHits, fragmentHits]
+        : [fragmentHits, textHits];
+      const seen = new Set(lead.map((hit) => hit.id));
       return {
         projectIdentifier: gate.identifier,
-        hits: [...fragmentHits, ...textHits.filter((hit) => !seen.has(hit.id))],
+        hits: [...lead, ...tail.filter((hit) => !seen.has(hit.id))],
       };
     }
     const [gateRows, textRaw] = await withUserContextRead(
@@ -1996,31 +2001,6 @@ const BACKLINK_KIND_RANK: Record<NoteTaskLinkKind, number> = {
 };
 
 /**
- * List the live notes linked to a task via `note_task_links` as the slim
- * tree projection plus the link `kind`. One read batch: task gate +
- * backlinks. A note linked under several kinds (unique on note, task,
- * kind) collapses to one row carrying the most specific kind
- * (`spec_of` > `reference` > `mention`).
- *
- * @param ctx - Resolved auth context.
- * @param taskId - UUID of the task.
- * @returns Backlink rows ordered by note title.
- * @throws ForbiddenError on malformed id, missing task, or cross-team access.
- */
-export async function getTaskNoteBacklinks(
-  ctx: AuthContext,
-  taskId: string,
-): Promise<TaskNoteBacklink[]> {
-  assertValidTaskId(taskId);
-  const [gateRows, linkRows] = await withUserContextRead(ctx.userId, (read) => [
-    taskAccessGateStmt(read, taskId),
-    taskNoteBacklinksStmt(read, taskId),
-  ]);
-  assertTaskGateRows(taskId, gateRows);
-  return dedupeBacklinks(linkRows);
-}
-
-/**
  * Collapse backlink rows to one row per note, keeping the most specific
  * link kind (`spec_of` > `reference` > `mention`).
  *
@@ -2244,7 +2224,6 @@ export type BundleNoteOrigin = "fed" | "linked" | "overflow";
 export type BundleNoteLink = {
   id: string;
   noteRef: string;
-  sequenceNumber: number;
   title: string;
   type: NoteType;
   summary: string;
@@ -2263,7 +2242,6 @@ function toBundleNoteLink(
   note: {
     id: string;
     noteRef: string;
-    sequenceNumber: number;
     title: string;
     type: NoteType;
   },
@@ -2273,7 +2251,6 @@ function toBundleNoteLink(
   return {
     id: note.id,
     noteRef: note.noteRef,
-    sequenceNumber: note.sequenceNumber,
     title: note.title,
     type: note.type,
     summary,

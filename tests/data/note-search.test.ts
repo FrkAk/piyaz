@@ -329,7 +329,7 @@ test("a ref fragment merges ahead of text hits, deduped, and never 404s a number
   expect(await searchNotes(ctx, f.projectId, "9999")).toEqual([]);
 });
 
-test("a ref fragment treats LIKE metacharacters as literal text", async () => {
+test("the ref-alphabet gate keeps LIKE metacharacters and prose off the fragment scan", async () => {
   const f = await seedUserOrgProject("SEQC");
   const ctx = makeAuthContext(f.userId);
   await createNote(ctx, {
@@ -338,8 +338,43 @@ test("a ref fragment treats LIKE metacharacters as literal text", async () => {
     body: "content",
   });
 
+  // `%`, `_`, and whitespace fail REF_FRAGMENT_PATTERN, so these queries
+  // take the FTS path only; the fragment scan never sees a metacharacter.
   expect(await searchNotes(ctx, f.projectId, "%")).toEqual([]);
   expect(await searchNotes(ctx, f.projectId, "_")).toEqual([]);
+  expect(await searchNotes(ctx, f.projectId, "N -")).toEqual([]);
+});
+
+test("a saturated fragment scan ranks text hits ahead of ref hits", async () => {
+  const f = await seedUserOrgProject("SEQD");
+  const ctx = makeAuthContext(f.userId);
+  const first = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Filler zero",
+    body: "content",
+  });
+  const pid = first.projectIdentifier;
+  const titled = await createNote(ctx, {
+    projectId: f.projectId,
+    title: `${pid} onboarding guide`,
+    body: "content",
+  });
+  for (let i = 0; i < 19; i++) {
+    await createNote(ctx, {
+      projectId: f.projectId,
+      title: `Filler ${String.fromCharCode(97 + i)}`,
+      body: "content",
+    });
+  }
+
+  // 21 notes: the bare prefix substring-matches every ref and saturates
+  // the scan's fetch bound, so it carries no selection signal. The ranked
+  // text hit must lead instead of drowning under oldest-first ref rows and
+  // falling past downstream hit caps.
+  const hits = await searchNotes(ctx, f.projectId, pid);
+  expect(hits[0].id).toBe(titled.id);
+  expect(hits.map((h) => h.id)).toContain(first.id);
+  expect(new Set(hits.map((h) => h.id)).size).toBe(hits.length);
 });
 
 test("searchNotes leaves non-ref queries on the FTS path", async () => {
