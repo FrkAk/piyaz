@@ -301,7 +301,7 @@ function EditorBody({
               asIdentifier(projectIdentifier),
               note.sequenceNumber,
             )}
-            copyable={false}
+            hintOnMount
           />
         )}
         <Pill color={meta.color}>{meta.label}</Pill>
