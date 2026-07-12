@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AutoGrowTextarea } from "@/components/shared/AutoGrowTextarea";
 import { EditButton } from "@/components/shared/EditButton";
 import { EditHint } from "@/components/shared/EditHint";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { NoteMarkdown } from "./NoteMarkdown";
 import {
   EDITOR_LINE_HEIGHT_PX,
@@ -72,6 +73,7 @@ export function NoteEditor({
   const [draft, setDraft] = useState(body);
   const [caret, setCaret] = useState(0);
   const [entryCaret, setEntryCaret] = useState(0);
+  const coarse = useMediaQuery("(pointer: coarse)");
 
   /** Character offset of the start of a 1-based source line. */
   const offsetForLine = (line: number) =>
@@ -149,10 +151,9 @@ export function NoteEditor({
             }
           }}
           onBlur={commit}
-          className="block w-full bg-transparent outline-none"
+          className="block w-full bg-transparent text-[13.5px] outline-none"
           style={{
             fontFamily: "inherit",
-            fontSize: 13.5,
             lineHeight: 1.5,
             color: "var(--color-text-secondary)",
             caretColor: "var(--color-accent)",
@@ -206,7 +207,7 @@ export function NoteEditor({
       />
       {body.trim() === "" ? (
         <p className="prose-spec text-[13.5px] italic text-text-faint">
-          Double-click to edit…
+          {coarse ? "Tap the pencil to edit…" : "Double-click to edit…"}
         </p>
       ) : (
         <NoteMarkdown body={body} identifier={identifier} />

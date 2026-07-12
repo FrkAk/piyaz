@@ -7,6 +7,7 @@ import {
   getNoteTreeList,
   searchNotes,
   searchNotesForMcp,
+  updateNote,
   NoteValidationError,
 } from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
@@ -265,6 +266,176 @@ test("a ref that resolves nothing falls back to full text", async () => {
 
   const mcp = await searchNotesForMcp(ctx, f.projectId, "RFC-N1");
   expect(mcp.hits.map((h) => h.id)).toEqual([note.id]);
+});
+
+test("a ref fragment substring-matches the composed ref, as the task list does", async () => {
+  const f = await seedUserOrgProject("SEQA");
+  const ctx = makeAuthContext(f.userId);
+  const made: Awaited<ReturnType<typeof createNote>>[] = [];
+  for (let i = 0; i < 11; i++) {
+    made.push(
+      await createNote(ctx, {
+        projectId: f.projectId,
+        title: `Note ${String.fromCharCode(97 + i)}`,
+        body: "content",
+      }),
+    );
+  }
+  const at = (seq: number) => {
+    const note = made.find((n) => n.sequenceNumber === seq);
+    if (note === undefined) throw new Error(`seeded no note at ${seq}`);
+    return note;
+  };
+
+  const one = await searchNotes(ctx, f.projectId, "1");
+  const oneIds = one.map((h) => h.id);
+  expect(oneIds).toContain(at(1).id);
+  expect(oneIds).toContain(at(10).id);
+  expect(oneIds).toContain(at(11).id);
+  expect(oneIds).not.toContain(at(2).id);
+
+  const withN = await searchNotes(ctx, f.projectId, "N1");
+  expect(withN.map((h) => h.id)).toEqual(oneIds);
+
+  const lower = await searchNotes(ctx, f.projectId, "n11");
+  expect(lower.map((h) => h.id)).toEqual([at(11).id]);
+
+  const prefix = await searchNotes(ctx, f.projectId, at(1).projectIdentifier);
+  expect(prefix.length).toBe(made.length);
+});
+
+test("a ref fragment merges ahead of text hits, deduped, and never 404s a number", async () => {
+  const f = await seedUserOrgProject("SEQB");
+  const ctx = makeAuthContext(f.userId);
+  const numbered = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Scheduler",
+    body: "content",
+  });
+  const titled = await createNote(ctx, {
+    projectId: f.projectId,
+    title: `${numbered.sequenceNumber} invariants`,
+    body: "content",
+  });
+
+  const hits = await searchNotes(
+    ctx,
+    f.projectId,
+    String(numbered.sequenceNumber),
+  );
+  expect(hits[0].id).toBe(numbered.id);
+  expect(hits.map((h) => h.id)).toContain(titled.id);
+  expect(new Set(hits.map((h) => h.id)).size).toBe(hits.length);
+
+  expect(await searchNotes(ctx, f.projectId, "9999")).toEqual([]);
+});
+
+test("substring search treats LIKE metacharacters as literal text", async () => {
+  const f = await seedUserOrgProject("SEQC");
+  const ctx = makeAuthContext(f.userId);
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Only note",
+    body: "content",
+  });
+  const percent = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "100% rollout",
+    body: "content",
+  });
+
+  expect((await searchNotes(ctx, f.projectId, "%")).map((h) => h.id)).toEqual([
+    percent.id,
+  ]);
+  expect(
+    (await searchNotes(ctx, f.projectId, "100%")).map((h) => h.id),
+  ).toEqual([percent.id]);
+  expect(await searchNotes(ctx, f.projectId, "_")).toEqual([]);
+  expect(await searchNotes(ctx, f.projectId, "N -")).toEqual([]);
+});
+
+test("title substring finds what FTS stemming misses, in the rail and MCP", async () => {
+  const f = await seedUserOrgProject("SEQD");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Onboarding guide",
+    body: "content",
+  });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Unrelated",
+    body: "other content",
+  });
+
+  // `boarding` shares no lexeme with "Onboarding"; only the substring
+  // tier can serve it, on both surfaces.
+  expect(
+    (await searchNotes(ctx, f.projectId, "boarding")).map((h) => h.id),
+  ).toEqual([note.id]);
+  const mcp = await searchNotesForMcp(ctx, f.projectId, "boarding");
+  expect(mcp.hits.map((h) => h.id)).toEqual([note.id]);
+  expect(
+    (await searchNotes(ctx, f.projectId, "onboarding gui")).map((h) => h.id),
+  ).toEqual([note.id]);
+});
+
+test("summary and tags are substring-searchable", async () => {
+  const f = await seedUserOrgProject("SEQE");
+  const ctx = makeAuthContext(f.userId);
+  const bySummary = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Q3",
+    body: "content",
+  });
+  await updateNote(ctx, bySummary.id, {
+    summary: "quarterly billing overhaul",
+  });
+  const byTag = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Runbook",
+    body: "content",
+  });
+  await updateNote(ctx, byTag.id, { tags: ["infra-heavy"] });
+
+  expect(
+    (await searchNotes(ctx, f.projectId, "billing over")).map((h) => h.id),
+  ).toEqual([bySummary.id]);
+  const mcp = await searchNotesForMcp(ctx, f.projectId, "infra-hea");
+  expect(mcp.hits.map((h) => h.id)).toEqual([byTag.id]);
+});
+
+test("MCP search resolves refs whole only; the rail also matches fragments", async () => {
+  const f = await seedUserOrgProject("SEQF");
+  const ctx = makeAuthContext(f.userId);
+  const numbered = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Scheduler",
+    body: "content",
+  });
+  const titled = await createNote(ctx, {
+    projectId: f.projectId,
+    title: `${numbered.sequenceNumber} invariants`,
+    body: "content",
+  });
+
+  // The bare number is a ref fragment to the rail and plain text to MCP,
+  // mirroring the task surfaces: the task list filters on the ref
+  // substring, task MCP search matches text and whole refs only.
+  const mcp = await searchNotesForMcp(
+    ctx,
+    f.projectId,
+    String(numbered.sequenceNumber),
+  );
+  expect(mcp.hits.map((h) => h.id)).toEqual([titled.id]);
+
+  const rail = await searchNotes(
+    ctx,
+    f.projectId,
+    String(numbered.sequenceNumber),
+  );
+  expect(rail[0].id).toBe(numbered.id);
+  expect(rail.map((h) => h.id)).toContain(titled.id);
 });
 
 test("searchNotes leaves non-ref queries on the FTS path", async () => {

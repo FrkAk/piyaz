@@ -4,6 +4,7 @@ import { createContext, useContext } from "react";
 import { STATUS_META } from "@/components/shared/StatusGlyph";
 import type { NoteType, TaskStatus } from "@/lib/types";
 import { NOTE_TYPE_META, tint } from "./note-meta";
+import { Pill } from "./Pill";
 
 /** Resolved inline task-chip target. */
 export type NoteTaskTarget = {
@@ -34,9 +35,6 @@ export interface NoteLinkContextValue {
 /** Link resolution + navigation, provided once by the editor body. */
 export const NoteLinkContext = createContext<NoteLinkContextValue | null>(null);
 
-const CHIP_CLASS =
-  "inline-flex items-center rounded px-1.5 align-baseline font-mono text-[0.82em]";
-
 interface TaskChipProps {
   /** @param seq - The task sequence number from the ref (e.g. 3 in `[[RSC-3]]`). */
   seq: number;
@@ -56,34 +54,21 @@ export function TaskChip({ seq }: TaskChipProps) {
   const label = ctx === null ? `-${seq}` : `${ctx.identifier}-${seq}`;
   if (ctx === null || task === undefined) {
     return (
-      <span
-        title="Unknown task"
-        className={CHIP_CLASS}
-        style={{
-          color: "var(--color-danger)",
-          background: tint("var(--color-danger)", 12),
-          border: `1px solid ${tint("var(--color-danger)", 30)}`,
-        }}
-      >
+      <Pill inline color="var(--color-danger)" title="Unknown task">
         {label}
-      </span>
+      </Pill>
     );
   }
-  const color = STATUS_META[task.status].cssVar;
+  const status = STATUS_META[task.status];
   return (
-    <button
-      type="button"
-      title={`${STATUS_META[task.status].label} · ${task.title}`}
+    <Pill
+      inline
+      color={status.cssVar}
+      title={`${status.label} · ${task.title}`}
       onClick={() => ctx.onTask(task.taskId)}
-      className={`${CHIP_CLASS} cursor-pointer`}
-      style={{
-        color,
-        background: tint(color, 12),
-        border: `1px solid ${tint(color, 30)}`,
-      }}
     >
       {label}
-    </button>
+    </Pill>
   );
 }
 

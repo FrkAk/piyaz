@@ -323,6 +323,7 @@ export function notePlaceholderFromRow(
 ): NoteFullResult {
   return {
     updatedByName: null,
+    updatedByAgent: false,
     note: {
       id: row.id,
       projectId,

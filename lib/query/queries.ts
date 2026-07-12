@@ -9,6 +9,7 @@ import {
 } from "@/lib/query/conditional-fetch";
 import { noteKeys, projectKeys, taskKeys } from "@/lib/query/keys";
 import type { BundleKind, BundlePart } from "@/lib/context/parts";
+import type { BundleNoteView } from "@/lib/context/format";
 import type {
   NoteFullResult,
   NoteSearchHit,
@@ -216,22 +217,35 @@ export function fetchNoteDetail(
 }
 
 /**
- * QueryFn factory for a task's linked-note backlinks.
+ * A task's note context: the notes linked to it, plus the note links the
+ * context bundle of one kind will carry. Both halves ride one request.
+ */
+export type TaskNoteContextResponse = {
+  backlinks: TaskNoteBacklink[];
+  feed: BundleNoteView;
+};
+
+/**
+ * QueryFn factory for a task's note context: its linked-note backlinks and
+ * the note links the bundle of `bundle` carries.
  *
  * @param qc - QueryClient.
  * @param projectId - Owning project id.
  * @param taskId - Task id.
+ * @param bundle - Bundle kind whose note feed to resolve; its depth decides
+ *   the feed's admitted/overflow split.
  * @returns Conditional-GET fetcher.
  */
-export function fetchNoteBacklinks(
+export function fetchTaskNoteContext(
   qc: QueryClient,
   projectId: string,
   taskId: string,
-): Fn<TaskNoteBacklink[]> {
+  bundle: BundleKind,
+): Fn<TaskNoteContextResponse> {
   return (ctx) =>
-    conditionalFetch<TaskNoteBacklink[]>({
-      url: `/api/task/${taskId}/notes`,
-      queryKey: noteKeys.backlinks(projectId, taskId),
+    conditionalFetch<TaskNoteContextResponse>({
+      url: `/api/task/${taskId}/notes?bundle=${bundle}`,
+      queryKey: noteKeys.backlinks(projectId, taskId, bundle),
       queryClient: qc,
       signal: ctx.signal,
     });

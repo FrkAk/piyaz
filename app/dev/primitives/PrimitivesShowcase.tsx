@@ -38,6 +38,7 @@ import {
   IconInbox,
   IconLink,
   IconList,
+  IconTasks,
   IconLock,
   IconMoon,
   IconMore,
@@ -174,6 +175,7 @@ const ICONS_LIST: Array<{ name: string; node: React.ReactNode }> = [
   { name: "Filter", node: <IconFilter size={16} /> },
   { name: "Sort", node: <IconSort size={16} /> },
   { name: "List", node: <IconList size={16} /> },
+  { name: "Tasks", node: <IconTasks size={16} /> },
   { name: "Graph", node: <IconGraph size={16} /> },
   { name: "Link", node: <IconLink size={16} /> },
   { name: "Spark", node: <IconSpark size={16} /> },
@@ -576,7 +578,7 @@ export function PrimitivesShowcase() {
         >
           <ViewTabs
             tabs={[
-              { id: "list", label: "Structure", icon: <IconList size={12} /> },
+              { id: "list", label: "Tasks", icon: <IconTasks size={12} /> },
               { id: "graph", label: "Graph", icon: <IconGraph size={12} /> },
               {
                 id: "agent",

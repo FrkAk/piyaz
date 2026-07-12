@@ -376,13 +376,14 @@ function phraseMove(event: NoteActivityEvent): string {
 
 /**
  * Header label for an actor. Human (web) actors keep their name; agent
- * (MCP) actors render as the owning user's agent.
+ * (MCP) actors render as the owning user's agent. Shared with the editor
+ * meta line so both surfaces attribute agent edits identically.
  *
  * @param name - Resolved actor name (or the "user" / "agent" fallback).
  * @param isAgent - Whether the actor is an agent (MCP source).
  * @returns Display label.
  */
-function displayActor(name: string, isAgent: boolean): string {
+export function displayActor(name: string, isAgent: boolean): string {
   if (!isAgent) return name;
   const first = name.split(/\s+/)[0];
   if (!first || first === "agent") return "Agent";

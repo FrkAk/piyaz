@@ -1177,3 +1177,26 @@ test("moveFolder cap guard considers explicit descendant paths", async () => {
   const untouched = await listNoteFolderPaths(ctx, f.projectId);
   expect(untouched.paths).toEqual([`a/${"f".repeat(505)}`]);
 });
+
+test("getNoteFull attributes the last edit to the updater's agent", async () => {
+  const f = await seedUserOrgProject("agentattr");
+  const webCtx = makeAuthContext(f.userId, { source: "web", userId: f.userId });
+  const mcpCtx = makeAuthContext(f.userId, {
+    source: "mcp",
+    userId: f.userId,
+    clientId: "test-client",
+  });
+
+  const note = await createNote(webCtx, {
+    projectId: f.projectId,
+    title: "Attribution",
+    body: "content",
+  });
+  expect((await getNoteFull(webCtx, note.id)).updatedByAgent).toBe(false);
+
+  await updateNote(mcpCtx, note.id, { summary: "agent summary" });
+  expect((await getNoteFull(webCtx, note.id)).updatedByAgent).toBe(true);
+
+  await updateNote(webCtx, note.id, { summary: "human summary" });
+  expect((await getNoteFull(webCtx, note.id)).updatedByAgent).toBe(false);
+});

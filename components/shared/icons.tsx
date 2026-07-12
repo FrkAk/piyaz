@@ -213,15 +213,27 @@ export function IconList(props: IconProps) {
   );
 }
 
-/** 4-node grid — graph view. */
+/** Dependency fan: one upstream node feeding two downstream — graph view. */
 export function IconGraph(props: IconProps) {
   return (
     <IconBase {...props}>
-      <path d="M4 4h2v2H4z" />
-      <path d="M10 4h2v2h-2z" />
-      <path d="M4 10h2v2H4z" />
-      <path d="M10 10h2v2h-2z" />
-      <path d="M5 6v4M11 6v4M6 5h4M6 11h4" />
+      <circle cx="8" cy="3.5" r="2" />
+      <circle cx="3.5" cy="12.5" r="2" />
+      <circle cx="12.5" cy="12.5" r="2" />
+      <path d="M7.1 5.3l-2.7 5.4" />
+      <path d="M8.9 5.3l2.7 5.4" />
+    </IconBase>
+  );
+}
+
+/** Checklist: two checked rows — tasks view. */
+export function IconTasks(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M2.5 4.6l1.3 1.3 2.4-2.6" />
+      <path d="M9 4.5h4.5" />
+      <path d="M2.5 11.1l1.3 1.3 2.4-2.6" />
+      <path d="M9 11h4.5" />
     </IconBase>
   );
 }

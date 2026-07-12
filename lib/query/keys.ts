@@ -66,8 +66,15 @@ export const noteKeys = {
   /** Per-note revision descriptors (versions panel). */
   revisions: (projectId: string, noteId: string) =>
     ["notes", projectId, "revisions", noteId] as const,
-  /** Notes linked to a task (backlinks panel). */
-  backlinks: (projectId: string, taskId: string) =>
+  /** A task's note context: backlinks + the note feed of one bundle kind. */
+  backlinks: (projectId: string, taskId: string, bundle: string) =>
+    ["notes", projectId, "backlinks", taskId, bundle] as const,
+  /**
+   * Every bundle kind's note context for one task: the invalidation prefix
+   * for task edits. A task's category and tags decide which notes auto-feed
+   * it, so retagging changes the feed without touching any note row.
+   */
+  backlinksTask: (projectId: string, taskId: string) =>
     ["notes", projectId, "backlinks", taskId] as const,
   /** All backlink queries for a project — the invalidation prefix. */
   backlinksAll: (projectId: string) =>

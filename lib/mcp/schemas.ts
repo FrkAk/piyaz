@@ -195,7 +195,7 @@ export const DESCRIPTIONS = {
     "list=the project's folder tree (refs, titles, folders, types, feed modes). move=one note into a folder, or folder+destParent (+newLeaf) to re-parent or rename a whole folder subtree — keep the tree organized for humans. " +
     "delete=preview by default, re-call preview=false; restore recovers a trashed note (use the UUID from the delete response). An overwritten body is recoverable: fields=['revisions'], then revision=N, then set body. " +
     "link/unlink=deliberate note-task relations (kind reference|spec_of); mention rows derive from [[refs]] in the body — write the ref into the body instead. " +
-    "search=a full noteRef ('DLK-N12', case-insensitive) resolves that note, else ranked full text within one project: team notes plus your own private notes, any feed mode. A ref that resolves nothing falls back to full text. Next: read heading='...' for the matching section instead of the full body.",
+    "search=a full noteRef ('DLK-N12', case-insensitive) resolves that note, else fuzzy within one project: title/summary/tag substring first, then ranked full text over title and body. Team notes plus your own private notes, any feed mode. A ref that resolves nothing falls back to the fuzzy tiers. Next: read heading='...' for the matching section instead of the full body.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -928,7 +928,7 @@ export const noteInputSchema = z.object({
       "search",
     ])
     .describe(
-      "create=1-10 notes, idempotent by (folder, title). read=meta / fields / heading section / revision snapshot. edit=ordered ops. list=the folder tree. move=note to folder, or folder subtree re-parent/rename. delete=preview by default; restore=recover a trashed note. request_share=ask a human to make a private note team-visible. link/unlink=note-task relation (reference|spec_of). search=a noteRef ('DLK-N12') resolves that note, else ranked full text in one project.",
+      "create=1-10 notes, idempotent by (folder, title). read=meta / fields / heading section / revision snapshot. edit=ordered ops. list=the folder tree. move=note to folder, or folder subtree re-parent/rename. delete=preview by default; restore=recover a trashed note. request_share=ask a human to make a private note team-visible. link/unlink=note-task relation (reference|spec_of). search=a noteRef ('DLK-N12') resolves that note, else title/summary/tag substring plus ranked full text in one project.",
     ),
   project: projectRefParam
     .optional()
@@ -1030,7 +1030,7 @@ export const noteInputSchema = z.object({
     .max(LIMITS.noteQuery)
     .optional()
     .describe(
-      "search only: a full noteRef ('DLK-N12', case-insensitive) resolves that note, falling back to full text when it resolves nothing; otherwise a full-text query where the last term prefix-matches.",
+      "search only: a full noteRef ('DLK-N12', case-insensitive) resolves that note, falling back to the fuzzy tiers when it resolves nothing; otherwise title/summary/tag substring plus ranked full text where the last term prefix-matches.",
     ),
   limit: z
     .int()

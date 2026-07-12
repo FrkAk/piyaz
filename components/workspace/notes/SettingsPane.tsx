@@ -235,7 +235,10 @@ export function SettingsPane({
   onCollapse,
   onClose,
 }: SettingsPaneProps) {
-  const { data, isPlaceholderData, isError } = useNoteDetail(projectId, noteId);
+  const { data, isPlaceholderData, isError, refetch } = useNoteDetail(
+    projectId,
+    noteId,
+  );
   const updateNote = useUpdateNote(projectId);
   const approveShare = useApproveShareRequest(projectId);
   const declineShare = useDeclineShareRequest(projectId);
@@ -299,7 +302,16 @@ export function SettingsPane({
     return (
       <RibbonShell fill={fill} onCollapse={onCollapse} onClose={onClose}>
         {isError ? (
-          <div className="p-4 text-[12px] text-text-muted">Note not found</div>
+          <div className="flex items-center gap-2 p-4 text-[12px] text-text-muted">
+            <span>Note not found.</span>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="cursor-pointer text-text-secondary underline hover:text-text-primary"
+            >
+              Retry
+            </button>
+          </div>
         ) : (
           <RibbonSkeleton />
         )}
@@ -374,7 +386,7 @@ export function SettingsPane({
             {(["private", "team"] as Visibility[]).map((v) => {
               const active = visibility === v;
               const color =
-                v === "team" ? "var(--color-done)" : "var(--color-accent)";
+                v === "team" ? "var(--color-done)" : "var(--color-text-muted)";
               return (
                 <button
                   key={v}
@@ -497,8 +509,8 @@ export function SettingsPane({
         <Section label="Auto-feed into tasks">
           <p className="mb-2 text-[11px] leading-snug text-text-muted">
             Controls whether agents can see this note. Off hides it entirely.
-            Any other option mentions it in the agent&rsquo;s MCP prompt for the
-            chosen scope.
+            Any other option mentions it in the agent&rsquo;s context bundle for
+            the chosen scope.
           </p>
           <div style={{ opacity: dimmed("feed") }}>
             <FeedEditor
@@ -529,7 +541,11 @@ export function SettingsPane({
             Tasks referenced in the body. Backlinks, not targeting.
           </p>
           {data.mentions.length === 0 ? (
-            <div className="py-0.5 text-[12px] text-text-faint">None</div>
+            loading ? (
+              <RefSkeleton />
+            ) : (
+              <div className="py-0.5 text-[12px] text-text-faint">None</div>
+            )
           ) : (
             data.mentions.map((mention) => (
               <MentionRow
@@ -542,7 +558,11 @@ export function SettingsPane({
 
           <FieldLabel className="mt-4">Linked notes</FieldLabel>
           {data.linksOut.length === 0 && data.linksIn.length === 0 ? (
-            <div className="py-0.5 text-[12px] text-text-faint">None</div>
+            loading ? (
+              <RefSkeleton />
+            ) : (
+              <div className="py-0.5 text-[12px] text-text-faint">None</div>
+            )
           ) : (
             <>
               {data.linksOut.map((linked) => (
@@ -606,6 +626,22 @@ function RibbonSkeleton() {
         style={{ "--skeleton-delay": "210ms" } as React.CSSProperties}
       />
     </div>
+  );
+}
+
+/**
+ * One-line reference placeholder shown while the note detail is still the
+ * tree-row placeholder, so an unresolved list never asserts "None".
+ *
+ * @returns A single skeleton bar shaped like a reference row.
+ */
+function RefSkeleton() {
+  return (
+    <span
+      className="skeleton-bar my-0.5 block h-4 w-2/3"
+      role="status"
+      aria-label="Loading references"
+    />
   );
 }
 
@@ -859,12 +895,12 @@ function FeedEditor({
               onClick={() => {
                 if (m.id !== note.feedMode) onSetMode(m.id);
               }}
-              className="rounded-full px-2.5 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
+              className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer pointer-coarse:min-h-6 pointer-coarse:px-3"
               style={{
                 color: active ? "#fff" : "var(--color-text-muted)",
                 fontWeight: active ? 500 : 400,
-                background: active ? "var(--color-accent)" : "transparent",
-                border: `1px solid ${active ? "var(--color-accent)" : "var(--color-border)"}`,
+                background: active ? "var(--color-accent-fill)" : "transparent",
+                border: `1px solid ${active ? "var(--color-accent-fill)" : "var(--color-border)"}`,
               }}
             >
               {m.label}
@@ -1087,7 +1123,7 @@ function FeedTaskPicker({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
+      <div className="mb-1.5 flex items-center gap-1.5 rounded-md border border-border px-2 py-1 focus-within:border-accent/40 focus-within:ring-1 focus-within:ring-accent/40">
         <IconSearch size={11} className="shrink-0 text-text-faint" />
         <input
           value={query}
@@ -1158,7 +1194,7 @@ function ChipToggle({ label, active, disabled, onClick }: ChipToggleProps) {
       disabled={disabled}
       aria-pressed={active}
       onClick={onClick}
-      className="inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer"
+      className="inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 enabled:cursor-pointer pointer-coarse:min-h-6 pointer-coarse:px-2.5"
       style={{
         color: active ? "var(--color-accent-light)" : "var(--color-text-muted)",
         background: active ? tint("var(--color-accent)", 16) : "transparent",

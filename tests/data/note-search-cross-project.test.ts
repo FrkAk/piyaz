@@ -5,6 +5,7 @@ import { superuserPool } from "@/tests/setup/global";
 import {
   createNote,
   searchNotesAcrossProjects,
+  updateNote,
   NoteValidationError,
 } from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
@@ -223,6 +224,54 @@ test("a ref colliding across two of the caller's orgs hits once per org", async 
   expect(new Set(hits.map((h) => h.organizationId)).size).toBe(2);
 });
 
+test("the palette resolves a note by the sequence half of its ref", async () => {
+  const f = await seedUserOrgProject("XSEQ");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Preemption, the tick, and preemption points",
+    body: "x",
+    visibility: "team",
+  });
+
+  const bare = await searchNotesAcrossProjects(
+    ctx,
+    String(note.sequenceNumber),
+  );
+  expect(bare.map((h) => h.id)).toContain(note.id);
+
+  const withN = await searchNotesAcrossProjects(ctx, `N${note.sequenceNumber}`);
+  expect(withN.map((h) => h.id)).toContain(note.id);
+});
+
+test("the palette matches note tags and summary per token", async () => {
+  const f = await seedUserOrgProject("XTAG");
+  const ctx = makeAuthContext(f.userId);
+  const tagged = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Deploy runbook",
+    body: "content",
+  });
+  await updateNote(ctx, tagged.id, { tags: ["infra"] });
+  const summarized = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Q3",
+    body: "content",
+  });
+  await updateNote(ctx, summarized.id, { summary: "billing overhaul plan" });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Unrelated",
+    body: "content",
+  });
+
+  const byTag = await searchNotesAcrossProjects(ctx, "infra");
+  expect(byTag.map((h) => h.id)).toEqual([tagged.id]);
+
+  const bySummary = await searchNotesAcrossProjects(ctx, "billing");
+  expect(bySummary.map((h) => h.id)).toEqual([summarized.id]);
+});
+
 test("keeps non-ref token search intact", async () => {
   const f = await seedUserOrgProject("XREFE");
   const ctx = makeAuthContext(f.userId);
@@ -260,4 +309,39 @@ test("ranks exact title over substring and validates query length", async () => 
   await expect(
     searchNotesAcrossProjects(ctx, "x".repeat(300)),
   ).rejects.toBeInstanceOf(NoteValidationError);
+});
+
+test("the palette treats LIKE metacharacters as literal text", async () => {
+  const f = await seedUserOrgProject("XLIKE");
+  const ctx = makeAuthContext(f.userId);
+  const percent = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Rollout at 50% complete",
+    body: "x",
+    visibility: "team",
+  });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Rollout at 500 complete",
+    body: "x",
+    visibility: "team",
+  });
+  const underscore = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "snake_case naming guide",
+    body: "x",
+    visibility: "team",
+  });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "snakeXcase naming guide",
+    body: "x",
+    visibility: "team",
+  });
+
+  const byPercent = await searchNotesAcrossProjects(ctx, "50%");
+  expect(byPercent.map((h) => h.id)).toEqual([percent.id]);
+
+  const byUnderscore = await searchNotesAcrossProjects(ctx, "snake_case");
+  expect(byUnderscore.map((h) => h.id)).toEqual([underscore.id]);
 });

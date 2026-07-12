@@ -1,7 +1,14 @@
 import type { Decision, AcceptanceCriterion } from "@/lib/types";
 import type { TaskLinkRef } from "@/lib/data/views";
 import type { BundleKind, BundlePart } from "@/lib/context/parts";
-import type { NoteFeedResolution, NoteFeedRow } from "@/lib/data/note";
+import {
+  selectGuidanceLinks,
+  selectGuidanceNotes,
+  selectNotePointers,
+  type BundleNoteLink,
+  type NoteFeedResolution,
+  type NoteFeedRow,
+} from "@/lib/data/note";
 
 /** Final-clause variants of the untrusted-content notice, keyed by kind. */
 const NOTICE_TAILS: Record<BundleKind, string[]> = {
@@ -293,16 +300,9 @@ export function formatNotePointers(
   feed: NoteFeedResolution,
   opts: { guidanceAsPointers: boolean; limit?: number },
 ): string {
-  const pointerRows = feed.notes.filter(
-    (row) => opts.guidanceAsPointers || row.type !== "guidance",
-  );
-  const lines = [
-    ...pointerRows.map((row) => notePointerLine(row, row.summary)),
-    ...feed.linked.map((pointer) =>
-      notePointerLine(pointer, pointer.summary ?? ""),
-    ),
-    ...feed.overflow.map((pointer) => notePointerLine(pointer, "")),
-  ];
+  const lines = selectNotePointers(feed, {
+    guidanceAsPointers: opts.guidanceAsPointers,
+  }).map((entry) => notePointerLine(entry, entry.summary));
   if (lines.length === 0) return "";
   const capped = capLines(
     lines,
@@ -318,6 +318,88 @@ export function formatNotePointers(
 }
 
 /**
+ * How each bundle kind renders the note feed. Mirrors the `buildNotesPart`
+ * and `buildGuidancePart` calls in `lib/context/_core/*`: deep kinds inline
+ * guidance full-body and list only reference/knowledge pointers; slim kinds
+ * ship no guidance section and pointer every type. `tests/context/parity`
+ * pins this against the builders: change both together.
+ */
+export const NOTE_FEED_RULES: Record<
+  BundleKind,
+  {
+    deep: boolean;
+    guidanceSection: boolean;
+    guidanceAsPointers: boolean;
+    limit: number;
+  }
+> = {
+  working: {
+    deep: false,
+    guidanceSection: false,
+    guidanceAsPointers: true,
+    limit: MAX_SLIM_NOTE_LINES,
+  },
+  planning: {
+    deep: true,
+    guidanceSection: true,
+    guidanceAsPointers: false,
+    limit: MAX_BUNDLE_LIST_LINES,
+  },
+  agent: {
+    deep: true,
+    guidanceSection: true,
+    guidanceAsPointers: false,
+    limit: MAX_BUNDLE_LIST_LINES,
+  },
+  review: {
+    deep: true,
+    guidanceSection: true,
+    guidanceAsPointers: false,
+    limit: MAX_BUNDLE_LIST_LINES,
+  },
+  record: {
+    deep: false,
+    guidanceSection: false,
+    guidanceAsPointers: true,
+    limit: MAX_SLIM_NOTE_LINES,
+  },
+};
+
+/** The note links a bundle of a given kind carries, for the web preview. */
+export type BundleNoteView = {
+  guidance: BundleNoteLink[];
+  notes: BundleNoteLink[];
+  hidden: number;
+  truncated: boolean;
+};
+
+/**
+ * Project a feed resolution onto the note links a bundle of `kind` will
+ * carry, applying the same section split, guidance filter, and width cap
+ * the markdown emitter applies. Links only: bodies never leave the server
+ * on this path.
+ *
+ * @param feed - Budgeted feed resolution, backlinks already folded.
+ * @param kind - Bundle kind the preview is rendering.
+ * @returns Guidance links, Relevant Notes links, and the capped remainder.
+ */
+export function buildBundleNoteView(
+  feed: NoteFeedResolution,
+  kind: BundleKind,
+): BundleNoteView {
+  const rules = NOTE_FEED_RULES[kind];
+  const pointers = selectNotePointers(feed, {
+    guidanceAsPointers: rules.guidanceAsPointers,
+  });
+  return {
+    guidance: rules.guidanceSection ? selectGuidanceLinks(feed) : [],
+    notes: pointers.slice(0, rules.limit),
+    hidden: Math.max(0, pointers.length - rules.limit),
+    truncated: feed.truncated,
+  };
+}
+
+/**
  * Build the Project Guidance bundle part from admitted guidance rows.
  * Deep bundles (agent, planning, review) render it as a constraints
  * section under the untrusted-content notice.
@@ -326,7 +408,7 @@ export function formatNotePointers(
  * @returns The part, or null when no guidance was admitted.
  */
 export function buildGuidancePart(feed: NoteFeedResolution): BundlePart | null {
-  const guidance = feed.notes.filter((row) => row.type === "guidance");
+  const guidance = selectGuidanceNotes(feed);
   if (guidance.length === 0) return null;
   return {
     id: "guidance",

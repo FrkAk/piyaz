@@ -3,7 +3,7 @@
 import { useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { IconDoc, IconGraph, IconList } from "@/components/shared/icons";
+import { IconDoc, IconGraph, IconTasks } from "@/components/shared/icons";
 
 /** Workspace view identifier — the `?view` query param value space. */
 export type WorkspaceView = "structure" | "graph" | "notes";
@@ -26,7 +26,7 @@ const TABS: ReadonlyArray<{
   label: string;
   icon: ReactNode;
 }> = [
-  { id: "structure", label: "Structure", icon: <IconList size={13} /> },
+  { id: "structure", label: "Tasks", icon: <IconTasks size={13} /> },
   { id: "graph", label: "Graph", icon: <IconGraph size={13} /> },
   { id: "notes", label: "Notes", icon: <IconDoc size={13} /> },
 ];
@@ -39,9 +39,10 @@ interface ViewSwitcherProps {
 }
 
 /**
- * Compact segmented workspace view switcher — Structure / Graph / Notes.
- * Pill styling with roving tabindex and arrow-key navigation along the
- * tablist.
+ * Compact segmented workspace view switcher — Tasks / Graph / Notes. The
+ * tasks view keeps its historical `structure` param value so existing
+ * URLs stay valid. Pill styling with roving tabindex and arrow-key
+ * navigation along the tablist.
  *
  * @param props - Controlled `active` view and change handler.
  * @returns A `<div role="tablist">` wrapping each view as a `<button role="tab">`.

@@ -36,6 +36,13 @@ const components: Components = {
   pre({ children }) {
     return <>{children}</>;
   },
+  table({ children }) {
+    return (
+      <div className="prose-scroll">
+        <table>{children}</table>
+      </div>
+    );
+  },
   code({ className, children }) {
     const lang = /language-(\w+)/.exec(className ?? "")?.[1];
     if (lang === undefined)

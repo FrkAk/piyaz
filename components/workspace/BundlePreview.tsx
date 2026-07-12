@@ -12,6 +12,12 @@ import type { AcceptanceCriterion, Decision, TaskStatus } from "@/lib/types";
 import type { TaskState } from "@/lib/data/task";
 import type { AssigneeRef, TaskLinkRef } from "@/lib/data/views";
 import type { BundleSectionId } from "@/lib/context/parts";
+import type { BundleNoteView } from "@/lib/context/format";
+import type { BundleNoteLink, BundleNoteOrigin } from "@/lib/data/note";
+import { IconDoc } from "@/components/shared/icons";
+import { skeletonVars } from "@/components/shared/skeleton";
+import { NOTE_TYPE_META } from "@/components/workspace/notes/note-meta";
+import { Pill } from "@/components/workspace/notes/Pill";
 import { REVIEW_LENS_PROMPTS } from "@/lib/context/lens";
 import {
   ALWAYS_RENDERED_BY_BUNDLE,
@@ -183,6 +189,20 @@ interface BundlePreviewProps {
   links: TaskLinkRef[];
   /** Execution record markdown. */
   executionRecord: string | null;
+  /**
+   * Note links the bundle of this variant will carry, resolved server-side
+   * with the same feed rules the markdown emitter uses. Undefined until the
+   * detail view's note-context read resolves.
+   */
+  noteFeed?: BundleNoteView;
+  /** Whether the note-context read is still in flight. */
+  noteFeedLoading?: boolean;
+  /** Whether the note-context read failed. */
+  noteFeedError?: boolean;
+  /** Retry the note-context read. */
+  onRetryNoteFeed?: () => void;
+  /** Open a note on the Notes surface from a ref chip. */
+  onOpenNote?: (noteId: string) => void;
   /** Click a neighbor row to navigate to that task. */
   onSelectTask?: (taskId: string) => void;
 }
@@ -283,10 +303,31 @@ function hasLocalData(id: BundleSectionId, props: BundlePreviewProps): boolean {
       return (props.executionRecord ?? "").trim().length > 0;
     case "blocked":
       return props.blockedBy.length > 0;
+    // Unresolved is not the same as empty: hiding these while the read is in
+    // flight or after it failed would assert the bundle carries no notes.
     case "guidance":
+      return (
+        noteFeedUnresolved(props) || (props.noteFeed?.guidance.length ?? 0) > 0
+      );
     case "notes":
-      return false;
+      return (
+        noteFeedUnresolved(props) || (props.noteFeed?.notes.length ?? 0) > 0
+      );
   }
+}
+
+/**
+ * Whether the note feed is still unknown: in flight, failed, or absent.
+ *
+ * @param props - Bundle props.
+ * @returns True when the feed's contents cannot yet be asserted.
+ */
+function noteFeedUnresolved(props: BundlePreviewProps): boolean {
+  return (
+    props.noteFeedLoading === true ||
+    props.noteFeedError === true ||
+    props.noteFeed === undefined
+  );
 }
 
 /**
@@ -301,6 +342,8 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
   const len = (s: string) => s.length;
   const refLen = (xs: BundleNeighbor[]) =>
     xs.reduce((sum, n) => sum + len(`${n.taskRef} ${n.title}`), 0);
+  const noteLen = (xs: BundleNoteLink[]) =>
+    xs.reduce((sum, n) => sum + len(`${n.noteRef} ${n.title} ${n.summary}`), 0);
   switch (id) {
     case "spec":
       return Math.max(len(props.spec), 1);
@@ -354,8 +397,9 @@ function sectionWeight(id: BundleSectionId, props: BundlePreviewProps): number {
     case "work-so-far":
       return Math.max(len(props.executionRecord ?? ""), 1);
     case "guidance":
+      return Math.max(noteLen(props.noteFeed?.guidance ?? []), 1);
     case "notes":
-      return 1;
+      return Math.max(noteLen(props.noteFeed?.notes ?? []), 1);
   }
 }
 
@@ -734,12 +778,141 @@ function sectionSummary(
     return dead.length > 2 ? `${refs} · +${dead.length - 2} more` : refs;
   }
   if (id === "lens") return "review lens prompts";
+  if (id === "guidance" || id === "notes") {
+    if (props.noteFeedError === true) return "could not load notes";
+    if (noteFeedUnresolved(props)) return "loading notes…";
+    const links =
+      id === "guidance"
+        ? (props.noteFeed?.guidance ?? [])
+        : (props.noteFeed?.notes ?? []);
+    const refs = links
+      .slice(0, 2)
+      .map((n) => n.noteRef)
+      .join(" · ");
+    return links.length > 2 ? `${refs} · +${links.length - 2} more` : refs;
+  }
   if (!props.executionRecord || props.executionRecord.trim().length === 0) {
     return "no execution record yet";
   }
   return props.status === "cancelled"
     ? "cancellation record"
     : "shipped record";
+}
+
+/** How the note reached the bundle, as the drawer captions it. */
+const NOTE_ORIGIN_LABEL: Record<BundleNoteOrigin, string> = {
+  fed: "auto-fed",
+  linked: "linked",
+  overflow: "over budget",
+};
+
+interface NoteLinkListProps {
+  /** Note links the bundle carries, in emit order. */
+  links: BundleNoteLink[];
+  /** Notes the bundle's width cap drops from the list. */
+  hidden?: number;
+  /** Whether matches were dropped beyond the feed's fetch bound. */
+  truncated?: boolean;
+  /** Whether the note-context read is still in flight. */
+  loading?: boolean;
+  /** Whether the note-context read failed. */
+  error?: boolean;
+  /** Retry the note-context read. */
+  onRetry?: () => void;
+  /** Open a note on the Notes surface. */
+  onOpenNote?: (noteId: string) => void;
+}
+
+/**
+ * Note-link list for the guidance and notes drawers. Lists what the bundle
+ * carries as references only: ref chip, title, type, and how the note
+ * reached the task (auto-fed, explicitly linked, or listed pointer-only
+ * after overflowing the feed's char budget). The bundle inlines guidance
+ * bodies for the agent; the preview never does.
+ *
+ * A failed read reports itself rather than rendering as an empty section:
+ * an empty list here would claim the agent receives no notes. The section
+ * itself is hidden once the read resolves empty, mirroring the builders,
+ * which emit no part at all when nothing feeds the task.
+ *
+ * @param props - List configuration.
+ * @returns The note-link rows, a skeleton, or the error state.
+ */
+function NoteLinkList({
+  links,
+  hidden = 0,
+  truncated = false,
+  loading = false,
+  error = false,
+  onRetry,
+  onOpenNote,
+}: NoteLinkListProps) {
+  if (error) {
+    return (
+      <div className="flex items-center gap-2 py-1 text-[12px] text-text-secondary">
+        <span>Couldn’t load this task’s notes.</span>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="cursor-pointer text-text-faint underline hover:text-text-secondary"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="space-y-1" role="status" aria-label="Loading notes">
+        {[0, 1].map((i) => (
+          <span
+            key={i}
+            className="skeleton-bar block h-7 w-full"
+            style={skeletonVars({ "--skeleton-delay": `${i * 70}ms` })}
+          />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      {links.map((note) => {
+        const meta = NOTE_TYPE_META[note.type] ?? NOTE_TYPE_META.reference;
+        return (
+          <button
+            key={note.id}
+            type="button"
+            onClick={() => onOpenNote?.(note.id)}
+            title={note.summary || note.title}
+            className="group/note flex w-full cursor-pointer items-center gap-2 rounded-md border border-border/40 px-2 py-1.5 text-left transition-colors hover:border-border-strong hover:bg-surface-raised/40"
+          >
+            <IconDoc
+              size={13}
+              className="shrink-0"
+              style={{ color: meta.color }}
+            />
+            <MonoId id={note.noteRef} copyable={false} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-primary transition-colors group-hover/note:text-accent-light">
+              {note.title || "Untitled"}
+            </span>
+            <Pill color={meta.color} className="shrink-0">
+              {meta.label}
+            </Pill>
+            <span className="shrink-0 font-mono text-[10px] uppercase text-text-faint">
+              {NOTE_ORIGIN_LABEL[note.origin]}
+            </span>
+          </button>
+        );
+      })}
+      {(hidden > 0 || truncated) && (
+        <p className="pt-0.5 font-mono text-[10px] text-text-faint">
+          {hidden > 0
+            ? `+${hidden} more listed to the agent as a search hint.`
+            : "More notes matched than the feed fetches."}
+        </p>
+      )}
+    </div>
+  );
 }
 
 interface SectionBodyProps {
@@ -853,6 +1026,21 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
   }
   if (id === "lens") {
     return <MarkdownBody text={REVIEW_LENS_PROMPTS} emptyHint="" />;
+  }
+  if (id === "guidance" || id === "notes") {
+    const feed = props.noteFeed;
+    const guidance = id === "guidance";
+    return (
+      <NoteLinkList
+        links={(guidance ? feed?.guidance : feed?.notes) ?? []}
+        hidden={guidance ? 0 : (feed?.hidden ?? 0)}
+        truncated={guidance ? false : (feed?.truncated ?? false)}
+        loading={props.noteFeedLoading === true || feed === undefined}
+        error={props.noteFeedError === true}
+        onRetry={props.onRetryNoteFeed}
+        onOpenNote={props.onOpenNote}
+      />
+    );
   }
   return (
     <MarkdownBody
