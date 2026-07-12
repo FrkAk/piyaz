@@ -387,6 +387,7 @@ function EditorBody({
         summary={note.summary}
         editable={editable}
         saveError={summaryError}
+        onBeginEdit={() => updateNote.reset()}
         onCommit={(next) =>
           updateNote.mutate({
             noteId,
@@ -480,6 +481,8 @@ interface NoteSummaryProps {
   editable: boolean;
   /** @param saveError - Message for the last failed summary write, else null. */
   saveError: string | null;
+  /** @param onBeginEdit - Clear the stale write state when editing starts. */
+  onBeginEdit: () => void;
   /** @param onCommit - Persist a changed, trimmed summary. */
   onCommit: (next: string) => void;
 }
@@ -488,10 +491,11 @@ interface NoteSummaryProps {
  * Summary block under the note title. Renders the one-line summary through the
  * shared markdown renderer and, like the body, opens a raw editor on
  * double-click, keyboard (Enter/Space), or the touch edit button. Enter or
- * blur commits; Escape cancels without saving. An empty summary on an editable
- * note shows a dashed accent prompt so it never ships without one; a locked or
+ * blur commits, and an uncommitted draft is flushed on unmount so a selection
+ * change without a blur never drops the edit; Escape cancels without saving.
+ * An empty summary on an editable note shows a dashed prompt; a locked or
  * unset read-only note renders nothing. A failed write surfaces inline instead
- * of reverting silently.
+ * of reverting silently, and clears when the editor reopens.
  *
  * @param props - Summary text, editability, last write error, and commit sink.
  * @returns The rendered summary, the empty prompt, or the raw editor.
@@ -500,6 +504,7 @@ function NoteSummary({
   summary,
   editable,
   saveError,
+  onBeginEdit,
   onCommit,
 }: NoteSummaryProps) {
   const [editing, setEditing] = useState(false);
@@ -512,6 +517,7 @@ function NoteSummary({
     cancelledRef.current = false;
     setDraft(summary);
     setEditing(true);
+    onBeginEdit();
   };
 
   const commit = () => {
@@ -525,6 +531,16 @@ function NoteSummary({
     cancelledRef.current = true;
     setEditing(false);
   };
+
+  const flushRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    flushRef.current = () => {
+      if (!editing || cancelledRef.current) return;
+      const next = draft.trim();
+      if (next !== summary) onCommit(next);
+    };
+  });
+  useEffect(() => () => flushRef.current(), []);
 
   useEffect(() => {
     if (!editing) return;
@@ -612,9 +628,9 @@ function NoteSummary({
       <button
         type="button"
         onClick={begin}
-        className="mb-3 flex w-full items-center gap-1.5 rounded-md border border-dashed border-accent/50 bg-accent/5 px-2 py-1.5 text-left text-[12px] text-text-muted transition-colors hover:border-accent hover:bg-accent/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+        className="mb-3 flex w-full items-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-left text-[12px] text-text-faint transition-colors hover:border-accent/50 hover:text-text-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
       >
-        <IconPencil size={11} className="shrink-0 text-accent" />
+        <IconPencil size={11} className="shrink-0" />
         Add a one-line summary so this note is easy to find.
       </button>
       {errorLine}

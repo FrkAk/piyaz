@@ -4,7 +4,11 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { CollapsibleRail } from "@/components/shared/CollapsibleRail";
 import { Drawer } from "@/components/shared/Drawer";
-import { IconPanelLeft, IconSettings } from "@/components/shared/icons";
+import {
+  IconPanelLeft,
+  IconPlus,
+  IconSettings,
+} from "@/components/shared/icons";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useMounted } from "@/hooks/useMounted";
 import {
@@ -106,8 +110,9 @@ export function NotesView({
    * failure surfaces in the tree pane's error strip.
    *
    * @param folder - Target folder path.
+   * @returns Whether the note was created and selected.
    */
-  async function createAndSelect(folder: string) {
+  async function createAndSelect(folder: string): Promise<boolean> {
     setCreateError(null);
     let result: Awaited<ReturnType<typeof createNote.mutateAsync>>;
     try {
@@ -120,15 +125,16 @@ export function NotesView({
       });
     } catch {
       setCreateError("Create failed");
-      return;
+      return false;
     }
     if (result.ok) {
       onSelectNote(result.data.id);
       setTreeOpen(false);
       setFocusTitle(result.data.id);
-    } else {
-      setCreateError(result.message);
+      return true;
     }
+    setCreateError(result.message);
+    return false;
   }
 
   const handleFocusedTitle = useCallback(() => setFocusTitle(null), []);
@@ -298,17 +304,35 @@ export function NotesView({
         <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-text-muted">
           Notes
         </span>
-        {noteId !== null && (
+        <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Note settings"
-            title="Note settings"
-            className="ml-auto inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            onClick={() => {
+              // A failed create surfaces in the tree pane's error strip,
+              // so open the drawer instead of failing silently.
+              void createAndSelect("").then((ok) => {
+                if (!ok) setTreeOpen(true);
+              });
+            }}
+            disabled={createNote.isPending}
+            aria-label="New note"
+            title="New note"
+            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 disabled:cursor-default disabled:opacity-50"
           >
-            <IconSettings size={15} />
+            <IconPlus size={15} />
           </button>
-        )}
+          {noteId !== null && (
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Note settings"
+              title="Note settings"
+              className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            >
+              <IconSettings size={15} />
+            </button>
+          )}
+        </div>
       </div>
       {editor}
       <TreeDrawer open={treeOpen} onClose={closeTree}>

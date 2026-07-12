@@ -16,7 +16,8 @@ import type { BundleNoteView } from "@/lib/context/format";
 import type { BundleNoteLink, BundleNoteOrigin } from "@/lib/data/note";
 import { IconDoc } from "@/components/shared/icons";
 import { skeletonVars } from "@/components/shared/skeleton";
-import { NOTE_TYPE_META, tint } from "@/components/workspace/notes/note-meta";
+import { NOTE_TYPE_META } from "@/components/workspace/notes/note-meta";
+import { Pill } from "@/components/workspace/notes/Pill";
 import { REVIEW_LENS_PROMPTS } from "@/lib/context/lens";
 import {
   ALWAYS_RENDERED_BY_BUNDLE,
@@ -894,12 +895,9 @@ function NoteLinkList({
             <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-primary transition-colors group-hover/note:text-accent-light">
               {note.title || "Untitled"}
             </span>
-            <span
-              className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] uppercase"
-              style={{ color: meta.color, background: tint(meta.color, 13) }}
-            >
+            <Pill color={meta.color} className="shrink-0">
               {meta.label}
-            </span>
+            </Pill>
             <span className="shrink-0 font-mono text-[9.5px] uppercase text-text-faint">
               {NOTE_ORIGIN_LABEL[note.origin]}
             </span>
