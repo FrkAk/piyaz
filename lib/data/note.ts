@@ -1848,11 +1848,13 @@ export type CrossProjectNoteSearchResult = {
 };
 
 /**
- * Cross-project note search for the ⌘K palette. Bounded by
- * `current_user_orgs()` (defense-in-depth over RLS); note visibility
- * (private rows confined to their creator, team rows org-wide) is enforced
- * by the `notes` RLS policy under `withUserContext`, so private notes never
- * leak cross-tenant.
+ * Cross-project note search for the ⌘K palette. Bounded by a
+ * `current_user_orgs()` subquery (defense-in-depth over RLS); note
+ * visibility (private rows confined to their creator, team rows org-wide)
+ * is enforced by the `notes` RLS policy under `withUserContextRead`, so
+ * private notes never leak cross-tenant. Both arms ship in one read batch
+ * — a single stateless HTTP round trip on the Workers head, as the rail
+ * search does — instead of an interactive WebSocket transaction.
  *
  * A full noteRef (`PREFIX-N<seq>`, case-insensitive) resolves that note by
  * exact identifier + sequence first. Identifiers are unique per org, so a
@@ -1900,66 +1902,69 @@ export async function searchNotesAcrossProjects(
       ELSE 3
     END`;
 
-  return withUserContext(ctx.userId, async (tx) => {
-    const orgRows = await executeRaw<{ org_id: string }>(
-      tx,
-      sql`SELECT org_id FROM public.current_user_orgs()`,
-    );
-    const orgIds = orgRows.map((r) => r.org_id);
-    if (orgIds.length === 0) return [];
+  const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return [];
 
-    const scope = [
-      inArray(projects.organizationId, orgIds),
-      isNull(notes.deletedAt),
+  const scope = [
+    sql`${projects.organizationId} IN (SELECT org_id FROM public.current_user_orgs())`,
+    isNull(notes.deletedAt),
+  ];
+  const tokenClauses = [...scope];
+  for (const token of tokens) {
+    const pattern = `%${escapeLike(token)}%`;
+    const orClauses = [
+      ilike(notes.title, pattern),
+      ilike(notes.summary, pattern),
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${notes.tags}) AS t WHERE t ILIKE ${pattern})`,
+      ilike(projects.title, pattern),
+      ilike(projects.identifier, pattern),
     ];
-    const select = (clauses: SQL[]) =>
-      tx
-        .select({
-          id: notes.id,
-          title: notes.title,
-          sequenceNumber: notes.sequenceNumber,
-          projectId: notes.projectId,
-          projectIdentifier: projects.identifier,
-          projectTitle: projects.title,
-          organizationId: projects.organizationId,
-        })
-        .from(notes)
-        .innerJoin(projects, eq(projects.id, notes.projectId))
-        .where(and(...clauses))
-        .orderBy(rankExpr, desc(notes.updatedAt), asc(notes.id))
-        .limit(limit);
-
-    const ref = matchNoteRef(trimmed);
-    if (ref !== null) {
-      const refRows = await select([
-        ...scope,
-        eq(projects.identifier, ref.prefix),
-        eq(notes.sequenceNumber, ref.seq),
-      ]);
-      if (refRows.length > 0) return refRows.map(toCrossProjectHit);
+    const seq = matchNoteSeqToken(token);
+    if (seq !== null) {
+      orClauses.push(eq(notes.sequenceNumber, seq));
     }
+    const tokenClause = or(...orClauses);
+    if (tokenClause) tokenClauses.push(tokenClause);
+  }
 
-    const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
-    if (tokens.length === 0) return [];
-    const clauses = [...scope];
-    for (const token of tokens) {
-      const pattern = `%${escapeLike(token)}%`;
-      const orClauses = [
-        ilike(notes.title, pattern),
-        ilike(notes.summary, pattern),
-        sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${notes.tags}) AS t WHERE t ILIKE ${pattern})`,
-        ilike(projects.title, pattern),
-        ilike(projects.identifier, pattern),
-      ];
-      const seq = matchNoteSeqToken(token);
-      if (seq !== null) {
-        orClauses.push(eq(notes.sequenceNumber, seq));
-      }
-      const tokenClause = or(...orClauses);
-      if (tokenClause) clauses.push(tokenClause);
-    }
-    return (await select(clauses)).map(toCrossProjectHit);
-  });
+  const select = (read: ReadConn, clauses: SQL[]) =>
+    read
+      .select({
+        id: notes.id,
+        title: notes.title,
+        sequenceNumber: notes.sequenceNumber,
+        projectId: notes.projectId,
+        projectIdentifier: projects.identifier,
+        projectTitle: projects.title,
+        organizationId: projects.organizationId,
+      })
+      .from(notes)
+      .innerJoin(projects, eq(projects.id, notes.projectId))
+      .where(and(...clauses))
+      .orderBy(rankExpr, desc(notes.updatedAt), asc(notes.id))
+      .limit(limit);
+
+  const ref = matchNoteRef(trimmed);
+  if (ref !== null) {
+    const [refRows, tokenRows] = await withUserContextRead(
+      ctx.userId,
+      (read) => [
+        select(read, [
+          ...scope,
+          eq(projects.identifier, ref.prefix),
+          eq(notes.sequenceNumber, ref.seq),
+        ]),
+        select(read, tokenClauses),
+      ],
+    );
+    const rows = refRows.length > 0 ? refRows : tokenRows;
+    return rows.map(toCrossProjectHit);
+  }
+
+  const [tokenRows] = await withUserContextRead(ctx.userId, (read) => [
+    select(read, tokenClauses),
+  ]);
+  return tokenRows.map(toCrossProjectHit);
 }
 
 /**
