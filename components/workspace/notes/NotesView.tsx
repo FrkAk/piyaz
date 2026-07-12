@@ -54,8 +54,11 @@ interface NotesViewProps {
 /**
  * Notes workspace view. At `lg` and up the tree pane sits beside the
  * editor pane and can be collapsed to give the editor full width via the
- * tree header toggle (persisted per {@link useNotesRailCollapse}), with a
- * reopen button over the editor; below `lg` the editor takes the full width
+ * tree header toggle (persisted per {@link useNotesRailCollapse}). The
+ * reopen and settings toggles render inside the note header row (via
+ * `EditorPane`) so they never collide with the note's own controls at
+ * narrow widths; only the empty state floats the reopen button over the
+ * pane. Below `lg` the editor takes the full width
  * and the tree becomes a slide-over drawer opened from the pane header,
  * closed by selecting a note, the close button, backdrop, or Escape. The
  * settings ribbon is an inline column only at `xl` and up (collapse
@@ -200,6 +203,16 @@ export function NotesView({
       onSelectTask={onSelectTask}
       onSelectNote={onSelectNote}
       taskMap={taskMap}
+      onShowTree={isLg && collapsed ? toggleRail : undefined}
+      onOpenSettings={
+        !isLg
+          ? undefined
+          : isXl
+            ? settingsCollapsed
+              ? toggleSettings
+              : undefined
+            : () => setSettingsOpen(true)
+      }
     />
   );
 
@@ -223,7 +236,7 @@ export function NotesView({
           />
         </CollapsibleRail>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {collapsed && (
+          {collapsed && noteId === null && (
             <button
               type="button"
               onClick={toggleRail}
@@ -232,17 +245,6 @@ export function NotesView({
               className="absolute left-2 top-2 z-10 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border-strong bg-base text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
             >
               <IconPanelLeft size={13} />
-            </button>
-          )}
-          {noteId !== null && (!isXl || settingsCollapsed) && (
-            <button
-              type="button"
-              onClick={isXl ? toggleSettings : () => setSettingsOpen(true)}
-              aria-label="Show settings"
-              title="Show settings"
-              className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border-strong bg-base text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
-            >
-              <IconSettings size={13} />
             </button>
           )}
           {editor}

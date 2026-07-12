@@ -6,7 +6,9 @@ import {
   IconAgent,
   IconBundle,
   IconLock,
+  IconPanelLeft,
   IconPencil,
+  IconSettings,
   IconUser,
   IconUsers,
   IconX,
@@ -67,6 +69,10 @@ interface EditorPaneProps {
   onSelectNote: (noteId: string | null) => void;
   /** @param taskMap - Project task slim map for inline chip resolution. */
   taskMap: TaskSlimMap;
+  /** @param onShowTree - When set, renders a reopen-tree button in the note header (collapsed-rail `lg` mode). */
+  onShowTree?: () => void;
+  /** @param onOpenSettings - When set, renders a settings button in the note header (`lg` drawer / collapsed-ribbon mode). */
+  onOpenSettings?: () => void;
 }
 
 /**
@@ -75,7 +81,9 @@ interface EditorPaneProps {
  * block editor as a flush document column filling the pane, with a
  * hairline divider under the header masthead. The column caps at 760px
  * with side padding that narrows below `sm` so phone widths never
- * overflow horizontally.
+ * overflow horizontally. Pane chrome (reopen tree, open settings) joins
+ * the header chip row rather than floating over it, so narrow widths
+ * never collide the toggles with the note's own controls.
  *
  * @param props - Project scope, selection, navigation, and title-focus wiring.
  * @returns The flexible editor column.
@@ -89,6 +97,8 @@ export function EditorPane({
   onSelectTask,
   onSelectNote,
   taskMap,
+  onShowTree,
+  onOpenSettings,
 }: EditorPaneProps) {
   return (
     <div
@@ -110,6 +120,8 @@ export function EditorPane({
           onSelectTask={onSelectTask}
           onSelectNote={onSelectNote}
           taskMap={taskMap}
+          onShowTree={onShowTree}
+          onOpenSettings={onOpenSettings}
         />
       )}
     </div>
@@ -125,6 +137,8 @@ interface EditorBodyProps {
   onSelectTask: (taskId: string) => void;
   onSelectNote: (noteId: string | null) => void;
   taskMap: TaskSlimMap;
+  onShowTree?: () => void;
+  onOpenSettings?: () => void;
 }
 
 /**
@@ -155,6 +169,8 @@ function EditorBody({
   onSelectTask,
   onSelectNote,
   taskMap,
+  onShowTree,
+  onOpenSettings,
 }: EditorBodyProps) {
   const qc = useQueryClient();
   const { data, isPlaceholderData, isError, refetch } = useNoteDetail(
@@ -295,6 +311,17 @@ function EditorBody({
   return (
     <div className="mx-auto max-w-[760px] px-4 pb-16 pt-6 sm:px-[34px] sm:pt-8">
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {onShowTree !== undefined && (
+          <button
+            type="button"
+            onClick={onShowTree}
+            aria-label="Show notes list"
+            title="Show notes list"
+            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+          >
+            <IconPanelLeft size={12} />
+          </button>
+        )}
         {!isPlaceholderData && (
           <MonoId
             id={composeNoteRef(
@@ -341,6 +368,17 @@ function EditorBody({
             </span>
           )}
           <PresenceAvatars noteId={noteId} visibility={note.visibility} />
+          {onOpenSettings !== undefined && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              aria-label="Show settings"
+              title="Show settings"
+              className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            >
+              <IconSettings size={12} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onSelectNote(null)}
