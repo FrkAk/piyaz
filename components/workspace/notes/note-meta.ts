@@ -1,5 +1,6 @@
 import type { NoteTreeRow } from "@/lib/data/note";
 import type { NoteType } from "@/lib/types";
+import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { NOTE_TYPE_RANK, type NoteSortKey } from "@/lib/ui/note-order";
 
 /** Display metadata and context behavior for one note type. */
@@ -250,6 +251,41 @@ export type FlatTreeRow =
 
 /** Category-group bucket key for rows with no category. */
 const UNCATEGORIZED_KEY = "__uncategorized__";
+
+/**
+ * Split search hits into direct matches (the query is a substring of the
+ * title, summary, or composed ref) and content matches (full-text hits
+ * from the note body). Recomputed from fields the search response already
+ * carries, so the split costs no extra egress or server compute. Tag-only
+ * matches land in the content group: the rail renders no tags, so the
+ * visible row does not contain the query either way.
+ *
+ * @param hits - Search hits in server order.
+ * @param query - The trimmed query the hits were fetched for.
+ * @param identifier - Project identifier for composing refs.
+ * @returns Direct and content groups, server order preserved within each.
+ */
+export function partitionSearchHits<
+  T extends { title: string; summary: string; sequenceNumber: number },
+>(
+  hits: readonly T[],
+  query: string,
+  identifier: string,
+): { direct: T[]; content: T[] } {
+  const q = query.toLowerCase();
+  const direct: T[] = [];
+  const content: T[] = [];
+  for (const hit of hits) {
+    const ref = composeNoteRef(asIdentifier(identifier), hit.sequenceNumber);
+    const isDirect =
+      q !== "" &&
+      (hit.title.toLowerCase().includes(q) ||
+        hit.summary.toLowerCase().includes(q) ||
+        ref.toLowerCase().includes(q));
+    (isDirect ? direct : content).push(hit);
+  }
+  return { direct, content };
+}
 
 /**
  * Sort note rows by the active sort key with stable tie-breaks.

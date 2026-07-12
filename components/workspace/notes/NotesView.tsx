@@ -209,6 +209,7 @@ export function NotesView({
         <CollapsibleRail open={!collapsed} width={RAIL_WIDTH}>
           <TreePane
             projectId={projectId}
+            projectIdentifier={projectIdentifier}
             selectedId={noteId}
             onSelect={handleSelect}
             onNewNote={(folder) => void createAndSelect(folder)}
@@ -339,6 +340,7 @@ export function NotesView({
         <TreePane
           fill
           projectId={projectId}
+          projectIdentifier={projectIdentifier}
           selectedId={noteId}
           onSelect={handleSelect}
           onNewNote={(folder) => void createAndSelect(folder)}

@@ -60,6 +60,7 @@ import {
   groupNotesByCategory,
   leafOf,
   normalizeFolderInput,
+  partitionSearchHits,
   NOTE_TYPE_META,
   parentOf,
   planFolderMove,
@@ -107,6 +108,8 @@ const RAIL_WIDTH = 320;
 interface TreePaneProps {
   /** @param projectId - Owning project id. */
   projectId: string;
+  /** @param projectIdentifier - Project prefix for composing refs in the search split. */
+  projectIdentifier: string;
   /** @param selectedId - Selected note id, or null. */
   selectedId: string | null;
   /** @param onSelect - Select a note (writes `?note=<id>`); null clears the selection. */
@@ -737,6 +740,7 @@ function TreeSkeleton() {
  */
 export function TreePane({
   projectId,
+  projectIdentifier,
   selectedId,
   onSelect,
   onNewNote,
@@ -1412,28 +1416,52 @@ export function TreePane({
     [allFolders],
   );
 
-  const flatItems = useMemo<FlatTreeRow[]>(
-    () =>
-      searching
-        ? hits.map((h) => ({
-            kind: "note" as const,
-            key: h.id,
-            note: h,
-            indent: 8,
-          }))
-        : group === "category"
-          ? flattenNoteCategories(groupNotesByCategory(sortedRows))
-          : flattenNoteTree(foldersByParent, notesByFolder, collapsed),
-    [
-      searching,
-      hits,
-      group,
-      sortedRows,
-      foldersByParent,
-      notesByFolder,
-      collapsed,
-    ],
-  );
+  const flatItems = useMemo<FlatTreeRow[]>(() => {
+    if (searching) {
+      // Direct hits (title/summary/ref contain the query) lead; body-only
+      // full-text hits sit under a labeled section so a strong match is
+      // never drowned by mentions. Recomputed from the hit rows themselves:
+      // the split ships no extra bytes.
+      const { direct, content } = partitionSearchHits(
+        hits,
+        query,
+        projectIdentifier,
+      );
+      const toItem = (h: (typeof hits)[number]) => ({
+        kind: "note" as const,
+        key: h.id,
+        note: h,
+        indent: 8,
+      });
+      return [
+        ...direct.map(toItem),
+        ...(content.length > 0
+          ? [
+              {
+                kind: "section" as const,
+                key: "__search-content__",
+                label: "In content",
+                noteCount: content.length,
+              },
+              ...content.map(toItem),
+            ]
+          : []),
+      ];
+    }
+    return group === "category"
+      ? flattenNoteCategories(groupNotesByCategory(sortedRows))
+      : flattenNoteTree(foldersByParent, notesByFolder, collapsed);
+  }, [
+    searching,
+    hits,
+    query,
+    projectIdentifier,
+    group,
+    sortedRows,
+    foldersByParent,
+    notesByFolder,
+    collapsed,
+  ]);
 
   const keyIndex = useMemo(() => {
     const map = new Map<string, number>();
