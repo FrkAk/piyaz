@@ -26,11 +26,35 @@ import type { BrandConfig } from "./types";
  * an operator who leaves a var empty gets the neutral path rather than a blank
  * address. Mirrors the empty-as-absent fail-safe of `parseEnvInt`.
  */
-function brandString(name: string): string | undefined {
+export function brandString(name: string): string | undefined {
   const raw = process.env[name];
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   return trimmed === "" ? undefined : trimmed;
+}
+
+/**
+ * The address vars `senderFor` reads, in the order it falls back through them.
+ */
+const SENDER_ADDRESS_VARS = [
+  "EMAIL_FROM",
+  "EMAIL_FROM_NOREPLY",
+  "EMAIL_FROM_SUPPORT",
+  "EMAIL_FROM_INFO",
+] as const;
+
+/**
+ * Whether the deployment configured any sender address at all.
+ *
+ * `senderFor` is total: unconfigured, it still resolves to
+ * `noreply@<appUrl host>`. Platform transports use this to gate on an
+ * *explicitly configured* sender instead, so a deployment never sends from a
+ * host-derived address it cannot SPF/DKIM-authenticate. Gating on `EMAIL_FROM`
+ * alone would miss a deployment that sets only the per-purpose vars, which
+ * `senderFor` fully supports.
+ */
+export function hasConfiguredSender(): boolean {
+  return SENDER_ADDRESS_VARS.some((name) => brandString(name) !== undefined);
 }
 
 /**

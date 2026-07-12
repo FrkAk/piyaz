@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { hasConfiguredSender } from "./brand";
 import type { EmailDeliveryResult, EmailSender, OutboundEmail } from "./types";
 
 /**
@@ -26,28 +27,43 @@ interface WorkerEnv {
 }
 
 /**
- * `EMAIL_FROM`, trimmed, treating unset or blank as absent. Same
- * empty-as-absent semantics as `brandString` in `lib/email/brand.ts`, so the
- * capability gate and address resolution agree on what "configured" means.
+ * Per-isolate dedupe flag for the missing-binding warning. Resets when an
+ * isolate cold-starts, so misconfigurations log once per isolate boot.
+ * Mirrors `lib/db/_auth-kv-storage.workers.ts`.
  */
-function configuredEmailFrom(): string | undefined {
-  const raw = process.env.EMAIL_FROM;
-  if (raw === undefined) return undefined;
-  const trimmed = raw.trim();
-  return trimmed === "" ? undefined : trimmed;
+let _missingBindingWarned = false;
+
+/**
+ * Test-only: reset the warn-once flag so a test exercising the missing-
+ * binding path can assert independently on the structured warn output.
+ * Not part of the runtime contract; never call from production code.
+ */
+export function __resetMissingBindingWarnedForTest(): void {
+  _missingBindingWarned = false;
 }
 
 /**
  * Resolve the `EMAIL` binding per call; module-load access to
  * `getCloudflareContext` throws because there is no request context at boot.
- * Returns `null` when the binding is absent (self-host, misconfigured env).
+ * Returns `null` when the binding is absent (self-host, misconfigured env),
+ * warning once per isolate so a dropped binding is visible in Workers logs
+ * rather than silently disabling every email surface.
  */
 function getEmailBinding(): SendEmailBinding | null {
   try {
     const env = getCloudflareContext({ async: false }).env as WorkerEnv;
     if (env.EMAIL) return env.EMAIL;
   } catch {
-    // No active CF request context; email is unavailable here.
+    // No active CF request context — fall through to the warning.
+  }
+  if (!_missingBindingWarned) {
+    _missingBindingWarned = true;
+    console.warn(
+      JSON.stringify({
+        event: "email_binding_unavailable",
+        hint: "EMAIL binding missing or called outside a request context; email is disabled.",
+      }),
+    );
   }
   return null;
 }
@@ -59,10 +75,11 @@ function getEmailBinding(): SendEmailBinding | null {
  * `E_RECIPIENT_SUPPRESSED`, ...); anything else maps to `E_UNKNOWN`.
  */
 function toDeliveryError(err: unknown): EmailDeliveryResult {
-  const code =
-    typeof (err as { code?: unknown }).code === "string"
-      ? (err as { code: string }).code
-      : "E_UNKNOWN";
+  const raw =
+    typeof err === "object" && err !== null
+      ? (err as { code?: unknown }).code
+      : undefined;
+  const code = typeof raw === "string" ? raw : "E_UNKNOWN";
   const message = err instanceof Error ? err.message : String(err);
   return { kind: "error", code, message };
 }
@@ -99,13 +116,14 @@ class CloudflareEmailSender implements EmailSender {
  * sibling on `DEPLOY_TARGET=cloudflare` builds.
  *
  * Resolved per call (the `EMAIL` binding is request-scoped): returns the
- * binding-backed sender when both the `EMAIL` binding and a non-blank
- * `EMAIL_FROM` are configured.
+ * binding-backed sender when the `EMAIL` binding is bound and the deployment
+ * configured a sender address (see `hasConfiguredSender`), so the gate accepts
+ * every address configuration `senderFor` supports.
  *
  * @returns The configured sender, or `null` when no transport is available.
  */
 export function getPlatformSender(): EmailSender | null {
   const binding = getEmailBinding();
-  if (binding === null || configuredEmailFrom() === undefined) return null;
+  if (binding === null || !hasConfiguredSender()) return null;
   return new CloudflareEmailSender(binding);
 }

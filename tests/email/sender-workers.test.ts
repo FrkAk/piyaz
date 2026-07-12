@@ -44,9 +44,21 @@ mock.module("@opennextjs/cloudflare", () => ({
   },
 }));
 
-const { getPlatformSender } = await import("@/lib/email/_sender.workers");
+const { getPlatformSender, __resetMissingBindingWarnedForTest } = await import(
+  "@/lib/email/_sender.workers"
+);
 
-const ORIGINAL_EMAIL_FROM = process.env.EMAIL_FROM;
+/** Every var the capability gate reads, so each test starts from a clean slate. */
+const SENDER_VARS = [
+  "EMAIL_FROM",
+  "EMAIL_FROM_NOREPLY",
+  "EMAIL_FROM_SUPPORT",
+  "EMAIL_FROM_INFO",
+] as const;
+
+const ORIGINAL_SENDER_VARS = SENDER_VARS.map(
+  (name) => [name, process.env[name]] as const,
+);
 
 const message = {
   to: "user@example.com",
@@ -61,15 +73,26 @@ beforeEach(() => {
   _sendImpl = async () => ({ messageId: "msg-1" });
   _envHasEmail = true;
   _ctxThrows = false;
+  for (const name of SENDER_VARS) delete process.env[name];
   process.env.EMAIL_FROM = "noreply@piyaz.ai";
+  __resetMissingBindingWarnedForTest();
 });
 
 afterAll(() => {
-  if (ORIGINAL_EMAIL_FROM === undefined) delete process.env.EMAIL_FROM;
-  else process.env.EMAIL_FROM = ORIGINAL_EMAIL_FROM;
+  for (const [name, value] of ORIGINAL_SENDER_VARS) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 });
 
 test("returns a sender when the EMAIL binding and EMAIL_FROM are configured", () => {
+  expect(getPlatformSender()).not.toBeNull();
+});
+
+test("returns a sender when only the per-purpose address vars are configured", () => {
+  delete process.env.EMAIL_FROM;
+  process.env.EMAIL_FROM_NOREPLY = "noreply@example.com";
+  process.env.EMAIL_FROM_SUPPORT = "hello@example.com";
   expect(getPlatformSender()).not.toBeNull();
 });
 
@@ -78,19 +101,37 @@ test("returns null when the EMAIL binding is absent", () => {
   expect(getPlatformSender()).toBeNull();
 });
 
-test("returns null when EMAIL_FROM is unset", () => {
+test("returns null when no sender address is configured", () => {
   delete process.env.EMAIL_FROM;
   expect(getPlatformSender()).toBeNull();
 });
 
-test("returns null when EMAIL_FROM is blank", () => {
+test("returns null when every sender address is blank", () => {
   process.env.EMAIL_FROM = "   ";
+  process.env.EMAIL_FROM_NOREPLY = "";
   expect(getPlatformSender()).toBeNull();
 });
 
 test("returns null outside a Cloudflare request context", () => {
   _ctxThrows = true;
   expect(getPlatformSender()).toBeNull();
+});
+
+test("warns once per isolate when the EMAIL binding is missing", () => {
+  _envHasEmail = false;
+  const warn = mock((_line: string) => {});
+  const original = console.warn;
+  console.warn = warn;
+  try {
+    getPlatformSender();
+    getPlatformSender();
+  } finally {
+    console.warn = original;
+  }
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(warn.mock.calls[0]![0])).toMatchObject({
+    event: "email_binding_unavailable",
+  });
 });
 
 test("send passes the message fields to the binding verbatim", async () => {
@@ -148,4 +189,12 @@ test("send maps a thrown non-Error to an E_UNKNOWN error result", async () => {
   };
   const result = await getPlatformSender()?.send(message);
   expect(result).toEqual({ kind: "error", code: "E_UNKNOWN", message: "boom" });
+});
+
+test("send maps a thrown null to an E_UNKNOWN error result rather than throwing", async () => {
+  _sendImpl = async () => {
+    throw null;
+  };
+  const result = await getPlatformSender()?.send(message);
+  expect(result).toEqual({ kind: "error", code: "E_UNKNOWN", message: "null" });
 });
