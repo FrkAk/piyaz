@@ -310,3 +310,38 @@ test("ranks exact title over substring and validates query length", async () => 
     searchNotesAcrossProjects(ctx, "x".repeat(300)),
   ).rejects.toBeInstanceOf(NoteValidationError);
 });
+
+test("the palette treats LIKE metacharacters as literal text", async () => {
+  const f = await seedUserOrgProject("XLIKE");
+  const ctx = makeAuthContext(f.userId);
+  const percent = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Rollout at 50% complete",
+    body: "x",
+    visibility: "team",
+  });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Rollout at 500 complete",
+    body: "x",
+    visibility: "team",
+  });
+  const underscore = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "snake_case naming guide",
+    body: "x",
+    visibility: "team",
+  });
+  await createNote(ctx, {
+    projectId: f.projectId,
+    title: "snakeXcase naming guide",
+    body: "x",
+    visibility: "team",
+  });
+
+  const byPercent = await searchNotesAcrossProjects(ctx, "50%");
+  expect(byPercent.map((h) => h.id)).toEqual([percent.id]);
+
+  const byUnderscore = await searchNotesAcrossProjects(ctx, "snake_case");
+  expect(byUnderscore.map((h) => h.id)).toEqual([underscore.id]);
+});

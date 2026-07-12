@@ -230,9 +230,9 @@ export function IconGraph(props: IconProps) {
 export function IconTasks(props: IconProps) {
   return (
     <IconBase {...props}>
-      <path d="M2.5 4.6l1.3 1.3 2.3-2.5" />
+      <path d="M2.5 4.6l1.3 1.3 2.4-2.6" />
       <path d="M9 4.5h4.5" />
-      <path d="M2.5 11.1l1.3 1.3 2.3-2.5" />
+      <path d="M2.5 11.1l1.3 1.3 2.4-2.6" />
       <path d="M9 11h4.5" />
     </IconBase>
   );

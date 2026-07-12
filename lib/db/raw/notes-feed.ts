@@ -292,7 +292,7 @@ export function notesFeedSql(
  * @returns SQL yielding {@link NoteFeedRawRow}s; empty when the task is
  *   not visible to the caller.
  */
-export function notesFeedForTaskSql(
+function notesFeedForTaskSql(
   taskId: string,
   summaryCap: number,
   limit: number,

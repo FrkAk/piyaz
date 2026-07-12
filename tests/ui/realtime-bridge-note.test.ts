@@ -176,7 +176,7 @@ describe("applyRealtimeEvent note case", () => {
     );
   });
 
-  test("own write (matching updatedAt) invalidates nothing", async () => {
+  test("own write (matching updatedAt) leaves list and detail untouched", async () => {
     const qc = seededClient(when);
     await applyRealtimeEvent(qc, noteEvent(when));
     expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);

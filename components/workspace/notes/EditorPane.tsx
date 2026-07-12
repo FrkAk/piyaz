@@ -326,7 +326,7 @@ function EditorBody({
             onClick={onShowTree}
             aria-label="Show notes list"
             title="Show notes list"
-            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 pointer-coarse:h-7 pointer-coarse:w-7"
           >
             <IconPanelLeft size={12} />
           </button>
@@ -383,7 +383,7 @@ function EditorBody({
               onClick={onOpenSettings}
               aria-label="Show settings"
               title="Show settings"
-              className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+              className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 pointer-coarse:h-7 pointer-coarse:w-7"
             >
               <IconSettings size={12} />
             </button>
@@ -393,7 +393,7 @@ function EditorBody({
             onClick={() => onSelectNote(null)}
             aria-label="Close note"
             title="Close note"
-            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 pointer-coarse:h-7 pointer-coarse:w-7"
           >
             <IconX size={12} />
           </button>
@@ -558,20 +558,23 @@ function NoteSummary({
   const [draft, setDraft] = useState(summary);
   const ref = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
+  const committedRef = useRef(false);
 
   const begin = () => {
     if (!editable) return;
     cancelledRef.current = false;
+    committedRef.current = false;
     setDraft(summary);
     setEditing(true);
     onBeginEdit();
   };
 
   const commit = () => {
-    if (cancelledRef.current) return;
+    if (cancelledRef.current || committedRef.current) return;
+    committedRef.current = true;
     setEditing(false);
     const next = draft.trim();
-    if (next !== summary) onCommit(next);
+    if (next !== summary.trim()) onCommit(next);
   };
 
   const cancel = () => {
@@ -582,9 +585,10 @@ function NoteSummary({
   const flushRef = useRef<() => void>(() => {});
   useEffect(() => {
     flushRef.current = () => {
-      if (!editing || cancelledRef.current) return;
+      if (!editing || cancelledRef.current || committedRef.current) return;
+      committedRef.current = true;
       const next = draft.trim();
-      if (next !== summary) onCommit(next);
+      if (next !== summary.trim()) onCommit(next);
     };
   });
   useEffect(() => () => flushRef.current(), []);

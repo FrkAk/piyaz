@@ -898,7 +898,7 @@ function NoteLinkList({
             <Pill color={meta.color} className="shrink-0">
               {meta.label}
             </Pill>
-            <span className="shrink-0 font-mono text-[9.5px] uppercase text-text-faint">
+            <span className="shrink-0 font-mono text-[10px] uppercase text-text-faint">
               {NOTE_ORIGIN_LABEL[note.origin]}
             </span>
           </button>

@@ -106,6 +106,10 @@ export function NotesView({
   // shrinks again (same render-time pattern as above).
   if (isLg && treeOpen) setTreeOpen(false);
 
+  // The settings drawer only renders below `xl` (the pane is inline at
+  // `xl`); same resize-cycle reasoning as the tree drawer.
+  if (isXl && settingsOpen) setSettingsOpen(false);
+
   /**
    * Create a persisted note in a folder, then select it and request
    * title focus. Selection only moves on the authoritative server id;

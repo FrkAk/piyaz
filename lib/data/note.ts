@@ -709,7 +709,7 @@ function slugifyTitle(title: string): string {
 }
 
 /**
- * Escape LIKE pattern metacharacters so user-derived prefixes match
+ * Escape LIKE pattern metacharacters so user-derived values match
  * literally.
  *
  * @param value - Literal string destined for a LIKE pattern.
@@ -1274,7 +1274,10 @@ function toNoteMention(row: {
  * link `kind` and the note `sequenceNumber` (for the ref chip); never
  * selects `body`/`search_tsv`. Served by
  * `note_task_links_task_id_idx`. Batch alongside a task-gating read and
- * evaluate the gate first, as {@link getTaskNoteContext} does.
+ * evaluate the gate first, as {@link getTaskNoteContext} does. The `id`
+ * tiebreak keeps row order deterministic across identical reads: the
+ * task-notes route hashes the serialized payload into its ETag, so an
+ * order flip on unchanged data would break conditional 304s.
  *
  * @param read - Read statement-building handle.
  * @param taskId - UUID of the task.
@@ -1289,7 +1292,7 @@ export function taskNoteBacklinksStmt(read: ReadConn, taskId: string) {
     .from(noteTaskLinks)
     .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
     .where(and(eq(noteTaskLinks.taskId, taskId), isNull(notes.deletedAt)))
-    .orderBy(notes.title, noteTaskLinks.kind);
+    .orderBy(notes.title, noteTaskLinks.kind, notes.id);
 }
 
 /** Pointer row from {@link taskBacklinkPointersStmt}. */
@@ -1889,10 +1892,11 @@ export async function searchNotesAcrossProjects(
 
   const limit = Math.min(Math.max(opts.limit ?? 10, 1), 25);
   const lower = trimmed.toLowerCase();
+  const likeLower = escapeLike(lower);
   const rankExpr = sql<number>`CASE
       WHEN LOWER(${notes.title}) = ${lower} THEN 0
-      WHEN LOWER(${notes.title}) LIKE ${lower + "%"} THEN 1
-      WHEN LOWER(${notes.title}) LIKE ${"%" + lower + "%"} THEN 2
+      WHEN LOWER(${notes.title}) LIKE ${likeLower + "%"} THEN 1
+      WHEN LOWER(${notes.title}) LIKE ${"%" + likeLower + "%"} THEN 2
       ELSE 3
     END`;
 
@@ -1939,7 +1943,7 @@ export async function searchNotesAcrossProjects(
     if (tokens.length === 0) return [];
     const clauses = [...scope];
     for (const token of tokens) {
-      const pattern = `%${token}%`;
+      const pattern = `%${escapeLike(token)}%`;
       const orClauses = [
         ilike(notes.title, pattern),
         ilike(notes.summary, pattern),

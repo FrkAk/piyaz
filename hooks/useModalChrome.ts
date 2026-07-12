@@ -43,6 +43,24 @@ interface ModalHandle {
 
 const modalStack: ModalHandle[] = [];
 let globalListenerInstalled = false;
+let lockedBodyOverflow: string | null = null;
+
+/**
+ * Lock background scrolling while any modal is open. Applies when the
+ * first handle pushes onto the stack and restores the body's previous
+ * overflow when the last one pops, so nested modals share one lock.
+ */
+function syncScrollLock(): void {
+  if (modalStack.length > 0 && lockedBodyOverflow === null) {
+    lockedBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return;
+  }
+  if (modalStack.length === 0 && lockedBodyOverflow !== null) {
+    document.body.style.overflow = lockedBodyOverflow;
+    lockedBodyOverflow = null;
+  }
+}
 
 /**
  * Whether any dialog wired through {@link useModalChrome} is currently
@@ -81,8 +99,9 @@ function ensureGlobalListenerInstalled(): void {
 }
 
 /**
- * Wires modal chrome behavior: Escape to close, Tab focus trap, and
- * focus restore on unmount. Stack-aware so nested modals (e.g. a
+ * Wires modal chrome behavior: Escape to close, Tab focus trap, focus
+ * restore on unmount, and a background scroll lock while open — the
+ * behavior `aria-modal` promises. Stack-aware so nested modals (e.g. a
  * destructive confirm dialog opened from inside a settings modal) are
  * each handled by the topmost dialog only — outer modals stay open
  * until the inner one dismisses.
@@ -116,6 +135,7 @@ export function useModalChrome(
       onClose: () => onCloseRef.current(),
     };
     modalStack.push(handle);
+    syncScrollLock();
 
     const frame = window.requestAnimationFrame(() => {
       const panel = panelRef.current;
@@ -130,6 +150,7 @@ export function useModalChrome(
       window.cancelAnimationFrame(frame);
       const idx = modalStack.indexOf(handle);
       if (idx !== -1) modalStack.splice(idx, 1);
+      syncScrollLock();
       previousFocusRef.current?.focus?.();
     };
   }, [open, panelRef]);
