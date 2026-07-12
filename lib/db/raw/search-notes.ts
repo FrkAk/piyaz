@@ -159,3 +159,36 @@ export function noteRefSearchStmt(
     LIMIT 1
   `);
 }
+
+/**
+ * Resolve a note in the searched project by sequence number alone, for a
+ * query that is the sequence half of a ref (`8` or `N8`). The project scope
+ * supplies the prefix {@link noteRefSearchStmt} matches explicitly, so no
+ * identifier predicate is needed. Unlike the full-ref path, the caller
+ * merges this hit with the text hits rather than letting it win outright: a
+ * bare number is also ordinary search text.
+ *
+ * Returns the identical slim {@link NoteSearchRawRow} shape (no `body`, no
+ * `search_tsv`) and stays inside the caller's RLS scope like the FTS path.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project to search in.
+ * @param seq - Parsed note sequence number.
+ * @returns Lazy raw statement yielding at most one {@link NoteSearchRawRow}.
+ */
+export function noteSeqSearchStmt(
+  read: ReadConn,
+  projectId: string,
+  seq: number,
+) {
+  return read.execute(sql`
+    SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
+           n.summary, n.visibility, n.feed_mode, n.agent_writable, n.locked,
+           n.updated_at, 1 AS rank
+    FROM ${notes} n
+    WHERE n.project_id = ${projectId}
+      AND n.sequence_number = ${seq}
+      AND n.deleted_at IS NULL
+    LIMIT 1
+  `);
+}

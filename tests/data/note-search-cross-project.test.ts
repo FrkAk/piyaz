@@ -223,6 +223,26 @@ test("a ref colliding across two of the caller's orgs hits once per org", async 
   expect(new Set(hits.map((h) => h.organizationId)).size).toBe(2);
 });
 
+test("the palette resolves a note by the sequence half of its ref", async () => {
+  const f = await seedUserOrgProject("XSEQ");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Preemption, the tick, and preemption points",
+    body: "x",
+    visibility: "team",
+  });
+
+  const bare = await searchNotesAcrossProjects(
+    ctx,
+    String(note.sequenceNumber),
+  );
+  expect(bare.map((h) => h.id)).toContain(note.id);
+
+  const withN = await searchNotesAcrossProjects(ctx, `N${note.sequenceNumber}`);
+  expect(withN.map((h) => h.id)).toContain(note.id);
+});
+
 test("keeps non-ref token search intact", async () => {
   const f = await seedUserOrgProject("XREFE");
   const ctx = makeAuthContext(f.userId);

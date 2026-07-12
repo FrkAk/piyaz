@@ -267,6 +267,65 @@ test("a ref that resolves nothing falls back to full text", async () => {
   expect(mcp.hits.map((h) => h.id)).toEqual([note.id]);
 });
 
+test("searchNotes resolves a note by the sequence half of its ref", async () => {
+  const f = await seedUserOrgProject("SEQA");
+  const ctx = makeAuthContext(f.userId);
+  const first = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Preemption and the tick",
+    body: "content",
+  });
+  const second = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Scheduler fairness",
+    body: "content",
+  });
+
+  const byBareSeq = await searchNotes(
+    ctx,
+    f.projectId,
+    String(second.sequenceNumber),
+  );
+  expect(byBareSeq.map((h) => h.id)).toEqual([second.id]);
+
+  const byNSeq = await searchNotes(
+    ctx,
+    f.projectId,
+    `N${second.sequenceNumber}`,
+  );
+  expect(byNSeq.map((h) => h.id)).toEqual([second.id]);
+
+  const lower = await searchNotes(ctx, f.projectId, `n${first.sequenceNumber}`);
+  expect(lower.map((h) => h.id)).toEqual([first.id]);
+});
+
+test("a sequence query merges its note ahead of text hits, and never 404s the number", async () => {
+  const f = await seedUserOrgProject("SEQB");
+  const ctx = makeAuthContext(f.userId);
+  const numbered = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Scheduler",
+    body: "content",
+  });
+  const titled = await createNote(ctx, {
+    projectId: f.projectId,
+    title: `${numbered.sequenceNumber} invariants`,
+    body: "content",
+  });
+
+  const hits = await searchNotes(
+    ctx,
+    f.projectId,
+    String(numbered.sequenceNumber),
+  );
+  expect(hits[0].id).toBe(numbered.id);
+  expect(hits.map((h) => h.id)).toContain(titled.id);
+  expect(new Set(hits.map((h) => h.id)).size).toBe(hits.length);
+
+  expect(await searchNotes(ctx, f.projectId, "9999")).toEqual([]);
+  expect(await searchNotes(ctx, f.projectId, "N9999999999")).toEqual([]);
+});
+
 test("searchNotes leaves non-ref queries on the FTS path", async () => {
   const f = await seedUserOrgProject("REFD");
   const ctx = makeAuthContext(f.userId);

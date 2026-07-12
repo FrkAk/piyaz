@@ -99,6 +99,7 @@ import {
 import {
   noteRefSearchStmt,
   noteSearchStmt,
+  noteSeqSearchStmt,
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
@@ -112,6 +113,7 @@ import {
   composeNoteRef,
   composeTaskRef,
   NOTE_REF_PATTERN,
+  NOTE_SEQ_TOKEN_PATTERN,
 } from "@/lib/graph/identifier";
 import {
   emitNoteEvent,
@@ -1666,12 +1668,32 @@ function matchNoteRef(query: string): { prefix: string; seq: number } | null {
 }
 
 /**
+ * Parse the sequence half of a note ref (`8` or `N8`) into a lookup key,
+ * so a note resolves by its number alone.
+ *
+ * @param token - One trimmed search token.
+ * @returns The in-range sequence number, or null when the token is not a
+ *   sequence token or names a sequence no note can carry.
+ */
+function matchNoteSeqToken(token: string): number | null {
+  const match = token.match(NOTE_SEQ_TOKEN_PATTERN);
+  if (match === null) return null;
+  return seqInRange(match[1]);
+}
+
+/**
  * Search one project's live notes in a single round trip.
  *
  * A ref-shaped query batches the exact ref lookup alongside the full-text
  * scan, so the fallback a ref resolving nothing needs costs no second trip;
- * a resolved ref still wins outright and never blends with text hits. Every
- * other query batches full text alone.
+ * a resolved ref still wins outright and never blends with text hits.
+ *
+ * The sequence half of a ref (`8` or `N8`) batches a sequence lookup the
+ * same way, but its hit is merged ahead of the text hits rather than
+ * winning outright: a bare number is also ordinary search text, so a note
+ * numbered 8 and a note titled "8 invariants" both surface.
+ *
+ * Every other query batches full text alone.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
@@ -1686,6 +1708,27 @@ async function searchProjectNotes(
 ): Promise<{ projectIdentifier: string; hits: NoteSearchHit[] }> {
   const ref = matchNoteRef(trimmed);
   if (ref === null) {
+    const seq = matchNoteSeqToken(trimmed);
+    if (seq !== null) {
+      const [gateRows, seqRaw, textRaw] = await withUserContextRead(
+        ctx.userId,
+        (read) => [
+          projectAccessGateStmt(read, projectId),
+          noteSeqSearchStmt(read, projectId, seq),
+          noteSearchStmt(read, projectId, trimmed),
+        ],
+      );
+      const gate = assertProjectGateRows(projectId, gateRows);
+      const seqHits =
+        normalizeExecuteResult<NoteSearchRawRow>(seqRaw).map(toSearchHit);
+      const textHits =
+        normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit);
+      const seen = new Set(seqHits.map((hit) => hit.id));
+      return {
+        projectIdentifier: gate.identifier,
+        hits: [...seqHits, ...textHits.filter((hit) => !seen.has(hit.id))],
+      };
+    }
     const [gateRows, textRaw] = await withUserContextRead(
       ctx.userId,
       (read) => [
@@ -1819,7 +1862,9 @@ export type CrossProjectNoteSearchResult = {
  * text that merely looks like a ref still finds a note titled with it.
  *
  * Per-token OR match: `notes.title`, `projects.title`, `projects.identifier`
- * (case-insensitive substring). Tokens AND-join. Ranked exact → prefix →
+ * (case-insensitive substring), plus `notes.sequence_number` for a token
+ * that is the sequence half of a ref (`8` or `N8`), so a note resolves by
+ * its number alone as a task does. Tokens AND-join. Ranked exact → prefix →
  * substring on title, then `updated_at` desc. Live notes only; `body` is
  * never selected.
  *
@@ -1896,11 +1941,16 @@ export async function searchNotesAcrossProjects(
     const clauses = [...scope];
     for (const token of tokens) {
       const pattern = `%${token}%`;
-      const tokenClause = or(
+      const orClauses = [
         ilike(notes.title, pattern),
         ilike(projects.title, pattern),
         ilike(projects.identifier, pattern),
-      );
+      ];
+      const seq = matchNoteSeqToken(token);
+      if (seq !== null) {
+        orClauses.push(eq(notes.sequenceNumber, seq));
+      }
+      const tokenClause = or(...orClauses);
       if (tokenClause) clauses.push(tokenClause);
     }
     return (await select(clauses)).map(toCrossProjectHit);
