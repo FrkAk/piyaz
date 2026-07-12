@@ -1,6 +1,6 @@
 # Data Processing Agreement
 
-Last updated: July 11, 2026
+Last updated: July 12, 2026
 
 ---
 
@@ -87,6 +87,24 @@ compliance with Article 28. The controller may request an audit in writing to
 **privacy@piyaz.ai** no more than once per year; audits are conducted with
 reasonable notice, during business hours, without disrupting the service, and
 subject to confidentiality.
+
+## Updates to this agreement
+
+The processor may update this DPA only where the update is required to comply
+with applicable law, regulation, a court order, or guidance issued by a
+supervisory authority, or where the update is commercially reasonable and does
+not reduce the security of the Service, does not expand the scope of or remove
+restrictions on the processor's processing of personal data, and does not
+otherwise have a material adverse impact on the controller's rights under this
+DPA.
+
+The current version is always available at [/dpa](/dpa), and the date at the top
+reflects it. Updates are announced in the team settings of the Service. The
+controller's continued use of the Service for a team after the update date
+constitutes acceptance of the updated DPA for that team. A change that would
+materially reduce the protections of this DPA takes effect for an existing team
+only after a team owner expressly re-accepts it; changes to the sub-processor
+list follow the notice and objection process in the Sub-processors section.
 
 ## Liability and precedence
 

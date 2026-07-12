@@ -46,6 +46,13 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 export const TERMINAL_STATUSES = ["done", "cancelled"] as const;
 
 /**
+ * Character bound on a note's one-line summary. The write path rejects past
+ * it and the editor caps input at it, so the two cannot drift. Distinct from
+ * the activity feed's own summary cap, which truncates a different column.
+ */
+export const NOTE_SUMMARY_MAX_CHARS = 1000;
+
+/**
  * Narrow a status string to a terminal status.
  *
  * @param status - Schema task status.

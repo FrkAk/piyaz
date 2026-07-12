@@ -3,6 +3,7 @@ import { ForbiddenError, assertTaskAccess } from "@/lib/auth/authorization";
 import { listTaskActivity } from "@/lib/data/activity";
 import { internalError } from "@/lib/api/error";
 import { error, ok } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /**
  * GET handler — paginated activity for a task, newest-first.
@@ -23,6 +24,9 @@ export async function GET(
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   try {
     await assertTaskAccess(taskId, ctx);

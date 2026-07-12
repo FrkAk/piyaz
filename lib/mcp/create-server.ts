@@ -25,6 +25,42 @@ import {
 import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
 import { isVerboseErrors } from "@/lib/api/error";
 import type { AuthContext } from "@/lib/auth/context";
+import { listOutstandingReconsent } from "@/lib/data/legal";
+import { describeReconsentDocuments } from "@/lib/legal/versions";
+
+/** Origin the hosted MCP runs on; the fallback when `BETTER_AUTH_URL` is unset. */
+const HOSTED_ORIGIN = "https://app.piyaz.ai";
+
+/**
+ * Origin for the human-facing `/legal/accept` link. Resolved at call time,
+ * not module load, so a Workers head that populates `BETTER_AUTH_URL` per
+ * request is not pinned to a stale value; defaults to the hosted origin (the
+ * primary MCP consumer) when unset or unparsable.
+ *
+ * @returns The accept-page origin.
+ */
+function acceptOrigin(): string {
+  const configured = process.env.BETTER_AUTH_URL?.trim();
+  if (!configured) return HOSTED_ORIGIN;
+  try {
+    return new URL(configured).origin;
+  } catch {
+    return HOSTED_ORIGIN;
+  }
+}
+
+/**
+ * Blocking-precondition message for a caller with outstanding re-consent.
+ * Written for the agent reading it: names the machine code, the documents,
+ * and the exact human action that unblocks the account.
+ *
+ * @param outstanding - Document types lacking current-version acceptance.
+ * @returns The tool error text.
+ */
+function reconsentMessage(outstanding: readonly string[]): string {
+  const documents = outstanding.length > 1 ? "documents" : "document";
+  return `Blocked (code: terms_acceptance_required): the updated Piyaz ${describeReconsentDocuments(outstanding)} must be re-accepted by the account holder before tools can run. Outstanding: ${outstanding.join(", ")}. No reads or writes happened. Tell the user to open ${acceptOrigin()}/legal/accept in a browser, sign in, and accept the updated ${documents}, then retry this exact call.`;
+}
 
 /**
  * Format a successful tool result as MCP content.
@@ -66,11 +102,17 @@ type McpResponse = ReturnType<typeof toMcp>;
 
 /**
  * Wrap a tool handler with the cross-cutting concerns every tool shares:
- * the heavy-tier rate check (middleware cannot see tool names, so the
- * expensive shapes are throttled here), the sanitised catch-all (mirrors
- * `internalError` in `lib/api/error.ts`: log server-side, return opaque
- * `Internal error` unless NODE_ENV is exactly `development`), and one
- * structured `mcp_tool` log line per call for observability.
+ * the legal re-consent gate (mcp-source actors with an outstanding personal
+ * document get a blocking error naming the acceptance URL; one indexed read
+ * per call — the stateless transport runs one tool call per POST, so there
+ * is nothing to memoize), the heavy-tier rate
+ * check (middleware cannot see tool names, so the expensive shapes are
+ * throttled here), the sanitised catch-all (mirrors `internalError` in
+ * `lib/api/error.ts`: log server-side, return opaque `Internal error` unless
+ * NODE_ENV is exactly `development`), and one structured `mcp_tool` log line
+ * per call for observability. The consent gate applies only to
+ * `actor.source === "mcp"` (the only actor the MCP route produces): web
+ * actors are gated at the page/route layer and system actors are internal.
  *
  * @param name - Tool name (e.g. `"piyaz_get"`).
  * @param ctx - Resolved auth context.
@@ -94,6 +136,13 @@ function wrapTool<P>(
     let truncated: boolean | undefined;
     let errName: string | undefined;
     try {
+      if (ctx.actor.source === "mcp") {
+        const outstanding = await listOutstandingReconsent(ctx.userId);
+        if (outstanding.length > 0) {
+          response = err(reconsentMessage(outstanding));
+          return response;
+        }
+      }
       if (opts.heavy?.(params)) {
         const check = await getBackend("mcpHeavy").check(
           `mcp-heavy:${ctx.userId}`,
@@ -141,7 +190,7 @@ function wrapTool<P>(
   };
 }
 
-const INSTRUCTIONS = `Piyaz tracks tasks, dependencies, decisions, execution records, and notes for software projects, so agents and engineers hand work across sessions. 9 tools: piyaz_workspace (identity, projects), piyaz_search (find tasks), piyaz_get (read task/project), piyaz_create (batch create), piyaz_edit (operation edits), piyaz_link (edges), piyaz_map (graph views), piyaz_activity (what changed), piyaz_note (project knowledge base). Refs are first-class: pass 'PYZ-42' / 'PYZ' / 'PYZ-N12' anywhere a task/project/note is named (UUIDs also work); responses emit refs. Stateless server: name the project or task on every call.
+const INSTRUCTIONS = `Piyaz tracks tasks, dependencies, decisions, execution records, and notes for software projects, so agents and engineers hand work across sessions. 9 tools: piyaz_workspace (identity, projects), piyaz_search (find tasks), piyaz_get (read task/project), piyaz_create (batch create), piyaz_edit (operation edits), piyaz_link (edges), piyaz_map (graph views), piyaz_activity (what changed), piyaz_note (project knowledge base). Refs are first-class: pass 'MBQ-42' / 'MBQ' / 'MBQ-N12' anywhere a task/project/note is named (UUIDs also work); responses emit refs. Stateless server: name the project or task on every call.
 
 Doctrine (persona, tag taxonomy, category vocabulary, full lifecycle table, orchestration) lives in the \`piyaz\` skill on your platform and its references (conventions.md, artifacts.md, lifecycle.md, resilience.md). The skill is ground truth; this server steers.
 
@@ -150,7 +199,7 @@ Doctrine (persona, tag taxonomy, category vocabulary, full lifecycle table, orch
 2. piyaz_workspace action='projects' — identifiers for every project (pair with action='teams' when a team is empty or missing).
 
 ## Find work
-Lead with piyaz_map: view='critical_path' on resume / "what's next" (the bottleneck dictates priority); view='ready' for unblocked planned tasks (pick from ready ∩ critical_path); view='plannable' when nothing is ready to code; view='blocked' to diagnose; view='downstream' task='<ref>' for impact analysis before changes. Drop to piyaz_search for lookups: cross-project by default, filters (status, priority, assignee='me', category, tags) AND-narrow, project='PYZ' scopes and adds derived state.
+Lead with piyaz_map: view='critical_path' on resume / "what's next" (the bottleneck dictates priority); view='ready' for unblocked planned tasks (pick from ready ∩ critical_path); view='plannable' when nothing is ready to code; view='blocked' to diagnose; view='downstream' task='<ref>' for impact analysis before changes. Drop to piyaz_search for lookups: cross-project by default, filters (status, priority, assignee='me', category, tags) AND-narrow, project='MBQ' scopes and adds derived state.
 
 ## Read
 Pick the lightest shape: piyaz_get task='<ref>' fields=['<field>'] for one field's exact text (the read before every surgical edit; response carries updatedAt and collection item ids); lens='summary' for orientation with edges; lens='working' for refinement (ids for every criterion/decision/link); lens='agent' BEFORE coding (multi-hop deps, upstream execution records, related tasks); lens='planning' BEFORE writing a plan; lens='review' for in_review tasks; lens='record' for done/cancelled retrospectives. Project: view='meta' for categories + tag vocabulary (check before coining either); view='overview' at most once per session.
@@ -169,10 +218,10 @@ Run before setting status to in_review, done, or cancelled. The implementer's te
 depends_on = source needs target's output (litmus: removing the target makes source impossible; merely harder = relates_to). Notes are REQUIRED and substantive — a brief to the developer starting the source task; placeholders rejected. After any status change or significant refinement: piyaz_map view='downstream' task='<ref>', then update edge notes, retire stale edges, add newly revealed ones, and update downstream descriptions. Cancellation is transparent (dependents stay blocked through the cancelled task's own unsatisfied prereqs): ask whether a replacement exists and rewire, or re-scope dependents. Skipping propagation is how graphs go stale, and stale graphs make Piyaz useless.
 
 ## Notes (the write-back loop)
-Durable knowledge belongs in notes, not in chat history: constraints an implementer must honor (type=guidance), specs and docs (type=reference), and what you learned building (type=knowledge). Write one when you discover a gotcha, settle a convention, or finish work the next agent will build on. Agent-created notes land visibility=team, feed_mode=none: searchable by teammates' agents immediately, auto-injected into matching task bundles only after feedMode is deliberately set (all/categories/tags/tasks). Agents never flip visibility; request_share asks a human to share a private note. Keep the folder tree organized for humans (list first, reuse folders, move to tidy). Read cost discipline: search → read (meta lists sections) → heading='...'; fields=['body'] is the last resort. [[PYZ-42]] and [[Note Title]] in bodies derive live relations; link kind='spec_of' marks a note as a task's spec. note_* events ride piyaz_activity, so resume covers notes.
+Durable knowledge belongs in notes, not in chat history: constraints an implementer must honor (type=guidance), specs and docs (type=reference), and what you learned building (type=knowledge). Write one when you discover a gotcha, settle a convention, or finish work the next agent will build on. Agent-created notes land visibility=team, feed_mode=none: searchable by teammates' agents immediately, auto-injected into matching task bundles only after feedMode is deliberately set (all/categories/tags/tasks). Agents never flip visibility; request_share asks a human to share a private note. Keep the folder tree organized for humans (list first, reuse folders, move to tidy). Read cost discipline: search → read (meta lists sections) → heading='...'; fields=['body'] is the last resort. [[MBQ-42]] and [[Note Title]] in bodies derive live relations; link kind='spec_of' marks a note as a task's spec. note_* events ride piyaz_activity, so resume covers notes.
 
 ## Resume
-piyaz_activity project='PYZ' since='<last known instant>' — what changed while you were away, newest first. Then piyaz_get the tasks that moved.
+piyaz_activity project='MBQ' since='<last known instant>' — what changed while you were away, newest first. Then piyaz_get the tasks that moved.
 
 ## Hints and errors are runtime instructions
 Tool responses carry _hints; errors carry the fix inline (candidate lists for ambiguous refs, the max existing ref on a near-miss, occurrence counts for failed str_replace, current item ids for missed collection targets, the fresh updatedAt on stale writes). They are server-side state you cannot see otherwise and they override your prior plan. Act on them before asking the user. 'Duplicate edge' means the edge exists: treat as success.

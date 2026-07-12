@@ -268,7 +268,7 @@ export function NoteVersions({
                               : `Restore v${rev.version}`
                       }
                       aria-label={`Restore version ${rev.version}`}
-                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-muted transition-colors hover:bg-accent-glow hover:text-accent-light focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55"
+                      className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-muted transition-colors hover:bg-accent-glow hover:text-accent-light focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-55 pointer-coarse:min-h-6 pointer-coarse:px-2"
                     >
                       <IconUndo size={10} />
                       {isPendingRow ? "Restoring…" : "Restore"}

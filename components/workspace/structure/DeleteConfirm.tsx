@@ -23,7 +23,7 @@ export function DeleteConfirm({
   autoFocus = false,
 }: DeleteConfirmProps) {
   return (
-    <span className="flex items-center gap-1">
+    <span className="flex items-center gap-1 pointer-coarse:gap-2">
       <button
         type="button"
         autoFocus={autoFocus}
@@ -31,7 +31,7 @@ export function DeleteConfirm({
           e.stopPropagation();
           onConfirm();
         }}
-        className="cursor-pointer rounded px-1.5 py-px font-mono text-[10px] font-semibold text-danger hover:bg-danger/15 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-danger/40"
+        className="inline-flex cursor-pointer items-center rounded px-1.5 py-px font-mono text-[10px] font-semibold text-danger hover:bg-danger/15 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-danger/40 pointer-coarse:min-h-6 pointer-coarse:px-2"
       >
         Delete
       </button>
@@ -41,7 +41,7 @@ export function DeleteConfirm({
           e.stopPropagation();
           onCancel();
         }}
-        className="cursor-pointer rounded p-1 text-text-muted hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+        className="inline-flex cursor-pointer items-center justify-center rounded p-1 text-text-muted hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 pointer-coarse:h-6 pointer-coarse:w-6"
         aria-label="Cancel delete"
       >
         <IconX size={10} />

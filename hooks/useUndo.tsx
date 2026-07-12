@@ -149,7 +149,7 @@ export function UndoButton({
           exit={{ opacity: 0, x: 4 }}
           transition={{ duration: 0.12 }}
           onClick={onUndo}
-          className={`inline-flex h-5 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-text-secondary ${className}`}
+          className={`inline-flex h-5 cursor-pointer items-center gap-1 rounded-md px-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-text-secondary pointer-coarse:h-6 pointer-coarse:px-2 ${className}`}
         >
           <IconUndo size={11} />
           Undo

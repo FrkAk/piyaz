@@ -5,7 +5,7 @@
 @theme {
   --font-body: "Inter Variable", "Inter", system-ui, sans-serif;
   --font-mono:
-    "GeistMono Variable", "GeistMono", ui-monospace, SFMono-Regular, monospace;
+    "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, monospace;
 
   /* Dark mode (default) — Raycast near-black blue */
   --color-base: #07080a;
@@ -473,6 +473,7 @@ html.light ::-webkit-scrollbar-thumb:hover {
 .prose-spec {
   line-height: 1.5;
   letter-spacing: 0.012em;
+  overflow-wrap: break-word;
 }
 .prose-spec p {
   margin: 0 0 0.25em;
@@ -580,6 +581,9 @@ html.light .prose-spec pre {
 }
 
 /* Tables (GFM) */
+/* Horizontal scroll comes from the `.prose-scroll` wrapper the markdown
+   renderer emits: `display: block` here would strip the table's implicit
+   ARIA role. */
 .prose-spec table {
   width: 100%;
   border-collapse: collapse;
@@ -588,6 +592,10 @@ html.light .prose-spec pre {
   border: 1px solid var(--color-border);
   border-radius: 6px;
   overflow: hidden;
+}
+.prose-spec .prose-scroll {
+  overflow-x: auto;
+  max-width: 100%;
 }
 .prose-spec th,
 .prose-spec td {
@@ -665,8 +673,6 @@ html.light .prose-spec pre {
   margin: 1.6em 0;
 }
 .legal-doc .prose-spec table {
-  display: block;
-  overflow-x: auto;
   margin: 0.8em 0 1.2em;
 }
 

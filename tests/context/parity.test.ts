@@ -10,6 +10,9 @@ import {
   resolveWorkingData,
 } from "@/lib/context/_core/bundle";
 import { buildAgentContextParts } from "@/lib/context/_core/agent";
+import { buildBundleNoteView } from "@/lib/context/format";
+import type { NoteFeedResolution } from "@/lib/data/note";
+import type { BundleKind } from "@/lib/context/parts";
 import { buildPlanningContextParts } from "@/lib/context/_core/planning";
 import { buildRecordContextParts } from "@/lib/context/_core/record";
 import { buildReviewContextParts } from "@/lib/context/_core/review";
@@ -116,25 +119,71 @@ async function seedFullParityTask(suffix: string) {
   return fx;
 }
 
+/**
+ * Note refs the built markdown actually lists under Relevant Notes.
+ *
+ * @param parts - Built bundle parts.
+ * @returns Refs in emit order, empty when the part was not emitted.
+ */
+function markdownNoteRefs(parts: readonly BundlePart[]): string[] {
+  const part = parts.find((p) => p.id === "notes");
+  if (part === undefined) return [];
+  return [...part.markdown.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1]);
+}
+
+/**
+ * Note refs the built markdown actually inlines under Project Guidance.
+ *
+ * @param parts - Built bundle parts.
+ * @returns Refs in emit order, empty when the part was not emitted.
+ */
+function markdownGuidanceRefs(parts: readonly BundlePart[]): string[] {
+  const part = parts.find((p) => p.id === "guidance");
+  if (part === undefined) return [];
+  return [...part.markdown.matchAll(/^### `([^`]+)`/gm)].map((m) => m[1]);
+}
+
+/**
+ * Pin the web bundle preview's note view against the markdown the agent is
+ * actually sent. `NOTE_FEED_RULES` restates the opts each builder passes to
+ * `buildNotesPart` / `buildGuidancePart`; without this the table can go
+ * stale and the preview would misreport which notes reach the agent.
+ *
+ * @param feed - The resolver's feed resolution.
+ * @param kind - Bundle kind whose rules are under test.
+ * @param parts - Parts the builder emitted from the same resolution.
+ */
+function expectNoteViewMatchesMarkdown(
+  feed: NoteFeedResolution,
+  kind: BundleKind,
+  parts: readonly BundlePart[],
+): void {
+  const view = buildBundleNoteView(feed, kind);
+  expect(view.notes.map((n) => n.noteRef)).toEqual(markdownNoteRefs(parts));
+  expect(view.guidance.map((n) => n.noteRef)).toEqual(
+    markdownGuidanceRefs(parts),
+  );
+}
+
 describe("drawer/bundle parity (spec §3 item 1)", () => {
   test("working", async () => {
     const fx = await seedFullParityTask("parity-working");
-    const parts = formatWorkingContextParts(
-      buildWorkingContextFrom(await resolveWorkingData(fx.userId, fx.taskId)),
-    );
+    const data = await resolveWorkingData(fx.userId, fx.taskId);
+    const parts = formatWorkingContextParts(buildWorkingContextFrom(data));
     expect(drawerOrder(parts, "working")).toEqual([
       ...SECTIONS_BY_BUNDLE.working,
     ]);
+    expectNoteViewMatchesMarkdown(data.feed, "working", parts);
   });
 
   test("planning", async () => {
     const fx = await seedFullParityTask("parity-planning");
-    const parts = buildPlanningContextParts(
-      await resolvePlanningData(fx.userId, fx.taskId),
-    );
+    const data = await resolvePlanningData(fx.userId, fx.taskId);
+    const parts = buildPlanningContextParts(data);
     expect(drawerOrder(parts, "planning")).toEqual([
       ...SECTIONS_BY_BUNDLE.planning,
     ]);
+    expectNoteViewMatchesMarkdown(data.feed, "planning", parts);
   });
 
   test("agent (in_progress, blocked)", async () => {
@@ -143,10 +192,10 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
       (sr) =>
         sr`UPDATE tasks SET status = 'in_progress' WHERE id = ${fx.taskId}`,
     );
-    const parts = buildAgentContextParts(
-      await resolveDependencyClosure(fx.userId, fx.taskId, "agent"),
-    );
+    const data = await resolveDependencyClosure(fx.userId, fx.taskId, "agent");
+    const parts = buildAgentContextParts(data);
     expect(drawerOrder(parts, "agent")).toEqual([...SECTIONS_BY_BUNDLE.agent]);
+    expectNoteViewMatchesMarkdown(data.feed, "agent", parts);
   });
 
   test("agent (planned-blocked)", async () => {
@@ -162,12 +211,12 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
 
   test("review", async () => {
     const fx = await seedFullParityTask("parity-review");
-    const parts = buildReviewContextParts(
-      await resolveReviewData(fx.userId, fx.taskId),
-    );
+    const data = await resolveReviewData(fx.userId, fx.taskId);
+    const parts = buildReviewContextParts(data);
     expect(drawerOrder(parts, "review")).toEqual([
       ...SECTIONS_BY_BUNDLE.review,
     ]);
+    expectNoteViewMatchesMarkdown(data.feed, "review", parts);
   });
 
   test("record-done", async () => {
@@ -175,12 +224,12 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
     await srRun(
       (sr) => sr`UPDATE tasks SET status = 'done' WHERE id = ${fx.taskId}`,
     );
-    const parts = buildRecordContextParts(
-      await resolveRecordData(fx.userId, fx.taskId),
-    );
+    const data = await resolveRecordData(fx.userId, fx.taskId);
+    const parts = buildRecordContextParts(data);
     expect(drawerOrder(parts, "record-done")).toEqual([
       ...SECTIONS_BY_BUNDLE["record-done"],
     ]);
+    expectNoteViewMatchesMarkdown(data.feed, "record", parts);
   });
 
   test("record-cancelled", async () => {

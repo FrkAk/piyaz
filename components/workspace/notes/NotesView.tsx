@@ -4,8 +4,13 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { CollapsibleRail } from "@/components/shared/CollapsibleRail";
 import { Drawer } from "@/components/shared/Drawer";
-import { IconPanelLeft, IconSettings } from "@/components/shared/icons";
+import {
+  IconPanelLeft,
+  IconPlus,
+  IconSettings,
+} from "@/components/shared/icons";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useMounted } from "@/hooks/useMounted";
 import {
   useNotesRailCollapse,
   useNotesSettingsCollapse,
@@ -49,8 +54,11 @@ interface NotesViewProps {
 /**
  * Notes workspace view. At `lg` and up the tree pane sits beside the
  * editor pane and can be collapsed to give the editor full width via the
- * tree header toggle (persisted per {@link useNotesRailCollapse}), with a
- * reopen button over the editor; below `lg` the editor takes the full width
+ * tree header toggle (persisted per {@link useNotesRailCollapse}). The
+ * reopen and settings toggles render inside the note header row (via
+ * `EditorPane`) so they never collide with the note's own controls at
+ * narrow widths; only the empty state floats the reopen button over the
+ * pane. Below `lg` the editor takes the full width
  * and the tree becomes a slide-over drawer opened from the pane header,
  * closed by selecting a note, the close button, backdrop, or Escape. The
  * settings ribbon is an inline column only at `xl` and up (collapse
@@ -85,6 +93,7 @@ export function NotesView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusTitle, setFocusTitle] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const mounted = useMounted();
 
   // A cleared selection closes the drawer for real (render-time state
   // adjustment, not an effect): the drawer only hides on `noteId === null`,
@@ -97,6 +106,10 @@ export function NotesView({
   // shrinks again (same render-time pattern as above).
   if (isLg && treeOpen) setTreeOpen(false);
 
+  // The settings drawer only renders below `xl` (the pane is inline at
+  // `xl`); same resize-cycle reasoning as the tree drawer.
+  if (isXl && settingsOpen) setSettingsOpen(false);
+
   /**
    * Create a persisted note in a folder, then select it and request
    * title focus. Selection only moves on the authoritative server id;
@@ -104,29 +117,31 @@ export function NotesView({
    * failure surfaces in the tree pane's error strip.
    *
    * @param folder - Target folder path.
+   * @returns Whether the note was created and selected.
    */
-  async function createAndSelect(folder: string) {
+  async function createAndSelect(folder: string): Promise<boolean> {
     setCreateError(null);
     let result: Awaited<ReturnType<typeof createNote.mutateAsync>>;
     try {
       result = await createNote.mutateAsync({
         title: "",
-        body: "## Overview\n",
+        body: "",
         folder,
         type: "reference",
         visibility: "private",
       });
     } catch {
       setCreateError("Create failed");
-      return;
+      return false;
     }
     if (result.ok) {
       onSelectNote(result.data.id);
       setTreeOpen(false);
       setFocusTitle(result.data.id);
-    } else {
-      setCreateError(result.message);
+      return true;
     }
+    setCreateError(result.message);
+    return false;
   }
 
   const handleFocusedTitle = useCallback(() => setFocusTitle(null), []);
@@ -177,6 +192,11 @@ export function NotesView({
   const closeTree = useCallback(() => setTreeOpen(false), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
+  // The viewport media queries resolve to their desktop SSR defaults until
+  // the first client paint; hold a neutral placeholder until mount so a
+  // narrow viewport never flashes the desktop three-pane layout.
+  if (!mounted) return <NotesViewSkeleton />;
+
   const editor = (
     <EditorPane
       projectId={projectId}
@@ -187,6 +207,16 @@ export function NotesView({
       onSelectTask={onSelectTask}
       onSelectNote={onSelectNote}
       taskMap={taskMap}
+      onShowTree={isLg && collapsed ? toggleRail : undefined}
+      onOpenSettings={
+        !isLg
+          ? undefined
+          : isXl
+            ? settingsCollapsed
+              ? toggleSettings
+              : undefined
+            : () => setSettingsOpen(true)
+      }
     />
   );
 
@@ -196,6 +226,7 @@ export function NotesView({
         <CollapsibleRail open={!collapsed} width={RAIL_WIDTH}>
           <TreePane
             projectId={projectId}
+            projectIdentifier={projectIdentifier}
             selectedId={noteId}
             onSelect={handleSelect}
             onNewNote={(folder) => void createAndSelect(folder)}
@@ -209,7 +240,7 @@ export function NotesView({
           />
         </CollapsibleRail>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {collapsed && (
+          {collapsed && noteId === null && (
             <button
               type="button"
               onClick={toggleRail}
@@ -218,17 +249,6 @@ export function NotesView({
               className="absolute left-2 top-2 z-10 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border-strong bg-base text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
             >
               <IconPanelLeft size={13} />
-            </button>
-          )}
-          {noteId !== null && (!isXl || settingsCollapsed) && (
-            <button
-              type="button"
-              onClick={isXl ? toggleSettings : () => setSettingsOpen(true)}
-              aria-label="Show settings"
-              title="Show settings"
-              className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-border-strong bg-base text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
-            >
-              <IconSettings size={13} />
             </button>
           )}
           {editor}
@@ -291,23 +311,42 @@ export function NotesView({
         <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-text-muted">
           Notes
         </span>
-        {noteId !== null && (
+        <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Note settings"
-            title="Note settings"
-            className="ml-auto inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            onClick={() => {
+              // A failed create surfaces in the tree pane's error strip,
+              // so open the drawer instead of failing silently.
+              void createAndSelect("").then((ok) => {
+                if (!ok) setTreeOpen(true);
+              });
+            }}
+            disabled={createNote.isPending}
+            aria-label="New note"
+            title="New note"
+            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 disabled:cursor-default disabled:opacity-50"
           >
-            <IconSettings size={15} />
+            <IconPlus size={15} />
           </button>
-        )}
+          {noteId !== null && (
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Note settings"
+              title="Note settings"
+              className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            >
+              <IconSettings size={15} />
+            </button>
+          )}
+        </div>
       </div>
       {editor}
       <TreeDrawer open={treeOpen} onClose={closeTree}>
         <TreePane
           fill
           projectId={projectId}
+          projectIdentifier={projectIdentifier}
           selectedId={noteId}
           onSelect={handleSelect}
           onNewNote={(folder) => void createAndSelect(folder)}
@@ -343,6 +382,33 @@ export function NotesView({
   );
 }
 
+/**
+ * Full-height placeholder for the first client paint, before the viewport
+ * media queries resolve. Prevents the notes view from flashing the desktop
+ * three-pane layout on a narrow viewport during hydration.
+ *
+ * @returns The decorative loading placeholder.
+ */
+function NotesViewSkeleton() {
+  return (
+    <div className="flex h-full w-full items-start justify-center">
+      <div className="w-full max-w-[760px] px-4 pt-6 sm:px-[34px] sm:pt-8">
+        <span className="sr-only">Loading notes</span>
+        <div aria-hidden="true" className="flex flex-col gap-3">
+          <span className="h-4 w-1/2 animate-pulse rounded bg-surface-hover" />
+          {[320, 280, 360, 240].map((width) => (
+            <span
+              key={width}
+              className="h-2 max-w-full animate-pulse rounded bg-surface-hover"
+              style={{ width }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface TreeDrawerProps {
   /** @param open - Whether the drawer is open. */
   open: boolean;
@@ -368,6 +434,7 @@ function TreeDrawer({ open, onClose, children }: TreeDrawerProps) {
       side="left"
       width="300px"
       label="Notes tree"
+      modal
     >
       {children}
     </Drawer>
@@ -399,6 +466,7 @@ function SettingsDrawer({ open, onClose, children }: SettingsDrawerProps) {
       side="right"
       width={`${SETTINGS_WIDTH}px`}
       label="Note settings"
+      modal
     >
       {children}
     </Drawer>

@@ -36,6 +36,7 @@ import {
   ne,
   or,
   sql,
+  type SQL,
 } from "drizzle-orm";
 import type { AuthContext } from "@/lib/auth/context";
 import {
@@ -44,17 +45,16 @@ import {
   assertProjectAccessTx,
   assertProjectGateRows,
   assertTaskAccessTx,
-  assertTaskGateRows,
   assertValidNoteId,
   assertValidProjectId,
   assertValidTaskId,
+  firstRowOrForbidden,
   ForbiddenError,
   isUuid,
 } from "@/lib/auth/authorization";
 import {
   noteAccessGateStmt,
   projectAccessGateStmt,
-  taskAccessGateStmt,
   type NoteAccessGate,
 } from "@/lib/data/access";
 import { insertActivityEvents } from "@/lib/data/activity";
@@ -88,15 +88,20 @@ import {
   type NotesTreeVersionRow,
 } from "@/lib/db/raw/get-notes-max-updated-at";
 import {
+  notesFeedForTaskStmt,
   notesFeedStmt,
   type FeedTask,
+  type NoteFeedBodyBound,
   type NoteFeedRawRow,
 } from "@/lib/db/raw/notes-feed";
 import {
+  noteRefSearchStmt,
   noteSearchStmt,
+  noteSubstringSearchStmt,
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
+import { seqInRange } from "@/lib/data/resolve-ref";
 import { BatchInputError } from "@/lib/data/task-batch";
 import { InvalidEditOpError } from "@/lib/data/task-edit";
 import { foldTextOp, type TextOp } from "@/lib/data/text-ops";
@@ -105,18 +110,22 @@ import {
   asIdentifier,
   composeNoteRef,
   composeTaskRef,
+  NOTE_REF_PATTERN,
+  NOTE_SEQ_TOKEN_PATTERN,
+  REF_FRAGMENT_PATTERN,
 } from "@/lib/graph/identifier";
 import {
   emitNoteEvent,
   emitNoteFoldersEvent,
   emitProjectEvent,
 } from "@/lib/realtime/events";
-import type {
-  FeedMode,
-  NoteTaskLinkKind,
-  NoteType,
-  TaskStatus,
-  Visibility,
+import {
+  NOTE_SUMMARY_MAX_CHARS,
+  type FeedMode,
+  type NoteTaskLinkKind,
+  type NoteType,
+  type TaskStatus,
+  type Visibility,
 } from "@/lib/types";
 
 /** Revisions kept per note; older rows are pruned in the write tx. */
@@ -145,9 +154,6 @@ const FOLDER_MAX_CHARS = 512;
 
 /** Char cap for a search query string. */
 const SEARCH_QUERY_MAX_CHARS = 256;
-
-/** Char cap for `summary`; it is projected on every tree-list row. */
-const SUMMARY_MAX_CHARS = 1000;
 
 /** Char cap for `category` and each tag / feed label. */
 const LABEL_MAX_CHARS = 200;
@@ -377,6 +383,8 @@ export type NoteFullResult = {
   projectIdentifier: string;
   /** Last editor's org-visible display name, or null when unresolvable. */
   updatedByName: string | null;
+  /** Whether the last edit came from the updater's agent (MCP actor). */
+  updatedByAgent: boolean;
   mentions: NoteMention[];
   linksOut: LinkedNoteSlim[];
   linksIn: LinkedNoteSlim[];
@@ -401,12 +409,22 @@ export type NoteFeedRow = {
   folder: string;
   summary: string;
   body: string;
+  /**
+   * Codepoints the body charges against the feed budget. Equals
+   * `charLen(body)` when the body shipped; on the `lengthsOnly` variant the
+   * body stays in Postgres and only this count crosses the wire.
+   */
+  bodyChars: number;
   sequenceNumber: number;
   noteRef: string;
   updatedAt: Date;
 };
 
-/** Pointer to an exposed note that overflowed the feed budget. */
+/**
+ * Pointer to an exposed note that overflowed the feed budget, or to an
+ * explicitly linked note. `summary` is carried only by linked pointers;
+ * overflow pointers omit it and render title-only.
+ */
 export type NoteFeedPointer = {
   id: string;
   slug: string;
@@ -414,16 +432,21 @@ export type NoteFeedPointer = {
   type: NoteType;
   sequenceNumber: number;
   noteRef: string;
+  summary?: string;
 };
 
 /**
  * Budgeted feed resolution: admitted rows plus overflow pointers.
  * `truncated` is true when exposed notes beyond the fetch or pointer
- * bound were dropped, so the pointer list may be incomplete.
+ * bound were dropped, so the pointer list may be incomplete. `linked`
+ * carries notes reached through a `note_task_links` backlink of any kind
+ * (spec_of/reference/mention) rather than the feed, rendered as pointers;
+ * the bundle path folds them in, standalone feed reads leave it empty.
  */
 export type NoteFeedResolution = {
   notes: NoteFeedRow[];
   overflow: NoteFeedPointer[];
+  linked: NoteFeedPointer[];
   truncated: boolean;
 };
 
@@ -686,7 +709,7 @@ function slugifyTitle(title: string): string {
 }
 
 /**
- * Escape LIKE pattern metacharacters so user-derived prefixes match
+ * Escape LIKE pattern metacharacters so user-derived values match
  * literally.
  *
  * @param value - Literal string destined for a LIKE pattern.
@@ -792,11 +815,11 @@ type NoteMetadataFields = Pick<
 function assertMetadataWithinCaps(fields: NoteMetadataFields): void {
   if (
     fields.summary !== undefined &&
-    fields.summary.length > SUMMARY_MAX_CHARS
+    fields.summary.length > NOTE_SUMMARY_MAX_CHARS
   ) {
     throw new NoteValidationError(
       "summary",
-      `summary exceeds ${SUMMARY_MAX_CHARS} characters`,
+      `summary exceeds ${NOTE_SUMMARY_MAX_CHARS} characters`,
     );
   }
   if (fields.category != null && fields.category.length > LABEL_MAX_CHARS) {
@@ -1250,8 +1273,11 @@ function toNoteMention(row: {
  * linked to the task via `note_task_links`, slim tree projection plus the
  * link `kind` and the note `sequenceNumber` (for the ref chip); never
  * selects `body`/`search_tsv`. Served by
- * `note_task_links_task_id_idx`. Batch alongside `taskAccessGateStmt`
- * and evaluate the gate rows first.
+ * `note_task_links_task_id_idx`. Batch alongside a task-gating read and
+ * evaluate the gate first, as {@link getTaskNoteContext} does. The `id`
+ * tiebreak keeps row order deterministic across identical reads: the
+ * task-notes route hashes the serialized payload into its ETag, so an
+ * order flip on unchanged data would break conditional 304s.
  *
  * @param read - Read statement-building handle.
  * @param taskId - UUID of the task.
@@ -1266,7 +1292,99 @@ export function taskNoteBacklinksStmt(read: ReadConn, taskId: string) {
     .from(noteTaskLinks)
     .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
     .where(and(eq(noteTaskLinks.taskId, taskId), isNull(notes.deletedAt)))
-    .orderBy(notes.title, noteTaskLinks.kind);
+    .orderBy(notes.title, noteTaskLinks.kind, notes.id);
+}
+
+/** Pointer row from {@link taskBacklinkPointersStmt}. */
+export type TaskBacklinkPointerRow = {
+  id: string;
+  slug: string;
+  sequenceNumber: number;
+  title: string;
+  type: NoteType;
+  summary: string;
+  identifier: string;
+};
+
+/**
+ * Build the agent-facing task-backlinks read: live, team-visible notes
+ * linked to the task via `note_task_links` under any kind
+ * (spec_of/reference/mention), projected to pointer fields plus the
+ * summary and the project identifier for the noteRef. Unlike
+ * {@link taskNoteBacklinksStmt} (the human web read, which returns a
+ * member's own private notes too), this enforces `visibility = 'team'`
+ * so a private linked note never reaches an agent bundle, the same fence
+ * the feed query applies. Feed mode is irrelevant here: a backlink
+ * surfaces the note regardless of `feed_mode`. A note linked under
+ * several kinds yields one row per kind; {@link foldBacklinkPointers}
+ * dedupes to one pointer. Batch it into the bundle's feed read; the
+ * extra statement adds no round trip.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - UUID of the task.
+ * @returns Lazy select statement yielding {@link TaskBacklinkPointerRow}s.
+ */
+export function taskBacklinkPointersStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({
+      id: notes.id,
+      slug: notes.slug,
+      sequenceNumber: notes.sequenceNumber,
+      title: notes.title,
+      type: notes.type,
+      summary: notes.summary,
+      identifier: projects.identifier,
+    })
+    .from(noteTaskLinks)
+    .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
+    .innerJoin(projects, eq(projects.id, notes.projectId))
+    .where(
+      and(
+        eq(noteTaskLinks.taskId, taskId),
+        isNull(notes.deletedAt),
+        eq(notes.visibility, "team"),
+      ),
+    )
+    .orderBy(notes.title);
+}
+
+/**
+ * Fold task-backlink rows into a feed resolution as `linked` pointers:
+ * notes reached through a `note_task_links` backlink of any kind
+ * (spec_of/reference/mention), deduped against feed-injected notes and
+ * overflow so a note that both feeds and is linked lists once, and by id
+ * so a note linked under several kinds lists once. Each carries its
+ * summary; rendered under Relevant Notes as pointers regardless of type,
+ * and a backlink never injects a body.
+ *
+ * @param resolution - The budgeted feed resolution to extend.
+ * @param backlinks - Backlink pointer rows from
+ *   {@link taskBacklinkPointersStmt}.
+ * @returns The resolution with `linked` populated.
+ */
+export function foldBacklinkPointers(
+  resolution: NoteFeedResolution,
+  backlinks: readonly TaskBacklinkPointerRow[],
+): NoteFeedResolution {
+  if (backlinks.length === 0) return resolution;
+  const seen = new Set<string>();
+  for (const note of resolution.notes) seen.add(note.id);
+  for (const pointer of resolution.overflow) seen.add(pointer.id);
+  const linked: NoteFeedPointer[] = [];
+  for (const row of backlinks) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    linked.push({
+      id: row.id,
+      slug: row.slug,
+      title: row.title,
+      type: row.type,
+      sequenceNumber: row.sequenceNumber,
+      noteRef: composeNoteRef(asIdentifier(row.identifier), row.sequenceNumber),
+      summary: row.summary,
+    });
+  }
+  return { ...resolution, linked };
 }
 
 /**
@@ -1451,13 +1569,15 @@ export async function getNoteFull(
   const gate = assertNoteGateRows(noteId, gateRows);
   const [note] = noteRows;
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
-  const updaterName =
-    normalizeExecuteResult<{ name: string | null }>(updaterRows)[0]?.name ??
-    null;
+  const [updater] = normalizeExecuteResult<{
+    name: string | null;
+    is_agent: boolean;
+  }>(updaterRows);
   return {
     note,
     projectIdentifier: gate.projectIdentifier,
-    updatedByName: updaterName,
+    updatedByName: updater?.name ?? null,
+    updatedByAgent: updater?.is_agent ?? false,
     mentions: mentionRows.map(toNoteMention),
     linksOut,
     linksIn,
@@ -1496,6 +1616,7 @@ export async function getNoteScalarFields(
     note: { ...row, body: "" },
     projectIdentifier: gate.projectIdentifier,
     updatedByName: null,
+    updatedByAgent: false,
     mentions: [],
     linksOut: [],
     linksIn: [],
@@ -1536,16 +1657,128 @@ export async function composeFeedTaskRefs(
 }
 
 /**
- * Rank-search a project's live notes over the generated `search_tsv`.
- * User text goes through `websearch_to_tsquery` (plainto fallback), never
- * raw `to_tsquery`; the last term also matches as a sanitized prefix
+ * Parse a ref-shaped query into an exact note lookup key.
+ *
+ * @param query - Trimmed search text.
+ * @returns The uppercase project prefix and the in-range sequence number,
+ *   or null when the text is not ref-shaped or names a sequence no note
+ *   can carry (outside the int4 column range).
+ */
+function matchNoteRef(query: string): { prefix: string; seq: number } | null {
+  const match = query.match(NOTE_REF_PATTERN);
+  if (match === null) return null;
+  const seq = seqInRange(match[2]);
+  if (seq === null) return null;
+  return { prefix: match[1].toUpperCase(), seq };
+}
+
+/**
+ * Parse the sequence half of a note ref (`8` or `N8`) into a lookup key,
+ * so a note resolves by its number alone.
+ *
+ * @param token - One trimmed search token.
+ * @returns The in-range sequence number, or null when the token is not a
+ *   sequence token or names a sequence no note can carry.
+ */
+function matchNoteSeqToken(token: string): number | null {
+  const match = token.match(NOTE_SEQ_TOKEN_PATTERN);
+  if (match === null) return null;
+  return seqInRange(match[1]);
+}
+
+/**
+ * Search one project's live notes in a single round trip, structured as
+ * task search is: a whole ref resolves exactly, everything else is fuzzy.
+ *
+ * A ref-shaped query batches the exact ref lookup alongside the fuzzy
+ * statements, so the fallback a ref resolving nothing needs costs no second
+ * trip; a resolved ref still wins outright and never blends with text hits.
+ *
+ * Every other query batches two fuzzy tiers: a substring scan over
+ * `title`/`summary`/tags (the tier task search serves with `ILIKE`, which
+ * FTS stemming cannot: `boarding` finds "Onboarding"), then ranked full
+ * text over `search_tsv`, deduped behind the substring hits. With
+ * `matchRefFragments` (the notes rail), a query of the ref alphabet also
+ * substring-matches the composed ref inside the same scan, so `1` finds
+ * `N1`, `N11`, and `N111` as the task list's `taskRef` filter does; MCP
+ * search passes false and resolves refs whole only, as task MCP search
+ * does.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - UUID of the project to search in.
+ * @param trimmed - Non-empty trimmed search text.
+ * @param matchRefFragments - Whether ref fragments join the substring tier.
+ * @returns The project identifier and the winning hits.
+ * @throws ForbiddenError when the caller cannot access the project.
+ */
+async function searchProjectNotes(
+  ctx: AuthContext,
+  projectId: string,
+  trimmed: string,
+  matchRefFragments: boolean,
+): Promise<{ projectIdentifier: string; hits: NoteSearchHit[] }> {
+  const ref = matchNoteRef(trimmed);
+  if (ref !== null) {
+    const [gateRows, refRaw, textRaw] = await withUserContextRead(
+      ctx.userId,
+      (read) => [
+        projectAccessGateStmt(read, projectId),
+        noteRefSearchStmt(read, projectId, ref.prefix, ref.seq),
+        noteSearchStmt(read, projectId, trimmed),
+      ],
+    );
+    const gate = assertProjectGateRows(projectId, gateRows);
+    const refHits =
+      normalizeExecuteResult<NoteSearchRawRow>(refRaw).map(toSearchHit);
+    return {
+      projectIdentifier: gate.identifier,
+      hits:
+        refHits.length > 0
+          ? refHits
+          : normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit),
+    };
+  }
+  const matchRef = matchRefFragments && REF_FRAGMENT_PATTERN.test(trimmed);
+  const [gateRows, substringRaw, textRaw] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      projectAccessGateStmt(read, projectId),
+      noteSubstringSearchStmt(read, projectId, trimmed, matchRef),
+      noteSearchStmt(read, projectId, trimmed),
+    ],
+  );
+  const gate = assertProjectGateRows(projectId, gateRows);
+  const substringHits =
+    normalizeExecuteResult<NoteSearchRawRow>(substringRaw).map(toSearchHit);
+  const textHits =
+    normalizeExecuteResult<NoteSearchRawRow>(textRaw).map(toSearchHit);
+  const seen = new Set(substringHits.map((hit) => hit.id));
+  return {
+    projectIdentifier: gate.identifier,
+    hits: [...substringHits, ...textHits.filter((hit) => !seen.has(hit.id))],
+  };
+}
+
+/**
+ * Search a project's live notes for the notes rail: exact ref, then
+ * title/summary/tag substring (which also matches ref fragments, so `1`
+ * finds `N1`, `N11`, and `N111` as the task list's `taskRef` filter does),
+ * then ranked full text over `search_tsv` deduped behind the substring
+ * hits. User text goes through `websearch_to_tsquery` (plainto fallback),
+ * never raw `to_tsquery`; the last term also matches as a sanitized prefix
  * lexeme for type-ahead. Hits are the slim tree projection, never the
  * body.
+ *
+ * A noteRef (`PREFIX-N<seq>`, case-insensitive) is composed at read time
+ * and never enters `search_tsv`, so a ref-shaped query resolves by exact
+ * identifier + sequence first. A ref that resolves nothing here (unknown
+ * project, trashed or absent note) falls through to the fuzzy tiers, so
+ * text that merely looks like a ref still finds a note titled with it.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
  * @param query - User search text.
- * @returns Up to 20 hits, best rank first; empty for a blank query.
+ * @returns Merged hits, substring tier first; empty for a blank query.
  * @throws ForbiddenError when the caller cannot access the project.
  * @throws NoteValidationError when the query exceeds the length cap.
  */
@@ -1569,12 +1802,8 @@ export async function searchNotes(
     assertProjectGateRows(projectId, gateRows);
     return [];
   }
-  const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
-    projectAccessGateStmt(read, projectId),
-    noteSearchStmt(read, projectId, trimmed),
-  ]);
-  assertProjectGateRows(projectId, gateRows);
-  return normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit);
+  const { hits } = await searchProjectNotes(ctx, projectId, trimmed, true);
+  return hits;
 }
 
 /**
@@ -1619,14 +1848,27 @@ export type CrossProjectNoteSearchResult = {
 };
 
 /**
- * Cross-project note search for the ⌘K palette. Bounded by
- * `current_user_orgs()` (defense-in-depth over RLS); note visibility
- * (private rows confined to their creator, team rows org-wide) is enforced
- * by the `notes` RLS policy under `withUserContext`, so private notes never
- * leak cross-tenant.
+ * Cross-project note search for the ⌘K palette. Bounded by a
+ * `current_user_orgs()` subquery (defense-in-depth over RLS); note
+ * visibility (private rows confined to their creator, team rows org-wide)
+ * is enforced by the `notes` RLS policy under `withUserContextRead`, so
+ * private notes never leak cross-tenant. Both arms ship in one read batch
+ * — a single stateless HTTP round trip on the Workers head, as the rail
+ * search does — instead of an interactive WebSocket transaction.
  *
- * Per-token OR match: `notes.title`, `projects.title`, `projects.identifier`
- * (case-insensitive substring). Tokens AND-join. Ranked exact → prefix →
+ * A full noteRef (`PREFIX-N<seq>`, case-insensitive) resolves that note by
+ * exact identifier + sequence first. Identifiers are unique per org, so a
+ * ref resolves within each of the caller's orgs; a colliding identifier
+ * across two of them yields one hit per org, disambiguated by the project
+ * crumb. A ref that resolves nothing falls through to the token match, so
+ * text that merely looks like a ref still finds a note titled with it.
+ *
+ * Per-token OR match: `notes.title`, `notes.summary`, each note tag,
+ * `projects.title`, `projects.identifier` (case-insensitive substring),
+ * plus `notes.sequence_number` for a token that is the sequence half of a
+ * ref (`8` or `N8`), so a note resolves by its number alone as a task
+ * does. The arms mirror task palette search, with `summary` standing in
+ * as the note's second line. Tokens AND-join. Ranked exact → prefix →
  * substring on title, then `updated_at` desc. Live notes only; `body` is
  * never selected.
  *
@@ -1652,39 +1894,41 @@ export async function searchNotesAcrossProjects(
 
   const limit = Math.min(Math.max(opts.limit ?? 10, 1), 25);
   const lower = trimmed.toLowerCase();
+  const likeLower = escapeLike(lower);
   const rankExpr = sql<number>`CASE
       WHEN LOWER(${notes.title}) = ${lower} THEN 0
-      WHEN LOWER(${notes.title}) LIKE ${lower + "%"} THEN 1
-      WHEN LOWER(${notes.title}) LIKE ${"%" + lower + "%"} THEN 2
+      WHEN LOWER(${notes.title}) LIKE ${likeLower + "%"} THEN 1
+      WHEN LOWER(${notes.title}) LIKE ${"%" + likeLower + "%"} THEN 2
       ELSE 3
     END`;
 
-  return withUserContext(ctx.userId, async (tx) => {
-    const orgRows = await executeRaw<{ org_id: string }>(
-      tx,
-      sql`SELECT org_id FROM public.current_user_orgs()`,
-    );
-    const orgIds = orgRows.map((r) => r.org_id);
-    if (orgIds.length === 0) return [];
+  const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return [];
 
-    const tokens = trimmed.split(/[\s-]+/).filter((t) => t.length > 0);
-    if (tokens.length === 0) return [];
-
-    const clauses = [
-      inArray(projects.organizationId, orgIds),
-      isNull(notes.deletedAt),
+  const scope = [
+    sql`${projects.organizationId} IN (SELECT org_id FROM public.current_user_orgs())`,
+    isNull(notes.deletedAt),
+  ];
+  const tokenClauses = [...scope];
+  for (const token of tokens) {
+    const pattern = `%${escapeLike(token)}%`;
+    const orClauses = [
+      ilike(notes.title, pattern),
+      ilike(notes.summary, pattern),
+      sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(${notes.tags}) AS t WHERE t ILIKE ${pattern})`,
+      ilike(projects.title, pattern),
+      ilike(projects.identifier, pattern),
     ];
-    for (const token of tokens) {
-      const pattern = `%${token}%`;
-      const tokenClause = or(
-        ilike(notes.title, pattern),
-        ilike(projects.title, pattern),
-        ilike(projects.identifier, pattern),
-      );
-      if (tokenClause) clauses.push(tokenClause);
+    const seq = matchNoteSeqToken(token);
+    if (seq !== null) {
+      orClauses.push(eq(notes.sequenceNumber, seq));
     }
+    const tokenClause = or(...orClauses);
+    if (tokenClause) tokenClauses.push(tokenClause);
+  }
 
-    const rows = await tx
+  const select = (read: ReadConn, clauses: SQL[]) =>
+    read
       .select({
         id: notes.id,
         title: notes.title,
@@ -1700,19 +1944,56 @@ export async function searchNotesAcrossProjects(
       .orderBy(rankExpr, desc(notes.updatedAt), asc(notes.id))
       .limit(limit);
 
-    return rows.map((row) => ({
-      id: row.id,
-      noteRef: composeNoteRef(
-        asIdentifier(row.projectIdentifier),
-        row.sequenceNumber,
-      ),
-      title: row.title,
-      projectId: row.projectId,
-      projectIdentifier: row.projectIdentifier,
-      projectTitle: row.projectTitle,
-      organizationId: row.organizationId,
-    }));
-  });
+  const ref = matchNoteRef(trimmed);
+  if (ref !== null) {
+    const [refRows, tokenRows] = await withUserContextRead(
+      ctx.userId,
+      (read) => [
+        select(read, [
+          ...scope,
+          eq(projects.identifier, ref.prefix),
+          eq(notes.sequenceNumber, ref.seq),
+        ]),
+        select(read, tokenClauses),
+      ],
+    );
+    const rows = refRows.length > 0 ? refRows : tokenRows;
+    return rows.map(toCrossProjectHit);
+  }
+
+  const [tokenRows] = await withUserContextRead(ctx.userId, (read) => [
+    select(read, tokenClauses),
+  ]);
+  return tokenRows.map(toCrossProjectHit);
+}
+
+/**
+ * Map a cross-project search row to the palette result shape.
+ *
+ * @param row - Selected row carrying the note and its project crumb.
+ * @returns Palette result with the composed noteRef.
+ */
+function toCrossProjectHit(row: {
+  id: string;
+  title: string;
+  sequenceNumber: number;
+  projectId: string;
+  projectIdentifier: string;
+  projectTitle: string;
+  organizationId: string;
+}): CrossProjectNoteSearchResult {
+  return {
+    id: row.id,
+    noteRef: composeNoteRef(
+      asIdentifier(row.projectIdentifier),
+      row.sequenceNumber,
+    ),
+    title: row.title,
+    projectId: row.projectId,
+    projectIdentifier: row.projectIdentifier,
+    projectTitle: row.projectTitle,
+    organizationId: row.organizationId,
+  };
 }
 
 /** Specificity rank per backlink kind; higher wins the per-note dedupe. */
@@ -1723,29 +2004,17 @@ const BACKLINK_KIND_RANK: Record<NoteTaskLinkKind, number> = {
 };
 
 /**
- * List the live notes linked to a task via `note_task_links` as the slim
- * tree projection plus the link `kind`. One read batch: task gate +
- * backlinks. A note linked under several kinds (unique on note, task,
- * kind) collapses to one row carrying the most specific kind
- * (`spec_of` > `reference` > `mention`).
+ * Collapse backlink rows to one row per note, keeping the most specific
+ * link kind (`spec_of` > `reference` > `mention`).
  *
- * @param ctx - Resolved auth context.
- * @param taskId - UUID of the task.
- * @returns Backlink rows ordered by note title.
- * @throws ForbiddenError on malformed id, missing task, or cross-team access.
+ * @param rows - Backlink rows, one per link.
+ * @returns Deduped rows, one per note.
  */
-export async function getTaskNoteBacklinks(
-  ctx: AuthContext,
-  taskId: string,
-): Promise<TaskNoteBacklink[]> {
-  assertValidTaskId(taskId);
-  const [gateRows, linkRows] = await withUserContextRead(ctx.userId, (read) => [
-    taskAccessGateStmt(read, taskId),
-    taskNoteBacklinksStmt(read, taskId),
-  ]);
-  assertTaskGateRows(taskId, gateRows);
+function dedupeBacklinks(
+  rows: readonly TaskNoteBacklink[],
+): TaskNoteBacklink[] {
   const byNote = new Map<string, TaskNoteBacklink>();
-  for (const row of linkRows) {
+  for (const row of rows) {
     const existing = byNote.get(row.id);
     if (
       !existing ||
@@ -1820,7 +2089,7 @@ export function applyFeedBudget(
   let cut = rows.length;
   for (let i = 0; i < rows.length; i++) {
     const rowChars =
-      charLen(rows[i].title) + charLen(rows[i].summary) + charLen(rows[i].body);
+      charLen(rows[i].title) + charLen(rows[i].summary) + rows[i].bodyChars;
     if (admitted.length >= maxNotes || runningChars + rowChars > maxChars) {
       cut = i;
       break;
@@ -1837,17 +2106,26 @@ export function applyFeedBudget(
     sequenceNumber: row.sequenceNumber,
     noteRef: row.noteRef,
   }));
-  return { notes: admitted, overflow, truncated: pointerEnd < rows.length };
+  return {
+    notes: admitted,
+    overflow,
+    linked: [],
+    truncated: pointerEnd < rows.length,
+  };
 }
 
 /**
  * Coerce a raw feed row to its typed shape (`updated_at` arrives as a
- * string or a Date depending on the driver).
+ * string or a Date depending on the driver). The `lengthsOnly` feed
+ * variant ships `body_length` in place of the body text, so `bodyChars`
+ * takes it verbatim and `body` stays empty; otherwise it is counted off
+ * the body that shipped.
  *
  * @param row - Raw driver row.
  * @returns Typed feed row.
  */
 function mapNoteFeedRow(row: NoteFeedRawRow): NoteFeedRow {
+  const body = row.body ?? "";
   return {
     id: row.id,
     slug: row.slug,
@@ -1855,7 +2133,9 @@ function mapNoteFeedRow(row: NoteFeedRawRow): NoteFeedRow {
     type: row.type as NoteType,
     folder: row.folder,
     summary: row.summary,
-    body: row.body ?? "",
+    body,
+    bodyChars:
+      row.body_length === undefined ? charLen(body) : Number(row.body_length),
     sequenceNumber: row.sequence_number,
     noteRef: composeNoteRef(asIdentifier(row.identifier), row.sequence_number),
     updatedAt: toDate(row.updated_at),
@@ -1934,6 +2214,214 @@ export async function resolveExposedNotes(
   ]);
   assertProjectGateRows(projectId, gateRows);
   return decodeFeedRows(rowsRaw, budget);
+}
+
+/** How a note reaches a bundle: the feed, an explicit link, or budget overflow. */
+export type BundleNoteOrigin = "fed" | "linked" | "overflow";
+
+/**
+ * One note as a bundle lists it: pointer fields only, never a body.
+ * `summary` is empty wherever the bundle itself drops it (overflow
+ * pointers render title-only).
+ */
+export type BundleNoteLink = {
+  id: string;
+  noteRef: string;
+  title: string;
+  type: NoteType;
+  summary: string;
+  origin: BundleNoteOrigin;
+};
+
+/**
+ * Project a feed row or pointer onto the slim bundle-note link shape.
+ *
+ * @param note - Feed row or pointer.
+ * @param summary - Summary the bundle renders for it, possibly empty.
+ * @param origin - How the note reached the bundle.
+ * @returns Slim link, never carrying a body.
+ */
+function toBundleNoteLink(
+  note: {
+    id: string;
+    noteRef: string;
+    title: string;
+    type: NoteType;
+  },
+  summary: string,
+  origin: BundleNoteOrigin,
+): BundleNoteLink {
+  return {
+    id: note.id,
+    noteRef: note.noteRef,
+    title: note.title,
+    type: note.type,
+    summary,
+    origin,
+  };
+}
+
+/**
+ * Admitted guidance rows: the ones a deep bundle renders full-body under
+ * Project Guidance. Linked and overflow notes stay pointers even when
+ * their type is `guidance`.
+ *
+ * @param feed - Budgeted feed resolution.
+ * @returns Admitted guidance rows in emit order.
+ */
+export function selectGuidanceNotes(feed: NoteFeedResolution): NoteFeedRow[] {
+  return feed.notes.filter((row) => row.type === "guidance");
+}
+
+/**
+ * The same admitted guidance rows as {@link selectGuidanceNotes}, projected
+ * to slim links for the web preview. The preview lists what the bundle
+ * inlines; it never ships the bodies themselves.
+ *
+ * @param feed - Budgeted feed resolution.
+ * @returns Guidance links in emit order.
+ */
+export function selectGuidanceLinks(
+  feed: NoteFeedResolution,
+): BundleNoteLink[] {
+  return selectGuidanceNotes(feed).map((row) =>
+    toBundleNoteLink(row, row.summary, "fed"),
+  );
+}
+
+/**
+ * Relevant Notes entries in bundle emit order: admitted feed rows
+ * (guidance excluded when the caller renders it full-body), then linked
+ * pointers, then budget-overflow pointers. Uncapped; callers apply their
+ * own width cap. Shared by the markdown emitter and the web bundle
+ * preview so the two cannot drift on which notes a bundle carries.
+ *
+ * @param feed - Budgeted feed resolution.
+ * @param opts - `guidanceAsPointers` keeps admitted guidance rows in the list.
+ * @returns Ordered pointer entries.
+ */
+export function selectNotePointers(
+  feed: NoteFeedResolution,
+  opts: { guidanceAsPointers: boolean },
+): BundleNoteLink[] {
+  return [
+    ...feed.notes
+      .filter((row) => opts.guidanceAsPointers || row.type !== "guidance")
+      .map((row) => toBundleNoteLink(row, row.summary, "fed")),
+    ...feed.linked.map((row) =>
+      toBundleNoteLink(row, row.summary ?? "", "linked"),
+    ),
+    ...feed.overflow.map((row) => toBundleNoteLink(row, "", "overflow")),
+  ];
+}
+
+/** Task row the note feed matches against, plus the feed's cache validator. */
+type TaskFeedTargetRow = {
+  id: string;
+  projectId: string;
+  category: string | null;
+  tags: string[] | null;
+  updatedAt: Date;
+};
+
+/**
+ * The task's feed-target columns. `category` and `tags` are the task side
+ * of the feed match and appear in no other task projection this surface
+ * reads. `updatedAt` is a validator input no note or link timestamp can
+ * observe: retagging a task changes which notes feed it without touching
+ * any note row.
+ *
+ * @param read - Read statement-building handle.
+ * @param taskId - Task UUID.
+ * @returns Lazy single-row statement.
+ */
+function taskFeedTargetStmt(read: ReadConn, taskId: string) {
+  return read
+    .select({
+      id: tasks.id,
+      projectId: tasks.projectId,
+      category: tasks.category,
+      tags: tasks.tags,
+      updatedAt: tasks.updatedAt,
+    })
+    .from(tasks)
+    .where(eq(tasks.id, taskId))
+    .limit(1);
+}
+
+/** A task's note context: its linked notes plus the bundle's note feed. */
+export type TaskNoteContext = {
+  backlinks: TaskNoteBacklink[];
+  feed: NoteFeedResolution;
+  taskUpdatedAt: Date;
+};
+
+/**
+ * Resolve everything the task detail surface needs about notes: the
+ * linked-note backlinks the Linked Notes section renders, and the same
+ * feed resolution the context bundle carries, with backlinks folded in as
+ * `linked` pointers exactly as the bundle path does.
+ *
+ * `deep` mirrors the bundle depth. Deep bundles (agent, planning, review)
+ * charge guidance body length against the feed char budget, so body length
+ * decides which notes are admitted rather than overflowed; slim bundles
+ * select no body column at all. This surface renders links only, so it
+ * takes the `lengthsOnly` variant: the budget arithmetic gets its char
+ * counts and the body text never leaves Postgres.
+ *
+ * One batch. The feed statement reads the task row in a CTE rather than
+ * binding a category and tags a prior read would have to supply, so it
+ * rides the same round trip as the backlinks. The task row doubles as the
+ * access gate, so no separate gate statement runs: RLS hides rows the
+ * caller cannot reach, making an empty result the 404 signal, and it hides
+ * them from the feed's CTE on the same terms.
+ *
+ * @param ctx - Resolved auth context.
+ * @param taskId - UUID of the task.
+ * @param deep - Whether the target bundle charges guidance bodies.
+ * @returns Backlinks, the folded feed resolution, and the task's validator.
+ * @throws ForbiddenError when the caller cannot access the task.
+ */
+export async function getTaskNoteContext(
+  ctx: AuthContext,
+  taskId: string,
+  deep: boolean,
+): Promise<TaskNoteContext> {
+  assertValidTaskId(taskId);
+  const bodies: NoteFeedBodyBound | undefined = deep
+    ? {
+        rankCap: FEED_NOTE_CAP,
+        charBound: FEED_CHAR_BUDGET + 1,
+        budget: FEED_CHAR_BUDGET,
+        lengthsOnly: true,
+      }
+    : undefined;
+  const [taskRows, linkRows, pointerRows, feedRaw] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      taskFeedTargetStmt(read, taskId),
+      taskNoteBacklinksStmt(read, taskId),
+      taskBacklinkPointersStmt(read, taskId),
+      notesFeedForTaskStmt(
+        read,
+        taskId,
+        FEED_NOTE_CAP,
+        feedFetchLimit() + 1,
+        bodies,
+      ),
+    ],
+  );
+  const task = firstRowOrForbidden(
+    "task",
+    taskId,
+    taskRows as TaskFeedTargetRow[],
+  );
+
+  return {
+    backlinks: dedupeBacklinks(linkRows),
+    feed: foldBacklinkPointers(decodeFeedRows(feedRaw), pointerRows),
+    taskUpdatedAt: task.updatedAt,
+  };
 }
 
 /**
@@ -3597,15 +4085,19 @@ export async function getNoteTreeForAgent(
 }
 
 /**
- * Ranked note search plus the owning project identifier, for callers
- * composing noteRefs per hit. RLS-scoped like {@link searchNotes}: team
- * notes regardless of feed mode plus the caller's own private notes.
- * Feed exposure gates bundle injection, never search (Notes spec §14.3).
+ * Note search for MCP, structured as task MCP search is: a whole noteRef
+ * resolves exactly, everything else is fuzzy (title/summary/tag substring,
+ * then ranked full text). Ref fragments do not match here; agents resolve
+ * refs whole, as `piyaz_search` does for tasks. Returns the owning project
+ * identifier for callers composing noteRefs per hit. RLS-scoped like
+ * {@link searchNotes}: team notes regardless of feed mode plus the
+ * caller's own private notes. Feed exposure gates bundle injection, never
+ * search (Notes spec §14.3).
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project to search in.
  * @param query - User search text.
- * @returns The project identifier and up to 20 hits, best rank first.
+ * @returns The project identifier and merged hits, substring tier first.
  * @throws ForbiddenError when the caller cannot access the project.
  * @throws NoteValidationError when the query exceeds the length cap.
  */
@@ -3629,15 +4121,7 @@ export async function searchNotesForMcp(
     const gate = assertProjectGateRows(projectId, gateRows);
     return { projectIdentifier: gate.identifier, hits: [] };
   }
-  const [gateRows, hitsRaw] = await withUserContextRead(ctx.userId, (read) => [
-    projectAccessGateStmt(read, projectId),
-    noteSearchStmt(read, projectId, trimmed),
-  ]);
-  const gate = assertProjectGateRows(projectId, gateRows);
-  return {
-    projectIdentifier: gate.identifier,
-    hits: normalizeExecuteResult<NoteSearchRawRow>(hitsRaw).map(toSearchHit),
-  };
+  return await searchProjectNotes(ctx, projectId, trimmed, false);
 }
 
 /** The deliberate (caller-managed) note-task link kinds; `mention` is derivation-owned. */

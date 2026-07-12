@@ -1,5 +1,9 @@
 import { betterAuth } from "better-auth";
-import { APIError } from "better-auth/api";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import { organization, jwt } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
@@ -22,6 +26,8 @@ import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
 import { signupsDisabled } from "@/lib/config/env";
 import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
+import { getOutstandingConsent } from "@/lib/auth/consent";
+import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
@@ -381,6 +387,90 @@ export const auth = betterAuth({
         },
       },
     },
+  },
+  hooks: {
+    // Two gates on the organization plugin's endpoints, which ride the
+    // better-auth catch-all and so bypass the app's route-level consent
+    // gate. Global endpoint hooks (unlike organizationHooks) receive the
+    // full request ctx (body, headers, returned value) and run for
+    // `auth.api.*` calls and raw POSTs to `/api/auth/organization/*` alike,
+    // so neither gate can be skipped by avoiding the web client.
+    // 1. Re-consent: every /organization/* endpoint is real tenant
+    //    read/write surface (list, members, invites, update, delete); a
+    //    caller with outstanding personal documents is blocked like on
+    //    /api routes. Reads through the request-cached `getOutstandingConsent`
+    //    so the web-action path (createTeamAction already gated its own read)
+    //    shares one query; a raw POST outside a React scope pays one read.
+    // 2. DPA at create: `dpaAccepted` is a transient consent signal read
+    //    off the request body; the durable evidence is the
+    //    `legal_acceptances` row written in `after`.
+    before: createAuthMiddleware(async (ctx) => {
+      if (!ctx.path.startsWith("/organization/")) return;
+      const session = await getSessionFromCtx(ctx);
+      if (session) {
+        const outstanding = await getOutstandingConsent(session.user.id);
+        if (outstanding.length > 0) {
+          throw new APIError("FORBIDDEN", {
+            message: `The updated Piyaz ${describeReconsentDocuments(outstanding)} must be re-accepted before continuing. Open /legal/accept to review and accept ${outstanding.length > 1 ? "them" : "it"}.`,
+            code: "TERMS_ACCEPTANCE_REQUIRED",
+          });
+        }
+      }
+      if (ctx.path !== "/organization/create") return;
+      const body = ctx.body as { dpaAccepted?: unknown } | undefined;
+      if (body?.dpaAccepted !== true) {
+        throw new APIError("BAD_REQUEST", {
+          message: TEAM_ACTION_MESSAGES.dpa_not_accepted,
+          code: "DPA_NOT_ACCEPTED",
+        });
+      }
+    }),
+    // Persist the DPA evidence row once the organization exists (the row FKs
+    // to it). On write failure, compensate by removing the just-created org
+    // (same audited sequence as deleteUser.beforeDelete: membership
+    // artifacts, realtime grant, then the org row) so no team survives
+    // without its acceptance evidence.
+    after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path !== "/organization/create") return;
+      const returned = ctx.context.returned as
+        | { id?: unknown; members?: Array<{ userId?: unknown }> }
+        | undefined;
+      const organizationId =
+        typeof returned?.id === "string" ? returned.id : null;
+      const ownerUserId = returned?.members?.[0]?.userId;
+      const userId = typeof ownerUserId === "string" ? ownerUserId : null;
+      if (!organizationId || !userId) return;
+      const requestHeaders = ctx.headers;
+      try {
+        await recordAcceptance(userId, "dpa", {
+          ipAddress: requestHeaders
+            ? clientIpFromHeaders(requestHeaders)
+            : null,
+          userAgent: requestHeaders?.get("user-agent") ?? null,
+          organizationId,
+        });
+      } catch (err) {
+        console.error("organization/create dpa acceptance-write failure", {
+          userId,
+          organizationId,
+          err,
+        });
+        try {
+          await clearOrgMembershipArtifacts(userId, organizationId);
+          await revokeOrgAccess(userId, organizationId);
+          await deleteSoleMemberOrgAsAdmin(organizationId, userId);
+        } catch (cleanupErr) {
+          console.error("organization/create compensating delete failed", {
+            userId,
+            organizationId,
+            err: cleanupErr,
+          });
+        }
+        throw new APIError("INTERNAL_SERVER_ERROR", {
+          message: "Could not record your acceptance. Please try again.",
+        });
+      }
+    }),
   },
 });
 

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { TopBar } from "@/components/layout/TopBar";
 import { MyTasksClient } from "@/components/my-tasks/MyTasksClient";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { getSession } from "@/lib/auth/session";
 import { listMyTasks } from "@/lib/graph/queries";
 import { getServerQueryClient } from "@/lib/query/client";
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
 export default async function MyTasksPage() {
   const session = await getSession();
   if (!session) redirect("/sign-in");
+  await requireLegalConsent(session.user.id);
 
   const qc = getServerQueryClient();
   const payload = await listMyTasks();

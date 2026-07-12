@@ -6,6 +6,7 @@ import {
   createNote,
   createNoteFolder,
   deleteNoteFolder,
+  updateNote,
 } from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
 import { broker } from "@/lib/realtime/broker";
@@ -371,16 +372,16 @@ test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, tr
   await trashNote(trashed.id);
   setSession({ user: { id: f.userId } });
 
-  const res = await backlinksGET(get(`/api/task/${taskId}/notes`), {
-    params: Promise.resolve({ taskId }),
-  });
+  const res = await backlinksGET(
+    get(`/api/task/${taskId}/notes?bundle=working`),
+    { params: Promise.resolve({ taskId }) },
+  );
   expect(res.status).toBe(200);
   expect(res.headers.get("etag")).toBeTruthy();
-  const rows = (await res.json()) as {
-    id: string;
-    kind: string;
-    sequenceNumber: number;
-  }[];
+  const body = (await res.json()) as {
+    backlinks: { id: string; kind: string; sequenceNumber: number }[];
+  };
+  const rows = body.backlinks;
   expect(rows.length).toBe(2);
   const byId = new Map(rows.map((r) => [r.id, r]));
   expect(byId.get(linked.id)?.kind).toBe("reference");
@@ -394,7 +395,9 @@ test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, tr
 
   const etag = res.headers.get("etag");
   const replay = await backlinksGET(
-    get(`/api/task/${taskId}/notes`, { "if-none-match": etag! }),
+    get(`/api/task/${taskId}/notes?bundle=working`, {
+      "if-none-match": etag!,
+    }),
     { params: Promise.resolve({ taskId }) },
   );
   expect(replay.status).toBe(304);
@@ -406,11 +409,75 @@ test("GET /api/task/[id]/notes — slim backlinks with kind, dedupe priority, tr
   `;
 
   const changed = await backlinksGET(
-    get(`/api/task/${taskId}/notes`, { "if-none-match": etag! }),
+    get(`/api/task/${taskId}/notes?bundle=working`, {
+      "if-none-match": etag!,
+    }),
     { params: Promise.resolve({ taskId }) },
   );
   expect(changed.status).toBe(200);
   expect(changed.headers.get("etag")).not.toBe(etag);
+});
+
+test("GET /api/task/[id]/notes — auto-fed notes ride the feed; retagging the task invalidates the ETag", async () => {
+  const f = await seedUserOrgProject("task-notes-feed");
+  const ctx = makeAuthContext(f.userId);
+  const taskId = await addTask(f.projectId, "fed");
+  const fed = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Fed by tag",
+    visibility: "team",
+  });
+  await updateNote(ctx, fed.id, { feedMode: "tags", feedTags: ["alpha"] });
+  const sql = superuserPool();
+  await sql`UPDATE tasks SET tags = ${sql.json(["alpha"])} WHERE id = ${taskId}`;
+  setSession({ user: { id: f.userId } });
+
+  const res = await backlinksGET(
+    get(`/api/task/${taskId}/notes?bundle=working`),
+    { params: Promise.resolve({ taskId }) },
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as {
+    backlinks: unknown[];
+    feed: { notes: { id: string; origin: string }[] };
+  };
+  // Auto-fed, not linked: it reaches the bundle through the tag feed only.
+  expect(body.backlinks).toEqual([]);
+  expect(body.feed.notes.map((n) => n.id)).toEqual([fed.id]);
+  expect(body.feed.notes[0].origin).toBe("fed");
+  // Links only: the preview never ships note bodies.
+  expect(body.feed.notes[0]).not.toHaveProperty("body");
+
+  // Retagging the task changes feed membership without touching any note
+  // row, so a note-derived validator would 304 stale here.
+  const etag = res.headers.get("etag");
+  await sql`UPDATE tasks SET tags = ${sql.json(["beta"])} WHERE id = ${taskId}`;
+  const retagged = await backlinksGET(
+    get(`/api/task/${taskId}/notes?bundle=working`, {
+      "if-none-match": etag!,
+    }),
+    { params: Promise.resolve({ taskId }) },
+  );
+  expect(retagged.status).toBe(200);
+  const after = (await retagged.json()) as { feed: { notes: unknown[] } };
+  expect(after.feed.notes).toEqual([]);
+});
+
+test("GET /api/task/[id]/notes — missing or unknown bundle kind is a 400", async () => {
+  const f = await seedUserOrgProject("task-notes-kind");
+  const taskId = await addTask(f.projectId, "kind");
+  setSession({ user: { id: f.userId } });
+
+  const missing = await backlinksGET(get(`/api/task/${taskId}/notes`), {
+    params: Promise.resolve({ taskId }),
+  });
+  expect(missing.status).toBe(400);
+
+  const unknown = await backlinksGET(
+    get(`/api/task/${taskId}/notes?bundle=nope`),
+    { params: Promise.resolve({ taskId }) },
+  );
+  expect(unknown.status).toBe(400);
 });
 
 test("GET /api/task/[id]/notes — same-ms note swap invalidates the ETag", async () => {
@@ -433,9 +500,10 @@ test("GET /api/task/[id]/notes — same-ms note swap invalidates the ETag", asyn
   await linkNoteTask(first.id, taskId, "reference");
   setSession({ user: { id: f.userId } });
 
-  const res = await backlinksGET(get(`/api/task/${taskId}/notes`), {
-    params: Promise.resolve({ taskId }),
-  });
+  const res = await backlinksGET(
+    get(`/api/task/${taskId}/notes?bundle=working`),
+    { params: Promise.resolve({ taskId }) },
+  );
   const etag = res.headers.get("etag");
 
   await sql`
@@ -448,12 +516,14 @@ test("GET /api/task/[id]/notes — same-ms note swap invalidates the ETag", asyn
   `;
 
   const swapped = await backlinksGET(
-    get(`/api/task/${taskId}/notes`, { "if-none-match": etag! }),
+    get(`/api/task/${taskId}/notes?bundle=working`, {
+      "if-none-match": etag!,
+    }),
     { params: Promise.resolve({ taskId }) },
   );
   expect(swapped.status).toBe(200);
-  const rows = (await swapped.json()) as { id: string }[];
-  expect(rows.map((r) => r.id)).toEqual([second.id]);
+  const body = (await swapped.json()) as { backlinks: { id: string }[] };
+  expect(body.backlinks.map((r) => r.id)).toEqual([second.id]);
 });
 
 test("GET /api/task/[id]/notes — non-uuid and cross-team task 404; unauthenticated 401 sweep", async () => {
@@ -462,14 +532,18 @@ test("GET /api/task/[id]/notes — non-uuid and cross-team task 404; unauthentic
   const foreignTask = await addTask(g.projectId, "foreign");
   setSession({ user: { id: f.userId } });
 
-  const bad = await backlinksGET(get("/api/task/not-a-uuid/notes"), {
-    params: Promise.resolve({ taskId: "not-a-uuid" }),
-  });
+  const bad = await backlinksGET(
+    get("/api/task/not-a-uuid/notes?bundle=working"),
+    {
+      params: Promise.resolve({ taskId: "not-a-uuid" }),
+    },
+  );
   expect(bad.status).toBe(404);
 
-  const foreign = await backlinksGET(get(`/api/task/${foreignTask}/notes`), {
-    params: Promise.resolve({ taskId: foreignTask }),
-  });
+  const foreign = await backlinksGET(
+    get(`/api/task/${foreignTask}/notes?bundle=working`),
+    { params: Promise.resolve({ taskId: foreignTask }) },
+  );
   expect(foreign.status).toBe(404);
 
   setSession(null);

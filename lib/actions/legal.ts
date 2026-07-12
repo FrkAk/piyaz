@@ -13,7 +13,11 @@ import {
   checkActionRateLimit,
   clientIpFromHeaders,
 } from "@/lib/actions/rate-limit-action";
-import { getDpaAcceptance, recordAcceptance } from "@/lib/data/legal";
+import {
+  getDpaAcceptance,
+  listOutstandingReconsent,
+  recordAcceptance,
+} from "@/lib/data/legal";
 
 /**
  * Serializable DPA acceptance state. `acceptedAt` is an ISO string so the
@@ -96,14 +100,59 @@ export async function recordDpaAcceptanceAction(input: {
 }
 
 /**
- * Read the caller's own current-version DPA acceptance state for one team. No
- * owner gate: it reads only the caller's rows under RLS. The client calls it
- * in the owner branch to decide between the accept control and the accepted
- * state.
+ * Record the caller's re-acceptance of every outstanding personal legal
+ * document (terms, privacy). Takes no client input: the server derives the
+ * outstanding set via `listOutstandingReconsent`, so a forged document list
+ * cannot mark anything accepted. One `legal_acceptances` row per outstanding
+ * document, version pinned by `recordAcceptance`. Idempotent: with nothing
+ * outstanding (already accepted in another tab) it succeeds without writing.
+ *
+ * @returns Discriminated result; `ok` once the caller is current on every
+ *   personal document.
+ */
+export async function acceptUpdatedLegalAction(): Promise<TeamActionResult> {
+  let userId: string;
+  try {
+    const session = await requireSession();
+    userId = session.user.id;
+  } catch {
+    return teamFail("unauthorized");
+  }
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "legal.reconsent.accept",
+      windowSeconds: 60,
+      perUserMax: 5,
+      perIpMax: 10,
+    },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
+
+  const outstanding = await listOutstandingReconsent(userId);
+  if (outstanding.length === 0) return { ok: true };
+
+  const h = await headers();
+  const context = {
+    ipAddress: clientIpFromHeaders(h),
+    userAgent: h.get("user-agent"),
+  };
+  for (const documentType of outstanding) {
+    await recordAcceptance(userId, documentType, context);
+  }
+  return { ok: true };
+}
+
+/**
+ * Read the caller's own latest DPA acceptance state for one team, regardless
+ * of version. No owner gate: it reads only the caller's rows under RLS. The
+ * client compares `version` against `LEGAL_VERSIONS.dpa` to pick between the
+ * accepted state, the update notice, and the first-accept control.
  *
  * @param input - `{ organizationId }` naming the team whose state is read.
- * @returns Discriminated result; `data` is the acceptance state, or `null` when
- *   the caller has not accepted the current version for that team.
+ * @returns Discriminated result; `data` is the latest acceptance state, or
+ *   `null` when the caller never accepted any DPA version for that team.
  */
 export async function getDpaAcceptanceAction(input: {
   organizationId: string;

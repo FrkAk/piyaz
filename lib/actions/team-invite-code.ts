@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
+import { requireLegalConsent } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { isOrgAdmin } from "@/lib/auth/org-permissions";
 import { makeAuthContext } from "@/lib/auth/context";
@@ -107,7 +108,8 @@ const orgInputSchema = z.object({
  *
  * Mapping: not signed in → unauthorized, not an admin of `organizationId`
  * → forbidden (covers both "regular member" and "non-member" without
- * leaking which one).
+ * leaking which one). Signed-in callers with outstanding legal documents
+ * are redirected to the re-acceptance interstitial before authorization.
  *
  * @param organizationId - Target team UUID (already shape-validated).
  * @returns The signed-in caller's `userId` on success, or a typed failure.
@@ -131,6 +133,7 @@ async function resolveAdminContext(organizationId: string): Promise<
       message: TEAM_ACTION_MESSAGES.unauthorized,
     };
   }
+  await requireLegalConsent(userId);
   let isAdmin: boolean;
   try {
     isAdmin = await isOrgAdmin(organizationId);
@@ -447,6 +450,7 @@ export async function joinTeamByCodeAction(input: {
       message: TEAM_ACTION_MESSAGES.unauthorized,
     };
   }
+  await requireLegalConsent(userId);
 
   // Rate-limit before schema parse on purpose: malformed input still
   // costs a slot so brute-force enumeration can't dodge the limiter by

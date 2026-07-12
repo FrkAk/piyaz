@@ -154,10 +154,10 @@ function matchTaskRef(
  * Parse a sequence number and bound it to the int4 column range.
  *
  * @param seqText - Digit string from a ref match.
- * @returns The sequence number, or null when it cannot be a valid task
+ * @returns The sequence number, or null when it cannot be a valid
  *   sequence (out of int4 range) so the lookup can be skipped safely.
  */
-function seqInRange(seqText: string): number | null {
+export function seqInRange(seqText: string): number | null {
   const seq = Number(seqText);
   if (!Number.isSafeInteger(seq) || seq < 1 || seq > INT4_MAX) return null;
   return seq;

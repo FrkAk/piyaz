@@ -1,6 +1,6 @@
 # Beta Terms of Service
 
-Last updated: July 11, 2026
+Last updated: July 12, 2026
 
 These Beta Terms govern the **hosted Piyaz service at `app.piyaz.ai`**, operated by
 the Piyaz team, for the duration of the beta. **If you self-host Piyaz, these terms do
@@ -19,6 +19,11 @@ accept these Terms for that organization. You must be at least 16 years old.
 The Service is operated by the Piyaz team ("Piyaz", "we", "us"). A formal operating
 entity has not yet been established; see the [Legal Notice](/impressum). Contact:
 **legal@piyaz.ai**.
+
+When you create or use a team on the Service, the
+[Data Processing Agreement](/dpa) ("DPA") is incorporated into these Terms by
+reference for that team's use of the Service. The team owner accepts the DPA on
+the team's behalf when creating the team.
 
 ## 2. Beta status of the Service
 
@@ -144,11 +149,15 @@ these Terms will designate governing law and jurisdiction.
 
 ## 17. Changes to these Terms
 
-We may update these Terms. The date at the top reflects the current
-version. We will notify you of material changes in-app or by email. When the beta ends,
-when paid plans are introduced, or for any other material change, we will ask you to
-**actively re-accept** the new Terms before you continue using the Service; silence is
-not treated as acceptance.
+We may amend these Terms at any time and will update this page when we do; the
+date at the top reflects the current version. We will notify you of material
+changes, such as the end of the beta or the introduction of paid plans, at least
+**30 days** before the change takes effect, by posting a notice in the Service or
+sending an email to the address on your account. For a material change we will
+also ask you to **actively re-accept** the new Terms in the Service before you
+continue using it; silence is not treated as acceptance. For any other
+modification, your continued use of the Service constitutes agreement to the
+revised Terms.
 
 ## 18. Contact
 

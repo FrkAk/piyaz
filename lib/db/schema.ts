@@ -686,6 +686,11 @@ export const legalAcceptances = pgTable(
     userAgent: text("user_agent"),
   },
   (t) => [
+    index("legal_acceptances_user_type_version_idx").on(
+      t.userId,
+      t.documentType,
+      t.documentVersion,
+    ),
     check(
       "legal_acceptances_document_type_check",
       sql`${t.documentType} IN ('terms', 'privacy', 'dpa')`,

@@ -6,14 +6,21 @@ import {
   IconAgent,
   IconBundle,
   IconLock,
+  IconPanelLeft,
+  IconPencil,
+  IconSettings,
   IconUser,
   IconUsers,
   IconX,
 } from "@/components/shared/icons";
 import { Avatar } from "@/components/shared/Avatar";
+import { EditButton } from "@/components/shared/EditButton";
+import { EditHint } from "@/components/shared/EditHint";
+import { Markdown } from "@/components/shared/Markdown";
 import { MonoId } from "@/components/shared/MonoId";
 import { useSession } from "@/lib/auth-client";
 import type { NoteFull } from "@/lib/data/note";
+import { NOTE_SUMMARY_MAX_CHARS } from "@/lib/types";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { noteKeys } from "@/lib/query/keys";
 import { fetchNotesTree } from "@/lib/query/queries";
@@ -22,6 +29,8 @@ import type { TaskStatus, Visibility } from "@/lib/types";
 import { formatRelative } from "@/lib/ui/relative-time";
 import { ConflictBanner } from "./ConflictBanner";
 import { NoteEditor } from "./NoteEditor";
+import { displayActor } from "./NoteHistory";
+import { Pill } from "./Pill";
 import { useNotePresenceHeartbeat } from "./usePresenceHeartbeat";
 import { NOTE_TYPE_META, tint } from "./note-meta";
 import {
@@ -36,7 +45,7 @@ import {
   type NoteTaskTarget,
 } from "./NoteInline";
 import { useNoteDetail } from "./useNoteDetail";
-import { useNoteAutosave } from "./useNoteMutations";
+import { useNoteAutosave, useUpdateNote } from "./useNoteMutations";
 
 /** Slim project task map keyed by task id, threaded from the workspace. */
 export type TaskSlimMap = ReadonlyMap<
@@ -61,6 +70,10 @@ interface EditorPaneProps {
   onSelectNote: (noteId: string | null) => void;
   /** @param taskMap - Project task slim map for inline chip resolution. */
   taskMap: TaskSlimMap;
+  /** @param onShowTree - When set, renders a reopen-tree button in the note header (collapsed-rail `lg` mode). */
+  onShowTree?: () => void;
+  /** @param onOpenSettings - When set, renders a settings button in the note header (`lg` drawer / collapsed-ribbon mode). */
+  onOpenSettings?: () => void;
 }
 
 /**
@@ -69,7 +82,9 @@ interface EditorPaneProps {
  * block editor as a flush document column filling the pane, with a
  * hairline divider under the header masthead. The column caps at 760px
  * with side padding that narrows below `sm` so phone widths never
- * overflow horizontally.
+ * overflow horizontally. Pane chrome (reopen tree, open settings) joins
+ * the header chip row rather than floating over it, so narrow widths
+ * never collide the toggles with the note's own controls.
  *
  * @param props - Project scope, selection, navigation, and title-focus wiring.
  * @returns The flexible editor column.
@@ -83,6 +98,8 @@ export function EditorPane({
   onSelectTask,
   onSelectNote,
   taskMap,
+  onShowTree,
+  onOpenSettings,
 }: EditorPaneProps) {
   return (
     <div
@@ -104,6 +121,8 @@ export function EditorPane({
           onSelectTask={onSelectTask}
           onSelectNote={onSelectNote}
           taskMap={taskMap}
+          onShowTree={onShowTree}
+          onOpenSettings={onOpenSettings}
         />
       )}
     </div>
@@ -119,11 +138,9 @@ interface EditorBodyProps {
   onSelectTask: (taskId: string) => void;
   onSelectNote: (noteId: string | null) => void;
   taskMap: TaskSlimMap;
+  onShowTree?: () => void;
+  onOpenSettings?: () => void;
 }
-
-/** Shared pill chip classes for the header row. */
-const PILL_CLASS =
-  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase";
 
 /**
  * Loaded-note body: header chip row (with live presence avatars on team
@@ -153,22 +170,36 @@ function EditorBody({
   onSelectTask,
   onSelectNote,
   taskMap,
+  onShowTree,
+  onOpenSettings,
 }: EditorBodyProps) {
   const qc = useQueryClient();
-  const { data, isPlaceholderData, isError } = useNoteDetail(projectId, noteId);
+  const { data, isPlaceholderData, isError, refetch } = useNoteDetail(
+    projectId,
+    noteId,
+  );
   const noteList = useQuery({
     queryKey: noteKeys.list(projectId),
     queryFn: fetchNotesTree(qc, projectId),
   });
   const autosave = useNoteAutosave(projectId, noteId);
+  const updateNote = useUpdateNote(projectId);
   const session = useSession();
   const note = data?.note;
+  // Agent edits attribute to the agent, matching the History timeline:
+  // the flag rides the detail read, so no extra request resolves it.
   const updaterName =
     note === undefined || note.updatedBy === null
       ? null
       : note.updatedBy === session.data?.user.id
-        ? "you"
-        : (data?.updatedByName ?? null);
+        ? data?.updatedByAgent
+          ? "your agent"
+          : "you"
+        : data?.updatedByName == null
+          ? null
+          : data.updatedByAgent
+            ? displayActor(data.updatedByName, true)
+            : data.updatedByName;
   useNotePresenceHeartbeat(
     noteId,
     note !== undefined && !isPlaceholderData && note.visibility === "team",
@@ -264,81 +295,80 @@ function EditorBody({
   if (note === undefined) {
     if (!isError) return null;
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-[12px] text-text-muted">Note not found</p>
+      <div className="flex h-full items-center justify-center gap-2 text-[12px] text-text-muted">
+        <span>Note not found.</span>
+        <button
+          type="button"
+          onClick={() => void refetch()}
+          className="cursor-pointer text-text-secondary underline hover:text-text-primary"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   const meta = NOTE_TYPE_META[note.type];
   const editable = !note.locked && !isPlaceholderData;
+  const summaryResult = updateNote.data;
+  const summaryError = updateNote.isError
+    ? "Couldn't save summary."
+    : summaryResult && !summaryResult.ok
+      ? summaryResult.message
+      : null;
 
   return (
     <div className="mx-auto max-w-[760px] px-4 pb-16 pt-6 sm:px-[34px] sm:pt-8">
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {onShowTree !== undefined && (
+          <button
+            type="button"
+            onClick={onShowTree}
+            aria-label="Show notes list"
+            title="Show notes list"
+            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 pointer-coarse:h-7 pointer-coarse:w-7"
+          >
+            <IconPanelLeft size={12} />
+          </button>
+        )}
         {!isPlaceholderData && (
           <MonoId
             id={composeNoteRef(
               asIdentifier(projectIdentifier),
               note.sequenceNumber,
             )}
-            copyable={false}
+            hintOnMount
           />
         )}
-        <span
-          className="inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] uppercase"
-          style={{
-            color: meta.color,
-            background: tint(meta.color, 13),
-            border: `1px solid ${tint(meta.color, 26)}`,
-          }}
+        <Pill color={meta.color}>{meta.label}</Pill>
+        <Pill
+          color={
+            note.visibility === "team"
+              ? "var(--color-done)"
+              : "var(--color-text-muted)"
+          }
+          icon={
+            note.visibility === "team" ? (
+              <IconUsers size={10} />
+            ) : (
+              <IconUser size={10} />
+            )
+          }
         >
-          {meta.label}
-        </span>
-        <span
-          className={PILL_CLASS}
-          style={{
-            color:
-              note.visibility === "team"
-                ? "var(--color-done)"
-                : "var(--color-text-muted)",
-            background:
-              note.visibility === "team"
-                ? "var(--color-done-bg)"
-                : "var(--color-surface-hover)",
-            border: "1px solid var(--color-border)",
-          }}
-        >
-          {note.visibility === "team" ? (
-            <IconUsers size={10} />
-          ) : (
-            <IconUser size={10} />
-          )}
           {note.visibility}
-        </span>
+        </Pill>
         {note.locked && (
-          <span
-            className={PILL_CLASS}
-            style={{
-              color: "var(--color-danger)",
-              background: tint("var(--color-danger)", 12),
-              border: `1px solid ${tint("var(--color-danger)", 30)}`,
-            }}
-          >
-            <IconLock size={10} /> locked
-          </span>
+          <Pill color="var(--color-danger)" icon={<IconLock size={10} />}>
+            locked
+          </Pill>
         )}
         {!note.agentWritable && (
-          <span
-            className={PILL_CLASS}
-            style={{
-              color: "var(--color-glyph-review)",
-              background: tint("var(--color-glyph-review)", 12),
-              border: `1px solid ${tint("var(--color-glyph-review)", 30)}`,
-            }}
+          <Pill
+            color="var(--color-glyph-review)"
+            icon={<IconAgent size={10} />}
           >
-            <IconAgent size={10} /> agent read-only
-          </span>
+            agent read-only
+          </Pill>
         )}
         <div className="ml-auto flex items-center gap-2">
           {note.locked && (
@@ -347,12 +377,23 @@ function EditorBody({
             </span>
           )}
           <PresenceAvatars noteId={noteId} visibility={note.visibility} />
+          {onOpenSettings !== undefined && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              aria-label="Show settings"
+              title="Show settings"
+              className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 pointer-coarse:h-7 pointer-coarse:w-7"
+            >
+              <IconSettings size={12} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onSelectNote(null)}
             aria-label="Close note"
             title="Close note"
-            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+            className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border-strong text-text-muted hover:bg-surface-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 pointer-coarse:h-7 pointer-coarse:w-7"
           >
             <IconX size={12} />
           </button>
@@ -387,6 +428,20 @@ function EditorBody({
           letterSpacing: "-0.01em",
           color: "var(--color-text-primary)",
         }}
+      />
+
+      <NoteSummary
+        summary={note.summary}
+        editable={editable}
+        saveError={summaryError}
+        onBeginEdit={() => updateNote.reset()}
+        onCommit={(next) =>
+          updateNote.mutate({
+            noteId,
+            patch: { summary: next },
+            rollbackOnStale: true,
+          })
+        }
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-1.5 border-b border-border pb-4 text-[11px] text-text-muted">
@@ -463,6 +518,174 @@ function EditorBody({
         </NoteLinkContext.Provider>
       )}
     </div>
+  );
+}
+
+interface NoteSummaryProps {
+  /** @param summary - The note's one-line summary markdown (empty when unset). */
+  summary: string;
+  /** @param editable - Whether the summary can be edited (unlocked and loaded). */
+  editable: boolean;
+  /** @param saveError - Message for the last failed summary write, else null. */
+  saveError: string | null;
+  /** @param onBeginEdit - Clear the stale write state when editing starts. */
+  onBeginEdit: () => void;
+  /** @param onCommit - Persist a changed, trimmed summary. */
+  onCommit: (next: string) => void;
+}
+
+/**
+ * Summary block under the note title. Renders the one-line summary through the
+ * shared markdown renderer and, like the body, opens a raw editor on
+ * double-click, keyboard (Enter/Space), or the touch edit button. Enter or
+ * blur commits, and an uncommitted draft is flushed on unmount so a selection
+ * change without a blur never drops the edit; Escape cancels without saving.
+ * An empty summary on an editable note shows a dashed prompt; a locked or
+ * unset read-only note renders nothing. A failed write surfaces inline instead
+ * of reverting silently, and clears when the editor reopens.
+ *
+ * @param props - Summary text, editability, last write error, and commit sink.
+ * @returns The rendered summary, the empty prompt, or the raw editor.
+ */
+function NoteSummary({
+  summary,
+  editable,
+  saveError,
+  onBeginEdit,
+  onCommit,
+}: NoteSummaryProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(summary);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const cancelledRef = useRef(false);
+  const committedRef = useRef(false);
+
+  const begin = () => {
+    if (!editable) return;
+    cancelledRef.current = false;
+    committedRef.current = false;
+    setDraft(summary);
+    setEditing(true);
+    onBeginEdit();
+  };
+
+  const commit = () => {
+    if (cancelledRef.current || committedRef.current) return;
+    committedRef.current = true;
+    setEditing(false);
+    const next = draft.trim();
+    if (next !== summary.trim()) onCommit(next);
+  };
+
+  const cancel = () => {
+    cancelledRef.current = true;
+    setEditing(false);
+  };
+
+  const flushRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    flushRef.current = () => {
+      if (!editing || cancelledRef.current || committedRef.current) return;
+      committedRef.current = true;
+      const next = draft.trim();
+      if (next !== summary.trim()) onCommit(next);
+    };
+  });
+  useEffect(() => () => flushRef.current(), []);
+
+  useEffect(() => {
+    if (!editing) return;
+    const el = ref.current;
+    if (el) {
+      el.focus({ preventScroll: true });
+      el.select();
+    }
+  }, [editing]);
+
+  if (editing) {
+    return (
+      <textarea
+        ref={ref}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        maxLength={NOTE_SUMMARY_MAX_CHARS}
+        rows={2}
+        aria-label="Note summary"
+        placeholder="One-line summary…"
+        className="mb-3 block w-full resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-[13px] text-text-secondary outline-none placeholder:text-text-faint focus-visible:border-accent/40 focus-visible:ring-1 focus-visible:ring-accent/40"
+      />
+    );
+  }
+
+  const errorLine = saveError !== null && (
+    <p
+      role="alert"
+      className="mb-3 -mt-1.5 font-mono text-[10px]"
+      style={{ color: "var(--color-danger)" }}
+    >
+      {saveError}
+    </p>
+  );
+
+  if (summary !== "") {
+    return (
+      <>
+        <div
+          tabIndex={editable ? 0 : undefined}
+          onDoubleClick={begin}
+          onKeyDown={
+            editable
+              ? (e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    begin();
+                  }
+                }
+              : undefined
+          }
+          title={editable ? "Double-click to edit the summary" : undefined}
+          className={`group/edit relative mb-3${editable ? " cursor-text rounded outline-none focus-visible:ring-1 focus-visible:ring-accent/40" : ""}`}
+        >
+          {editable && <EditHint />}
+          {editable && (
+            <EditButton
+              onClick={begin}
+              label="Edit summary"
+              className="absolute right-0 top-0 z-10 bg-base/80"
+            />
+          )}
+          <Markdown className="text-[13px] text-text-muted">{summary}</Markdown>
+        </div>
+        {errorLine}
+      </>
+    );
+  }
+
+  if (!editable) return null;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={begin}
+        className="mb-3 flex w-full items-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-left text-[12px] text-text-faint transition-colors hover:border-accent/50 hover:text-text-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+      >
+        <IconPencil size={11} className="shrink-0" />
+        Add a one-line summary so this note is easy to find.
+      </button>
+      {errorLine}
+    </>
   );
 }
 

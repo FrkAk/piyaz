@@ -93,7 +93,9 @@ describe("getPasswordUpdatedAt", () => {
   // "permission denied for table account" at runtime. These tests run
   // against the real role split and fail on any client downgrade.
   test("returns the credential row's updatedAt", async () => {
-    const f = await seedUserOrgProject("pw-updated-at");
+    const f = await seedUserOrgProject("pw-updated-at", {
+      legalCurrent: false,
+    });
     const sqlc = superuserPool();
     await sqlc`
       INSERT INTO piyaz_auth."account"
@@ -107,14 +109,16 @@ describe("getPasswordUpdatedAt", () => {
   });
 
   test("returns null for a user without a password-bearing account", async () => {
-    const f = await seedUserOrgProject("pw-no-credential");
+    const f = await seedUserOrgProject("pw-no-credential", {
+      legalCurrent: false,
+    });
     expect(await getPasswordUpdatedAt(f.userId)).toBeNull();
   });
 });
 
 describe("clearOrgMembershipArtifacts", () => {
   test("wipes session pointer + 3 oauth tables for matching (userId, orgId)", async () => {
-    const f = await seedUserOrgProject("clear-match");
+    const f = await seedUserOrgProject("clear-match", { legalCurrent: false });
 
     const sqlc = superuserPool();
     try {
@@ -161,8 +165,8 @@ describe("clearOrgMembershipArtifacts", () => {
   });
 
   test("does not touch records for other (userId, orgId) pairs", async () => {
-    const a = await seedUserOrgProject("clear-iso-a");
-    const b = await seedUserOrgProject("clear-iso-b");
+    const a = await seedUserOrgProject("clear-iso-a", { legalCurrent: false });
+    const b = await seedUserOrgProject("clear-iso-b", { legalCurrent: false });
 
     const sqlc = superuserPool();
     try {
@@ -192,7 +196,7 @@ describe("clearOrgMembershipArtifacts", () => {
 
 describe("getWhoami", () => {
   test("returns the caller's own id, name, and email", async () => {
-    const f = await seedUserOrgProject("whoami-self");
+    const f = await seedUserOrgProject("whoami-self", { legalCurrent: false });
     const who = await getWhoami(makeAuthContext(f.userId));
     expect(who).toEqual({
       userId: f.userId,
@@ -202,8 +206,8 @@ describe("getWhoami", () => {
   });
 
   test("never discloses another user's row", async () => {
-    const a = await seedUserOrgProject("whoami-a");
-    const b = await seedUserOrgProject("whoami-b");
+    const a = await seedUserOrgProject("whoami-a", { legalCurrent: false });
+    const b = await seedUserOrgProject("whoami-b", { legalCurrent: false });
     const who = await getWhoami(makeAuthContext(a.userId));
     expect(who.userId).toBe(a.userId);
     expect(who.userId).not.toBe(b.userId);
@@ -213,7 +217,7 @@ describe("getWhoami", () => {
 
 describe("scrubLegalAcceptances", () => {
   test("nulls ip/user-agent and retains document evidence", async () => {
-    const f = await seedUserOrgProject("scrub-basic");
+    const f = await seedUserOrgProject("scrub-basic", { legalCurrent: false });
     const sqlc = superuserPool();
     await insertAcceptance(sqlc, f.userId, {
       documentType: "terms",
@@ -251,13 +255,13 @@ describe("scrubLegalAcceptances", () => {
   });
 
   test("zero acceptance rows is a valid success", async () => {
-    const f = await seedUserOrgProject("scrub-empty");
+    const f = await seedUserOrgProject("scrub-empty", { legalCurrent: false });
     await expect(scrubLegalAcceptances(f.userId)).resolves.toBeUndefined();
   });
 
   test("only scrubs the target user's rows", async () => {
-    const a = await seedUserOrgProject("scrub-iso-a");
-    const b = await seedUserOrgProject("scrub-iso-b");
+    const a = await seedUserOrgProject("scrub-iso-a", { legalCurrent: false });
+    const b = await seedUserOrgProject("scrub-iso-b", { legalCurrent: false });
     const sqlc = superuserPool();
     await insertAcceptance(sqlc, a.userId, { ipAddress: "10.0.0.1" });
     await insertAcceptance(sqlc, b.userId, { ipAddress: "10.0.0.2" });
@@ -273,7 +277,7 @@ describe("scrubLegalAcceptances", () => {
 
 describe("exportAccountData", () => {
   test("returns the caller's profile, memberships, and acceptances", async () => {
-    const f = await seedUserOrgProject("export-self");
+    const f = await seedUserOrgProject("export-self", { legalCurrent: false });
     const sqlc = superuserPool();
     await insertAcceptance(sqlc, f.userId, {
       documentType: "terms",
@@ -299,7 +303,9 @@ describe("exportAccountData", () => {
   });
 
   test("never includes another member's data from a shared team", async () => {
-    const a = await seedUserOrgProject("export-shared-a");
+    const a = await seedUserOrgProject("export-shared-a", {
+      legalCurrent: false,
+    });
     const sqlc = superuserPool();
     const b = await insertUser(sqlc, "export-shared-b");
     await insertMember(sqlc, a.organizationId, b, "member");
@@ -317,7 +323,9 @@ describe("exportAccountData", () => {
 
 describe("enumerateOwnedOrgsForDeletion + planOwnedOrgDeletion", () => {
   test("blocks when the caller solely owns a team with other members", async () => {
-    const f = await seedUserOrgProject("plan-sole-owner");
+    const f = await seedUserOrgProject("plan-sole-owner", {
+      legalCurrent: false,
+    });
     const sqlc = superuserPool();
     const other = await insertUser(sqlc, "plan-sole-owner-member");
     await insertMember(sqlc, f.organizationId, other, "member");
@@ -333,7 +341,9 @@ describe("enumerateOwnedOrgsForDeletion + planOwnedOrgDeletion", () => {
   });
 
   test("marks a solely-owned memberless team for deletion", async () => {
-    const f = await seedUserOrgProject("plan-memberless");
+    const f = await seedUserOrgProject("plan-memberless", {
+      legalCurrent: false,
+    });
 
     const owned = await enumerateOwnedOrgsForDeletion(f.userId);
     expect(owned).toEqual([
@@ -346,7 +356,9 @@ describe("enumerateOwnedOrgsForDeletion + planOwnedOrgDeletion", () => {
   });
 
   test("leaves a co-owned team untouched", async () => {
-    const f = await seedUserOrgProject("plan-co-owned");
+    const f = await seedUserOrgProject("plan-co-owned", {
+      legalCurrent: false,
+    });
     const sqlc = superuserPool();
     const coOwner = await insertUser(sqlc, "plan-co-owner-2");
     const member = await insertUser(sqlc, "plan-co-owner-member");
@@ -364,7 +376,9 @@ describe("enumerateOwnedOrgsForDeletion + planOwnedOrgDeletion", () => {
   });
 
   test("excludes teams where the caller is not an owner", async () => {
-    const owner = await seedUserOrgProject("plan-not-owner-owner");
+    const owner = await seedUserOrgProject("plan-not-owner-owner", {
+      legalCurrent: false,
+    });
     const sqlc = superuserPool();
     const member = await insertUser(sqlc, "plan-not-owner-member");
     await insertMember(sqlc, owner.organizationId, member, "member");

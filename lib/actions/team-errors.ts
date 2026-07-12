@@ -27,6 +27,7 @@ export type TeamActionFailureCode =
   | "invalid_password"
   | "session_not_fresh"
   | "rate_limited"
+  | "dpa_not_accepted"
   | "unknown";
 
 /** Discriminated result. `T = void` shrinks to `{ ok: true }` (no `data`). */
@@ -62,6 +63,8 @@ export const TEAM_ACTION_MESSAGES: Record<TeamActionFailureCode, string> = {
   session_not_fresh:
     "For security, confirm with your password or sign in again, then retry.",
   rate_limited: "Too many attempts. Please wait a moment and try again.",
+  dpa_not_accepted:
+    "You must accept the data processing agreement to create a team.",
   unknown: "Something went wrong. Please try again.",
 };
 
@@ -157,6 +160,9 @@ export function mapBetterAuthError(err: unknown): TeamActionFailureCode {
     // changePassword on a user without a password-bearing credential row.
     case "CREDENTIAL_ACCOUNT_NOT_FOUND":
       return "not_found";
+    // organization/create rejected by the DPA consent gate in lib/auth.ts.
+    case "DPA_NOT_ACCEPTED":
+      return "dpa_not_accepted";
     default:
       if (FORBIDDEN_CODES.has(code)) return "forbidden";
       if (code.startsWith("YOU_ARE_NOT_ALLOWED_TO_")) {

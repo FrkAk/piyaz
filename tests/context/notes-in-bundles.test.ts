@@ -230,6 +230,67 @@ test("slim bundles render every matched note as a pointer, never a body", async 
   expect(recordText).not.toContain("## Project Guidance");
 });
 
+test("note-task backlinks of any kind surface as summary pointers; private links stay hidden", async () => {
+  const fx = await seedRichContextTask("notes-backlink");
+  const { task } = await resolveWorkingData(fx.userId, fx.taskId);
+  const sr = serviceRoleConnect();
+  try {
+    const [teamNote] = await sr`
+      INSERT INTO notes
+        (project_id, title, slug, visibility, type, body, summary, feed_mode)
+      VALUES
+        (${task.projectId}, 'Linked spec', 'linked-spec', 'team', 'reference',
+         'Spec body detail.', 'the spec', 'none')
+      RETURNING id
+    `;
+    const [mentionNote] = await sr`
+      INSERT INTO notes
+        (project_id, title, slug, visibility, type, body, summary, feed_mode)
+      VALUES
+        (${task.projectId}, 'Mentioned doc', 'mentioned-doc', 'team',
+         'knowledge', 'Mention body.', 'a mention', 'none')
+      RETURNING id
+    `;
+    const [privateNote] = await sr`
+      INSERT INTO notes
+        (project_id, title, slug, visibility, type, body, summary, feed_mode)
+      VALUES
+        (${task.projectId}, 'Private linked', 'private-linked', 'private',
+         'reference', 'Secret spec.', 'hidden', 'none')
+      RETURNING id
+    `;
+    await sr`
+      INSERT INTO note_task_links (note_id, task_id, kind) VALUES
+        (${teamNote.id}, ${fx.taskId}, 'spec_of'),
+        (${mentionNote.id}, ${fx.taskId}, 'mention'),
+        (${privateNote.id}, ${fx.taskId}, 'spec_of')
+    `;
+  } finally {
+    await sr.end({ timeout: 5 });
+  }
+
+  const agent = await resolveAgentBundleData(fx.userId, fx.taskId);
+  expect(agent.kind).toBe("agent");
+  if (agent.kind !== "agent") throw new Error("unreachable");
+  const planning = await resolvePlanningData(fx.userId, fx.taskId);
+
+  for (const feed of [agent.data.feed, planning.feed]) {
+    expect(feed.linked.map((n) => n.title)).toEqual([
+      "Linked spec",
+      "Mentioned doc",
+    ]);
+    expect(feed.notes.map((n) => n.title)).not.toContain("Linked spec");
+  }
+
+  const agentText = joinParts(buildAgentContextParts(agent.data));
+  expect(agentText).toContain("## Relevant Notes");
+  expect(agentText).toMatch(/\[reference\] Linked spec — the spec/);
+  expect(agentText).toMatch(/\[knowledge\] Mentioned doc — a mention/);
+  expect(agentText).not.toContain("Spec body detail.");
+  expect(agentText).not.toContain("Private linked");
+  expect(agentText).not.toContain("Secret spec.");
+});
+
 test("an over-budget guidance body degrades every matched note to pointers", async () => {
   const fx = await seedRichContextTask("notes-overflow");
   const { task } = await resolveWorkingData(fx.userId, fx.taskId);

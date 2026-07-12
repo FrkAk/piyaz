@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { Root } from "mdast";
 import { defaultSchema } from "rehype-sanitize";
 import { Markdown } from "@/components/shared/Markdown";
@@ -58,11 +59,17 @@ interface NoteMarkdownProps {
  * Full-markdown renderer for a note body: the shared {@link Markdown}
  * component plus clickable task-ref chips and `[[wiki]]` links. Resolution
  * and navigation come from the `NoteLinkContext` the caller provides.
+ * Memoized on its two string props: markdown parses in render, so without
+ * the memo every parent re-render (each title keystroke) re-parses the
+ * whole body.
  *
  * @param props - Note body and owning project identifier.
  * @returns The rendered note.
  */
-export function NoteMarkdown({ body, identifier }: NoteMarkdownProps) {
+export const NoteMarkdown = memo(function NoteMarkdown({
+  body,
+  identifier,
+}: NoteMarkdownProps) {
   return (
     <Markdown
       className="note-md text-[13.5px] text-text-secondary"
@@ -73,6 +80,6 @@ export function NoteMarkdown({ body, identifier }: NoteMarkdownProps) {
       {body}
     </Markdown>
   );
-}
+});
 
 export default NoteMarkdown;

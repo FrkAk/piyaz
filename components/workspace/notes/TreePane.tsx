@@ -50,6 +50,7 @@ import {
 import { DeleteConfirm } from "@/components/workspace/structure/DeleteConfirm";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { MoveToFolderDialog } from "./MoveToFolderDialog";
+import { Pill } from "./Pill";
 import {
   type FlatTreeRow,
   flattenNoteCategories,
@@ -59,12 +60,14 @@ import {
   groupNotesByCategory,
   leafOf,
   normalizeFolderInput,
+  partitionSearchHits,
   NOTE_TYPE_META,
   parentOf,
   planFolderMove,
   planFolderRename,
   resolveCreateTarget,
   sortNoteRows,
+  summarizeFolderDelete,
   tint,
   type TypeFilter,
 } from "./note-meta";
@@ -105,6 +108,8 @@ const RAIL_WIDTH = 320;
 interface TreePaneProps {
   /** @param projectId - Owning project id. */
   projectId: string;
+  /** @param projectIdentifier - Project prefix for composing refs in the search split. */
+  projectIdentifier: string;
   /** @param selectedId - Selected note id, or null. */
   selectedId: string | null;
   /** @param onSelect - Select a note (writes `?note=<id>`); null clears the selection. */
@@ -223,7 +228,7 @@ function RowActionsMenu({
         }}
         renderTrigger={(_active, open) => (
           <span
-            className={`inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary in-focus-visible:bg-surface-hover in-focus-visible:text-text-primary ${
+            className={`inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary in-focus-visible:bg-surface-hover in-focus-visible:text-text-primary pointer-coarse:h-7 pointer-coarse:w-7 ${
               coarse || open
                 ? ""
                 : "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
@@ -273,7 +278,7 @@ const NoteRow = memo(function NoteRow({
   onMove,
 }: NoteRowProps) {
   const color = NOTE_TYPE_META[row.type].color;
-  const draggable = onDragStart !== undefined;
+  const draggable = onDragStart !== undefined && !coarse;
 
   if (renaming) {
     return (
@@ -370,10 +375,16 @@ const NoteRow = memo(function NoteRow({
           {row.title || "Untitled"}
         </span>
         {row.visibility === "private" && (
-          <IconUser size={10} className="text-text-faint" />
+          <span title="Private" className="shrink-0 text-text-faint">
+            <IconUser size={10} />
+            <span className="sr-only">Private</span>
+          </span>
         )}
         {!row.agentWritable && (
-          <IconLock size={10} className="text-text-faint" />
+          <span title="Agent read-only" className="shrink-0 text-text-faint">
+            <IconLock size={10} />
+            <span className="sr-only">Agent read-only</span>
+          </span>
         )}
       </button>
       {onDelete !== undefined &&
@@ -546,8 +557,8 @@ const FolderRow = memo(function FolderRow({
     <div className="group relative flex w-full items-center">
       <button
         type="button"
-        draggable
-        aria-roledescription="Draggable folder"
+        draggable={!coarse}
+        aria-roledescription={coarse ? undefined : "Draggable folder"}
         aria-current={selected ? "true" : undefined}
         onClick={() => onClick(path)}
         onDoubleClick={() => onBeginRename(path)}
@@ -599,8 +610,10 @@ const FolderRow = memo(function FolderRow({
         ) : (
           <IconChevronDown size={11} className="text-text-muted" />
         )}
-        <span className="text-[12px] font-semibold">{leafOf(path)}</span>
-        <span className="ml-auto font-mono text-[10px] text-text-faint">
+        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">
+          {leafOf(path)}
+        </span>
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-text-faint">
           {noteCount}
         </span>
       </button>
@@ -727,6 +740,7 @@ function TreeSkeleton() {
  */
 export function TreePane({
   projectId,
+  projectIdentifier,
   selectedId,
   onSelect,
   onNewNote,
@@ -835,7 +849,8 @@ export function TreePane({
     useDeleteNote(projectId);
   const { mutateAsync: restoreNoteAsync } = useRestoreNote(projectId);
   const { mutate: mutateCreateFolder } = useCreateFolder(projectId);
-  const { mutate: mutateDeleteFolder } = useDeleteFolder(projectId);
+  const { mutate: mutateDeleteFolder, mutateAsync: deleteFolderAsync } =
+    useDeleteFolder(projectId);
 
   const {
     canUndo,
@@ -924,6 +939,7 @@ export function TreePane({
   }, [search.data, typeFilter]);
 
   const count = searching ? hits.length : visibleRows.length;
+  const countReady = searching ? !search.isPending : !list.isPending;
 
   /**
    * Folder row click: toggle collapse and select the folder as the
@@ -1311,8 +1327,10 @@ export function TreePane({
    * Confirm a non-empty folder delete: clear the selection when the open
    * note is inside, drop the subtree's explicit folder rows, await the
    * soft-delete of every note under the folder, then push one undo entry
-   * that restores the notes (explicit empty subfolders are not
-   * resurrected by the undo).
+   * covering only the notes actually deleted (explicit empty subfolders
+   * are not resurrected by the undo). Failed deletes surface as one
+   * message counting and naming the surviving notes; when every delete
+   * fails no undo entry is pushed.
    */
   async function confirmFolderDelete() {
     const pending = pendingFolderDelete;
@@ -1322,28 +1340,34 @@ export function TreePane({
       onSelect(null);
     }
     clearSelectionUnder(pending.path);
-    mutateDeleteFolder(pending.path, {
-      onSuccess: (result) => {
-        if (!result.ok) setTreeError(result.message);
-      },
-      onError: () => setTreeError("Delete failed"),
-    });
+    const folderPromise = deleteFolderAsync(pending.path).catch(() => null);
     const results = await Promise.all(
       pending.noteIds.map((id) => deleteNoteAsync(id).catch(() => null)),
     );
-    for (const result of results) {
-      if (result === null) setTreeError("Delete failed");
-      else if (!result.ok) setTreeError(result.message);
+    const folderResult = await folderPromise;
+    const titles = new Map((rows ?? []).map((r) => [r.id, r.title]));
+    const { deleted, failureMessage } = summarizeFolderDelete(
+      pending.noteIds,
+      results,
+      (id) => titles.get(id) || "Untitled",
+    );
+    const folderMessage =
+      folderResult === null
+        ? "Delete failed"
+        : folderResult.ok
+          ? null
+          : folderResult.message;
+    const message = failureMessage ?? folderMessage;
+    if (message !== null) setTreeError(message);
+    if (deleted.length > 0) {
+      pushUndo({
+        notes: deleted.map((d) => ({
+          id: d.id,
+          token: casToken(d.updatedAt),
+        })),
+        label: leafOf(pending.path),
+      });
     }
-    pushUndo({
-      notes: pending.noteIds.map((id, i) => {
-        const result = results[i];
-        return result?.ok
-          ? { id, token: casToken(result.data.updatedAt) }
-          : { id };
-      }),
-      label: leafOf(pending.path),
-    });
   }
 
   /**
@@ -1392,28 +1416,52 @@ export function TreePane({
     [allFolders],
   );
 
-  const flatItems = useMemo<FlatTreeRow[]>(
-    () =>
-      searching
-        ? hits.map((h) => ({
-            kind: "note" as const,
-            key: h.id,
-            note: h,
-            indent: 8,
-          }))
-        : group === "category"
-          ? flattenNoteCategories(groupNotesByCategory(sortedRows))
-          : flattenNoteTree(foldersByParent, notesByFolder, collapsed),
-    [
-      searching,
-      hits,
-      group,
-      sortedRows,
-      foldersByParent,
-      notesByFolder,
-      collapsed,
-    ],
-  );
+  const flatItems = useMemo<FlatTreeRow[]>(() => {
+    if (searching) {
+      // Direct hits (title/summary/ref contain the query) lead; body-only
+      // full-text hits sit under a labeled section so a strong match is
+      // never drowned by mentions. Recomputed from the hit rows themselves:
+      // the split ships no extra bytes.
+      const { direct, content } = partitionSearchHits(
+        hits,
+        query,
+        projectIdentifier,
+      );
+      const toItem = (h: (typeof hits)[number]) => ({
+        kind: "note" as const,
+        key: h.id,
+        note: h,
+        indent: 8,
+      });
+      return [
+        ...direct.map(toItem),
+        ...(content.length > 0
+          ? [
+              {
+                kind: "section" as const,
+                key: "__search-content__",
+                label: "In content",
+                noteCount: content.length,
+              },
+              ...content.map(toItem),
+            ]
+          : []),
+      ];
+    }
+    return group === "category"
+      ? flattenNoteCategories(groupNotesByCategory(sortedRows))
+      : flattenNoteTree(foldersByParent, notesByFolder, collapsed);
+  }, [
+    searching,
+    hits,
+    query,
+    projectIdentifier,
+    group,
+    sortedRows,
+    foldersByParent,
+    notesByFolder,
+    collapsed,
+  ]);
 
   const keyIndex = useMemo(() => {
     const map = new Map<string, number>();
@@ -1560,7 +1608,7 @@ export function TreePane({
         style={{ height: 40 }}
       >
         <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-          Notes · {count}
+          Notes{countReady ? ` · ${count}` : ""}
         </span>
         <div className="flex items-center gap-0.5">
           <UndoButton canUndo={canUndo} onUndo={undo} className="mr-0.5" />
@@ -1570,7 +1618,7 @@ export function TreePane({
             disabled={group === "category"}
             aria-label="New folder"
             title="New folder"
-            className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:cursor-default disabled:opacity-50"
+            className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:cursor-default disabled:opacity-50"
           >
             <IconFolderPlus size={13} />
           </button>
@@ -1580,7 +1628,7 @@ export function TreePane({
             disabled={createPending}
             aria-label="New note"
             title="New note"
-            className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:cursor-default disabled:opacity-50"
+            className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-text-muted hover:bg-surface-hover hover:text-text-primary disabled:cursor-default disabled:opacity-50"
           >
             <IconPlus
               size={13}
@@ -1630,7 +1678,10 @@ export function TreePane({
             value={rawQuery}
             onChange={(e) => setRawQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Escape") setRawQuery("");
+              if (e.key === "Escape" && rawQuery !== "") {
+                e.stopPropagation();
+                setRawQuery("");
+              }
             }}
             placeholder="Search notes…"
             className="w-full bg-transparent font-mono text-[11.5px] outline-none placeholder:text-text-faint [&::-webkit-search-cancel-button]:appearance-none"
@@ -1642,7 +1693,7 @@ export function TreePane({
               onClick={() => setRawQuery("")}
               aria-label="Clear search"
               title="Clear search"
-              className="inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-text-faint hover:text-text-primary"
+              className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-text-faint hover:text-text-primary pointer-coarse:h-6 pointer-coarse:w-6"
             >
               <IconX size={11} />
             </button>
@@ -1658,20 +1709,16 @@ export function TreePane({
           const labelColor =
             c === "all" && !active ? "var(--color-text-muted)" : color;
           return (
-            <button
+            <Pill
               key={c}
-              type="button"
-              aria-pressed={active}
+              color={labelColor}
+              active={active}
+              ariaPressed={active}
               onClick={() => setTypeFilter(c)}
-              className="inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-[10px] uppercase"
-              style={{
-                color: labelColor,
-                background: active ? tint(color, 13) : "transparent",
-                border: `1px solid ${active ? tint(color, 30) : "var(--color-border)"}`,
-              }}
+              className="shrink-0 whitespace-nowrap pointer-coarse:min-h-6 pointer-coarse:px-2.5"
             >
               {c === "all" ? "All" : NOTE_TYPE_META[c].label}
-            </button>
+            </Pill>
           );
         })}
       </div>
@@ -1712,20 +1759,38 @@ export function TreePane({
       </div>
 
       {(treeError ?? createError ?? foldersError) !== null && (
-        <p
-          className="px-3 pb-1.5 font-mono text-[10.5px]"
+        <div
+          className="flex items-center gap-2 px-3 pb-1.5 font-mono text-[10.5px]"
           style={{ color: "var(--color-danger)" }}
         >
-          {treeError ?? createError ?? foldersError}
-        </p>
+          <span>{treeError ?? createError ?? foldersError}</span>
+          {treeError === null &&
+            createError === null &&
+            foldersError !== null && (
+              <button
+                type="button"
+                onClick={() => void folders.refetch()}
+                className="cursor-pointer text-text-muted underline hover:text-text-secondary"
+              >
+                Retry
+              </button>
+            )}
+        </div>
       )}
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {searching ? (
           search.isError ? (
-            <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
-              Search failed
-            </p>
+            <div className="flex items-center gap-2 px-2 pt-2 font-mono text-[11px] text-text-faint">
+              <span>Search failed.</span>
+              <button
+                type="button"
+                onClick={() => void search.refetch()}
+                className="cursor-pointer text-text-muted underline hover:text-text-secondary"
+              >
+                Retry
+              </button>
+            </div>
           ) : hits.length > 0 ? null : search.isPending ? (
             <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
               Searching…
@@ -1736,9 +1801,16 @@ export function TreePane({
             </p>
           )
         ) : list.isError ? (
-          <p className="px-2 pt-2 font-mono text-[11px] text-text-faint">
-            Failed to load notes
-          </p>
+          <div className="flex items-center gap-2 px-2 pt-2 font-mono text-[11px] text-text-faint">
+            <span>Failed to load notes.</span>
+            <button
+              type="button"
+              onClick={() => void list.refetch()}
+              className="cursor-pointer text-text-muted underline hover:text-text-secondary"
+            >
+              Retry
+            </button>
+          </div>
         ) : list.isPending ? (
           <TreeSkeleton />
         ) : flatItems.length === 0 && creatingFolder === null ? (

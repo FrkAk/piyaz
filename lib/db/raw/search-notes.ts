@@ -16,17 +16,21 @@
  * against `lin` as a prefix). Plain OR of the bare prefix would let the
  * partial last word alone match; plain AND of the full parse would
  * demand the partial word as a complete lexeme and kill type-ahead.
- * The prefix lexeme is sanitized to strict alphanumerics in TS and
- * bound as a parameter, so no user text ever reaches `to_tsquery`
- * syntax. GIN `tsvector_ops` supports prefix lexemes via partial
- * match, so the arm stays on `notes_search_idx`.
+ * A hyphenated or otherwise punctuated last term splits into its
+ * alphanumeric sub-tokens, ANDed together with only the final sub-token
+ * prefix-matched (`probe-card` becomes `probe & card:*`), so it matches
+ * a compound like `probe-cardinality` that Postgres tokenizes into
+ * separate lexemes. Each sub-token is strict alphanumerics and the `&`
+ * and `:*` operators are inserted here, so no user text ever reaches
+ * `to_tsquery` syntax. GIN `tsvector_ops` supports prefix lexemes via
+ * partial match, so the arm stays on `notes_search_idx`.
  *
  * Ranked on the GIN index and capped at `NOTE_SEARCH_LIMIT`; the raw
  * `body` and `search_tsv` are never selected.
  */
 
 import { sql } from "drizzle-orm";
-import { notes } from "@/lib/db/schema";
+import { notes, projects } from "@/lib/db/schema";
 import { type ReadConn } from "@/lib/db/raw";
 
 /** Maximum hits one search returns. */
@@ -54,21 +58,26 @@ export type NoteSearchRawRow = {
  *
  * The arm is skipped when the query ends with a quote (the user closed
  * a phrase), when the last term is websearch-negated (`-draft` must not
- * prefix-match `draft`), or when the term sanitizes to fewer than 2
- * alphanumeric chars.
+ * prefix-match `draft`), or when the final alphanumeric sub-token is
+ * fewer than 2 chars (a 1-char prefix matches too much).
  *
  * @param query - Trimmed, non-empty user search text.
- * @returns The query text before the last term plus the `lexeme:*`
- *   prefix term, or `null` when the arm does not apply.
+ * @returns The query text before the last term plus the ANDed sub-token
+ *   prefix expression (final sub-token as `token:*`), or `null` when the
+ *   arm does not apply.
  */
 function typeaheadArm(query: string): { head: string; prefix: string } | null {
   if (query.endsWith('"')) return null;
   const start = query.search(/\S+$/);
   const lastTerm = query.slice(start);
   if (lastTerm.startsWith("-")) return null;
-  const lexeme = lastTerm.replace(/[^a-zA-Z0-9]/g, "");
-  if (lexeme.length < 2) return null;
-  return { head: query.slice(0, start).trim(), prefix: `${lexeme}:*` };
+  const subTokens = lastTerm.split(/[^a-zA-Z0-9]+/).filter((t) => t.length > 0);
+  const lastSub = subTokens.at(-1);
+  if (lastSub === undefined || lastSub.length < 2) return null;
+  const prefix = subTokens
+    .map((token, i) => (i === subTokens.length - 1 ? `${token}:*` : token))
+    .join(" & ");
+  return { head: query.slice(0, start).trim(), prefix };
 }
 
 /**
@@ -110,5 +119,122 @@ export function noteSearchStmt(
       AND n.search_tsv @@ q.tsq
     ORDER BY rank DESC, n.updated_at DESC
     LIMIT ${NOTE_SEARCH_LIMIT}
+  `);
+}
+
+/**
+ * Resolve a typed note ref to a single live note, bypassing FTS.
+ *
+ * A note ref (`PREFIX-N<seq>`) is composed at read time and never enters
+ * the `search_tsv`, so {@link noteSearchStmt} can never match it. This
+ * sibling resolves the ref by exact project identifier + sequence number,
+ * gated to the searched project so a ref naming any other project matches
+ * nothing here (the caller then falls back to {@link noteSearchStmt}, so
+ * ref-shaped title text stays findable). Returns the identical slim
+ * {@link NoteSearchRawRow} shape (no `body`, no `search_tsv`) with a
+ * constant rank, and stays inside the caller's RLS scope like the FTS path.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project to search in.
+ * @param prefix - Uppercased ref prefix; must equal the project identifier.
+ * @param seq - Parsed note sequence number.
+ * @returns Lazy raw statement yielding at most one {@link NoteSearchRawRow}.
+ */
+export function noteRefSearchStmt(
+  read: ReadConn,
+  projectId: string,
+  prefix: string,
+  seq: number,
+) {
+  return read.execute(sql`
+    SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
+           n.summary, n.visibility, n.feed_mode, n.agent_writable, n.locked,
+           n.updated_at, 1 AS rank
+    FROM ${notes} n
+    JOIN ${projects} p ON p.id = n.project_id
+    WHERE n.project_id = ${projectId}
+      AND p.identifier = ${prefix}
+      AND n.sequence_number = ${seq}
+      AND n.deleted_at IS NULL
+    LIMIT 1
+  `);
+}
+
+/** Rows the substring scan may return before the caller merges FTS hits. */
+const NOTE_SUBSTRING_LIMIT = 20;
+
+/**
+ * Escape the LIKE metacharacters in user text so `%`, `_`, and `\` match
+ * themselves. Pair the pattern with `ESCAPE '\'` in the predicate.
+ *
+ * @param text - Raw user text.
+ * @returns Text safe to wrap in `%...%`.
+ */
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/**
+ * Substring-match notes in the searched project the way task search
+ * matches tasks: case-insensitive `%query%` over `title`, `summary`, and
+ * each tag (the fuzzy tier FTS stemming cannot serve: `boarding` finds
+ * "Onboarding", which shares no lexeme). With `matchRef`, the composed ref
+ * joins the match so `1` finds `N1`, `N11`, and `N111` as the task list's
+ * `taskRef` filter does; ref matches order first by sequence, then title
+ * matches by recency. The ref is composed at read time and never enters
+ * `search_tsv`, so the FTS path can never match it.
+ *
+ * The caller merges these ahead of the FTS hits, deduped. Only a whole-ref
+ * query short-circuits, through {@link noteRefSearchStmt}.
+ *
+ * The predicates are not indexable, so this scans the project's live
+ * notes. It stays a separate statement rather than an `OR` arm on
+ * {@link noteSearchStmt} precisely so the FTS query keeps using its GIN
+ * index, and it rides the caller's existing read batch, costing no round
+ * trip.
+ *
+ * Returns the identical slim {@link NoteSearchRawRow} shape (no `body`, no
+ * `search_tsv`) and stays inside the caller's RLS scope like the FTS path.
+ *
+ * @param read - Read statement-building handle.
+ * @param projectId - UUID of the project to search in.
+ * @param query - Non-empty trimmed search text; LIKE metacharacters match
+ *   literally.
+ * @param matchRef - Whether the composed ref joins the match (the notes
+ *   rail); MCP search mirrors task search and resolves refs whole only.
+ * @returns Lazy raw statement yielding up to {@link NOTE_SUBSTRING_LIMIT}
+ *   rows.
+ */
+export function noteSubstringSearchStmt(
+  read: ReadConn,
+  projectId: string,
+  query: string,
+  matchRef: boolean,
+) {
+  const pattern = `%${escapeLike(query)}%`;
+  const refArm = matchRef
+    ? sql`(p.identifier || '-N' || n.sequence_number::text) ILIKE ${pattern} ESCAPE '\\'`
+    : sql`false`;
+  return read.execute(sql`
+    SELECT n.id, n.slug, n.sequence_number, n.title, n.type, n.folder,
+           n.summary, n.visibility, n.feed_mode, n.agent_writable, n.locked,
+           n.updated_at, 1 AS rank
+    FROM ${notes} n
+    JOIN ${projects} p ON p.id = n.project_id
+    WHERE n.project_id = ${projectId}
+      AND n.deleted_at IS NULL
+      AND (
+        ${refArm}
+        OR n.title ILIKE ${pattern} ESCAPE '\\'
+        OR n.summary ILIKE ${pattern} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(n.tags) AS tag
+          WHERE tag ILIKE ${pattern} ESCAPE '\\'
+        )
+      )
+    ORDER BY CASE WHEN ${refArm} THEN 0 ELSE 1 END,
+             CASE WHEN ${refArm} THEN n.sequence_number END ASC,
+             n.updated_at DESC
+    LIMIT ${NOTE_SUBSTRING_LIMIT}
   `);
 }

@@ -26,6 +26,7 @@ import { isTerminalStatus } from "@/lib/types";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /** 400 body shared by the gate pre-check and the resolver's terminal assert. */
 const RECORD_REQUIRES_TERMINAL =
@@ -108,6 +109,9 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
 
   const kind = new URL(req.url).searchParams.get("bundle");
   if (!isBundleKind(kind)) {

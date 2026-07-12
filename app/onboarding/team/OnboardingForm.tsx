@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { TabSwitcher } from "@/components/shared/TabSwitcher";
 import { AuthInput } from "@/components/auth/AuthInput";
 import { AuthSubmit } from "@/components/auth/AuthSubmit";
+import { DpaConsentCheckbox } from "@/components/shared/DpaConsentCheckbox";
 import {
   INVITE_CODE_ALPHABET_PATTERN_SOURCE,
   INVITE_CODE_LENGTH,
@@ -61,6 +62,7 @@ export function OnboardingForm({ userName }: OnboardingFormProps = {}) {
   const [tab, setTab] = useState<TabId>("create");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [dpaAccepted, setDpaAccepted] = useState(false);
 
   /**
    * Switch tabs and clear any stale error from the previous tab.
@@ -100,7 +102,7 @@ export function OnboardingForm({ userName }: OnboardingFormProps = {}) {
               const name = String(formData.get("name") ?? "");
               const slug = String(formData.get("slug") ?? "");
               startTransition(async () => {
-                const result = await createTeam({ name, slug });
+                const result = await createTeam({ name, slug, dpaAccepted });
                 if (!result.ok) setError(result.message);
               });
             }}
@@ -124,7 +126,15 @@ export function OnboardingForm({ userName }: OnboardingFormProps = {}) {
               hint="Lowercase letters, digits, hyphens. 2–32 characters."
               className="font-mono"
             />
-            <AuthSubmit isLoading={pending}>Create team</AuthSubmit>
+            <div className="mt-0.5">
+              <DpaConsentCheckbox
+                checked={dpaAccepted}
+                onChange={setDpaAccepted}
+              />
+            </div>
+            <AuthSubmit isLoading={pending} disabled={!dpaAccepted}>
+              Create team
+            </AuthSubmit>
           </form>
         ) : (
           <form

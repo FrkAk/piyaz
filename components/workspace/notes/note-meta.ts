@@ -1,5 +1,6 @@
 import type { NoteTreeRow } from "@/lib/data/note";
 import type { NoteType } from "@/lib/types";
+import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { NOTE_TYPE_RANK, type NoteSortKey } from "@/lib/ui/note-order";
 
 /** Display metadata and context behavior for one note type. */
@@ -171,6 +172,59 @@ export function planFolderMove(
   return { kind: "move", destParent, leaf, dest };
 }
 
+/** Structural note-delete result; `null` = the delete threw and was caught. */
+type NoteDeleteResult =
+  | { ok: true; data: { updatedAt: Date | string } }
+  | { ok: false; message: string };
+
+/** Partitioned outcome of a bulk folder-delete. */
+export interface FolderDeleteSummary {
+  deleted: { id: string; updatedAt: Date | string }[];
+  failureMessage: string | null;
+}
+
+/** Survivor titles shown before truncating to a `+K more` suffix. */
+const SURVIVOR_TITLE_LIMIT = 3;
+
+/**
+ * Partition the results of a bulk folder-delete into the notes actually
+ * soft-deleted and one message naming the survivors. `results[i]` pairs
+ * with `noteIds[i]`; a failed (`ok: false`) or thrown (`null`) delete
+ * means the note survived. The message lists at most
+ * {@link SURVIVOR_TITLE_LIMIT} survivor titles then `+K more`, as a
+ * single line for the tree error strip.
+ *
+ * @param noteIds - Note ids in delete-dispatch order.
+ * @param results - Per-note delete results, same order as `noteIds`.
+ * @param titleOf - Resolves a note id to its display title.
+ * @returns Deleted notes with their post-delete `updatedAt`, and the
+ *   survivor message (`null` when every delete succeeded).
+ */
+export function summarizeFolderDelete(
+  noteIds: readonly string[],
+  results: readonly (NoteDeleteResult | null)[],
+  titleOf: (id: string) => string,
+): FolderDeleteSummary {
+  const deleted: FolderDeleteSummary["deleted"] = [];
+  const survivors: string[] = [];
+  noteIds.forEach((id, i) => {
+    const result = results[i];
+    if (result?.ok) deleted.push({ id, updatedAt: result.data.updatedAt });
+    else survivors.push(titleOf(id) || "Untitled");
+  });
+  if (survivors.length === 0) return { deleted, failureMessage: null };
+  const names = survivors.slice(0, SURVIVOR_TITLE_LIMIT).join(", ");
+  const extra =
+    survivors.length > SURVIVOR_TITLE_LIMIT
+      ? `, +${survivors.length - SURVIVOR_TITLE_LIMIT} more`
+      : "";
+  const noun = noteIds.length === 1 ? "note" : "notes";
+  return {
+    deleted,
+    failureMessage: `${survivors.length} of ${noteIds.length} ${noun} could not be deleted: ${names}${extra}`,
+  };
+}
+
 /** Base row indent in px; each nesting level adds {@link INDENT_STEP}. */
 const INDENT_BASE = 8;
 
@@ -197,6 +251,41 @@ export type FlatTreeRow =
 
 /** Category-group bucket key for rows with no category. */
 const UNCATEGORIZED_KEY = "__uncategorized__";
+
+/**
+ * Split search hits into direct matches (the query is a substring of the
+ * title, summary, or composed ref) and content matches (full-text hits
+ * from the note body). Recomputed from fields the search response already
+ * carries, so the split costs no extra egress or server compute. Tag-only
+ * matches land in the content group: the rail renders no tags, so the
+ * visible row does not contain the query either way.
+ *
+ * @param hits - Search hits in server order.
+ * @param query - The trimmed query the hits were fetched for.
+ * @param identifier - Project identifier for composing refs.
+ * @returns Direct and content groups, server order preserved within each.
+ */
+export function partitionSearchHits<
+  T extends { title: string; summary: string; sequenceNumber: number },
+>(
+  hits: readonly T[],
+  query: string,
+  identifier: string,
+): { direct: T[]; content: T[] } {
+  const q = query.toLowerCase();
+  const direct: T[] = [];
+  const content: T[] = [];
+  for (const hit of hits) {
+    const ref = composeNoteRef(asIdentifier(identifier), hit.sequenceNumber);
+    const isDirect =
+      q !== "" &&
+      (hit.title.toLowerCase().includes(q) ||
+        hit.summary.toLowerCase().includes(q) ||
+        ref.toLowerCase().includes(q));
+    (isDirect ? direct : content).push(hit);
+  }
+  return { direct, content };
+}
 
 /**
  * Sort note rows by the active sort key with stable tie-breaks.

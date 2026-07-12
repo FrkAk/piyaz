@@ -1,6 +1,7 @@
 import { getAuthContext } from "@/lib/auth/context";
 import { listAccessibleProjectIds } from "@/lib/data/project";
 import { ok, error } from "@/lib/api/response";
+import { consentGateResponse } from "@/lib/auth/consent";
 
 /**
  * Internal authorization probe for the Cloudflare realtime WebSocket upgrade.
@@ -25,6 +26,9 @@ export async function GET(): Promise<Response> {
   } catch {
     return error("Unauthorized", 401);
   }
+
+  const gate = await consentGateResponse(ctx.userId);
+  if (gate) return gate;
   const projectIds = await listAccessibleProjectIds(ctx);
   return ok({ userId: ctx.userId, projectIds });
 }

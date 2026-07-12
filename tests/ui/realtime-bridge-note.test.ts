@@ -127,8 +127,56 @@ afterEach(() => {
   _resetPresenceForTests();
 });
 
+describe("applyRealtimeEvent task case", () => {
+  test("a task event invalidates that task's note context for every bundle kind", async () => {
+    const qc = new QueryClient();
+    const TASK = "t1";
+    // A task's category and tags decide which notes auto-feed it, so a task
+    // edit changes its note feed without touching any note row.
+    qc.setQueryData(noteKeys.backlinks(PROJECT, TASK, "working"), {
+      backlinks: [],
+      feed: { guidance: [], notes: [], hidden: 0, truncated: false },
+    });
+    qc.setQueryData(noteKeys.backlinks(PROJECT, TASK, "agent"), {
+      backlinks: [],
+      feed: { guidance: [], notes: [], hidden: 0, truncated: false },
+    });
+    qc.setQueryData(noteKeys.backlinks(PROJECT, "other-task", "working"), {
+      backlinks: [],
+      feed: { guidance: [], notes: [], hidden: 0, truncated: false },
+    });
+
+    await applyRealtimeEvent(
+      qc,
+      JSON.stringify({ kind: "task", projectId: PROJECT, taskId: TASK }),
+    );
+
+    expect(invalidated(qc, noteKeys.backlinks(PROJECT, TASK, "working"))).toBe(
+      true,
+    );
+    expect(invalidated(qc, noteKeys.backlinks(PROJECT, TASK, "agent"))).toBe(
+      true,
+    );
+    expect(
+      invalidated(qc, noteKeys.backlinks(PROJECT, "other-task", "working")),
+    ).toBe(false);
+  });
+});
+
 describe("applyRealtimeEvent note case", () => {
-  test("own write (matching updatedAt) invalidates nothing", async () => {
+  test("a note event still invalidates every task's note context", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(noteKeys.backlinks(PROJECT, "t1", "working"), {
+      backlinks: [],
+      feed: { guidance: [], notes: [], hidden: 0, truncated: false },
+    });
+    await applyRealtimeEvent(qc, noteEvent());
+    expect(invalidated(qc, noteKeys.backlinks(PROJECT, "t1", "working"))).toBe(
+      true,
+    );
+  });
+
+  test("own write (matching updatedAt) leaves list and detail untouched", async () => {
     const qc = seededClient(when);
     await applyRealtimeEvent(qc, noteEvent(when));
     expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);

@@ -22,10 +22,13 @@ import {
 } from "@/lib/data/edge";
 import type { Identifier } from "@/lib/graph/identifier";
 import type { NewTaskEdge } from "@/lib/db/schema";
+import { redirect } from "next/navigation";
 import {
   authorizeWrite,
   type ActionRateLimitConfig,
 } from "@/lib/actions/rate-limit-action";
+import { ConsentRequiredError, RECONSENT_PATH } from "@/lib/auth/consent";
+import type { AuthContext } from "@/lib/auth/context";
 
 export type { CreateProjectInput, ProjectUpdate } from "@/lib/data/project";
 export type { CreateTaskInput, TaskUpdate } from "@/lib/data/task";
@@ -65,13 +68,34 @@ const WRITE_BUDGETS = {
 } satisfies Record<string, ActionRateLimitConfig>;
 
 /**
+ * Authorize a graph write, converting a consent block into the interstitial
+ * redirect. These wrappers have no catch of their own, so the typed
+ * `ConsentRequiredError` would otherwise reach the client as an opaque
+ * server error instead of navigation.
+ *
+ * @param config - Rate-limit policy for this write action.
+ * @returns The caller's auth context.
+ * @throws RateLimitError when a budget is exceeded.
+ */
+async function authorizeConsentedWrite(
+  config: ActionRateLimitConfig,
+): Promise<AuthContext> {
+  try {
+    return await authorizeWrite(config);
+  } catch (err) {
+    if (err instanceof ConsentRequiredError) redirect(RECONSENT_PATH);
+    throw err;
+  }
+}
+
+/**
  * Server action wrapper — update a project's fields.
  * @param projectId - UUID of the project.
  * @param changes - Subset of project fields to update.
  * @returns The updated project row.
  */
 export async function updateProject(projectId: string, changes: ProjectUpdate) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.projectUpdate);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.projectUpdate);
   return coreUpdateProject(ctx, projectId, changes);
 }
 
@@ -85,7 +109,7 @@ export async function renameProjectIdentifier(
   projectId: string,
   identifier: Identifier,
 ) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.projectUpdate);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.projectUpdate);
   return coreRenameProjectIdentifier(ctx, projectId, identifier);
 }
 
@@ -95,7 +119,7 @@ export async function renameProjectIdentifier(
  * @returns Task summary with composed taskRef.
  */
 export async function createTask(data: CreateTaskInput) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.taskCreate);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.taskCreate);
   return coreCreateTask(ctx, data);
 }
 
@@ -111,7 +135,7 @@ export async function updateTask(
   changes: TaskUpdate,
   overwriteArrays = false,
 ) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.taskUpdate);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.taskUpdate);
   return coreUpdateTask(ctx, taskId, changes, overwriteArrays);
 }
 
@@ -121,7 +145,7 @@ export async function updateTask(
  * @returns Deletion summary.
  */
 export async function deleteTask(taskId: string) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.taskDelete);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.taskDelete);
   return coreDeleteTask(ctx, taskId);
 }
 
@@ -131,7 +155,7 @@ export async function deleteTask(taskId: string) {
  * @returns The created edge.
  */
 export async function createEdge(data: Omit<NewTaskEdge, "id">) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.edgeWrite);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.edgeWrite);
   return coreCreateEdge(ctx, data);
 }
 
@@ -140,7 +164,7 @@ export async function createEdge(data: Omit<NewTaskEdge, "id">) {
  * @param edgeId - UUID of the edge.
  */
 export async function removeEdge(edgeId: string) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.edgeWrite);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.edgeWrite);
   return coreRemoveEdge(ctx, edgeId);
 }
 
@@ -153,7 +177,7 @@ export async function removeEdge(edgeId: string) {
  * @returns The new (or pre-existing) link row.
  */
 export async function addTaskLink(taskId: string, url: string) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.taskLink);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.taskLink);
   return coreAddTaskLink(ctx, taskId, url);
 }
 
@@ -165,7 +189,7 @@ export async function addTaskLink(taskId: string, url: string) {
  * @returns Deletion summary with the removed link id.
  */
 export async function removeTaskLink(linkId: string) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.taskLink);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.taskLink);
   return coreRemoveTaskLink(ctx, linkId);
 }
 
@@ -179,7 +203,7 @@ export async function removeTaskLink(linkId: string) {
  * @returns The updated link row.
  */
 export async function updateTaskLink(linkId: string, url: string) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.taskLink);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.taskLink);
   return coreUpdateTaskLink(ctx, linkId, url);
 }
 
@@ -194,7 +218,7 @@ export async function renameCategory(
   oldName: string,
   newName: string,
 ) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.categoryWrite);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.categoryWrite);
   return coreRenameCategory(ctx, projectId, oldName, newName);
 }
 
@@ -204,6 +228,6 @@ export async function renameCategory(
  * @param categoryName - Category to remove.
  */
 export async function deleteCategory(projectId: string, categoryName: string) {
-  const ctx = await authorizeWrite(WRITE_BUDGETS.categoryWrite);
+  const ctx = await authorizeConsentedWrite(WRITE_BUDGETS.categoryWrite);
   return coreDeleteCategory(ctx, projectId, categoryName);
 }

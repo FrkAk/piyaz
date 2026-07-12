@@ -1,8 +1,10 @@
 import { test, expect, afterEach } from "bun:test";
+import { NextRequest } from "next/server";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
 import { GET } from "@/app/api/projects/route";
+import { GET as consentMetaGET } from "@/app/api/oauth/consent-meta/route";
 
 const setSession = (
   globalThis as unknown as {
@@ -151,4 +153,55 @@ test("GET /api/projects — 304 when If-None-Match matches the current ETag", as
   expect(conditional.status).toBe(304);
   expect(conditional.headers.get("ETag")).toBe(etag);
   expect(await conditional.text()).toBe("");
+});
+
+test("GET /api/projects — a stale user with a matching ETag gets 403, not 304", async () => {
+  const f = await seedUserOrgProject("projlist-stale-etag");
+  setSession({ user: { id: f.userId } });
+
+  const first = await GET(new Request("http://test/api/projects"));
+  expect(first.status).toBe(200);
+  const etag = first.headers.get("ETag");
+  expect(etag).toBeTruthy();
+
+  await superuserPool()`DELETE FROM legal_acceptances WHERE user_id = ${f.userId}`;
+
+  const conditional = await GET(
+    new Request("http://test/api/projects", {
+      headers: { "If-None-Match": etag! },
+    }),
+  );
+  expect(conditional.status).toBe(403);
+  const body = (await conditional.json()) as { code: string };
+  expect(body.code).toBe("terms_acceptance_required");
+});
+
+test("GET /api/projects — 403 terms_acceptance_required for a stale user", async () => {
+  const f = await seedUserOrgProject("projlist-stale", { legalCurrent: false });
+  setSession({ user: { id: f.userId } });
+
+  const res = await GET(new Request("http://test/api/projects"));
+
+  expect(res.status).toBe(403);
+  const body = (await res.json()) as {
+    code: string;
+    outstanding: string[];
+    acceptUrl: string;
+  };
+  expect(body.code).toBe("terms_acceptance_required");
+  expect(body.outstanding).toEqual(["terms", "privacy"]);
+  expect(body.acceptUrl).toBe("/legal/accept");
+});
+
+test("GET /api/oauth/consent-meta — stays ungated for a stale user", async () => {
+  const f = await seedUserOrgProject("consentmeta-stale", {
+    legalCurrent: false,
+  });
+  setSession({ user: { id: f.userId } });
+
+  const res = await consentMetaGET(
+    new NextRequest("http://test/api/oauth/consent-meta?client_id=unknown"),
+  );
+
+  expect(res.status).not.toBe(403);
 });

@@ -17,6 +17,8 @@ import {
   checkActionUserRateLimit,
 } from "@/lib/actions/rate-limit-action";
 import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
+import { truncateAll } from "@/tests/setup/schema";
+import { seedUserOrgProject } from "@/tests/setup/seed";
 
 /**
  * Action-level coverage for `changePasswordAction`. The brute-force defense
@@ -27,7 +29,9 @@ import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
  * it — this file is the rate-limit and input-bound pin.
  *
  * `auth.api.changePassword` is spied (not the real handler) so routing and
- * input checks are exercised without a credential row or DB password write;
+ * input checks are exercised without a credential row or DB password write.
+ * The session user is a seeded row (not synthetic) because the action's
+ * consent gate reads `legal_acceptances` for real;
  * `next/headers` is mocked process-wide (headers + the cookies() stub BA's
  * `nextCookies` guard recognizes — see `tests/setup/next-headers-mock.ts`).
  * `tests/setup/preload.ts` mocks `@/lib/auth/session`, exposing
@@ -49,7 +53,7 @@ const setSession = (
   }
 ).__setTestSession;
 
-const USER_ID = "11111111-1111-4111-8111-111111111111";
+let USER_ID: string;
 
 const RATE_CONFIG = {
   action: "password.change",
@@ -62,15 +66,18 @@ const RATE_CONFIG = {
 type ChangePasswordImpl = (...args: unknown[]) => Promise<unknown>;
 let changePasswordSpy: ReturnType<typeof spyOn>;
 
-beforeAll(() => {
+beforeAll(async () => {
+  const fixture = await seedUserOrgProject("PWCHG");
+  USER_ID = fixture.userId;
   changePasswordSpy = spyOn(
     auth.api as unknown as { changePassword: ChangePasswordImpl },
     "changePassword",
   ).mockImplementation(async () => ({}));
 });
 
-afterAll(() => {
+afterAll(async () => {
   changePasswordSpy.mockRestore();
+  await truncateAll();
 });
 
 beforeEach(() => {

@@ -235,3 +235,51 @@ test("light shapes pass with the heavy budget exhausted", async () => {
   }
   await client.close();
 });
+
+/**
+ * Wire a client whose server context carries an mcp-source actor, the only
+ * actor shape the consent gate applies to.
+ *
+ * @param userId - Seeded user id to bind the server's auth context to.
+ * @returns Connected MCP client.
+ */
+async function connectedMcpActorClient(userId: string): Promise<Client> {
+  const server = createMcpServer(
+    makeAuthContext(userId, { source: "mcp", userId, clientId: "test-mcp" }),
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "test-client", version: "0.0.0" });
+  await Promise.all([
+    server.connect(serverTransport),
+    client.connect(clientTransport),
+  ]);
+  return client;
+}
+
+test("consent gate blocks every tool for an mcp actor with outstanding re-consent", async () => {
+  const fx = await seedUserOrgProject("MCPGATE", { legalCurrent: false });
+  const client = await connectedMcpActorClient(fx.userId);
+
+  const result = await client.callTool({
+    name: "piyaz_workspace",
+    arguments: { action: "whoami" },
+  });
+  expect(result.isError).toBe(true);
+  const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+  expect(text).toContain("terms_acceptance_required");
+  expect(text).toContain("/legal/accept");
+  await client.close();
+});
+
+test("consent gate passes an mcp actor current on both documents", async () => {
+  const fx = await seedUserOrgProject("MCPGATEOK");
+  const client = await connectedMcpActorClient(fx.userId);
+
+  const result = await client.callTool({
+    name: "piyaz_workspace",
+    arguments: { action: "whoami" },
+  });
+  expect(result.isError ?? false).toBe(false);
+  await client.close();
+});

@@ -6,8 +6,8 @@
  * (scripts/generate-docs.ts).
  *
  * Identifier convention: every task parameter accepts a taskRef like
- * `PYZ-42` or a task UUID; every project parameter accepts a project
- * identifier like `PYZ` or a project UUID. The params are plain strings
+ * `VLT-42` or a task UUID; every project parameter accepts a project
+ * identifier like `VLT` or a project UUID. The params are plain strings
  * (never Zod unions — upfront schema loaders handle `anyOf` inconsistently)
  * and the server resolves them, returning corrective errors with candidate
  * lists on ambiguity and near-miss suggestions on a miss.
@@ -58,13 +58,13 @@ export const LIMITS = {
   noteFeedTaskIds: 1_000,
 } as const;
 
-/** A task handle: taskRef (`PYZ-42`) or task UUID. */
+/** A task handle: taskRef (`KRN-42`) or task UUID. */
 const taskRefParam = z.string().max(LIMITS.ref);
 
-/** A project handle: project identifier (`PYZ`) or project UUID. */
+/** A project handle: project identifier (`KRN`) or project UUID. */
 const projectRefParam = z.string().max(LIMITS.ref);
 
-/** A note handle: noteRef (`PYZ-N12`), note UUID, or slug (with project). */
+/** A note handle: noteRef (`KRN-N12`), note UUID, or slug (with project). */
 const noteRefParam = z.string().max(LIMITS.noteFolder);
 
 /** The literal `me` or a user UUID; shared by assignee-bearing params. */
@@ -139,7 +139,7 @@ const estimateSchema = z.union([
 /** Tool descriptions shared between the MCP server and the docs generator. */
 export const DESCRIPTIONS = {
   piyaz_workspace:
-    "Session-start tool: identify the caller and manage projects across every team they belong to. There is no 'active' team or server-side session; responses emit project identifiers (e.g. 'PYZ') that every other tool accepts directly. " +
+    "Session-start tool: identify the caller and manage projects across every team they belong to. There is no 'active' team or server-side session; responses emit project identifiers (e.g. 'PXD') that every other tool accepts directly. " +
     "whoami=caller identity (user id, name, team count); run once at session start. " +
     "teams=every membership (id, name, slug, role, projectCount) including empty teams. " +
     "projects=all projects with identifier, status, team chip, task counts, progress; skips empty teams, so pair with teams for the full set. " +
@@ -149,28 +149,28 @@ export const DESCRIPTIONS = {
     "rename_category/delete_category=vocabulary edits that cascade to task rows atomically. " +
     "Next: piyaz_search to find work, piyaz_map view='ready' to find unblocked tasks.",
   piyaz_search:
-    "Universal task finder. Cross-project across every team by default; pass project='PYZ' to scope. At least one criterion required: query (matches taskRef, title, tags), status[], priority[], assignee ('me' or a user UUID), category, or tags[] (AND-within). " +
+    "Universal task finder. Cross-project across every team by default; pass project='ZBR' to scope. At least one criterion required: query (matches taskRef, title, tags), status[], priority[], assignee ('me' or a user UUID), category, or tags[] (AND-within). " +
     "Results are newest-updated first with a cursor when more pages exist; project-scoped results carry the derived state (ready/blocked/plannable). " +
     "Every result line leads with the taskRef — chain it straight into piyaz_get, piyaz_edit, or piyaz_link. Narrow with filters instead of paging when a page overflows.",
   piyaz_get:
-    "Read one task or one project. Pass exactly one of task ('PYZ-42' or UUID) or project ('PYZ' or UUID). ALWAYS fetch before reasoning about a task; pick the lightest shape that answers the question. " +
+    "Read one task or one project. Pass exactly one of task ('QFN-42' or UUID) or project ('QFN' or UUID). ALWAYS fetch before reasoning about a task; pick the lightest shape that answers the question. " +
     "Task lenses: summary=header+description+counts+1-hop edges with notes (lightest with edges). working=criteria with ids, decisions with ids, links with ids, 1-hop edges — the edit-address read. agent=multi-hop deps + upstream execution records + related tasks (~4-8K tokens); fetch BEFORE coding; terminal tasks return the retrospective record instead. planning=project description, prereqs, work-so-far, downstream specs, abandoned approaches; fetch BEFORE writing a plan. review=implementationPlan beside executionRecord + PR link + review-lens prompts (for in_review tasks). record=retrospective for done/cancelled tasks. " +
     "fields=[...]: raw single-field read (lens ignored); the cheapest way to fetch one field's exact text before a piyaz_edit str_replace, or collection ids before by-id ops; response includes updatedAt for ifUpdatedAt preconditions. " +
     "Project: view='meta' (categories, tag vocabulary, progress — check before setting category or coining tags) or view='overview' (every task + edge; HEAVY, at most once per session; truncated groups name the piyaz_search filter to narrow with).",
   piyaz_create:
-    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('PYZ' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description (2-4 sentences; single-sentence flagged). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
+    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('HWM' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description (2-4 sentences; single-sentence flagged). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
     "Idempotent: exact-title matches against existing tasks are skipped and returned as 'deduped' (reusable as edge endpoints), so a restarted decompose run never duplicates a task set; onDuplicate='error' rejects the whole batch instead. Edges that already exist are silently skipped. " +
     "Include acceptanceCriteria (2-4 binary), tags (three dimensions), category (from piyaz_get project view='meta'), priority, estimate up front — hints flag what's missing. Fails while the project is archived (reopen via piyaz_workspace status='active'). " +
     "Next: verify wiring with piyaz_map view='neighbors' task='<ref>'.",
   piyaz_edit:
-    "Edit one task with an ordered list of operations, applied atomically (all or nothing). task accepts 'PYZ-42' or a UUID. " +
+    "Edit one task with an ordered list of operations, applied atomically (all or nothing). task accepts 'JCL-42' or a UUID. " +
     "Text fields (description, implementationPlan, executionRecord): op='str_replace' (oldStr must match exactly once; the error names the occurrence count), op='append' (adds a paragraph), op='set' (full replace — prefer str_replace/append for surgical edits). " +
     "Collections (acceptanceCriteria, decisions, links, assignees): op='add' (text/url; assignees take value='me' or a user UUID), op='update'/'remove'/'check'/'uncheck' by the item id from piyaz_get lens='working' or fields=[...] (assignees support add/remove only). Removed items are unrecoverable. " +
     "Scalars (status, priority, estimate, category, title, tags, files, prUrl): op='set' with value. Status transitions return lifecycle hints — read and act on them. " +
     "ifUpdatedAt (from a prior read) makes the whole call a compare-and-swap for contended tasks. " +
     "op='delete_task' must be the only op: preview defaults to true (impact summary); preview=false executes. Prefer set status='cancelled' for abandoned scope — delete only pure noise. Fails while the project is archived (reopen via piyaz_workspace status='active').",
   piyaz_link:
-    "Create, update, or remove dependency edges. source/target accept 'PYZ-42' or UUIDs. depends_on=source needs target's output (target must finish first). relates_to=informational, neither blocks. Litmus: removing the target makes the source impossible → depends_on; merely harder → relates_to. " +
+    "Create, update, or remove dependency edges. source/target accept 'TRV-42' or UUIDs. depends_on=source needs target's output (target must finish first). relates_to=informational, neither blocks. Litmus: removing the target makes the source impossible → depends_on; merely harder → relates_to. " +
     "create=new edge; note REQUIRED and substantive (placeholders 'needed'/'depends'/'related' rejected) — write it as a brief to the developer starting the source task. " +
     "update=rewrite the note, keyed by source+target+type (type is the lookup key there; pass edgeId to also change type). To re-type without an edgeId: remove, then create with a fresh note. remove=same keys. " +
     "Server rejects self-edges, duplicates, and cycles (the error names the chain). On 'duplicate edge': treat as success. Fails while the project is archived (reopen via piyaz_workspace status='active'). Verify with piyaz_map view='neighbors'.",
@@ -183,19 +183,19 @@ export const DESCRIPTIONS = {
     "neighbors=1-2 hops around one task, both edge types, both directions, with notes — the context-network walk; every line is ref-chainable into piyaz_get. " +
     "ready/blocked/plannable/critical_path need project; downstream/neighbors need task.",
   piyaz_activity:
-    "What changed, newest first, keyset-paginated. Pass exactly one scope: project ('PYZ' or UUID), task ('PYZ-42' or UUID), or note ('PYZ-N12', UUID, or slug; slug form also needs project). " +
-    "since (ISO timestamp) answers 'what changed since I left' — the resume-after-compaction primitive: piyaz_activity project='PYZ' since='<last known instant>'. " +
+    "What changed, newest first, keyset-paginated. Pass exactly one scope: project ('GSP' or UUID), task ('GSP-42' or UUID), or note ('GSP-N12', UUID, or slug; slug form also needs project). " +
+    "since (ISO timestamp) answers 'what changed since I left' — the resume-after-compaction primitive: piyaz_activity project='GSP' since='<last known instant>'. " +
     "note scope is per-note history (edits, moves, links, restores) and requires the note to be agent-exposed: team visibility AND feed enabled. A private note or one with feed_mode='none' reads as not found; project/task scopes silently exclude non-exposed notes' events. " +
     "Events carry actor, type, summary, and target ref. Follow up on a specific task with piyaz_get, or on a note with piyaz_note read.",
   piyaz_note:
-    "Project notes: the team's shared knowledge base, in the same folder tree humans see in the web UI. Note params accept a noteRef ('PYZ-N12'), a note UUID, or a slug together with project; responses emit refs. Types: guidance=constraints auto-injected into matching task bundles; reference=specs and docs, read on demand by heading; knowledge=agent-maintained wiki and memory. Write back what you learn — durable constraints, gotchas, and decisions belong in notes so the next agent starts smarter. " +
+    "Project notes: the team's shared knowledge base, in the same folder tree humans see in the web UI. Note params accept a noteRef ('DLK-N12'), a note UUID, or a slug together with project; responses emit refs. Types: guidance=constraints auto-injected into matching task bundles; reference=specs and docs, read on demand by heading; knowledge=agent-maintained wiki and memory. Write back what you learn — durable constraints, gotchas, and decisions belong in notes so the next agent starts smarter. " +
     "create=1-10 notes (title required; body, folder, type, summary, tags, category, feed params). Agent-created notes land visibility=team, feed_mode=none: teammates' agents can search them immediately, nothing auto-injects until feedMode is deliberately set (all/categories/tags/tasks; feedTaskIds accept taskRefs). Idempotent by exact (folder, title): dupes return as deduped. " +
     "read=meta header by default; fields=[...] for exact values plus updatedAt (the ifUpdatedAt token); heading='...' for one section; fields=['revisions'] for the snapshot list; revision=N for one snapshot. The full body only via fields=['body'] — prefer heading reads. " +
     "edit=1-20 ordered ops, atomic: str_replace/append/set on body (oldStr must match exactly once; the error names the count), set for title/summary/folder/type/category/tags/feedMode/feedCategories/feedTags/feedTaskIds. visibility, locked, and agent_writable are not editable here — request_share is the agent's only path toward team visibility for a private note, and notes with agent_writable=false reject every agent write (reads and search still work). " +
     "list=the project's folder tree (refs, titles, folders, types, feed modes). move=one note into a folder, or folder+destParent (+newLeaf) to re-parent or rename a whole folder subtree — keep the tree organized for humans. " +
     "delete=preview by default, re-call preview=false; restore recovers a trashed note (use the UUID from the delete response). An overwritten body is recoverable: fields=['revisions'], then revision=N, then set body. " +
     "link/unlink=deliberate note-task relations (kind reference|spec_of); mention rows derive from [[refs]] in the body — write the ref into the body instead. " +
-    "search=ranked full text within one project: team notes plus your own private notes, any feed mode. Next: read heading='...' for the matching section instead of the full body.",
+    "search=a full noteRef ('DLK-N12', case-insensitive) resolves that note, else fuzzy within one project: title/summary/tag substring first, then ranked full text over title and body. Team notes plus your own private notes, any feed mode. A ref that resolves nothing falls back to the fuzzy tiers. Next: read heading='...' for the matching section instead of the full body.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -220,7 +220,7 @@ export const workspaceInputSchema = z.object({
   project: projectRefParam
     .optional()
     .describe(
-      "Project identifier ('PYZ') or project UUID. Required for update.",
+      "Project identifier ('PXD') or project UUID. Required for update.",
     ),
   title: z
     .string()
@@ -287,7 +287,7 @@ export const searchInputSchema = z.object({
   project: projectRefParam
     .optional()
     .describe(
-      "Project identifier ('PYZ') or UUID to scope the search. DEFAULT: cross-project across every team you belong to. Project-scoped results include the derived state (ready/blocked/plannable/...).",
+      "Project identifier ('ZBR') or UUID to scope the search. DEFAULT: cross-project across every team you belong to. Project-scoped results include the derived state (ready/blocked/plannable/...).",
     ),
   status: z
     .array(z.enum(TASK_STATUSES))
@@ -338,12 +338,12 @@ export const getInputSchema = z.object({
   task: taskRefParam
     .optional()
     .describe(
-      "taskRef ('PYZ-42') or task UUID. Pass exactly one of task or project.",
+      "taskRef ('QFN-42') or task UUID. Pass exactly one of task or project.",
     ),
   project: projectRefParam
     .optional()
     .describe(
-      "Project identifier ('PYZ') or project UUID. Pass exactly one of task or project.",
+      "Project identifier ('QFN') or project UUID. Pass exactly one of task or project.",
     ),
   lens: z
     .enum(GET_LENSES)
@@ -490,11 +490,11 @@ const createEdgeItemSchema = z.object({
   source: z
     .string()
     .max(LIMITS.ref)
-    .describe("A `key` from this call, a taskRef ('PYZ-42'), or a task UUID."),
+    .describe("A `key` from this call, a taskRef ('HWM-42'), or a task UUID."),
   target: z
     .string()
     .max(LIMITS.ref)
-    .describe("A `key` from this call, a taskRef ('PYZ-42'), or a task UUID."),
+    .describe("A `key` from this call, a taskRef ('HWM-42'), or a task UUID."),
   type: z
     .enum(["depends_on", "relates_to"])
     .describe(
@@ -510,7 +510,7 @@ const createEdgeItemSchema = z.object({
 
 export const createInputSchema = z.object({
   project: projectRefParam.describe(
-    "Project identifier ('PYZ') or project UUID. Required.",
+    "Project identifier ('HWM') or project UUID. Required.",
   ),
   tasks: z
     .array(createTaskItemSchema)
@@ -642,7 +642,7 @@ const editOpSchema = z.object({
 });
 
 export const editInputSchema = z.object({
-  task: taskRefParam.describe("taskRef ('PYZ-42') or task UUID. Required."),
+  task: taskRefParam.describe("taskRef ('JCL-42') or task UUID. Required."),
   ifUpdatedAt: z
     .string()
     .max(LIMITS.isoTimestamp)
@@ -668,12 +668,12 @@ export const linkInputSchema = z.object({
   source: taskRefParam
     .optional()
     .describe(
-      "Source taskRef ('PYZ-42') or UUID. Required for create; keys update/remove together with target+type.",
+      "Source taskRef ('TRV-42') or UUID. Required for create; keys update/remove together with target+type.",
     ),
   target: taskRefParam
     .optional()
     .describe(
-      "Target taskRef ('PYZ-42') or UUID. Required for create; keys update/remove together with source+type.",
+      "Target taskRef ('TRV-42') or UUID. Required for create; keys update/remove together with source+type.",
     ),
   type: z
     .enum(["depends_on", "relates_to"])
@@ -712,11 +712,11 @@ export const mapInputSchema = z.object({
   project: projectRefParam
     .optional()
     .describe(
-      "Project identifier ('PYZ') or UUID. Required for ready/blocked/plannable/critical_path.",
+      "Project identifier ('WYN') or UUID. Required for ready/blocked/plannable/critical_path.",
     ),
   task: taskRefParam
     .optional()
-    .describe("taskRef ('PYZ-42') or UUID. Required for downstream/neighbors."),
+    .describe("taskRef ('WYN-42') or UUID. Required for downstream/neighbors."),
   hops: z
     .int()
     .min(1)
@@ -735,17 +735,17 @@ export const activityInputSchema = z.object({
   project: projectRefParam
     .optional()
     .describe(
-      "Project identifier ('PYZ') or UUID. Pass exactly one scope: project, task, or note (project may also accompany a slug-form note).",
+      "Project identifier ('GSP') or UUID. Pass exactly one scope: project, task, or note (project may also accompany a slug-form note).",
     ),
   task: taskRefParam
     .optional()
     .describe(
-      "taskRef ('PYZ-42') or UUID. Pass exactly one scope: project, task, or note.",
+      "taskRef ('GSP-42') or UUID. Pass exactly one scope: project, task, or note.",
     ),
   note: noteRefParam
     .optional()
     .describe(
-      "noteRef ('PYZ-N12'), note UUID, or slug (slug needs project). Per-note history; the note must be agent-exposed (team visibility, feed enabled) or it reads as not found.",
+      "noteRef ('GSP-N12'), note UUID, or slug (slug needs project). Per-note history; the note must be agent-exposed (team visibility, feed enabled) or it reads as not found.",
     ),
   since: z
     .string()
@@ -806,7 +806,7 @@ const noteCreateItemSchema = z.object({
     .max(LIMITS.noteBody)
     .optional()
     .describe(
-      "Markdown body. [[PYZ-42]] links a task, [[Title]] links a note; both derive live relations on every save.",
+      "Markdown body. [[DLK-42]] links a task, [[Title]] links a note; both derive live relations on every save.",
     ),
   folder: z
     .string()
@@ -819,7 +819,7 @@ const noteCreateItemSchema = z.object({
     .enum(["reference", "guidance", "knowledge"])
     .optional()
     .describe(
-      "guidance=short constraints block auto-injected into matching task bundles (keep it tight). reference=specs and docs, read on demand. knowledge=agent-maintained wiki and memory. Default reference.",
+      "guidance=short constraints block, injected full-body into matching task bundles (keep it tight). reference=specs and docs. knowledge=agent-maintained wiki and memory. reference/knowledge inject only as a title+summary pointer the agent reads on demand, never full-body. Default reference.",
     ),
   summary: z
     .string()
@@ -840,7 +840,7 @@ const noteCreateItemSchema = z.object({
     .enum(["none", "all", "categories", "tags", "tasks"])
     .optional()
     .describe(
-      "When this note auto-injects into task bundles: none (default; searchable only), all, categories/tags (match via feedCategories/feedTags), tasks (match via feedTaskIds).",
+      "When this note auto-injects into task bundles: none (default; searchable only), all, categories/tags (match via feedCategories/feedTags), tasks (match via feedTaskIds). Injection shape depends on type: guidance injects its full body, reference/knowledge inject as a title+summary pointer only.",
     ),
   feedCategories: noteFeedLabelsSchema
     .optional()
@@ -853,7 +853,7 @@ const noteCreateItemSchema = z.object({
     .max(LIMITS.noteFeedTaskIds)
     .optional()
     .describe(
-      "feedMode='tasks': the specific tasks this note feeds into. taskRefs ('PYZ-42') or UUIDs.",
+      "feedMode='tasks': the specific tasks this note feeds into. taskRefs ('DLK-42') or UUIDs.",
     ),
 });
 
@@ -928,17 +928,17 @@ export const noteInputSchema = z.object({
       "search",
     ])
     .describe(
-      "create=1-10 notes, idempotent by (folder, title). read=meta / fields / heading section / revision snapshot. edit=ordered ops. list=the folder tree. move=note to folder, or folder subtree re-parent/rename. delete=preview by default; restore=recover a trashed note. request_share=ask a human to make a private note team-visible. link/unlink=note-task relation (reference|spec_of). search=ranked full text in one project.",
+      "create=1-10 notes, idempotent by (folder, title). read=meta / fields / heading section / revision snapshot. edit=ordered ops. list=the folder tree. move=note to folder, or folder subtree re-parent/rename. delete=preview by default; restore=recover a trashed note. request_share=ask a human to make a private note team-visible. link/unlink=note-task relation (reference|spec_of). search=a noteRef ('DLK-N12') resolves that note, else title/summary/tag substring plus ranked full text in one project.",
     ),
   project: projectRefParam
     .optional()
     .describe(
-      "Project identifier ('PYZ') or UUID. Required for create, list, and search; also scopes a slug-form note param.",
+      "Project identifier ('DLK') or UUID. Required for create, list, and search; also scopes a slug-form note param.",
     ),
   note: noteRefParam
     .optional()
     .describe(
-      "noteRef ('PYZ-N12'), note UUID, or slug (slug needs project). Required for read, edit, move (note form), delete, restore, request_share, link, unlink.",
+      "noteRef ('DLK-N12'), note UUID, or slug (slug needs project). Required for read, edit, move (note form), delete, restore, request_share, link, unlink.",
     ),
   notes: z
     .array(noteCreateItemSchema)
@@ -1018,7 +1018,7 @@ export const noteInputSchema = z.object({
     ),
   task: taskRefParam
     .optional()
-    .describe("link/unlink: the task endpoint, taskRef ('PYZ-42') or UUID."),
+    .describe("link/unlink: the task endpoint, taskRef ('DLK-42') or UUID."),
   kind: z
     .enum(["reference", "spec_of"])
     .optional()
@@ -1029,7 +1029,9 @@ export const noteInputSchema = z.object({
     .string()
     .max(LIMITS.noteQuery)
     .optional()
-    .describe("search only: full-text query; the last term prefix-matches."),
+    .describe(
+      "search only: a full noteRef ('DLK-N12', case-insensitive) resolves that note, falling back to the fuzzy tiers when it resolves nothing; otherwise title/summary/tag substring plus ranked full text where the last term prefix-matches.",
+    ),
   limit: z
     .int()
     .min(1)
