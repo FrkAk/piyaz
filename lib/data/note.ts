@@ -383,6 +383,8 @@ export type NoteFullResult = {
   projectIdentifier: string;
   /** Last editor's org-visible display name, or null when unresolvable. */
   updatedByName: string | null;
+  /** Whether the last edit came from the updater's agent (MCP actor). */
+  updatedByAgent: boolean;
   mentions: NoteMention[];
   linksOut: LinkedNoteSlim[];
   linksIn: LinkedNoteSlim[];
@@ -1564,13 +1566,15 @@ export async function getNoteFull(
   const gate = assertNoteGateRows(noteId, gateRows);
   const [note] = noteRows;
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
-  const updaterName =
-    normalizeExecuteResult<{ name: string | null }>(updaterRows)[0]?.name ??
-    null;
+  const [updater] = normalizeExecuteResult<{
+    name: string | null;
+    is_agent: boolean;
+  }>(updaterRows);
   return {
     note,
     projectIdentifier: gate.projectIdentifier,
-    updatedByName: updaterName,
+    updatedByName: updater?.name ?? null,
+    updatedByAgent: updater?.is_agent ?? false,
     mentions: mentionRows.map(toNoteMention),
     linksOut,
     linksIn,
@@ -1609,6 +1613,7 @@ export async function getNoteScalarFields(
     note: { ...row, body: "" },
     projectIdentifier: gate.projectIdentifier,
     updatedByName: null,
+    updatedByAgent: false,
     mentions: [],
     linksOut: [],
     linksIn: [],

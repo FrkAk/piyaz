@@ -29,6 +29,7 @@ import type { TaskStatus, Visibility } from "@/lib/types";
 import { formatRelative } from "@/lib/ui/relative-time";
 import { ConflictBanner } from "./ConflictBanner";
 import { NoteEditor } from "./NoteEditor";
+import { displayActor } from "./NoteHistory";
 import { Pill } from "./Pill";
 import { useNotePresenceHeartbeat } from "./usePresenceHeartbeat";
 import { NOTE_TYPE_META, tint } from "./note-meta";
@@ -185,12 +186,20 @@ function EditorBody({
   const updateNote = useUpdateNote(projectId);
   const session = useSession();
   const note = data?.note;
+  // Agent edits attribute to the agent, matching the History timeline:
+  // the flag rides the detail read, so no extra request resolves it.
   const updaterName =
     note === undefined || note.updatedBy === null
       ? null
       : note.updatedBy === session.data?.user.id
-        ? "you"
-        : (data?.updatedByName ?? null);
+        ? data?.updatedByAgent
+          ? "your agent"
+          : "you"
+        : data?.updatedByName == null
+          ? null
+          : data.updatedByAgent
+            ? displayActor(data.updatedByName, true)
+            : data.updatedByName;
   useNotePresenceHeartbeat(
     noteId,
     note !== undefined && !isPlaceholderData && note.visibility === "team",
