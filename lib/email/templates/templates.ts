@@ -5,8 +5,8 @@
  * and the branded-vs-neutral gating. Params are treated as untrusted; the shell
  * escapes every interpolated value, so templates compose plain strings.
  *
- * These param shapes are the contract PYZ-273 (Better Auth wiring) and PYZ-153
- * (invite email) call, so field names stay explicit. Subjects are the caller's
+ * These param shapes are the contract the Better Auth wiring and the invite
+ * email flow call, so field names stay explicit. Subjects are the caller's
  * responsibility; templates own body content only.
  */
 import type { BrandConfig } from "../types";
