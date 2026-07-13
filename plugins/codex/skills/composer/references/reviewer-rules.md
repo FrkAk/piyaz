@@ -31,6 +31,8 @@ Applies wherever an agent generates `executionRecord`, `decisions`, `description
 
 For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, `files=[]` is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
+Non-code deliverables must be reviewable: committed in the PR when repo-resident, otherwise linked on the task or recorded in a `Deliverables` section of the `executionRecord` with the path or URL and the exact regeneration command. A claimed deliverable the reviewer cannot reach is a blocking finding.
+
 ## lifecycle §2.3 — Open a PR if the work changed code (what the implementer owed)
 
 If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Piyaz-only refinement), the implementer must have opened a PR:

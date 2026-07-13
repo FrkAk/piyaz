@@ -16,7 +16,7 @@ description: >
 
 Composer is a Piyaz task orchestrator. Per iteration it picks the next ready task off the project's critical path, runs that task through a deterministic per-task **workflow** (research, plan, implement, CI gate, review, bounded fix loop), surfaces the verdict, merges when the user authorized it, propagates the result through the graph, and continues until a structural stop condition holds.
 
-The orchestrator (this skill, running in the main loop) owns only the **interactive seams**: pick the task, resolve gates, run the merge gate, propagate. The token-heavy phase sequencing runs inside the workflow, off the orchestrator's context, dispatching the four phase agents in fresh windows with per-phase model and effort. This is the design's main token discipline: orchestration is JavaScript, not main-loop reasoning over a transcript that grows with every phase.
+The orchestrator (this skill, running in the main loop) owns only the **interactive seams**: pick the task, resolve gates, run the merge gate, propagate. The token-heavy phase sequencing runs inside the workflow, off the orchestrator's context, dispatching the phase agents in fresh windows with per-phase model and effort. This is the design's main token discipline: orchestration is JavaScript, not main-loop reasoning over a transcript that grows with every phase.
 
 Composer is glue. The heavy lifting (task selection, refinement, the Completion Protocol, propagation) lives in the `piyaz` skill (`skills/piyaz/SKILL.md`); composer reuses those flows rather than duplicating them.
 
@@ -48,18 +48,17 @@ Workflow({
   args: { taskRef, taskId, projectId, categories, tagVocabulary,
           pickEstimate, pickPriority, workType, tags, thinDescription,
           mode, plannableOnly, resumeFrom, priorBrief, gateAnswers,
-          fixFindings, prUrl, priorFailure, estimate, flags },
+          fixFindings, prUrl, priorFailure, estimate, flags, fable },
 })
 ```
 
 If `${CLAUDE_PLUGIN_ROOT}` does not resolve in the tool argument, substitute the absolute path of this plugin's root. The workflow runs in the background; the orchestrator is suspended until it returns, so it spends no context tokens while phases run.
 
-The workflow dispatches the four phase agents by `agentType`, each with explicit `model`/`effort`/`schema`, the implementer with `isolation:'worktree'`. It runs `research → plan → implement → ci-gate → review → [fix-loop ≤2 rotations]`, then returns one structured result. It does **not** merge, propagate, or touch edges; those are the orchestrator's seams. The phase contracts live in the agent files; do not duplicate them here.
+The workflow dispatches the phase agents by `agentType`, each with explicit `model`/`effort`/`schema`, the implementer with `isolation:'worktree'`. It runs `research+plan → implement → ci-gate → review → [fix-loop ≤2 rotations]`, with a fixed-interval CI poll (60s, bounded) and a CI-pending re-poll path that re-reviews without burning a fix rotation, then returns one structured result. It does **not** merge, propagate, or touch edges; those are the orchestrator's seams. The phase contracts live in the agent files; do not duplicate them here.
 
 | Phase | `agentType` | Writes to Piyaz | Workflow captures |
 | --- | --- | --- | --- |
-| 1. Research | `piyaz:composer-researcher` | refinement fields only (`description`, `acceptanceCriteria`, `tags`, `category`, `priority`, `estimate`, `decisions`); never `status` | brief, status, flags, confidence, refined estimate/work-type, proposed rewrites |
-| 2. Plan | `piyaz:composer-planner` | `implementationPlan`, `decisions`; `status='planned'` on `draft → planned` only | status, section/step counts, open questions |
+| 1+2. Research+Plan (merged) | `piyaz:composer-researcher` under an orchestrator authority grant | refinement fields (`description`, `acceptanceCriteria`, `tags`, `category`, `priority`, `estimate`, `decisions`) plus `implementationPlan`; `status='planned'` on `draft → planned` only | brief, status, gatePhase, flags, confidence, refined estimate/work-type, proposed rewrites, section/step counts, open questions |
 | 3. Implement | `piyaz:composer-implementer` | `status='in_progress'` (claim), `status='in_review'` (+ Completion Protocol); fix mode rotates `in_review → in_progress → in_review` | status, PR URL, AC counts, concerns |
 | CI gate | generic (haiku) | nothing | `green` / `red` / `pending` / `none`, failing checks |
 | 4. Review | `piyaz:review` (dispatched with a verdict schema) | nothing (read-only) | verdict, blocking findings |
@@ -71,7 +70,7 @@ The workflow returns exactly one of three shapes. Branch on `result.status`, not
 | `status` | Meaning | Orchestrator reaction |
 | --- | --- | --- |
 | `DONE` | Task ran to `in_review` (or `planned` for a plannable-only pick) | Surface the verdict, run the *Merge gate*, propagate |
-| `NEEDS_DECISION` | The research or plan phase gated; `result.gate` carries the trigger and `result.phase` names the raising phase | Resolve via *Gates*, then relaunch the workflow with the answer |
+| `NEEDS_DECISION` | The merged research+plan phase gated; `result.gate` carries the trigger and `result.phase` names the raising half (`research` or `plan`) | Resolve via *Gates*, then relaunch the workflow with the answer |
 | `BLOCKED` | A phase could not complete; `result.phase` and `result.reason` say which and why | *Failure handling* |
 
 A `DONE` result also carries: `outcome` (`in_review`|`planned`), `verdict`, `prUrl`, `ciState`, `acSatisfied`/`acTotal`, `rotations`, `escalated` (true when a `block` verdict or an exhausted fix budget left findings unaddressed), `blockingFindings`, `concerns`. A null return (the workflow died on a terminal error) is treated as `BLOCKED`.
@@ -146,11 +145,11 @@ digraph composer_iteration {
 
 ## Gates
 
-A `NEEDS_DECISION` result means the research or plan phase needs a user decision before the task can proceed. `result.phase` names the raising phase and `result.gate` carries the trigger. Resolve with `the AskUserQuestion tool`, then relaunch the workflow:
+A `NEEDS_DECISION` result means the merged research+plan phase needs a user decision before the task can proceed. `result.phase` names the raising half (`research` or `plan`, from the agent's `gatePhase`) and `result.gate` carries the trigger. Resolve with `the AskUserQuestion tool`, then relaunch the workflow:
 
 - **Oversize** (`oversize-task` flag): offer to dispatch `piyaz:decompose-task` or skip the task. Composer never splits a task itself. On decompose, dispatch the decompose agent and end the iteration; the children land in the backlog.
 - **Proposed rewrites** (`result.gate.proposedRewrites` non-empty): show original vs proposed per field with the rationale; offer accept / deny. On accept, apply via `piyaz_edit` and relaunch the workflow **fresh** (no `resumeFrom`) so research re-grounds on the rewritten task. On deny, end the iteration (backlog picks next; single-task stops).
-- **Low confidence or external input** (confidence < 0.6, `external-input-required`, or any plan-phase open question): surface the open questions, wait for answers, then relaunch — research gate relaunches **fresh** with `gateAnswers`; a plan gate relaunches with `resumeFrom='plan'`, `priorBrief=result.brief`, and `gateAnswers`, so research is not redone.
+- **Low confidence or external input** (confidence < 0.6, `external-input-required`, or any plan-phase open question): surface the open questions, wait for answers, then relaunch — research gate relaunches **fresh** with `gateAnswers`; a plan gate relaunches with `resumeFrom='plan'`, `priorBrief=result.brief`, and `gateAnswers`, so research is not redone (the merged phase plans from the prior brief).
 
 **Headless gate fallback:** when `AskUserQuestion` is unavailable (errors or hangs), a `NEEDS_DECISION` resolves to skip-the-task: append a `GATE` line carrying the unasked question and the skip, write `TASK_END outcome=skipped`, end the iteration (backlog picks next; single-task stops). Never fabricate an answer; skipping is the reversible default (resilience §11).
 
@@ -178,15 +177,16 @@ The workflow self-selects each phase's model and effort from the pick facts and 
 
 | Phase | est 1–2 | est 3 | est 5 | est 8–13 / unset |
 | --- | --- | --- | --- | --- |
-| Researcher | sonnet | sonnet | opus | opus |
-| Planner | opus | opus | opus | opus |
+| Research+Plan | opus | opus | opus | opus |
 | Implementer | sonnet (also docs/test/chore) | sonnet if docs/test/chore, else opus | opus | opus |
 | CI gate | haiku | haiku | haiku | haiku |
 | Reviewer | opus | opus | opus | opus — never downgrade |
 
-Research correctness is load-bearing: a mis-refined task wastes far more downstream opus tokens than a cheaper research model saves, so the researcher never runs below sonnet, and the floor rises to opus on substantial or risky tasks. (CI watching is mechanical, so the cheap haiku tier holds there only.)
+Research and plan correctness are load-bearing: a mis-refined task or a vague plan wastes far more downstream tokens than a cheaper model saves, so the merged phase never runs below opus. (CI polling is mechanical, so the cheap haiku tier holds there only.)
 
 Guardrails force opus and higher effort on the planner and implementer regardless of estimate when any holds: a `security`/`safety`/`compliance` tag; estimate 8, 13, or missing; a fix-mode rotation; any retry or partial-success recovery; `priority='urgent'`; or a risk-bearing research flag (`security-boundary-uncovered`, `version-drift-major`, `dep-mismatch`). These are encoded in `compose-task.js`; this table is the human-readable mirror.
+
+Fable sits above opus and upgrades the guardrail-fired dispatches. When `args.fable` is not `'off'`, the research+plan, implement, and fix dispatches select fable instead of opus when a guardrail fires on estimate 8+, a risk tag or flag, or `priorFailure`; the final fix rotation always takes the top tier. A failed fable dispatch (no account access, terminal error) falls back to opus and disables fable for the rest of the run. Pass `fable:'off'` when the user declines the tier; the reviewer stays opus and the CI gate stays haiku either way.
 
 ## Run log
 
@@ -327,6 +327,6 @@ Not a decomposer (oversize routes out). Not a hand-refiner (that is the piyaz sk
 
 - `skills/composer/workflows/compose-task.js`: the per-task pipeline the orchestrator launches.
 - `skills/piyaz/SKILL.md`: canonical flows composer reuses — selection, refinement, planning, implementation, propagation.
-- `agents/composer-researcher.md`, `agents/composer-planner.md`, `agents/composer-implementer.md`, `agents/review.md`: the four phase contracts and their structured returns.
+- `agents/composer-researcher.md`, `agents/composer-planner.md`, `agents/composer-implementer.md`, `agents/review.md`: the phase contracts and their structured returns. The workflow's merged research+plan phase runs on the researcher; the planner stays for direct dispatch.
 - `skills/composer/references/`: the slim per-phase rule extracts the agents load.
 - `agents/decompose-task.md`: the oversize-delegation target.

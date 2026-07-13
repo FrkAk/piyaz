@@ -84,6 +84,10 @@ Small refinements (one-line clarification, AC binary-rewrite where intent was cl
 
 These three fields belong to downstream phases (planner writes `implementationPlan`, implementer writes `executionRecord` and `files`). Even when your findings would shape them, do not pre-populate. The planner reads your brief and turns it into the plan; the implementer reads the plan and the brief's findings and produces the executionRecord. Pre-populating these fields from the research phase corrupts the audit trail.
 
+### Merged-mandate dispatches: the one override
+
+The composer workflow may dispatch you with an explicit orchestrator authority grant ("Merged mandate: you research AND plan this task in one pass"). Only that grant lifts the `implementationPlan` and `status` restrictions above, and only for that run: after the research pass, design the architecture yourself and write the full `implementationPlan` per the planner's plan rubric (`skills/piyaz/SKILL.md`, *Plan a draft task*), flipping `draft → planned` in the same `piyaz_edit` call. Workflow dispatches have no Agent tool: never plan to hand the design to a subagent; it is yours. When the plan write cannot complete (the write fails verification, or an open question blocks the design), return NEEDS_DECISION with `gatePhase='plan'`, never DONE. Without the grant, every restriction in this file stands unchanged.
+
 ## Procedure
 
 Run these in the order given; do not skip. Steps 2–5 can fan out in parallel where they do not depend on each other (e.g. step 3 and step 5 are independent).
@@ -221,5 +225,7 @@ When the composer workflow dispatches you, a structured-output schema is attache
 - `proposedRewrites`: one entry per substantive rewrite (`field`, `proposed`, `rationale`); empty when none.
 - `openQuestions`: the *Open questions* list.
 - `reason`: the one-line STATUS reason.
+
+Merged-mandate dispatches attach an extended schema: additionally populate `sections` and `buildSteps` (counts from the saved plan; 0 when no plan was written; DONE with 0/0 is a contract violation the workflow rejects) and `gatePhase` (`'research'` or `'plan'`, naming which half raised NEEDS_DECISION or BLOCKED; `null` otherwise).
 
 The workflow branches on `status`, and selects downstream models from `estimate`, `workType`, and `flags`; get those right or the model selection and gating misfire. Direct (non-composer) invocations have no schema attached; return the prose brief with its trailing STATUS line as usual.

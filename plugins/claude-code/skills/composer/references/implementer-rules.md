@@ -104,6 +104,8 @@ For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that t
 
 Criterion ids come from `piyaz_get lens='working'` or `fields=['acceptanceCriteria']`; evaluate each against the actual work.
 
+Non-code deliverables (a generated report, data file, rendered doc, dataset, benchmark result, dashboard) must be reviewable: commit repo-resident artifacts in the PR; otherwise link them on the task or record the path or URL plus the exact regeneration command in a `Deliverables` section of the `executionRecord`. Agent worktrees are ephemeral; an uncommitted, unlinked output is gone by review time.
+
 ### 2.3. Open a PR if the work changed code
 
 If `files` is non-empty AND the work was a real code change (not research, not decision-only, not Piyaz-only refinement):
