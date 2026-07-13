@@ -34,14 +34,24 @@ export function brandString(name: string): string | undefined {
 }
 
 /**
- * The address vars `senderFor` reads, in the order it falls back through them.
+ * Per-purpose sender address var. The key set defines `EmailPurpose` and the
+ * values feed `SENDER_ADDRESS_VARS`, so `senderFor` and the capability gate
+ * cannot drift over which vars exist.
  */
-const SENDER_ADDRESS_VARS = [
+const PURPOSE_SENDER_VARS = {
+  transactional: "EMAIL_FROM_NOREPLY",
+  personal: "EMAIL_FROM_SUPPORT",
+  informational: "EMAIL_FROM_INFO",
+} as const;
+
+/**
+ * Every sender address var a deployment can configure: the shared
+ * `EMAIL_FROM` fallback plus each per-purpose var.
+ */
+const SENDER_ADDRESS_VARS: readonly string[] = [
   "EMAIL_FROM",
-  "EMAIL_FROM_NOREPLY",
-  "EMAIL_FROM_SUPPORT",
-  "EMAIL_FROM_INFO",
-] as const;
+  ...Object.values(PURPOSE_SENDER_VARS),
+];
 
 /**
  * Whether the deployment configured any sender address at all.
@@ -140,7 +150,7 @@ export function resolveBrandConfig(): BrandConfig {
  * that always invites a reply (team invites, welcome); `informational` is
  * no-reply informational mail.
  */
-export type EmailPurpose = "transactional" | "personal" | "informational";
+export type EmailPurpose = keyof typeof PURPOSE_SENDER_VARS;
 
 /**
  * Select the `from` (and, for `personal` mail, `replyTo`) for an email purpose.
@@ -164,13 +174,17 @@ export function senderFor(purpose: EmailPurpose): {
 
   switch (purpose) {
     case "transactional":
-      return { from: brandString("EMAIL_FROM_NOREPLY") ?? fallbackFrom };
+      return {
+        from: brandString(PURPOSE_SENDER_VARS.transactional) ?? fallbackFrom,
+      };
     case "personal": {
-      const from = brandString("EMAIL_FROM_SUPPORT") ?? fallbackFrom;
+      const from = brandString(PURPOSE_SENDER_VARS.personal) ?? fallbackFrom;
       return { from, replyTo: brand.supportEmail ?? from };
     }
     case "informational":
-      return { from: brandString("EMAIL_FROM_INFO") ?? fallbackFrom };
+      return {
+        from: brandString(PURPOSE_SENDER_VARS.informational) ?? fallbackFrom,
+      };
     default:
       return { from: fallbackFrom };
   }
