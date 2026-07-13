@@ -207,7 +207,7 @@ function renderFooter(brand: BrandConfig): string {
  * Build the client-robust HTML part: a full document with a `color-scheme`
  * meta for dark-mode clients, a table-based centered container capped at 600px,
  * inline CSS on every element, and the branded-vs-neutral gating (logo, accent,
- * footer links) applied here so the five templates stay thin.
+ * footer links) applied here so the templates stay thin.
  */
 export function renderShell(brand: BrandConfig, content: EmailContent): string {
   const accent = accentColor(brand);
