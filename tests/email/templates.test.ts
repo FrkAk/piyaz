@@ -9,8 +9,10 @@ import {
   verificationEmail,
   passwordResetEmail,
   emailChangeEmail,
+  emailChangeApprovalEmail,
   passwordChangedEmail,
   newSignInEmail,
+  deleteAccountEmail,
 } from "@/lib/email/templates";
 
 const neutral: BrandConfig = {
@@ -37,6 +39,7 @@ const samples = [
       verificationEmail(b, {
         verifyUrl: "https://app.example/verify?t=abc",
         recipientName: "Dana",
+        expiresLabel: "1 hour",
       }),
   ],
   [
@@ -57,7 +60,13 @@ const samples = [
   ],
   [
     "passwordChanged",
-    (b: BrandConfig) => passwordChangedEmail(b, { recipientName: "Dana" }),
+    (b: BrandConfig) =>
+      passwordChangedEmail(b, {
+        recipientName: "Dana",
+        timestamp: "2026-07-10 18:00 UTC",
+        device: "Firefox on Linux",
+        location: "Berlin, DE (203.0.113.7)",
+      }),
   ],
   [
     "newSignIn",
@@ -65,6 +74,25 @@ const samples = [
       newSignInEmail(b, {
         timestamp: "2026-07-10 18:00 UTC",
         device: "Firefox on Linux",
+        location: "Berlin, DE (203.0.113.7)",
+      }),
+  ],
+  [
+    "emailChangeApproval",
+    (b: BrandConfig) =>
+      emailChangeApprovalEmail(b, {
+        approveUrl: "https://app.example/approve?t=abc",
+        newEmail: "new@acme.example",
+        recipientName: "Dana",
+      }),
+  ],
+  [
+    "deleteAccount",
+    (b: BrandConfig) =>
+      deleteAccountEmail(b, {
+        confirmUrl: "https://app.example/delete?t=abc",
+        expiresLabel: "24 hours",
+        recipientName: "Dana",
       }),
   ],
 ] as const;
@@ -177,6 +205,93 @@ describe("template structure", () => {
     expect(text).toMatch(/\nhttp:\/\/localhost:3000\/verify\?t=abc\n/);
   });
 
+  test("verification expiry note renders only when expiresLabel is set", () => {
+    const without = verificationEmail(neutral, {
+      verifyUrl: "https://app.example/v",
+    });
+    expect(without.html).not.toContain("This link expires");
+    expect(without.text).not.toContain("This link expires");
+    const withLabel = verificationEmail(neutral, {
+      verifyUrl: "https://app.example/v",
+      expiresLabel: "1 hour",
+    });
+    expect(withLabel.html).toContain("This link expires in 1 hour.");
+    expect(withLabel.text).toContain("This link expires in 1 hour.");
+  });
+
+  test("passwordReset always carries the single-use line", () => {
+    const without = passwordResetEmail(neutral, {
+      resetUrl: "https://app.example/r",
+    });
+    expect(without.html).toContain("This link can only be used once.");
+    expect(without.text).toContain("This link can only be used once.");
+    const withLabel = passwordResetEmail(neutral, {
+      resetUrl: "https://app.example/r",
+      expiresLabel: "1 hour",
+    });
+    expect(withLabel.html).toContain("This link can only be used once.");
+    expect(withLabel.text).toContain("This link can only be used once.");
+  });
+
+  test("passwordChanged renders When/Device/Location notes only when set", () => {
+    const withContext = passwordChangedEmail(neutral, {
+      timestamp: "2026-07-10 18:00 UTC",
+      device: "Firefox on Linux",
+      location: "Berlin, DE (203.0.113.7)",
+    });
+    expect(withContext.text).toContain("When: 2026-07-10 18:00 UTC");
+    expect(withContext.text).toContain("Device: Firefox on Linux");
+    expect(withContext.text).toContain("Location: Berlin, DE (203.0.113.7)");
+    const withoutContext = passwordChangedEmail(neutral, {});
+    expect(withoutContext.text).not.toContain("When:");
+    expect(withoutContext.text).not.toContain("Device:");
+    expect(withoutContext.text).not.toContain("Location:");
+  });
+
+  test("newSignIn renders a Location note when set", () => {
+    const { html, text } = newSignInEmail(neutral, {
+      location: "Berlin, DE (203.0.113.7)",
+    });
+    expect(html).toContain("Location: Berlin, DE (203.0.113.7)");
+    expect(text).toContain("Location: Berlin, DE (203.0.113.7)");
+  });
+
+  test("emailChangeApproval names the new address; wasn't-you copy gated on supportEmail", () => {
+    const withSupport = emailChangeApprovalEmail(branded, {
+      approveUrl: "https://app.example/approve?t=abc",
+      newEmail: "new@acme.example",
+    });
+    expect(withSupport.html).toContain("new@acme.example");
+    expect(withSupport.text).toContain("new@acme.example");
+    expect(withSupport.text).toMatch(
+      /\nhttps:\/\/app\.example\/approve\?t=abc\n/,
+    );
+    expect(withSupport.text).toContain("help@acme.example");
+    const withoutSupport = emailChangeApprovalEmail(neutral, {
+      approveUrl: "https://app.example/approve?t=abc",
+      newEmail: "new@acme.example",
+    });
+    expect(withoutSupport.text).not.toContain("help@acme.example");
+    expect(withoutSupport.text).toContain("change your password");
+  });
+
+  test("deleteAccount renders its confirm URL, gated expiry note, and didn't-request line", () => {
+    const without = deleteAccountEmail(neutral, {
+      confirmUrl: "https://app.example/delete?t=abc",
+    });
+    expect(without.text).toMatch(/\nhttps:\/\/app\.example\/delete\?t=abc\n/);
+    expect(without.html).not.toContain("This link expires");
+    expect(without.text).not.toContain("This link expires");
+    expect(without.text).toContain("your account will stay active");
+    const withLabel = deleteAccountEmail(neutral, {
+      confirmUrl: "https://app.example/delete?t=abc",
+      expiresLabel: "24 hours",
+    });
+    expect(withLabel.html).toContain("This link expires in 24 hours.");
+    expect(withLabel.text).toContain("This link expires in 24 hours.");
+    expect(withLabel.text).toContain("your account will stay active");
+  });
+
   test("button label color follows the accent's luminance", () => {
     const light = verificationEmail(
       { ...neutral, brandColor: "#ffee00" },
@@ -243,6 +358,53 @@ describe("hostile input is neutralized (AC #4)", () => {
     expect(text).not.toContain("\nYour account is locked");
     expect(text).not.toContain("\nYour session expired");
     expect(text).not.toContain("\nhttps://evil.example");
+  });
+
+  test("newline-smuggling location and timestamp cannot forge text lines", () => {
+    const signIn = newSignInEmail(neutral, {
+      timestamp: "18:00\nUrgent: verify at https://evil.example",
+      location: "203.0.113.7\n\nYour account is locked, call now",
+    });
+    expect(signIn.text).not.toContain("\nUrgent:");
+    expect(signIn.text).not.toContain("\nYour account is locked");
+    expect(signIn.text).not.toContain("\nhttps://evil.example");
+    const changed = passwordChangedEmail(neutral, {
+      timestamp: "18:00\nUrgent: verify at https://evil.example",
+      location: "203.0.113.7\n\nYour account is locked, call now",
+    });
+    expect(changed.text).not.toContain("\nUrgent:");
+    expect(changed.text).not.toContain("\nYour account is locked");
+    expect(changed.text).not.toContain("\nhttps://evil.example");
+  });
+
+  test("a hostile newEmail cannot break out of markup or forge text lines", () => {
+    const breakout = emailChangeApprovalEmail(neutral, {
+      approveUrl: "https://app.example/approve",
+      newEmail: 'evil@x"><img src=x>',
+    });
+    expect(breakout.html).not.toContain('"><img');
+    expect(breakout.html).not.toContain("<img src=x>");
+    const smuggled = emailChangeApprovalEmail(neutral, {
+      approveUrl: "https://app.example/approve",
+      newEmail: "evil@x\nYour account is locked, call now",
+    });
+    expect(smuggled.text).not.toContain("\nYour account is locked");
+  });
+
+  test("hostile approve and confirm URLs degrade to dead labels", () => {
+    const approval = emailChangeApprovalEmail(neutral, {
+      approveUrl: "javascript:alert(1)",
+      newEmail: "new@acme.example",
+    });
+    expect(approval.html).not.toContain("javascript:");
+    expect(approval.html).toContain("Approve email change");
+    expect(approval.text).not.toContain("javascript:");
+    const deletion = deleteAccountEmail(neutral, {
+      confirmUrl: "javascript:alert(1)",
+    });
+    expect(deletion.html).not.toContain("javascript:");
+    expect(deletion.html).toContain("Confirm account deletion");
+    expect(deletion.text).not.toContain("javascript:");
   });
 
   test("footer labels and appName smuggling newlines cannot forge text lines", () => {
