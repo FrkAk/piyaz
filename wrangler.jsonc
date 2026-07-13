@@ -100,6 +100,15 @@
           "head_sampling_rate": 1
         }
       },
+      "secrets": {
+        "required": [
+          "BETTER_AUTH_SECRET",
+          "BROKER_DO_SECRET",
+          "DATABASE_URL",
+          "DATABASE_SERVICE_ROLE_URL",
+          "DATABASE_AUTH_URL"
+        ]
+      },
       "vars": {
         "DEPLOY_TARGET": "cloudflare",
         "BETTER_AUTH_URL": "https://app.piyaz.ai",
@@ -196,6 +205,15 @@
           "persist": true,
           "head_sampling_rate": 1
         }
+      },
+      "secrets": {
+        "required": [
+          "BETTER_AUTH_SECRET",
+          "BROKER_DO_SECRET",
+          "DATABASE_URL",
+          "DATABASE_SERVICE_ROLE_URL",
+          "DATABASE_AUTH_URL"
+        ]
       },
       "vars": {
         "DEPLOY_TARGET": "cloudflare",
