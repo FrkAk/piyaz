@@ -102,7 +102,7 @@ One `piyaz_edit` call carries the whole payload as ordered ops: `set executionRe
 
 For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, `set files` with `value=[]` explicitly. Omitting the op leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
-Criterion ids come from `piyaz_get lens='working'` or `fields=['acceptanceCriteria']`; evaluate each against the actual work.
+Criterion ids come from `piyaz_get lens='working'` or `fields=['acceptanceCriteria']`; evaluate each against the actual work. A fix or rework rotation re-`set`s the author's own `executionRecord` to the folded final shipped state instead of appending per-rotation narrative.
 
 Non-code deliverables (a generated report, data file, rendered doc, dataset, benchmark result, dashboard) must be reviewable: commit repo-resident artifacts in the PR; otherwise link them on the task or record the path or URL plus the exact regeneration command in a `Deliverables` section of the `executionRecord`. Agent worktrees are ephemeral; an uncommitted, unlinked output is gone by review time.
 
@@ -183,6 +183,7 @@ You write this field at the `in_review` transition; it is the core of your Compl
 - **Include:** function names, file paths, endpoints, data formats.
 - **Exclude:** debugging stories, false starts, filler.
 - **For `cancelled`:** rationale (why abandoned), approaches tried, decisions learned. Same shape as a done record, just for non-shipping outcomes.
+- **Deliverables section (optional):** when the task ships non-code artifacts, a `## Deliverables` list (path or URL plus the exact regeneration command per artifact) extends the record beyond the sentence core.
 - **Draft tasks must NOT carry an `executionRecord`.** That field implies the task shipped.
 
 ### `decisions`
@@ -220,7 +221,7 @@ Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementati
 - Bullet lists (`-`) for 3 or more items. Never run-on prose.
 - Backticks for code references: file paths, function names, endpoints, variables, package names.
 - Paragraph breaks between distinct topics.
-- Headings (`##`, `###`) only in long fields like `implementationPlan`.
+- Headings (`##`, `###`) only in long fields like `implementationPlan` and the executionRecord's optional `Deliverables` section.
 
 ### Tone: never sound like AI
 

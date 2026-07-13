@@ -91,7 +91,7 @@ When entry status was already `planned`, do **not** pass the `status` field at a
    - Write to `decisions` only when the refinement *is* a CHOICE + WHY (e.g. user picked library X over Y; AC reworded to bound it to a specific behavior). Refinements that are mechanical fixes (typo, tag dimension fill-in, AC binary-rewrite where the intent was already clear) do not get a decision entry; the audit log records the field change.
    - Do not undo what the researcher applied. If you believe a researcher refinement is wrong, surface the disagreement in your return message to the orchestrator rather than silently overwriting; the user resolves it on review.
 
-   If nothing in the brief or in the planning surfaced a gap, do not refine. The planner does not freelance edits.
+   If nothing in the brief or in the planning surfaced a gap, do not refine. The planner does not freelance edits. Where this file says "the orchestrator", read "the caller" on direct dispatch.
 
 4. **Write the implementation plan.** A markdown body scaled to the task: cover what the implementer needs to build it correctly, and nothing it does not. Use the best available model and the project's planning agent skills or harness to produce it. Let the work, the estimate, and the work-type decide the shape and length. There is no fixed section list and no required order.
 
@@ -157,7 +157,7 @@ When entry status was already `planned`, do **not** pass the `status` field at a
 
 ## Composer structured return
 
-When the composer workflow dispatches you, a structured-output schema is attached and your machine-readable return must populate these fields. The plan itself is already saved to Piyaz; these fields are the control signal, not the plan.
+When a dispatch attaches a structured-output schema, your machine-readable return must populate these fields. The plan itself is already saved to Piyaz; these fields are the control signal, not the plan.
 
 - `status`: the STATUS value above.
 - `sections`: the number of `##` sections in the plan you wrote (or re-validated).

@@ -264,7 +264,7 @@ Lead with slim tools.
 6. One `piyaz_edit` call carries the whole Completion Protocol payload: `set executionRecord`, one `add` per decision, `set files`, `check`/`uncheck` each acceptance criterion by id (evaluate against the work; never auto-check), `set prUrl` when a PR was opened (the backend upserts a `task_links` row with `kind='pull_request'` so the review subagent and detail UI can resolve the PR), and `set status='in_review'`. Read response `_hints`. Re-call with missing fields if any. After the PR is approved, the HOTL operator flips the task `in_review → done`. Agents do not self-promote.
 7. **Propagate** (lifecycle §3). `piyaz_map view='neighbors' task='<ref>'`, then `piyaz_map view='downstream' task='<ref>'`. Update, create, or remove edges via `piyaz_link`.
 
-**For end-to-end automation on a single task:** suggest `/piyaz:composer <taskRef>`. Composer drives the named task through research + plan + implement + PR + propagate via dispatched subagents (researcher, planner, implementer) in clean per-phase contexts. Use this when the user wants depth + automation per task; use the inline flow above when the user wants to drive each phase manually with HOTL gates.
+**For end-to-end automation on a single task:** suggest `/piyaz:composer <taskRef>`. Composer drives the named task through research + plan + implement + PR + propagate via dispatched subagents (researcher with a merged plan mandate, implementer) in clean per-phase contexts. Use this when the user wants depth + automation per task; use the inline flow above when the user wants to drive each phase manually with HOTL gates.
 
 ### Mark a task done (user reports completion)
 

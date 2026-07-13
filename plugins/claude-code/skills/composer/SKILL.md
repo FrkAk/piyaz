@@ -46,7 +46,7 @@ Each iteration's task runs through `skills/composer/workflows/compose-task.js`, 
 Workflow({
   scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/composer/workflows/compose-task.js",
   args: { taskRef, taskId, projectId, categories, tagVocabulary,
-          pickEstimate, pickPriority, workType, tags, thinDescription,
+          pickEstimate, pickPriority, workType, tags,
           mode, plannableOnly, resumeFrom, priorBrief, gateAnswers,
           fixFindings, prUrl, priorFailure, estimate, flags, fable },
 })
@@ -135,7 +135,7 @@ digraph composer_iteration {
 
 1. **Pick.** Backlog: `piyaz_map view='ready'` ∩ `view='critical_path'`; rank by priority (`urgent > core > normal > backlog`), tie-break by lowest estimate. Fall back to the highest-priority `ready` task when the intersection is empty, then to `piyaz_map view='plannable'` when `ready` is empty (plannable picks route through research + plan only; mark the pick **plannable-only**). Single-task: the named task; if `done` or `cancelled`, report and stop; if already claimed, see *Failure handling* (jump to the in-flight phase, never restart). Emit a one-paragraph pick rationale (taskRef, priority, estimate, critical-path yes/no, one-sentence reason). Do not wait for approval; the user interrupts if they disagree.
 
-2. **Gather pick facts and launch.** Build the workflow `args` from the pick and bootstrap: `taskRef`, `taskId` (the UUID, carried for cross-referencing; refs are first-class in tool calls — conventions §4), `projectId`, `categories`, `tagVocabulary`, `pickEstimate`, `pickPriority`, `workType` and `tags` (from the task row), `thinDescription` (true when the description fails the artifacts §1 rubric on a glance), `mode`, `plannableOnly`. Write `PICK` then `WORKFLOW task=<ref> runId=<id>` to the run log, then launch the workflow and await the result.
+2. **Gather pick facts and launch.** Build the workflow `args` from the pick and bootstrap: `taskRef`, `taskId` (the UUID, carried for cross-referencing; refs are first-class in tool calls — conventions §4), `projectId`, `categories`, `tagVocabulary`, `pickEstimate`, `pickPriority`, `workType` and `tags` (from the task row), `mode`, `plannableOnly`. Write `PICK` then `WORKFLOW task=<ref> runId=<id>` to the run log, then launch the workflow and await the result.
 
 3. **Handle the result.** `NEEDS_DECISION` → *Gates*. `BLOCKED`/null → *Failure handling*. `DONE` with `outcome=planned` (plannable-only) → end the iteration (`TASK_END outcome=planned`); backlog returns to the pick, single-task reports and stops. `DONE` with `outcome=in_review` → step 4.
 
@@ -184,7 +184,7 @@ The workflow self-selects each phase's model and effort from the pick facts and 
 
 Research and plan correctness are load-bearing: a mis-refined task or a vague plan wastes far more downstream tokens than a cheaper model saves, so the merged phase never runs below opus. (CI polling is mechanical, so the cheap haiku tier holds there only.)
 
-Guardrails force opus and higher effort on the planner and implementer regardless of estimate when any holds: a `security`/`safety`/`compliance` tag; estimate 8, 13, or missing; a fix-mode rotation; any retry or partial-success recovery; `priority='urgent'`; or a risk-bearing research flag (`security-boundary-uncovered`, `version-drift-major`, `dep-mismatch`). These are encoded in `compose-task.js`; this table is the human-readable mirror.
+Guardrails force opus and higher effort on the research+plan and implement dispatches regardless of estimate when any holds: a `security`/`safety`/`compliance` tag; estimate 8, 13, or missing; a fix-mode rotation; any retry or partial-success recovery; `priority='urgent'`; or a risk-bearing research flag (`security-boundary-uncovered`, `version-drift-major`, `dep-mismatch`). These are encoded in `compose-task.js`; this table is the human-readable mirror.
 
 Fable sits above opus and upgrades the guardrail-fired dispatches. When `args.fable` is not `'off'`, the research+plan, implement, and fix dispatches select fable instead of opus when a guardrail fires on estimate 8+, a risk tag or flag, or `priorFailure`; the final fix rotation always takes the top tier. A failed fable dispatch (no account access, terminal error) falls back to opus and disables fable for the rest of the run. Pass `fable:'off'` when the user declines the tier; the reviewer stays opus and the CI gate stays haiku either way.
 

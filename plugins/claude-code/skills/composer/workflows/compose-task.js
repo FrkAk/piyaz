@@ -10,7 +10,7 @@
  *
  * Args (orchestrator → workflow):
  *   taskRef, taskId, projectId, categories, tagVocabulary,
- *   pickEstimate, pickPriority, workType, tags, thinDescription,
+ *   pickEstimate, pickPriority, workType, tags,
  *   mode, plannableOnly, resumeFrom, priorBrief, gateAnswers, fixFindings,
  *   prUrl, priorFailure, estimate, flags, fable
  *
@@ -124,7 +124,7 @@ const VERDICT_SCHEMA = {
       },
     },
     concerns: { type: "array", items: { type: "string" } },
-    ciOnly: { type: "boolean", description: "True when every blocking finding requires no code change (pending CI the sole blocker)." },
+    ciOnly: { type: "boolean", description: "True only when unresolved CI is the sole blocking finding." },
     reason: { type: ["string", "null"] },
   },
 };
@@ -167,7 +167,7 @@ function hasRiskTag(tags) {
 }
 
 /**
- * Reports whether the implementer/planner must be forced to opus.
+ * Reports whether the implement dispatch must be forced to opus.
  * @param {number|null} est - Refined estimate.
  * @param {string[]} flags - Research flags.
  * @returns {boolean} True when a guardrail forces the smartest tier.
@@ -285,6 +285,7 @@ function formatFindings(findings) {
 
 const head = `Target task: ${a.taskRef} (taskId ${a.taskId}) in project ${a.projectId}. Pass that projectId on every Piyaz tool call.`;
 
+// Mirrors composer-implementer.md pre-flight step f and the lifecycle §2.2 deliverables rule; keep the three in sync.
 const PROVISION =
   "Worktree provisioning: a worktree checkout omits gitignored files. Before editing code, copy from the primary checkout " +
   "(first entry of `git worktree list --porcelain`) into the worktree root when absent: the project's agent-instruction files " +
@@ -302,13 +303,18 @@ let planQuestions = [];
 if (shouldRun("plan")) {
   const reResearch = shouldRun("research");
   const entryStatus = a.plannableOnly ? "draft" : a.mode === "single" ? "unknown" : "draft|planned";
+  const mandate = reResearch
+    ? "Merged mandate: you research AND plan this task in one pass. "
+    : "Merged mandate: plan this task from the prior research brief below; do not re-research. ";
   const prompt =
     `${head}\nProject categories and tags: ${a.categories}; ${a.tagVocabulary}.\nEntry status: ${entryStatus}.\n` +
-    "Merged mandate: you research AND plan this task in one pass. Orchestrator authority grant: the phase-1 restriction against writing implementationPlan or status is lifted for this dispatch. " +
-    "After the research pass, design the architecture yourself; the Agent tool is unavailable in workflow dispatches, so never plan to dispatch a subagent. " +
-    "Write the full implementationPlan to Piyaz and flip draft to planned in the same piyaz_edit call. " +
-    "If the plan write cannot complete, return NEEDS_DECISION with gatePhase='plan', never DONE." +
-    (reResearch ? "" : `\nPrior research brief (do not re-research):\n${brief}`) +
+    mandate +
+    "Orchestrator authority grant: the phase-1 restriction against writing implementationPlan or status is lifted for this dispatch. " +
+    "Design the architecture yourself; the Agent tool is unavailable in workflow dispatches, so never plan to dispatch a subagent. " +
+    "On a draft entry, write the full implementationPlan to Piyaz and flip draft to planned in the same piyaz_edit call. " +
+    "On a planned entry a plan already exists: re-validate it, rewrite only on material drift, never re-pass status='planned', and report the saved plan's real section and build-step counts, never 0/0. " +
+    "An open question that blocks the design returns NEEDS_DECISION with gatePhase='plan'; a failed plan write returns BLOCKED with gatePhase='plan'. Never return DONE without a saved plan." +
+    (reResearch ? "" : `\nPrior research brief:\n${brief}`) +
     (a.gateAnswers ? `\nOpen questions resolved by the user:\n${a.gateAnswers}` : "");
   merged = await dispatch(prompt, {
     agentType: "piyaz:composer-researcher",
@@ -385,29 +391,34 @@ let pendingFindings = a.resumeFrom === "fix" && a.fixFindings ? a.fixFindings : 
 
 while (true) {
   if (pendingFindings == null) {
-    phase("CI gate");
-    const ci = await agent(
-      `Poll CI for pull request ${prUrl} and report status. Run exactly this single command:\n` +
-        `timeout 660 bash -c 'while :; do out=$(gh pr checks ${prUrl} 2>&1); code=$?; [ $code -ne 8 ] && { printf "%s\\n" "$out"; exit $code; }; sleep 60; done'; echo "exit=$?"\n` +
-        "It polls once a minute, 11 gh calls at most; never re-run it in a tighter loop. " +
-        "Interpret the exit code: 0 means green; 8 or 124 means pending (checks still running after the poll budget); any other non-zero means red, UNLESS the output says no checks are reported, which is none. " +
-        "On red, read the failing check names from the output. Do not edit any files; only report.",
-      { model: "haiku", effort: "low", schema: CI_SCHEMA, label: `ci:${a.taskRef}`, phase: "CI gate" },
-    );
-    ciState = ci ? ci.state : "pending";
-    const failing = ci && ci.failingChecks ? ci.failingChecks.join(", ") : "";
+    let failing = "";
+    if (prUrl) {
+      phase("CI gate");
+      const ci = await agent(
+        `Poll CI for pull request ${prUrl} and report status. Run exactly this single command:\n` +
+          `timeout 660 bash -c 'while :; do out=$(gh pr checks ${prUrl} 2>&1); code=$?; [ $code -ne 8 ] && { printf "%s\\n" "$out"; exit $code; }; sleep 60; done'; echo "exit=$?"\n` +
+          "It polls once a minute, 11 gh calls at most; never re-run it in a tighter loop. " +
+          "Interpret the exit code: 0 means green; 124 means pending (checks still running when the poll budget ran out); any other non-zero means red, UNLESS the output says no checks are reported, which is none. " +
+          "On red, read the failing check names from the output. Do not edit any files; only report.",
+        { model: "haiku", effort: "low", schema: CI_SCHEMA, label: `ci:${a.taskRef}`, phase: "CI gate" },
+      );
+      ciState = ci ? ci.state : "pending";
+      failing = ci && ci.failingChecks ? ci.failingChecks.join(", ") : "";
+    } else {
+      ciState = "none";
+    }
 
     phase("Review");
     const ciNote =
       ciState === "red"
         ? ` CI: failing (${failing})`
         : ciState === "pending"
-          ? " CI: unresolved after 10m"
+          ? " CI: unresolved after the 11m poll budget"
           : "";
     lastReview = await agent(
-      `${head} PR URL: ${prUrl}. Mode: composer-phase-4.${ciNote} ` +
+      `${head} ${prUrl ? `PR URL: ${prUrl}.` : "No PR; review through the task's linked deliverables."} Mode: composer-phase-4.${ciNote} ` +
         "Run the comments-and-docs audit and, when the task names output artifacts, deliverable verification per your rules. " +
-        "Set ciOnly=true when every blocking finding requires no code change (pending CI only).",
+        "Set ciOnly=true only when unresolved CI is the sole blocking finding.",
       {
         agentType: "piyaz:review",
         model: "opus",

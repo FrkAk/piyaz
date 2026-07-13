@@ -11,7 +11,7 @@ description: >
   executionRecord excerpts, downstream impact, and the PR handle from
   `task.links` filtered to `kind='pull_request'`; the PR diff is the
   source of truth for what changed, and tasks that ship deliverables
-  instead of a PR review through their linked artifacts. Returns one of
+  instead of a PR are reviewed through their linked artifacts. Returns one of
   `approve`, `request-changes`, or `block` with file-cited reasoning across
   the security, performance, reliability, observability, and codebase
   standards lenses. Never auto-flips status; HOTL owns the `in_review` to
@@ -135,7 +135,7 @@ d. **Observability.** Logs / metrics / traces consistent with the rest of the co
 
 e. **Codebase standards.** The project's own conventions from `CLAUDE.md` (or equivalent), the patterns the upstream `executionRecord` entries cite, the file structure and naming the rest of the codebase uses. Lint and formatting belong to the toolchain; flag substantive deviations (a new abstraction layer where the codebase has a flat module, a new dependency where a built-in would do, a copy-paste of an existing helper instead of reusing it). When `pr-review-toolkit:type-design-analyzer` is available and the diff introduces new types, dispatch it for this lens.
 
-Four checks that live in this lens because lint cannot catch them and they were the recurring miss when this agent's predecessors reviewed cross-file flows:
+Six checks live in this lens because lint cannot catch them and they were the recurring miss when this agent's predecessors reviewed cross-file flows:
 
 - **Internal cross-references.** When the diff renumbers a step, renames an anchor, moves a file path, renames a function, or changes any token other docs cite, every old reference is stale. Search the repo (`grep`, `rg`) for the old form before declaring the lens clean. Particularly relevant in projects with multi-file flows that cross-cite by number (e.g. "see step N of the composer loop").
 - **Duplicate-source drift.** When the same content lives in two places by design (constants mirrored across modules, API schemas shared between client and server, i18n keys against source strings, docs that paraphrase code), the diff must update both sides. Read the second source when the diff touches the first; flag mismatches. Automated sync checks (when the project has one) only enforce surface equality; they do not catch semantic drift when both sides were edited independently. When the duplication looks accidental and a single source of truth is feasible (derive one from the other, share a module, codegen one side from the other), raise it as a follow-up under `Notes` — the duplicate is the bug, the drift is the symptom.
@@ -187,7 +187,7 @@ The plan named the files the implementer was going to touch. The PR diff names w
 
 ### 7. Downstream impact
 
-`piyaz_map view='downstream' task='<taskRef>'`. Read the immediate dependents. For each, check the edge note: does the `decisions` list on the just-shipped task invalidate any downstream's assumption? Surface the affected edges with one-line guidance for the orchestrator's propagation pass (composer step 7) or for HOTL in direct mode.
+`piyaz_map view='downstream' task='<taskRef>'`. Read the immediate dependents. For each, check the edge note: does the `decisions` list on the just-shipped task invalidate any downstream's assumption? Surface the affected edges with one-line guidance for the orchestrator's propagation pass (the composer loop's propagate step) or for HOTL in direct mode.
 
 This is not a propagation run. You do not write to edges. You produce a list of edges that will need attention after the merge; the orchestrator (or the human) executes the rewires.
 
@@ -304,10 +304,10 @@ End your return with a final line:
 
 `STATUS: <DONE | BLOCKED> — <one-line reason>`
 
-In dispatched mode this same DONE/BLOCKED and its reason populate the structured `status` and `reason` fields; a `BLOCKED` `status` is how the orchestrator detects an unreviewable phase, and `verdict` is then `null`. The schema also carries `ciOnly`: set it true when every blocking finding requires no code change (pending CI the sole blocker) so the workflow re-polls CI instead of burning a fix rotation; false otherwise.
+In dispatched mode this same DONE/BLOCKED and its reason populate the structured `status` and `reason` fields; a `BLOCKED` `status` is how the orchestrator detects an unreviewable phase, and `verdict` is then `null`. The schema also carries `ciOnly`: set it true only when unresolved CI is the sole blocking finding, so the workflow re-polls CI instead of burning a fix rotation. Any other finding, including no-code-change payload defects the implementer must repair, means false.
 
 - `DONE`: you delivered a verdict. **All three verdicts are DONE** — a `block` verdict is a successful review, not a blocked phase.
-- `BLOCKED`: you could not review at all — `piyaz_get lens='review'` unreachable, the task is not at `in_review`, or the PR handle is missing, not supplied in the dispatch, and no deliverable links exist to review through. Environmental `gh` failures (auth expiry, rate limit, network) return `STATUS: BLOCKED — environmental: <exact error>`; the orchestrator surfaces these to the user without consuming the failure budget.
+- `BLOCKED`: you could not review at all — `piyaz_get lens='review'` unreachable, the task is not at `in_review`, or the PR handle is missing, not supplied in the dispatch, and no deliverables exist to review through (no links, and no artifacts named by the ACs or description). Environmental `gh` failures (auth expiry, rate limit, network) return `STATUS: BLOCKED — environmental: <exact error>`; the orchestrator surfaces these to the user without consuming the failure budget.
 
 ## Rework intake mode
 
@@ -362,7 +362,7 @@ The dispatch carries the explicit PR URL; do not re-resolve it from `task.links`
 - It does not flip status. The review agent has no `piyaz_edit` write access; `in_review → done` is owned by HOTL, or by the orchestrator's merge gate on a clean merge under an authorizing merge policy. The verdict informs that decision; it never executes it.
 - It does not write `decisions`, `executionRecord`, `files`, or `acceptanceCriteria` back to the task. The implementer populated those; the verdict critiques them.
 - It does not open, close, merge, approve, or comment on the PR. The verdict travels in chat; the human review happens on GitHub.
-- It does not run propagation. The downstream impact section is a punch list for the orchestrator's propagation step (composer step 7) or for HOTL.
+- It does not run propagation. The downstream impact section is a punch list for the orchestrator's propagation step (the composer loop's propagate step) or for HOTL.
 - It does not refine the task. If the description or ACs are weak, surface that as a process note in the verdict and route the user to `piyaz:manage` or the piyaz skill for refinement.
 - It does not flag style or formatting. Lint and the formatter own those. Substantive deviations from project patterns belong under the codebase-standards lens.
 - It does not speculate about hypothetical future load, future contributors, future requirements. Review the task as scoped; surface follow-ups under `Notes` if they are concrete enough to file as their own task.

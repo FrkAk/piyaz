@@ -90,6 +90,7 @@ The implementer writes this field at the `in_review` transition; you verify it a
 - **Include:** function names, file paths, endpoints, data formats.
 - **Exclude:** debugging stories, false starts, filler.
 - **For `cancelled`:** rationale (why abandoned), approaches tried, decisions learned. Same shape as a done record, just for non-shipping outcomes.
+- **Deliverables section (optional):** when the task ships non-code artifacts, a `## Deliverables` list (path or URL plus the exact regeneration command per artifact) extends the record beyond the sentence core.
 - **Draft tasks must NOT carry an `executionRecord`.** That field implies the task shipped.
 
 ### `decisions`
