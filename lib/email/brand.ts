@@ -26,11 +26,45 @@ import type { BrandConfig } from "./types";
  * an operator who leaves a var empty gets the neutral path rather than a blank
  * address. Mirrors the empty-as-absent fail-safe of `parseEnvInt`.
  */
-function brandString(name: string): string | undefined {
+export function brandString(name: string): string | undefined {
   const raw = process.env[name];
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   return trimmed === "" ? undefined : trimmed;
+}
+
+/**
+ * Per-purpose sender address var. The key set defines `EmailPurpose` and the
+ * values feed `SENDER_ADDRESS_VARS`, so `senderFor` and the capability gate
+ * cannot drift over which vars exist.
+ */
+const PURPOSE_SENDER_VARS = {
+  transactional: "EMAIL_FROM_NOREPLY",
+  personal: "EMAIL_FROM_SUPPORT",
+  informational: "EMAIL_FROM_INFO",
+} as const;
+
+/**
+ * Every sender address var a deployment can configure: the shared
+ * `EMAIL_FROM` fallback plus each per-purpose var.
+ */
+const SENDER_ADDRESS_VARS: readonly string[] = [
+  "EMAIL_FROM",
+  ...Object.values(PURPOSE_SENDER_VARS),
+];
+
+/**
+ * Whether the deployment configured any sender address at all.
+ *
+ * `senderFor` is total: unconfigured, it still resolves to
+ * `noreply@<appUrl host>`. Platform transports use this to gate on an
+ * *explicitly configured* sender instead, so a deployment never sends from a
+ * host-derived address it cannot SPF/DKIM-authenticate. Gating on `EMAIL_FROM`
+ * alone would miss a deployment that sets only the per-purpose vars, which
+ * `senderFor` fully supports.
+ */
+export function hasConfiguredSender(): boolean {
+  return SENDER_ADDRESS_VARS.some((name) => brandString(name) !== undefined);
 }
 
 /**
@@ -116,7 +150,7 @@ export function resolveBrandConfig(): BrandConfig {
  * that always invites a reply (team invites, welcome); `informational` is
  * no-reply informational mail.
  */
-export type EmailPurpose = "transactional" | "personal" | "informational";
+export type EmailPurpose = keyof typeof PURPOSE_SENDER_VARS;
 
 /**
  * Select the `from` (and, for `personal` mail, `replyTo`) for an email purpose.
@@ -140,13 +174,17 @@ export function senderFor(purpose: EmailPurpose): {
 
   switch (purpose) {
     case "transactional":
-      return { from: brandString("EMAIL_FROM_NOREPLY") ?? fallbackFrom };
+      return {
+        from: brandString(PURPOSE_SENDER_VARS.transactional) ?? fallbackFrom,
+      };
     case "personal": {
-      const from = brandString("EMAIL_FROM_SUPPORT") ?? fallbackFrom;
+      const from = brandString(PURPOSE_SENDER_VARS.personal) ?? fallbackFrom;
       return { from, replyTo: brand.supportEmail ?? from };
     }
     case "informational":
-      return { from: brandString("EMAIL_FROM_INFO") ?? fallbackFrom };
+      return {
+        from: brandString(PURPOSE_SENDER_VARS.informational) ?? fallbackFrom,
+      };
     default:
       return { from: fallbackFrom };
   }

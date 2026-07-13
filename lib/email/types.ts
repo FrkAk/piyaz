@@ -11,10 +11,9 @@
 /**
  * Outcome of an `EmailSender.send()` call. Discriminated on `kind` so callers
  * must handle both arms: the `ok` arm carries the provider-returned
- * `messageId` when one is available (optional, since transports like the
- * Cloudflare `send_email` binding return no provider id); the `error` arm
- * carries a machine-readable `code` (transport specific) and a human-readable
- * `message`.
+ * `messageId` when one is available (optional, since a transport may have no
+ * provider id to report); the `error` arm carries a machine-readable `code`
+ * (transport specific) and a human-readable `message`.
  */
 export type EmailDeliveryResult =
   | { kind: "ok"; messageId?: string }
