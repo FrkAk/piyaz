@@ -14,6 +14,7 @@ import {
   listProjectsForMcp,
   type ProjectSlimPage,
 } from "@/lib/data/project";
+import { createNoteTaskLink, removeNoteTaskLink } from "@/lib/data/note";
 import { findProjectAccess } from "@/lib/data/access";
 import { makeAuthContext } from "@/lib/auth/context";
 
@@ -115,6 +116,180 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
     "sourceTaskId",
     "targetTaskId",
   ]);
+  expect(g.notes).toEqual([]);
+  expect(g.noteLinks).toEqual([]);
+  expect(g.noteTaskLinks).toEqual([]);
+});
+
+/**
+ * Insert a new user and add them to an existing org as a plain member.
+ * Mirrors the helper in tests/data/notes-rls.test.ts.
+ *
+ * @param organizationId - Org the new member joins.
+ * @param suffix - Unique suffix for the user's name and email.
+ * @returns The new user's id.
+ */
+async function seedSecondMember(
+  organizationId: string,
+  suffix: string,
+): Promise<string> {
+  const sql = superuserPool();
+  const [u] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
+    RETURNING id
+  `;
+  await sql`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${organizationId}, ${u.id}, 'member', now())
+  `;
+  return u.id;
+}
+
+test("getProjectGraphSlim notes payload is RLS-scoped per member", async () => {
+  const f = await seedUserOrgProject("graphnotes");
+  const userB = await seedSecondMember(f.organizationId, "graphnotes-b");
+
+  const su = superuserPool();
+  const [task] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${f.projectId}, 'T1', 1)
+    RETURNING id
+  `;
+  const [teamNote] = await su<{ id: string }[]>`
+    INSERT INTO notes (project_id, title, slug, visibility, type, created_by)
+    VALUES (${f.projectId}, 'Team', 'team', 'team', 'guidance', ${f.userId})
+    RETURNING id
+  `;
+  const [privA] = await su<{ id: string }[]>`
+    INSERT INTO notes (project_id, title, slug, visibility, created_by)
+    VALUES (${f.projectId}, 'Priv A', 'priv-a', 'private', ${f.userId})
+    RETURNING id
+  `;
+  const [privB] = await su<{ id: string }[]>`
+    INSERT INTO notes (project_id, title, slug, visibility, created_by)
+    VALUES (${f.projectId}, 'Priv B', 'priv-b', 'private', ${userB})
+    RETURNING id
+  `;
+  await su`
+    INSERT INTO note_task_links (note_id, task_id, kind) VALUES
+      (${teamNote.id}, ${task.id}, 'reference'),
+      (${privB.id}, ${task.id}, 'reference')
+  `;
+  await su`
+    INSERT INTO note_links (source_note_id, target_note_id) VALUES
+      (${teamNote.id}, ${privB.id}),
+      (${teamNote.id}, ${privA.id})
+  `;
+
+  const gA = await getProjectGraphSlim(makeAuthContext(f.userId), f.projectId);
+  expect(gA.notes.map((n) => n.id).sort()).toEqual(
+    [teamNote.id, privA.id].sort(),
+  );
+  for (const n of gA.notes) {
+    expect(Object.keys(n).sort()).toEqual(["id", "noteRef", "title", "type"]);
+    expect(n.noteRef).toMatch(/^PRJgraphnotes-N\d+$/);
+  }
+  expect(gA.notes.find((n) => n.id === teamNote.id)?.type).toBe("guidance");
+  expect(gA.noteTaskLinks).toEqual([
+    { noteId: teamNote.id, taskId: task.id },
+  ]);
+  expect(gA.noteLinks).toEqual([
+    { sourceNoteId: teamNote.id, targetNoteId: privA.id },
+  ]);
+
+  const gB = await getProjectGraphSlim(makeAuthContext(userB), f.projectId);
+  expect(gB.notes.map((n) => n.id).sort()).toEqual(
+    [teamNote.id, privB.id].sort(),
+  );
+  expect(
+    gB.noteTaskLinks.map((l) => l.noteId).sort(),
+  ).toEqual([teamNote.id, privB.id].sort());
+  expect(gB.noteLinks).toEqual([
+    { sourceNoteId: teamNote.id, targetNoteId: privB.id },
+  ]);
+});
+
+test("getProjectGraphSlim excludes trashed notes and their edges", async () => {
+  const f = await seedUserOrgProject("graphnotes-trash");
+  const su = superuserPool();
+  const [task] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${f.projectId}, 'T1', 1)
+    RETURNING id
+  `;
+  const [live] = await su<{ id: string }[]>`
+    INSERT INTO notes (project_id, title, slug, visibility, created_by)
+    VALUES (${f.projectId}, 'Live', 'live', 'team', ${f.userId})
+    RETURNING id
+  `;
+  const [trashed] = await su<{ id: string }[]>`
+    INSERT INTO notes (project_id, title, slug, visibility, created_by, deleted_at)
+    VALUES (${f.projectId}, 'Trashed', 'trashed', 'team', ${f.userId}, now())
+    RETURNING id
+  `;
+  await su`
+    INSERT INTO note_task_links (note_id, task_id, kind)
+    VALUES (${trashed.id}, ${task.id}, 'reference')
+  `;
+  await su`
+    INSERT INTO note_links (source_note_id, target_note_id) VALUES
+      (${live.id}, ${trashed.id}),
+      (${trashed.id}, ${live.id})
+  `;
+
+  const g = await getProjectGraphSlim(makeAuthContext(f.userId), f.projectId);
+  expect(g.notes.map((n) => n.id)).toEqual([live.id]);
+  expect(g.noteTaskLinks).toEqual([]);
+  expect(g.noteLinks).toEqual([]);
+});
+
+test("getProjectGraphSlim dedupes note-task pairs across kinds", async () => {
+  const f = await seedUserOrgProject("graphnotes-dedupe");
+  const su = superuserPool();
+  const [task] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${f.projectId}, 'T1', 1)
+    RETURNING id
+  `;
+  const [note] = await su<{ id: string }[]>`
+    INSERT INTO notes (project_id, title, slug, visibility, created_by)
+    VALUES (${f.projectId}, 'Spec', 'spec', 'team', ${f.userId})
+    RETURNING id
+  `;
+  await su`
+    INSERT INTO note_task_links (note_id, task_id, kind) VALUES
+      (${note.id}, ${task.id}, 'mention'),
+      (${note.id}, ${task.id}, 'spec_of')
+  `;
+
+  const g = await getProjectGraphSlim(makeAuthContext(f.userId), f.projectId);
+  expect(g.noteTaskLinks).toEqual([{ noteId: note.id, taskId: task.id }]);
+});
+
+test("note-inclusive validator moves on deliberate link create and remove", async () => {
+  const f = await seedUserOrgProject("graphnotes-etag");
+  const ctx = makeAuthContext(f.userId);
+  const su = superuserPool();
+  const [task] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${f.projectId}, 'T1', 1)
+    RETURNING id
+  `;
+  const [note] = await su<{ id: string }[]>`
+    INSERT INTO notes (project_id, title, slug, visibility, created_by)
+    VALUES (${f.projectId}, 'Ref', 'ref', 'team', ${f.userId})
+    RETURNING id
+  `;
+
+  const before = await getProjectMaxUpdatedAt(ctx, f.projectId, true);
+  await createNoteTaskLink(ctx, note.id, task.id, "reference");
+  const afterCreate = await getProjectMaxUpdatedAt(ctx, f.projectId, true);
+  expect(afterCreate.getTime()).toBeGreaterThan(before.getTime());
+
+  await removeNoteTaskLink(ctx, note.id, task.id, "reference");
+  const afterRemove = await getProjectMaxUpdatedAt(ctx, f.projectId, true);
+  expect(afterRemove.getTime()).toBeGreaterThan(afterCreate.getTime());
 });
 
 test("getProjectChrome returns header fields plus task count", async () => {

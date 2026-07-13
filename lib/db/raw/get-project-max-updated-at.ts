@@ -6,9 +6,9 @@ import { executeRaw, type Conn } from "@/lib/db/raw";
  * Resolve the latest `updated_at` across a project's metadata, every task
  * in the project, and every edge whose source OR target is in the project.
  * When `includeNotes` is set the project's notes are folded in too, so a
- * consumer that embeds note content (the context-bundle route) invalidates
- * on a note edit; consumers that render no notes (the graph route) leave it
- * off to avoid needless cache misses.
+ * consumer that embeds note content or note nodes (the context-bundle and
+ * graph routes) invalidates on a note edit; consumers that render no notes
+ * leave it off to avoid needless cache misses.
  *
  * Single round trip via `GREATEST` over correlated subqueries so the
  * conditional-GET path fans out one DB query per request, not several.

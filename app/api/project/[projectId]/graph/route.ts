@@ -23,6 +23,10 @@ import { consentGateResponse } from "@/lib/auth/consent";
  * `acceptanceCriteria`, `executionRecord`, `files`) are
  * deliberately omitted — fetch them per-task via `GET /api/task/[id]`.
  *
+ * The validator folds `notes.updated_at` in (`includeNotes`) because the
+ * payload carries note nodes and their edges; without it a note edit would
+ * 304-serve a stale graph.
+ *
  * @param req - Incoming request.
  * @param projectId - Project UUID from the route params.
  * @returns 200, 304, 401, 404, or 500.
@@ -39,7 +43,7 @@ async function handle(req: Request, projectId: string): Promise<Response> {
   if (gate) return gate;
 
   try {
-    const max = await getProjectMaxUpdatedAt(ctx, projectId);
+    const max = await getProjectMaxUpdatedAt(ctx, projectId, true);
 
     if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);

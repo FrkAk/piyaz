@@ -1,6 +1,15 @@
 import "server-only";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import {
+  aliasedTable,
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  sql,
+} from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
 import {
   executeRaw,
@@ -9,7 +18,14 @@ import {
   type ReadConn,
 } from "@/lib/db/raw";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
-import { projects, tasks, taskEdges } from "@/lib/db/schema";
+import {
+  noteLinks,
+  notes,
+  noteTaskLinks,
+  projects,
+  tasks,
+  taskEdges,
+} from "@/lib/db/schema";
 import {
   assigneeCountExpr,
   assigneeUserIdsExpr,
@@ -29,11 +45,13 @@ import type { ProjectStatus, TaskStatus } from "@/lib/types";
 import { STATUS_BUCKET } from "@/lib/data/views";
 import {
   asIdentifier,
+  composeNoteRef,
   deriveIdentifier,
   enrichWithTaskRef,
   type Identifier,
 } from "@/lib/graph/identifier";
 import type {
+  NoteGraphSlim,
   ProjectChrome,
   ProjectGraphSlim,
   ProjectIndexEntry,
@@ -134,11 +152,15 @@ function assertAccessMatchesProject(
  * that only the per-task detail surface needs — those are fetched lazily
  * via `GET /api/task/[id]`.
  *
- * Two column-projected selects run under `Promise.all`. The edges select
+ * Five column-projected selects run under `Promise.all`. The edges select
  * filters on `source_task_id` alone: the `task_edges_same_project_immutable`
  * trigger guarantees both endpoints share a project, so the source-side
  * index scan returns every intra-project edge exactly once — no second arm
- * or de-dupe needed.
+ * or de-dupe needed. The same trigger pattern (`reject_note_links_cross_project`)
+ * lets the note-link select filter on the source note's project alone. Note
+ * visibility is pure RLS: `notes_member_access` (team notes plus the caller's
+ * own private ones) and the both-endpoint policies on the link tables scope
+ * every note row and edge — no app-level re-check.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -146,7 +168,8 @@ function assertAccessMatchesProject(
  *   reuses one project-access read across the layout and page instead of
  *   reading the row again here. Must have been resolved for this same
  *   `projectId`; a mismatch throws. Omit to resolve it in-frame.
- * @returns Slim project metadata + slim tasks + slim edges.
+ * @returns Slim project metadata + slim tasks + slim edges + slim notes
+ *   with their note-note and note-task edges.
  * @throws ForbiddenError on missing or cross-team project.
  * @throws Error when `access` was resolved for a different project.
  */
@@ -187,11 +210,54 @@ export async function getProjectGraphSlim(
       .innerJoin(tasks, eq(taskEdges.sourceTaskId, tasks.id))
       .where(eq(tasks.projectId, projectId));
 
-    const [taskRows, edges] = await Promise.all([tasksQ, edgesQ]);
-    const enriched = enrichWithTaskRef(
-      taskRows,
-      asIdentifier(project.identifier),
-    );
+    const notesQ = tx
+      .select({
+        id: notes.id,
+        sequenceNumber: notes.sequenceNumber,
+        title: notes.title,
+        type: notes.type,
+      })
+      .from(notes)
+      .where(and(eq(notes.projectId, projectId), isNull(notes.deletedAt)))
+      .orderBy(asc(notes.sequenceNumber));
+
+    const noteTaskLinksQ = tx
+      .selectDistinct({
+        noteId: noteTaskLinks.noteId,
+        taskId: noteTaskLinks.taskId,
+      })
+      .from(noteTaskLinks)
+      .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
+      .where(and(eq(notes.projectId, projectId), isNull(notes.deletedAt)));
+
+    const targetNotes = aliasedTable(notes, "target_notes");
+    const noteLinksQ = tx
+      .select({
+        sourceNoteId: noteLinks.sourceNoteId,
+        targetNoteId: noteLinks.targetNoteId,
+      })
+      .from(noteLinks)
+      .innerJoin(notes, eq(notes.id, noteLinks.sourceNoteId))
+      .innerJoin(targetNotes, eq(targetNotes.id, noteLinks.targetNoteId))
+      .where(
+        and(
+          eq(notes.projectId, projectId),
+          isNull(notes.deletedAt),
+          isNull(targetNotes.deletedAt),
+        ),
+      );
+
+    const [taskRows, edges, noteRows, noteTaskEdges, noteEdges] =
+      await Promise.all([tasksQ, edgesQ, notesQ, noteTaskLinksQ, noteLinksQ]);
+    const identifier = asIdentifier(project.identifier);
+    const enriched = enrichWithTaskRef(taskRows, identifier);
+
+    const slimNotes: NoteGraphSlim[] = noteRows.map((n) => ({
+      id: n.id,
+      noteRef: composeNoteRef(identifier, n.sequenceNumber),
+      title: n.title,
+      type: n.type,
+    }));
 
     const stateMap = await deriveTaskStatesSlim(
       projectId,
@@ -236,6 +302,9 @@ export async function getProjectGraphSlim(
       },
       tasks: slimTasks,
       edges,
+      notes: slimNotes,
+      noteLinks: noteEdges,
+      noteTaskLinks: noteTaskEdges,
     };
   });
 }
@@ -292,7 +361,7 @@ export async function getProjectChrome(
  * on the workspace graph and context-bundle endpoints to short-circuit the
  * heavy read on a 304 response. The context route sets `includeNotes` so a
  * note edit invalidates the bundles that now embed note content; the graph
- * route leaves it off.
+ * route sets it too because the graph payload carries note nodes and edges.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.

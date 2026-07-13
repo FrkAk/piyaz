@@ -4133,7 +4133,10 @@ export type DeliberateNoteTaskLinkKind = Exclude<NoteTaskLinkKind, "mention">;
  * `mention` rows are owned by body-link derivation and cannot be created
  * here. Both endpoints must be live, accessible, and in the same project
  * (the DB trigger rejects cross-project rows; this pre-check keeps the
- * rejection typed).
+ * rejection typed). A created link bumps `notes.updated_at` in the same
+ * transaction: the link tables carry only `created_at`, so without the bump
+ * the note-inclusive validators (graph and context ETags) would miss the
+ * change.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -4173,6 +4176,10 @@ export async function createNoteTaskLink(
       .returning({ id: noteTaskLinks.id });
     const created = rows.length > 0;
     if (created) {
+      await tx
+        .update(notes)
+        .set({ updatedAt: new Date() })
+        .where(eq(notes.id, noteId));
       await insertActivityEvents(tx, ctx.actor, [
         {
           projectId: gate.projectId,
@@ -4207,7 +4214,9 @@ export async function createNoteTaskLink(
 /**
  * Remove a deliberate note-task link (`reference` or `spec_of`).
  * `mention` rows are owned by body-link derivation and cannot be removed
- * here. Removing an absent link returns `removed: false`.
+ * here. Removing an absent link returns `removed: false`. A removed link
+ * bumps `notes.updated_at` in the same transaction so the note-inclusive
+ * validators (graph and context ETags) observe the change.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -4247,6 +4256,10 @@ export async function removeNoteTaskLink(
       .returning({ id: noteTaskLinks.id });
     const removed = rows.length > 0;
     if (removed) {
+      await tx
+        .update(notes)
+        .set({ updatedAt: new Date() })
+        .where(eq(notes.id, noteId));
       await insertActivityEvents(tx, ctx.actor, [
         {
           projectId: gate.projectId,
