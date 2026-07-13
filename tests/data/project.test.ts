@@ -191,9 +191,7 @@ test("getProjectGraphSlim notes payload is RLS-scoped per member", async () => {
     expect(n.noteRef).toMatch(/^PRJgraphnotes-N\d+$/);
   }
   expect(gA.notes.find((n) => n.id === teamNote.id)?.type).toBe("guidance");
-  expect(gA.noteTaskLinks).toEqual([
-    { noteId: teamNote.id, taskId: task.id },
-  ]);
+  expect(gA.noteTaskLinks).toEqual([{ noteId: teamNote.id, taskId: task.id }]);
   expect(gA.noteLinks).toEqual([
     { sourceNoteId: teamNote.id, targetNoteId: privA.id },
   ]);
@@ -202,9 +200,9 @@ test("getProjectGraphSlim notes payload is RLS-scoped per member", async () => {
   expect(gB.notes.map((n) => n.id).sort()).toEqual(
     [teamNote.id, privB.id].sort(),
   );
-  expect(
-    gB.noteTaskLinks.map((l) => l.noteId).sort(),
-  ).toEqual([teamNote.id, privB.id].sort());
+  expect(gB.noteTaskLinks.map((l) => l.noteId).sort()).toEqual(
+    [teamNote.id, privB.id].sort(),
+  );
   expect(gB.noteLinks).toEqual([
     { sourceNoteId: teamNote.id, targetNoteId: privB.id },
   ]);

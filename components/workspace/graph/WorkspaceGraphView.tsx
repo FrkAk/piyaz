@@ -3,7 +3,13 @@
 import dynamic from "next/dynamic";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
+import type {
+  NoteGraphEdge,
+  NoteGraphSlim,
+  NoteTaskGraphEdge,
+  TaskGraphEdge,
+  TaskGraphSlim,
+} from "@/lib/data/views";
 import { MiniTaskRail } from "./MiniTaskRail";
 import { GraphHoverCard } from "./GraphHoverCard";
 import {
@@ -34,10 +40,19 @@ interface WorkspaceGraphViewProps {
   tasks: TaskGraphSlim[];
   /** @param edges - Project edges in slim graph shape. */
   edges: TaskGraphEdge[];
+  /** @param notes - Project notes in slim graph shape. */
+  notes: NoteGraphSlim[];
+  /** @param noteLinks - Note-to-note edges in slim graph shape. */
+  noteLinks: NoteGraphEdge[];
+  /** @param noteTaskLinks - Note-to-task edges in slim graph shape. */
+  noteTaskLinks: NoteTaskGraphEdge[];
   /** @param selectedNodeId - Currently selected task id. */
   selectedNodeId: string | null;
   /** @param onSelectNode - Open a task — mirrors the structure-view handler. */
   onSelectNode: (id: string) => void;
+  /** @param onSelectNote - Open a note on the notes surface via the
+   *   `?view=notes&note=<id>` selection path. */
+  onSelectNote: (id: string) => void;
   /** @param onDeselect - Click empty canvas → clear selection. */
   onDeselect: () => void;
   /**
@@ -78,8 +93,12 @@ export function WorkspaceGraphView({
   projectId,
   tasks,
   edges,
+  notes,
+  noteLinks,
+  noteTaskLinks,
   selectedNodeId,
   onSelectNode,
+  onSelectNote,
   onDeselect,
   detailSlot,
   propRailSlot,
@@ -90,6 +109,7 @@ export function WorkspaceGraphView({
   const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(
     () => new Set(),
   );
+  const [notesHidden, setNotesHidden] = useState(false);
   const [edgeFilter, setEdgeFilter] = useState<EdgeFilterValue>("all");
 
   const hiddenEdgeTypes = useMemo(
@@ -104,6 +124,10 @@ export function WorkspaceGraphView({
       else next.add(status);
       return next;
     });
+  }, []);
+
+  const toggleNotes = useCallback(() => {
+    setNotesHidden((prev) => !prev);
   }, []);
 
   // Filter the rail in lockstep with the canvas — what's listed = what's drawn.
@@ -164,8 +188,13 @@ export function WorkspaceGraphView({
           projectId={projectId}
           tasks={tasks}
           edges={edges}
+          notes={notes}
+          noteLinks={noteLinks}
+          noteTaskLinks={noteTaskLinks}
           selectedNodeId={selectedNodeId}
           onSelectNode={onSelectNode}
+          onSelectNote={onSelectNote}
+          notesHidden={notesHidden}
           onDeselect={onDeselect}
           hoveredIdHint={hoveredFromRail}
           hiddenStatuses={hiddenStatuses}
@@ -203,6 +232,9 @@ export function WorkspaceGraphView({
         <StatusLegend
           hiddenStatuses={hiddenStatuses}
           onToggleStatus={toggleStatus}
+          noteCount={notes.length}
+          notesHidden={notesHidden}
+          onToggleNotes={toggleNotes}
         />
 
         {/* Detail slide-over — pinned right; canvas underneath stays at full

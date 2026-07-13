@@ -38,7 +38,8 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   `lib/realtime/events.ts` is paired with a `project` dispatch that already
  *   invalidates the graph. If `emitTaskEvent` ever stops emitting the paired
  *   project event, restore the graph invalidation here.
- * - `note` events ride the `project:<projectId>` subscription for team notes
+ * - `note` events invalidate the slim graph (it renders note nodes and
+ *   edges), ride the `project:<projectId>` subscription for team notes
  *   and the `note:<noteId>` subscription for private notes (see
  *   `lib/realtime/events.ts`), and are judged by {@link handleNoteEvent}
  *   after any in-flight local write for that note settles, so the actor's
@@ -91,6 +92,11 @@ export async function applyRealtimeEvent(
       });
       break;
     case "note":
+      // The slim graph renders note nodes and their edges, and any note
+      // write (title, type, body-derived or deliberate links, trash or
+      // restore) can change them. The refetch rides the conditional-GET
+      // path, so an unmoved validator answers with a 304.
+      qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
       await handleNoteEvent(qc, ev);
       break;
     case "note-presence":

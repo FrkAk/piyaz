@@ -682,6 +682,7 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     noteId,
     handleSelectNote,
     handleSelectTaskFromNote,
+    handleOpenNoteFromTask,
     refreshAll,
     taskSlim,
     detail,
@@ -737,8 +738,12 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
             projectId={projectId}
             tasks={graph.tasks}
             edges={graph.edges}
+            notes={graph.notes}
+            noteLinks={graph.noteLinks}
+            noteTaskLinks={graph.noteTaskLinks}
             selectedNodeId={selectedTaskId}
             onSelectNode={handleSelectNode}
+            onSelectNote={handleOpenNoteFromTask}
             onDeselect={handleClose}
             detailSlot={showOverlay ? detail : undefined}
             propRailSlot={showOverlay ? propRail : undefined}

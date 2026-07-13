@@ -1,4 +1,4 @@
-import type { EdgeType } from "@/lib/types";
+import type { EdgeType, NoteType } from "@/lib/types";
 import type { SimulationLinkDatum } from "d3-force";
 
 // ---------------------------------------------------------------------------
@@ -9,8 +9,15 @@ import type { SimulationLinkDatum } from "d3-force";
 export interface GraphNode {
   id: string;
   title: string;
+  /** Composed ref — a taskRef for task nodes, a noteRef for note nodes. */
   taskRef: string;
+  /** Lifecycle status for task nodes; the inert `"note"` sentinel for note
+   *  nodes (draw and filter paths branch on `kind` before reading it). */
   status: string;
+  /** Entity discriminator: tasks draw as circles, notes as rounded squares. */
+  kind: "task" | "note";
+  /** Note type driving the note node's color; undefined on task nodes. */
+  noteType?: NoteType;
   tags: string[];
   x?: number;
   y?: number;
@@ -30,11 +37,12 @@ export interface GraphNode {
   _hoverT: number;
 }
 
-/** A link between two graph nodes. */
+/** A link between two graph nodes. `"note"` covers both note-note and
+ *  note-task edges — one muted dashed style for the knowledge layer. */
 export interface GraphLink extends SimulationLinkDatum<GraphNode> {
   source: string | GraphNode;
   target: string | GraphNode;
-  type: EdgeType;
+  type: EdgeType | "note";
 }
 
 // ---------------------------------------------------------------------------
@@ -44,13 +52,19 @@ export interface GraphLink extends SimulationLinkDatum<GraphNode> {
 /** Default node radius (used as fallback). */
 export const NODE_RADIUS_DEFAULT = 14;
 
-export const EDGE_COLOR: Record<EdgeType, string> = {
+export const EDGE_COLOR: Record<EdgeType | "note", string> = {
   depends_on: "#55b3ff",
   relates_to: "#a78bfa",
+  note: "#8b93a1",
 };
 
 export const RELATES_DASH: number[] = [4, 6];
 export const RELATES_OPACITY = 0.6;
+
+/** Dash pattern for note edges — tighter than relates so the knowledge
+ *  layer reads as a distinct, quieter stratum. */
+export const NOTE_EDGE_DASH: number[] = [2, 5];
+export const NOTE_EDGE_OPACITY = 0.45;
 
 export const ACCENT = "#818cf8";
 
@@ -112,6 +126,9 @@ export interface ThemeColors {
   statusInReview: string;
   statusDone: string;
   statusCancelled: string;
+  noteReference: string;
+  noteGuidance: string;
+  noteKnowledge: string;
   surface: string;
   /** True when rendering against the light theme. Drives node halo/fill
    *  alpha boosts so colored pixels stay visible against a near-white
@@ -143,6 +160,12 @@ export const DARK_THEME: ThemeColors = {
   statusInReview: "#a78bfa",
   statusDone: "#5fc992",
   statusCancelled: "#e57373",
+  // Note-type palette mirrors NOTE_TYPE_META (components/workspace/notes):
+  // reference = planned blue, guidance = progress amber, knowledge =
+  // relates violet, so the graph and the notes rail speak one language.
+  noteReference: "#55b3ff",
+  noteGuidance: "#ffbc33",
+  noteKnowledge: "#a78bfa",
   surface: "rgba(7,8,10,0.85)",
   isLight: false,
   haloAlpha: 0.12,
@@ -164,6 +187,9 @@ export const LIGHT_THEME: ThemeColors = {
   statusInReview: "#7c3aed",
   statusDone: "#059669",
   statusCancelled: "#c25454",
+  noteReference: "#3b82f6",
+  noteGuidance: "#d97706",
+  noteKnowledge: "#7c3aed",
   surface: "rgba(255,255,255,0.85)",
   isLight: true,
   haloAlpha: 0.22,
@@ -196,6 +222,9 @@ export function getCanvasTheme(): ThemeColors {
       statusInReview: read("--color-glyph-review") || base.statusInReview,
       statusDone: read("--color-done") || base.statusDone,
       statusCancelled: read("--color-cancelled") || base.statusCancelled,
+      noteReference: read("--color-planned") || base.noteReference,
+      noteGuidance: read("--color-progress") || base.noteGuidance,
+      noteKnowledge: read("--color-relates") || base.noteKnowledge,
     };
   } catch {
     return base;
@@ -233,6 +262,25 @@ export function statusColor(stage: string, t: ThemeColors): string {
       return t.statusCancelled;
     default:
       return t.statusDraft;
+  }
+}
+
+/**
+ * Map a note type to its theme color. The counterpart of {@link statusColor}
+ * for note nodes; the palette mirrors `NOTE_TYPE_META` on the notes surface.
+ *
+ * @param type - Note type.
+ * @param t - Theme colors.
+ * @returns Color string for the type.
+ */
+export function noteTypeColor(type: NoteType, t: ThemeColors): string {
+  switch (type) {
+    case "guidance":
+      return t.noteGuidance;
+    case "knowledge":
+      return t.noteKnowledge;
+    default:
+      return t.noteReference;
   }
 }
 

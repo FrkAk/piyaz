@@ -9,9 +9,16 @@ import {
   useMemo,
 } from "react";
 import { quadtree } from "d3-quadtree";
-import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
-import type { EdgeType } from "@/lib/types";
-import { useForceSimulation } from "./useForceSimulation";
+import type {
+  NoteGraphEdge,
+  NoteGraphSlim,
+  NoteTaskGraphEdge,
+  TaskGraphEdge,
+  TaskGraphSlim,
+} from "@/lib/data/views";
+import type { EdgeType, NoteType } from "@/lib/types";
+import { NOTE_TYPE_META } from "@/components/workspace/notes/note-meta";
+import { useForceSimulation, type NoteEdge } from "./useForceSimulation";
 import { GraphControls } from "./GraphControls";
 import {
   type GraphNode,
@@ -20,12 +27,15 @@ import {
   EDGE_COLOR,
   RELATES_DASH,
   RELATES_OPACITY,
+  NOTE_EDGE_DASH,
+  NOTE_EDGE_OPACITY,
   ACCENT,
   ZOOM_FACTOR,
   MIN_ZOOM,
   MAX_ZOOM,
   getCanvasTheme,
   statusColor,
+  noteTypeColor,
   hexToRgb,
   easeOutCubic,
   getNodeSize,
@@ -43,10 +53,23 @@ interface ForceGraphProps {
   tasks: TaskGraphSlim[];
   /** @param edges - Slim edge records defining relationships. */
   edges: TaskGraphEdge[];
+  /** @param notes - Slim note records rendered alongside the tasks. */
+  notes: NoteGraphSlim[];
+  /** @param noteLinks - Note-to-note edges from the slim payload. */
+  noteLinks: NoteGraphEdge[];
+  /** @param noteTaskLinks - Note-to-task edges from the slim payload. */
+  noteTaskLinks: NoteTaskGraphEdge[];
   /** @param selectedNodeId - Currently selected node ID, or null. */
   selectedNodeId: string | null;
-  /** @param onSelectNode - Called when a graph node is clicked. */
+  /** @param onSelectNode - Called when a task node is clicked. */
   onSelectNode: (nodeId: string) => void;
+  /** @param onSelectNote - Called when a note node is clicked. Note nodes
+   *   never become `selectedNodeId`; the click navigates to the notes
+   *   surface instead of focusing the graph. */
+  onSelectNote?: (noteId: string) => void;
+  /** @param notesHidden - Hides every note node and note edge. Controlled
+   *   by the parent legend's Notes toggle. */
+  notesHidden?: boolean;
   /** @param onDeselect - Called when the canvas background is clicked. */
   onDeselect?: () => void;
   /**
@@ -193,8 +216,13 @@ export function ForceGraph({
   projectId,
   tasks,
   edges,
+  notes,
+  noteLinks,
+  noteTaskLinks,
   selectedNodeId,
   onSelectNode,
+  onSelectNote,
+  notesHidden = false,
   onDeselect,
   hoveredIdHint = null,
   onHoverNode,
@@ -238,6 +266,30 @@ export function ForceGraph({
       ),
     [edges, filteredTaskIds, edgeFilter],
   );
+  const visibleNotes = useMemo(
+    () => (notesHidden ? [] : notes),
+    [notesHidden, notes],
+  );
+  // Flatten both note link arrays into direction-agnostic edges once per
+  // input change — never per frame. A note-task edge survives only while
+  // its task survives the status filter; note-note edges only need both
+  // endpoints present (RLS already scoped the payload to visible notes).
+  const visibleNoteEdges = useMemo(() => {
+    if (notesHidden) return [];
+    const noteIds = new Set(notes.map((n) => n.id));
+    const out: NoteEdge[] = [];
+    for (const l of noteTaskLinks) {
+      if (noteIds.has(l.noteId) && filteredTaskIds.has(l.taskId)) {
+        out.push({ sourceId: l.noteId, targetId: l.taskId });
+      }
+    }
+    for (const l of noteLinks) {
+      if (noteIds.has(l.sourceNoteId) && noteIds.has(l.targetNoteId)) {
+        out.push({ sourceId: l.sourceNoteId, targetId: l.targetNoteId });
+      }
+    }
+    return out;
+  }, [notesHidden, notes, noteTaskLinks, noteLinks, filteredTaskIds]);
 
   useEffect(() => {
     const observer = new MutationObserver(() => setLight(isLightMode()));
@@ -256,6 +308,9 @@ export function ForceGraph({
   const dragRef = useRef<{
     active: boolean;
     nodeId: string | null;
+    /** Entity kind of the pressed node — routes the click on pointerup
+     *  (tasks select in-graph, notes navigate to the notes surface). */
+    nodeKind: "task" | "note" | null;
     panning: boolean;
     /** Rolling basis updated each pan tick — used to compute incremental
      *  translation deltas. NOT a stable click anchor. */
@@ -271,6 +326,7 @@ export function ForceGraph({
   }>({
     active: false,
     nodeId: null,
+    nodeKind: null,
     panning: false,
     startX: 0,
     startY: 0,
@@ -338,6 +394,8 @@ export function ForceGraph({
       projectId,
       filteredTasks,
       filteredEdges,
+      visibleNotes,
+      visibleNoteEdges,
       size.width,
       size.height,
       selectedNodeId,
@@ -653,11 +711,18 @@ export function ForceGraph({
       gCache.halo.clear();
       gCache.theme = theme;
     }
-    const getFillGradient = (status: string, sz: number): CanvasGradient => {
-      const key = `${status}|${sz}`;
+    // Stage → color resolver shared by the gradient caches and the node
+    // body. Note nodes carry a `note:<type>` stage key so they flow through
+    // the same `(stage, size)`-keyed caches as task statuses.
+    const stageColor = (stage: string): string =>
+      stage.startsWith("note:")
+        ? noteTypeColor(stage.slice(5) as NoteType, theme)
+        : statusColor(stage, theme);
+    const getFillGradient = (stage: string, sz: number): CanvasGradient => {
+      const key = `${stage}|${sz}`;
       let g = gCache.fill.get(key);
       if (!g) {
-        const [r, gn, b] = hexToRgb(statusColor(status, theme));
+        const [r, gn, b] = hexToRgb(stageColor(stage));
         g = ctx.createRadialGradient(0, 0, 0, 0, 0, sz);
         g.addColorStop(0, `rgba(${r},${gn},${b},${theme.fillInnerAlpha})`);
         g.addColorStop(1, `rgba(${r},${gn},${b},${theme.fillOuterAlpha})`);
@@ -665,11 +730,11 @@ export function ForceGraph({
       }
       return g;
     };
-    const getHaloGradient = (status: string, sz: number): CanvasGradient => {
-      const key = `${status}|${sz}`;
+    const getHaloGradient = (stage: string, sz: number): CanvasGradient => {
+      const key = `${stage}|${sz}`;
       let g = gCache.halo.get(key);
       if (!g) {
-        const [r, gn, b] = hexToRgb(statusColor(status, theme));
+        const [r, gn, b] = hexToRgb(stageColor(stage));
         g = ctx.createRadialGradient(0, 0, sz * 0.5, 0, 0, sz * 2.5);
         g.addColorStop(0, `rgba(${r},${gn},${b},${theme.haloAlpha})`);
         g.addColorStop(1, `rgba(${r},${gn},${b},0)`);
@@ -738,19 +803,25 @@ export function ForceGraph({
       const dimAlpha = Math.max(src._dimT, tgt._dimT);
 
       const isRelates = l.type === "relates_to";
+      const isNoteEdge = l.type === "note";
+      const isDepends = l.type === "depends_on";
       const edgeColor = EDGE_COLOR[l.type] ?? "#6b7280";
       const baseAlpha =
-        (1 - dimAlpha * 0.85) * enterAlpha * (isRelates ? RELATES_OPACITY : 1);
+        (1 - dimAlpha * 0.85) *
+        enterAlpha *
+        (isNoteEdge ? NOTE_EDGE_OPACITY : isRelates ? RELATES_OPACITY : 1);
       ctx.globalAlpha = linkDimmed ? baseAlpha * 0.05 : baseAlpha;
-      ctx.lineWidth = isRelates ? 1.5 : 2;
+      ctx.lineWidth = isNoteEdge ? 1.25 : isRelates ? 1.5 : 2;
 
       const dx = tgt.x - src.x;
       const dy = tgt.y - src.y;
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
 
-      // Edge style — depends_on gets a directional gradient (bright at source, fades toward target)
-      if (isRelates) {
-        ctx.setLineDash(RELATES_DASH);
+      // Edge style — depends_on gets a directional gradient (bright at
+      // source, fades toward target); relates and note edges draw as muted
+      // dashes (note edges tighter and quieter — the knowledge stratum).
+      if (isRelates || isNoteEdge) {
+        ctx.setLineDash(isNoteEdge ? NOTE_EDGE_DASH : RELATES_DASH);
         ctx.strokeStyle = edgeColor;
       } else {
         ctx.setLineDash([]);
@@ -777,7 +848,7 @@ export function ForceGraph({
         ctx.stroke();
 
         // Arrow for depends_on only
-        if (!isRelates) {
+        if (isDepends) {
           const tgtR = getNodeSize(tgt.id, linkCounts) + 4;
           const angle = Math.atan2(dy, dx);
           const ax = tgt.x - Math.cos(angle) * tgtR;
@@ -800,7 +871,7 @@ export function ForceGraph({
         }
 
         // Flow dots for depends_on — animate direction from source to target
-        if (!isRelates && !linkDimmed && effFlowDots) {
+        if (isDepends && !linkDimmed && effFlowDots) {
           const now = performance.now() / 1000;
           const speed = 0.25;
           const dotCount = 3;
@@ -840,7 +911,7 @@ export function ForceGraph({
         ctx.stroke();
 
         // Arrow for depends_on only
-        if (!isRelates) {
+        if (isDepends) {
           const angle = Math.atan2(tgt.y - cpy, tgt.x - cpx);
           const tgtR = getNodeSize(tgt.id, linkCounts) + 4;
           const ax = tgt.x - Math.cos(angle) * tgtR;
@@ -863,7 +934,7 @@ export function ForceGraph({
         }
 
         // Flow dots for depends_on — animate along quadratic curve
-        if (!isRelates && !linkDimmed && effFlowDots) {
+        if (isDepends && !linkDimmed && effFlowDots) {
           const now = performance.now() / 1000;
           const speed = 0.25;
           const dotCount = 3;
@@ -910,7 +981,12 @@ export function ForceGraph({
       ) {
         const emx = (hSrc.x + hTgt.x) / 2;
         const emy = (hSrc.y + hTgt.y) / 2;
-        const label = hovEdge.type === "depends_on" ? "depends" : "relates";
+        const label =
+          hovEdge.type === "depends_on"
+            ? "depends"
+            : hovEdge.type === "note"
+              ? "note"
+              : "relates";
         const edgeColor = EDGE_COLOR[hovEdge.type] ?? "#6b7280";
         ctx.globalAlpha = 0.9;
         ctx.font = `700 8px "GeistMono Variable", "GeistMono", monospace`;
@@ -958,10 +1034,14 @@ export function ForceGraph({
       // Display stage — `plannable` / `ready` are derived sub-stages the
       // parent computes from edges + criteria. They paint with the planned
       // colour but the body stays hollow so the operator can spot
-      // "actionable next" at a glance.
-      const stage = stageMap?.get(n.id) ?? n.status;
+      // "actionable next" at a glance. Note nodes bypass the stage map and
+      // key by `note:<type>` so the gradient caches stay stage-keyed.
+      const isNote = n.kind === "note";
+      const stage = isNote
+        ? `note:${n.noteType ?? "reference"}`
+        : (stageMap?.get(n.id) ?? n.status);
       const isHollowStage = stage === "plannable" || stage === "ready";
-      const sc = statusColor(stage, theme);
+      const sc = stageColor(stage);
       const [sr, sg, sb] = hexToRgb(sc);
 
       ctx.save();
@@ -1002,9 +1082,16 @@ export function ForceGraph({
       // gradient (or a solid fill at adaptive level 2). Gradients are
       // cached per (stage, sz); their user-space coords get mapped through
       // the current transform at fill time, so one cached gradient renders
-      // correctly under every node's local translate/scale.
+      // correctly under every node's local translate/scale. Note nodes
+      // draw a rounded square — shape discriminates entity kind, color
+      // discriminates note type.
       ctx.beginPath();
-      ctx.arc(0, 0, sz, 0, Math.PI * 2);
+      if (isNote) {
+        const half = sz * 0.85;
+        ctx.roundRect(-half, -half, half * 2, half * 2, sz * 0.35);
+      } else {
+        ctx.arc(0, 0, sz, 0, Math.PI * 2);
+      }
       if (isHollowStage) {
         ctx.fillStyle = `rgba(${sr},${sg},${sb},0.06)`;
       } else if (effGradientFill) {
@@ -1014,66 +1101,75 @@ export function ForceGraph({
       }
       ctx.fill();
 
-      // Stage-specific ring. Convention across the workspace (rail, hover
-      // card, structure list, canvas):
-      //   dashed         → spec stage (draft, plannable, cancelled)
-      //   solid          → committed plan / executing / done (planned, in_progress, done)
-      //   solid + dot    → committed plan AND deps done — ready to fire (ready)
-      // Hollow stages (plannable / ready) get a thicker, opaque stroke so
-      // the ring pops against the hollow body.
-      ctx.lineWidth = isSelected ? 2.5 : isHollowStage ? 2 : 1.5;
-      ctx.strokeStyle = isSelected
-        ? ACCENT
-        : `rgba(${sr},${sg},${sb},${isSelected || isHovered || isHollowStage ? 1.0 : 0.8})`;
+      if (isNote) {
+        // Thin solid type-colored ring — no lifecycle dash vocabulary on
+        // notes; the rounded square already sets them apart.
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = `rgba(${sr},${sg},${sb},${isHovered ? 1.0 : 0.85})`;
+        ctx.setLineDash([]);
+        ctx.stroke();
+      } else {
+        // Stage-specific ring. Convention across the workspace (rail, hover
+        // card, structure list, canvas):
+        //   dashed         → spec stage (draft, plannable, cancelled)
+        //   solid          → committed plan / executing / done (planned, in_progress, done)
+        //   solid + dot    → committed plan AND deps done — ready to fire (ready)
+        // Hollow stages (plannable / ready) get a thicker, opaque stroke so
+        // the ring pops against the hollow body.
+        ctx.lineWidth = isSelected ? 2.5 : isHollowStage ? 2 : 1.5;
+        ctx.strokeStyle = isSelected
+          ? ACCENT
+          : `rgba(${sr},${sg},${sb},${isSelected || isHovered || isHollowStage ? 1.0 : 0.8})`;
 
-      switch (stage) {
-        case "done":
-          ctx.setLineDash([]);
-          break;
-        case "in_progress":
-          ctx.setLineDash([]);
-          // Pulsing glow on `in_progress` nodes — the `Math.sin(Date.now())`
-          // tick guarantees a redraw every frame, so `effShadowPulse` gates
-          // both the visual AND the render-loop trigger that keeps the loop
-          // from going idle. At level 2 the node still reads as in-progress
-          // via the solid status ring.
-          if (effShadowBlur && effShadowPulse) {
-            ctx.shadowColor = sc;
-            ctx.shadowBlur = 6 + Math.sin(Date.now() / 400) * 3;
-          }
-          break;
-        case "in_review":
-          // Solid violet ring + filled body, no pulse — the work is done,
-          // the node is calmly waiting on a human gate. Distinguished from
-          // in_progress (amber + pulse) and done (green) by colour alone.
-          ctx.setLineDash([]);
-          break;
-        case "planned":
-        case "ready":
-          // Solid blue ring. `ready` adds an inner filled dot below
-          // (after the stroke) so it reads as "queued / all-clear" against
-          // the otherwise-hollow body.
-          ctx.setLineDash([]);
-          break;
-        case "plannable":
-          // Dashed blue ring + hollow body — "draft has criteria, ready to
-          // be planned". Visually similar to draft but in planned-blue.
-          ctx.setLineDash([3, 4]);
-          break;
-        case "cancelled":
-          ctx.setLineDash([4, 3]);
-          ctx.globalAlpha = nodeAlpha * 0.45;
-          break;
-        default: // draft
-          // Slightly looser dash + far less aggressive dim — the previous
-          // 0.6 multiplier on a #9ca3af fill made draft nodes invisible
-          // against the canvas surface in dark mode.
-          ctx.setLineDash([2, 4]);
-          ctx.globalAlpha = nodeAlpha * 0.85;
-          break;
+        switch (stage) {
+          case "done":
+            ctx.setLineDash([]);
+            break;
+          case "in_progress":
+            ctx.setLineDash([]);
+            // Pulsing glow on `in_progress` nodes — the `Math.sin(Date.now())`
+            // tick guarantees a redraw every frame, so `effShadowPulse` gates
+            // both the visual AND the render-loop trigger that keeps the loop
+            // from going idle. At level 2 the node still reads as in-progress
+            // via the solid status ring.
+            if (effShadowBlur && effShadowPulse) {
+              ctx.shadowColor = sc;
+              ctx.shadowBlur = 6 + Math.sin(Date.now() / 400) * 3;
+            }
+            break;
+          case "in_review":
+            // Solid violet ring + filled body, no pulse — the work is done,
+            // the node is calmly waiting on a human gate. Distinguished from
+            // in_progress (amber + pulse) and done (green) by colour alone.
+            ctx.setLineDash([]);
+            break;
+          case "planned":
+          case "ready":
+            // Solid blue ring. `ready` adds an inner filled dot below
+            // (after the stroke) so it reads as "queued / all-clear" against
+            // the otherwise-hollow body.
+            ctx.setLineDash([]);
+            break;
+          case "plannable":
+            // Dashed blue ring + hollow body — "draft has criteria, ready to
+            // be planned". Visually similar to draft but in planned-blue.
+            ctx.setLineDash([3, 4]);
+            break;
+          case "cancelled":
+            ctx.setLineDash([4, 3]);
+            ctx.globalAlpha = nodeAlpha * 0.45;
+            break;
+          default: // draft
+            // Slightly looser dash + far less aggressive dim — the previous
+            // 0.6 multiplier on a #9ca3af fill made draft nodes invisible
+            // against the canvas surface in dark mode.
+            ctx.setLineDash([2, 4]);
+            ctx.globalAlpha = nodeAlpha * 0.85;
+            break;
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
-      ctx.stroke();
-      ctx.setLineDash([]);
 
       ctx.shadowColor = "transparent";
       ctx.shadowBlur = 0;
@@ -1446,6 +1542,7 @@ export function ForceGraph({
       dragRef.current = {
         active: true,
         nodeId: hit?.id ?? null,
+        nodeKind: hit?.kind ?? null,
         panning: !hit,
         startX: sx,
         startY: sy,
@@ -1530,8 +1627,12 @@ export function ForceGraph({
             const isPinned =
               hit.fx != null && hit.fy != null && hit.id !== selectedNodeId;
             const suffix = isPinned ? " (dbl-click to unpin)" : "";
+            const typeLabel =
+              hit.kind === "note" && hit.noteType
+                ? ` · ${NOTE_TYPE_META[hit.noteType].label}`
+                : "";
             tooltipRef.current = {
-              text: `${hit.taskRef} · ${hit.title}${suffix}`,
+              text: `${hit.taskRef} · ${hit.title}${typeLabel}${suffix}`,
               x: sx,
               y: sy,
             };
@@ -1563,7 +1664,13 @@ export function ForceGraph({
       // so any distance-based check would misread the gesture as a click.
       if (drag.active && !drag.moved) {
         if (drag.nodeId) {
-          onSelectNode(drag.nodeId);
+          // Note nodes navigate to the notes surface instead of becoming
+          // the graph selection — the graph layout renders no note detail.
+          if (drag.nodeKind === "note") {
+            onSelectNote?.(drag.nodeId);
+          } else {
+            onSelectNode(drag.nodeId);
+          }
         } else {
           onDeselect?.();
         }
@@ -1571,6 +1678,7 @@ export function ForceGraph({
       dragRef.current = {
         active: false,
         nodeId: null,
+        nodeKind: null,
         panning: false,
         startX: 0,
         startY: 0,
@@ -1581,7 +1689,7 @@ export function ForceGraph({
       canvasRef.current?.releasePointerCapture(e.pointerId);
       needsRedrawRef.current = true;
     },
-    [onSelectNode, onDeselect],
+    [onSelectNode, onSelectNote, onDeselect],
   );
 
   const handleDoubleClick = useCallback(
@@ -1682,8 +1790,9 @@ export function ForceGraph({
     reset();
   }, [reset]);
 
-  const isEmpty = filteredTasks.length === 0 && tasks.length === 0;
-  const allFiltered = filteredTasks.length === 0 && tasks.length > 0;
+  const isEmpty = tasks.length === 0 && notes.length === 0;
+  const allFiltered =
+    !isEmpty && filteredTasks.length === 0 && visibleNotes.length === 0;
 
   return (
     <div ref={containerRef} className={`relative h-full w-full ${className}`}>
