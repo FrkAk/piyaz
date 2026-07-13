@@ -270,7 +270,7 @@ export function emailChangeApprovalEmail(
     kind: "note",
     text: brand.supportEmail
       ? `If you didn't request this change, don't approve it. Contact ${brand.supportEmail} right away to secure your account.`
-      : "If you didn't request this change, don't approve it and change your password right away to secure your account.",
+      : "If you didn't request this change, don't approve it. Change your password right away to secure your account.",
   });
   return render(
     brand,

@@ -187,7 +187,9 @@ describe("template structure", () => {
     const withSupport = passwordChangedEmail(branded, {});
     expect(withSupport.html).not.toContain("color:#ffffff");
     expect(withSupport.text).not.toContain("Confirm email:");
-    expect(withSupport.text).toContain("help@acme.example");
+    expect(withSupport.text).toContain(
+      "If this wasn't you, contact help@acme.example right away to secure your account.",
+    );
     const withoutSupport = passwordChangedEmail(neutral, {});
     expect(withoutSupport.text).not.toContain("help@acme.example");
     expect(withoutSupport.text).toContain("reset your password");
@@ -300,13 +302,17 @@ describe("template structure", () => {
     expect(withSupport.text).toMatch(
       /\nhttps:\/\/app\.example\/approve\?t=abc\n/,
     );
-    expect(withSupport.text).toContain("help@acme.example");
+    expect(withSupport.text).toContain(
+      "If you didn't request this change, don't approve it. Contact help@acme.example right away to secure your account.",
+    );
     const withoutSupport = emailChangeApprovalEmail(neutral, {
       approveUrl: "https://app.example/approve?t=abc",
       newEmail: "new@acme.example",
     });
     expect(withoutSupport.text).not.toContain("help@acme.example");
-    expect(withoutSupport.text).toContain("change your password");
+    expect(withoutSupport.text).toContain(
+      "If you didn't request this change, don't approve it. Change your password right away to secure your account.",
+    );
   });
 
   test("deleteAccount renders its confirm URL, gated expiry note, and didn't-request line", () => {
