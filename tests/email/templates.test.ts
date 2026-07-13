@@ -56,6 +56,7 @@ const samples = [
       emailChangeEmail(b, {
         confirmUrl: "https://app.example/change?t=abc",
         newEmail: "new@acme.example",
+        expiresLabel: "1 hour",
       }),
   ],
   [
@@ -84,6 +85,7 @@ const samples = [
         approveUrl: "https://app.example/approve?t=abc",
         newEmail: "new@acme.example",
         recipientName: "Dana",
+        expiresLabel: "1 hour",
       }),
   ],
   [
@@ -231,6 +233,38 @@ describe("template structure", () => {
     });
     expect(withLabel.html).toContain("This link can only be used once.");
     expect(withLabel.text).toContain("This link can only be used once.");
+  });
+
+  test("emailChange expiry note renders only when expiresLabel is set", () => {
+    const without = emailChangeEmail(neutral, {
+      confirmUrl: "https://app.example/change?t=abc",
+      newEmail: "new@acme.example",
+    });
+    expect(without.html).not.toContain("This link expires");
+    expect(without.text).not.toContain("This link expires");
+    const withLabel = emailChangeEmail(neutral, {
+      confirmUrl: "https://app.example/change?t=abc",
+      newEmail: "new@acme.example",
+      expiresLabel: "1 hour",
+    });
+    expect(withLabel.html).toContain("This link expires in 1 hour.");
+    expect(withLabel.text).toContain("This link expires in 1 hour.");
+  });
+
+  test("emailChangeApproval expiry note renders only when expiresLabel is set", () => {
+    const without = emailChangeApprovalEmail(neutral, {
+      approveUrl: "https://app.example/approve?t=abc",
+      newEmail: "new@acme.example",
+    });
+    expect(without.html).not.toContain("This link expires");
+    expect(without.text).not.toContain("This link expires");
+    const withLabel = emailChangeApprovalEmail(neutral, {
+      approveUrl: "https://app.example/approve?t=abc",
+      newEmail: "new@acme.example",
+      expiresLabel: "1 hour",
+    });
+    expect(withLabel.html).toContain("This link expires in 1 hour.");
+    expect(withLabel.text).toContain("This link expires in 1 hour.");
   });
 
   test("passwordChanged renders When/Device/Location notes only when set", () => {

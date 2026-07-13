@@ -118,28 +118,37 @@ export function passwordResetEmail(
 export interface EmailChangeParams {
   confirmUrl: string;
   newEmail: string;
+  /** Human-readable expiry label (e.g. "1 hour"); owned by the caller so no TTL is baked in here. */
+  expiresLabel?: string;
 }
 
-/** Email-change confirmation: names the new address and links its confirmation. */
+/** Email-change confirmation: names the new address, links its confirmation, optional expiry note. */
 export function emailChangeEmail(
   brand: BrandConfig,
   params: EmailChangeParams,
 ): RenderedEmail {
+  const blocks: EmailBlock[] = [
+    {
+      kind: "paragraph",
+      text: `Confirm that you want to use ${params.newEmail} for your ${brand.appName} account.`,
+    },
+    { kind: "action", label: "Confirm email change", url: params.confirmUrl },
+  ];
+  if (params.expiresLabel) {
+    blocks.push({
+      kind: "note",
+      text: `This link expires in ${params.expiresLabel}.`,
+    });
+  }
+  blocks.push({
+    kind: "note",
+    text: "If you didn't request this change, ignore this email and your address will stay the same.",
+  });
   return render(
     brand,
     "Confirm your new email address",
     "Confirm your new email",
-    [
-      {
-        kind: "paragraph",
-        text: `Confirm that you want to use ${params.newEmail} for your ${brand.appName} account.`,
-      },
-      { kind: "action", label: "Confirm email change", url: params.confirmUrl },
-      {
-        kind: "note",
-        text: "If you didn't request this change, ignore this email and your address will stay the same.",
-      },
-    ],
+    blocks,
   );
 }
 
@@ -234,31 +243,40 @@ export interface EmailChangeApprovalParams {
   approveUrl: string;
   newEmail: string;
   recipientName?: string;
+  /** Human-readable expiry label (e.g. "1 hour"); owned by the caller so no TTL is baked in here. */
+  expiresLabel?: string;
 }
 
-/** Email-change approval gate: names the pending new address; wasn't-you pointer gated on `supportEmail`. */
+/** Email-change approval gate: names the pending new address, optional expiry note; wasn't-you pointer gated on `supportEmail`. */
 export function emailChangeApprovalEmail(
   brand: BrandConfig,
   params: EmailChangeApprovalParams,
 ): RenderedEmail {
+  const blocks: EmailBlock[] = [
+    { kind: "paragraph", text: greeting(params.recipientName) },
+    {
+      kind: "paragraph",
+      text: `We received a request to change the email address on your ${brand.appName} account to ${params.newEmail}.`,
+    },
+    { kind: "action", label: "Approve email change", url: params.approveUrl },
+  ];
+  if (params.expiresLabel) {
+    blocks.push({
+      kind: "note",
+      text: `This link expires in ${params.expiresLabel}.`,
+    });
+  }
+  blocks.push({
+    kind: "note",
+    text: brand.supportEmail
+      ? `If you didn't request this change, don't approve it. Contact ${brand.supportEmail} right away to secure your account.`
+      : "If you didn't request this change, don't approve it and change your password right away to secure your account.",
+  });
   return render(
     brand,
     `Approve the email change for your ${brand.appName} account`,
     "Approve email change",
-    [
-      { kind: "paragraph", text: greeting(params.recipientName) },
-      {
-        kind: "paragraph",
-        text: `We received a request to change the email address on your ${brand.appName} account to ${params.newEmail}.`,
-      },
-      { kind: "action", label: "Approve email change", url: params.approveUrl },
-      {
-        kind: "note",
-        text: brand.supportEmail
-          ? `If you didn't request this change, don't approve it. Contact ${brand.supportEmail} right away to secure your account.`
-          : "If you didn't request this change, don't approve it and change your password right away to secure your account.",
-      },
-    ],
+    blocks,
   );
 }
 
