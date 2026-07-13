@@ -32,7 +32,9 @@ let _ctxThrows = false;
  * `tests/auth/kv-secondary-storage.workers.test.ts:41-46`. `_envHasEmail`
  * flips per test to exercise the missing-binding path; `_ctxThrows`
  * simulates access outside a request context, where the real
- * `getCloudflareContext` throws.
+ * `getCloudflareContext` throws. The module mock is process-global and
+ * unrestoreable, so `afterAll` parks `_ctxThrows = true` to match that
+ * out-of-Workers throw for any later test file importing the indirection.
  */
 mock.module("@opennextjs/cloudflare", () => ({
   getCloudflareContext: (_opts?: { async?: boolean }) => {
@@ -79,6 +81,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+  _ctxThrows = true;
   for (const [name, value] of ORIGINAL_SENDER_VARS) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
