@@ -149,6 +149,7 @@ Single-AC tasks are flagged by the server in `_hints`; rewrite them. Tasks with 
 - **Include:** function names, file paths, endpoints, data formats.
 - **Exclude:** debugging stories, false starts, filler.
 - **For `cancelled`:** rationale (why abandoned), approaches tried, decisions learned. Same shape as a done record, just for non-shipping outcomes.
+- **Deliverables section (optional):** when the task ships non-code artifacts, a `## Deliverables` list (path or URL plus the exact regeneration command per artifact) extends the record beyond the sentence core.
 - **Draft tasks must NOT carry an `executionRecord`.** That field implies the task shipped.
 
 ### `decisions`
@@ -386,7 +387,7 @@ Applies to `description`, `acceptanceCriteria`, `executionRecord`, `implementati
 - Bullet lists (`-`) for 3 or more items. Never run-on prose.
 - Backticks for code references: file paths, function names, endpoints, variables, package names.
 - Paragraph breaks between distinct topics.
-- Headings (`##`, `###`) only in long fields like `implementationPlan`.
+- Headings (`##`, `###`) only in long fields like `implementationPlan` and the executionRecord's optional `Deliverables` section.
 
 ### Tone: never sound like AI
 

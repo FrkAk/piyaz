@@ -61,7 +61,7 @@ conventions §1 applies to your `executionRecord`, your `decisions`, and your `a
 
 `delete_task` and `remove` ops, `piyaz_create`, `piyaz_link` (any action), `piyaz_workspace` `create`/`update`, `git push --force`, `git reset --hard` on shared branches, `gh pr merge`, anything that closes or merges a PR. You ship the work and hand off; you do not self-merge. Resolving PR review threads (the GraphQL `resolveReviewThread` mutation, or any UI-equivalent) is also forbidden; the human resolves their own threads.
 
-Destructive ops are forbidden: no `remove`, no rewriting fields you did not author. `decisions` accrete via `add`; ACs are evaluated by id via `check`/`uncheck`, never rewritten; `executionRecord` is yours to `set` once (or `append` on rework).
+Destructive ops are forbidden: no `remove`, no rewriting fields you did not author. `decisions` accrete via `add`; ACs are evaluated by id via `check`/`uncheck`, never rewritten; `executionRecord` is yours to `set`, and a fix rotation re-`set`s it to the folded final state rather than appending narrative.
 
 ### Status writes: claim once, hand off once
 
@@ -89,6 +89,8 @@ c. Verify the plan is implementable. Walk the plan's *Files and changes* list an
 d. Confirm the project's test, typecheck, and lint commands from the plan's *Verification* section. If the plan is missing one, read `package.json` / `pyproject.toml` / `Cargo.toml` to derive it; if you cannot derive it, fail loudly and exit. Do not invent commands.
 
 e. When you are running directly in the orchestrator's tree (no worktree isolation), require a clean tree: `git status --porcelain` must print nothing. Anything else: fail loudly naming the leftover state (`STATUS: BLOCKED — dirty tree: <first lines of porcelain output>`). Inside an isolated worktree this is guaranteed fresh; skip the check.
+
+f. Worktree provisioning. A worktree checkout omits gitignored files. Copy from the primary checkout (first entry of `git worktree list --porcelain`) into the worktree root when absent: the project's agent-instruction files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, or equivalent), the env file the repo documents (`.env.local` or equivalent), named design references (`DESIGN.md` or equivalent), and any documented local test login. Read and follow the project agent-instruction file and your user-level one. Never commit or force-add the copies; never leak credentials into code, docs, PR bodies, or Piyaz records.
 
 ### 2. Claim and branch
 
@@ -144,6 +146,7 @@ c. Production-grade quality bar (this is what makes composer worth running over 
    - **Reliability**: handle the failure modes the plan listed; let unexpected exceptions propagate to the surrounding handler rather than swallowing them with `try/except: pass`-shaped catches.
    - **Observability**: logs/metrics/traces consistent with the rest of the codebase; new error paths get the same log level and structure as existing ones.
    - **Style**: match the project's conventions from the plan's *Verification* section. Pass `lint` and `typecheck` strictly; do not disable rules to make them pass.
+   - **Design grounding**: when the repo names a design reference (`DESIGN.md`, a design-system doc, or a prototype/primitives route), that reference is the design spec for UI work. Load the frontend design skills where the platform ships them, compose from existing primitives, and record deviations from the spec in the `executionRecord`.
 
 d. Commit in coherent chunks with the project's commit format (the plan names it). One commit per logical step is fine; squashing on merge is the maintainer's call, not yours.
 
@@ -182,6 +185,7 @@ Hold the payload to four rules before you write it. They are where composer's ou
 - **executionRecord excludes run metadata.** No orchestration or runtime narration (agent hang times, `TaskStop`, recovery stories), no commit SHAs, no squash notes, no fix-rotation counts. The record reflects what was built, not how the run executed; run mechanics belong to the orchestrator's run log, not the durable task (artifacts §1).
 - **Every `checked: true` AC carries a cited evidence line** (a test name, a diff path, or command output). No citable evidence means `checked: false` with a one-line reason. An honest `checked: false` ships; it does not block the handoff. Never mark an AC met and then defer the real verification to a downstream task or a human pass; a deferred or untestable criterion is `checked: false` with the reason in one line. The reviewer rejects an unverifiable `checked: true` (review.md, AC evaluation), so a blanket-true payload fails review rather than passing it.
 - **`decisions` is CHOICE + WHY only.** An open question is not a decision; a `Open: ...` note never enters `decisions`, and neither does a process note (artifacts §1).
+- **Non-code deliverables are reviewable or they do not exist.** Commit repo-resident artifacts in the PR; link external ones on the task or record them in a `Deliverables` section of the `executionRecord` with the path or URL and the exact regeneration command. Your worktree is ephemeral; an uncommitted, unlinked output is gone by review time.
 
 **Pre-handoff self-check.** Confirm two things before the write. (1) Tags satisfy the three-dimension shape (exactly 1 work-type, at least 1 cross-cutting, at most 2 tech) and carry no `area:` prefix (codebase area is `category`, not a tag). You do not own the `tags` field; the researcher sets it, so a violation here is an upstream miss — but never block completed, PR-open work over it. Hand off normally and surface the defect: write `in_review`, add a `concerns` entry naming what is wrong, and return `STATUS: DONE_WITH_CONCERNS — tags unmet: <what is wrong>`. The reviewer treats the same defect as a `request-changes` backstop (review.md, AC evaluation), and the fix lands on the rotation back through `in_progress`. (2) A non-empty `files` has a matching `prUrl`; this one is yours, so open the PR and capture its URL before you write. If the PR will not open, surface `STATUS: BLOCKED — <reason>`; never write `in_review` with code changes and no `prUrl`.
 
@@ -228,7 +232,7 @@ When the dispatch says fix mode, the reviewer requested changes on your PR and t
 4. Inspect the branch for foreign commits: compare the PR's commit authors (`gh pr view <url> --json commits --jq '.commits[].authors[].login'`) against your own identity (`git config user.name` and the login you push as). Foreign commits found: note them verbatim in your return message and re-evaluate ALL acceptance criteria in step 7, not only the ACs the findings touched — someone else's edits may have moved ground under criteria you previously satisfied.
 5. Address **exactly the blocking findings in the dispatch**. No replanning, no scope expansion, no drive-by refactors. An accepted human direction change (a rework finding that redirects an approach) lands as a `decisions` entry (CHOICE + WHY) before the code change. A finding you believe is wrong: do not silently skip it; note your reasoning in the return message and fix the rest.
 6. Re-run the full verification suite (typecheck, lint, tests) until green, push to the same branch.
-7. Re-mark `in_review` with an updated Completion Protocol payload (append a one-line `executionRecord` delta describing the fix; re-evaluate only the ACs the findings touched, or all ACs when step 4 found foreign commits). The pre-write status re-read from the main procedure's *Mark in_review* step applies here.
+7. Re-mark `in_review` with an updated Completion Protocol payload. Restructure the `executionRecord` to state the final shipped state like a PR body: fold the fix into the relevant sections via `set`, never append per-rotation narrative paragraphs. Re-evaluate only the ACs the findings touched, or all ACs when step 4 found foreign commits. The pre-write status re-read from the main procedure's *Mark in_review* step applies here.
 8. Return: `<taskRef> fix rotation complete. PR <url>. <one line per finding: addressed or contested>.` plus the STATUS line per the success/failure paths above. In rework mode you MAY post one `gh pr comment <url> --body '<one-paragraph summary of what was addressed>'` — at most one per rotation. You NEVER resolve review threads; resolution is the human's prerogative.
 
 ## Environmental failures

@@ -95,6 +95,7 @@ Completion Protocol:
 - [ ] files: every repo path touched; files=[] explicitly when none (§2.2)
 - [ ] acceptanceCriteria: each item evaluated true/false against the work (§2.2)
 - [ ] PR opened if the work changed code; template detected and filled (§2.3, §2.4)
+- [ ] Non-code deliverables committed, linked, or recorded with a regeneration command (§2.2)
 - [ ] prUrl passed on the in_review update when a PR exists (§2.2)
 - [ ] Response _hints read; required-field hints cleared before continuing
 - [ ] Propagation run (§3)
@@ -112,7 +113,9 @@ One `piyaz_edit` call carries the whole payload as ordered ops: `set executionRe
 
 For pure spec-review / docs / decision-only / Piyaz-only refinement tasks that touched no repo files, `set files` with `value=[]` explicitly. Omitting the op leaves the prior value in place and the server's "missing files" hint will not clear. The empty array is the correct positive answer to "what changed in the repo?", not the absence of an answer.
 
-Criterion ids come from `piyaz_get lens='working'` or `fields=['acceptanceCriteria']`; evaluate each against the actual work. Wholesale `set` on text fields is never part of the Completion Protocol; the record accretes via `set executionRecord` (first write) or `append` (adding to prior work). If you find yourself rewriting fields you did not author, stop and re-read the red flags in SKILL.md.
+Criterion ids come from `piyaz_get lens='working'` or `fields=['acceptanceCriteria']`; evaluate each against the actual work. Wholesale `set` on text fields is never part of the Completion Protocol; the record accretes via `set executionRecord` (first write) or `append` (adding to prior work). The one exception is a fix or rework rotation: the record's author re-`set`s the `executionRecord` to the folded final shipped state instead of appending per-rotation narrative. If you find yourself rewriting fields you did not author, stop and re-read the red flags in SKILL.md.
+
+Non-code deliverables (a generated report, data file, rendered doc, dataset, benchmark result, dashboard) must be reviewable: commit repo-resident artifacts in the PR; otherwise link them on the task or record the path or URL plus the exact regeneration command in a `Deliverables` section of the `executionRecord`. Agent worktrees are ephemeral; an uncommitted, unlinked output is gone by review time.
 
 ### 2.3. Open a PR if the work changed code
 
