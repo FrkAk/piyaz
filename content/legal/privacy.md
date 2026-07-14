@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: July 14, 2026
+Last updated: July 15, 2026
 
 This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**, operated
 by the Piyaz team. **If you self-host Piyaz, this document does not apply to your
@@ -76,7 +76,7 @@ Your data is stored in the **European Union**. We use the following sub-processo
 
 - **Neon** (Neon, LLC, a Databricks company): managed PostgreSQL database. Your data is stored in the **AWS `eu-central-1` (Frankfurt, Germany)** region.
 - **Amazon Web Services (AWS)**: underlying cloud infrastructure for the Neon database, Frankfurt region (EU).
-- **Cloudflare, Inc.**: application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging across its global edge network.
+- **Cloudflare, Inc.**: application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, operational logging, and transactional email delivery (Email Sending) across its global edge network.
 
 A current [sub-processor list](/subprocessors) is maintained and incorporated here by
 reference.
@@ -142,7 +142,7 @@ grows.
 ## How long we keep your data
 
 - **Account and workspace data**: for as long as your account is active. After you delete your account, data is removed within **30 days**, and residual copies in backups are purged within **90 days**.
-- **Session records**: expire automatically after **7 days**.
+- **Session records**: expire automatically **7 days** after your last activity.
 - **Acceptance records**: anonymized when your account is deleted (the link to you, your IP address, and your user-agent are removed) and retained in that anonymized form as evidence that the agreement existed.
 - **Operational logs and traces**: retained for up to **90 days** and then deleted or anonymized.
 - **Transactional email records**: our email provider (Cloudflare) retains per-message delivery metadata (sender, recipient, subject, and delivery status) for **31 days** in its delivery analytics. Addresses that bounce or report our mail as spam are kept on an account-level suppression list to prevent repeat sends.
@@ -174,7 +174,7 @@ cookie banner.
 
 | Cookie | Purpose | Duration |
 | --- | --- | --- |
-| `__Secure-better-auth.session_token` | Keeps you signed in after login. You stay signed in for up to 7 days, including across browser restarts, unless you sign out. | 7 days |
+| `__Secure-better-auth.session_token` | Keeps you signed in. Your session expires 7 days after your last activity, unless you sign out first. | 7 days from last activity |
 
 **Preference cookies** (user-requested interface customization: each is set only when
 you take the matching action, stores no personal data, and is never used for tracking):
