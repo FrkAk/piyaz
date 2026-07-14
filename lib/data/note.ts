@@ -121,6 +121,7 @@ import {
 } from "@/lib/realtime/events";
 import {
   NOTE_SUMMARY_MAX_CHARS,
+  NOTE_TASK_LINK_KIND_RANK,
   type FeedMode,
   type NoteTaskLinkKind,
   type NoteType,
@@ -374,8 +375,10 @@ export type TaskNoteBacklink = NoteTreeRow & {
   sequenceNumber: number;
 };
 
-/** Full note row minus the server-side `search_tsv` and `shared_since` columns (RLS fence state; no client reads it). */
-export type NoteFull = Omit<Note, "searchTsv" | "sharedSince">;
+/** Full note row minus the server-side columns no client reads:
+ *  `search_tsv`, `shared_since` (RLS fence state), and `meta_updated_at`
+ *  (graph-ETag clock). */
+export type NoteFull = Omit<Note, "searchTsv" | "sharedSince" | "metaUpdatedAt">;
 
 /** Single-note read: the full row plus its derived link context. */
 export type NoteFullResult = {
@@ -980,6 +983,16 @@ const JSON_PATCH_FIELDS = new Set<keyof NotePatch>([
   "feedTaskIds",
 ]);
 
+/** Patch fields the slim graph payload observes; a change to any of them
+ *  bumps `meta_updated_at` so the graph ETag moves. Feed targeting columns
+ *  stay out — the payload ships only the `feedMode != 'none'` boolean. */
+const GRAPH_META_NOTE_FIELDS: ReadonlySet<string> = new Set([
+  "title",
+  "type",
+  "feedMode",
+  "visibility",
+]);
+
 /**
  * Remove patch fields whose value equals the note's current value, so a
  * value-equal patch takes the no-op path (no UPDATE, no activity event,
@@ -1044,6 +1057,21 @@ async function loadSlugNamespace(
 }
 
 /**
+ * Compare two id collections as sets.
+ *
+ * @param next - Newly derived ids (may contain duplicates).
+ * @param current - Existing ids.
+ * @returns True when both contain exactly the same ids.
+ */
+function sameIdSet(next: readonly string[], current: readonly string[]): boolean {
+  const a = new Set(next);
+  const b = new Set(current);
+  if (a.size !== b.size) return false;
+  for (const id of a) if (!b.has(id)) return false;
+  return true;
+}
+
+/**
  * Re-derive a note's body-driven links inside the body-write transaction.
  * Deletes then reinserts ONLY the derivation-owned rows: `note_task_links`
  * with `kind='mention'` (user-managed `reference`/`spec_of` rows survive)
@@ -1052,12 +1080,18 @@ async function loadSlugNamespace(
  * members' private notes from the title lookup, so derivation can never
  * link to a note the author cannot see.
  *
+ * When the derived set matches the stored rows the rewrite is skipped
+ * entirely — unchanged bodies stop churning link rows, and the return
+ * value tells the caller whether the graph-visible link set moved (the
+ * `meta_updated_at` bump trigger).
+ *
  * @param tx - Active RLS transaction handle.
  * @param noteId - Source note id.
  * @param projectId - Owning project id.
  * @param projectIdentifier - Identifier task refs are parsed against.
  * @param body - The new note body.
  * @param isNew - Skip the scoped deletes for a freshly inserted note.
+ * @returns True when the stored derivation-owned link set changed.
  */
 async function replaceDerivedLinks(
   tx: Tx,
@@ -1066,7 +1100,7 @@ async function replaceDerivedLinks(
   projectIdentifier: string,
   body: string,
   isNew: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const { taskSeqs, titles } = extractNoteRefs(body, projectIdentifier);
 
   let taskIds: string[] = [];
@@ -1104,6 +1138,27 @@ async function replaceDerivedLinks(
   }
 
   if (!isNew) {
+    const [currentMentions, currentOut] = await Promise.all([
+      tx
+        .select({ taskId: noteTaskLinks.taskId })
+        .from(noteTaskLinks)
+        .where(
+          and(
+            eq(noteTaskLinks.noteId, noteId),
+            eq(noteTaskLinks.kind, "mention"),
+          ),
+        ),
+      tx
+        .select({ targetNoteId: noteLinks.targetNoteId })
+        .from(noteLinks)
+        .where(eq(noteLinks.sourceNoteId, noteId)),
+    ]);
+    if (
+      sameIdSet(taskIds, currentMentions.map((r) => r.taskId)) &&
+      sameIdSet(targetNoteIds, currentOut.map((r) => r.targetNoteId))
+    ) {
+      return false;
+    }
     await tx
       .delete(noteTaskLinks)
       .where(
@@ -1131,6 +1186,7 @@ async function replaceDerivedLinks(
       })),
     );
   }
+  return !isNew || taskIds.length > 0 || targetNoteIds.length > 0;
 }
 
 /**
@@ -1996,13 +2052,6 @@ function toCrossProjectHit(row: {
   };
 }
 
-/** Specificity rank per backlink kind; higher wins the per-note dedupe. */
-const BACKLINK_KIND_RANK: Record<NoteTaskLinkKind, number> = {
-  spec_of: 2,
-  reference: 1,
-  mention: 0,
-};
-
 /**
  * Collapse backlink rows to one row per note, keeping the most specific
  * link kind (`spec_of` > `reference` > `mention`).
@@ -2018,7 +2067,7 @@ function dedupeBacklinks(
     const existing = byNote.get(row.id);
     if (
       !existing ||
-      BACKLINK_KIND_RANK[row.kind] > BACKLINK_KIND_RANK[existing.kind]
+      NOTE_TASK_LINK_KIND_RANK[row.kind] > NOTE_TASK_LINK_KIND_RANK[existing.kind]
     ) {
       byNote.set(row.id, row);
     }
@@ -3166,6 +3215,27 @@ async function updateNoteCore(
 
     const nextVisibility = applied.visibility ?? current.visibility;
 
+    // Derivation runs BEFORE the notes UPDATE (it only reads other rows and
+    // excludes self) so its changed-set verdict can fold into the same
+    // UPDATE: graph-visible field changes and link-set changes share one
+    // meta_updated_at bump — no second round trip.
+    const derivedLinksChanged = bodyChanged
+      ? await replaceDerivedLinks(
+          tx,
+          noteId,
+          current.projectId,
+          current.projectIdentifier,
+          applied.body ?? "",
+          false,
+        )
+      : false;
+    const graphMetaChanged = changedFields.some((field) =>
+      GRAPH_META_NOTE_FIELDS.has(field),
+    );
+    if (graphMetaChanged || derivedLinksChanged) {
+      changes.metaUpdatedAt = changes.updatedAt;
+    }
+
     const [summary] = await tx
       .update(notes)
       .set(changes)
@@ -3175,7 +3245,6 @@ async function updateNoteCore(
     let links: NoteLinksRefresh | undefined;
     let revisionCheckpoint: NoteRevisionCheckpoint | undefined;
     if (bodyChanged) {
-      const newBody = applied.body ?? "";
       const [newestRevision] = await tx
         .select({
           version: noteRevisions.version,
@@ -3211,14 +3280,6 @@ async function updateNoteCore(
           createdAt: current.updatedAt,
         };
       }
-      await replaceDerivedLinks(
-        tx,
-        noteId,
-        current.projectId,
-        current.projectIdentifier,
-        newBody,
-        false,
-      );
       const mentionRows = await tx
         .select({
           taskId: noteTaskLinks.taskId,
@@ -3703,6 +3764,7 @@ export async function deleteNote(
         deletedAt: now,
         updatedBy: ctx.userId,
         updatedAt: now,
+        metaUpdatedAt: now,
       })
       .where(eq(notes.id, noteId))
       .returning({
@@ -3813,13 +3875,15 @@ export async function restoreNote(
       ? nextFreeSlug(base, taken)
       : current.slug;
 
+    const now = new Date();
     const [summary] = await tx
       .update(notes)
       .set({
         deletedAt: null,
         slug,
         updatedBy: ctx.userId,
-        updatedAt: new Date(),
+        updatedAt: now,
+        metaUpdatedAt: now,
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
@@ -3999,7 +4063,10 @@ export async function declineShareRequest(
  * Shared visibility write: updates the column, clears the share-request
  * marker and stamps `shared_since` (DB `now()`) when flipping to `team`,
  * clears `shared_since` when flipping to `private`, and records the
- * activity event.
+ * activity event. Bumps both note clocks — a visibility flip changes which
+ * members' graph payloads contain the note, so the graph ETag must move
+ * (this path serves {@link approveShareRequest}, which bypasses
+ * `updateNote`'s field-based bump).
  *
  * @param tx - Active RLS transaction handle.
  * @param ctx - Resolved auth context.
@@ -4013,6 +4080,7 @@ async function applyVisibilityTx(
   gate: NoteAccessGate,
   visibility: Visibility,
 ): Promise<NoteSummary> {
+  const now = new Date();
   const [row] = await tx
     .update(notes)
     .set({
@@ -4021,7 +4089,8 @@ async function applyVisibilityTx(
         ? { shareRequestedBy: null, sharedSince: sql`now()` }
         : { sharedSince: null }),
       updatedBy: ctx.userId,
-      updatedAt: new Date(),
+      updatedAt: now,
+      metaUpdatedAt: now,
     })
     .where(eq(notes.id, gate.id))
     .returning(noteSummaryColumns);
@@ -4133,10 +4202,10 @@ export type DeliberateNoteTaskLinkKind = Exclude<NoteTaskLinkKind, "mention">;
  * `mention` rows are owned by body-link derivation and cannot be created
  * here. Both endpoints must be live, accessible, and in the same project
  * (the DB trigger rejects cross-project rows; this pre-check keeps the
- * rejection typed). A created link bumps `notes.updated_at` in the same
- * transaction: the link tables carry only `created_at`, so without the bump
- * the note-inclusive validators (graph and context ETags) would miss the
- * change.
+ * rejection typed). A created link bumps BOTH note clocks in the same
+ * transaction — `updated_at` for the context ETag and `meta_updated_at`
+ * for the graph ETag: the link tables carry only `created_at`, so without
+ * the bumps the note-inclusive validators would miss the change.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -4176,9 +4245,10 @@ export async function createNoteTaskLink(
       .returning({ id: noteTaskLinks.id });
     const created = rows.length > 0;
     if (created) {
+      const now = new Date();
       await tx
         .update(notes)
-        .set({ updatedAt: new Date() })
+        .set({ updatedAt: now, metaUpdatedAt: now })
         .where(eq(notes.id, noteId));
       await insertActivityEvents(tx, ctx.actor, [
         {
@@ -4215,8 +4285,9 @@ export async function createNoteTaskLink(
  * Remove a deliberate note-task link (`reference` or `spec_of`).
  * `mention` rows are owned by body-link derivation and cannot be removed
  * here. Removing an absent link returns `removed: false`. A removed link
- * bumps `notes.updated_at` in the same transaction so the note-inclusive
- * validators (graph and context ETags) observe the change.
+ * bumps BOTH note clocks in the same transaction (`updated_at` for the
+ * context ETag, `meta_updated_at` for the graph ETag) so the note-inclusive
+ * validators observe the change.
  *
  * @param ctx - Resolved auth context.
  * @param noteId - UUID of the note.
@@ -4256,9 +4327,10 @@ export async function removeNoteTaskLink(
       .returning({ id: noteTaskLinks.id });
     const removed = rows.length > 0;
     if (removed) {
+      const now = new Date();
       await tx
         .update(notes)
-        .set({ updatedAt: new Date() })
+        .set({ updatedAt: now, metaUpdatedAt: now })
         .where(eq(notes.id, noteId));
       await insertActivityEvents(tx, ctx.actor, [
         {

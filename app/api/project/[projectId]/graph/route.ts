@@ -23,9 +23,10 @@ import { consentGateResponse } from "@/lib/auth/consent";
  * `acceptanceCriteria`, `executionRecord`, `files`) are
  * deliberately omitted — fetch them per-task via `GET /api/task/[id]`.
  *
- * The validator folds `notes.updated_at` in (`includeNotes`) because the
- * payload carries note nodes and their edges; without it a note edit would
- * 304-serve a stale graph.
+ * The validator folds the notes `meta` clock in (`notes.meta_updated_at`):
+ * the payload carries note nodes and their edges, so metadata and link
+ * changes must move it — but body-only edits must not, or every keystroke
+ * autosave would ship a full graph payload to every open viewer.
  *
  * @param req - Incoming request.
  * @param projectId - Project UUID from the route params.
@@ -43,7 +44,7 @@ async function handle(req: Request, projectId: string): Promise<Response> {
   if (gate) return gate;
 
   try {
-    const max = await getProjectMaxUpdatedAt(ctx, projectId, true);
+    const max = await getProjectMaxUpdatedAt(ctx, projectId, "meta");
 
     if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);

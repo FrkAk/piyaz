@@ -14,9 +14,45 @@ import {
   listProjectsForMcp,
   type ProjectSlimPage,
 } from "@/lib/data/project";
-import { createNoteTaskLink, removeNoteTaskLink } from "@/lib/data/note";
+import {
+  approveShareRequest,
+  createNote,
+  createNoteTaskLink,
+  deleteNote,
+  removeNoteTaskLink,
+  restoreNote,
+  updateNote,
+} from "@/lib/data/note";
+import { createTask } from "@/lib/data/task";
 import { findProjectAccess } from "@/lib/data/access";
 import { makeAuthContext } from "@/lib/auth/context";
+
+/**
+ * Read both note validator clocks for a project.
+ *
+ * @param ctx - Resolved auth context.
+ * @param projectId - Project UUID.
+ * @returns The meta- and content-mode validator timestamps.
+ */
+async function readNoteClocks(
+  ctx: ReturnType<typeof makeAuthContext>,
+  projectId: string,
+): Promise<{ meta: number; content: number }> {
+  const [meta, content] = await Promise.all([
+    getProjectMaxUpdatedAt(ctx, projectId, "meta"),
+    getProjectMaxUpdatedAt(ctx, projectId, "content"),
+  ]);
+  return { meta: meta.getTime(), content: content.getTime() };
+}
+
+/**
+ * Wait 50ms so Postgres clocks strictly advance past prior writes.
+ *
+ * @returns Resolves after the delay.
+ */
+function settleClock(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 50));
+}
 
 afterEach(async () => {
   await truncateAll();
@@ -157,8 +193,8 @@ test("getProjectGraphSlim notes payload is RLS-scoped per member", async () => {
     RETURNING id
   `;
   const [teamNote] = await su<{ id: string }[]>`
-    INSERT INTO notes (project_id, title, slug, visibility, type, created_by)
-    VALUES (${f.projectId}, 'Team', 'team', 'team', 'guidance', ${f.userId})
+    INSERT INTO notes (project_id, title, slug, visibility, type, feed_mode, created_by)
+    VALUES (${f.projectId}, 'Team', 'team', 'team', 'guidance', 'all', ${f.userId})
     RETURNING id
   `;
   const [privA] = await su<{ id: string }[]>`
@@ -187,11 +223,21 @@ test("getProjectGraphSlim notes payload is RLS-scoped per member", async () => {
     [teamNote.id, privA.id].sort(),
   );
   for (const n of gA.notes) {
-    expect(Object.keys(n).sort()).toEqual(["id", "noteRef", "title", "type"]);
+    expect(Object.keys(n).sort()).toEqual([
+      "fed",
+      "id",
+      "noteRef",
+      "title",
+      "type",
+    ]);
     expect(n.noteRef).toMatch(/^PRJgraphnotes-N\d+$/);
   }
   expect(gA.notes.find((n) => n.id === teamNote.id)?.type).toBe("guidance");
-  expect(gA.noteTaskLinks).toEqual([{ noteId: teamNote.id, taskId: task.id }]);
+  expect(gA.notes.find((n) => n.id === teamNote.id)?.fed).toBe(true);
+  expect(gA.notes.find((n) => n.id === privA.id)?.fed).toBe(false);
+  expect(gA.noteTaskLinks).toEqual([
+    { noteId: teamNote.id, taskId: task.id, kind: "reference" },
+  ]);
   expect(gA.noteLinks).toEqual([
     { sourceNoteId: teamNote.id, targetNoteId: privA.id },
   ]);
@@ -242,12 +288,17 @@ test("getProjectGraphSlim excludes trashed notes and their edges", async () => {
   expect(g.noteLinks).toEqual([]);
 });
 
-test("getProjectGraphSlim dedupes note-task pairs across kinds", async () => {
+test("getProjectGraphSlim dedupes note-task pairs to the strongest kind", async () => {
   const f = await seedUserOrgProject("graphnotes-dedupe");
   const su = superuserPool();
   const [task] = await su<{ id: string }[]>`
     INSERT INTO tasks ("project_id", "title", "sequence_number")
     VALUES (${f.projectId}, 'T1', 1)
+    RETURNING id
+  `;
+  const [task2] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${f.projectId}, 'T2', 2)
     RETURNING id
   `;
   const [note] = await su<{ id: string }[]>`
@@ -258,11 +309,24 @@ test("getProjectGraphSlim dedupes note-task pairs across kinds", async () => {
   await su`
     INSERT INTO note_task_links (note_id, task_id, kind) VALUES
       (${note.id}, ${task.id}, 'mention'),
-      (${note.id}, ${task.id}, 'spec_of')
+      (${note.id}, ${task.id}, 'spec_of'),
+      (${note.id}, ${task2.id}, 'reference'),
+      (${note.id}, ${task2.id}, 'mention')
   `;
 
   const g = await getProjectGraphSlim(makeAuthContext(f.userId), f.projectId);
-  expect(g.noteTaskLinks).toEqual([{ noteId: note.id, taskId: task.id }]);
+  const byTask = new Map(g.noteTaskLinks.map((l) => [l.taskId, l]));
+  expect(g.noteTaskLinks.length).toBe(2);
+  expect(byTask.get(task.id)).toEqual({
+    noteId: note.id,
+    taskId: task.id,
+    kind: "spec_of",
+  });
+  expect(byTask.get(task2.id)).toEqual({
+    noteId: note.id,
+    taskId: task2.id,
+    kind: "reference",
+  });
 });
 
 test("note-inclusive validator moves on deliberate link create and remove", async () => {
@@ -280,14 +344,155 @@ test("note-inclusive validator moves on deliberate link create and remove", asyn
     RETURNING id
   `;
 
-  const before = await getProjectMaxUpdatedAt(ctx, f.projectId, true);
+  const beforeMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const beforeContent = await getProjectMaxUpdatedAt(
+    ctx,
+    f.projectId,
+    "content",
+  );
   await createNoteTaskLink(ctx, note.id, task.id, "reference");
-  const afterCreate = await getProjectMaxUpdatedAt(ctx, f.projectId, true);
-  expect(afterCreate.getTime()).toBeGreaterThan(before.getTime());
+  const afterCreateMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const afterCreateContent = await getProjectMaxUpdatedAt(
+    ctx,
+    f.projectId,
+    "content",
+  );
+  expect(afterCreateMeta.getTime()).toBeGreaterThan(beforeMeta.getTime());
+  expect(afterCreateContent.getTime()).toBeGreaterThan(beforeContent.getTime());
 
   await removeNoteTaskLink(ctx, note.id, task.id, "reference");
-  const afterRemove = await getProjectMaxUpdatedAt(ctx, f.projectId, true);
-  expect(afterRemove.getTime()).toBeGreaterThan(afterCreate.getTime());
+  const afterRemoveMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const afterRemoveContent = await getProjectMaxUpdatedAt(
+    ctx,
+    f.projectId,
+    "content",
+  );
+  expect(afterRemoveMeta.getTime()).toBeGreaterThan(afterCreateMeta.getTime());
+  expect(afterRemoveContent.getTime()).toBeGreaterThan(
+    afterCreateContent.getTime(),
+  );
+});
+
+test("body-only note edits move the content clock but not the meta clock", async () => {
+  const f = await seedUserOrgProject("graphnotes-body");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Journal",
+  });
+  await settleClock();
+
+  const before = await readNoteClocks(ctx, f.projectId);
+  await updateNote(ctx, note.id, { body: "plain prose, no refs" });
+  const after = await readNoteClocks(ctx, f.projectId);
+
+  expect(after.content).toBeGreaterThan(before.content);
+  expect(after.meta).toBe(before.meta);
+});
+
+test("note metadata edits move the meta clock", async () => {
+  const f = await seedUserOrgProject("graphnotes-meta");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Draft",
+  });
+  await settleClock();
+
+  const before = await readNoteClocks(ctx, f.projectId);
+  await updateNote(ctx, note.id, { title: "Renamed" });
+  const afterTitle = await readNoteClocks(ctx, f.projectId);
+  expect(afterTitle.meta).toBeGreaterThan(before.meta);
+
+  await settleClock();
+  await updateNote(ctx, note.id, { feedMode: "all" });
+  const afterFeed = await readNoteClocks(ctx, f.projectId);
+  expect(afterFeed.meta).toBeGreaterThan(afterTitle.meta);
+});
+
+test("note trash and restore move the meta clock", async () => {
+  const f = await seedUserOrgProject("graphnotes-trashclk");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Doomed",
+  });
+  await settleClock();
+
+  const before = await readNoteClocks(ctx, f.projectId);
+  await deleteNote(ctx, note.id);
+  const afterTrash = await readNoteClocks(ctx, f.projectId);
+  expect(afterTrash.meta).toBeGreaterThan(before.meta);
+
+  await settleClock();
+  await restoreNote(ctx, note.id);
+  const afterRestore = await readNoteClocks(ctx, f.projectId);
+  expect(afterRestore.meta).toBeGreaterThan(afterTrash.meta);
+});
+
+test("body edits move the meta clock only when the derived link set changes", async () => {
+  const f = await seedUserOrgProject("graphnotes-derive");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Source",
+  });
+  await settleClock();
+
+  const before = await readNoteClocks(ctx, f.projectId);
+  await updateNote(ctx, note.id, { body: `see [[${task.taskRef}]]` });
+  const afterMention = await readNoteClocks(ctx, f.projectId);
+  expect(afterMention.meta).toBeGreaterThan(before.meta);
+
+  await settleClock();
+  await updateNote(ctx, note.id, {
+    body: `see [[${task.taskRef}]] once more`,
+  });
+  const afterSameSet = await readNoteClocks(ctx, f.projectId);
+  expect(afterSameSet.content).toBeGreaterThan(afterMention.content);
+  expect(afterSameSet.meta).toBe(afterMention.meta);
+});
+
+test("share approval moves the meta clock", async () => {
+  const f = await seedUserOrgProject("graphnotes-share");
+  const userB = await seedSecondMember(f.organizationId, "graphnotes-share-b");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Pending",
+  });
+  const su = superuserPool();
+  await su`
+    UPDATE notes SET share_requested_by = ${userB} WHERE id = ${note.id}
+  `;
+  await settleClock();
+
+  const before = await readNoteClocks(ctx, f.projectId);
+  await approveShareRequest(ctx, note.id);
+  const after = await readNoteClocks(ctx, f.projectId);
+  expect(after.meta).toBeGreaterThan(before.meta);
+});
+
+test("a private-note edit moves only the editor's meta validator", async () => {
+  const f = await seedUserOrgProject("graphnotes-privclk");
+  const userB = await seedSecondMember(f.organizationId, "graphnotes-priv-b");
+  const ctxA = makeAuthContext(f.userId);
+  const ctxB = makeAuthContext(userB);
+  const noteB = await createNote(ctxB, {
+    projectId: f.projectId,
+    title: "B private",
+  });
+  await settleClock();
+
+  const beforeA = await readNoteClocks(ctxA, f.projectId);
+  const beforeB = await readNoteClocks(ctxB, f.projectId);
+  await updateNote(ctxB, noteB.id, { title: "B renamed" });
+  const afterA = await readNoteClocks(ctxA, f.projectId);
+  const afterB = await readNoteClocks(ctxB, f.projectId);
+
+  expect(afterB.meta).toBeGreaterThan(beforeB.meta);
+  expect(afterA.meta).toBe(beforeA.meta);
 });
 
 test("getProjectChrome returns header fields plus task count", async () => {
@@ -428,22 +633,31 @@ test("getProjectMaxUpdatedAt returns the latest updated_at across project + task
   }
 });
 
-test("getProjectMaxUpdatedAt folds notes in only when includeNotes is set", async () => {
+test("getProjectMaxUpdatedAt reads the notes clock selected by notesMode", async () => {
   const f = await seedUserOrgProject("maxnotes");
   const ctx = makeAuthContext(f.userId);
 
   const sqlc = superuserPool();
   try {
-    const future = new Date(Date.now() + 7200_000);
+    // Distinct clocks per column prove each mode reads its own column:
+    // meta at +1h, content (updated_at) at +2h.
+    const metaFuture = new Date(Date.now() + 3600_000);
+    const contentFuture = new Date(Date.now() + 7200_000);
     await sqlc`
-      INSERT INTO notes ("project_id", "title", "slug", "visibility", "updated_at")
-      VALUES (${f.projectId}, 'Fresh note', 'fresh-note', 'team', ${future})
+      INSERT INTO notes ("project_id", "title", "slug", "visibility", "updated_at", "meta_updated_at")
+      VALUES (${f.projectId}, 'Fresh note', 'fresh-note', 'team', ${contentFuture}, ${metaFuture})
     `;
-    const withoutNotes = await getProjectMaxUpdatedAt(ctx, f.projectId);
-    expect(withoutNotes.getTime()).toBeLessThan(future.getTime() - 1000);
+    const none = await getProjectMaxUpdatedAt(ctx, f.projectId);
+    expect(none.getTime()).toBeLessThan(metaFuture.getTime() - 1000);
 
-    const withNotes = await getProjectMaxUpdatedAt(ctx, f.projectId, true);
-    expect(withNotes.getTime()).toBeGreaterThanOrEqual(future.getTime() - 1000);
+    const meta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+    expect(meta.getTime()).toBeGreaterThanOrEqual(metaFuture.getTime() - 1000);
+    expect(meta.getTime()).toBeLessThan(contentFuture.getTime() - 1000);
+
+    const content = await getProjectMaxUpdatedAt(ctx, f.projectId, "content");
+    expect(content.getTime()).toBeGreaterThanOrEqual(
+      contentFuture.getTime() - 1000,
+    );
   } finally {
     await sqlc.end({ timeout: 5 });
   }

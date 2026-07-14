@@ -39,9 +39,16 @@ import {
   projectTagsStmt,
 } from "@/lib/db/raw/aggregate-project-tags";
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
-import { getProjectMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-max-updated-at";
+import {
+  getProjectMaxUpdatedAtRaw,
+  type ProjectValidatorNotesMode,
+} from "@/lib/db/raw/get-project-max-updated-at";
 import { insertActivityEvents } from "@/lib/data/activity";
-import type { ProjectStatus, TaskStatus } from "@/lib/types";
+import {
+  NOTE_TASK_LINK_KIND_RANK,
+  type ProjectStatus,
+  type TaskStatus,
+} from "@/lib/types";
 import { STATUS_BUCKET } from "@/lib/data/views";
 import {
   asIdentifier,
@@ -52,6 +59,7 @@ import {
 } from "@/lib/graph/identifier";
 import type {
   NoteGraphSlim,
+  NoteTaskGraphEdge,
   ProjectChrome,
   ProjectGraphSlim,
   ProjectIndexEntry,
@@ -147,6 +155,32 @@ function assertAccessMatchesProject(
 }
 
 /**
+ * Collapse note-task link rows to one edge per `(noteId, taskId)` pair,
+ * keeping the most specific kind (`spec_of` > `reference` > `mention`).
+ * Mirrors the backlink dedupe on the task detail surface so both read the
+ * same rank table.
+ *
+ * @param rows - Distinct link rows, one per (pair, kind).
+ * @returns Deduped edges, one per pair.
+ */
+function dedupeNoteTaskEdges(
+  rows: readonly NoteTaskGraphEdge[],
+): NoteTaskGraphEdge[] {
+  const byPair = new Map<string, NoteTaskGraphEdge>();
+  for (const row of rows) {
+    const key = `${row.noteId}:${row.taskId}`;
+    const existing = byPair.get(key);
+    if (
+      !existing ||
+      NOTE_TASK_LINK_KIND_RANK[row.kind] > NOTE_TASK_LINK_KIND_RANK[existing.kind]
+    ) {
+      byPair.set(key, row);
+    }
+  }
+  return [...byPair.values()];
+}
+
+/**
  * Slim graph payload for the workspace canvas + task list. Drops the heavy
  * task fields (description, plan, decisions, criteria, executionRecord)
  * that only the per-task detail surface needs — those are fetched lazily
@@ -160,7 +194,9 @@ function assertAccessMatchesProject(
  * lets the note-link select filter on the source note's project alone. Note
  * visibility is pure RLS: `notes_member_access` (team notes plus the caller's
  * own private ones) and the both-endpoint policies on the link tables scope
- * every note row and edge — no app-level re-check.
+ * every note row and edge — no app-level re-check. Note-task rows arrive
+ * distinct per (pair, kind) and reduce to the strongest kind app-side via
+ * {@link dedupeNoteTaskEdges}.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -216,6 +252,7 @@ export async function getProjectGraphSlim(
         sequenceNumber: notes.sequenceNumber,
         title: notes.title,
         type: notes.type,
+        feedMode: notes.feedMode,
       })
       .from(notes)
       .where(and(eq(notes.projectId, projectId), isNull(notes.deletedAt)))
@@ -225,6 +262,7 @@ export async function getProjectGraphSlim(
       .selectDistinct({
         noteId: noteTaskLinks.noteId,
         taskId: noteTaskLinks.taskId,
+        kind: noteTaskLinks.kind,
       })
       .from(noteTaskLinks)
       .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
@@ -247,7 +285,7 @@ export async function getProjectGraphSlim(
         ),
       );
 
-    const [taskRows, edges, noteRows, noteTaskEdges, noteEdges] =
+    const [taskRows, edges, noteRows, noteTaskRows, noteEdges] =
       await Promise.all([tasksQ, edgesQ, notesQ, noteTaskLinksQ, noteLinksQ]);
     const identifier = asIdentifier(project.identifier);
     const enriched = enrichWithTaskRef(taskRows, identifier);
@@ -257,7 +295,9 @@ export async function getProjectGraphSlim(
       noteRef: composeNoteRef(identifier, n.sequenceNumber),
       title: n.title,
       type: n.type,
+      fed: n.feedMode !== "none",
     }));
+    const noteTaskEdges = dedupeNoteTaskEdges(noteTaskRows);
 
     const stateMap = await deriveTaskStatesSlim(
       projectId,
@@ -356,27 +396,28 @@ export async function getProjectChrome(
 }
 
 /**
- * Latest `updated_at` across the project, its tasks, and its edges (and
- * its notes when `includeNotes` is set). Used by the conditional-GET path
- * on the workspace graph and context-bundle endpoints to short-circuit the
- * heavy read on a 304 response. The context route sets `includeNotes` so a
- * note edit invalidates the bundles that now embed note content; the graph
- * route sets it too because the graph payload carries note nodes and edges.
+ * Latest `updated_at` across the project, its tasks, and its edges (and a
+ * notes clock per `notesMode`). Used by the conditional-GET path on the
+ * workspace graph and context-bundle endpoints to short-circuit the heavy
+ * read on a 304 response. The context route passes `content` (it embeds
+ * note bodies, so any note edit must move it); the graph route passes
+ * `meta` (it renders only note metadata and links, so body-only edits
+ * must NOT move it — that is the egress fix).
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @param includeNotes - Fold `notes.updated_at` into the validator.
+ * @param notesMode - Which notes clock to fold into the validator.
  * @returns The latest timestamp.
  * @throws ForbiddenError on missing or cross-team project.
  */
 export async function getProjectMaxUpdatedAt(
   ctx: AuthContext,
   projectId: string,
-  includeNotes = false,
+  notesMode: ProjectValidatorNotesMode = "none",
 ): Promise<Date> {
   return withUserContext(ctx.userId, async (tx) => {
     await assertProjectAccessTx(tx, projectId);
-    const max = await getProjectMaxUpdatedAtRaw(tx, projectId, includeNotes);
+    const max = await getProjectMaxUpdatedAtRaw(tx, projectId, notesMode);
     if (!max) {
       throw new Error(
         `getProjectMaxUpdatedAt: project ${projectId} disappeared after access check`,

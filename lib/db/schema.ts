@@ -441,6 +441,13 @@ export const notes = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // Graph-visible metadata clock: bumped only on changes the slim graph
+    // payload can observe (title, type, feedMode, visibility, trash/restore,
+    // link-set changes). updated_at stays the content clock / CAS token, and
+    // every meta bump also bumps updated_at, so content strictly dominates.
+    metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     // Consumed only server-side by notes_search_idx and large (up to hundreds
     // of KB for a max-size body): reads must project explicit columns that

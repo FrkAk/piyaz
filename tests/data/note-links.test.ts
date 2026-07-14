@@ -144,6 +144,35 @@ test("re-derivation replaces mention rows but preserves user-managed kinds", asy
   expect(noteLinks.length).toBe(0);
 });
 
+test("a body save with an unchanged link set leaves derived rows untouched", async () => {
+  const f = await seedUserOrgProject("lnk6");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  await createNote(ctx, { projectId: f.projectId, title: "Target" });
+  const source = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Source",
+    body: `refs [[${task.taskRef}]] and [[Target]]`,
+  });
+
+  const sr = serviceRoleConnect();
+  const beforeMentions = await sr<{ id: string }[]>`
+    SELECT id FROM note_task_links WHERE note_id = ${source.id} ORDER BY id`;
+  const beforeLinks = await sr<{ id: string }[]>`
+    SELECT id FROM note_links WHERE source_note_id = ${source.id} ORDER BY id`;
+
+  await updateNote(ctx, source.id, {
+    body: `reworded, still refs [[${task.taskRef}]] and [[Target]]`,
+  });
+
+  const afterMentions = await sr<{ id: string }[]>`
+    SELECT id FROM note_task_links WHERE note_id = ${source.id} ORDER BY id`;
+  const afterLinks = await sr<{ id: string }[]>`
+    SELECT id FROM note_links WHERE source_note_id = ${source.id} ORDER BY id`;
+  expect(afterMentions).toEqual(beforeMentions);
+  expect(afterLinks).toEqual(beforeLinks);
+});
+
 test("broken refs and self links are never stored", async () => {
   const f = await seedUserOrgProject("lnk3");
   const ctx = makeAuthContext(f.userId);
