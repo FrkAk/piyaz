@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: July 12, 2026
+Last updated: July 15, 2026
 
 This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**, operated
 by the Piyaz team. **If you self-host Piyaz, this document does not apply to your
@@ -76,7 +76,7 @@ Your data is stored in the **European Union**. We use the following sub-processo
 
 - **Neon** (Neon, LLC, a Databricks company): managed PostgreSQL database. Your data is stored in the **AWS `eu-central-1` (Frankfurt, Germany)** region.
 - **Amazon Web Services (AWS)**: underlying cloud infrastructure for the Neon database, Frankfurt region (EU).
-- **Cloudflare, Inc.**: application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging across its global edge network.
+- **Cloudflare, Inc.**: application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, operational logging, and transactional email delivery (Email Sending) across its global edge network.
 
 A current [sub-processor list](/subprocessors) is maintained and incorporated here by
 reference.
@@ -142,9 +142,10 @@ grows.
 ## How long we keep your data
 
 - **Account and workspace data**: for as long as your account is active. After you delete your account, data is removed within **30 days**, and residual copies in backups are purged within **90 days**.
-- **Session records**: expire automatically after **7 days**.
+- **Session records**: expire automatically **7 days** after your last activity.
 - **Acceptance records**: anonymized when your account is deleted (the link to you, your IP address, and your user-agent are removed) and retained in that anonymized form as evidence that the agreement existed.
 - **Operational logs and traces**: retained for up to **90 days** and then deleted or anonymized.
+- **Transactional email records**: our email provider (Cloudflare) retains per-message delivery metadata (sender, recipient, subject, and delivery status) for **31 days** in its delivery analytics. Addresses that bounce or report our mail as spam are kept on an account-level suppression list to prevent repeat sends.
 
 ## Your data protection rights
 
@@ -163,11 +164,33 @@ To exercise any of these rights, email **privacy@piyaz.ai**. We will respond wit
 
 ## Cookies
 
-We use only **strictly necessary cookies** required to operate the service, chiefly the
-authentication session cookie, which is `httpOnly`, `SameSite=Lax`, and `Secure` in
-production. We do **not** use analytics, advertising, or tracking cookies. Because our
-cookies are strictly necessary, no cookie-consent banner is required under the ePrivacy
-Directive.
+We use **first-party cookies only**: no analytics, advertising, or tracking cookies,
+and no third-party cookies. Each cookie serves a single purpose. We rely on the
+consent exemptions for strictly necessary cookies and user-requested functionality
+under the ePrivacy Directive (Art. 5(3)) and UK PECR, which is why we do not show a
+cookie banner.
+
+**Strictly necessary cookies** (essential to provide the service you request):
+
+| Cookie | Purpose | Duration |
+| --- | --- | --- |
+| `__Secure-better-auth.session_token` | Keeps you signed in. Your session expires 7 days after your last activity, unless you sign out first. | 7 days from last activity |
+
+**Preference cookies** (user-requested interface customization: each is set only when
+you take the matching action, stores no personal data, and is never used for tracking):
+
+| Cookie | Purpose | Duration |
+| --- | --- | --- |
+| `piyaz-theme` | Remembers your light/dark theme choice. | 1 year |
+| `piyaz-sidebar-collapsed` | Remembers whether the main sidebar is collapsed. | 1 year |
+| `piyaz-graph-rail-collapsed` | Remembers whether the project graph rail is collapsed. | 1 year |
+| `piyaz-notes-rail-collapsed` | Remembers whether the notes tree rail is hidden. | 1 year |
+| `piyaz-notes-settings-collapsed` | Remembers whether the notes settings ribbon is hidden. | 1 year |
+
+You can change any preference at any time by toggling the setting back, or delete the
+cookie in your browser; the interface reverts to its default. If we ever introduce
+cookies outside these exemptions, we will update this policy and ask for your consent
+first (see "Analytics we may add later").
 
 ## Analytics we may add later
 

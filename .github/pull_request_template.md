@@ -26,3 +26,9 @@
 <!-- Does this change UI flows, env vars, setup steps, or workflows documented at docs.piyaz.ai? List affected pages, or write "none". Generated reference (MCP tools, skill references, skills/agents catalog) syncs automatically via the Docs Sync workflow. -->
 
 - 
+
+## Compliance impact
+
+<!-- Does this change cookies or client-side storage, personal data collected, third-party services, or data flows? If yes, update the affected docs under content/legal/ in this PR (bump lib/legal/versions.ts only when doc text changed). Otherwise write "none". -->
+
+- 
