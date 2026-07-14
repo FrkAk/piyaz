@@ -19,7 +19,6 @@ import { EditHint } from "@/components/shared/EditHint";
 import { Markdown } from "@/components/shared/Markdown";
 import { MonoId } from "@/components/shared/MonoId";
 import { useSession } from "@/lib/auth-client";
-import type { NoteFull } from "@/lib/data/note";
 import { NOTE_SUMMARY_MAX_CHARS } from "@/lib/types";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { noteKeys } from "@/lib/query/keys";
@@ -32,7 +31,7 @@ import { NoteEditor } from "./NoteEditor";
 import { displayActor } from "./NoteHistory";
 import { Pill } from "./Pill";
 import { useNotePresenceHeartbeat } from "./usePresenceHeartbeat";
-import { NOTE_TYPE_META, tint } from "./note-meta";
+import { NOTE_TYPE_META, feedSummary, tint } from "./note-meta";
 import {
   shouldAdoptServerTitle,
   shouldClearDirty,
@@ -738,27 +737,6 @@ function PresenceAvatars({ noteId, visibility }: PresenceAvatarsProps) {
       )}
     </span>
   );
-}
-
-/**
- * Human summary of where a note auto-feeds into tasks.
- *
- * @param note - The note's feed targeting columns.
- * @returns The banner phrase for the note's feed mode.
- */
-function feedSummary(note: NoteFull): string {
-  switch (note.feedMode) {
-    case "all":
-      return "every task in this project";
-    case "categories":
-      return `tasks in ${note.feedCategories.join(", ") || "—"}`;
-    case "tags":
-      return `tasks tagged ${note.feedTags.join(", ") || "—"}`;
-    case "tasks":
-      return `${note.feedTaskIds.length} selected task${note.feedTaskIds.length === 1 ? "" : "s"}`;
-    default:
-      return "";
-  }
 }
 
 interface BannerProps {

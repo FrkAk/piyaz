@@ -15,23 +15,32 @@ import type {
   TaskGraphEdge,
   TaskGraphSlim,
 } from "@/lib/data/views";
-import type { GraphNode, GraphLink, GraphTierConfig } from "./graphConstants";
+import type {
+  GraphNode,
+  GraphLink,
+  GraphTierConfig,
+  NoteLinkType,
+} from "./graphConstants";
 import {
   getNodeSize,
   buildLinkCounts,
   getDeviceTier,
   getTierConfig,
+  isNoteLinkType,
 } from "./graphConstants";
 
 /** Slim task record used for graph rendering — heavy fields are not needed. */
 type GraphTask = TaskGraphSlim;
 
 /** Direction-agnostic note edge (note-note or note-task), pre-flattened by
- *  the consumer from the slim payload's two link arrays. */
+ *  the consumer from the slim payload's two link arrays. `type` carries the
+ *  relation so the renderer styles each stratum apart. */
 export interface NoteEdge {
   sourceId: string;
   targetId: string;
+  type: NoteLinkType;
 }
+
 
 // ---------------------------------------------------------------------------
 // Link distance per edge type
@@ -201,6 +210,7 @@ function buildGraph(
       taskRef: t.taskRef,
       status: t.status,
       kind: "task",
+      fed: false,
       tags: t.tags ?? [],
       x: p.x,
       y: p.y,
@@ -223,6 +233,7 @@ function buildGraph(
       status: "note",
       kind: "note",
       noteType: n.type,
+      fed: n.fed,
       tags: [],
       x: p.x,
       y: p.y,
@@ -246,7 +257,7 @@ function buildGraph(
   }
   for (const e of noteEdges) {
     if (ids.has(e.sourceId) && ids.has(e.targetId)) {
-      links.push({ source: e.sourceId, target: e.targetId, type: "note" });
+      links.push({ source: e.sourceId, target: e.targetId, type: e.type });
     }
   }
 
@@ -380,13 +391,21 @@ function makeSim(
   h: number,
   tier: GraphTierConfig,
 ): SimResult {
-  const linkCounts = buildLinkCounts(links);
+  // Two degree maps with distinct jobs. taskDeg (task edges only) drives
+  // DRAWN size, so attaching notes never visually inflates a task. allDeg
+  // (every edge) drives the physics — charge, collide, hub ring, link
+  // stretch — because a task annotated by ten notes IS a physical hub that
+  // needs the space, even while drawn small. Splitting these the other way
+  // (physics on taskDeg) compressed real graphs into a knot of overlapping
+  // satellites; the physics deliberately match the pre-notes tuning.
+  const taskDeg = buildLinkCounts(links.filter((l) => !isNoteLinkType(l.type)));
+  const allDeg = buildLinkCounts(links);
   const cfg = deriveForceConfig(nodes.length, links.length);
   // Hubs sit on an inner ring of this radius. Their leaves naturally fan
   // outward via the link / charge / collide balance — the ring is just a
   // scaffold that stops every hub from competing for the same point.
   const hubRingR = cfg.linkDistDepends * 1.0;
-  const degOf = (id: string) => linkCounts.get(id) ?? 0;
+  const degOf = (id: string) => allDeg.get(id) ?? 0;
 
   const sim = forceSimulation<GraphNode, GraphLink>(nodes)
     .force(
@@ -394,6 +413,8 @@ function makeSim(
       forceLink<GraphNode, GraphLink>(links)
         .id((n) => n.id)
         .distance((l) => {
+          // Note edges ride the relates distance — same spring the quiet
+          // task relations use; the hub stretch below spreads dense knots.
           const baseDist =
             l.type === "depends_on" ? cfg.linkDistDepends : cfg.linkDistRelates;
           const srcId = typeof l.source === "string" ? l.source : l.source.id;
@@ -436,7 +457,7 @@ function makeSim(
       "collide",
       forceCollide<GraphNode>()
         .radius((n) => {
-          const baseR = getNodeSize(n.id, linkCounts) + cfg.collidePadding;
+          const baseR = getNodeSize(n, taskDeg) + cfg.collidePadding;
           const d = degOf(n.id);
           // Hub bonus — degree-12 hub claims ~60 extra units of personal
           // space. Hub leaves still sit at link-distance (much bigger than
@@ -535,7 +556,7 @@ interface UseForceSimulationReturn {
  * @param noteEdges - Flattened note-note and note-task edges.
  * @param width - Canvas width in pixels.
  * @param height - Canvas height in pixels.
- * @param selectedNodeId - Currently selected task id, or null.
+ * @param selectedNodeId - Currently selected node id (task or note), or null.
  * @param onTick - Optional notification fired every live simulation tick.
  *   The consumer's render loop reads from the (mutated-in-place) node array,
  *   so the callback's only job is to flag a redraw — no React state update
@@ -609,22 +630,25 @@ export function useForceSimulation(
       .map((n) => n.id)
       .sort()
       .join(",");
+    // Relation is part of the note-edge identity: a mention upgraded to
+    // spec_of arrives as the same endpoint pair with a new type, and only
+    // a rebuild restyles the drawn edge.
     const nes = noteEdges
-      .map((e) => `${e.sourceId}-${e.targetId}`)
+      .map((e) => `${e.sourceId}-${e.targetId}-${e.type}`)
       .sort()
       .join(",");
     return `${ids}|${es}|${nids}|${nes}`;
   }, [taskList, edges, noteList, noteEdges]);
 
-  // Property fingerprint — status / title / note-type changes only. Drives
-  // the in-place mutation effect.
+  // Property fingerprint — status / title / note-type / fed changes only.
+  // Drives the in-place mutation effect.
   const propsKey = useMemo(() => {
     const ts = taskList
       .map((t) => `${t.id}:${t.status}:${t.title}`)
       .sort()
       .join("|");
     const ns = noteList
-      .map((n) => `${n.id}:${n.type}:${n.title}`)
+      .map((n) => `${n.id}:${n.type}:${n.fed ? 1 : 0}:${n.title}`)
       .sort()
       .join("|");
     return `${ts}||${ns}`;
@@ -809,6 +833,10 @@ export function useForceSimulation(
         if (!note) continue;
         if (n.noteType !== note.type) {
           n.noteType = note.type;
+          changed = true;
+        }
+        if (n.fed !== note.fed) {
+          n.fed = note.fed;
           changed = true;
         }
         if (n.title !== note.title) {

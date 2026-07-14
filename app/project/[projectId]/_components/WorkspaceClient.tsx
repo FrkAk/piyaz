@@ -29,7 +29,9 @@ import { createTask } from "@/lib/graph/mutations";
 import { DeferredLoadingSpinner } from "@/components/shared/DeferredLoadingSpinner";
 import { projectKeys, taskKeys } from "@/lib/query/keys";
 import { fetchProjectGraph, fetchTaskBody } from "@/lib/query/queries";
+import { NotePreviewPanel } from "@/components/workspace/graph/NotePreviewPanel";
 import type {
+  NoteGraphSlim,
   ProjectGraphSlim,
   TaskEdgeRef,
   TaskFullWithEdges,
@@ -124,6 +126,33 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     setSelectedTaskId(null);
   }
 
+  /**
+   * Optimistic graph note selection. The canonical selection is the `?note`
+   * URL param, but `router.replace` lands a render (or more) later — under
+   * a rapid task→note click the task clears synchronously while the param
+   * is still in flight, so a URL-only derivation would close the overlay
+   * for a frame and re-open it (a visible bounce). The pending id bridges
+   * that gap and hands off via the render-phase reset once the URL agrees.
+   */
+  const [pendingNoteId, setPendingNoteId] = useState<string | null>(null);
+  if (pendingNoteId && noteId === pendingNoteId) {
+    setPendingNoteId(null);
+  }
+  const effectiveNoteId = pendingNoteId ?? noteId;
+
+  /**
+   * Note selected in the graph view, derived from the pending-or-URL note
+   * id. Task selection wins (mutually exclusive in graph view), and a
+   * note that left the payload (trashed, visibility flip) derives to null
+   * so the preview overlay closes on its own. Note ids NEVER enter
+   * `selectedTaskId` — the reset above would null them and the task body
+   * query would 404.
+   */
+  const graphNoteSlim: NoteGraphSlim | null =
+    view === "graph" && !selectedTaskId && effectiveNoteId && graph
+      ? (graph.notes.find((n) => n.id === effectiveNoteId) ?? null)
+      : null;
+
   const refreshAll = useCallback(() => {
     qc.invalidateQueries({ queryKey: projectKeys.graph(projectId) });
     if (selectedTaskId) {
@@ -197,18 +226,34 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     [push],
   );
 
-  const updateParam = useCallback(
-    (key: string, value: string | null) => {
+  const updateParams = useCallback(
+    (entries: Record<string, string | null>, opts?: { force?: boolean }) => {
       const next = new URLSearchParams(searchParams.toString());
-      if (value === null || value === "") next.delete(key);
-      else next.set(key, value);
+      for (const [key, value] of Object.entries(entries)) {
+        if (value === null || value === "") next.delete(key);
+        else next.set(key, value);
+      }
       const nextQs = next.toString();
-      if (nextQs === searchParams.toString()) return;
+      // `force` skips the no-op short-circuit: under rapid clicks a prior
+      // replace may still be in flight, so a write that looks like a no-op
+      // against the STALE snapshot must still queue to override it.
+      if (!opts?.force && nextQs === searchParams.toString()) return;
       router.replace(nextQs ? `${pathname}?${nextQs}` : pathname, {
         scroll: false,
       });
     },
     [router, pathname, searchParams],
+  );
+
+  /**
+   * Single-key convenience over {@link updateParams}. Multi-key writes MUST
+   * go through `updateParams` in one call — two chained `updateParam` calls
+   * rebuild the query string from the same stale `searchParams` closure, so
+   * the second replace drops the first.
+   */
+  const updateParam = useCallback(
+    (key: string, value: string | null) => updateParams({ [key]: value }),
+    [updateParams],
   );
 
   /**
@@ -234,9 +279,25 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
   }, [taskParam, updateParam]);
 
   /**
+   * Drop the graph note selection: pending id and URL param. The URL
+   * write is forced because a `?note=<id>` replace may still be in
+   * flight — pending non-null is exactly that signal — and the queued
+   * clear must land after it.
+   */
+  const clearNoteSelection = useCallback(() => {
+    if (noteId || pendingNoteId) {
+      setPendingNoteId(null);
+      updateParams({ note: null }, { force: true });
+    }
+  }, [noteId, pendingNoteId, updateParams]);
+
+  /**
    * Select a task. At narrow viewports (`!isXl`), the graph canvas and
    * detail panel cannot share screen space, so auto-switch back to the
-   * structure view when graph mode is currently active.
+   * structure view when graph mode is currently active. At xl in graph
+   * view, an open (or in-flight) note preview is cleared — task and note
+   * selection are mutually exclusive there, and leaving `?note` set
+   * would resurrect the preview when the task closes.
    *
    * @param taskId - Task to select.
    */
@@ -244,13 +305,16 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     (taskId: string) => {
       setSelectedTaskId(taskId);
       if (view === "graph" && !isXl) {
+        setPendingNoteId(null);
         // Wrap the URL change in a transition so React doesn't block the
         // input thread while the structure tree mounts. The cross-fade in
         // `WorkspaceLayout` masks any residual reconciliation cost.
         startViewTransition(() => updateParam("view", null));
+      } else if (view === "graph") {
+        clearNoteSelection();
       }
     },
-    [view, isXl, updateParam],
+    [view, isXl, updateParam, clearNoteSelection],
   );
 
   const handleClose = useCallback(() => {
@@ -308,6 +372,40 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     },
     [router, pathname, searchParams],
   );
+
+  /**
+   * Select a note from the graph (canvas node or rail row). Touch taps and
+   * narrow viewports jump straight to the notes surface (no room for the
+   * preview overlay); pointer clicks at xl open the in-graph read-only
+   * preview by writing the persistent `?note` param while staying on the
+   * graph view.
+   *
+   * @param nextNoteId - Note to select.
+   * @param viaTouch - True when the gesture was a touch tap.
+   */
+  const handleSelectNoteFromGraph = useCallback(
+    (nextNoteId: string, viaTouch: boolean) => {
+      if (viaTouch || !isXl) {
+        handleOpenNoteFromTask(nextNoteId);
+        return;
+      }
+      setSelectedTaskId(null);
+      // Optimistic: the preview opens this render; the URL write follows.
+      setPendingNoteId(nextNoteId);
+      updateParam("note", nextNoteId);
+    },
+    [isXl, handleOpenNoteFromTask, updateParam],
+  );
+
+  /**
+   * Clear the graph selection — both the task and, in graph view, the note
+   * preview (the `?note` param doubles as the notes-surface selection; the
+   * graph treats it as its selection, so a blank-canvas click forgets it).
+   */
+  const handleGraphDeselect = useCallback(() => {
+    setSelectedTaskId(null);
+    clearNoteSelection();
+  }, [clearNoteSelection]);
 
   const [prevSelectedTaskId, setPrevSelectedTaskId] = useState<string | null>(
     null,
@@ -371,9 +469,12 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
     handleSelectNode,
     handleClose,
     noteId,
+    graphNoteSlim,
     handleSelectNote,
     handleSelectTaskFromNote,
     handleOpenNoteFromTask,
+    handleSelectNoteFromGraph,
+    handleGraphDeselect,
     refreshAll,
     taskMap,
     projectTags,
@@ -435,12 +536,18 @@ interface SharedLayoutProps {
   handleClose: () => void;
   /** Selected note id from the `?note` query param, or null. */
   noteId: string | null;
+  /** Slim row for the note selected in graph view, or null. */
+  graphNoteSlim: NoteGraphSlim | null;
   /** Select a note (writes `?note=<id>`) or clear with null. */
   handleSelectNote: (noteId: string | null) => void;
   /** Select a task from a notes-editor chip and switch to the structure view. */
   handleSelectTaskFromNote: (taskId: string) => void;
   /** Open a note from a task's linked-notes card: switch to Notes and select it. */
   handleOpenNoteFromTask: (noteId: string) => void;
+  /** Select a note from the graph — preview on pointer, direct jump on touch. */
+  handleSelectNoteFromGraph: (noteId: string, viaTouch: boolean) => void;
+  /** Clear the graph selection (task and note preview). */
+  handleGraphDeselect: () => void;
   refreshAll: () => void;
   taskMap: Map<string, { title: string; status: string; taskRef: string }>;
   projectTags: string[];
@@ -678,11 +785,13 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     setDrawerOpen,
     navigatorClosed,
     handleSelectNode,
-    handleClose,
     noteId,
+    graphNoteSlim,
     handleSelectNote,
     handleSelectTaskFromNote,
     handleOpenNoteFromTask,
+    handleSelectNoteFromGraph,
+    handleGraphDeselect,
     refreshAll,
     taskSlim,
     detail,
@@ -695,6 +804,13 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
     taskMap,
     projectTags,
   } = props;
+
+  // Preview-to-preview navigation from the panel's link rows: a pointer
+  // interaction by definition, so route as non-touch.
+  const swapNotePreview = useCallback(
+    (id: string) => handleSelectNoteFromGraph(id, false),
+    [handleSelectNoteFromGraph],
+  );
 
   const navigator = (
     <NavigatorPanel
@@ -730,7 +846,23 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
 
   let layoutBody: React.ReactNode;
   if (layoutShape === "graph") {
-    const showOverlay = isXl && Boolean(taskSlim);
+    const showOverlay = isXl && (Boolean(taskSlim) || graphNoteSlim !== null);
+    // Task detail wins the overlay slot; the read-only note preview fills
+    // it when a note is the selection. PropRail is task-only chrome.
+    const notePreview = graphNoteSlim ? (
+      <NotePreviewPanel
+        projectId={projectId}
+        noteId={graphNoteSlim.id}
+        slim={graphNoteSlim}
+        projectIdentifier={graph.project.identifier}
+        taskMap={taskMap}
+        notes={graph.notes}
+        onClose={handleGraphDeselect}
+        onOpenInNotes={handleOpenNoteFromTask}
+        onSelectTask={handleSelectNode}
+        onSelectNote={swapNotePreview}
+      />
+    ) : null;
     layoutBody = (
       <div className="flex h-[calc(var(--viewport-height)-var(--topbar-h))]">
         <div className="flex min-w-0 flex-1 flex-col">
@@ -741,12 +873,14 @@ function WorkspaceLayout(props: WorkspaceLayoutProps) {
             notes={graph.notes}
             noteLinks={graph.noteLinks}
             noteTaskLinks={graph.noteTaskLinks}
-            selectedNodeId={selectedTaskId}
+            selectedNodeId={selectedTaskId ?? graphNoteSlim?.id ?? null}
             onSelectNode={handleSelectNode}
-            onSelectNote={handleOpenNoteFromTask}
-            onDeselect={handleClose}
-            detailSlot={showOverlay ? detail : undefined}
-            propRailSlot={showOverlay ? propRail : undefined}
+            onSelectNote={handleSelectNoteFromGraph}
+            onDeselect={handleGraphDeselect}
+            detailSlot={
+              showOverlay ? (taskSlim ? detail : notePreview) : undefined
+            }
+            propRailSlot={showOverlay && taskSlim ? propRail : undefined}
             propRailOpen={propRailOpen}
           />
         </div>

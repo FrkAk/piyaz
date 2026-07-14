@@ -1,4 +1,4 @@
-import type { NoteTreeRow } from "@/lib/data/note";
+import type { NoteFull, NoteTreeRow } from "@/lib/data/note";
 import type { NoteType } from "@/lib/types";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { NOTE_TYPE_RANK, type NoteSortKey } from "@/lib/ui/note-order";
@@ -53,6 +53,30 @@ export type TypeFilter = "all" | NoteType;
  */
 export function tint(color: string, pct: number): string {
   return `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+}
+
+/**
+ * Human summary of where a note auto-feeds into tasks. Shared by the
+ * editor's feed banner and the graph note preview.
+ *
+ * @param note - The note's feed targeting columns.
+ * @returns The banner phrase for the note's feed mode.
+ */
+export function feedSummary(
+  note: Pick<NoteFull, "feedMode" | "feedCategories" | "feedTags" | "feedTaskIds">,
+): string {
+  switch (note.feedMode) {
+    case "all":
+      return "every task in this project";
+    case "categories":
+      return `tasks in ${note.feedCategories.join(", ") || "—"}`;
+    case "tags":
+      return `tasks tagged ${note.feedTags.join(", ") || "—"}`;
+    case "tasks":
+      return `${note.feedTaskIds.length} selected task${note.feedTaskIds.length === 1 ? "" : "s"}`;
+    default:
+      return "";
+  }
 }
 
 /**

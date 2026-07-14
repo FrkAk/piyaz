@@ -10,14 +10,18 @@ import type {
   TaskGraphEdge,
   TaskGraphSlim,
 } from "@/lib/data/views";
-import { MiniTaskRail } from "./MiniTaskRail";
+import { MiniTaskRail, RailNodeList } from "./MiniTaskRail";
 import { GraphHoverCard } from "./GraphHoverCard";
+import { GraphNoteHoverCard } from "./GraphNoteHoverCard";
 import {
   EdgeFilterPills,
   edgeFilterToHidden,
+  noteEdgesHiddenFor,
   type EdgeFilterValue,
 } from "./EdgeFilterPills";
 import { StatusLegend } from "./StatusLegend";
+import { Drawer } from "@/components/shared/Drawer";
+import { IconPanelLeft } from "@/components/shared/icons";
 
 /** Dynamic import — the canvas-based ForceGraph is client-only. */
 const ForceGraph = dynamic(
@@ -46,13 +50,14 @@ interface WorkspaceGraphViewProps {
   noteLinks: NoteGraphEdge[];
   /** @param noteTaskLinks - Note-to-task edges in slim graph shape. */
   noteTaskLinks: NoteTaskGraphEdge[];
-  /** @param selectedNodeId - Currently selected task id. */
+  /** @param selectedNodeId - Currently selected node id (task or note). */
   selectedNodeId: string | null;
   /** @param onSelectNode - Open a task — mirrors the structure-view handler. */
   onSelectNode: (id: string) => void;
-  /** @param onSelectNote - Open a note on the notes surface via the
-   *   `?view=notes&note=<id>` selection path. */
-  onSelectNote: (id: string) => void;
+  /** @param onSelectNote - Select a note. `viaTouch` routes the gesture:
+   *   pointer clicks open the in-graph preview, touch taps jump straight
+   *   to the notes surface. */
+  onSelectNote: (id: string, viaTouch: boolean) => void;
   /** @param onDeselect - Click empty canvas → clear selection. */
   onDeselect: () => void;
   /**
@@ -111,11 +116,13 @@ export function WorkspaceGraphView({
   );
   const [notesHidden, setNotesHidden] = useState(false);
   const [edgeFilter, setEdgeFilter] = useState<EdgeFilterValue>("all");
+  const [listOpen, setListOpen] = useState(false);
 
   const hiddenEdgeTypes = useMemo(
     () => edgeFilterToHidden(edgeFilter),
     [edgeFilter],
   );
+  const noteEdgesHidden = noteEdgesHiddenFor(edgeFilter);
 
   const toggleStatus = useCallback((status: string) => {
     setHiddenStatuses((prev) => {
@@ -127,13 +134,51 @@ export function WorkspaceGraphView({
   }, []);
 
   const toggleNotes = useCallback(() => {
+    // Hiding notes while one is selected would strand the preview overlay
+    // on an invisible node — drop the selection first.
+    if (
+      !notesHidden &&
+      selectedNodeId &&
+      notes.some((n) => n.id === selectedNodeId)
+    ) {
+      onDeselect();
+    }
     setNotesHidden((prev) => !prev);
-  }, []);
+  }, [notesHidden, selectedNodeId, notes, onDeselect]);
 
   // Filter the rail in lockstep with the canvas — what's listed = what's drawn.
   const visibleTasks = useMemo(
     () => tasks.filter((t) => !hiddenStatuses.has(t.status)),
     [tasks, hiddenStatuses],
+  );
+  const visibleNotes = useMemo(
+    () => (notesHidden ? [] : notes),
+    [notesHidden, notes],
+  );
+  const fedNoteCount = useMemo(
+    () => notes.reduce((count, n) => (n.fed ? count + 1 : count), 0),
+    [notes],
+  );
+
+  // Rail rows use pointer clicks — route to the in-graph preview. The
+  // mobile drawer routes as touch (direct jump) and closes itself.
+  const selectNoteFromRail = useCallback(
+    (id: string) => onSelectNote(id, false),
+    [onSelectNote],
+  );
+  const selectTaskFromDrawer = useCallback(
+    (id: string) => {
+      setListOpen(false);
+      onSelectNode(id);
+    },
+    [onSelectNode],
+  );
+  const selectNoteFromDrawer = useCallback(
+    (id: string) => {
+      setListOpen(false);
+      onSelectNote(id, true);
+    },
+    [onSelectNote],
   );
 
   // Derived stage map — only the sub-stages (`plannable` / `ready`) that
@@ -148,13 +193,17 @@ export function WorkspaceGraphView({
     return m;
   }, [tasks]);
 
-  // Rail wins; canvas is the fallback. Hover card is suppressed once a task
+  // Rail wins; canvas is the fallback. Hover card is suppressed once a node
   // is selected — the detail panel is the canonical view at that point.
   const hoveredId = hoveredFromRail ?? hoveredOnCanvas;
   const showHoverCard = !selectedNodeId && hoveredId !== null;
   const hoveredTask = showHoverCard
     ? (tasks.find((t) => t.id === hoveredId) ?? null)
     : null;
+  const hoveredNote =
+    showHoverCard && !hoveredTask
+      ? (notes.find((n) => n.id === hoveredId) ?? null)
+      : null;
 
   const hoverCounts = useMemo(() => {
     if (!hoveredTask) return { upstream: 0, downstream: 0 };
@@ -167,18 +216,37 @@ export function WorkspaceGraphView({
     return { upstream, downstream };
   }, [hoveredTask, edges]);
 
+  const noteHoverCounts = useMemo(() => {
+    if (!hoveredNote) return { tasks: 0, notes: 0 };
+    let taskCount = 0;
+    let noteCount = 0;
+    for (const l of noteTaskLinks) {
+      if (l.noteId === hoveredNote.id) taskCount += 1;
+    }
+    for (const l of noteLinks) {
+      if (l.sourceNoteId === hoveredNote.id || l.targetNoteId === hoveredNote.id)
+        noteCount += 1;
+    }
+    return { tasks: taskCount, notes: noteCount };
+  }, [hoveredNote, noteTaskLinks, noteLinks]);
+
   const overlayOpen = Boolean(detailSlot && selectedNodeId);
-  const overlayWidth = propRailOpen ? OVERLAY_W_FULL : OVERLAY_W_DETAIL;
+  // Note previews pass no propRailSlot — the overlay stays at detail-only
+  // width instead of reserving 280px of empty rail.
+  const overlayWidth =
+    propRailOpen && propRailSlot != null ? OVERLAY_W_FULL : OVERLAY_W_DETAIL;
   const rightInset = overlayOpen ? overlayWidth : 0;
 
   return (
     <div className="flex h-full min-h-0 flex-1">
       <MiniTaskRail
         tasks={visibleTasks}
+        notes={visibleNotes}
         selectedNodeId={selectedNodeId}
         hoveredId={hoveredFromRail}
         onHover={setHoveredFromRail}
         onSelect={onSelectNode}
+        onSelectNote={selectNoteFromRail}
         stageMap={stageMap}
         className="max-sm:hidden"
       />
@@ -199,10 +267,46 @@ export function WorkspaceGraphView({
           hoveredIdHint={hoveredFromRail}
           hiddenStatuses={hiddenStatuses}
           hiddenEdgeTypes={hiddenEdgeTypes}
+          noteEdgesHidden={noteEdgesHidden}
           rightInset={rightInset}
           stageMap={stageMap}
           onHoverNode={setHoveredOnCanvas}
         />
+
+        {/* Mobile list access — the rail is hidden below `sm`, so a floating
+            button opens the same rows in a drawer. Touch-first: 44px target. */}
+        <button
+          type="button"
+          onClick={() => setListOpen(true)}
+          className="absolute left-3 top-3 z-10 inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted backdrop-blur-md sm:hidden"
+          style={{
+            background:
+              "color-mix(in srgb, var(--color-base) 82%, transparent)",
+          }}
+        >
+          <IconPanelLeft size={12} />
+          List
+        </button>
+        <Drawer
+          open={listOpen}
+          onClose={() => setListOpen(false)}
+          side="left"
+          width="280px"
+          label="Graph nodes"
+          wrapperClassName="sm:hidden"
+          panelClassName="bg-base-2"
+        >
+          <RailNodeList
+            tasks={visibleTasks}
+            notes={visibleNotes}
+            selectedNodeId={selectedNodeId}
+            hoveredId={null}
+            onHover={() => {}}
+            onSelectTask={selectTaskFromDrawer}
+            onSelectNote={selectNoteFromDrawer}
+            stageMap={stageMap}
+          />
+        </Drawer>
 
         {/* Top-right chrome — rides the overlay edge instead of getting eaten
             by it. Hover card stays suppressed while a task is selected (the
@@ -223,6 +327,13 @@ export function WorkspaceGraphView({
               downstreamCount={hoverCounts.downstream}
               onOpen={() => onSelectNode(hoveredTask.id)}
             />
+          ) : showHoverCard && hoveredNote ? (
+            <GraphNoteHoverCard
+              note={hoveredNote}
+              taskLinkCount={noteHoverCounts.tasks}
+              noteLinkCount={noteHoverCounts.notes}
+              onOpen={() => onSelectNote(hoveredNote.id, false)}
+            />
           ) : (
             <EdgeFilterPills value={edgeFilter} onChange={setEdgeFilter} />
           )}
@@ -233,6 +344,7 @@ export function WorkspaceGraphView({
           hiddenStatuses={hiddenStatuses}
           onToggleStatus={toggleStatus}
           noteCount={notes.length}
+          fedCount={fedNoteCount}
           notesHidden={notesHidden}
           onToggleNotes={toggleNotes}
         />
@@ -251,8 +363,9 @@ export function WorkspaceGraphView({
               exit={{ x: "100%" }}
               transition={OVERLAY_TRANSITION}
               className="absolute right-0 top-0 bottom-0 z-20 flex bg-base shadow-[var(--shadow-float)]"
+              style={{ maxWidth: "100%" }}
               role="region"
-              aria-label="Task detail"
+              aria-label="Node detail"
             >
               <div className="w-px bg-gradient-to-b from-border-strong via-border to-transparent" />
               <div className="flex min-w-0 flex-1 flex-col">{detailSlot}</div>

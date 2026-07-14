@@ -27,8 +27,7 @@ import {
   EDGE_COLOR,
   RELATES_DASH,
   RELATES_OPACITY,
-  NOTE_EDGE_DASH,
-  NOTE_EDGE_OPACITY,
+  NOTE_EDGE_STYLE,
   ACCENT,
   ZOOM_FACTOR,
   MIN_ZOOM,
@@ -42,6 +41,8 @@ import {
   buildLinkCounts,
   getDeviceTier,
   getTierConfig,
+  isNoteLinkType,
+  kindToLinkType,
 } from "./graphConstants";
 
 /** Props for the ForceGraph component. */
@@ -63,13 +64,17 @@ interface ForceGraphProps {
   selectedNodeId: string | null;
   /** @param onSelectNode - Called when a task node is clicked. */
   onSelectNode: (nodeId: string) => void;
-  /** @param onSelectNote - Called when a note node is clicked. Note nodes
-   *   never become `selectedNodeId`; the click navigates to the notes
-   *   surface instead of focusing the graph. */
-  onSelectNote?: (noteId: string) => void;
+  /** @param onSelectNote - Called when a note node is clicked or tapped.
+   *   `viaTouch` distinguishes the gesture: the parent opens the in-graph
+   *   preview for pointer clicks and jumps straight to the notes surface
+   *   for touch taps. */
+  onSelectNote?: (noteId: string, viaTouch: boolean) => void;
   /** @param notesHidden - Hides every note node and note edge. Controlled
    *   by the parent legend's Notes toggle. */
   notesHidden?: boolean;
+  /** @param noteEdgesHidden - Hides note edges only (nodes stay). Driven
+   *   by the task-stratum edge filter pills. */
+  noteEdgesHidden?: boolean;
   /** @param onDeselect - Called when the canvas background is clicked. */
   onDeselect?: () => void;
   /**
@@ -114,6 +119,8 @@ interface ForceGraphProps {
 const EMPTY_STATUS_SET: ReadonlySet<string> = new Set();
 /** Empty set fallback used when no edge filter prop is provided. */
 const EMPTY_EDGE_SET: ReadonlySet<EdgeType> = new Set();
+/** Long-press hold time before a touch toggles a node's pin, in ms. */
+const LONG_PRESS_MS = 500;
 
 /**
  * Detect if light mode is active by checking the HTML class.
@@ -223,6 +230,7 @@ export function ForceGraph({
   onSelectNode,
   onSelectNote,
   notesHidden = false,
+  noteEdgesHidden = false,
   onDeselect,
   hoveredIdHint = null,
   onHoverNode,
@@ -270,26 +278,34 @@ export function ForceGraph({
     () => (notesHidden ? [] : notes),
     [notesHidden, notes],
   );
-  // Flatten both note link arrays into direction-agnostic edges once per
-  // input change — never per frame. A note-task edge survives only while
+  // Flatten both note link arrays into direction-agnostic typed edges once
+  // per input change — never per frame. A note-task edge survives only while
   // its task survives the status filter; note-note edges only need both
   // endpoints present (RLS already scoped the payload to visible notes).
   const visibleNoteEdges = useMemo(() => {
-    if (notesHidden) return [];
+    if (notesHidden || noteEdgesHidden) return [];
     const noteIds = new Set(notes.map((n) => n.id));
     const out: NoteEdge[] = [];
     for (const l of noteTaskLinks) {
       if (noteIds.has(l.noteId) && filteredTaskIds.has(l.taskId)) {
-        out.push({ sourceId: l.noteId, targetId: l.taskId });
+        out.push({
+          sourceId: l.noteId,
+          targetId: l.taskId,
+          type: kindToLinkType(l.kind),
+        });
       }
     }
     for (const l of noteLinks) {
       if (noteIds.has(l.sourceNoteId) && noteIds.has(l.targetNoteId)) {
-        out.push({ sourceId: l.sourceNoteId, targetId: l.targetNoteId });
+        out.push({
+          sourceId: l.sourceNoteId,
+          targetId: l.targetNoteId,
+          type: "note_note",
+        });
       }
     }
     return out;
-  }, [notesHidden, notes, noteTaskLinks, noteLinks, filteredTaskIds]);
+  }, [notesHidden, noteEdgesHidden, notes, noteTaskLinks, noteLinks, filteredTaskIds]);
 
   useEffect(() => {
     const observer = new MutationObserver(() => setLight(isLightMode()));
@@ -334,6 +350,18 @@ export function ForceGraph({
     originY: 0,
     moved: false,
   });
+  /** Live pointers on the canvas (screen coords), keyed by pointerId —
+   *  two simultaneous entries arm the pinch gesture. */
+  const activePointersRef = useRef(new Map<number, { x: number; y: number }>());
+  /** Two-finger gesture baseline (span + centroid), null when not pinching.
+   *  Updated every move so zoom/pan apply incremental deltas. */
+  const pinchRef = useRef<{
+    prevDist: number;
+    prevCx: number;
+    prevCy: number;
+  } | null>(null);
+  /** Pending long-press pin/unpin timer for a touch hold on a node. */
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoveredRef = useRef<string | null>(null);
   const hoveredEdgeRef = useRef<GraphLink | null>(null);
   const tooltipRef = useRef<{ text: string; x: number; y: number } | null>(
@@ -414,8 +442,13 @@ export function ForceGraph({
     sizeRef.current = size;
   }, [size]);
 
-  // Link counts for node sizing
-  const linkCounts = useMemo(() => buildLinkCounts(links), [links]);
+  // Task-edge counts for node sizing / hit radii / label gating. Filtered
+  // to task links so the renderer agrees with the sim: note attachments
+  // must not grow a task's drawn size while its collide radius stays put.
+  const taskLinkCounts = useMemo(
+    () => buildLinkCounts(links.filter((l) => !isNoteLinkType(l.type))),
+    [links],
+  );
 
   // Per-link parallel-edge metadata — counts how many edges share the same
   // unordered (src, tgt) pair plus this link's index inside that bundle.
@@ -598,7 +631,7 @@ export function ForceGraph({
           while (leaf) {
             const d = leaf.data;
             if (d?.x != null && d.y != null) {
-              const r = getNodeSize(d.id, linkCounts) + slop;
+              const r = getNodeSize(d, taskLinkCounts) + slop;
               const dx = d.x - wx;
               const dy = d.y - wy;
               const dist2 = dx * dx + dy * dy;
@@ -619,7 +652,7 @@ export function ForceGraph({
       });
       return best;
     },
-    [linkCounts],
+    [taskLinkCounts],
   );
 
   // Edge midpoint hit test for hover labels
@@ -803,15 +836,20 @@ export function ForceGraph({
       const dimAlpha = Math.max(src._dimT, tgt._dimT);
 
       const isRelates = l.type === "relates_to";
-      const isNoteEdge = l.type === "note";
       const isDepends = l.type === "depends_on";
-      const edgeColor = EDGE_COLOR[l.type] ?? "#6b7280";
+      // Per-relation note styling — deliberate links, mentions, and the
+      // note-note web each carry their own dash/opacity/width stratum.
+      const noteStyle = isNoteLinkType(l.type) ? NOTE_EDGE_STYLE[l.type] : null;
+      const edgeColor =
+        l.type === "note_note"
+          ? theme.noteLink
+          : (EDGE_COLOR[l.type] ?? "#6b7280");
       const baseAlpha =
         (1 - dimAlpha * 0.85) *
         enterAlpha *
-        (isNoteEdge ? NOTE_EDGE_OPACITY : isRelates ? RELATES_OPACITY : 1);
+        (noteStyle?.opacity ?? (isRelates ? RELATES_OPACITY : 1));
       ctx.globalAlpha = linkDimmed ? baseAlpha * 0.05 : baseAlpha;
-      ctx.lineWidth = isNoteEdge ? 1.25 : isRelates ? 1.5 : 2;
+      ctx.lineWidth = noteStyle?.width ?? (isRelates ? 1.5 : 2);
 
       const dx = tgt.x - src.x;
       const dy = tgt.y - src.y;
@@ -819,9 +857,9 @@ export function ForceGraph({
 
       // Edge style — depends_on gets a directional gradient (bright at
       // source, fades toward target); relates and note edges draw as muted
-      // dashes (note edges tighter and quieter — the knowledge stratum).
-      if (isRelates || isNoteEdge) {
-        ctx.setLineDash(isNoteEdge ? NOTE_EDGE_DASH : RELATES_DASH);
+      // dashes (note strata tighter and quieter than relates).
+      if (isRelates || noteStyle) {
+        ctx.setLineDash(noteStyle ? [...noteStyle.dash] : RELATES_DASH);
         ctx.strokeStyle = edgeColor;
       } else {
         ctx.setLineDash([]);
@@ -849,7 +887,7 @@ export function ForceGraph({
 
         // Arrow for depends_on only
         if (isDepends) {
-          const tgtR = getNodeSize(tgt.id, linkCounts) + 4;
+          const tgtR = getNodeSize(tgt, taskLinkCounts) + 4;
           const angle = Math.atan2(dy, dx);
           const ax = tgt.x - Math.cos(angle) * tgtR;
           const ay = tgt.y - Math.sin(angle) * tgtR;
@@ -876,8 +914,8 @@ export function ForceGraph({
           const speed = 0.25;
           const dotCount = 3;
           const dotRadius = 2.5;
-          const srcR = getNodeSize(src.id, linkCounts);
-          const tgtR = getNodeSize(tgt.id, linkCounts);
+          const srcR = getNodeSize(src, taskLinkCounts);
+          const tgtR = getNodeSize(tgt, taskLinkCounts);
           const startT = srcR / len;
           const endT = 1 - tgtR / len;
           ctx.fillStyle = edgeColor;
@@ -913,7 +951,7 @@ export function ForceGraph({
         // Arrow for depends_on only
         if (isDepends) {
           const angle = Math.atan2(tgt.y - cpy, tgt.x - cpx);
-          const tgtR = getNodeSize(tgt.id, linkCounts) + 4;
+          const tgtR = getNodeSize(tgt, taskLinkCounts) + 4;
           const ax = tgt.x - Math.cos(angle) * tgtR;
           const ay = tgt.y - Math.sin(angle) * tgtR;
           const arrowLen = 10;
@@ -939,8 +977,8 @@ export function ForceGraph({
           const speed = 0.25;
           const dotCount = 3;
           const dotRadius = 2.5;
-          const srcR = getNodeSize(src.id, linkCounts);
-          const tgtR = getNodeSize(tgt.id, linkCounts);
+          const srcR = getNodeSize(src, taskLinkCounts);
+          const tgtR = getNodeSize(tgt, taskLinkCounts);
           const startT = srcR / len;
           const endT = 1 - tgtR / len;
           ctx.fillStyle = edgeColor;
@@ -981,13 +1019,15 @@ export function ForceGraph({
       ) {
         const emx = (hSrc.x + hTgt.x) / 2;
         const emy = (hSrc.y + hTgt.y) / 2;
-        const label =
-          hovEdge.type === "depends_on"
+        const label = isNoteLinkType(hovEdge.type)
+          ? NOTE_EDGE_STYLE[hovEdge.type].label
+          : hovEdge.type === "depends_on"
             ? "depends"
-            : hovEdge.type === "note"
-              ? "note"
-              : "relates";
-        const edgeColor = EDGE_COLOR[hovEdge.type] ?? "#6b7280";
+            : "relates";
+        const edgeColor =
+          hovEdge.type === "note_note"
+            ? theme.noteLink
+            : (EDGE_COLOR[hovEdge.type] ?? "#6b7280");
         ctx.globalAlpha = 0.9;
         ctx.font = `700 8px "GeistMono Variable", "GeistMono", monospace`;
         ctx.textAlign = "center";
@@ -1016,7 +1056,7 @@ export function ForceGraph({
       ctx.globalAlpha = nodeAlpha;
 
       const entranceScale = 0.3 + 0.7 * enterProgress;
-      const sz = getNodeSize(n.id, linkCounts);
+      const sz = getNodeSize(n, taskLinkCounts);
 
       // Off-screen cull — use the halo radius (sz * 2.5) as the AABB so a
       // node whose body is off-screen but whose halo bleeds into view stays
@@ -1103,11 +1143,24 @@ export function ForceGraph({
 
       if (isNote) {
         // Thin solid type-colored ring — no lifecycle dash vocabulary on
-        // notes; the rounded square already sets them apart.
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = `rgba(${sr},${sg},${sb},${isHovered ? 1.0 : 0.85})`;
+        // notes; the rounded square already sets them apart. Selection
+        // swaps to the shared accent ring, same as tasks.
+        ctx.lineWidth = isSelected ? 2.5 : 1.5;
+        ctx.strokeStyle = isSelected
+          ? ACCENT
+          : `rgba(${sr},${sg},${sb},${isHovered ? 1.0 : 0.85})`;
         ctx.setLineDash([]);
         ctx.stroke();
+        // Fed marker — solid type-colored corner dot, echoing the "ready"
+        // inner-dot convention (dot = armed). Type color, not accent: the
+        // accent dot outside the node already means "pinned".
+        if (n.fed) {
+          const half = sz * 0.85;
+          ctx.fillStyle = `rgba(${sr},${sg},${sb},1)`;
+          ctx.beginPath();
+          ctx.arc(half * 0.95, -half * 0.95, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else {
         // Stage-specific ring. Convention across the workspace (rail, hover
         // card, structure list, canvas):
@@ -1201,7 +1254,7 @@ export function ForceGraph({
       // Adaptive labels — always for selected/hovered. Otherwise gated by
       // zoom + connectivity, scaled by graph size: 200-node projects only
       // show hub labels at default zoom, 30-node projects show everything.
-      const edgeCount = linkCounts.get(n.id) ?? 0;
+      const edgeCount = taskLinkCounts.get(n.id) ?? 0;
       const isHub = edgeCount >= 5;
       const isMidHub = edgeCount >= 3;
       const showLabel =
@@ -1275,7 +1328,7 @@ export function ForceGraph({
     size,
     selectedNodeId,
     theme,
-    linkCounts,
+    taskLinkCounts,
     parallelMeta,
     hoveredIdHint,
     tier,
@@ -1531,12 +1584,44 @@ export function ForceGraph({
   ]);
 
   // --- Pointer events ---
+  /** Cancel a pending long-press pin, if any. */
+  const clearLongPress = useCallback(() => {
+    if (longPressRef.current !== null) {
+      clearTimeout(longPressRef.current);
+      longPressRef.current = null;
+    }
+  }, []);
+  useEffect(() => clearLongPress, [clearLongPress]);
+
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return;
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
+      const ap = activePointersRef.current;
+      ap.set(e.pointerId, { x: sx, y: sy });
+      canvasRef.current?.setPointerCapture(e.pointerId);
+
+      // Second finger down — the gesture becomes a pinch. Kill the click
+      // intent and any long-press; a node mid-drag stays where it is
+      // (fx/fy only set once moved, matching drag-pin semantics).
+      if (ap.size === 2) {
+        clearLongPress();
+        const [p1, p2] = [...ap.values()];
+        pinchRef.current = {
+          prevDist: Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1,
+          prevCx: (p1.x + p2.x) / 2,
+          prevCy: (p1.y + p2.y) / 2,
+        };
+        dragRef.current.moved = true;
+        dragRef.current.active = false;
+        animRef.current = null;
+        userOverrideRef.current = true;
+        return;
+      }
+      if (ap.size > 2) return;
+
       const [wx, wy] = screenToWorld(sx, sy);
       const hit = hitTest(wx, wy);
       dragRef.current = {
@@ -1550,9 +1635,36 @@ export function ForceGraph({
         originY: sy,
         moved: false,
       };
-      canvasRef.current?.setPointerCapture(e.pointerId);
+
+      // Touch parity for double-click: holding a node toggles its pin.
+      // `moved` is set so the subsequent pointerup doesn't also select.
+      if (e.pointerType === "touch" && hit) {
+        clearLongPress();
+        longPressRef.current = setTimeout(() => {
+          longPressRef.current = null;
+          const drag = dragRef.current;
+          if (
+            pinchRef.current ||
+            !drag.active ||
+            drag.moved ||
+            drag.nodeId !== hit.id
+          ) {
+            return;
+          }
+          if (hit.fx != null) {
+            hit.fx = null;
+            hit.fy = null;
+          } else {
+            hit.fx = hit.x ?? null;
+            hit.fy = hit.y ?? null;
+          }
+          drag.moved = true;
+          reheat();
+          needsRedrawRef.current = true;
+        }, LONG_PRESS_MS);
+      }
     },
-    [screenToWorld, hitTest],
+    [screenToWorld, hitTest, clearLongPress, reheat],
   );
 
   const pointerMoveRaf = useRef<number | null>(null);
@@ -1570,11 +1682,42 @@ export function ForceGraph({
       if (!rect) return;
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
+      const ap = activePointersRef.current;
+      if (ap.has(e.pointerId)) ap.set(e.pointerId, { x: sx, y: sy });
+
+      // Pinch — zoom about the two-finger centroid (same math as the wheel
+      // path) plus pan by the centroid delta. Runs before every other
+      // branch; drag/pan/hover never see multi-touch moves.
+      if (pinchRef.current && ap.size >= 2) {
+        const [p1, p2] = [...ap.values()];
+        const cx = (p1.x + p2.x) / 2;
+        const cy = (p1.y + p2.y) / 2;
+        const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1;
+        const p = pinchRef.current;
+        const t = transformRef.current;
+        const newScale = Math.min(
+          MAX_ZOOM,
+          Math.max(MIN_ZOOM, t.scale * (dist / p.prevDist)),
+        );
+        t.x = cx - (cx - t.x) * (newScale / t.scale);
+        t.y = cy - (cy - t.y) * (newScale / t.scale);
+        t.scale = newScale;
+        t.x += cx - p.prevCx;
+        t.y += cy - p.prevCy;
+        p.prevDist = dist;
+        p.prevCx = cx;
+        p.prevCy = cy;
+        setZoomLevel(newScale);
+        needsRedrawRef.current = true;
+        return;
+      }
+
       const drag = dragRef.current;
 
       if (drag.active && drag.nodeId) {
         if (!drag.moved && Math.hypot(sx - drag.originX, sy - drag.originY) < 4)
           return;
+        if (!drag.moved) clearLongPress();
         drag.moved = true;
         const [wx, wy] = screenToWorld(sx, sy);
         const node = nodes.find((n) => n.id === drag.nodeId);
@@ -1631,8 +1774,10 @@ export function ForceGraph({
               hit.kind === "note" && hit.noteType
                 ? ` · ${NOTE_TYPE_META[hit.noteType].label}`
                 : "";
+            const fedLabel =
+              hit.kind === "note" && hit.fed ? " · feeds tasks" : "";
             tooltipRef.current = {
-              text: `${hit.taskRef} · ${hit.title}${typeLabel}${suffix}`,
+              text: `${hit.taskRef} · ${hit.title}${typeLabel}${fedLabel}${suffix}`,
               x: sx,
               y: sy,
             };
@@ -1652,11 +1797,40 @@ export function ForceGraph({
       ticking,
       onHoverNode,
       selectedNodeId,
+      clearLongPress,
     ],
   );
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
+      clearLongPress();
+      const ap = activePointersRef.current;
+      ap.delete(e.pointerId);
+      canvasRef.current?.releasePointerCapture(e.pointerId);
+
+      // Pinch teardown — when a finger lifts mid-pinch the gesture degrades
+      // to a single-finger pan already marked `moved`, so the remaining
+      // finger neither hovers nor fires a spurious click on its own up.
+      if (pinchRef.current) {
+        if (ap.size < 2) {
+          pinchRef.current = null;
+          const remaining = [...ap.values()][0];
+          dragRef.current = {
+            active: remaining !== undefined,
+            nodeId: null,
+            nodeKind: null,
+            panning: remaining !== undefined,
+            startX: remaining?.x ?? 0,
+            startY: remaining?.y ?? 0,
+            originX: remaining?.x ?? 0,
+            originY: remaining?.y ?? 0,
+            moved: true,
+          };
+        }
+        needsRedrawRef.current = true;
+        return;
+      }
+
       const drag = dragRef.current;
       // Use the `moved` flag (not the rolling startX/Y, which the pan branch
       // updates each tick) to distinguish click from drag. This is the fix
@@ -1664,10 +1838,11 @@ export function ForceGraph({
       // so any distance-based check would misread the gesture as a click.
       if (drag.active && !drag.moved) {
         if (drag.nodeId) {
-          // Note nodes navigate to the notes surface instead of becoming
-          // the graph selection — the graph layout renders no note detail.
+          // Note clicks route by gesture: the parent opens the in-graph
+          // preview for pointer clicks and jumps straight to the notes
+          // surface for touch taps.
           if (drag.nodeKind === "note") {
-            onSelectNote?.(drag.nodeId);
+            onSelectNote?.(drag.nodeId, e.pointerType === "touch");
           } else {
             onSelectNode(drag.nodeId);
           }
@@ -1686,10 +1861,37 @@ export function ForceGraph({
         originY: 0,
         moved: false,
       };
-      canvasRef.current?.releasePointerCapture(e.pointerId);
       needsRedrawRef.current = true;
     },
-    [onSelectNode, onSelectNote, onDeselect],
+    [onSelectNode, onSelectNote, onDeselect, clearLongPress],
+  );
+
+  /**
+   * Pointer cancellation (browser gesture takeover, palm rejection, tab
+   * switch mid-touch): reset the gesture state machine WITHOUT the click
+   * branch — a cancelled touch previously stranded `dragRef.active`.
+   */
+  const handlePointerCancel = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      clearLongPress();
+      const ap = activePointersRef.current;
+      ap.delete(e.pointerId);
+      if (ap.size < 2) pinchRef.current = null;
+      canvasRef.current?.releasePointerCapture(e.pointerId);
+      dragRef.current = {
+        active: false,
+        nodeId: null,
+        nodeKind: null,
+        panning: false,
+        startX: 0,
+        startY: 0,
+        originX: 0,
+        originY: 0,
+        moved: false,
+      };
+      needsRedrawRef.current = true;
+    },
+    [clearLongPress],
   );
 
   const handleDoubleClick = useCallback(
@@ -1816,11 +2018,12 @@ export function ForceGraph({
         <>
           <canvas
             ref={canvasRef}
-            className="absolute inset-0 cursor-grab active:cursor-grabbing"
+            className="absolute inset-0 cursor-grab touch-none active:cursor-grabbing"
             style={{ width: size.width, height: size.height }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerCancel}
             onDoubleClick={handleDoubleClick}
           />
           <GraphControls
