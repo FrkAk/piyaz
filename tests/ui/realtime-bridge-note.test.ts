@@ -501,6 +501,31 @@ describe("applyRealtimeEvent note case", () => {
     expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(true);
   });
 
+  test("a metaChanged:false event patches the cached tree row's updatedAt in place", async () => {
+    const qc = seededClient(when);
+    const newer = new Date(when.getTime() + 60_000);
+
+    await applyRealtimeEvent(qc, noteEvent(newer, 2, undefined, false));
+
+    expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
+    const rows = qc.getQueryData<NoteTreeRow[]>(noteKeys.list(PROJECT));
+    const patched = rows?.find((r) => r.id === NOTE)?.updatedAt;
+    expect(patched).toBeDefined();
+    expect(
+      typeof patched === "string" ? Date.parse(patched) : patched?.getTime(),
+    ).toBe(newer.getTime());
+  });
+
+  test("a metaChanged:false event never rewinds a newer cached tree row", async () => {
+    const qc = seededClient(when);
+    const older = new Date(when.getTime() - 60_000);
+
+    await applyRealtimeEvent(qc, noteEvent(older, 2, undefined, false));
+
+    const rows = qc.getQueryData<NoteTreeRow[]>(noteKeys.list(PROJECT));
+    expect(rows?.find((r) => r.id === NOTE)?.updatedAt).toEqual(when);
+  });
+
   test("a metaChanged:true event invalidates the graph, tree, and backlinks", async () => {
     const qc = seededClient(when);
     qc.setQueryData(projectKeys.graph(PROJECT), { tasks: [] });

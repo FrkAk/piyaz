@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
-import { seedUserOrgProject } from "@/tests/setup/seed";
+import { seedSecondMember, seedUserOrgProject } from "@/tests/setup/seed";
 import { broker } from "@/lib/realtime/broker";
 import { GET, HEAD } from "@/app/api/task/[taskId]/events/route";
 import { makeAuthContext } from "@/lib/auth/context";
+import { createNote, createNoteTaskLink, updateNote } from "@/lib/data/note";
 import { createTask, updateTask } from "@/lib/data/task";
 import type { ActivityEvent } from "@/lib/types";
 
@@ -109,6 +110,41 @@ describe("GET /api/task/[taskId]/events", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { events: ActivityEvent[] };
     expect(body.events).toHaveLength(2);
+  });
+
+  test("a note privatization that hides a mid-page event moves the ETag", async () => {
+    const { fx, taskId } = await seedTaskWithEvents("ev-flip");
+    const ctx = makeAuthContext(fx.userId);
+    const note = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "Salary bands",
+      visibility: "team",
+    });
+    await createNoteTaskLink(ctx, note.id, taskId, "spec_of");
+    await updateTask(ctx, taskId, { status: "done" });
+
+    const userB = await seedSecondMember(fx.organizationId, "ev-flip-b");
+    setSession({ user: { id: userB } });
+    const first = await call(taskId);
+    const etag = first.headers.get("etag") as string;
+    expect(await first.text()).toContain("Salary bands");
+    const replay = await call(taskId, "", { "if-none-match": etag });
+    expect(replay.status).toBe(304);
+
+    await updateNote(ctx, note.id, { visibility: "private" });
+    const after = await call(taskId, "", { "if-none-match": etag });
+    expect(after.status).toBe(200);
+    expect(await after.text()).not.toContain("Salary bands");
+  });
+
+  test("returns 404 for a non-uuid id before any SQL", async () => {
+    const { fx } = await seedTaskWithEvents("ev-uuid");
+    setSession({ user: { id: fx.userId } });
+
+    expect((await call("not-a-uuid")).status).toBe(404);
+    expect(
+      (await call("not-a-uuid", "", { "if-none-match": '"0-x"' })).status,
+    ).toBe(404);
   });
 
   test("returns 404 for a cross-team caller (no event leak in body)", async () => {

@@ -31,6 +31,7 @@ export type ActivityRawRow = {
   actor_name: string | null;
   actor_image: string | null;
   agent_name: string | null;
+  visible_count?: number | string;
 };
 
 /**
@@ -82,7 +83,9 @@ export function noteExposureClause(agentExposed: boolean): SQL {
  * resolved once per *distinct* client id on the page (a STABLE function is
  * not memoized across rows, so calling it inline per row re-ran the
  * membership probe for every duplicate harness). `summary` is capped to
- * {@link SUMMARY_MAX_CHARS} so only the rendered prefix is egressed.
+ * {@link SUMMARY_MAX_CHARS} so only the rendered prefix is egressed. Every
+ * row carries `visible_count`, the pre-`LIMIT` window count matching
+ * {@link taskActivityHeadStmt}'s validator arm.
  *
  * @param taskId - Task whose events to read.
  * @param cur - Decoded keyset cursor, or null for the first page.
@@ -115,7 +118,8 @@ function activityPageSql(
                 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_cursor,
         ae.actor_user_id, ae.source, ae.actor_client_id,
         substring(ae.summary FROM 1 FOR ${SUMMARY_MAX_CHARS}) AS summary,
-        ae.target_ref, ae.metadata
+        ae.target_ref, ae.metadata,
+        COUNT(*) OVER ()::int AS visible_count
       FROM public.activity_events ae
       WHERE ae.task_id = ${taskId}::uuid
       ${noteExposureClause(agentExposed)}
@@ -138,6 +142,7 @@ function activityPageSql(
       page.id, page.project_id, page.task_id, page.type, page.created_at,
       page.created_at_cursor, page.actor_user_id, page.source,
       page.actor_client_id, page.summary, page.target_ref, page.metadata,
+      page.visible_count,
       a.name AS actor_name,
       a.image AS actor_image,
       cn.name AS agent_name
@@ -164,9 +169,14 @@ function activityPageSql(
 /**
  * Lazy read statement for the newest event key of a task-activity page:
  * `(id, created_at)` of the first row the matching {@link taskActivityStmt}
- * would return. One index head probe with the same exposure filters, no
- * identity joins: the cheap validator resolve for `HEAD`/`If-None-Match`,
- * so a 304 skips the full page fetch.
+ * would return, plus `visible_count`, the exposure-filtered row count of
+ * the whole keyset window (`COUNT(*) OVER ()` runs before `LIMIT`). The
+ * count arm is what lets the validator observe exposure-set shrinkage —
+ * a note trash or team-to-private flip hides a mid-window row without
+ * appending any task-scoped event, so the head key alone would 304 a
+ * stale page forever (the notes-tree live-count idiom). Same exposure
+ * filters as the page, no identity joins: the cheap validator resolve for
+ * `HEAD`/`If-None-Match`, so a 304 skips the full page fetch.
  *
  * @param read - RLS-scoped read connection from `withUserContextRead`.
  * @param taskId - Task whose events to probe.
@@ -192,7 +202,7 @@ export function taskActivityHeadStmt(
     ? sql`AND ae.created_at > ${since}::timestamptz`
     : sql``;
   return read.execute(sql`
-    SELECT ae.id, ae.created_at
+    SELECT ae.id, ae.created_at, COUNT(*) OVER ()::int AS visible_count
     FROM public.activity_events ae
     WHERE ae.task_id = ${taskId}::uuid
     ${sinceClause}

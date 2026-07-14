@@ -391,10 +391,14 @@ export function WorkspaceClient({ projectId }: WorkspaceClientProps) {
       }
       setSelectedTaskId(null);
       // Optimistic: the preview opens this render; the URL write follows.
+      // Forced while a prior `?note` replace is in flight (pending non-null
+      // is that signal, mirroring `clearNoteSelection`): re-selecting the
+      // id the stale snapshot still carries must queue a corrective
+      // replace, not short-circuit and let the in-flight write win.
       setPendingNoteId(nextNoteId);
-      updateParam("note", nextNoteId);
+      updateParams({ note: nextNoteId }, { force: pendingNoteId !== null });
     },
-    [isXl, handleOpenNoteFromTask, updateParam],
+    [isXl, handleOpenNoteFromTask, updateParams, pendingNoteId],
   );
 
   /**

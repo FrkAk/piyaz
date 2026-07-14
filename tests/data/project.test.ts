@@ -495,6 +495,33 @@ test("a team-to-private visibility flip moves other members' validators", async 
   expect(afterB.content).toBeGreaterThan(beforeB.content);
 });
 
+test("the flip's project-clock bump never rewinds a future updated_at", async () => {
+  const f = await seedUserOrgProject("graphnotes-flipmono");
+  const ctxA = makeAuthContext(f.userId);
+  const note = await createNote(ctxA, {
+    projectId: f.projectId,
+    title: "Was team",
+    visibility: "team",
+  });
+  const su = superuserPool();
+  await su`
+    UPDATE projects SET updated_at = now() + interval '5 seconds'
+    WHERE id = ${f.projectId}
+  `;
+  const [{ updated_at: before }] = await su<{ updated_at: Date }[]>`
+    SELECT updated_at FROM projects WHERE id = ${f.projectId}
+  `;
+
+  await updateNote(ctxA, note.id, { visibility: "private" });
+
+  const [{ updated_at: after }] = await su<{ updated_at: Date }[]>`
+    SELECT updated_at FROM projects WHERE id = ${f.projectId}
+  `;
+  expect(new Date(after).getTime()).toBeGreaterThanOrEqual(
+    new Date(before).getTime(),
+  );
+});
+
 test("a private-note edit moves only the editor's meta validator", async () => {
   const f = await seedUserOrgProject("graphnotes-privclk");
   const userB = await seedSecondMember(f.organizationId, "graphnotes-priv-b");

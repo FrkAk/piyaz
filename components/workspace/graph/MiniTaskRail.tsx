@@ -123,7 +123,7 @@ export function RailNodeList({
             onMouseEnter={() => onHover(t.id)}
             onClick={() => onSelectTask(t.id)}
             aria-current={active ? "true" : undefined}
-            className={`relative flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left transition-colors ${
+            className={`relative flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left transition-colors pointer-coarse:min-h-11 ${
               active
                 ? "bg-surface-hover"
                 : hot
@@ -210,7 +210,7 @@ export function RailNodeList({
                 onMouseEnter={() => onHover(n.id)}
                 onClick={() => onSelectNote(n.id)}
                 aria-current={active ? "true" : undefined}
-                className={`relative flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left transition-colors ${
+                className={`relative flex w-full cursor-pointer items-center gap-2 px-3 py-1 text-left transition-colors pointer-coarse:min-h-11 ${
                   active
                     ? "bg-surface-hover"
                     : hot

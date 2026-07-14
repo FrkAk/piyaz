@@ -77,7 +77,15 @@ export function NotePreviewPanel({
   onSelectTask,
   onSelectNote,
 }: NotePreviewPanelProps) {
-  const { data, isError, refetch } = useNoteDetail(projectId, noteId);
+  const { data, isPlaceholderData, isError, refetch } = useNoteDetail(
+    projectId,
+    noteId,
+  );
+  // The tree-seeded placeholder fabricates `body: ""` and `feedMode:
+  // "none"` — treating it as loaded would flash the empty-body state and
+  // drop the fed marker, so body, fed, and links render only from real
+  // detail data; chrome keeps falling back to the slim row.
+  const detail = isPlaceholderData ? undefined : data;
 
   const tasksBySeq = useMemo(() => {
     const map = new Map<number, NoteTaskTarget>();
@@ -116,12 +124,12 @@ export function NotePreviewPanel({
     [projectIdentifier, tasksBySeq, notesByTitle, onSelectTask, onSelectNote],
   );
 
-  const note = data?.note;
+  const note = detail?.note;
   // One row per task, strongest kind wins — a body mention plus a
   // deliberate spec_of on the same task must not list twice.
-  const taskLinks = data
+  const taskLinks = detail
     ? [
-        ...data.mentions
+        ...detail.mentions
           .reduce((byTask, m) => {
             const existing = byTask.get(m.taskId);
             if (
@@ -138,10 +146,12 @@ export function NotePreviewPanel({
     : [];
   // A note that links out AND is linked back lands in both directions —
   // dedupe by id or React sees two children with one key.
-  const noteLinks = data
+  const noteLinks = detail
     ? [
         ...new Map(
-          [...data.linksOut, ...data.linksIn].map((n) => [n.id, n] as const),
+          [...detail.linksOut, ...detail.linksIn].map(
+            (n) => [n.id, n] as const,
+          ),
         ).values(),
       ]
     : [];

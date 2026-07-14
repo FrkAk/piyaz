@@ -9,13 +9,17 @@ import { consentGateResponse } from "@/lib/auth/consent";
 /**
  * Conditional handler for `GET` and `HEAD` on a task's activity page.
  *
- * The ETag folds the newest event's timestamp with its id, so a
- * same-millisecond append still moves the validator; `cursor` and `limit`
- * vary the URL, so each page caches under its own validator. HEAD and
- * `If-None-Match` requests resolve the validator via the
- * `getTaskActivityHead` probe (existence gate + one index-head row, no
- * identity joins) so a 304 avoids the full page fetch. A missing or
- * cross-team task is 404-shaped (`ForbiddenError` from the data ring).
+ * The ETag folds the newest event's timestamp and id with the window's
+ * exposure-filtered row count: the head pair moves on any append (even
+ * same-millisecond), and the count arm moves when a note trash or
+ * team-to-private flip hides a mid-window row without appending a
+ * task-scoped event — the head alone would 304 that stale page forever.
+ * `cursor` and `limit` vary the URL, so each page caches under its own
+ * validator. HEAD and `If-None-Match` requests resolve the validator via
+ * the `getTaskActivityHead` probe (existence gate + one index-head scan,
+ * no identity joins) so a 304 avoids the full page fetch. A malformed,
+ * missing, or cross-team task id is 404-shaped (`ForbiddenError` from the
+ * data ring).
  *
  * @param req - Incoming request; reads `?cursor` and `?limit`.
  * @param taskId - Task UUID from the route params.
@@ -38,7 +42,9 @@ async function handle(req: Request, taskId: string): Promise<Response> {
 
     if (req.method === "HEAD" || req.headers.has("if-none-match")) {
       const head = await getTaskActivityHead(ctx, taskId, { cursor });
-      const token = head ? `${head.createdAtMs}-${head.id}` : "none";
+      const token = head
+        ? `${head.createdAtMs}-${head.id}-${head.visibleCount}`
+        : "none";
       if (req.method === "HEAD" || etagMatches(req, token)) {
         return conditionalRespond(req, null, token);
       }
@@ -52,9 +58,13 @@ async function handle(req: Request, taskId: string): Promise<Response> {
     });
     const newest = page.events[0];
     const validator = newest
-      ? `${Date.parse(newest.createdAt)}-${newest.id}`
+      ? `${Date.parse(newest.createdAt)}-${newest.id}-${page.visibleCount}`
       : "none";
-    return conditionalRespond(req, page, validator);
+    return conditionalRespond(
+      req,
+      { events: page.events, nextCursor: page.nextCursor },
+      validator,
+    );
   } catch (err) {
     if (err instanceof ForbiddenError) return error("Task not found", 404);
     return internalError("task-events", err);

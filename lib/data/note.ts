@@ -3186,6 +3186,7 @@ async function updateNoteCore(
         links: undefined,
         revisionCheckpoint: undefined,
         metaChanged: false,
+        flippedToPrivate: false,
       };
     }
 
@@ -3199,6 +3200,7 @@ async function updateNoteCore(
         links: undefined,
         revisionCheckpoint: undefined,
         metaChanged: false,
+        flippedToPrivate: false,
       };
     }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
@@ -3248,11 +3250,18 @@ async function updateNoteCore(
     // A team-to-private flip hides the row from other members under RLS,
     // so their note-clock MAX can no longer observe the bump above.
     // Moving the project clock (visible to every member) makes their
-    // graph and context validators register the disappearance.
-    if (applied.visibility === "private" && current.visibility === "team") {
+    // graph and context validators register the disappearance; the
+    // GREATEST floor keeps the bump monotonic under app/DB clock skew
+    // (the trigger idiom in `rls-functions.sql`). The refetch that
+    // consults those validators is triggered by the post-commit project
+    // event below — the note event itself rides `note:<id>` after the
+    // flip, which other members never subscribed to.
+    const flippedToPrivate =
+      applied.visibility === "private" && current.visibility === "team";
+    if (flippedToPrivate) {
       await tx
         .update(projects)
-        .set({ updatedAt: now })
+        .set({ updatedAt: sql`GREATEST(updated_at, now())` })
         .where(eq(projects.id, current.projectId));
     }
 
@@ -3355,6 +3364,7 @@ async function updateNoteCore(
       links,
       revisionCheckpoint,
       metaChanged,
+      flippedToPrivate,
     };
   });
 
@@ -3368,6 +3378,9 @@ async function updateNoteCore(
       result.revisionCheckpoint !== undefined,
       result.metaChanged,
     );
+    if (result.flippedToPrivate) {
+      emitProjectEvent(result.summary.projectId);
+    }
   }
   return {
     ...result.summary,

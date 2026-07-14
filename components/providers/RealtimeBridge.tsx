@@ -266,12 +266,25 @@ async function handleNoteEvent(
   }
   // `metaChanged: false` marks writes that cannot alter tree rows or feed
   // links (body-only saves, share markers); the tree and backlink refetches
-  // are skipped for those entirely.
+  // are skipped for those entirely. The rows still ship the content clock
+  // (`updatedAt`) and the "Updated" sort orders on it, so the skipped
+  // refetch patches the row's `updatedAt` in place instead — recency
+  // ordering tracks remote autosaves without a round trip.
   const rows = qc.getQueryData<NoteTreeRow[]>(noteKeys.list(ev.projectId));
   const row = rows?.find((r) => r.id === ev.noteId);
   const listCurrent = row !== undefined && updatedAtMs(row.updatedAt) >= evMs;
   if (ev.metaChanged !== false && !listCurrent) {
     qc.invalidateQueries({ queryKey: noteKeys.list(ev.projectId) });
+  } else if (
+    ev.metaChanged === false &&
+    ev.updatedAt !== undefined &&
+    row !== undefined &&
+    !listCurrent
+  ) {
+    const updatedAt = new Date(ev.updatedAt);
+    qc.setQueryData<NoteTreeRow[]>(noteKeys.list(ev.projectId), (data) =>
+      data?.map((r) => (r.id === ev.noteId ? { ...r, updatedAt } : r)),
+    );
   }
   // Not gated on `listCurrent`: that guard tracks the tree row, which an
   // optimistic write already advanced, but a note's feed settings decide

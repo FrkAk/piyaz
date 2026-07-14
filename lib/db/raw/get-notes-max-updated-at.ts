@@ -2,10 +2,14 @@
  * Notes tree-list cache validator: latest `meta_updated_at` plus the
  * live-row count for one project's notes. The metadata clock moves on
  * every change except pure body edits, so autosaves answer 304 while any
- * tree-rendered field revalidates. The count is part of the validator
- * because a soft delete removes a row without raising any surviving
- * clock — MAX alone would leave the tree ETag stale after a delete.
- * Scanned via the `project_id` prefix of the partial
+ * metadata field revalidates. The one row field outside the clock is
+ * `updatedAt` (the content clock, which the "Updated" sort orders on):
+ * body-only edits move it without moving this validator, and the client
+ * patches it in place from the `metaChanged: false` realtime event
+ * (`RealtimeBridge`) instead of refetching. The count is part of the
+ * validator because a soft delete removes a row without raising any
+ * surviving clock — MAX alone would leave the tree ETag stale after a
+ * delete. Scanned via the `project_id` prefix of the partial
  * `notes_project_updated_idx` (`WHERE deleted_at IS NULL`).
  */
 

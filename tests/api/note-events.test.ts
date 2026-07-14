@@ -379,6 +379,32 @@ describe("realtime note events: metaChanged flag", () => {
     ]);
   });
 
+  test("a team-to-private flip emits a project event so unsubscribed members refetch", async () => {
+    const fx = await seedUserOrgProject("nev-flip-proj");
+    const userB = await seedSecondMember(fx.organizationId, "nev-flip-proj-b");
+    const ctx = makeAuthContext(fx.userId);
+    const note = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "N",
+      visibility: "team",
+    });
+
+    const frames: string[] = [];
+    broker.attach(userB, {
+      send: (data) => frames.push(data),
+      close: () => {},
+    });
+    broker.register(userB, `project:${fx.projectId}`);
+
+    await updateNote(ctx, note.id, { visibility: "private" });
+
+    const kinds = frames.map(
+      (f) => (JSON.parse(f.slice("data: ".length)) as RealtimeEvent).kind,
+    );
+    expect(kinds).toContain("project");
+    expect(kinds).not.toContain("note");
+  });
+
   test("a body edit that changes the derived link set emits metaChanged true", async () => {
     const fx = await seedUserOrgProject("nev-meta-derive");
     const ctx = makeAuthContext(fx.userId);
