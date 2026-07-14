@@ -49,7 +49,9 @@ mock.module("next/cache", () => ({
 
 const setSession = (
   globalThis as unknown as {
-    __setTestSession: (s: { user: { id: string } } | null) => void;
+    __setTestSession: (
+      s: { user: { id: string; email?: string; name?: string } } | null,
+    ) => void;
   }
 ).__setTestSession;
 
@@ -194,6 +196,35 @@ describe("changePasswordAction rate limiting", () => {
     expect(RATE_CONFIG.perUserMax).toBe(binding!.simple.limit);
     expect(RATE_CONFIG.perIpMax).toBe(binding!.simple.limit);
     expect(RATE_CONFIG.windowSeconds).toBe(binding!.simple.period);
+  });
+});
+
+describe("changePasswordAction notification", () => {
+  test("sends the password-changed notification on success", async () => {
+    process.env.EMAIL_TRANSPORT = "log";
+    setSession({
+      user: {
+        id: USER_ID,
+        email: "pwchg-notify@test.local",
+        name: "Notify Me",
+      },
+    });
+    const info = spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const { changePasswordAction } = await import("@/lib/actions/password");
+      const result = await changePasswordAction({
+        currentPassword: "current-password-1",
+        newPassword: "valid-new-pass-12",
+      });
+      expect(result.ok).toBe(true);
+      const logged = info.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain("[email:log]");
+      expect(logged).toContain("password was changed");
+      expect(logged).toContain("pwchg-notify@test.local");
+    } finally {
+      info.mockRestore();
+      delete process.env.EMAIL_TRANSPORT;
+    }
   });
 });
 

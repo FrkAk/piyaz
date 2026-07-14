@@ -38,6 +38,7 @@
     "db:rls:verify": "bun scripts/verify-rls.ts",
     "db:rls:owner": "bun scripts/apply-owner-rls.ts",
     "db:baseline": "bun run scripts/baseline-self-host.ts",
+    "db:grandfather-verified": "bun scripts/grandfather-verified-users.ts",
     "db:push": "bun run scripts/assert-throwaway-db.ts && drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:test:up": "docker compose -f docker-compose.test.yml up -d --wait",

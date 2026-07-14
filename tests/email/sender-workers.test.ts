@@ -2,7 +2,7 @@ import { test, expect, beforeEach, afterAll, mock } from "bun:test";
 
 /** The structured builder shape the fake `send_email` binding records. */
 interface SendBuilder {
-  from: string;
+  from: string | { name: string; email: string };
   to: string;
   subject: string;
   replyTo?: string;
@@ -156,6 +156,15 @@ test("send omits replyTo from the builder when unset", async () => {
   const sender = getPlatformSender();
   await sender?.send(message);
   expect(_sendCalls[0]).not.toContainKey("replyTo");
+});
+
+test("send maps fromName to the binding's {email, name} address form", async () => {
+  const sender = getPlatformSender();
+  await sender?.send({ ...message, fromName: "Piyaz" });
+  expect(_sendCalls[0]?.from).toEqual({
+    name: "Piyaz",
+    email: "noreply@piyaz.ai",
+  });
 });
 
 test("send does not forward category to the binding", async () => {

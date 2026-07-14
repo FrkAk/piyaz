@@ -24,10 +24,12 @@ interface DeleteAccountDialogProps {
  * must type their email or the literal word DELETE. Password-account
  * holders also confirm with their password; provider-account holders
  * leave it blank and rely on a recent sign-in (`session_not_fresh`
- * surfaces inline otherwise). On confirm it calls `deleteAccountAction`;
- * on success the session is gone, so the user is redirected to
- * `/sign-in`. The sole-owner block surfaces inline so the user can
- * transfer or delete the offending team first.
+ * surfaces inline otherwise). On confirm it calls `deleteAccountAction`.
+ * Email-capable deploys send a confirmation link instead of deleting
+ * immediately (`verificationEmailSent`), so the dialog switches to a
+ * check-your-email notice; otherwise the session is gone and the user is
+ * redirected to `/sign-in`. The sole-owner block surfaces inline so the
+ * user can transfer or delete the offending team first.
  *
  * Mounts the body only while `open` is true so state resets on each open.
  *
@@ -73,6 +75,7 @@ function DeleteAccountDialogBody({
   const [typed, setTyped] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [emailSent, setEmailSent] = useState(false);
   const [pending, startTransition] = useTransition();
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -91,9 +94,61 @@ function DeleteAccountDialogBody({
         setError(result.message);
         return;
       }
+      if (result.data.verificationEmailSent) {
+        setEmailSent(true);
+        return;
+      }
       router.replace("/sign-in");
     });
   };
+
+  if (emailSent) {
+    return (
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-account-title"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18 }}
+        className="fixed inset-0 z-[70] flex items-center justify-center px-4"
+      >
+        <button
+          type="button"
+          aria-label="Close dialog"
+          onClick={onClose}
+          className="absolute inset-0 cursor-default bg-black/60 backdrop-blur-sm"
+        />
+        <motion.div
+          ref={panelRef}
+          initial={{ opacity: 0, scale: 0.96, y: 8 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.96, y: 8 }}
+          transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+          className="relative w-full max-w-md rounded-xl border border-border bg-surface p-6 shadow-[var(--shadow-float)]"
+        >
+          <h3
+            id="delete-account-title"
+            className="text-lg font-semibold text-text-primary"
+          >
+            Check your email
+          </h3>
+          <p className="mt-3 text-sm leading-relaxed text-text-secondary">
+            We sent a confirmation link to{" "}
+            <span className="font-mono text-text-primary">{email}</span>. Your
+            account stays active until you open it; the link expires in 24
+            hours.
+          </p>
+          <div className="mt-5 flex items-center justify-end">
+            <Button variant="secondary" size="md" onClick={onClose}>
+              Close
+            </Button>
+          </div>
+        </motion.div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div

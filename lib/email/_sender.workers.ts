@@ -12,7 +12,7 @@ import type { EmailDeliveryResult, EmailSender, OutboundEmail } from "./types";
  */
 interface SendEmailBinding {
   send(builder: {
-    from: string;
+    from: string | { name: string; email: string };
     to: string;
     subject: string;
     replyTo?: string;
@@ -95,7 +95,10 @@ class CloudflareEmailSender implements EmailSender {
   async send(message: OutboundEmail): Promise<EmailDeliveryResult> {
     try {
       const { messageId } = await this.binding.send({
-        from: message.from,
+        from:
+          message.fromName !== undefined
+            ? { name: message.fromName, email: message.from }
+            : message.from,
         to: message.to,
         subject: message.subject,
         html: message.html,
@@ -126,4 +129,17 @@ export function getPlatformSender(): EmailSender | null {
   const binding = getEmailBinding();
   if (binding === null || !hasConfiguredSender()) return null;
   return new CloudflareEmailSender(binding);
+}
+
+/**
+ * Boot-safe email-capability signal for this runtime. Reads only static env
+ * (`hasConfiguredSender`), never the request-scoped `EMAIL` binding, so it is
+ * safe to evaluate at module load where Better Auth option presence is
+ * decided. The binding itself is static wrangler config, so env-configured
+ * addresses imply the binding on a correctly deployed head.
+ *
+ * @returns `true` when a sender address is configured for this deployment.
+ */
+export function platformEmailConfigured(): boolean {
+  return hasConfiguredSender();
 }

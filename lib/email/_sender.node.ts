@@ -16,3 +16,16 @@ import type { EmailSender } from "./types";
 export function getPlatformSender(): EmailSender | null {
   return null;
 }
+
+/**
+ * Boot-safe email-capability signal for this runtime.
+ *
+ * Placeholder: returns `false` until the SMTP adapter lands; counting
+ * `EMAIL_FROM*` here would flip boot-time Better Auth behavior (delete-account
+ * email confirmation) with no deliverable transport behind it.
+ *
+ * @returns `false` until a Node transport exists.
+ */
+export function platformEmailConfigured(): boolean {
+  return false;
+}
