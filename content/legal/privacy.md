@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: July 12, 2026
+Last updated: July 14, 2026
 
 This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**, operated
 by the Piyaz team. **If you self-host Piyaz, this document does not apply to your
@@ -145,6 +145,7 @@ grows.
 - **Session records**: expire automatically after **7 days**.
 - **Acceptance records**: anonymized when your account is deleted (the link to you, your IP address, and your user-agent are removed) and retained in that anonymized form as evidence that the agreement existed.
 - **Operational logs and traces**: retained for up to **90 days** and then deleted or anonymized.
+- **Transactional email records**: our email provider (Cloudflare) retains per-message delivery metadata (sender, recipient, subject, and delivery status) for approximately **31 days** in its delivery analytics. Addresses that hard-bounce or report our mail as spam are kept on an account-level suppression list to prevent repeat sends.
 
 ## Your data protection rights
 
@@ -163,11 +164,30 @@ To exercise any of these rights, email **privacy@piyaz.ai**. We will respond wit
 
 ## Cookies
 
-We use only **strictly necessary cookies** required to operate the service, chiefly the
-authentication session cookie, which is `httpOnly`, `SameSite=Lax`, and `Secure` in
-production. We do **not** use analytics, advertising, or tracking cookies. Because our
-cookies are strictly necessary, no cookie-consent banner is required under the ePrivacy
-Directive.
+We use **first-party cookies only**: no analytics, advertising, or tracking cookies,
+and no third-party cookies. Every cookie we set falls under the ePrivacy Directive's
+consent exemptions, so no cookie-consent banner is shown.
+
+**Strictly necessary cookies** (essential to provide the service you request):
+
+| Cookie | Purpose | Duration |
+| --- | --- | --- |
+| `__Secure-better-auth.session_token` (no `__Secure-` prefix outside production) | Keeps you signed in. `httpOnly`, `Secure` in production, `SameSite=Lax`. | 7 days |
+| Short-lived `better-auth` flow cookies | Protect sign-in and agent-authorization flows against forgery (CSRF/state). | Minutes to browser close |
+
+**Preference cookies** (user-requested interface customization: each is set only when
+you take the matching action, stores no personal data, and is never used for tracking):
+
+| Cookie | Purpose | Duration |
+| --- | --- | --- |
+| `piyaz-theme` | Remembers your light/dark theme choice. | 1 year |
+| `piyaz-sidebar-collapsed` | Remembers whether the main sidebar is collapsed. | 1 year |
+| `piyaz-graph-rail-collapsed` | Remembers whether the project graph rail is collapsed. | 1 year |
+| `piyaz-notes-rail-collapsed` | Remembers whether the notes tree rail is hidden. | 1 year |
+| `piyaz-notes-settings-collapsed` | Remembers whether the notes settings ribbon is hidden. | 1 year |
+
+If we ever introduce cookies outside these exemptions, we will update this policy and
+ask for your consent first (see "Analytics we may add later").
 
 ## Analytics we may add later
 

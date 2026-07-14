@@ -71,6 +71,10 @@ bun run typecheck
 
 Both must pass. CI will run them automatically on your PR.
 
+## Legal and compliance surface
+
+`content/legal/*.md` and `lib/legal/versions.ts` are the legal surface for the hosted service. A PR that adds or renames a cookie or client-side storage key, collects new personal data, adds or swaps a third-party service, or changes how personal data flows must update the affected legal docs in the same PR, and say so in the PR template's "Compliance impact" section. When a document's text changes, bump its `LEGAL_VERSIONS` entry and the doc's "Last updated" date together; a bump re-offers the document to every user through the re-consent gate, so never bump without a text change. The cookie inventory in the privacy policy must stay in sync with the cookies the app actually sets.
+
 ## PR process
 
 - Create a feature branch from `main`.
