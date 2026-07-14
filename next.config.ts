@@ -13,6 +13,7 @@ const TARGET_FILES = [
   ["lib/db/_auth-kv-storage", `lib/db/_auth-kv-storage.${DRIVER_TARGET}`],
   ["lib/realtime/_broker", `lib/realtime/_broker.${DRIVER_TARGET}`],
   ["lib/email/_sender", `lib/email/_sender.${DRIVER_TARGET}`],
+  ["lib/email/_defer", `lib/email/_defer.${DRIVER_TARGET}`],
 ] as const;
 
 /**

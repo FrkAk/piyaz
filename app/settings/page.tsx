@@ -5,6 +5,7 @@ import { requireLegalConsent } from "@/lib/auth/consent";
 import { getSession } from "@/lib/auth/session";
 import { listOAuthSessionsAction } from "@/lib/actions/oauth-session";
 import { getPasswordUpdatedAt } from "@/lib/data/account";
+import { isEmailEnabled } from "@/lib/email";
 import { loadUserTeams } from "@/lib/server/request-loaders";
 import { SettingsView } from "./_components/SettingsView";
 
@@ -37,6 +38,11 @@ export default async function SettingsPage() {
   const initialSessions = sessionsResult.ok ? sessionsResult.data : [];
   const initialTeams = teamsResult.ok ? teamsResult.data : [];
 
+  // Request-time capability read (the Workers transport is request-scoped;
+  // this page is force-dynamic). Credential holders only: the change flow
+  // requires current-password re-entry, which social-login users don't have.
+  const emailChangeEnabled = isEmailEnabled() && passwordUpdatedAt !== null;
+
   return (
     <AppShell>
       <TopBar />
@@ -48,6 +54,7 @@ export default async function SettingsPage() {
           createdAt: session.user.createdAt,
         }}
         passwordUpdatedAt={passwordUpdatedAt}
+        emailChangeEnabled={emailChangeEnabled}
         initialSessions={initialSessions}
         initialTeams={initialTeams}
       />

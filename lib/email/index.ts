@@ -1,7 +1,10 @@
 import "server-only";
 
 import { LogSender } from "./log-sender";
-import { getPlatformSender } from "@/lib/email/_sender";
+import {
+  getPlatformSender,
+  platformEmailConfigured,
+} from "@/lib/email/_sender";
 import type { EmailSender } from "./types";
 
 /**
@@ -31,4 +34,18 @@ export function getEmailSender(): EmailSender | null {
  */
 export function isEmailEnabled(): boolean {
   return getEmailSender() !== null;
+}
+
+/**
+ * Boot-safe variant of the capability gate for config that Better Auth reads
+ * once at construction (for example whether account deletion requires an
+ * emailed confirmation). Reads only static env — `EMAIL_TRANSPORT=log` or the
+ * per-runtime `platformEmailConfigured()` — never the request-scoped Workers
+ * binding, so it is safe at module load. Request-time delivery still goes
+ * through `getEmailSender()`.
+ *
+ * @returns `true` when this deployment is configured to send email.
+ */
+export function isEmailConfiguredAtBoot(): boolean {
+  return process.env.EMAIL_TRANSPORT === "log" || platformEmailConfigured();
 }

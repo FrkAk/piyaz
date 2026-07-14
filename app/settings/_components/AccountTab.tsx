@@ -8,6 +8,7 @@ import { initials } from "@/lib/ui/initials";
 import { teamAvatarGradient } from "@/lib/ui/team-avatar";
 import { formatAbsolute } from "@/lib/ui/relative-time";
 import {
+  changeEmailAction,
   exportAccountDataAction,
   updateProfileAction,
 } from "@/lib/actions/profile";
@@ -43,20 +44,30 @@ interface AccountTabProps {
   /** Credential row's updatedAt (password last changed); null hides the
    *  password card (no password-bearing credential account). */
   passwordUpdatedAt: Date | string | null;
+  /** Whether the email-change flow is available (email-capable deploy AND
+   *  credential holder). When false the email field stays locked. */
+  emailChangeEnabled: boolean;
 }
 
 /**
- * Account tab — identity card (56px gradient avatar, locked email, editable
- * display name), password card (collapsed disclosure backed by
+ * Account tab — identity card (56px gradient avatar, editable display name,
+ * plus the locked email field on deploys without the change flow), email
+ * card (collapsed disclosure backed by `changeEmailAction`, shown only when
+ * `emailChangeEnabled`), password card (collapsed disclosure backed by
  * `changePasswordAction`), and a danger-zone card wiring the data export
  * (`exportAccountDataAction`) and account deletion (`DeleteAccountDialog`).
  * Photo upload remains a wired-once-backend-lands placeholder — see DESIGN
  * §11 conventions for non-functional buttons.
  *
- * @param props - Identity slice + password metadata.
- * @returns Tab body with H1, identity card, password card, danger zone.
+ * @param props - Identity slice + password metadata + email-change capability.
+ * @returns Tab body with H1, identity card, email card, password card,
+ *   danger zone.
  */
-export function AccountTab({ user, passwordUpdatedAt }: AccountTabProps) {
+export function AccountTab({
+  user,
+  passwordUpdatedAt,
+  emailChangeEnabled,
+}: AccountTabProps) {
   const router = useRouter();
   const [name, setName] = useState(user.name);
   const [pending, startTransition] = useTransition();
@@ -151,20 +162,22 @@ export function AccountTab({ user, passwordUpdatedAt }: AccountTabProps) {
             />
           </label>
 
-          <label className="block">
-            <span className={FIELD_LABEL_CLASS}>Email</span>
-            <input
-              type="email"
-              value={user.email}
-              disabled
-              aria-readonly="true"
-              className={`${INPUT_CLASS} cursor-not-allowed text-text-muted`}
-              title="Email is your sign-in identity and can't be changed here."
-            />
-            <p className="mt-1 text-[11px] text-text-muted">
-              Sign-in identity — managed by your auth provider.
-            </p>
-          </label>
+          {!emailChangeEnabled ? (
+            <label className="block">
+              <span className={FIELD_LABEL_CLASS}>Email</span>
+              <input
+                type="email"
+                value={user.email}
+                disabled
+                aria-readonly="true"
+                className={`${INPUT_CLASS} cursor-not-allowed text-text-muted`}
+                title="Email is your sign-in identity and can't be changed here."
+              />
+              <p className="mt-1 text-[11px] text-text-muted">
+                Sign-in identity — managed by your auth provider.
+              </p>
+            </label>
+          ) : null}
 
           <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
             <p className="text-[11.5px] text-text-muted">
@@ -192,6 +205,8 @@ export function AccountTab({ user, passwordUpdatedAt }: AccountTabProps) {
         </div>
       </form>
 
+      {emailChangeEnabled ? <EmailSection email={user.email} /> : null}
+
       {passwordUpdatedAt !== null ? (
         <PasswordSection lastChanged={passwordUpdatedAt} />
       ) : null}
@@ -214,6 +229,204 @@ export function AccountTab({ user, passwordUpdatedAt }: AccountTabProps) {
           </a>
         ))}
       </nav>
+    </section>
+  );
+}
+
+/**
+ * Email card — collapsed disclosure showing the current sign-in address;
+ * expands into new-email/current-password fields submitted through
+ * `changeEmailAction`. A successful submit only STARTS the change: Better
+ * Auth emails an approval link to the current address, then a verification
+ * link to the new one, so the card surfaces a sent-notice instead of
+ * refreshing. Collapse resets all field state so reopening starts clean.
+ *
+ * @param props - `email` — the current sign-in address.
+ * @returns Card with disclosure form between the identity card and the
+ *   password card.
+ */
+function EmailSection({ email }: { email: string }) {
+  const fieldId = useId();
+  const [open, setOpen] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [approvalSent, setApprovalSent] = useState(false);
+  // Same double-submit guard as PasswordSection: isPending flips only after
+  // a re-render, so the ref closes the gate synchronously.
+  const inFlightRef = useRef(false);
+
+  const trimmed = newEmail.trim().toLowerCase();
+  const sameAsCurrent = trimmed.length > 0 && trimmed === email.toLowerCase();
+  const submittable =
+    trimmed.length > 2 &&
+    trimmed.includes("@") &&
+    !sameAsCurrent &&
+    currentPassword.length > 0;
+
+  const close = () => {
+    setOpen(false);
+    setNewEmail("");
+    setCurrentPassword("");
+    setError(null);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape" && !pending) close();
+  };
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!submittable || pending || inFlightRef.current) return;
+    inFlightRef.current = true;
+    setError(null);
+    startTransition(async () => {
+      try {
+        const result = await changeEmailAction({
+          newEmail: trimmed,
+          currentPassword,
+        });
+        if (!result.ok) {
+          setError(result.message);
+          return;
+        }
+        close();
+        setApprovalSent(true);
+      } catch {
+        setError(
+          "Something went wrong reaching the server. Check your connection and try again.",
+        );
+      } finally {
+        inFlightRef.current = false;
+      }
+    });
+  };
+
+  return (
+    <section className="rounded-[10px] border border-border bg-surface p-5 shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-text-primary">Email</p>
+          <p className="mt-0.5 truncate text-[13px] text-text-muted">{email}</p>
+          <p className="mt-1.5 text-[11.5px] text-text-muted">
+            Sign-in identity — changing it requires approval from this address.
+          </p>
+        </div>
+        {!open ? (
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => {
+              setApprovalSent(false);
+              setOpen(true);
+            }}
+          >
+            Change email
+          </Button>
+        ) : null}
+      </div>
+
+      {approvalSent ? (
+        <p
+          role="status"
+          className="mt-4 rounded-md border border-border bg-base px-3 py-2 text-[12px] leading-relaxed text-text-secondary"
+        >
+          Approval link sent to {email}. The change completes after you verify
+          the new address.
+        </p>
+      ) : null}
+
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            key="email-form"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
+            style={{ overflow: "hidden" }}
+          >
+            <form
+              onSubmit={handleSubmit}
+              onKeyDown={handleKeyDown}
+              className="mt-5 space-y-4"
+            >
+              <label className="block">
+                <span className={FIELD_LABEL_CLASS}>New email</span>
+                <input
+                  type="email"
+                  value={newEmail}
+                  onChange={(event) => setNewEmail(event.target.value)}
+                  autoComplete="email"
+                  autoFocus
+                  aria-invalid={sameAsCurrent ? true : undefined}
+                  aria-describedby={
+                    sameAsCurrent ? `${fieldId}-email-error` : undefined
+                  }
+                  className={INPUT_CLASS}
+                />
+                {sameAsCurrent ? (
+                  <p
+                    id={`${fieldId}-email-error`}
+                    role="alert"
+                    className="mt-1 text-[11px] text-cancelled"
+                  >
+                    That&apos;s already your sign-in address.
+                  </p>
+                ) : null}
+              </label>
+
+              <label className="block">
+                <span className={FIELD_LABEL_CLASS}>Current password</span>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  autoComplete="current-password"
+                  className={INPUT_CLASS}
+                />
+              </label>
+
+              <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
+                <p className="min-w-0 text-[11.5px] leading-relaxed text-text-muted">
+                  We&apos;ll send an approval link to {email}, then a
+                  verification link to the new address.
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="md"
+                    onClick={close}
+                    disabled={pending}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    disabled={!submittable}
+                    isLoading={pending}
+                  >
+                    Change email
+                  </Button>
+                </div>
+              </div>
+
+              {error ? (
+                <p
+                  role="alert"
+                  className="rounded-md border border-cancelled/25 bg-cancelled/10 px-3 py-2 text-[12px] text-cancelled"
+                >
+                  {error}
+                </p>
+              ) : null}
+            </form>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </section>
   );
 }

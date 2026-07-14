@@ -14,8 +14,12 @@ import { ensureCacheControl, ensureNoStore } from "@/lib/security/headers";
  * the pattern), so removing its HTTP exposure closes both the
  * `list-invitations` non-admin bypass (MYMR-155) and the sibling
  * `get-full-organization` leak that returns the same invitation rows
- * to any org member. Self-service / password-reset / email-verification
- * routes are likewise omitted; the UI does not call them today.
+ * to any org member. The password-reset / email-verification / delete
+ * confirmation family is exposed for the emailed links and the auth UI;
+ * `/change-email` and `/delete-user` stay omitted — both initiate through
+ * server actions only (`changeEmailAction`, `deleteAccountAction`), which
+ * carry their own rate limits and, for email change, the current-password
+ * re-entry gate.
  *
  * `/oauth2/token` is also served by a dedicated Next route
  * (`app/api/auth/oauth2/token/route.ts`) that defaults the `resource`
@@ -28,6 +32,15 @@ const ALLOWED_PATHS: ReadonlySet<string> = new Set([
   "/sign-up/email",
   "/sign-out",
   "/get-session",
+
+  // Email flows (PYZ-317). The GET entries are emailed links; the POST
+  // entries are called by the auth UI (PYZ-318). Rate limits live in
+  // `rateLimit.customRules` (lib/auth.ts).
+  "/request-password-reset",
+  "/reset-password",
+  "/verify-email",
+  "/send-verification-email",
+  "/delete-user/callback",
 
   // `app/api/mcp/route.ts:36` verifies bearer tokens against this JWKS.
   "/jwks",
@@ -46,6 +59,14 @@ const ALLOWED_PATHS: ReadonlySet<string> = new Set([
   "/.well-known/oauth-authorization-server",
   "/.well-known/openid-configuration",
 ]);
+
+/**
+ * Allowlisted path prefixes for Better Auth routes carrying a path-segment
+ * parameter, which the exact-match set cannot express. The only entry is the
+ * emailed password-reset link (`/reset-password/<token>`), a GET that
+ * redirects to the reset form.
+ */
+const ALLOWED_PREFIXES: readonly string[] = ["/reset-password/"];
 
 const BASE_PATH = "/api/auth";
 
@@ -104,7 +125,11 @@ function normalizeAuthPath(pathname: string): string | null {
 async function handler(request: Request): Promise<Response> {
   const { pathname } = new URL(request.url);
   const path = normalizeAuthPath(pathname);
-  if (path === null || !ALLOWED_PATHS.has(path)) {
+  if (
+    path === null ||
+    (!ALLOWED_PATHS.has(path) &&
+      !ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix)))
+  ) {
     return new Response("Not Found", { status: 404 });
   }
   const response = await auth.handler(request);

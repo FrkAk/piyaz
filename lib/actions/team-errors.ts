@@ -26,6 +26,7 @@ export type TeamActionFailureCode =
   | "slug_taken"
   | "invalid_password"
   | "session_not_fresh"
+  | "email_not_configured"
   | "rate_limited"
   | "dpa_not_accepted"
   | "unknown";
@@ -62,6 +63,8 @@ export const TEAM_ACTION_MESSAGES: Record<TeamActionFailureCode, string> = {
   invalid_password: "Current password is incorrect.",
   session_not_fresh:
     "For security, confirm with your password or sign in again, then retry.",
+  email_not_configured:
+    "Email is not configured on this deployment, so this action is unavailable.",
   rate_limited: "Too many attempts. Please wait a moment and try again.",
   dpa_not_accepted:
     "You must accept the data processing agreement to create a team.",

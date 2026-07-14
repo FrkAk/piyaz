@@ -100,6 +100,9 @@ interface SettingsViewProps {
   /** Credential row's updatedAt (password last changed), or null when the
    *  user has no password-bearing credential account. */
   passwordUpdatedAt: Date | string | null;
+  /** Whether the email-change flow is available (email-capable deploy AND
+   *  credential holder), resolved server-side per request. */
+  emailChangeEnabled: boolean;
   /** Initial OAuth device sessions, fetched server-side. */
   initialSessions: OAuthSessionView[];
   /** Initial team memberships, fetched server-side. */
@@ -118,6 +121,7 @@ interface SettingsViewProps {
 export function SettingsView({
   user,
   passwordUpdatedAt,
+  emailChangeEnabled,
   initialSessions,
   initialTeams,
 }: SettingsViewProps) {
@@ -271,7 +275,11 @@ export function SettingsView({
               transition={{ duration: 0.16, ease: "easeOut" }}
             >
               {tab === "account" && (
-                <AccountTab user={user} passwordUpdatedAt={passwordUpdatedAt} />
+                <AccountTab
+                  user={user}
+                  passwordUpdatedAt={passwordUpdatedAt}
+                  emailChangeEnabled={emailChangeEnabled}
+                />
               )}
               {tab === "teams" && (
                 <TeamsTab

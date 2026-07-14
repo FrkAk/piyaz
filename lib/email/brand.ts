@@ -162,12 +162,17 @@ export type EmailPurpose = keyof typeof PURPOSE_SENDER_VARS;
  * - `personal`: `EMAIL_FROM_SUPPORT`, `replyTo` = `EMAIL_REPLY_TO` else the
  *   resolved `from` (a `replyTo` is always present).
  * - `informational`: `EMAIL_FROM_INFO`, no `replyTo`.
+ *
+ * Accepts a pre-resolved `brand` so callers that already resolved the config
+ * for rendering pass it down instead of re-reading env.
  */
-export function senderFor(purpose: EmailPurpose): {
+export function senderFor(
+  purpose: EmailPurpose,
+  brand: BrandConfig = resolveBrandConfig(),
+): {
   from: string;
   replyTo?: string;
 } {
-  const brand = resolveBrandConfig();
   const fallbackFrom =
     brandString("EMAIL_FROM") ??
     `noreply@${hostOf(brand.appUrl) ?? "localhost"}`;

@@ -23,12 +23,15 @@ export type EmailDeliveryResult =
  * A single transactional email to deliver. `to` is a single recipient (all
  * downstream flows are single-recipient transactional mail). Both `html` and
  * `text` are required for deliverability. `replyTo` is optional and distinct
- * from `from`. `category` is optional open metadata only, never a routing instruction;
+ * from `from`. `fromName` is an optional display name for the `from` address;
+ * transports that support a structured address form render it, others ignore
+ * it. `category` is optional open metadata only, never a routing instruction;
  * purpose→address routing lives in the brand resolver, not here.
  */
 export interface OutboundEmail {
   to: string;
   from: string;
+  fromName?: string;
   replyTo?: string;
   subject: string;
   html: string;

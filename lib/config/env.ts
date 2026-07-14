@@ -36,3 +36,21 @@ export function signupsDisabled(): boolean {
   const signupsEnabled = process.env.NEXT_PUBLIC_SIGNUPS_ENABLED === "true";
   return isHosted && !signupsEnabled;
 }
+
+/**
+ * Whether sign-in requires a verified email address for this deployment.
+ *
+ * A dedicated deploy signal (`REQUIRE_EMAIL_VERIFICATION=true`), never derived
+ * from email-transport availability: `EMAIL_TRANSPORT=log` would make a
+ * transport-based gate block self-host sign-ins while verification mail goes
+ * to stdout. Fail open: unset means no verification gate, so self-host
+ * behavior is unchanged. Set only on cloud heads, in lockstep with
+ * `scripts/grandfather-verified-users.ts` (enabling the gate without the
+ * grandfather run locks out every pre-existing account). Read once at Better
+ * Auth construction.
+ *
+ * @returns `true` when unverified sign-ins must be blocked, else `false`.
+ */
+export function emailVerificationRequired(): boolean {
+  return process.env.REQUIRE_EMAIL_VERIFICATION === "true";
+}

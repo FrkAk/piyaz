@@ -6,9 +6,11 @@ import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
 import { requireLegalConsent } from "@/lib/auth/consent";
 import { getSession } from "@/lib/auth/session";
+import { sendPasswordChangedEmail } from "@/lib/auth/emails";
 import {
   checkActionIpRateLimit,
   checkActionUserRateLimit,
+  clientIpFromHeaders,
   type ActionRateLimitConfig,
 } from "@/lib/actions/rate-limit-action";
 import {
@@ -92,7 +94,7 @@ export async function changePasswordAction(input: {
   const ipLimit = await checkActionIpRateLimit(RATE_LIMIT);
   if (!ipLimit.ok) return teamFail("rate_limited");
 
-  let userId: string;
+  let user: { id: string; email: string; name: string };
   try {
     const session = await getSession();
     // getSession returns null for a missing session and throws only on
@@ -100,19 +102,20 @@ export async function changePasswordAction(input: {
     // them structurally keeps a DB hiccup during a credential flow from
     // masquerading as "you must be signed in".
     if (!session) return teamFail("unauthorized");
-    userId = session.user.id;
+    user = session.user;
   } catch (err) {
     console.error("changePasswordAction session lookup failed", err);
     return teamFail("unknown");
   }
-  await requireLegalConsent(userId);
+  await requireLegalConsent(user.id);
 
   const parsed = parseOrFail(changePasswordSchema, input);
   if (!parsed.ok) return parsed;
 
-  const userLimit = await checkActionUserRateLimit(RATE_LIMIT, userId);
+  const userLimit = await checkActionUserRateLimit(RATE_LIMIT, user.id);
   if (!userLimit.ok) return teamFail("rate_limited");
 
+  const requestHeaders = await headers();
   try {
     await auth.api.changePassword({
       body: {
@@ -120,7 +123,7 @@ export async function changePasswordAction(input: {
         newPassword: parsed.data.newPassword,
         revokeOtherSessions: true,
       },
-      headers: await headers(),
+      headers: requestHeaders,
     });
   } catch (err) {
     const code = mapBetterAuthError(err);
@@ -128,6 +131,18 @@ export async function changePasswordAction(input: {
       console.error("changePasswordAction failed", err);
     }
     return teamFail(code);
+  }
+
+  // onPasswordReset covers only the reset flow, so the settings path sends
+  // the same notification itself. Floated and contained: a render or
+  // delivery failure never fails the completed password change.
+  try {
+    sendPasswordChangedEmail(user, {
+      device: requestHeaders.get("user-agent") ?? undefined,
+      location: clientIpFromHeaders(requestHeaders) ?? undefined,
+    });
+  } catch (err) {
+    console.error("changePasswordAction notification failure", err);
   }
 
   revalidatePath("/settings");
