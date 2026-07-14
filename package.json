@@ -18,7 +18,7 @@
     "build:cf": "DEPLOY_TARGET=cloudflare next build --webpack && DEPLOY_TARGET=cloudflare opennextjs-cloudflare build",
     "preview:cf": "DEPLOY_TARGET=cloudflare next build --webpack && DEPLOY_TARGET=cloudflare opennextjs-cloudflare build && DEPLOY_TARGET=cloudflare opennextjs-cloudflare preview --env production",
     "deploy:cf": "bun run scripts/assert-deploy-ready.ts && DEPLOY_TARGET=cloudflare next build --webpack && DEPLOY_TARGET=cloudflare opennextjs-cloudflare build && DEPLOY_TARGET=cloudflare opennextjs-cloudflare deploy --env production",
-    "deploy:cf:dev": "SIGNUPS_ENABLED=true DEPLOY_TARGET=cloudflare next build --webpack && DEPLOY_TARGET=cloudflare opennextjs-cloudflare build && DEPLOY_TARGET=cloudflare opennextjs-cloudflare deploy --env dev",
+    "deploy:cf:dev": "SIGNUPS_ENABLED=true DEPLOY_TARGET=cloudflare next build --webpack && SIGNUPS_ENABLED=true DEPLOY_TARGET=cloudflare opennextjs-cloudflare build && SIGNUPS_ENABLED=true DEPLOY_TARGET=cloudflare opennextjs-cloudflare deploy --env dev",
     "cf-typegen": "wrangler types --env production --env-interface CloudflareEnv cloudflare-env.d.ts",
     "pretest": "[ -n \"$TEST_DATABASE_URL\" ] || bun run db:test:up",
     "test": "bun test",
