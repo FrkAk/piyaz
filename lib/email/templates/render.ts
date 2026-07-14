@@ -193,7 +193,7 @@ function renderFooter(brand: BrandConfig): string {
     ? `<div style="margin-top:8px;">${links
         .map(
           (link) =>
-            `<a href="${escapeHtml(link.url)}" style="color:${MUTED};text-decoration:underline;margin:0 8px;">${escapeHtml(link.label)}</a>`,
+            `<a href="${escapeHtml(link.url)}" style="color:${MUTED};text-decoration:underline;margin:0 16px 0 0;">${escapeHtml(link.label)}</a>`,
         )
         .join("")}</div>`
     : "";
