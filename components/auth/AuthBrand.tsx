@@ -4,11 +4,13 @@
  * sidebar variant (22×22) because the auth surface is a destination, not
  * a chrome accessory.
  *
+ * @param props - Optional layout classes appended to the flex row;
+ *   defaults to the auth-form margin (`mb-8`).
  * @returns Inline-flex brand row.
  */
-export function AuthBrand() {
+export function AuthBrand({ className = "mb-8" }: { className?: string }) {
   return (
-    <div className="mb-8 flex items-center gap-2.5">
+    <div className={`flex items-center gap-2.5 ${className}`}>
       {/* eslint-disable-next-line @next/next/no-img-element -- brand mark is a 30px static asset; next/image optimization is overkill and unconfigured on the Cloudflare build */}
       <img
         src="/piyaz-mark.png"

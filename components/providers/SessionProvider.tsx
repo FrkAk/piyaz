@@ -28,8 +28,10 @@ const PUBLIC_PATHS = [
 ];
 
 /**
- * Client mirror of the middleware's public-path rules: exact matches plus
- * the invitation detail prefix.
+ * Client counterpart of the middleware's public-path rules: exact matches
+ * plus the invitation detail prefix. Deliberately omits `/consent`, which
+ * middleware exempts: the OAuth consent surface needs a session
+ * client-side, so this guard's sign-in bounce is correct there.
  *
  * @param pathname - Current route pathname.
  * @returns True when the path renders without a session.

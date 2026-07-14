@@ -8,11 +8,12 @@ import type { EmailSender } from "@/lib/email/types";
  * End-to-end coverage for the email-auth UI backends PYZ-318 wires: the
  * `/verify-email` landing redirects (success, reuse, tampered token, and
  * the invite `next` param surviving both legs), the `/reset-password`
- * error leg, invitation delivery through `sendInvitationEmail` with the
- * personal sender, recipient view/accept/reject without email
- * verification (`requireEmailVerificationOnInvitation: false`), resend
- * refreshing the same row, and the account-deletion callback landing on
- * `/account-deleted`.
+ * error and success legs, invitation delivery through
+ * `sendInvitationEmail` with the personal sender, recipient
+ * view/accept/reject without email verification
+ * (`requireEmailVerificationOnInvitation: false`), wrong-recipient view
+ * and accept rejection, resend refreshing the same row, and the
+ * account-deletion callback landing on `/account-deleted`.
  *
  * Flows drive `auth.handler(...)` on locally-constructed `createAuth()`
  * instances (one email-enabled ungated, one email-enabled gated), so
@@ -347,7 +348,7 @@ test("the invite next param survives both verification redirect legs", async () 
   expect(successTarget.searchParams.get("error")).toBeNull();
 });
 
-test("a tampered reset link redirects to /reset-password with INVALID_TOKEN", async () => {
+test("reset links redirect to /reset-password: tampered with INVALID_TOKEN, valid with the token", async () => {
   const email = "reset-error-leg@test.local";
   await signUpWithCookie(authEmail, email, "reset-error-leg-pw", "127.0.6.20");
   const request = await authPost(
@@ -366,6 +367,12 @@ test("a tampered reset link redirects to /reset-password with INVALID_TOKEN", as
   const target = redirectUrl(response);
   expect(target.pathname).toBe("/reset-password");
   expect(target.searchParams.get("error")).toBe("INVALID_TOKEN");
+
+  const valid = await authGet(authEmail, link, "127.0.6.21");
+  const validTarget = redirectUrl(valid);
+  expect(validTarget.pathname).toBe("/reset-password");
+  expect(validTarget.searchParams.get("token")).toBeTruthy();
+  expect(validTarget.searchParams.get("error")).toBeNull();
 });
 
 test("invitation delivers via the personal sender and an unverified recipient views and accepts", async () => {
@@ -426,7 +433,7 @@ test("invitation delivers via the personal sender and an unverified recipient vi
   expect(accept.status).toBe(200);
 });
 
-test("wrong recipient and unknown invitation ids collapse to non-200s", async () => {
+test("wrong-recipient view and accept, and unknown invitation ids, collapse to non-200s", async () => {
   const inviterCookie = (await signUpWithCookie(
     authEmail,
     "enum-owner@test.local",
@@ -459,6 +466,15 @@ test("wrong recipient and unknown invitation ids collapse to non-200s", async ()
     outsiderCookie,
   );
   expect(wrongRecipient.status).toBe(403);
+
+  const wrongAccept = await authPost(
+    authEmail,
+    "/organization/accept-invitation",
+    { invitationId },
+    "127.0.6.41",
+    { cookie: outsiderCookie },
+  );
+  expect(wrongAccept.status).toBe(403);
 
   const unknown = await authGet(
     authEmail,

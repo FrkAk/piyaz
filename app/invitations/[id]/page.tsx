@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import type { ReactNode } from "react";
 import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
 import { AuthLinkButton } from "@/components/auth/AuthLinkButton";
+import { AuthStatusFrame } from "@/components/auth/AuthStatusFrame";
 import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
 import { mapBetterAuthError } from "@/lib/actions/team-errors";
 import { requireLegalConsent } from "@/lib/auth/consent";
@@ -44,40 +44,6 @@ function expiryLabel(expiresAt: Date): string {
   return hours >= 48 ? `in ${Math.round(hours / 24)}d` : `in ${hours}h`;
 }
 
-/** Centered invitation frame: mono eyebrow + heading + slot content. */
-function InviteFrame({
-  heading,
-  children,
-}: {
-  heading: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-dvh items-center justify-center px-4">
-      <div className="w-full max-w-md space-y-4">
-        <div className="text-center">
-          <span
-            className="mb-2 block font-mono text-[10px] font-semibold uppercase"
-            style={{
-              color: "var(--color-accent-light)",
-              letterSpacing: "0.14em",
-            }}
-          >
-            Team invitation
-          </span>
-          <h1
-            className="text-[26px] font-semibold text-text-primary"
-            style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
-          >
-            {heading}
-          </h1>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
 /**
  * The one panel every failure mode renders: missing, expired, withdrawn,
  * wrong recipient, malformed id, and rate-limited all collapse here so
@@ -85,7 +51,7 @@ function InviteFrame({
  */
 function UnavailablePanel() {
   return (
-    <InviteFrame heading="Invitation unavailable">
+    <AuthStatusFrame eyebrow="Team invitation" heading="Invitation unavailable">
       <p
         className="text-center text-sm text-text-muted"
         style={{ lineHeight: 1.55 }}
@@ -103,7 +69,7 @@ function UnavailablePanel() {
           Go to your workspace
         </Link>
       </p>
-    </InviteFrame>
+    </AuthStatusFrame>
   );
 }
 
@@ -123,10 +89,11 @@ function DetailRow({ label, value }: { label: string; value: string }) {
  *
  * - Signed out → a neutral shell with zero invitation details, whose
  *   sign-in/sign-up CTAs carry this page as the `next` destination.
- * - Signed in → consent gate, then a view rate limit, then
- *   `auth.api.getInvitation`, which BA restricts to pending, unexpired
- *   invitations whose email matches the session (anti-enumeration:
- *   every failure renders the same generic panel).
+ * - Signed in → malformed ids are rejected for free, then a view rate
+ *   limit, then the consent gate, then `auth.api.getInvitation`, which
+ *   BA restricts to pending, unexpired invitations whose email matches
+ *   the session (anti-enumeration: every failure renders the same
+ *   generic panel).
  *
  * @param props - Route params carrying the invitation id.
  * @returns Neutral shell, generic panel, or the invitation detail card.
@@ -138,7 +105,7 @@ export default async function InvitationPage({ params }: InvitationPageProps) {
   if (!session) {
     const next = encodeURIComponent(`/invitations/${id}`);
     return (
-      <InviteFrame heading="You've been invited">
+      <AuthStatusFrame eyebrow="Team invitation" heading="You've been invited">
         <p
           className="text-center text-sm text-text-muted"
           style={{ lineHeight: 1.55 }}
@@ -152,7 +119,7 @@ export default async function InvitationPage({ params }: InvitationPageProps) {
           </AuthLinkButton>
           <Link
             href={`/sign-up?next=${next}`}
-            className="inline-flex w-full items-center justify-center rounded-lg border text-[13px] font-medium text-text-primary transition-colors hover:bg-surface-hover"
+            className="inline-flex w-full items-center justify-center rounded-lg border text-[13px] font-medium text-text-primary transition-colors outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
             style={{
               height: 38,
               background: "var(--color-surface-raised)",
@@ -163,11 +130,9 @@ export default async function InvitationPage({ params }: InvitationPageProps) {
             Create an account
           </Link>
         </div>
-      </InviteFrame>
+      </AuthStatusFrame>
     );
   }
-
-  await requireLegalConsent(session.user.id);
 
   if (!z.uuid().safeParse(id).success) return <UnavailablePanel />;
 
@@ -181,6 +146,8 @@ export default async function InvitationPage({ params }: InvitationPageProps) {
     session.user.id,
   );
   if (!limit.ok) return <UnavailablePanel />;
+
+  await requireLegalConsent(session.user.id);
 
   let invitation: InvitationDetail | null = null;
   try {
@@ -213,7 +180,10 @@ export default async function InvitationPage({ params }: InvitationPageProps) {
       : "member";
 
   return (
-    <InviteFrame heading={`Join ${invitation.organizationName}`}>
+    <AuthStatusFrame
+      eyebrow="Team invitation"
+      heading={`Join ${invitation.organizationName}`}
+    >
       <div
         className="space-y-4 rounded-[10px] border p-5"
         style={{
@@ -233,6 +203,6 @@ export default async function InvitationPage({ params }: InvitationPageProps) {
         </div>
         <InvitationActions invitationId={id} />
       </div>
-    </InviteFrame>
+    </AuthStatusFrame>
   );
 }

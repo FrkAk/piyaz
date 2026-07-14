@@ -143,7 +143,7 @@ export function PendingInvitationsList({
                           variant="secondary"
                           size="sm"
                           isLoading={resendingId === invitation.id}
-                          disabled={resendingId !== null}
+                          disabled={resendingId !== null || sentId !== null}
                           onClick={() => handleResend(invitation.id)}
                         >
                           {sentId === invitation.id ? "Sent" : "Resend"}
