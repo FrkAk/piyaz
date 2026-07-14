@@ -3,7 +3,11 @@ import "server-only";
 import { jwtVerify } from "jose";
 import { getEmailSender } from "@/lib/email";
 import { enrollEmailSend } from "@/lib/email/_defer";
-import { resolveBrandConfig, senderFor } from "@/lib/email/brand";
+import {
+  resolveBrandConfig,
+  senderFor,
+  type EmailPurpose,
+} from "@/lib/email/brand";
 import {
   deleteAccountEmail,
   emailChangeApprovalEmail,
@@ -11,6 +15,7 @@ import {
   newSignInEmail,
   passwordChangedEmail,
   passwordResetEmail,
+  teamInviteEmail,
   verificationEmail,
   type RenderedEmail,
 } from "@/lib/email/templates";
@@ -51,6 +56,7 @@ export interface SignInContext {
  * @param subject - Caller-owned subject line.
  * @param brand - Brand config, resolved once by the caller for the subject.
  * @param render - Renders the body once the capability gate has passed.
+ * @param senderKind - Sender purpose for address selection; defaults to transactional (noreply).
  */
 function deliverAuthEmail(
   to: string,
@@ -58,10 +64,11 @@ function deliverAuthEmail(
   subject: string,
   brand: BrandConfig,
   render: (brand: BrandConfig) => RenderedEmail,
+  senderKind: EmailPurpose = "transactional",
 ): void {
   const sender = getEmailSender();
   if (sender === null) return;
-  const { from, replyTo } = senderFor("transactional", brand);
+  const { from, replyTo } = senderFor(senderKind, brand);
   const rendered = render(brand);
   const send = sender
     .send({
@@ -304,5 +311,40 @@ export function sendNewSignInEmail(
         device: context.device,
         location: context.location,
       }),
+  );
+}
+
+/**
+ * `organization.sendInvitationEmail` wiring. Builds the invitation URL from
+ * the brand's `appUrl` (Better Auth provides no built-in link) and sends from
+ * the personal purpose (an invite invites a reply), with a real reply-to
+ * instead of noreply. TTL label mirrors the organization plugin's
+ * `invitationExpiresIn` default of 48 hours.
+ *
+ * @param data - Better Auth invitation payload (structural subset).
+ */
+export async function sendTeamInviteEmail(data: {
+  id: string;
+  email: string;
+  organization: { name: string };
+  inviter: { user: { name: string; email: string } };
+}): Promise<void> {
+  const brand = resolveBrandConfig();
+  const inviteUrl = new URL(`/invitations/${data.id}`, brand.appUrl).toString();
+  deliverAuthEmail(
+    data.email,
+    "teamInvite",
+    `Join ${data.organization.name} on ${brand.appName}`,
+    brand,
+    (b) =>
+      teamInviteEmail(b, {
+        inviteUrl,
+        teamName: data.organization.name,
+        inviterName: data.inviter.user.name || undefined,
+        inviterEmail: data.inviter.user.email || undefined,
+        recipientEmail: data.email,
+        expiresLabel: "48 hours",
+      }),
+    "personal",
   );
 }

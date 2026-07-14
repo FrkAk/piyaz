@@ -39,9 +39,11 @@ export default async function SettingsPage() {
   const initialTeams = teamsResult.ok ? teamsResult.data : [];
 
   // Request-time capability read (the Workers transport is request-scoped;
-  // this page is force-dynamic). Credential holders only: the change flow
-  // requires current-password re-entry, which social-login users don't have.
-  const emailChangeEnabled = isEmailEnabled() && passwordUpdatedAt !== null;
+  // this page is force-dynamic). Email-change additionally needs a
+  // credential holder: the flow requires current-password re-entry, which
+  // social-login users don't have.
+  const emailEnabled = isEmailEnabled();
+  const emailChangeEnabled = emailEnabled && passwordUpdatedAt !== null;
 
   return (
     <AppShell>
@@ -55,6 +57,7 @@ export default async function SettingsPage() {
         }}
         passwordUpdatedAt={passwordUpdatedAt}
         emailChangeEnabled={emailChangeEnabled}
+        emailEnabled={emailEnabled}
         initialSessions={initialSessions}
         initialTeams={initialTeams}
       />

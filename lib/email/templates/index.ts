@@ -12,6 +12,7 @@ export {
   type PasswordChangedParams,
   type NewSignInParams,
   type DeleteAccountParams,
+  type TeamInviteParams,
   verificationEmail,
   passwordResetEmail,
   emailChangeEmail,
@@ -19,4 +20,5 @@ export {
   passwordChangedEmail,
   newSignInEmail,
   deleteAccountEmail,
+  teamInviteEmail,
 } from "./templates";

@@ -254,7 +254,10 @@ export async function deleteAccountAction(input?: {
 
   try {
     await auth.api.deleteUser({
-      body: parsed.data.password ? { password: parsed.data.password } : {},
+      body: {
+        callbackURL: "/account-deleted",
+        ...(parsed.data.password ? { password: parsed.data.password } : {}),
+      },
       headers: await headers(),
     });
     return {

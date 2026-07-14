@@ -1,5 +1,5 @@
 /**
- * The seven transactional email templates as pure functions of a `BrandConfig`
+ * The transactional email templates as pure functions of a `BrandConfig`
  * plus per-email params. Each returns a matched `{ html, text }` pair through
  * the shared shell in `render.ts`, which owns all escaping, URL scheme checks,
  * and the branded-vs-neutral gating. Params are treated as untrusted; the shell
@@ -303,6 +303,53 @@ export function deleteAccountEmail(
     brand,
     `Confirm the deletion of your ${brand.appName} account`,
     "Confirm account deletion",
+    blocks,
+  );
+}
+
+/** Params for the team-invitation email. */
+export interface TeamInviteParams {
+  inviteUrl: string;
+  teamName: string;
+  inviterName?: string;
+  inviterEmail?: string;
+  /** The invited address, echoed so the recipient knows which account to sign in with. */
+  recipientEmail?: string;
+  /** Human-readable expiry label (e.g. "48 hours"); owned by the caller so no TTL is baked in here. */
+  expiresLabel?: string;
+}
+
+/** Team invitation: names the inviter and team, links the invitation page, optional expiry and sent-to notes. */
+export function teamInviteEmail(
+  brand: BrandConfig,
+  params: TeamInviteParams,
+): RenderedEmail {
+  const inviter = params.inviterName
+    ? params.inviterEmail
+      ? `${params.inviterName} (${params.inviterEmail})`
+      : params.inviterName
+    : "A teammate";
+  const blocks: EmailBlock[] = [
+    {
+      kind: "paragraph",
+      text: `${inviter} invited you to join ${params.teamName} on ${brand.appName}.`,
+    },
+    { kind: "action", label: "View invitation", url: params.inviteUrl },
+  ];
+  blocks.push(...expiryNote(params.expiresLabel));
+  if (params.recipientEmail)
+    blocks.push({
+      kind: "note",
+      text: `This invitation was sent to ${params.recipientEmail}. Sign in with that address to accept it.`,
+    });
+  blocks.push({
+    kind: "note",
+    text: "If you weren't expecting this invitation, you can safely ignore this email.",
+  });
+  return render(
+    brand,
+    `Join ${params.teamName} on ${brand.appName}`,
+    "You've been invited",
     blocks,
   );
 }

@@ -9,6 +9,7 @@ import {
   getBackend,
 } from "@/lib/api/rate-limit";
 import { buildCsp } from "@/lib/security/headers";
+import { safeInviteNext } from "@/lib/auth/invite-next";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -50,9 +51,11 @@ export async function middleware(request: NextRequest) {
     return response;
   };
 
-  // Auth pages: redirect to home if already signed in
+  // Auth pages: redirect signed-in users to their validated invite
+  // destination when one is carried, else home.
   if (session && (pathname === "/sign-in" || pathname === "/sign-up")) {
-    return withCsp(NextResponse.redirect(new URL("/", request.url)));
+    const next = safeInviteNext(request.nextUrl.searchParams.get("next"));
+    return withCsp(NextResponse.redirect(new URL(next ?? "/", request.url)));
   }
 
   // Protected app pages: redirect to sign-in if not authenticated.
@@ -62,11 +65,16 @@ export async function middleware(request: NextRequest) {
     pathname === "/sign-in" ||
     pathname === "/sign-up" ||
     pathname === "/consent" ||
+    pathname === "/verify-email" ||
+    pathname === "/forgot-password" ||
+    pathname === "/reset-password" ||
+    pathname === "/account-deleted" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||
     pathname === "/impressum" ||
     pathname === "/subprocessors" ||
     pathname === "/dpa" ||
+    pathname.startsWith("/invitations/") ||
     pathname.startsWith("/api/auth/") ||
     pathname === "/api/mcp" ||
     pathname.startsWith("/.well-known/");

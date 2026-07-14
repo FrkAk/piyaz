@@ -103,6 +103,9 @@ interface SettingsViewProps {
   /** Whether the email-change flow is available (email-capable deploy AND
    *  credential holder), resolved server-side per request. */
   emailChangeEnabled: boolean;
+  /** Whether the deploy can send email at all, resolved server-side per
+   *  request. Gates the invitation Resend action. */
+  emailEnabled: boolean;
   /** Initial OAuth device sessions, fetched server-side. */
   initialSessions: OAuthSessionView[];
   /** Initial team memberships, fetched server-side. */
@@ -122,6 +125,7 @@ export function SettingsView({
   user,
   passwordUpdatedAt,
   emailChangeEnabled,
+  emailEnabled,
   initialSessions,
   initialTeams,
 }: SettingsViewProps) {
@@ -314,6 +318,7 @@ export function SettingsView({
       <TeamManageModal
         team={tab === "teams" ? activeTeam : null}
         currentUserId={user.id}
+        emailEnabled={emailEnabled}
         onClose={closeManage}
       />
     </div>

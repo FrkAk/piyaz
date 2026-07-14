@@ -13,6 +13,8 @@ interface InviteSectionProps {
   invitations: InvitationView[];
   /** Current invite-code metadata, or null when none has been minted. */
   inviteCode: InviteCodeMetadata | null;
+  /** Whether the deploy can send email; gates the pending-list Resend action. */
+  emailEnabled: boolean;
   /** Refresh the pending list after invite/cancel. */
   onInvitationsChanged: () => Promise<void>;
   /** Replace the invite-code metadata after rotate/revoke. */
@@ -36,6 +38,7 @@ export function InviteSection({
   teamId,
   invitations,
   inviteCode,
+  emailEnabled,
   onInvitationsChanged,
   onInviteCodeChanged,
   onRefreshMembers,
@@ -58,6 +61,7 @@ export function InviteSection({
         <PendingInvitationsList
           organizationId={teamId}
           invitations={invitations}
+          emailEnabled={emailEnabled}
           onChanged={onInvitationsChanged}
           onError={onError}
         />

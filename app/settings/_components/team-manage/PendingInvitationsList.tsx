@@ -1,10 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
 import { formatAbsolute } from "@/lib/ui/relative-time";
 import { roleStyle } from "@/lib/ui/role-badge";
-import { cancelInvitationAction } from "@/lib/actions/team-invitations";
+import {
+  cancelInvitationAction,
+  resendInvitationAction,
+} from "@/lib/actions/team-invitations";
 import type { InvitationView } from "@/lib/actions/team-invitations-map";
 import { InlineConfirm } from "@/app/settings/_components/InlineConfirm";
 
@@ -13,9 +17,11 @@ interface PendingInvitationsListProps {
   organizationId: string;
   /** Invitations currently in `pending` state. Already filtered server-side. */
   invitations: InvitationView[];
-  /** Called after a successful cancel to refresh the list. */
+  /** Whether the deploy can send email; gates the Resend action. */
+  emailEnabled: boolean;
+  /** Called after a successful cancel or resend to refresh the list. */
   onChanged: () => Promise<void> | void;
-  /** Surface a transient error from any cancel. */
+  /** Surface a transient error from any cancel or resend. */
   onError: (message: string) => void;
 }
 
@@ -35,18 +41,24 @@ function formatExpiry(date: Date): string {
 
 /**
  * Pending invitations panel. Lists every still-actionable invitation with
- * an inline-confirm Cancel. Empty state surfaces a quiet message rather
- * than hiding the section, so admins always see how many invites are out.
+ * an inline-confirm Cancel and, on email-capable deploys, a Resend that
+ * refreshes the expiry window and refires the invitation email. Empty
+ * state surfaces a quiet message rather than hiding the section, so
+ * admins always see how many invites are out.
  *
- * @param props - List + change callbacks.
+ * @param props - List + capability flag + change callbacks.
  * @returns Section card with optional list of invitation rows.
  */
 export function PendingInvitationsList({
   organizationId,
   invitations,
+  emailEnabled,
   onChanged,
   onError,
 }: PendingInvitationsListProps) {
+  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [sentId, setSentId] = useState<string | null>(null);
+
   const handleCancel = async (id: string) => {
     const result = await cancelInvitationAction({
       invitationId: id,
@@ -56,6 +68,22 @@ export function PendingInvitationsList({
       onError(result.message);
       return;
     }
+    await onChanged();
+  };
+
+  const handleResend = async (id: string) => {
+    setResendingId(id);
+    const result = await resendInvitationAction({
+      invitationId: id,
+      organizationId,
+    });
+    setResendingId(null);
+    if (!result.ok) {
+      onError(result.message);
+      return;
+    }
+    setSentId(id);
+    window.setTimeout(() => setSentId(null), 2000);
     await onChanged();
   };
 
@@ -104,14 +132,23 @@ export function PendingInvitationsList({
                         </span>
                       </div>
                       <p className="mt-0.5 text-xs text-text-muted">
-                        Email delivery ships with the next release
-                        <span aria-hidden="true"> · </span>
                         Invited by {invitation.inviterName}
                         <span aria-hidden="true"> · </span>
                         Expires {formatExpiry(invitation.expiresAt)}
                       </p>
                     </div>
-                    <div className="shrink-0">
+                    <div className="flex shrink-0 items-center gap-2">
+                      {emailEnabled ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          isLoading={resendingId === invitation.id}
+                          disabled={resendingId !== null}
+                          onClick={() => handleResend(invitation.id)}
+                        >
+                          {sentId === invitation.id ? "Sent" : "Resend"}
+                        </Button>
+                      ) : null}
                       <InlineConfirm
                         trigger={
                           <Button variant="secondary" size="sm">
