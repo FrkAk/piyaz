@@ -145,7 +145,7 @@ grows.
 - **Session records**: expire automatically after **7 days**.
 - **Acceptance records**: anonymized when your account is deleted (the link to you, your IP address, and your user-agent are removed) and retained in that anonymized form as evidence that the agreement existed.
 - **Operational logs and traces**: retained for up to **90 days** and then deleted or anonymized.
-- **Transactional email records**: our email provider (Cloudflare) retains per-message delivery metadata (sender, recipient, subject, and delivery status) for approximately **31 days** in its delivery analytics. Addresses that hard-bounce or report our mail as spam are kept on an account-level suppression list to prevent repeat sends.
+- **Transactional email records**: our email provider (Cloudflare) retains per-message delivery metadata (sender, recipient, subject, and delivery status) for **31 days** in its delivery analytics. Addresses that bounce or report our mail as spam are kept on an account-level suppression list to prevent repeat sends.
 
 ## Your data protection rights
 
@@ -165,15 +165,16 @@ To exercise any of these rights, email **privacy@piyaz.ai**. We will respond wit
 ## Cookies
 
 We use **first-party cookies only**: no analytics, advertising, or tracking cookies,
-and no third-party cookies. Every cookie we set falls under the ePrivacy Directive's
-consent exemptions, so no cookie-consent banner is shown.
+and no third-party cookies. Each cookie serves a single purpose. We rely on the
+consent exemptions for strictly necessary cookies and user-requested functionality
+under the ePrivacy Directive (Art. 5(3)) and UK PECR, which is why we do not show a
+cookie banner.
 
 **Strictly necessary cookies** (essential to provide the service you request):
 
 | Cookie | Purpose | Duration |
 | --- | --- | --- |
-| `__Secure-better-auth.session_token` (no `__Secure-` prefix outside production) | Keeps you signed in. `httpOnly`, `Secure` in production, `SameSite=Lax`. | 7 days |
-| Short-lived `better-auth` flow cookies | Protect sign-in and agent-authorization flows against forgery (CSRF/state). | Minutes to browser close |
+| `__Secure-better-auth.session_token` | Keeps you signed in after login. You stay signed in for up to 7 days, including across browser restarts, unless you sign out. | 7 days |
 
 **Preference cookies** (user-requested interface customization: each is set only when
 you take the matching action, stores no personal data, and is never used for tracking):
@@ -186,8 +187,10 @@ you take the matching action, stores no personal data, and is never used for tra
 | `piyaz-notes-rail-collapsed` | Remembers whether the notes tree rail is hidden. | 1 year |
 | `piyaz-notes-settings-collapsed` | Remembers whether the notes settings ribbon is hidden. | 1 year |
 
-If we ever introduce cookies outside these exemptions, we will update this policy and
-ask for your consent first (see "Analytics we may add later").
+You can change any preference at any time by toggling the setting back, or delete the
+cookie in your browser; the interface reverts to its default. If we ever introduce
+cookies outside these exemptions, we will update this policy and ask for your consent
+first (see "Analytics we may add later").
 
 ## Analytics we may add later
 
