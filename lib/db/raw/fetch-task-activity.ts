@@ -154,19 +154,6 @@ function activityPageSql(
 }
 
 /**
- * Lazy read statement for one keyset page of a task's activity, for the
- * `withUserContextRead` batch. Mirrors `taskFullStmt`.
- *
- * @param read - RLS-scoped read connection from `withUserContextRead`.
- * @param taskId - Task whose events to read.
- * @param cur - Decoded keyset cursor, or null for the first page.
- * @param limit - Row cap (already includes the +1 look-ahead).
- * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
- * @param agentExposed - Restrict note-linked events to feed-enabled notes
- *   ({@link noteExposureClause}).
- * @returns Lazy raw-SQL read statement.
- */
-/**
  * Lazy read statement for the newest event key of a task-activity page:
  * `(id, created_at)` of the first row the matching {@link taskActivityStmt}
  * would return, plus `visible_count`, the exposure-filtered row count of
@@ -212,6 +199,19 @@ export function taskActivityHeadStmt(
     LIMIT 1`);
 }
 
+/**
+ * Lazy read statement for one keyset page of a task's activity, for the
+ * `withUserContextRead` batch. Mirrors `taskFullStmt`.
+ *
+ * @param read - RLS-scoped read connection from `withUserContextRead`.
+ * @param taskId - Task whose events to read.
+ * @param cur - Decoded keyset cursor, or null for the first page.
+ * @param limit - Row cap (already includes the +1 look-ahead).
+ * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
+ * @param agentExposed - Restrict note-linked events to feed-enabled notes
+ *   ({@link noteExposureClause}).
+ * @returns Lazy raw-SQL read statement.
+ */
 export function taskActivityStmt(
   read: ReadConn,
   taskId: string,
