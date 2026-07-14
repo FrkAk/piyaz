@@ -253,9 +253,11 @@ export function ForceGraph({
 
   const tier = useMemo(() => getTierConfig(getDeviceTier()), []);
   // `prefers-reduced-motion` folds into the same effective-config flags the
-  // adaptive perf level uses: decorative animation (flow dots, status
-  // pulse, transition lerps) is dropped and camera moves snap, while the
-  // simulation itself — the layout mechanism — keeps running.
+  // adaptive perf level uses. Softened, not snapped: infinite decorative
+  // animation (flow dots, status pulse) is dropped and camera moves become
+  // fast short eases instead of long cinematic glides, while one-shot
+  // micro-fades (hover/dim/enter) and the simulation itself — the layout
+  // mechanism — keep running.
   const reducedMotion = useReducedMotion() === true;
 
   const statusFilter = hiddenStatuses ?? EMPTY_STATUS_SET;
@@ -416,8 +418,7 @@ export function ForceGraph({
         endY: target.y,
         endScale: target.scale,
         startTime: performance.now(),
-        // 1ms, not 0: a same-timestamp frame would compute 0/0 = NaN.
-        duration: reducedMotion ? 1 : duration,
+        duration: reducedMotion ? Math.min(duration, 150) : duration,
       };
       needsRedrawRef.current = true;
     },
@@ -735,7 +736,7 @@ export function ForceGraph({
     const effGradientFill = level < 2;
     const effShadowBlur = level < 2;
     const effShadowPulse = level < 2 && !reducedMotion;
-    const effLerps = level < 2 && !reducedMotion;
+    const effLerps = level < 2;
 
     // Viewport bounds in world coords, expanded by a generous padding so
     // halos, arrows, and labels at the screen edge stay drawn. Padding has
@@ -1524,9 +1525,9 @@ export function ForceGraph({
           const target = fitTransform(nodesForFitRef.current, sz, rightInset);
           if (target) {
             const tr = transformRef.current;
-            // Reduced motion snaps the chase to the fit target instead of
-            // gliding through the cinematic zoom-out reveal.
-            const lerp = reducedMotion ? 1 : 0.04;
+            // Reduced motion converges on the fit target quickly instead
+            // of gliding through the long cinematic zoom-out reveal.
+            const lerp = reducedMotion ? 0.2 : 0.04;
             const dx = target.x - tr.x;
             const dy = target.y - tr.y;
             const ds = target.scale - tr.scale;
@@ -1554,7 +1555,7 @@ export function ForceGraph({
       const lvl = perfRef.current.level;
       const flowOn = tier.flowDots && lvl === 0 && !reducedMotion;
       const pulseOn = lvl < 2 && !reducedMotion;
-      const lerpsOn = lvl < 2 && !reducedMotion;
+      const lerpsOn = lvl < 2;
 
       const hasInProgress =
         pulseOn && nodes.some((n) => n.status === "in_progress");
