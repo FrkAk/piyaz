@@ -23,6 +23,13 @@ function greeting(recipientName?: string): string {
   return recipientName ? `Hi ${recipientName},` : "Hi,";
 }
 
+/** Link-expiry note as a single-block list when a caller-owned label is provided, else empty. */
+function expiryNote(expiresLabel?: string): EmailBlock[] {
+  return expiresLabel
+    ? [{ kind: "note", text: `This link expires in ${expiresLabel}.` }]
+    : [];
+}
+
 /** Run one content definition through both shell renderers into a matched pair. */
 function render(
   brand: BrandConfig,
@@ -58,12 +65,7 @@ export function verificationEmail(
     },
     { kind: "action", label: "Confirm email", url: params.verifyUrl },
   ];
-  if (params.expiresLabel) {
-    blocks.push({
-      kind: "note",
-      text: `This link expires in ${params.expiresLabel}.`,
-    });
-  }
+  blocks.push(...expiryNote(params.expiresLabel));
   blocks.push({
     kind: "note",
     text: "If you didn't create this account, you can safely ignore this email.",
@@ -97,12 +99,7 @@ export function passwordResetEmail(
     },
     { kind: "action", label: "Reset password", url: params.resetUrl },
   ];
-  if (params.expiresLabel) {
-    blocks.push({
-      kind: "note",
-      text: `This link expires in ${params.expiresLabel}.`,
-    });
-  }
+  blocks.push(...expiryNote(params.expiresLabel));
   blocks.push({
     kind: "note",
     text: "This link can only be used once.",
@@ -134,12 +131,7 @@ export function emailChangeEmail(
     },
     { kind: "action", label: "Confirm email change", url: params.confirmUrl },
   ];
-  if (params.expiresLabel) {
-    blocks.push({
-      kind: "note",
-      text: `This link expires in ${params.expiresLabel}.`,
-    });
-  }
+  blocks.push(...expiryNote(params.expiresLabel));
   blocks.push({
     kind: "note",
     text: "If you didn't request this change, ignore this email and your address will stay the same.",
@@ -260,12 +252,7 @@ export function emailChangeApprovalEmail(
     },
     { kind: "action", label: "Approve email change", url: params.approveUrl },
   ];
-  if (params.expiresLabel) {
-    blocks.push({
-      kind: "note",
-      text: `This link expires in ${params.expiresLabel}.`,
-    });
-  }
+  blocks.push(...expiryNote(params.expiresLabel));
   blocks.push({
     kind: "note",
     text: brand.supportEmail
@@ -305,12 +292,7 @@ export function deleteAccountEmail(
       url: params.confirmUrl,
     },
   ];
-  if (params.expiresLabel) {
-    blocks.push({
-      kind: "note",
-      text: `This link expires in ${params.expiresLabel}.`,
-    });
-  }
+  blocks.push(...expiryNote(params.expiresLabel));
   blocks.push({
     kind: "note",
     text: brand.supportEmail
