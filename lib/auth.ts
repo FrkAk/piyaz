@@ -549,6 +549,9 @@ export function createAuth() {
         // every-login mail trains users to ignore alerts. Fully contained:
         // notification failures never fail the sign-in.
         if (ctx.path === "/sign-in/email") {
+          // Email-disabled deploys send nothing here, so skip the recognition
+          // query and keep sign-in on its pre-email-flows path unchanged.
+          if (!isEmailConfiguredAtBoot()) return;
           const newSession = ctx.context.newSession;
           if (!newSession) return;
           try {

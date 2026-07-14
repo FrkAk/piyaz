@@ -6,7 +6,7 @@ import { z } from "zod/v4";
 import { auth } from "@/lib/auth";
 import { requireLegalConsent } from "@/lib/auth/consent";
 import { getSession, requireSession } from "@/lib/auth/session";
-import { isEmailEnabled } from "@/lib/email";
+import { isEmailConfiguredAtBoot, isEmailEnabled } from "@/lib/email";
 import {
   checkActionIpRateLimit,
   checkActionRateLimit,
@@ -19,7 +19,12 @@ import {
   teamFail,
   type TeamActionResult,
 } from "@/lib/actions/team-errors";
-import { exportAccountData, type AccountExport } from "@/lib/data/account";
+import {
+  enumerateOwnedOrgsForDeletion,
+  exportAccountData,
+  planOwnedOrgDeletion,
+  type AccountExport,
+} from "@/lib/data/account";
 
 const NAME_MAX = 80;
 
@@ -159,14 +164,15 @@ export async function changeEmailAction(input: {
     return teamFail("invalid_input");
   }
 
+  const requestHeaders = await headers();
   try {
     await auth.api.verifyPassword({
       body: { password: parsed.data.currentPassword },
-      headers: await headers(),
+      headers: requestHeaders,
     });
     await auth.api.changeEmail({
       body: { newEmail: parsed.data.newEmail, callbackURL: "/settings" },
-      headers: await headers(),
+      headers: requestHeaders,
     });
   } catch (err) {
     const code = mapBetterAuthError(err);
@@ -195,8 +201,10 @@ const deleteAccountSchema = z.object({
  * session must be younger than `freshAge`, otherwise `session_not_fresh`
  * is returned so the dialog can prompt for password or re-login. On
  * email-capable deploys Better Auth emails a confirmation link instead of
- * deleting immediately (a supplied password still only re-authenticates);
- * `verificationEmailSent` tells the dialog which flow ran.
+ * deleting immediately (a supplied password still only re-authenticates) and
+ * runs `beforeDelete` only when that link is opened, so the sole-owner block
+ * is pre-checked here before dispatch; `verificationEmailSent` tells the
+ * dialog which flow ran.
  *
  * @param input - Optional `{ password }` for credential-account holders.
  * @returns Discriminated `TeamActionResult` carrying
@@ -226,6 +234,18 @@ export async function deleteAccountAction(input?: {
     userId,
   );
   if (!limit.ok) return teamFail("rate_limited");
+
+  // On email-capable deploys Better Auth sends the confirmation email and
+  // returns before beforeDelete runs, so its sole-owner block would only
+  // surface at the emailed callback as a raw error. Pre-check under the same
+  // boot signal so the guidance stays inline and no doomed confirmation email
+  // is sent; email-disabled deploys keep beforeDelete's inline block.
+  if (isEmailConfiguredAtBoot()) {
+    const plan = planOwnedOrgDeletion(
+      await enumerateOwnedOrgsForDeletion(userId),
+    );
+    if (plan.kind === "blocked") return teamFail("cannot_delete_sole_owner");
+  }
 
   try {
     const result = await auth.api.deleteUser({

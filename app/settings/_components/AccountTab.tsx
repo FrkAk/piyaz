@@ -314,7 +314,14 @@ function EmailSection({ email }: { email: string }) {
           </p>
         </div>
         {!open ? (
-          <Button variant="secondary" size="md" onClick={() => setOpen(true)}>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => {
+              setApprovalSent(false);
+              setOpen(true);
+            }}
+          >
             Change email
           </Button>
         ) : null}
