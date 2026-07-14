@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/shared/Button";
 import {
   acceptEmailInvitationAction,
@@ -16,7 +15,8 @@ interface InvitationActionsProps {
 
 /**
  * Accept/Decline pair for the invitation detail card. Accepting joins the
- * team (Better Auth sets the active organization) and lands on `/`;
+ * team (Better Auth sets the active organization) and lands on `/` via a
+ * full navigation, so the workspace shell loads fresh for the new member;
  * declining marks the row rejected and swaps to a quiet confirmation.
  * Failures surface in the inline danger strip.
  *
@@ -24,12 +24,11 @@ interface InvitationActionsProps {
  * @returns Button pair, declined confirmation, or error strip.
  */
 export function InvitationActions({ invitationId }: InvitationActionsProps) {
-  const router = useRouter();
   const [busy, setBusy] = useState<"accept" | "decline" | null>(null);
   const [declined, setDeclined] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** Join the team, then hand navigation to the app's membership gate. */
+  /** Join the team, then enter the workspace shell with a fresh document. */
   async function handleAccept() {
     setError(null);
     setBusy("accept");
@@ -39,8 +38,7 @@ export function InvitationActions({ invitationId }: InvitationActionsProps) {
       setBusy(null);
       return;
     }
-    router.push("/");
-    router.refresh();
+    window.location.assign("/");
   }
 
   /** Mark the invitation rejected so it leaves the team's pending list. */

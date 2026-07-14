@@ -105,7 +105,7 @@ export default async function InvitationPage({ params }: InvitationPageProps) {
   if (!session) {
     const next = encodeURIComponent(`/invitations/${id}`);
     return (
-      <AuthStatusFrame eyebrow="Team invitation" heading="You've been invited">
+      <AuthStatusFrame eyebrow="Team invitation" heading="You’ve been invited">
         <p
           className="text-center text-sm text-text-muted"
           style={{ lineHeight: 1.55 }}
