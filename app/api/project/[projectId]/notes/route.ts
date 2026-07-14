@@ -9,12 +9,13 @@ import { consentGateResponse } from "@/lib/auth/consent";
 /**
  * Conditional handler for `GET` and `HEAD` on the project notes tree list.
  *
- * The validator is the composite token `${maxLiveUpdatedAtMs}-${liveCount}`;
- * the count arm invalidates on soft deletes that lower no MAX, and an
- * empty project yields the stable token `0-0`. HEAD and
- * `If-None-Match` requests resolve it via the `getNotesTreeVersion`
- * probe so a 304 avoids the heavier tree-list fetch; cold GETs skip the
- * probe and derive the same token from the fetched rows.
+ * The validator is the composite token `${maxMetaUpdatedAtMs}-${liveCount}`,
+ * built on the notes metadata clock so body-only autosaves answer 304
+ * instead of re-shipping every row; the count arm invalidates on soft
+ * deletes that lower no MAX, and an empty project yields the stable token
+ * `0-0`. Every arm resolves the token via the `getNotesTreeVersion` probe
+ * (the rows carry the content clock, not the metadata clock), and a 304
+ * skips the tree-list fetch entirely.
  *
  * The payload is the slim {@link import("@/lib/data/note").NoteTreeRow}
  * projection; `body`/`search_tsv` are never selected. Fetch bodies
@@ -36,21 +37,15 @@ async function handle(req: Request, projectId: string): Promise<Response> {
   if (gate) return gate;
 
   try {
-    if (req.method === "HEAD" || req.headers.has("if-none-match")) {
-      const version = await getNotesTreeVersion(ctx, projectId);
-      const token = `${version.maxUpdatedAt?.getTime() ?? 0}-${version.liveCount}`;
+    const version = await getNotesTreeVersion(ctx, projectId);
+    const token = `${version.maxUpdatedAt?.getTime() ?? 0}-${version.liveCount}`;
 
-      if (req.method === "HEAD" || etagMatches(req, token)) {
-        return conditionalRespond(req, null, token);
-      }
-
-      const rows = await getNoteTreeList(ctx, projectId);
-      return conditionalRespond(req, rows, token);
+    if (req.method === "HEAD" || etagMatches(req, token)) {
+      return conditionalRespond(req, null, token);
     }
 
     const rows = await getNoteTreeList(ctx, projectId);
-    const maxMs = rows.reduce((m, r) => Math.max(m, r.updatedAt.getTime()), 0);
-    return conditionalRespond(req, rows, `${maxMs}-${rows.length}`);
+    return conditionalRespond(req, rows, token);
   } catch (err) {
     if (err instanceof ForbiddenError) {
       return error("Project not found", 404);

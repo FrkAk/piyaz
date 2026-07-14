@@ -1,10 +1,12 @@
 /**
- * Notes tree-list cache validator: latest `updated_at` plus the live-row
- * count for one project's notes. The count is part of the validator
+ * Notes tree-list cache validator: latest `meta_updated_at` plus the
+ * live-row count for one project's notes. The metadata clock moves on
+ * every change except pure body edits, so autosaves answer 304 while any
+ * tree-rendered field revalidates. The count is part of the validator
  * because a soft delete removes a row without raising any surviving
- * `updated_at` — MAX alone would leave the tree ETag stale after a
- * delete. Served by the partial `notes_project_updated_idx`
- * (`WHERE deleted_at IS NULL`).
+ * clock — MAX alone would leave the tree ETag stale after a delete.
+ * Scanned via the `project_id` prefix of the partial
+ * `notes_project_updated_idx` (`WHERE deleted_at IS NULL`).
  */
 
 import { sql } from "drizzle-orm";
@@ -27,7 +29,7 @@ export type NotesTreeVersionRow = {
  */
 export function notesTreeVersionStmt(read: ReadConn, projectId: string) {
   return read.execute(sql`
-    SELECT MAX(updated_at) AS max_updated_at, COUNT(*) AS live_count
+    SELECT MAX(meta_updated_at) AS max_updated_at, COUNT(*) AS live_count
     FROM ${notes}
     WHERE project_id = ${projectId} AND deleted_at IS NULL
   `);

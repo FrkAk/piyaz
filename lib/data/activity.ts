@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth/authorization";
 import { noteAccessGateStmt, type NoteAccessGate } from "@/lib/data/access";
 import {
+  taskActivityHeadStmt,
   taskActivityStmt,
   type ActivityCursor,
   type ActivityRawRow,
@@ -378,6 +379,44 @@ export async function listTaskActivity(
     events: page.map(toActivityEvent),
     nextCursor: hasMore ? encodeCursor(last.created_at_cursor, last.id) : null,
   };
+}
+
+/**
+ * Newest event key of one task-activity page: the `(createdAtMs, id)` pair
+ * the matching {@link listTaskActivity} page would surface first, or null
+ * when the page is empty. One RLS-scoped batch (index head probe with the
+ * same exposure filters + task-existence probe): the cheap validator
+ * resolve for `HEAD`/`If-None-Match`, so a 304 skips the full page fetch
+ * and its identity joins.
+ *
+ * @param ctx - Caller auth context.
+ * @param taskId - Task whose events to probe.
+ * @param opts - Optional opaque `cursor` and `since` lower bound, matching
+ *   the page read they validate.
+ * @returns The newest matching event's key, or null when none match.
+ * @throws ForbiddenError when the task is not visible to the caller.
+ */
+export async function getTaskActivityHead(
+  ctx: AuthContext,
+  taskId: string,
+  opts: { cursor?: string; since?: string },
+): Promise<{ createdAtMs: number; id: string } | null> {
+  const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
+
+  const agentExposed = ctx.actor.source === "mcp";
+  const [raw, probe] = await withUserContextRead(ctx.userId, (read) => [
+    taskActivityHeadStmt(read, taskId, cur, since, agentExposed),
+    read.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)),
+  ]);
+  if (probe.length === 0) throw new ForbiddenError("Forbidden", "task", taskId);
+  const [row] = normalizeExecuteResult<{
+    id: string;
+    created_at: Date | string;
+  }>(raw);
+  return row
+    ? { createdAtMs: toDate(row.created_at).getTime(), id: row.id }
+    : null;
 }
 
 /**

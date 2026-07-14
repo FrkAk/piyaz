@@ -161,6 +161,47 @@ function activityPageSql(
  *   ({@link noteExposureClause}).
  * @returns Lazy raw-SQL read statement.
  */
+/**
+ * Lazy read statement for the newest event key of a task-activity page:
+ * `(id, created_at)` of the first row the matching {@link taskActivityStmt}
+ * would return. One index head probe with the same exposure filters, no
+ * identity joins: the cheap validator resolve for `HEAD`/`If-None-Match`,
+ * so a 304 skips the full page fetch.
+ *
+ * @param read - RLS-scoped read connection from `withUserContextRead`.
+ * @param taskId - Task whose events to probe.
+ * @param cur - Decoded keyset cursor, or null for the first page.
+ * @param since - Inclusive-exclusive lower bound (`created_at > since`), or null.
+ * @param agentExposed - Restrict note-linked events to feed-enabled notes
+ *   ({@link noteExposureClause}).
+ * @returns Lazy raw-SQL read statement yielding zero or one rows.
+ */
+export function taskActivityHeadStmt(
+  read: ReadConn,
+  taskId: string,
+  cur: ActivityCursor | null,
+  since: string | null = null,
+  agentExposed = false,
+) {
+  const keyset = cur
+    ? sql`AND (ae.created_at < ${cur.createdAt}::timestamptz
+        OR (ae.created_at = ${cur.createdAt}::timestamptz
+            AND ae.id < ${cur.id}::uuid))`
+    : sql``;
+  const sinceClause = since
+    ? sql`AND ae.created_at > ${since}::timestamptz`
+    : sql``;
+  return read.execute(sql`
+    SELECT ae.id, ae.created_at
+    FROM public.activity_events ae
+    WHERE ae.task_id = ${taskId}::uuid
+    ${sinceClause}
+    ${keyset}
+    ${noteExposureClause(agentExposed)}
+    ORDER BY ae.created_at DESC, ae.id DESC
+    LIMIT 1`);
+}
+
 export function taskActivityStmt(
   read: ReadConn,
   taskId: string,

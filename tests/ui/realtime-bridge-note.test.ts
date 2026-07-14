@@ -5,7 +5,7 @@ import {
   applyRealtimeEvent,
 } from "@/components/providers/RealtimeBridge";
 import type { NoteTreeRow } from "@/lib/data/note";
-import { noteKeys } from "@/lib/query/keys";
+import { noteKeys, projectKeys } from "@/lib/query/keys";
 import {
   beginNoteEditSession,
   clearNoteDirty,
@@ -99,6 +99,7 @@ function noteEvent(
   updatedAt?: Date,
   version?: number,
   revisionCheckpointed?: boolean,
+  metaChanged?: boolean,
 ): string {
   return JSON.stringify({
     kind: "note",
@@ -107,6 +108,7 @@ function noteEvent(
     ...(updatedAt ? { updatedAt: updatedAt.toISOString() } : {}),
     ...(version !== undefined ? { version } : {}),
     ...(revisionCheckpointed !== undefined ? { revisionCheckpointed } : {}),
+    ...(metaChanged !== undefined ? { metaChanged } : {}),
   });
 }
 
@@ -471,7 +473,7 @@ describe("applyRealtimeEvent note case", () => {
     unsubscribe();
   });
 
-  test("note-folders event invalidates the folders query and nothing else", async () => {
+  test("note-folders event invalidates the folders and tree queries, not the detail", async () => {
     const qc = seededClient(when);
     qc.setQueryData(noteKeys.folders(PROJECT), []);
 
@@ -481,7 +483,34 @@ describe("applyRealtimeEvent note case", () => {
     );
 
     expect(invalidated(qc, noteKeys.folders(PROJECT))).toBe(true);
-    expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
+    expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(true);
     expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(false);
+  });
+
+  test("a metaChanged:false event skips the graph, tree, and backlink refetches", async () => {
+    const qc = seededClient(when);
+    qc.setQueryData(projectKeys.graph(PROJECT), { tasks: [] });
+    qc.setQueryData(noteKeys.backlinksTask(PROJECT, "t1"), []);
+    const newer = new Date(when.getTime() + 60_000);
+
+    await applyRealtimeEvent(qc, noteEvent(newer, 2, undefined, false));
+
+    expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(false);
+    expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(false);
+    expect(invalidated(qc, noteKeys.backlinksTask(PROJECT, "t1"))).toBe(false);
+    expect(invalidated(qc, noteKeys.detail(PROJECT, NOTE))).toBe(true);
+  });
+
+  test("a metaChanged:true event invalidates the graph, tree, and backlinks", async () => {
+    const qc = seededClient(when);
+    qc.setQueryData(projectKeys.graph(PROJECT), { tasks: [] });
+    qc.setQueryData(noteKeys.backlinksTask(PROJECT, "t1"), []);
+    const newer = new Date(when.getTime() + 60_000);
+
+    await applyRealtimeEvent(qc, noteEvent(newer, 2, undefined, true));
+
+    expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(true);
+    expect(invalidated(qc, noteKeys.list(PROJECT))).toBe(true);
+    expect(invalidated(qc, noteKeys.backlinksTask(PROJECT, "t1"))).toBe(true);
   });
 });

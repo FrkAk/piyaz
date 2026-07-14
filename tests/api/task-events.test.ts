@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { broker } from "@/lib/realtime/broker";
-import { GET } from "@/app/api/task/[taskId]/events/route";
+import { GET, HEAD } from "@/app/api/task/[taskId]/events/route";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask, updateTask } from "@/lib/data/task";
 import type { ActivityEvent } from "@/lib/types";
@@ -27,12 +27,49 @@ async function seedTaskWithEvents(prefix: string) {
   return { fx, taskId: task.id };
 }
 
-const call = (taskId: string, query = "") =>
-  GET(new Request(`http://test/api/task/${taskId}/events${query}`), {
-    params: Promise.resolve({ taskId }),
-  });
+const call = (
+  taskId: string,
+  query = "",
+  headers: Record<string, string> = {},
+  method: "GET" | "HEAD" = "GET",
+) =>
+  (method === "HEAD" ? HEAD : GET)(
+    new Request(`http://test/api/task/${taskId}/events${query}`, {
+      method,
+      headers,
+    }),
+    { params: Promise.resolve({ taskId }) },
+  );
 
 describe("GET /api/task/[taskId]/events", () => {
+  test("a second request with the matching ETag returns 304 with no body", async () => {
+    const { fx, taskId } = await seedTaskWithEvents("ev-etag");
+    setSession({ user: { id: fx.userId } });
+
+    const first = await call(taskId);
+    const etag = first.headers.get("etag");
+    expect(etag).not.toBeNull();
+
+    const replay = await call(taskId, "", { "if-none-match": etag as string });
+    expect(replay.status).toBe(304);
+    expect(await replay.text()).toBe("");
+
+    await updateTask(makeAuthContext(fx.userId), taskId, { status: "done" });
+    const after = await call(taskId, "", { "if-none-match": etag as string });
+    expect(after.status).toBe(200);
+    expect(after.headers.get("etag")).not.toBe(etag);
+  });
+
+  test("HEAD returns the ETag and no body", async () => {
+    const { fx, taskId } = await seedTaskWithEvents("ev-head");
+    setSession({ user: { id: fx.userId } });
+
+    const res = await call(taskId, "", {}, "HEAD");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).not.toBeNull();
+    expect(await res.text()).toBe("");
+  });
+
   test("returns the owner's events newest-first with a 200", async () => {
     const { fx, taskId } = await seedTaskWithEvents("ev-owner");
     setSession({ user: { id: fx.userId } });

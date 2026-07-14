@@ -374,7 +374,7 @@ describe("realtime note events: metaChanged flag", () => {
 
     expect(noteEventsFrom(frames).map((e) => e.metaChanged)).toEqual([
       false,
-      false,
+      true,
       true,
     ]);
   });

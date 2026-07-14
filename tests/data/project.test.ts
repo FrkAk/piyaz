@@ -19,6 +19,7 @@ import {
   createNote,
   createNoteTaskLink,
   deleteNote,
+  moveNote,
   removeNoteTaskLink,
   restoreNote,
   updateNote,
@@ -391,6 +392,23 @@ test("note metadata edits move the meta clock", async () => {
   await updateNote(ctx, note.id, { feedMode: "all" });
   const afterFeed = await readNoteClocks(ctx, f.projectId);
   expect(afterFeed.meta).toBeGreaterThan(afterTitle.meta);
+});
+
+test("folder moves and summary edits move the meta clock", async () => {
+  const f = await seedUserOrgProject("graphnotes-metafields");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, { projectId: f.projectId, title: "N" });
+  await settleClock();
+
+  const before = await readNoteClocks(ctx, f.projectId);
+  await moveNote(ctx, note.id, "docs");
+  const afterMove = await readNoteClocks(ctx, f.projectId);
+  expect(afterMove.meta).toBeGreaterThan(before.meta);
+
+  await settleClock();
+  await updateNote(ctx, note.id, { summary: "one-liner" });
+  const afterSummary = await readNoteClocks(ctx, f.projectId);
+  expect(afterSummary.meta).toBeGreaterThan(afterMove.meta);
 });
 
 test("note trash and restore move the meta clock", async () => {

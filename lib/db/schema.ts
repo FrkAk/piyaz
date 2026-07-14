@@ -441,10 +441,11 @@ export const notes = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    // Graph-visible metadata clock: bumped only on changes the slim graph
-    // payload can observe (title, type, feedMode, visibility, trash/restore,
-    // link-set changes). updated_at stays the content clock / CAS token, and
-    // every meta bump also bumps updated_at, so content strictly dominates.
+    // Metadata clock: bumped on every change except pure body edits
+    // (fields, folder, links, trash/restore). The graph and notes-tree
+    // validators read it so body autosaves stay 304-cheap. updated_at stays
+    // the content clock / CAS token; every meta bump also bumps updated_at,
+    // so content strictly dominates.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

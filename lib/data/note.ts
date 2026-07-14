@@ -986,16 +986,6 @@ const JSON_PATCH_FIELDS = new Set<keyof NotePatch>([
   "feedTaskIds",
 ]);
 
-/** Patch fields the slim graph payload observes; a change to any of them
- *  bumps `meta_updated_at` so the graph ETag moves. Feed targeting columns
- *  stay out — the payload ships only the `feedMode != 'none'` boolean. */
-const GRAPH_META_NOTE_FIELDS: ReadonlySet<string> = new Set([
-  "title",
-  "type",
-  "feedMode",
-  "visibility",
-]);
-
 /**
  * Remove patch fields whose value equals the note's current value, so a
  * value-equal patch takes the no-op path (no UPDATE, no activity event,
@@ -1542,8 +1532,9 @@ export async function getNoteTreeList(
 }
 
 /**
- * Read the tree-list cache validator: latest live `updated_at` plus the
- * live-row count (the count catches soft deletes MAX alone misses).
+ * Read the tree-list cache validator: latest live `meta_updated_at` plus
+ * the live-row count (the count catches soft deletes MAX alone misses).
+ * The metadata clock keeps body-only autosaves off the validator.
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -3233,8 +3224,8 @@ async function updateNoteCore(
 
     // Derivation runs BEFORE the notes UPDATE (it only reads other rows and
     // excludes self) so its changed-set verdict can fold into the same
-    // UPDATE: graph-visible field changes and link-set changes share one
-    // meta_updated_at bump — no second round trip.
+    // UPDATE: metadata field changes and link-set changes share one
+    // meta_updated_at bump; no second round trip.
     const derivedLinksChanged = bodyChanged
       ? await replaceDerivedLinks(
           tx,
@@ -3245,10 +3236,12 @@ async function updateNoteCore(
           false,
         )
       : false;
-    const graphMetaChanged = changedFields.some((field) =>
-      GRAPH_META_NOTE_FIELDS.has(field),
-    );
-    const metaChanged = graphMetaChanged || derivedLinksChanged;
+    // Metadata clock rule: every change except a pure body edit moves
+    // `meta_updated_at`. The graph and notes-tree validators read it, so
+    // body autosaves stay 304-cheap while any rendered field (or a derived
+    // link set) revalidates.
+    const metaChanged =
+      derivedLinksChanged || changedFields.some((field) => field !== "body");
     if (metaChanged) {
       changes.metaUpdatedAt = now;
     }
@@ -3431,9 +3424,15 @@ export async function moveNote(
         visibility: gate.visibility,
       };
     }
+    const now = new Date();
     const [summary] = await tx
       .update(notes)
-      .set({ folder: dest, updatedBy: ctx.userId, updatedAt: new Date() })
+      .set({
+        folder: dest,
+        updatedBy: ctx.userId,
+        updatedAt: now,
+        metaUpdatedAt: now,
+      })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
     await insertActivityEvents(tx, ctx.actor, [
@@ -3462,7 +3461,7 @@ export async function moveNote(
       result.summary.updatedAt,
       result.summary.version,
       undefined,
-      false,
+      true,
     );
   }
   return result.summary;
@@ -3582,12 +3581,14 @@ export async function moveFolder(
         `move would push a descendant past ${FOLDER_MAX_CHARS} characters`,
       );
     }
+    const subtreeNow = new Date();
     const rows = await tx
       .update(notes)
       .set({
         folder: sql`${dest} || substr(${notes.folder}, char_length(${srcPath}::text) + 1)`,
         updatedBy: ctx.userId,
-        updatedAt: new Date(),
+        updatedAt: subtreeNow,
+        metaUpdatedAt: subtreeNow,
       })
       .where(subtreeFilter)
       .returning({
@@ -3640,7 +3641,12 @@ export async function moveFolder(
   });
 
   if (moved.teamMoved) emitProjectEvent(projectId);
-  if (moved.explicitMoved > 0) emitNoteFoldersEvent(projectId);
+  // Folder paths on note rows changed too, so viewers must revalidate the
+  // tree list, not just the explicit-folder set; the client's note-folders
+  // handler invalidates both.
+  if (moved.movedCount > 0 || moved.explicitMoved > 0) {
+    emitNoteFoldersEvent(projectId);
+  }
   return {
     dest,
     movedCount: moved.movedCount,

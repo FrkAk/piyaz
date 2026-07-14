@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Avatar } from "@/components/shared/Avatar";
 import { StatusGlyph } from "@/components/shared/StatusGlyph";
 import { MonoId } from "@/components/shared/MonoId";
@@ -23,6 +23,7 @@ import {
 } from "@/components/shared/icons";
 import type { ActivityEvent, ActivityEventType } from "@/lib/types";
 import { taskKeys } from "@/lib/query/keys";
+import { conditionalFetchPage } from "@/lib/query/conditional-fetch";
 import { formatRelative } from "@/components/workspace/structure/relativeTime";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 
@@ -45,23 +46,6 @@ interface ActivityPage {
 }
 
 /**
- * Fetch one page of activity for a task.
- * @param taskId - Task id.
- * @param cursor - Opaque keyset cursor or null for the first page.
- * @returns The page payload.
- * @throws Error when the request fails.
- */
-async function fetchActivity(
-  taskId: string,
-  cursor: string | null,
-): Promise<ActivityPage> {
-  const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-  const res = await fetch(`/api/task/${taskId}/events${qs}`);
-  if (!res.ok) throw new Error(`activity ${res.status}`);
-  return res.json();
-}
-
-/**
  * Activity timeline — consecutive events by the same actor collapse into one
  * cluster (avatar + name + harness badge shown once), each action rendered as a
  * glyph + humanized phrase + connected-task chip + relative time. Lazy-loaded
@@ -75,6 +59,7 @@ export function ActivitySection({
   taskId,
   taskMap,
 }: ActivitySectionProps) {
+  const qc = useQueryClient();
   const {
     data,
     isError,
@@ -85,7 +70,16 @@ export function ActivitySection({
     isFetchNextPageError,
   } = useInfiniteQuery({
     queryKey: taskKeys.activity(projectId, taskId),
-    queryFn: ({ pageParam }) => fetchActivity(taskId, pageParam),
+    queryFn: ({ pageParam, signal }) =>
+      conditionalFetchPage<ActivityPage>({
+        url: pageParam
+          ? `/api/task/${taskId}/events?cursor=${encodeURIComponent(pageParam)}`
+          : `/api/task/${taskId}/events`,
+        queryKey: taskKeys.activity(projectId, taskId),
+        pageParam,
+        queryClient: qc,
+        signal,
+      }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
   });

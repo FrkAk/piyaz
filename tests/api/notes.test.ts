@@ -6,6 +6,7 @@ import {
   createNote,
   createNoteFolder,
   deleteNoteFolder,
+  moveNote,
   updateNote,
 } from "@/lib/data/note";
 import { makeAuthContext } from "@/lib/auth/context";
@@ -131,6 +132,36 @@ test("GET /api/project/[id]/notes — slim rows without body, ETag set; 304 + HE
   expect(head.status).toBe(200);
   expect(head.headers.get("etag")).toBe(etag);
   expect(await head.text()).toBe("");
+});
+
+test("GET /api/project/[id]/notes — body-only edits do not move the ETag; folder moves do", async () => {
+  const f = await seedUserOrgProject("notes-meta-etag");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Alpha",
+  });
+  setSession({ user: { id: f.userId } });
+
+  const first = await listGET(get(`/api/project/${f.projectId}/notes`), {
+    params: Promise.resolve({ projectId: f.projectId }),
+  });
+  const etag = first.headers.get("etag");
+  expect(etag).toBeTruthy();
+
+  await updateNote(ctx, note.id, { body: "typing, plain prose" });
+  const afterBody = await listGET(
+    get(`/api/project/${f.projectId}/notes`, { "if-none-match": etag! }),
+    { params: Promise.resolve({ projectId: f.projectId }) },
+  );
+  expect(afterBody.status).toBe(304);
+
+  await moveNote(ctx, note.id, "docs");
+  const afterMove = await listGET(
+    get(`/api/project/${f.projectId}/notes`, { "if-none-match": etag! }),
+    { params: Promise.resolve({ projectId: f.projectId }) },
+  );
+  expect(afterMove.status).toBe(200);
 });
 
 test("GET /api/project/[id]/notes — soft delete below MAX still invalidates the ETag", async () => {
