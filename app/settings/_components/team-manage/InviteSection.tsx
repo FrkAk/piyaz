@@ -52,6 +52,7 @@ export function InviteSection({
       <div className="space-y-4">
         <InviteForm
           teamId={teamId}
+          emailEnabled={emailEnabled}
           onInvited={async () => {
             await onInvitationsChanged();
             await onRefreshMembers();

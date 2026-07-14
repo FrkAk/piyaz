@@ -19,6 +19,8 @@ const ROLE_OPTIONS: ReadonlyArray<{
 interface InviteFormProps {
   /** Team UUID — passed to the invite action so admins of T can invite to T from any session. */
   teamId: string;
+  /** Whether the deploy can send email; picks the helper copy. */
+  emailEnabled: boolean;
   /** Called after a successful invite to refresh the pending list. */
   onInvited: () => Promise<void> | void;
   /** Surface a transient error from the action. */
@@ -26,19 +28,24 @@ interface InviteFormProps {
 }
 
 /**
- * Email-invite form. Sends a Better Auth invitation row to the supplied
- * team. Email delivery itself is wired in MYMR-153 — for now the row
- * appears in the pending list and an admin must share the invite link
- * out-of-band (or use the invite-code panel).
+ * Email-invite form. Creates a Better Auth invitation row for the
+ * supplied team; on email-capable deploys the recipient is emailed an
+ * `/invitations/<id>` link, otherwise the row waits in the pending list
+ * and an admin shares the invite code out-of-band.
  *
  * Owner role is intentionally absent from the role picker: only owners
  * can promote-to-owner anyway, and even owners must invite-then-promote
  * rather than invite directly to the owner role (BA enforces this).
  *
- * @param props - Form callbacks.
+ * @param props - Capability flag + form callbacks.
  * @returns Email + role picker row with Send button.
  */
-export function InviteForm({ teamId, onInvited, onError }: InviteFormProps) {
+export function InviteForm({
+  teamId,
+  emailEnabled,
+  onInvited,
+  onError,
+}: InviteFormProps) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"member" | "admin">("member");
   const [pending, startTransition] = useTransition();
@@ -211,8 +218,9 @@ export function InviteForm({ teamId, onInvited, onError }: InviteFormProps) {
         </Button>
       </div>
       <p className="mt-3 text-xs text-text-muted">
-        We&apos;ll add a row to the pending list. Email delivery ships with the
-        next release; for now share the invite code below.
+        {emailEnabled
+          ? "We'll email them an invitation link and add it to the pending list below."
+          : "We'll add a row to the pending list. This deployment can't send email, so share the invite code below instead."}
       </p>
     </form>
   );
