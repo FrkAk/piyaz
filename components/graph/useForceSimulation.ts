@@ -209,7 +209,6 @@ function buildGraph(
       taskRef: t.taskRef,
       status: t.status,
       kind: "task",
-      fed: false,
       tags: t.tags ?? [],
       x: p.x,
       y: p.y,
@@ -392,11 +391,9 @@ function makeSim(
 ): SimResult {
   // Two degree maps with distinct jobs. taskDeg (task edges only) drives
   // DRAWN size, so attaching notes never visually inflates a task. allDeg
-  // (every edge) drives the physics — charge, collide, hub ring, link
-  // stretch — because a task annotated by ten notes IS a physical hub that
-  // needs the space, even while drawn small. Splitting these the other way
-  // (physics on taskDeg) compressed real graphs into a knot of overlapping
-  // satellites; the physics deliberately match the pre-notes tuning.
+  // (every edge) drives the physics (charge, collide, hub ring, link
+  // stretch): a task annotated by ten notes is a physical hub that needs
+  // the space, even while drawn small.
   const taskDeg = buildLinkCounts(links.filter((l) => !isNoteLinkType(l.type)));
   const allDeg = buildLinkCounts(links);
   const cfg = deriveForceConfig(nodes.length, links.length);

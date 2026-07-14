@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
-import { seedUserOrgProject } from "@/tests/setup/seed";
+import { seedSecondMember, seedUserOrgProject } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
 import {
   getProjectSlim,
@@ -156,31 +156,6 @@ test("getProjectGraphSlim drops heavy fields and shapes correctly", async () => 
   expect(g.noteLinks).toEqual([]);
   expect(g.noteTaskLinks).toEqual([]);
 });
-
-/**
- * Insert a new user and add them to an existing org as a plain member.
- * Mirrors the helper in tests/data/notes-rls.test.ts.
- *
- * @param organizationId - Org the new member joins.
- * @param suffix - Unique suffix for the user's name and email.
- * @returns The new user's id.
- */
-async function seedSecondMember(
-  organizationId: string,
-  suffix: string,
-): Promise<string> {
-  const sql = superuserPool();
-  const [u] = await sql<{ id: string }[]>`
-    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
-    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
-    RETURNING id
-  `;
-  await sql`
-    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
-    VALUES (${organizationId}, ${u.id}, 'member', now())
-  `;
-  return u.id;
-}
 
 test("getProjectGraphSlim notes payload is RLS-scoped per member", async () => {
   const f = await seedUserOrgProject("graphnotes");
@@ -480,6 +455,26 @@ test("share approval moves the meta clock", async () => {
   await approveShareRequest(ctx, note.id);
   const after = await readNoteClocks(ctx, f.projectId);
   expect(after.meta).toBeGreaterThan(before.meta);
+});
+
+test("a team-to-private visibility flip moves other members' validators", async () => {
+  const f = await seedUserOrgProject("graphnotes-flipclk");
+  const userB = await seedSecondMember(f.organizationId, "graphnotes-flip-b");
+  const ctxA = makeAuthContext(f.userId);
+  const ctxB = makeAuthContext(userB);
+  const note = await createNote(ctxA, {
+    projectId: f.projectId,
+    title: "Was team",
+    visibility: "team",
+  });
+  await settleClock();
+
+  const beforeB = await readNoteClocks(ctxB, f.projectId);
+  await updateNote(ctxA, note.id, { visibility: "private" });
+  const afterB = await readNoteClocks(ctxB, f.projectId);
+
+  expect(afterB.meta).toBeGreaterThan(beforeB.meta);
+  expect(afterB.content).toBeGreaterThan(beforeB.content);
 });
 
 test("a private-note edit moves only the editor's meta validator", async () => {

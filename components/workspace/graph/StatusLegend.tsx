@@ -5,7 +5,6 @@ import {
   STATUS_META,
   type TaskStatus,
 } from "@/components/shared/StatusGlyph";
-import { NOTE_EDGE_GRAY } from "@/components/graph/graphConstants";
 
 interface StatusLegendProps {
   /** @param hiddenStatuses - Statuses currently hidden from the canvas. */
@@ -106,8 +105,9 @@ export function StatusLegend({
               style={{
                 width: 10,
                 height: 10,
-                border: `1.5px solid ${NOTE_EDGE_GRAY}`,
-                background: `color-mix(in srgb, ${NOTE_EDGE_GRAY} 18%, transparent)`,
+                border: "1.5px solid var(--color-note-edge)",
+                background:
+                  "color-mix(in srgb, var(--color-note-edge) 18%, transparent)",
               }}
             />
             <span
@@ -129,8 +129,9 @@ export function StatusLegend({
                 style={{
                   width: 10,
                   height: 10,
-                  border: `1.5px solid ${NOTE_EDGE_GRAY}`,
-                  background: `color-mix(in srgb, ${NOTE_EDGE_GRAY} 18%, transparent)`,
+                  border: "1.5px solid var(--color-note-edge)",
+                  background:
+                    "color-mix(in srgb, var(--color-note-edge) 18%, transparent)",
                 }}
               >
                 <span
@@ -140,7 +141,7 @@ export function StatusLegend({
                     height: 4,
                     top: -2,
                     right: -2,
-                    background: NOTE_EDGE_GRAY,
+                    background: "var(--color-note-edge)",
                   }}
                 />
               </span>

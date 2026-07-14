@@ -92,11 +92,15 @@ export async function applyRealtimeEvent(
       });
       break;
     case "note":
-      // The slim graph renders note nodes and their edges, and any note
-      // write (title, type, body-derived or deliberate links, trash or
-      // restore) can change them. The refetch rides the conditional-GET
-      // path, so an unmoved validator answers with a 304.
-      qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
+      // The slim graph renders note nodes and their edges. `metaChanged:
+      // false` marks writes that cannot alter it (body-only autosaves,
+      // folder moves, share markers); skipping those spares every open
+      // viewer a refetch round trip per autosave. Anything else, and any
+      // event without the flag, invalidates; the refetch rides the
+      // conditional-GET path, so an unmoved validator answers with a 304.
+      if (ev.metaChanged !== false) {
+        qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
+      }
       await handleNoteEvent(qc, ev);
       break;
     case "note-presence":

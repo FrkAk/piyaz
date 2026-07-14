@@ -18,8 +18,8 @@ export interface GraphNode {
   kind: "task" | "note";
   /** Note type driving the note node's color; undefined on task nodes. */
   noteType?: NoteType;
-  /** Note auto-feeds tasks (`feedMode != 'none'`); always false for tasks. */
-  fed: boolean;
+  /** Note auto-feeds tasks (`feedMode != 'none'`); undefined on task nodes. */
+  fed?: boolean;
   tags: string[];
   x?: number;
   y?: number;
@@ -93,8 +93,9 @@ export const NODE_RADIUS_DEFAULT = 14;
  *  task nodes grow with connectivity. */
 export const NOTE_NODE_RADIUS = 9;
 
-/** Neutral gray shared by note-task edges and the legend's Notes swatch —
- *  the "notes layer" color, deliberately outside the type palette. */
+/** Dark-theme fallback for the notes-layer gray. The canvas resolves the
+ *  theme-aware value from `ThemeColors.noteEdge`; DOM surfaces read
+ *  `var(--color-note-edge)` directly. */
 export const NOTE_EDGE_GRAY = "#8b93a1";
 
 export const EDGE_COLOR: Record<EdgeType | NoteLinkType, string> = {
@@ -213,6 +214,8 @@ export interface ThemeColors {
   noteKnowledge: string;
   /** Stroke for note-note edges — the knowledge web's teal. */
   noteLink: string;
+  /** Stroke for note-task edges and the notes-layer swatch gray. */
+  noteEdge: string;
   surface: string;
   /** True when rendering against the light theme. Drives node halo/fill
    *  alpha boosts so colored pixels stay visible against a near-white
@@ -251,6 +254,7 @@ export const DARK_THEME: ThemeColors = {
   noteGuidance: "#ffbc33",
   noteKnowledge: "#a78bfa",
   noteLink: "#2dd4bf",
+  noteEdge: NOTE_EDGE_GRAY,
   surface: "rgba(7,8,10,0.85)",
   isLight: false,
   haloAlpha: 0.12,
@@ -276,6 +280,7 @@ export const LIGHT_THEME: ThemeColors = {
   noteGuidance: "#d97706",
   noteKnowledge: "#7c3aed",
   noteLink: "#0d9488",
+  noteEdge: "#64748b",
   surface: "rgba(255,255,255,0.85)",
   isLight: true,
   haloAlpha: 0.22,
@@ -312,6 +317,7 @@ export function getCanvasTheme(): ThemeColors {
       noteGuidance: read("--color-progress") || base.noteGuidance,
       noteKnowledge: read("--color-relates") || base.noteKnowledge,
       noteLink: read("--color-note-link") || base.noteLink,
+      noteEdge: read("--color-note-edge") || base.noteEdge,
     };
   } catch {
     return base;

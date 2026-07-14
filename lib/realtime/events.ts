@@ -69,6 +69,10 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
  *   (delete).
  * @param revisionCheckpointed - Whether the write archived a revision
  *   checkpoint (the stored revision list changed).
+ * @param metaChanged - Whether the write moved the note's graph-visible
+ *   metadata or link set (`notes.meta_updated_at`). Pass `false` on
+ *   graph-inert writes so consumers skip the slim-graph refetch; omit
+ *   when unknown or always graph-visible.
  */
 export function emitNoteEvent(
   projectId: string,
@@ -77,6 +81,7 @@ export function emitNoteEvent(
   updatedAt?: Date,
   version?: number,
   revisionCheckpointed?: boolean,
+  metaChanged?: boolean,
 ): void {
   const payload = {
     kind: "note",
@@ -85,6 +90,7 @@ export function emitNoteEvent(
     ...(updatedAt !== undefined ? { updatedAt: updatedAt.toISOString() } : {}),
     ...(version !== undefined ? { version } : {}),
     ...(revisionCheckpointed !== undefined ? { revisionCheckpointed } : {}),
+    ...(metaChanged !== undefined ? { metaChanged } : {}),
   } satisfies RealtimeEvent;
   broker.dispatch(
     visibility === "team" ? `project:${projectId}` : `note:${noteId}`,

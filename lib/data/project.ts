@@ -403,7 +403,7 @@ export async function getProjectChrome(
  * read on a 304 response. The context route passes `content` (it embeds
  * note bodies, so any note edit must move it); the graph route passes
  * `meta` (it renders only note metadata and links, so body-only edits
- * must NOT move it — that is the egress fix).
+ * must not move it).
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.

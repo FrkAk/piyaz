@@ -3194,6 +3194,7 @@ async function updateNoteCore(
         visibility: current.visibility,
         links: undefined,
         revisionCheckpoint: undefined,
+        metaChanged: false,
       };
     }
 
@@ -3206,13 +3207,15 @@ async function updateNoteCore(
         visibility: current.visibility,
         links: undefined,
         revisionCheckpoint: undefined,
+        metaChanged: false,
       };
     }
     const newVersion = bodyChanged ? current.version + 1 : current.version;
+    const now = new Date();
     const changes: Record<string, unknown> = {
       ...applied,
       updatedBy: ctx.userId,
-      updatedAt: new Date(),
+      updatedAt: now,
     };
     if (bodyChanged) {
       changes.version = newVersion;
@@ -3245,8 +3248,19 @@ async function updateNoteCore(
     const graphMetaChanged = changedFields.some((field) =>
       GRAPH_META_NOTE_FIELDS.has(field),
     );
-    if (graphMetaChanged || derivedLinksChanged) {
-      changes.metaUpdatedAt = changes.updatedAt;
+    const metaChanged = graphMetaChanged || derivedLinksChanged;
+    if (metaChanged) {
+      changes.metaUpdatedAt = now;
+    }
+    // A team-to-private flip hides the row from other members under RLS,
+    // so their note-clock MAX can no longer observe the bump above.
+    // Moving the project clock (visible to every member) makes their
+    // graph and context validators register the disappearance.
+    if (applied.visibility === "private" && current.visibility === "team") {
+      await tx
+        .update(projects)
+        .set({ updatedAt: now })
+        .where(eq(projects.id, current.projectId));
     }
 
     const [summary] = await tx
@@ -3347,6 +3361,7 @@ async function updateNoteCore(
       visibility: nextVisibility,
       links,
       revisionCheckpoint,
+      metaChanged,
     };
   });
 
@@ -3358,6 +3373,7 @@ async function updateNoteCore(
       result.summary.updatedAt,
       result.summary.version,
       result.revisionCheckpoint !== undefined,
+      result.metaChanged,
     );
   }
   return {
@@ -3445,6 +3461,8 @@ export async function moveNote(
       result.visibility,
       result.summary.updatedAt,
       result.summary.version,
+      undefined,
+      false,
     );
   }
   return result.summary;
@@ -3974,6 +3992,8 @@ export async function requestShare(
     "private",
     summary.updatedAt,
     summary.version,
+    undefined,
+    false,
   );
   return summary;
 }
@@ -4068,6 +4088,8 @@ export async function declineShareRequest(
     "private",
     summary.updatedAt,
     summary.version,
+    undefined,
+    false,
   );
   return summary;
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import type { EdgeType } from "@/lib/types";
-import { NOTE_EDGE_GRAY } from "@/components/graph/graphConstants";
 
 /** Active value for the edge filter pills. `all` shows every edge; the
  *  other values show ONLY their stratum (`notes` = every note edge). */
@@ -27,7 +26,7 @@ const ITEMS: ReadonlyArray<PillItem> = [
   { id: "all", label: "All edges" },
   { id: "depends_on", label: "Depends on", tokenColor: "var(--color-depends)" },
   { id: "relates_to", label: "Relates to", tokenColor: "var(--color-relates)" },
-  { id: "notes", label: "Note links", tokenColor: NOTE_EDGE_GRAY },
+  { id: "notes", label: "Note links", tokenColor: "var(--color-note-edge)" },
 ];
 
 /**

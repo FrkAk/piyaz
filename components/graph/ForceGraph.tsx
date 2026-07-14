@@ -850,7 +850,9 @@ export function ForceGraph({
       const edgeColor =
         l.type === "note_note"
           ? theme.noteLink
-          : (EDGE_COLOR[l.type] ?? "#6b7280");
+          : noteStyle
+            ? theme.noteEdge
+            : (EDGE_COLOR[l.type] ?? "#6b7280");
       const baseAlpha =
         (1 - dimAlpha * 0.85) *
         enterAlpha *
@@ -1034,7 +1036,9 @@ export function ForceGraph({
         const edgeColor =
           hovEdge.type === "note_note"
             ? theme.noteLink
-            : (EDGE_COLOR[hovEdge.type] ?? "#6b7280");
+            : isNoteLinkType(hovEdge.type)
+              ? theme.noteEdge
+              : (EDGE_COLOR[hovEdge.type] ?? "#6b7280");
         ctx.globalAlpha = 0.9;
         ctx.font = `700 8px "GeistMono Variable", "GeistMono", monospace`;
         ctx.textAlign = "center";

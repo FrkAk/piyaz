@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import {
   appUserConnect,
+  seedSecondMember,
   seedUserOrgProject,
   serviceRoleConnect,
 } from "@/tests/setup/seed";
@@ -14,27 +15,6 @@ import {
 afterEach(async () => {
   await truncateAll();
 });
-
-/**
- * Insert a new user and add them to an existing org as a plain member.
- *
- * @param organizationId - Org the new member joins.
- * @param suffix - Unique suffix for the user's name and email.
- * @returns The new user's id.
- */
-async function seedSecondMember(
-  organizationId: string,
-  suffix: string,
-): Promise<string> {
-  const sql = superuserPool();
-  const [u] = await sql<{ id: string }[]>`
-    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
-    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
-    RETURNING id
-  `;
-  await addMembership(organizationId, u.id);
-  return u.id;
-}
 
 /**
  * Add an existing user to another org as a plain member (dual-org setup).
