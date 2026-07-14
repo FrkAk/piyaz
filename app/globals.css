@@ -44,6 +44,12 @@
 
   --color-depends: #55b3ff;
   --color-relates: #a78bfa;
+  /* Note-note graph edges — teal is the one hue absent from the status/type
+     vocabulary, so the knowledge web can't be misread as lifecycle. */
+  --color-note-link: #2dd4bf;
+  /* Note-task graph edges and the legend's notes-layer swatch — neutral
+     gray outside the type palette. */
+  --color-note-edge: #8b93a1;
 
   /* Status glyph fills — graph + list */
   --color-glyph-draft: rgba(156, 163, 175, 0.45);
@@ -119,6 +125,8 @@ html.light {
   --color-cancelled: #c25454;
   --color-depends: #2563eb;
   --color-relates: #7c3aed;
+  --color-note-link: #0d9488;
+  --color-note-edge: #64748b;
 
   --color-done-bg: rgba(95, 201, 146, 0.08);
   --color-progress-bg: rgba(255, 188, 51, 0.08);

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
-import { seedUserOrgProject } from "@/tests/setup/seed";
+import { seedSecondMember, seedUserOrgProject } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
-import { LEGAL_VERSIONS } from "@/lib/legal/versions";
 import { broker } from "@/lib/realtime/broker";
+import type { RealtimeEvent } from "@/lib/realtime/types";
 import {
   GET as getEvents,
   HEAD as headEvents,
@@ -13,7 +13,13 @@ import {
   HEAD as headRevisions,
 } from "@/app/api/note/[noteId]/revisions/route";
 import { makeAuthContext } from "@/lib/auth/context";
-import { createNote, deleteNote, updateNote } from "@/lib/data/note";
+import {
+  createNote,
+  deleteNote,
+  moveFolder,
+  moveNote,
+  updateNote,
+} from "@/lib/data/note";
 import type { ActivityEvent } from "@/lib/types";
 
 const setSession = (
@@ -42,33 +48,17 @@ async function seedNoteWithHistory(prefix: string) {
 }
 
 /**
- * Insert a new user and add them to an existing org as a plain member.
+ * Parse captured SSE frames down to the note-kind realtime events.
  *
- * @param organizationId - Org the new member joins.
- * @param suffix - Unique suffix for the user's name and email.
- * @returns The new user's id.
+ * @param frames - Raw `data: <json>\n\n` frames captured by a fake conn.
+ * @returns The decoded note events in dispatch order.
  */
-async function seedSecondMember(
-  organizationId: string,
-  suffix: string,
-): Promise<string> {
-  const sql = superuserPool();
-  const [u] = await sql<{ id: string }[]>`
-    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
-    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
-    RETURNING id
-  `;
-  await sql`
-    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
-    VALUES (${organizationId}, ${u.id}, 'member', now())
-  `;
-  await sql`
-    INSERT INTO legal_acceptances ("user_id", "document_type", "document_version")
-    VALUES
-      (${u.id}, 'terms', ${LEGAL_VERSIONS.terms}),
-      (${u.id}, 'privacy', ${LEGAL_VERSIONS.privacy})
-  `;
-  return u.id;
+function noteEventsFrom(
+  frames: string[],
+): Extract<RealtimeEvent, { kind: "note" }>[] {
+  return frames
+    .map((f) => JSON.parse(f.slice("data: ".length)) as RealtimeEvent)
+    .filter((e) => e.kind === "note");
 }
 
 const callEvents = (
@@ -364,5 +354,150 @@ describe("GET /api/note/[noteId]/revisions", () => {
     await deleteNote(ctx, noteId);
     setSession({ user: { id: fx.userId } });
     expect((await callRevisions(noteId, {}, "HEAD")).status).toBe(404);
+  });
+});
+
+describe("realtime note events: metaChanged flag", () => {
+  test("graph-inert writes emit metaChanged false; graph-visible writes true", async () => {
+    const fx = await seedUserOrgProject("nev-meta");
+    const ctx = makeAuthContext(fx.userId);
+    const note = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "N",
+      visibility: "team",
+    });
+
+    const frames: string[] = [];
+    broker.attach(fx.userId, {
+      send: (data) => frames.push(data),
+      close: () => {},
+    });
+    broker.register(fx.userId, `project:${fx.projectId}`);
+
+    await updateNote(ctx, note.id, { body: "plain prose, no refs" });
+    await moveNote(ctx, note.id, "docs");
+    await updateNote(ctx, note.id, { title: "Renamed" });
+
+    expect(noteEventsFrom(frames).map((e) => e.metaChanged)).toEqual([
+      false,
+      true,
+      true,
+    ]);
+  });
+
+  test("a team-to-private flip emits a project event so unsubscribed members refetch", async () => {
+    const fx = await seedUserOrgProject("nev-flip-proj");
+    const userB = await seedSecondMember(fx.organizationId, "nev-flip-proj-b");
+    const ctx = makeAuthContext(fx.userId);
+    const note = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "N",
+      visibility: "team",
+    });
+
+    const frames: string[] = [];
+    broker.attach(userB, {
+      send: (data) => frames.push(data),
+      close: () => {},
+    });
+    broker.register(userB, `project:${fx.projectId}`);
+
+    await updateNote(ctx, note.id, { visibility: "private" });
+
+    const kinds = frames.map(
+      (f) => (JSON.parse(f.slice("data: ".length)) as RealtimeEvent).kind,
+    );
+    expect(kinds).toContain("project");
+    expect(kinds).not.toContain("note");
+  });
+
+  test("a team-to-private flip purges former viewers from the note channel", async () => {
+    const fx = await seedUserOrgProject("nev-flip-purge");
+    const userB = await seedSecondMember(fx.organizationId, "nev-flip-purge-b");
+    const ctx = makeAuthContext(fx.userId);
+    const note = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "N",
+      visibility: "team",
+    });
+
+    const framesA: string[] = [];
+    const framesB: string[] = [];
+    broker.attach(fx.userId, {
+      send: (data) => framesA.push(data),
+      close: () => {},
+    });
+    broker.register(fx.userId, `note:${note.id}`);
+    broker.attach(userB, {
+      send: (data) => framesB.push(data),
+      close: () => {},
+    });
+    broker.register(userB, `note:${note.id}`);
+
+    await updateNote(ctx, note.id, { visibility: "private" });
+    await updateNote(ctx, note.id, { title: "Renamed" });
+
+    expect(noteEventsFrom(framesA)).toHaveLength(2);
+    expect(noteEventsFrom(framesB)).toHaveLength(1);
+  });
+
+  test("a subtree folder move emits per-note events so open editors stay fresh", async () => {
+    const fx = await seedUserOrgProject("nev-movefolder");
+    const ctx = makeAuthContext(fx.userId);
+    const team = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "T",
+      visibility: "team",
+    });
+    await moveNote(ctx, team.id, "docs");
+    const priv = await createNote(ctx, { projectId: fx.projectId, title: "P" });
+    await moveNote(ctx, priv.id, "docs/sub");
+
+    const frames: string[] = [];
+    broker.attach(fx.userId, {
+      send: (data) => frames.push(data),
+      close: () => {},
+    });
+    broker.register(fx.userId, `project:${fx.projectId}`);
+    broker.register(fx.userId, `note:${priv.id}`);
+
+    await moveFolder(ctx, fx.projectId, "docs", "", "archive");
+
+    const noteEvents = noteEventsFrom(frames);
+    expect(noteEvents.map((e) => e.noteId).sort()).toEqual(
+      [team.id, priv.id].sort(),
+    );
+    expect(noteEvents.every((e) => e.metaChanged === true)).toBe(true);
+    expect(noteEvents.every((e) => e.updatedAt !== undefined)).toBe(true);
+  });
+
+  test("a body edit that changes the derived link set emits metaChanged true", async () => {
+    const fx = await seedUserOrgProject("nev-meta-derive");
+    const ctx = makeAuthContext(fx.userId);
+    const su = superuserPool();
+    const [task] = await su<{ id: string }[]>`
+      INSERT INTO tasks ("project_id", "title", "sequence_number")
+      VALUES (${fx.projectId}, 'T1', 1)
+      RETURNING id
+    `;
+    void task;
+    const note = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "Source",
+      visibility: "team",
+    });
+
+    const frames: string[] = [];
+    broker.attach(fx.userId, {
+      send: (data) => frames.push(data),
+      close: () => {},
+    });
+    broker.register(fx.userId, `project:${fx.projectId}`);
+
+    await updateNote(ctx, note.id, {
+      body: `see [[PRJnev-meta-derive-1]]`,
+    });
+
+    expect(noteEventsFrom(frames).map((e) => e.metaChanged)).toEqual([true]);
   });
 });

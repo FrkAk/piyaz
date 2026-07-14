@@ -97,6 +97,23 @@ class Broker {
   }
 
   /**
+   * Drop every user's subscription on {@link key} except
+   * {@link keepUserId}'s. Used after a team-to-private note flip: former
+   * viewers registered the fetch-implicit `note:<id>` channel while the
+   * note was shared, and the TTL alone would keep them receiving
+   * edit-timing, version, and presence events for up to 10 more minutes.
+   *
+   * @param key - Resource key to purge.
+   * @param keepUserId - User whose subscription survives; omit to purge all.
+   */
+  purgeKeySubs(key: ResourceKey, keepUserId?: string): void {
+    for (const [userId, userMap] of this.subs) {
+      if (userId === keepUserId) continue;
+      userMap.delete(key);
+    }
+  }
+
+  /**
    * Attach a live SSE connection for the user.
    *
    * @param userId - Caller user id.

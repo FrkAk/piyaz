@@ -297,6 +297,19 @@ class WorkersBroker {
   }
 
   /**
+   * Drop every user's subscription on {@link key} except
+   * {@link keepUserId}'s. Fire-and-forget: on Workers the purge and any
+   * just-dispatched event race as separate DO sub-requests, so delivery
+   * of a final event to purged users is best-effort.
+   *
+   * @param key - Resource key to purge.
+   * @param keepUserId - User whose subscription survives; omit to purge all.
+   */
+  purgeKeySubs(key: ResourceKey, keepUserId?: string): void {
+    this.fireAndForget({ op: "purge-key-subs", key, keepUserId });
+  }
+
+  /**
    * Notify the DO that an SSE handler is detaching a connection.
    * Informational only — the DO discovers the real detach via
    * `webSocketClose`. Forwarded so future diagnostic ops can hook in

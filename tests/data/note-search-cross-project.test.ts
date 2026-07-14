@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
-import { seedUserOrgProject } from "@/tests/setup/seed";
+import { seedSecondMember, seedUserOrgProject } from "@/tests/setup/seed";
 import { superuserPool } from "@/tests/setup/global";
 import {
   createNote,
@@ -13,30 +13,6 @@ import { makeAuthContext } from "@/lib/auth/context";
 afterEach(async () => {
   await truncateAll();
 });
-
-/**
- * Add a fresh user to an existing org as a plain member.
- *
- * @param organizationId - Org the new member joins.
- * @param suffix - Unique suffix for the user's name/email.
- * @returns The new member's user id.
- */
-async function seedSecondMember(
-  organizationId: string,
-  suffix: string,
-): Promise<string> {
-  const sql = superuserPool();
-  const [u] = await sql<{ id: string }[]>`
-    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
-    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
-    RETURNING id
-  `;
-  await sql`
-    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
-    VALUES (${organizationId}, ${u.id}, 'member', now())
-  `;
-  return u.id;
-}
 
 /**
  * Add an org holding a project that reuses an existing identifier, with the

@@ -7,10 +7,12 @@ import { normalizeExecuteResult, toDate } from "@/lib/db/raw";
 import {
   assertNoteGateRows,
   assertValidNoteId,
+  assertValidTaskId,
   ForbiddenError,
 } from "@/lib/auth/authorization";
 import { noteAccessGateStmt, type NoteAccessGate } from "@/lib/data/access";
 import {
+  taskActivityHeadStmt,
   taskActivityStmt,
   type ActivityCursor,
   type ActivityRawRow,
@@ -349,14 +351,22 @@ function toActivityEvent(r: ActivityRawRow): ActivityEvent {
  * @param taskId - Task whose events to read.
  * @param opts - `limit` (clamped to {@link MAX_LIMIT}), an opaque `cursor`, and
  *   an optional `since` lower bound (events with `created_at > since`).
- * @returns A page of events plus the next cursor (null when exhausted).
- * @throws ForbiddenError when the task is not visible to the caller.
+ * @returns A page of events, the next cursor (null when exhausted), and
+ *   `visibleCount`, the exposure-filtered row count of the whole keyset
+ *   window (the validator arm matching {@link getTaskActivityHead}).
+ * @throws ForbiddenError when the task id is malformed or the task is not
+ *   visible to the caller (both 404-shaped).
  */
 export async function listTaskActivity(
   ctx: AuthContext,
   taskId: string,
   opts: { cursor?: string; limit?: number; since?: string },
-): Promise<{ events: ActivityEvent[]; nextCursor: string | null }> {
+): Promise<{
+  events: ActivityEvent[];
+  nextCursor: string | null;
+  visibleCount: number;
+}> {
+  assertValidTaskId(taskId);
   const limit = Math.min(Math.max(opts.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
   const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
   const since = normalizeSince(opts.since);
@@ -371,13 +381,64 @@ export async function listTaskActivity(
 
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
-  if (page.length === 0) return { events: [], nextCursor: null };
+  if (page.length === 0)
+    return { events: [], nextCursor: null, visibleCount: 0 };
 
   const last = page[page.length - 1];
   return {
     events: page.map(toActivityEvent),
     nextCursor: hasMore ? encodeCursor(last.created_at_cursor, last.id) : null,
+    visibleCount: Number(page[0].visible_count ?? 0),
   };
+}
+
+/**
+ * Newest event key of one task-activity page: the `(createdAtMs, id)` pair
+ * the matching {@link listTaskActivity} page would surface first plus the
+ * window's exposure-filtered `visibleCount`, or null when the page is
+ * empty. The count arm makes the validator observe a note trash or
+ * team-to-private flip that hides a mid-window row without moving the
+ * head. One RLS-scoped batch (index head probe with the same exposure
+ * filters + task-existence probe): the cheap validator resolve for
+ * `HEAD`/`If-None-Match`, so a 304 skips the full page fetch and its
+ * identity joins.
+ *
+ * @param ctx - Caller auth context.
+ * @param taskId - Task whose events to probe.
+ * @param opts - Optional opaque `cursor` and `since` lower bound, matching
+ *   the page read they validate.
+ * @returns The newest matching event's key and window count, or null when
+ *   none match.
+ * @throws ForbiddenError when the task id is malformed or the task is not
+ *   visible to the caller (both 404-shaped).
+ */
+export async function getTaskActivityHead(
+  ctx: AuthContext,
+  taskId: string,
+  opts: { cursor?: string; since?: string },
+): Promise<{ createdAtMs: number; id: string; visibleCount: number } | null> {
+  assertValidTaskId(taskId);
+  const cur = opts.cursor ? decodeCursor(opts.cursor) : null;
+  const since = normalizeSince(opts.since);
+
+  const agentExposed = ctx.actor.source === "mcp";
+  const [raw, probe] = await withUserContextRead(ctx.userId, (read) => [
+    taskActivityHeadStmt(read, taskId, cur, since, agentExposed),
+    read.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId)),
+  ]);
+  if (probe.length === 0) throw new ForbiddenError("Forbidden", "task", taskId);
+  const [row] = normalizeExecuteResult<{
+    id: string;
+    created_at: Date | string;
+    visible_count: number | string;
+  }>(raw);
+  return row
+    ? {
+        createdAtMs: toDate(row.created_at).getTime(),
+        id: row.id,
+        visibleCount: Number(row.visible_count ?? 0),
+      }
+    : null;
 }
 
 /**

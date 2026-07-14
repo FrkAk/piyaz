@@ -1,10 +1,17 @@
-import type { Project, Task, TaskEdge } from "@/lib/db/schema";
+import type {
+  NoteLink,
+  NoteTaskLink,
+  Project,
+  Task,
+  TaskEdge,
+} from "@/lib/db/schema";
 import type { TaskState } from "@/lib/data/task";
 import type {
   AcceptanceCriterion,
   Decision,
   Priority,
   Estimate,
+  NoteType,
   TaskStatus,
 } from "@/lib/types";
 
@@ -186,8 +193,34 @@ export type TaskGraphEdge = Pick<
  * so the JSON shape matches the type across the API boundary. */
 export type TaskEdgeRef = TaskGraphEdge & Pick<TaskEdge, "note">;
 
-/** Slim project graph for the workspace canvas + list. Edges and tasks are
- * projected down to the fields the graph surfaces render. */
+/**
+ * Slim note entry returned by the project graph payload. Mirrors
+ * {@link TaskGraphSlim}'s ref composition: `noteRef` is the composed
+ * `<IDENT>-N<seq>` string. Only the fields the canvas and rail render ship;
+ * `fed` derives from `feedMode != 'none'`.
+ */
+export type NoteGraphSlim = {
+  id: string;
+  noteRef: string;
+  title: string;
+  type: NoteType;
+  fed: boolean;
+};
+
+/** Slim note-to-note edge for the graph payload. Keyed client-side by the
+ * endpoint pair (`note_links` is unique on it), so no `id` ships. */
+export type NoteGraphEdge = Pick<NoteLink, "sourceNoteId" | "targetNoteId">;
+
+/** Slim note-to-task edge for the graph payload. Pairs are deduped
+ * server-side to the strongest `kind` (`spec_of` > `reference` > `mention`)
+ * so the canvas styles deliberate links apart from body mentions. */
+export type NoteTaskGraphEdge = Pick<
+  NoteTaskLink,
+  "noteId" | "taskId" | "kind"
+>;
+
+/** Slim project graph for the workspace canvas + list. Edges, tasks, and
+ * notes are projected down to the fields the graph surfaces render. */
 export type ProjectGraphSlim = {
   project: Pick<
     Project,
@@ -202,6 +235,9 @@ export type ProjectGraphSlim = {
   >;
   tasks: TaskGraphSlim[];
   edges: TaskGraphEdge[];
+  notes: NoteGraphSlim[];
+  noteLinks: NoteGraphEdge[];
+  noteTaskLinks: NoteTaskGraphEdge[];
 };
 
 /**

@@ -2,34 +2,42 @@ import { sql } from "drizzle-orm";
 import { notes, projects, tasks, taskEdges } from "@/lib/db/schema";
 import { executeRaw, type Conn } from "@/lib/db/raw";
 
+/** How a project validator folds notes in: `none` ignores notes, `meta`
+ *  reads the graph-visible metadata clock (`notes.meta_updated_at`), and
+ *  `content` reads the full content clock (`notes.updated_at`). */
+export type ProjectValidatorNotesMode = "none" | "meta" | "content";
+
 /**
  * Resolve the latest `updated_at` across a project's metadata, every task
  * in the project, and every edge whose source OR target is in the project.
- * When `includeNotes` is set the project's notes are folded in too, so a
- * consumer that embeds note content (the context-bundle route) invalidates
- * on a note edit; consumers that render no notes (the graph route) leave it
- * off to avoid needless cache misses.
+ * `notesMode` picks the notes clock: the graph route uses `meta` so note
+ * body edits don't move its validator (the payload renders only note
+ * metadata and links), the context-bundle route uses `content` because it
+ * embeds note bodies, and consumers that render no notes use `none` to
+ * avoid needless cache misses. Every meta bump also bumps `updated_at`,
+ * so `content` strictly dominates `meta`.
  *
  * Single round trip via `GREATEST` over correlated subqueries so the
  * conditional-GET path fans out one DB query per request, not several.
  *
  * @param conn - Drizzle client or transaction handle.
  * @param projectId - UUID of the project.
- * @param includeNotes - Fold `notes.updated_at` into the validator.
+ * @param notesMode - Which notes clock to fold into the validator.
  * @returns The latest `updated_at`, or `null` when the project does not exist.
  */
 export async function getProjectMaxUpdatedAtRaw(
   conn: Conn,
   projectId: string,
-  includeNotes = false,
+  notesMode: ProjectValidatorNotesMode = "none",
 ): Promise<Date | null> {
-  const notesTerm = includeNotes
-    ? sql`,
+  const notesTerm =
+    notesMode === "none"
+      ? sql``
+      : sql`,
         COALESCE(
-          (SELECT MAX(updated_at) FROM ${notes} WHERE project_id = p.id),
+          (SELECT MAX(${notesMode === "meta" ? sql.raw("meta_updated_at") : sql.raw("updated_at")}) FROM ${notes} WHERE project_id = p.id),
           p.updated_at
-        )`
-    : sql``;
+        )`;
   const rows = await executeRaw<{ max_updated_at: string | Date }>(
     conn,
     sql`

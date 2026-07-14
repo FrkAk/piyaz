@@ -1,4 +1,4 @@
-import type { EdgeType } from "@/lib/types";
+import type { EdgeType, NoteTaskLinkKind, NoteType } from "@/lib/types";
 import type { SimulationLinkDatum } from "d3-force";
 
 // ---------------------------------------------------------------------------
@@ -9,8 +9,17 @@ import type { SimulationLinkDatum } from "d3-force";
 export interface GraphNode {
   id: string;
   title: string;
+  /** Composed ref — a taskRef for task nodes, a noteRef for note nodes. */
   taskRef: string;
+  /** Lifecycle status for task nodes; the inert `"note"` sentinel for note
+   *  nodes (draw and filter paths branch on `kind` before reading it). */
   status: string;
+  /** Entity discriminator: tasks draw as circles, notes as rounded squares. */
+  kind: "task" | "note";
+  /** Note type driving the note node's color; undefined on task nodes. */
+  noteType?: NoteType;
+  /** Note auto-feeds tasks (`feedMode != 'none'`); undefined on task nodes. */
+  fed?: boolean;
   tags: string[];
   x?: number;
   y?: number;
@@ -30,11 +39,47 @@ export interface GraphNode {
   _hoverT: number;
 }
 
-/** A link between two graph nodes. */
+/** Note edge discriminants — one per visible relation so the style table
+ *  and hover-label map stay exhaustiveness-checked. */
+export type NoteLinkType =
+  | "note_note"
+  | "note_task_spec_of"
+  | "note_task_reference"
+  | "note_task_mention";
+
+/** A link between two graph nodes. Note edges carry their relation so
+ *  deliberate links, body mentions, and the knowledge web style apart. */
 export interface GraphLink extends SimulationLinkDatum<GraphNode> {
   source: string | GraphNode;
   target: string | GraphNode;
-  type: EdgeType;
+  type: EdgeType | NoteLinkType;
+}
+
+/**
+ * Narrow a link type to the note edge vocabulary.
+ *
+ * @param t - Link type.
+ * @returns True when the link is a note edge of any relation.
+ */
+export function isNoteLinkType(t: GraphLink["type"]): t is NoteLinkType {
+  return t === "note_note" || t.startsWith("note_task_");
+}
+
+/**
+ * Map a payload note-task link kind to its graph link type.
+ *
+ * @param kind - Note-task link kind from the slim payload.
+ * @returns The matching {@link NoteLinkType} discriminant.
+ */
+export function kindToLinkType(kind: NoteTaskLinkKind): NoteLinkType {
+  switch (kind) {
+    case "spec_of":
+      return "note_task_spec_of";
+    case "reference":
+      return "note_task_reference";
+    case "mention":
+      return "note_task_mention";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -44,13 +89,64 @@ export interface GraphLink extends SimulationLinkDatum<GraphNode> {
 /** Default node radius (used as fallback). */
 export const NODE_RADIUS_DEFAULT = 14;
 
-export const EDGE_COLOR: Record<EdgeType, string> = {
+/** Fixed radius for note nodes — satellites stay small and uniform; only
+ *  task nodes grow with connectivity. */
+export const NOTE_NODE_RADIUS = 9;
+
+/** Dark-theme fallback for the notes-layer gray. The canvas resolves the
+ *  theme-aware value from `ThemeColors.noteEdge`; DOM surfaces read
+ *  `var(--color-note-edge)` directly. */
+export const NOTE_EDGE_GRAY = "#8b93a1";
+
+export const EDGE_COLOR: Record<EdgeType | NoteLinkType, string> = {
   depends_on: "#55b3ff",
   relates_to: "#a78bfa",
+  // note_note is the dark fallback only — the canvas resolves it from
+  // ThemeColors.noteLink so the teal stays theme-aware.
+  note_note: "#2dd4bf",
+  note_task_spec_of: NOTE_EDGE_GRAY,
+  note_task_reference: NOTE_EDGE_GRAY,
+  note_task_mention: NOTE_EDGE_GRAY,
 };
 
 export const RELATES_DASH: number[] = [4, 6];
 export const RELATES_OPACITY = 0.6;
+
+/** Per-relation note edge styling. The note-task strata form a visual
+ *  ladder mirroring `NOTE_TASK_LINK_KIND_RANK`: `spec_of` draws the
+ *  heaviest cadence (long dash, widest), `reference` a lighter short
+ *  dash, mentions ambient residue — the surviving strongest kind is
+ *  decodable without the hover pill. The note-note web stays a distinct
+ *  dotted stratum. `label` feeds the hover pill. */
+export const NOTE_EDGE_STYLE: Record<
+  NoteLinkType,
+  { dash: readonly number[]; opacity: number; width: number; label: string }
+> = {
+  note_note: {
+    dash: [1.5, 3.5],
+    opacity: 0.45,
+    width: 1.25,
+    label: "links note",
+  },
+  note_task_spec_of: {
+    dash: [6, 3],
+    opacity: 0.6,
+    width: 1.5,
+    label: "spec of",
+  },
+  note_task_reference: {
+    dash: [2, 5],
+    opacity: 0.55,
+    width: 1.25,
+    label: "references",
+  },
+  note_task_mention: {
+    dash: [1, 4],
+    opacity: 0.3,
+    width: 1,
+    label: "mentions",
+  },
+};
 
 export const ACCENT = "#818cf8";
 
@@ -63,16 +159,20 @@ export const MAX_ZOOM = 5;
 // ---------------------------------------------------------------------------
 
 /**
- * Compute node radius based on edge count.
- * @param nodeId - Node ID.
- * @param linkCounts - Map of node ID to edge count.
+ * Compute node radius. Task nodes grow with their TASK-edge count (note
+ * attachments must not inflate a task); note nodes stay at the fixed
+ * satellite radius.
+ *
+ * @param node - Node id + kind.
+ * @param taskLinkCounts - Map of node ID to task-edge count.
  * @returns Pixel radius for the node.
  */
 export function getNodeSize(
-  nodeId: string,
-  linkCounts: Map<string, number>,
+  node: Pick<GraphNode, "id" | "kind">,
+  taskLinkCounts: Map<string, number>,
 ): number {
-  const count = linkCounts.get(nodeId) ?? 0;
+  if (node.kind === "note") return NOTE_NODE_RADIUS;
+  const count = taskLinkCounts.get(node.id) ?? 0;
   if (count >= 7) return 22;
   if (count >= 4) return 18;
   return 14;
@@ -112,6 +212,13 @@ export interface ThemeColors {
   statusInReview: string;
   statusDone: string;
   statusCancelled: string;
+  noteReference: string;
+  noteGuidance: string;
+  noteKnowledge: string;
+  /** Stroke for note-note edges — the knowledge web's teal. */
+  noteLink: string;
+  /** Stroke for note-task edges and the notes-layer swatch gray. */
+  noteEdge: string;
   surface: string;
   /** True when rendering against the light theme. Drives node halo/fill
    *  alpha boosts so colored pixels stay visible against a near-white
@@ -143,6 +250,14 @@ export const DARK_THEME: ThemeColors = {
   statusInReview: "#a78bfa",
   statusDone: "#5fc992",
   statusCancelled: "#e57373",
+  // Note-type palette mirrors NOTE_TYPE_META (components/workspace/notes):
+  // reference = planned blue, guidance = progress amber, knowledge =
+  // relates violet, so the graph and the notes rail speak one language.
+  noteReference: "#55b3ff",
+  noteGuidance: "#ffbc33",
+  noteKnowledge: "#a78bfa",
+  noteLink: "#2dd4bf",
+  noteEdge: NOTE_EDGE_GRAY,
   surface: "rgba(7,8,10,0.85)",
   isLight: false,
   haloAlpha: 0.12,
@@ -164,6 +279,11 @@ export const LIGHT_THEME: ThemeColors = {
   statusInReview: "#7c3aed",
   statusDone: "#059669",
   statusCancelled: "#c25454",
+  noteReference: "#3b82f6",
+  noteGuidance: "#d97706",
+  noteKnowledge: "#7c3aed",
+  noteLink: "#0d9488",
+  noteEdge: "#64748b",
   surface: "rgba(255,255,255,0.85)",
   isLight: true,
   haloAlpha: 0.22,
@@ -196,6 +316,11 @@ export function getCanvasTheme(): ThemeColors {
       statusInReview: read("--color-glyph-review") || base.statusInReview,
       statusDone: read("--color-done") || base.statusDone,
       statusCancelled: read("--color-cancelled") || base.statusCancelled,
+      noteReference: read("--color-planned") || base.noteReference,
+      noteGuidance: read("--color-progress") || base.noteGuidance,
+      noteKnowledge: read("--color-relates") || base.noteKnowledge,
+      noteLink: read("--color-note-link") || base.noteLink,
+      noteEdge: read("--color-note-edge") || base.noteEdge,
     };
   } catch {
     return base;
@@ -233,6 +358,25 @@ export function statusColor(stage: string, t: ThemeColors): string {
       return t.statusCancelled;
     default:
       return t.statusDraft;
+  }
+}
+
+/**
+ * Map a note type to its theme color. The counterpart of {@link statusColor}
+ * for note nodes; the palette mirrors `NOTE_TYPE_META` on the notes surface.
+ *
+ * @param type - Note type.
+ * @param t - Theme colors.
+ * @returns Color string for the type.
+ */
+export function noteTypeColor(type: NoteType, t: ThemeColors): string {
+  switch (type) {
+    case "guidance":
+      return t.noteGuidance;
+    case "knowledge":
+      return t.noteKnowledge;
+    default:
+      return t.noteReference;
   }
 }
 

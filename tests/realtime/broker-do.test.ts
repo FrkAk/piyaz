@@ -268,6 +268,47 @@ test("clear-task-subs — drops every task:* key when many are registered", asyn
   expect(ws.send).toHaveBeenCalledTimes(3);
 });
 
+test("purge-key-subs — drops every user's key except the kept user's", async () => {
+  const { ctx, broker } = makeBroker();
+  const wsKeep = attach(ctx, "u1");
+  const wsPurged = attach(ctx, "u2");
+  await rpc(broker, { op: "register", userId: "u1", key: "note:n1" });
+  await rpc(broker, { op: "register", userId: "u2", key: "note:n1" });
+
+  await rpc(broker, { op: "purge-key-subs", key: "note:n1", keepUserId: "u1" });
+  await rpc(broker, {
+    op: "dispatch",
+    key: "note:n1",
+    payload: { kind: "note", projectId: "p1", noteId: "n1" },
+  });
+
+  const frame = `data: ${JSON.stringify({ kind: "note", projectId: "p1", noteId: "n1" })}\n\n`;
+  expect(wsKeep.send).toHaveBeenCalledWith(frame);
+  expect(wsPurged.send).not.toHaveBeenCalled();
+});
+
+test("purge-key-subs — persists mutated users and leaves other keys intact", async () => {
+  const ctx = fakeCtxWithStorage();
+  ctx.acceptWebSocket(fakeSocket(), ["u1"]);
+  ctx.acceptWebSocket(fakeSocket(), ["u2"]);
+  const broker = new PiyazBroker(
+    ctx as never,
+    { BROKER_DO_SECRET: TEST_SECRET } as never,
+  );
+  await rpc(broker, { op: "register", userId: "u1", key: "note:n1" });
+  await rpc(broker, { op: "register", userId: "u2", key: "note:n1" });
+  await rpc(broker, { op: "register", userId: "u2", key: "project:p1" });
+
+  await rpc(broker, { op: "purge-key-subs", key: "note:n1", keepUserId: "u1" });
+
+  const keptEntries = ctx.data.get("subs:u1") as Array<[string, number | null]>;
+  const purgedEntries = ctx.data.get("subs:u2") as Array<
+    [string, number | null]
+  >;
+  expect(keptEntries.map((entry) => entry[0])).toEqual(["note:n1"]);
+  expect(purgedEntries.map((entry) => entry[0])).toEqual(["project:p1"]);
+});
+
 test("TTL expiry — expired entries are cleaned and not delivered", async () => {
   const { ctx, broker } = makeBroker();
   const ws = attach(ctx, "u1");

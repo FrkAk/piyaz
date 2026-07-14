@@ -441,6 +441,14 @@ export const notes = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // Metadata clock: bumped on every change except pure body edits
+    // (fields, folder, links, trash/restore). The graph and notes-tree
+    // validators read it so body autosaves stay 304-cheap. updated_at stays
+    // the content clock / CAS token; every meta bump also bumps updated_at,
+    // so content strictly dominates.
+    metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     // Consumed only server-side by notes_search_idx and large (up to hundreds
     // of KB for a max-size body): reads must project explicit columns that

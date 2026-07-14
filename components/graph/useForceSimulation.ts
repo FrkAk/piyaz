@@ -10,17 +10,36 @@ import {
 import type { Simulation } from "d3-force";
 import { quadtree } from "d3-quadtree";
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import type { TaskGraphEdge, TaskGraphSlim } from "@/lib/data/views";
-import type { GraphNode, GraphLink, GraphTierConfig } from "./graphConstants";
+import type {
+  NoteGraphSlim,
+  TaskGraphEdge,
+  TaskGraphSlim,
+} from "@/lib/data/views";
+import type {
+  GraphNode,
+  GraphLink,
+  GraphTierConfig,
+  NoteLinkType,
+} from "./graphConstants";
 import {
   getNodeSize,
   buildLinkCounts,
   getDeviceTier,
   getTierConfig,
+  isNoteLinkType,
 } from "./graphConstants";
 
 /** Slim task record used for graph rendering — heavy fields are not needed. */
 type GraphTask = TaskGraphSlim;
+
+/** Direction-agnostic note edge (note-note or note-task), pre-flattened by
+ *  the consumer from the slim payload's two link arrays. `type` carries the
+ *  relation so the renderer styles each stratum apart. */
+export interface NoteEdge {
+  sourceId: string;
+  targetId: string;
+  type: NoteLinkType;
+}
 
 // ---------------------------------------------------------------------------
 // Link distance per edge type
@@ -141,12 +160,16 @@ interface BuildResult {
 }
 
 /**
- * Build GraphNode + GraphLink arrays from tasks and edges. Nodes whose id
- * appears in `saved` reuse the saved x/y (and skip the entrance fade) so a
- * remount with cached positions paints in the same place.
+ * Build GraphNode + GraphLink arrays from tasks, notes, and their edges.
+ * Nodes whose id appears in `saved` reuse the saved x/y (and skip the
+ * entrance fade) so a remount with cached positions paints in the same
+ * place. Tasks and notes share one spawn spiral so mixed graphs explode
+ * from the same distribution as task-only ones.
  *
  * @param taskList - Task records.
  * @param edges - Slim edge records.
+ * @param noteList - Slim note records.
+ * @param noteEdges - Flattened note-note and note-task edges.
  * @param cx - Initial-ring centre X (used only for uncached nodes).
  * @param cy - Initial-ring centre Y.
  * @param saved - Per-project position cache.
@@ -155,37 +178,69 @@ interface BuildResult {
 function buildGraph(
   taskList: GraphTask[],
   edges: TaskGraphEdge[],
+  noteList: NoteGraphSlim[],
+  noteEdges: NoteEdge[],
   cx: number,
   cy: number,
   saved: Map<string, { x: number; y: number }>,
 ): BuildResult {
   const nodes: GraphNode[] = [];
   const ids = new Set<string>();
+  const total = taskList.length + noteList.length;
   // Sunflower spiral spacing — grows with project complexity so a 200-node
   // graph spawns closer to its equilibrium spread instead of having to
   // expand from a tight ring. Cuts settle time dramatically for large N.
   const golden = Math.PI * (3 - Math.sqrt(5));
-  const spacing = 30 + 25 * Math.log10(Math.max(taskList.length, 10));
+  const spacing = 30 + 25 * Math.log10(Math.max(total, 10));
+
+  const spawn = (i: number) => {
+    const r = Math.sqrt(i + 0.5) * spacing;
+    const angle = i * golden;
+    return { x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r };
+  };
 
   for (let i = 0; i < taskList.length; i++) {
     const t = taskList[i];
-    const r = Math.sqrt(i + 0.5) * spacing;
-    const angle = i * golden;
     const s = saved.get(t.id);
+    const p = s ?? spawn(i);
     nodes.push({
       id: t.id,
       title: t.title,
       taskRef: t.taskRef,
       status: t.status,
+      kind: "task",
       tags: t.tags ?? [],
-      x: s?.x ?? cx + Math.cos(angle) * r,
-      y: s?.y ?? cy + Math.sin(angle) * r,
+      x: p.x,
+      y: p.y,
       _enterT: s ? 1 : 0,
       _dimT: 0,
       _selectGlow: 0,
       _hoverT: 0,
     });
     ids.add(t.id);
+  }
+
+  for (let i = 0; i < noteList.length; i++) {
+    const n = noteList[i];
+    const s = saved.get(n.id);
+    const p = s ?? spawn(taskList.length + i);
+    nodes.push({
+      id: n.id,
+      title: n.title,
+      taskRef: n.noteRef,
+      status: "note",
+      kind: "note",
+      noteType: n.type,
+      fed: n.fed,
+      tags: [],
+      x: p.x,
+      y: p.y,
+      _enterT: s ? 1 : 0,
+      _dimT: 0,
+      _selectGlow: 0,
+      _hoverT: 0,
+    });
+    ids.add(n.id);
   }
 
   const links: GraphLink[] = [];
@@ -196,6 +251,11 @@ function buildGraph(
         target: e.targetTaskId,
         type: e.edgeType,
       });
+    }
+  }
+  for (const e of noteEdges) {
+    if (ids.has(e.sourceId) && ids.has(e.targetId)) {
+      links.push({ source: e.sourceId, target: e.targetId, type: e.type });
     }
   }
 
@@ -329,13 +389,19 @@ function makeSim(
   h: number,
   tier: GraphTierConfig,
 ): SimResult {
-  const linkCounts = buildLinkCounts(links);
+  // Two degree maps with distinct jobs. taskDeg (task edges only) drives
+  // DRAWN size, so attaching notes never visually inflates a task. allDeg
+  // (every edge) drives the physics (charge, collide, hub ring, link
+  // stretch): a task annotated by ten notes is a physical hub that needs
+  // the space, even while drawn small.
+  const taskDeg = buildLinkCounts(links.filter((l) => !isNoteLinkType(l.type)));
+  const allDeg = buildLinkCounts(links);
   const cfg = deriveForceConfig(nodes.length, links.length);
   // Hubs sit on an inner ring of this radius. Their leaves naturally fan
   // outward via the link / charge / collide balance — the ring is just a
   // scaffold that stops every hub from competing for the same point.
   const hubRingR = cfg.linkDistDepends * 1.0;
-  const degOf = (id: string) => linkCounts.get(id) ?? 0;
+  const degOf = (id: string) => allDeg.get(id) ?? 0;
 
   const sim = forceSimulation<GraphNode, GraphLink>(nodes)
     .force(
@@ -343,6 +409,8 @@ function makeSim(
       forceLink<GraphNode, GraphLink>(links)
         .id((n) => n.id)
         .distance((l) => {
+          // Note edges ride the relates distance — same spring the quiet
+          // task relations use; the hub stretch below spreads dense knots.
           const baseDist =
             l.type === "depends_on" ? cfg.linkDistDepends : cfg.linkDistRelates;
           const srcId = typeof l.source === "string" ? l.source : l.source.id;
@@ -385,7 +453,7 @@ function makeSim(
       "collide",
       forceCollide<GraphNode>()
         .radius((n) => {
-          const baseR = getNodeSize(n.id, linkCounts) + cfg.collidePadding;
+          const baseR = getNodeSize(n, taskDeg) + cfg.collidePadding;
           const d = degOf(n.id);
           // Hub bonus — degree-12 hub claims ~60 extra units of personal
           // space. Hub leaves still sit at link-distance (much bigger than
@@ -412,6 +480,15 @@ function makeSim(
         if (d < HUB_THRESHOLD) return 0;
         return Math.min(0.18, 0.06 + (d - HUB_THRESHOLD) * 0.018);
       }),
+    )
+    // Knowledge shelf — unlinked notes settle on a stable outer ring instead
+    // of drifting under charge alone. Linked notes get strength 0 and are
+    // placed by their edges like any other node.
+    .force(
+      "noteShelf",
+      forceRadial<GraphNode>(hubRingR * 2.4, w / 2, h / 2).strength((n) =>
+        n.kind === "note" && degOf(n.id) === 0 ? 0.12 : 0,
+      ),
     )
     // Knot-buster — kicks nodes that find themselves wedged between many
     // neighbours toward the empty side of their local crowd. Search radius
@@ -471,9 +548,11 @@ interface UseForceSimulationReturn {
  * @param projectId - Cache key. Stable across the lifetime of the workspace.
  * @param taskList - Tasks to visualise.
  * @param edges - Edges to draw between tasks.
+ * @param noteList - Notes to visualise alongside the tasks.
+ * @param noteEdges - Flattened note-note and note-task edges.
  * @param width - Canvas width in pixels.
  * @param height - Canvas height in pixels.
- * @param selectedNodeId - Currently selected task id, or null.
+ * @param selectedNodeId - Currently selected node id (task or note), or null.
  * @param onTick - Optional notification fired every live simulation tick.
  *   The consumer's render loop reads from the (mutated-in-place) node array,
  *   so the callback's only job is to flag a redraw — no React state update
@@ -485,6 +564,8 @@ export function useForceSimulation(
   projectId: string,
   taskList: GraphTask[],
   edges: TaskGraphEdge[],
+  noteList: NoteGraphSlim[],
+  noteEdges: NoteEdge[],
   width: number,
   height: number,
   selectedNodeId: string | null,
@@ -541,19 +622,33 @@ export function useForceSimulation(
       .map((e) => `${e.sourceTaskId}-${e.targetTaskId}-${e.edgeType}`)
       .sort()
       .join(",");
-    return `${ids}|${es}`;
-  }, [taskList, edges]);
+    const nids = noteList
+      .map((n) => n.id)
+      .sort()
+      .join(",");
+    // Relation is part of the note-edge identity: a mention upgraded to
+    // spec_of arrives as the same endpoint pair with a new type, and only
+    // a rebuild restyles the drawn edge.
+    const nes = noteEdges
+      .map((e) => `${e.sourceId}-${e.targetId}-${e.type}`)
+      .sort()
+      .join(",");
+    return `${ids}|${es}|${nids}|${nes}`;
+  }, [taskList, edges, noteList, noteEdges]);
 
-  // Property fingerprint — status + title changes only. Drives the in-place
-  // mutation effect.
-  const propsKey = useMemo(
-    () =>
-      taskList
-        .map((t) => `${t.id}:${t.status}:${t.title}`)
-        .sort()
-        .join("|"),
-    [taskList],
-  );
+  // Property fingerprint — status / title / note-type / fed changes only.
+  // Drives the in-place mutation effect.
+  const propsKey = useMemo(() => {
+    const ts = taskList
+      .map((t) => `${t.id}:${t.status}:${t.title}`)
+      .sort()
+      .join("|");
+    const ns = noteList
+      .map((n) => `${n.id}:${n.type}:${n.fed ? 1 : 0}:${n.title}`)
+      .sort()
+      .join("|");
+    return `${ts}||${ns}`;
+  }, [taskList, noteList]);
 
   // -----------------------------------------------------------------------
   // Live-path tick / end handlers — attached on any timer-driven restart.
@@ -601,7 +696,7 @@ export function useForceSimulation(
   // setState calls disabled at the rule: state tracks the imperative
   // d3-force lifecycle (stop/attach/restart) and can't be derived from props.
   useEffect(() => {
-    if (taskList.length === 0) {
+    if (taskList.length === 0 && noteList.length === 0) {
       simRef.current?.stop();
       simRef.current = null;
       nodesRef.current = [];
@@ -627,6 +722,8 @@ export function useForceSimulation(
     const { nodes: newNodes, links: newLinks } = buildGraph(
       taskList,
       edges,
+      noteList,
+      noteEdges,
       w / 2,
       h / 2,
       cache,
@@ -722,10 +819,28 @@ export function useForceSimulation(
     const ns = nodesRef.current;
     if (ns.length === 0) return;
     const byId = new Map(taskList.map((t) => [t.id, t] as const));
+    const noteById = new Map(noteList.map((n) => [n.id, n] as const));
     let changed = false;
     // d3-force keys nodes by object identity; swapping objects resets positions.
     /* eslint-disable react-hooks/immutability */
     for (const n of ns) {
+      if (n.kind === "note") {
+        const note = noteById.get(n.id);
+        if (!note) continue;
+        if (n.noteType !== note.type) {
+          n.noteType = note.type;
+          changed = true;
+        }
+        if (n.fed !== note.fed) {
+          n.fed = note.fed;
+          changed = true;
+        }
+        if (n.title !== note.title) {
+          n.title = note.title;
+          changed = true;
+        }
+        continue;
+      }
       const t = byId.get(n.id);
       if (!t) continue;
       if (n.status !== t.status) {

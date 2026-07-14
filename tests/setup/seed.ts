@@ -80,3 +80,35 @@ export async function seedUserOrgProject(
   }
   return { userId: u.id, organizationId: o.id, projectId: p.id };
 }
+
+/**
+ * Insert a new user and add them to an existing org as a plain member.
+ * Writes current legal acceptances, mirroring {@link seedUserOrgProject},
+ * so consent-gated API routes accept the user.
+ *
+ * @param organizationId - Org the new member joins.
+ * @param suffix - Unique suffix for the user's name and email.
+ * @returns The new user's id.
+ */
+export async function seedSecondMember(
+  organizationId: string,
+  suffix: string,
+): Promise<string> {
+  const sql = superuserPool();
+  const [u] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES (${"User " + suffix}, ${"user" + suffix + "@test.local"}, true, now())
+    RETURNING id
+  `;
+  await sql`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${organizationId}, ${u.id}, 'member', now())
+  `;
+  await sql`
+    INSERT INTO legal_acceptances ("user_id", "document_type", "document_version")
+    VALUES
+      (${u.id}, 'terms', ${LEGAL_VERSIONS.terms}),
+      (${u.id}, 'privacy', ${LEGAL_VERSIONS.privacy})
+  `;
+  return u.id;
+}

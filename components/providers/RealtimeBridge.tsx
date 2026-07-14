@@ -38,7 +38,8 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   `lib/realtime/events.ts` is paired with a `project` dispatch that already
  *   invalidates the graph. If `emitTaskEvent` ever stops emitting the paired
  *   project event, restore the graph invalidation here.
- * - `note` events ride the `project:<projectId>` subscription for team notes
+ * - `note` events invalidate the slim graph (it renders note nodes and
+ *   edges), ride the `project:<projectId>` subscription for team notes
  *   and the `note:<noteId>` subscription for private notes (see
  *   `lib/realtime/events.ts`), and are judged by {@link handleNoteEvent}
  *   after any in-flight local write for that note settles, so the actor's
@@ -46,8 +47,9 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  *   redundant refetch.
  * - `note-presence` events write the shared presence store only: no
  *   settle await, no query invalidation, no refetch.
- * - `note-folders` events invalidate the explicit-folders list so another
- *   member's empty-folder create/rename/delete reaches every open tree.
+ * - `note-folders` events invalidate the explicit-folders list and the
+ *   tree list, so another member's folder create/move/delete reaches
+ *   every open tree.
  * - `project-list` events invalidate the home grid.
  * - `project-deleted` events invalidate the home grid and drop the
  *   workspace's slim-graph cache entry.
@@ -91,6 +93,15 @@ export async function applyRealtimeEvent(
       });
       break;
     case "note":
+      // The slim graph renders note nodes and their edges. `metaChanged:
+      // false` marks writes that cannot alter any note surface (body-only
+      // autosaves, share markers); skipping those spares every open viewer
+      // a refetch round trip per autosave. Anything else, and any event
+      // without the flag, invalidates; the refetch rides the
+      // conditional-GET path, so an unmoved validator answers with a 304.
+      if (ev.metaChanged !== false) {
+        qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
+      }
       await handleNoteEvent(qc, ev);
       break;
     case "note-presence":
@@ -98,6 +109,11 @@ export async function applyRealtimeEvent(
       break;
     case "note-folders":
       qc.invalidateQueries({ queryKey: noteKeys.folders(ev.projectId) });
+      // A subtree move rewrites `folder` on note rows (their per-note
+      // events refresh open details, not the tree), so the tree list
+      // revalidates too; when only explicit folder rows changed the
+      // refetch answers 304.
+      qc.invalidateQueries({ queryKey: noteKeys.list(ev.projectId) });
       break;
     case "project-list":
       qc.invalidateQueries({ queryKey: projectKeys.list() });
@@ -215,6 +231,7 @@ async function handleNoteEvent(
     updatedAt?: string;
     version?: number;
     revisionCheckpointed?: boolean;
+    metaChanged?: boolean;
   },
 ): Promise<void> {
   await whenNoteWritesSettle(ev.noteId);
@@ -248,16 +265,34 @@ async function handleNoteEvent(
   if (ev.updatedAt !== undefined) {
     clearNoteTrashedIfRestoredRemotely(ev.noteId, evMs);
   }
+  // `metaChanged: false` marks writes that cannot alter tree rows or feed
+  // links (body-only saves, share markers); the tree and backlink refetches
+  // are skipped for those entirely. The rows still ship the content clock
+  // (`updatedAt`) and the "Updated" sort orders on it, so the skipped
+  // refetch patches the row's `updatedAt` in place instead — recency
+  // ordering tracks remote autosaves without a round trip.
   const rows = qc.getQueryData<NoteTreeRow[]>(noteKeys.list(ev.projectId));
   const row = rows?.find((r) => r.id === ev.noteId);
   const listCurrent = row !== undefined && updatedAtMs(row.updatedAt) >= evMs;
-  if (!listCurrent) {
+  if (ev.metaChanged !== false && !listCurrent) {
     qc.invalidateQueries({ queryKey: noteKeys.list(ev.projectId) });
+  } else if (
+    ev.metaChanged === false &&
+    ev.updatedAt !== undefined &&
+    row !== undefined &&
+    !listCurrent
+  ) {
+    const updatedAt = new Date(ev.updatedAt);
+    qc.setQueryData<NoteTreeRow[]>(noteKeys.list(ev.projectId), (data) =>
+      data?.map((r) => (r.id === ev.noteId ? { ...r, updatedAt } : r)),
+    );
   }
   // Not gated on `listCurrent`: that guard tracks the tree row, which an
   // optimistic write already advanced, but a note's feed settings decide
   // which tasks it auto-feeds and leave no trace on the tree row.
-  qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(ev.projectId) });
+  if (ev.metaChanged !== false) {
+    qc.invalidateQueries({ queryKey: noteKeys.backlinksAll(ev.projectId) });
+  }
   if (!hasUnsavedNoteEdits(ev.noteId)) {
     const detail = qc.getQueryData<NoteFullResult>(
       noteKeys.detail(ev.projectId, ev.noteId),

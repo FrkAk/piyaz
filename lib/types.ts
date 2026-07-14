@@ -170,6 +170,14 @@ export type FeedMode = "none" | "all" | "categories" | "tags" | "tasks";
 /** Semantic relationship between a note and a task. */
 export type NoteTaskLinkKind = "mention" | "reference" | "spec_of";
 
+/** Specificity rank per note-task link kind; higher wins pair dedupes
+ *  (`spec_of` > `reference` > `mention`). */
+export const NOTE_TASK_LINK_KIND_RANK: Record<NoteTaskLinkKind, number> = {
+  spec_of: 2,
+  reference: 1,
+  mention: 0,
+};
+
 /** Lifecycle state of a note's semantic embedding. */
 export type EmbeddingStatus = "none" | "pending" | "ready" | "failed" | "stale";
 

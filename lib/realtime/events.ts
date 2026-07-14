@@ -51,8 +51,11 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
  *   private-note fetches to the creator, so only the creator's own
  *   sessions receive it: their other tabs stay CAS-fresh without leaking
  *   a project-wide timing signal of private activity. A team session
- *   still subscribed from before a private flip receives one event whose
- *   refetch 404s the now-inaccessible note, which is the correct heal.
+ *   still subscribed from before a private flip receives the flip event
+ *   itself (its refetch 404s the now-inaccessible note, the correct
+ *   heal) and is then dropped from the channel by
+ *   {@link purgeNoteChannel}, so no later private-note or presence
+ *   events reach former viewers.
  *
  * `updatedAt` lets the consumer skip refetches its caches already reflect
  * (the actor's own write, merged from the mutation response); `version`
@@ -69,6 +72,10 @@ export function emitTaskEvent(projectId: string, taskId: string): void {
  *   (delete).
  * @param revisionCheckpointed - Whether the write archived a revision
  *   checkpoint (the stored revision list changed).
+ * @param metaChanged - Whether the write moved the note's graph-visible
+ *   metadata or link set (`notes.meta_updated_at`). Pass `false` on
+ *   graph-inert writes so consumers skip the slim-graph refetch; omit
+ *   when unknown or always graph-visible.
  */
 export function emitNoteEvent(
   projectId: string,
@@ -77,6 +84,7 @@ export function emitNoteEvent(
   updatedAt?: Date,
   version?: number,
   revisionCheckpointed?: boolean,
+  metaChanged?: boolean,
 ): void {
   const payload = {
     kind: "note",
@@ -85,11 +93,71 @@ export function emitNoteEvent(
     ...(updatedAt !== undefined ? { updatedAt: updatedAt.toISOString() } : {}),
     ...(version !== undefined ? { version } : {}),
     ...(revisionCheckpointed !== undefined ? { revisionCheckpointed } : {}),
+    ...(metaChanged !== undefined ? { metaChanged } : {}),
   } satisfies RealtimeEvent;
   broker.dispatch(
     visibility === "team" ? `project:${projectId}` : `note:${noteId}`,
     payload,
   );
+}
+
+/**
+ * Emit one note event per moved row of a subtree folder move, batched into
+ * a single broker call (`dispatchMany` costs one DO sub-request on
+ * Workers). Channel selection per row follows {@link emitNoteEvent}: team
+ * rows ride `project:<projectId>`, private rows ride `note:<noteId>`.
+ * Every event carries `metaChanged: true` (the move bumped
+ * `meta_updated_at`) and the post-move `updatedAt`/`version`, so open
+ * remote editors refresh their cached detail — and with it the CAS
+ * token — instead of hitting a spurious stale-write conflict on their
+ * next autosave.
+ *
+ * @param projectId - Owning project id.
+ * @param notes - Post-move rows: id, visibility, `updatedAt`, `version`.
+ */
+export function emitNoteEventsBatch(
+  projectId: string,
+  notes: Array<{
+    id: string;
+    visibility: Visibility;
+    updatedAt: Date;
+    version: number;
+  }>,
+): void {
+  if (notes.length === 0) return;
+  broker.dispatchMany(
+    notes.map((note) => ({
+      key:
+        note.visibility === "team"
+          ? (`project:${projectId}` as const)
+          : (`note:${note.id}` as const),
+      payload: {
+        kind: "note",
+        projectId,
+        noteId: note.id,
+        updatedAt: note.updatedAt.toISOString(),
+        version: note.version,
+        metaChanged: true,
+      } satisfies RealtimeEvent,
+    })),
+  );
+}
+
+/**
+ * Drop every subscription on a note's fetch-implicit channel except the
+ * creator's. Called after a team-to-private flip: former viewers
+ * registered `note:<id>` while the note was shared and would otherwise
+ * keep receiving edit-timing, version, and presence events until their
+ * 10-minute TTL lapsed. Callers dispatch the flip's own note event before
+ * purging so still-subscribed sessions receive the final heal event
+ * (best-effort on Workers, where the two DO sub-requests may land out of
+ * order).
+ *
+ * @param noteId - Note whose channel to purge.
+ * @param keepUserId - The creator; their sessions stay subscribed.
+ */
+export function purgeNoteChannel(noteId: string, keepUserId: string): void {
+  broker.purgeKeySubs(`note:${noteId}`, keepUserId);
 }
 
 /**
