@@ -49,18 +49,19 @@ export interface SignInContext {
  * @param to - Recipient address.
  * @param template - Template name for the structured failure log and category.
  * @param subject - Caller-owned subject line.
+ * @param brand - Brand config, resolved once by the caller for the subject.
  * @param render - Renders the body once the capability gate has passed.
  */
 function deliverAuthEmail(
   to: string,
   template: string,
   subject: string,
+  brand: BrandConfig,
   render: (brand: BrandConfig) => RenderedEmail,
 ): void {
   const sender = getEmailSender();
   if (sender === null) return;
-  const brand = resolveBrandConfig();
-  const { from, replyTo } = senderFor("transactional");
+  const { from, replyTo } = senderFor("transactional", brand);
   const rendered = render(brand);
   const send = sender
     .send({
@@ -147,6 +148,7 @@ export async function sendVerificationEmail(data: {
       data.user.email,
       "emailChange",
       `Confirm your new ${brand.appName} email`,
+      brand,
       (b) =>
         emailChangeEmail(b, {
           confirmUrl: data.url,
@@ -160,6 +162,7 @@ export async function sendVerificationEmail(data: {
     data.user.email,
     "verification",
     `Verify your ${brand.appName} email`,
+    brand,
     (b) =>
       verificationEmail(b, {
         verifyUrl: data.url,
@@ -184,6 +187,7 @@ export async function sendResetPasswordEmail(data: {
     data.user.email,
     "passwordReset",
     `Reset your ${brand.appName} password`,
+    brand,
     (b) =>
       passwordResetEmail(b, {
         resetUrl: data.url,
@@ -210,6 +214,7 @@ export async function sendChangeEmailApprovalEmail(data: {
     data.user.email,
     "emailChangeApproval",
     `Approve your ${brand.appName} email change`,
+    brand,
     (b) =>
       emailChangeApprovalEmail(b, {
         approveUrl: data.url,
@@ -236,6 +241,7 @@ export async function sendDeleteAccountEmail(data: {
     data.user.email,
     "deleteAccount",
     `Confirm ${brand.appName} account deletion`,
+    brand,
     (b) =>
       deleteAccountEmail(b, {
         confirmUrl: data.url,
@@ -262,6 +268,7 @@ export function sendPasswordChangedEmail(
     user.email,
     "passwordChanged",
     `Your ${brand.appName} password was changed`,
+    brand,
     (b) =>
       passwordChangedEmail(b, {
         recipientName: user.name || undefined,
@@ -289,6 +296,7 @@ export function sendNewSignInEmail(
     user.email,
     "newSignIn",
     `New sign-in to ${brand.appName}`,
+    brand,
     (b) =>
       newSignInEmail(b, {
         recipientName: user.name || undefined,

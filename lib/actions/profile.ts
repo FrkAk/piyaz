@@ -239,8 +239,13 @@ export async function deleteAccountAction(input?: {
   // returns before beforeDelete runs, so its sole-owner block would only
   // surface at the emailed callback as a raw error. Pre-check under the same
   // boot signal so the guidance stays inline and no doomed confirmation email
-  // is sent; email-disabled deploys keep beforeDelete's inline block.
-  if (isEmailConfiguredAtBoot()) {
+  // is sent; email-disabled deploys keep beforeDelete's inline block. The same
+  // signal decides `verificationEmailSent`: `sendDeleteAccountVerification`
+  // presence (lib/auth.ts, gated on this signal at construction) is what flips
+  // Better Auth into the emailed flow, and the flow-selection literal is
+  // pinned against real Better Auth in tests/email/auth-email-flows.
+  const emailedFlow = isEmailConfiguredAtBoot();
+  if (emailedFlow) {
     const plan = planOwnedOrgDeletion(
       await enumerateOwnedOrgsForDeletion(userId),
     );
@@ -248,15 +253,13 @@ export async function deleteAccountAction(input?: {
   }
 
   try {
-    const result = await auth.api.deleteUser({
+    await auth.api.deleteUser({
       body: parsed.data.password ? { password: parsed.data.password } : {},
       headers: await headers(),
     });
     return {
       ok: true,
-      data: {
-        verificationEmailSent: result.message === "Verification email sent",
-      },
+      data: { verificationEmailSent: emailedFlow },
     };
   } catch (err) {
     const code = mapBetterAuthError(err);
