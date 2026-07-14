@@ -224,7 +224,10 @@ export function WorkspaceGraphView({
       if (l.noteId === hoveredNote.id) taskCount += 1;
     }
     for (const l of noteLinks) {
-      if (l.sourceNoteId === hoveredNote.id || l.targetNoteId === hoveredNote.id)
+      if (
+        l.sourceNoteId === hoveredNote.id ||
+        l.targetNoteId === hoveredNote.id
+      )
         noteCount += 1;
     }
     return { tasks: taskCount, notes: noteCount };

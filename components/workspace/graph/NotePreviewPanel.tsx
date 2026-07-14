@@ -38,7 +38,10 @@ interface NotePreviewPanelProps {
   /** @param projectIdentifier - Identifier for composing refs. */
   projectIdentifier: string;
   /** @param taskMap - Graph task map — resolves inline task-ref chips. */
-  taskMap: ReadonlyMap<string, { title: string; status: string; taskRef: string }>;
+  taskMap: ReadonlyMap<
+    string,
+    { title: string; status: string; taskRef: string }
+  >;
   /** @param notes - Slim graph notes — resolve `[[wiki]]` links without a
    *   tree fetch. */
   notes: NoteGraphSlim[];
@@ -117,26 +120,30 @@ export function NotePreviewPanel({
   // One row per task, strongest kind wins — a body mention plus a
   // deliberate spec_of on the same task must not list twice.
   const taskLinks = data
-    ? [...data.mentions
-        .reduce((byTask, m) => {
-          const existing = byTask.get(m.taskId);
-          if (
-            !existing ||
-            NOTE_TASK_LINK_KIND_RANK[m.kind] >
-              NOTE_TASK_LINK_KIND_RANK[existing.kind]
-          ) {
-            byTask.set(m.taskId, m);
-          }
-          return byTask;
-        }, new Map<string, NoteMention>())
-        .values()]
+    ? [
+        ...data.mentions
+          .reduce((byTask, m) => {
+            const existing = byTask.get(m.taskId);
+            if (
+              !existing ||
+              NOTE_TASK_LINK_KIND_RANK[m.kind] >
+                NOTE_TASK_LINK_KIND_RANK[existing.kind]
+            ) {
+              byTask.set(m.taskId, m);
+            }
+            return byTask;
+          }, new Map<string, NoteMention>())
+          .values(),
+      ]
     : [];
   // A note that links out AND is linked back lands in both directions —
   // dedupe by id or React sees two children with one key.
   const noteLinks = data
-    ? [...new Map(
-        [...data.linksOut, ...data.linksIn].map((n) => [n.id, n] as const),
-      ).values()]
+    ? [
+        ...new Map(
+          [...data.linksOut, ...data.linksIn].map((n) => [n.id, n] as const),
+        ).values(),
+      ]
     : [];
   // Chrome renders from the slim graph row synchronously; the fetched
   // detail takes over field-by-field when it lands. Rapid note→note swaps

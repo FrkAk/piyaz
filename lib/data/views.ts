@@ -214,7 +214,10 @@ export type NoteGraphEdge = Pick<NoteLink, "sourceNoteId" | "targetNoteId">;
 /** Slim note-to-task edge for the graph payload. Pairs are deduped
  * server-side to the strongest `kind` (`spec_of` > `reference` > `mention`)
  * so the canvas styles deliberate links apart from body mentions. */
-export type NoteTaskGraphEdge = Pick<NoteTaskLink, "noteId" | "taskId" | "kind">;
+export type NoteTaskGraphEdge = Pick<
+  NoteTaskLink,
+  "noteId" | "taskId" | "kind"
+>;
 
 /** Slim project graph for the workspace canvas + list. Edges, tasks, and
  * notes are projected down to the fields the graph surfaces render. */

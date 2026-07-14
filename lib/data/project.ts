@@ -172,7 +172,8 @@ function dedupeNoteTaskEdges(
     const existing = byPair.get(key);
     if (
       !existing ||
-      NOTE_TASK_LINK_KIND_RANK[row.kind] > NOTE_TASK_LINK_KIND_RANK[existing.kind]
+      NOTE_TASK_LINK_KIND_RANK[row.kind] >
+        NOTE_TASK_LINK_KIND_RANK[existing.kind]
     ) {
       byPair.set(key, row);
     }

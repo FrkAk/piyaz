@@ -378,7 +378,10 @@ export type TaskNoteBacklink = NoteTreeRow & {
 /** Full note row minus the server-side columns no client reads:
  *  `search_tsv`, `shared_since` (RLS fence state), and `meta_updated_at`
  *  (graph-ETag clock). */
-export type NoteFull = Omit<Note, "searchTsv" | "sharedSince" | "metaUpdatedAt">;
+export type NoteFull = Omit<
+  Note,
+  "searchTsv" | "sharedSince" | "metaUpdatedAt"
+>;
 
 /** Single-note read: the full row plus its derived link context. */
 export type NoteFullResult = {
@@ -1063,7 +1066,10 @@ async function loadSlugNamespace(
  * @param current - Existing ids.
  * @returns True when both contain exactly the same ids.
  */
-function sameIdSet(next: readonly string[], current: readonly string[]): boolean {
+function sameIdSet(
+  next: readonly string[],
+  current: readonly string[],
+): boolean {
   const a = new Set(next);
   const b = new Set(current);
   if (a.size !== b.size) return false;
@@ -1154,8 +1160,14 @@ async function replaceDerivedLinks(
         .where(eq(noteLinks.sourceNoteId, noteId)),
     ]);
     if (
-      sameIdSet(taskIds, currentMentions.map((r) => r.taskId)) &&
-      sameIdSet(targetNoteIds, currentOut.map((r) => r.targetNoteId))
+      sameIdSet(
+        taskIds,
+        currentMentions.map((r) => r.taskId),
+      ) &&
+      sameIdSet(
+        targetNoteIds,
+        currentOut.map((r) => r.targetNoteId),
+      )
     ) {
       return false;
     }
@@ -2067,7 +2079,8 @@ function dedupeBacklinks(
     const existing = byNote.get(row.id);
     if (
       !existing ||
-      NOTE_TASK_LINK_KIND_RANK[row.kind] > NOTE_TASK_LINK_KIND_RANK[existing.kind]
+      NOTE_TASK_LINK_KIND_RANK[row.kind] >
+        NOTE_TASK_LINK_KIND_RANK[existing.kind]
     ) {
       byNote.set(row.id, row);
     }

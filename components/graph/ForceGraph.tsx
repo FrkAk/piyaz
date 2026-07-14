@@ -305,7 +305,14 @@ export function ForceGraph({
       }
     }
     return out;
-  }, [notesHidden, noteEdgesHidden, notes, noteTaskLinks, noteLinks, filteredTaskIds]);
+  }, [
+    notesHidden,
+    noteEdgesHidden,
+    notes,
+    noteTaskLinks,
+    noteLinks,
+    filteredTaskIds,
+  ]);
 
   useEffect(() => {
     const observer = new MutationObserver(() => setLight(isLightMode()));

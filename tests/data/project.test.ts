@@ -351,7 +351,11 @@ test("note-inclusive validator moves on deliberate link create and remove", asyn
     "content",
   );
   await createNoteTaskLink(ctx, note.id, task.id, "reference");
-  const afterCreateMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const afterCreateMeta = await getProjectMaxUpdatedAt(
+    ctx,
+    f.projectId,
+    "meta",
+  );
   const afterCreateContent = await getProjectMaxUpdatedAt(
     ctx,
     f.projectId,
@@ -361,7 +365,11 @@ test("note-inclusive validator moves on deliberate link create and remove", asyn
   expect(afterCreateContent.getTime()).toBeGreaterThan(beforeContent.getTime());
 
   await removeNoteTaskLink(ctx, note.id, task.id, "reference");
-  const afterRemoveMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const afterRemoveMeta = await getProjectMaxUpdatedAt(
+    ctx,
+    f.projectId,
+    "meta",
+  );
   const afterRemoveContent = await getProjectMaxUpdatedAt(
     ctx,
     f.projectId,

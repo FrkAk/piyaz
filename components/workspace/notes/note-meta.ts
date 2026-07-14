@@ -63,7 +63,10 @@ export function tint(color: string, pct: number): string {
  * @returns The banner phrase for the note's feed mode.
  */
 export function feedSummary(
-  note: Pick<NoteFull, "feedMode" | "feedCategories" | "feedTags" | "feedTaskIds">,
+  note: Pick<
+    NoteFull,
+    "feedMode" | "feedCategories" | "feedTags" | "feedTaskIds"
+  >,
 ): string {
   switch (note.feedMode) {
     case "all":

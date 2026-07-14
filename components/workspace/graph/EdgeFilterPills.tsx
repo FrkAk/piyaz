@@ -41,8 +41,7 @@ const ITEMS: ReadonlyArray<PillItem> = [
  */
 export function edgeFilterToHidden(value: EdgeFilterValue): Set<EdgeType> {
   if (value === "all") return new Set();
-  if (value === "notes")
-    return new Set<EdgeType>(["depends_on", "relates_to"]);
+  if (value === "notes") return new Set<EdgeType>(["depends_on", "relates_to"]);
   if (value === "depends_on") return new Set<EdgeType>(["relates_to"]);
   return new Set<EdgeType>(["depends_on"]);
 }
@@ -72,7 +71,9 @@ export function EdgeFilterPills({
   className = "",
 }: EdgeFilterPillsProps) {
   return (
-    <div className={`flex flex-wrap items-center justify-end gap-1.5 ${className}`}>
+    <div
+      className={`flex flex-wrap items-center justify-end gap-1.5 ${className}`}
+    >
       {ITEMS.map((item) => {
         const active = item.id === value;
         return (

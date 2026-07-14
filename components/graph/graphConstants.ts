@@ -118,15 +118,30 @@ export const NOTE_EDGE_STYLE: Record<
   NoteLinkType,
   { dash: readonly number[]; opacity: number; width: number; label: string }
 > = {
-  note_note: { dash: [1.5, 3.5], opacity: 0.45, width: 1.25, label: "links note" },
-  note_task_spec_of: { dash: [2, 5], opacity: 0.55, width: 1.25, label: "spec of" },
+  note_note: {
+    dash: [1.5, 3.5],
+    opacity: 0.45,
+    width: 1.25,
+    label: "links note",
+  },
+  note_task_spec_of: {
+    dash: [2, 5],
+    opacity: 0.55,
+    width: 1.25,
+    label: "spec of",
+  },
   note_task_reference: {
     dash: [2, 5],
     opacity: 0.55,
     width: 1.25,
     label: "references",
   },
-  note_task_mention: { dash: [1, 4], opacity: 0.3, width: 1, label: "mentions" },
+  note_task_mention: {
+    dash: [1, 4],
+    opacity: 0.3,
+    width: 1,
+    label: "mentions",
+  },
 };
 
 export const ACCENT = "#818cf8";
