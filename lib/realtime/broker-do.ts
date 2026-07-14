@@ -25,6 +25,7 @@ export type BrokerMessage =
     }
   | { op: "unregister"; userId: string; key: ResourceKey }
   | { op: "clear-task-subs"; userId: string }
+  | { op: "purge-key-subs"; key: ResourceKey; keepUserId?: string }
   | { op: "detach"; userId: string }
   | { op: "dispatch"; key: ResourceKey; payload: unknown }
   | {
@@ -228,6 +229,9 @@ export class PiyazBroker extends DurableObject<BrokerEnv> {
       case "clear-task-subs":
         this.clearTaskSubs(msg.userId);
         return new Response(null, { status: 204 });
+      case "purge-key-subs":
+        this.purgeKeySubs(msg.key, msg.keepUserId);
+        return new Response(null, { status: 204 });
       case "detach":
         return new Response(null, { status: 204 });
       case "dispatch":
@@ -323,6 +327,23 @@ export class PiyazBroker extends DurableObject<BrokerEnv> {
     }
     for (const key of resourceKeys) userMap.delete(key);
     this.persistUser(userId);
+  }
+
+  /**
+   * Drop every user's subscription on {@link key} except
+   * {@link keepUserId}'s. Mirrors the self-host `purgeKeySubs` used after a
+   * team-to-private note flip so former viewers' fetch-implicit `note:<id>`
+   * subscriptions do not outlive their access. Persists each mutated
+   * user's sub set so the purge survives hibernation.
+   *
+   * @param key - Resource key to purge.
+   * @param keepUserId - User whose subscription survives; omit to purge all.
+   */
+  private purgeKeySubs(key: ResourceKey, keepUserId?: string): void {
+    for (const [userId, userMap] of this.subs) {
+      if (userId === keepUserId) continue;
+      if (userMap.delete(key)) this.persistUser(userId);
+    }
   }
 
   /**

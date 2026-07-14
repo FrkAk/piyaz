@@ -116,8 +116,10 @@ import {
 } from "@/lib/graph/identifier";
 import {
   emitNoteEvent,
+  emitNoteEventsBatch,
   emitNoteFoldersEvent,
   emitProjectEvent,
+  purgeNoteChannel,
 } from "@/lib/realtime/events";
 import {
   NOTE_SUMMARY_MAX_CHARS,
@@ -3380,6 +3382,7 @@ async function updateNoteCore(
     );
     if (result.flippedToPrivate) {
       emitProjectEvent(result.summary.projectId);
+      purgeNoteChannel(result.summary.id, ctx.userId);
     }
   }
   return {
@@ -3554,7 +3557,12 @@ export async function moveFolder(
     const access = await assertProjectAccessTx(tx, projectId);
     assertProjectWritable(access.project.status, access.project.identifier);
     if (dest === srcPath) {
-      return { movedCount: 0, teamMoved: false, explicitMoved: 0 };
+      return {
+        movedCount: 0,
+        teamMoved: false,
+        explicitMoved: 0,
+        movedNotes: [],
+      };
     }
     await acquireProjectLock(tx, projectId);
     const subtreeFilter = and(
@@ -3610,6 +3618,8 @@ export async function moveFolder(
         title: notes.title,
         folder: notes.folder,
         visibility: notes.visibility,
+        updatedAt: notes.updatedAt,
+        version: notes.version,
       });
     const explicitRows = await tx
       .delete(noteFolders)
@@ -3650,6 +3660,12 @@ export async function moveFolder(
       movedCount: rows.length,
       teamMoved,
       explicitMoved: explicitRows.length,
+      movedNotes: rows.map((row) => ({
+        id: row.id,
+        visibility: row.visibility,
+        updatedAt: row.updatedAt,
+        version: row.version,
+      })),
     };
   });
 
@@ -3660,6 +3676,10 @@ export async function moveFolder(
   if (moved.movedCount > 0 || moved.explicitMoved > 0) {
     emitNoteFoldersEvent(projectId);
   }
+  // Per-note events so open remote editors refresh their cached detail
+  // (folder path + CAS token) — the note-folders event above only reaches
+  // the tree and folder queries.
+  emitNoteEventsBatch(projectId, moved.movedNotes);
   return {
     dest,
     movedCount: moved.movedCount,

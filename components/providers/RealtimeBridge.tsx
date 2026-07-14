@@ -109,9 +109,10 @@ export async function applyRealtimeEvent(
       break;
     case "note-folders":
       qc.invalidateQueries({ queryKey: noteKeys.folders(ev.projectId) });
-      // A subtree move rewrites `folder` on note rows without a per-note
-      // event, so the tree list revalidates too; when only explicit folder
-      // rows changed the refetch answers 304.
+      // A subtree move rewrites `folder` on note rows (their per-note
+      // events refresh open details, not the tree), so the tree list
+      // revalidates too; when only explicit folder rows changed the
+      // refetch answers 304.
       qc.invalidateQueries({ queryKey: noteKeys.list(ev.projectId) });
       break;
     case "project-list":

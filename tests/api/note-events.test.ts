@@ -13,7 +13,13 @@ import {
   HEAD as headRevisions,
 } from "@/app/api/note/[noteId]/revisions/route";
 import { makeAuthContext } from "@/lib/auth/context";
-import { createNote, deleteNote, moveNote, updateNote } from "@/lib/data/note";
+import {
+  createNote,
+  deleteNote,
+  moveFolder,
+  moveNote,
+  updateNote,
+} from "@/lib/data/note";
 import type { ActivityEvent } from "@/lib/types";
 
 const setSession = (
@@ -403,6 +409,66 @@ describe("realtime note events: metaChanged flag", () => {
     );
     expect(kinds).toContain("project");
     expect(kinds).not.toContain("note");
+  });
+
+  test("a team-to-private flip purges former viewers from the note channel", async () => {
+    const fx = await seedUserOrgProject("nev-flip-purge");
+    const userB = await seedSecondMember(fx.organizationId, "nev-flip-purge-b");
+    const ctx = makeAuthContext(fx.userId);
+    const note = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "N",
+      visibility: "team",
+    });
+
+    const framesA: string[] = [];
+    const framesB: string[] = [];
+    broker.attach(fx.userId, {
+      send: (data) => framesA.push(data),
+      close: () => {},
+    });
+    broker.register(fx.userId, `note:${note.id}`);
+    broker.attach(userB, {
+      send: (data) => framesB.push(data),
+      close: () => {},
+    });
+    broker.register(userB, `note:${note.id}`);
+
+    await updateNote(ctx, note.id, { visibility: "private" });
+    await updateNote(ctx, note.id, { title: "Renamed" });
+
+    expect(noteEventsFrom(framesA)).toHaveLength(2);
+    expect(noteEventsFrom(framesB)).toHaveLength(1);
+  });
+
+  test("a subtree folder move emits per-note events so open editors stay fresh", async () => {
+    const fx = await seedUserOrgProject("nev-movefolder");
+    const ctx = makeAuthContext(fx.userId);
+    const team = await createNote(ctx, {
+      projectId: fx.projectId,
+      title: "T",
+      visibility: "team",
+    });
+    await moveNote(ctx, team.id, "docs");
+    const priv = await createNote(ctx, { projectId: fx.projectId, title: "P" });
+    await moveNote(ctx, priv.id, "docs/sub");
+
+    const frames: string[] = [];
+    broker.attach(fx.userId, {
+      send: (data) => frames.push(data),
+      close: () => {},
+    });
+    broker.register(fx.userId, `project:${fx.projectId}`);
+    broker.register(fx.userId, `note:${priv.id}`);
+
+    await moveFolder(ctx, fx.projectId, "docs", "", "archive");
+
+    const noteEvents = noteEventsFrom(frames);
+    expect(noteEvents.map((e) => e.noteId).sort()).toEqual(
+      [team.id, priv.id].sort(),
+    );
+    expect(noteEvents.every((e) => e.metaChanged === true)).toBe(true);
+    expect(noteEvents.every((e) => e.updatedAt !== undefined)).toBe(true);
   });
 
   test("a body edit that changes the derived link set emits metaChanged true", async () => {

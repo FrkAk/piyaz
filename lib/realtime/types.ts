@@ -18,9 +18,10 @@ export type RealtimeEvent =
       version?: number;
       revisionCheckpointed?: boolean;
       /** False when the write cannot change the slim graph payload
-       *  (body-only edits with an unchanged link set, folder moves,
-       *  share markers); consumers skip the graph refetch. Absent means
-       *  unknown; treat as changed. */
+       *  (body-only edits with an unchanged link set, share markers);
+       *  consumers skip the graph refetch. Folder moves emit true — they
+       *  bump the metadata clock. Absent means unknown; treat as
+       *  changed. */
       metaChanged?: boolean;
     }
   | {

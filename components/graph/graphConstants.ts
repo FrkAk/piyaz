@@ -112,9 +112,12 @@ export const EDGE_COLOR: Record<EdgeType | NoteLinkType, string> = {
 export const RELATES_DASH: number[] = [4, 6];
 export const RELATES_OPACITY = 0.6;
 
-/** Per-relation note edge styling. Deliberate note-task links read as the
- *  documented layer, mentions as ambient residue, and the note-note web as
- *  a distinct dotted stratum. `label` feeds the hover pill. */
+/** Per-relation note edge styling. The note-task strata form a visual
+ *  ladder mirroring `NOTE_TASK_LINK_KIND_RANK`: `spec_of` draws the
+ *  heaviest cadence (long dash, widest), `reference` a lighter short
+ *  dash, mentions ambient residue — the surviving strongest kind is
+ *  decodable without the hover pill. The note-note web stays a distinct
+ *  dotted stratum. `label` feeds the hover pill. */
 export const NOTE_EDGE_STYLE: Record<
   NoteLinkType,
   { dash: readonly number[]; opacity: number; width: number; label: string }
@@ -126,9 +129,9 @@ export const NOTE_EDGE_STYLE: Record<
     label: "links note",
   },
   note_task_spec_of: {
-    dash: [2, 5],
-    opacity: 0.55,
-    width: 1.25,
+    dash: [6, 3],
+    opacity: 0.6,
+    width: 1.5,
     label: "spec of",
   },
   note_task_reference: {

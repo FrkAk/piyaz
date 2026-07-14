@@ -8,6 +8,7 @@ import {
   useState,
   useMemo,
 } from "react";
+import { useReducedMotion } from "motion/react";
 import { quadtree } from "d3-quadtree";
 import type {
   NoteGraphEdge,
@@ -251,6 +252,11 @@ export function ForceGraph({
   const [zoomLevel, setZoomLevel] = useState(1);
 
   const tier = useMemo(() => getTierConfig(getDeviceTier()), []);
+  // `prefers-reduced-motion` folds into the same effective-config flags the
+  // adaptive perf level uses: decorative animation (flow dots, status
+  // pulse, transition lerps) is dropped and camera moves snap, while the
+  // simulation itself — the layout mechanism — keeps running.
+  const reducedMotion = useReducedMotion() === true;
 
   const statusFilter = hiddenStatuses ?? EMPTY_STATUS_SET;
   const edgeFilter = hiddenEdgeTypes ?? EMPTY_EDGE_SET;
@@ -410,11 +416,12 @@ export function ForceGraph({
         endY: target.y,
         endScale: target.scale,
         startTime: performance.now(),
-        duration,
+        // 1ms, not 0: a same-timestamp frame would compute 0/0 = NaN.
+        duration: reducedMotion ? 1 : duration,
       };
       needsRedrawRef.current = true;
     },
-    [],
+    [reducedMotion],
   );
 
   // Stable callback handed to the simulation hook — fires on every live
@@ -724,11 +731,11 @@ export function ForceGraph({
     // adaptive degrade level. See `perfRef` for the level definitions.
     const level = perfRef.current.level;
     const effHalo = tier.halo && level === 0;
-    const effFlowDots = tier.flowDots && level === 0;
+    const effFlowDots = tier.flowDots && level === 0 && !reducedMotion;
     const effGradientFill = level < 2;
     const effShadowBlur = level < 2;
-    const effShadowPulse = level < 2;
-    const effLerps = level < 2;
+    const effShadowPulse = level < 2 && !reducedMotion;
+    const effLerps = level < 2 && !reducedMotion;
 
     // Viewport bounds in world coords, expanded by a generous padding so
     // halos, arrows, and labels at the screen edge stay drawn. Padding has
@@ -1343,6 +1350,7 @@ export function ForceGraph({
     parallelMeta,
     hoveredIdHint,
     tier,
+    reducedMotion,
     labelScale,
     stageMap,
   ]);
@@ -1516,7 +1524,9 @@ export function ForceGraph({
           const target = fitTransform(nodesForFitRef.current, sz, rightInset);
           if (target) {
             const tr = transformRef.current;
-            const lerp = 0.04;
+            // Reduced motion snaps the chase to the fit target instead of
+            // gliding through the cinematic zoom-out reveal.
+            const lerp = reducedMotion ? 1 : 0.04;
             const dx = target.x - tr.x;
             const dy = target.y - tr.y;
             const ds = target.scale - tr.scale;
@@ -1542,9 +1552,9 @@ export function ForceGraph({
       // frame for `hasAnimating` / `hasFlowDots` / `hasInProgress` and never
       // actually save anything.
       const lvl = perfRef.current.level;
-      const flowOn = tier.flowDots && lvl === 0;
-      const pulseOn = lvl < 2;
-      const lerpsOn = lvl < 2;
+      const flowOn = tier.flowDots && lvl === 0 && !reducedMotion;
+      const pulseOn = lvl < 2 && !reducedMotion;
+      const lerpsOn = lvl < 2 && !reducedMotion;
 
       const hasInProgress =
         pulseOn && nodes.some((n) => n.status === "in_progress");
@@ -1591,6 +1601,7 @@ export function ForceGraph({
     selectedNodeId,
     hoveredIdHint,
     tier,
+    reducedMotion,
     rightInset,
   ]);
 
