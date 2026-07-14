@@ -1,0 +1,1 @@
+ALTER TABLE "notes" ADD COLUMN "meta_updated_at" timestamp with time zone DEFAULT now() NOT NULL;
