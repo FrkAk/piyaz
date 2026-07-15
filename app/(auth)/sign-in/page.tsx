@@ -18,8 +18,8 @@ interface SignInPageProps {
  *
  * Left column hosts the email/password form plus disabled-with-tooltip
  * GitHub and Google buttons (backend providers not yet wired in
- * `lib/auth.ts`). Right column renders the static `AuthHero` mock; the
- * webapp never streams live agent data — Piyaz is MCP-first.
+ * `lib/auth.ts`). Right column renders the scripted `AuthHero` graph
+ * vignette; the webapp never streams live agent data — Piyaz is MCP-first.
  *
  * A validated `next` query param (invitation CTAs) overrides the default
  * post-sign-in redirect to `/`, where `requireMembership` forwards new
@@ -41,14 +41,14 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            Walk into every session knowing what to do next.
+            One workspace for your team and your agents.
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"
             style={{ lineHeight: 1.55 }}
           >
-            The agent-native project graph. Sign in to continue, or onboard a
-            repo from your CLI.
+            Every session picks up the full story: what shipped, what is next,
+            and why. Sign in to continue.
           </p>
 
           <SocialButtons />

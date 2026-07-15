@@ -52,7 +52,7 @@ export default async function SignUpPage({ searchParams }: SignUpPageProps) {
           >
             {SIGNUPS_DISABLED
               ? "Piyaz is in a closed beta. New accounts are opening soon, so sign-ups are invite-only for now."
-              : "Your project graph and decision history live here. Connect agents through MCP from your CLI once you’re in."}
+              : "Create your workspace, invite your team, and connect your agents from any harness."}
           </p>
 
           {SIGNUPS_DISABLED ? (
