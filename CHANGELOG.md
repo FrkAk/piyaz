@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/FrkAk/piyaz/compare/v0.4.0...v0.4.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* hard-navigate to app root after auth to fix blank screen ([#227](https://github.com/FrkAk/piyaz/issues/227)) ([e670db8](https://github.com/FrkAk/piyaz/commit/e670db88ea28c40cd3f6ec78d11e1ed964114dfd))
+
 ## [0.4.0](https://github.com/FrkAk/piyaz/compare/v0.3.0...v0.4.0) (2026-07-15)
 
 
