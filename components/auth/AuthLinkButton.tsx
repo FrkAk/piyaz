@@ -22,10 +22,10 @@ interface AuthLinkButtonProps {
  * on auth status pages (verify-email Continue, reset-password follow-ups,
  * invitation sign-in/sign-up). `primary` is the accent-gradient CTA;
  * `secondary` is the raised-surface counterpart mirroring
- * `Button variant="secondary"`. Server-component safe: plain `Link`, no
- * client state.
+ * `Button variant="secondary"`. Renders a soft `Link` by default, or a
+ * plain `<a>` when `hardNav` is set. Server-component safe: no client state.
  *
- * @param props - Target href, optional variant, and label.
+ * @param props - Target href, optional variant, hard-nav flag, and label.
  * @returns Full-width link styled as an auth CTA.
  */
 export function AuthLinkButton({
