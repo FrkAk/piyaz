@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { AuthBrand } from "@/components/auth/AuthBrand";
+import { AuthThemeToggle } from "@/components/auth/AuthThemeToggle";
 
 interface AuthStatusFrameProps {
   /** Mono uppercase context label above the heading; omitted when unset. */
@@ -14,7 +15,9 @@ interface AuthStatusFrameProps {
  * Centered frame for standalone auth status pages (verify-email,
  * account-deleted, invitation landing): brand mark, optional mono
  * eyebrow, and a heading at the auth-shell scale over the page content.
- * Server-component safe: no client state.
+ * A floating theme toggle pins to the top-right corner, matching
+ * `AuthShell`. Server-component safe: the toggle is the only client
+ * island.
  *
  * @param props - Eyebrow, heading, and panel content.
  * @returns Full-height centered status layout.
@@ -25,7 +28,8 @@ export function AuthStatusFrame({
   children,
 }: AuthStatusFrameProps) {
   return (
-    <div className="flex min-h-dvh items-center justify-center px-4">
+    <div className="relative flex min-h-dvh items-center justify-center px-4">
+      <AuthThemeToggle />
       <div className="w-full max-w-md">
         <AuthBrand className="mb-7 justify-center" />
         <div className="space-y-4">

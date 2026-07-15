@@ -35,6 +35,9 @@ interface InvitationPageProps {
 /**
  * Time-until-expiry label for invitation copy: "in Xh" under two days,
  * "in Xd" beyond. Expired rows never reach this (BA filters them).
+ *
+ * @param expiresAt - The invitation's expiry instant.
+ * @returns Relative label like "in 3h" or "in 2d".
  */
 function expiryLabel(expiresAt: Date): string {
   const hours = Math.max(
@@ -48,6 +51,8 @@ function expiryLabel(expiresAt: Date): string {
  * The one panel every failure mode renders: missing, expired, withdrawn,
  * wrong recipient, malformed id, and rate-limited all collapse here so
  * the page discloses nothing about which it was.
+ *
+ * @returns Generic unavailable panel with a workspace link.
  */
 function UnavailablePanel() {
   return (
@@ -73,7 +78,12 @@ function UnavailablePanel() {
   );
 }
 
-/** One label/value row inside the invitation detail card. */
+/**
+ * One label/value row inside the invitation detail card.
+ *
+ * @param props - Row label and its display value.
+ * @returns Justified label/value line.
+ */
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3 text-[12.5px]">
@@ -117,18 +127,9 @@ export default async function InvitationPage({ params }: InvitationPageProps) {
           <AuthLinkButton href={`/sign-in?next=${next}`}>
             Sign in
           </AuthLinkButton>
-          <Link
-            href={`/sign-up?next=${next}`}
-            className="inline-flex w-full items-center justify-center rounded-lg border text-[13px] font-medium text-text-primary transition-colors outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-            style={{
-              height: 38,
-              background: "var(--color-surface-raised)",
-              borderColor: "var(--color-border-strong)",
-              boxShadow: "var(--shadow-button)",
-            }}
-          >
+          <AuthLinkButton href={`/sign-up?next=${next}`} variant="secondary">
             Create an account
-          </Link>
+          </AuthLinkButton>
         </div>
       </AuthStatusFrame>
     );

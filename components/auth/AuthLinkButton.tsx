@@ -4,19 +4,45 @@ import type { ReactNode } from "react";
 interface AuthLinkButtonProps {
   /** Navigation target. */
   href: string;
+  /** Visual weight: gradient primary CTA or raised secondary. */
+  variant?: "primary" | "secondary";
   /** Button label content. */
   children: ReactNode;
 }
 
 /**
- * Gradient link-button matching `AuthSubmit`'s 38px CTA, for navigation
- * targets on auth status pages (verify-email Continue, reset-password
- * follow-ups). Server-component safe: plain `Link`, no client state.
+ * Link-button matching `AuthSubmit`'s 38px CTA, for navigation targets
+ * on auth status pages (verify-email Continue, reset-password follow-ups,
+ * invitation sign-in/sign-up). `primary` is the accent-gradient CTA;
+ * `secondary` is the raised-surface counterpart mirroring
+ * `Button variant="secondary"`. Server-component safe: plain `Link`, no
+ * client state.
  *
- * @param props - Target href and label.
- * @returns Full-width gradient link styled as the primary auth CTA.
+ * @param props - Target href, optional variant, and label.
+ * @returns Full-width link styled as an auth CTA.
  */
-export function AuthLinkButton({ href, children }: AuthLinkButtonProps) {
+export function AuthLinkButton({
+  href,
+  variant = "primary",
+  children,
+}: AuthLinkButtonProps) {
+  if (variant === "secondary") {
+    return (
+      <Link
+        href={href}
+        className="inline-flex w-full items-center justify-center text-[13px] font-medium text-text-primary transition-colors outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        style={{
+          height: 38,
+          borderRadius: 8,
+          background: "var(--color-surface-raised)",
+          border: "1px solid var(--color-border-strong)",
+          boxShadow: "var(--shadow-button)",
+        }}
+      >
+        {children}
+      </Link>
+    );
+  }
   return (
     <Link
       href={href}
