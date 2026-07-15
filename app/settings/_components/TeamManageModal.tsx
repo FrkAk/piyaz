@@ -42,6 +42,8 @@ interface TeamManageModalProps {
   team: TeamView | null;
   /** Caller's user id — drives self-row detection inside MembersSection. */
   currentUserId: string;
+  /** Whether the deploy can send email; gates the invitation Resend action. */
+  emailEnabled: boolean;
   /** Close handler — fires for X click, Esc, backdrop click, and forbidden state. */
   onClose: () => void;
 }
@@ -138,6 +140,7 @@ async function fetchTeamManagePayload(
 export function TeamManageModal({
   team,
   currentUserId,
+  emailEnabled,
   onClose,
 }: TeamManageModalProps) {
   return (
@@ -147,6 +150,7 @@ export function TeamManageModal({
           key={team.id}
           team={team}
           currentUserId={currentUserId}
+          emailEnabled={emailEnabled}
           onClose={onClose}
         />
       ) : null}
@@ -157,6 +161,7 @@ export function TeamManageModal({
 interface ModalInnerProps {
   team: TeamView;
   currentUserId: string;
+  emailEnabled: boolean;
   onClose: () => void;
 }
 
@@ -168,7 +173,12 @@ interface ModalInnerProps {
  * @param props - Inner modal state.
  * @returns Backdrop + animated panel.
  */
-function ModalInner({ team, currentUserId, onClose }: ModalInnerProps) {
+function ModalInner({
+  team,
+  currentUserId,
+  emailEnabled,
+  onClose,
+}: ModalInnerProps) {
   const reducedMotion = useReducedMotion();
   const panelRef = useRef<HTMLDivElement | null>(null);
   useModalChrome(true, onClose, panelRef);
@@ -386,6 +396,7 @@ function ModalInner({ team, currentUserId, onClose }: ModalInnerProps) {
               inviteCode={inviteCode}
               dpaAcceptance={dpaAcceptance}
               currentUserId={currentUserId}
+              emailEnabled={emailEnabled}
               isAdminOrOwner={isAdminOrOwner}
               isOwner={isOwner}
               glowMemberId={glowMemberId}
@@ -479,6 +490,7 @@ interface ModalBodyProps {
   inviteCode: InviteCodeMetadata | null;
   dpaAcceptance: DpaAcceptanceState | null;
   currentUserId: string;
+  emailEnabled: boolean;
   isAdminOrOwner: boolean;
   isOwner: boolean;
   glowMemberId: string | null;
@@ -514,6 +526,7 @@ function ModalBody({
   inviteCode,
   dpaAcceptance,
   currentUserId,
+  emailEnabled,
   isAdminOrOwner,
   isOwner,
   glowMemberId,
@@ -555,6 +568,7 @@ function ModalBody({
           teamId={team.id}
           invitations={invitations}
           inviteCode={inviteCode}
+          emailEnabled={emailEnabled}
           onInvitationsChanged={refreshInvitations}
           onInviteCodeChanged={onInviteCodeChanged}
           onRefreshInviteCode={refreshInviteCode}

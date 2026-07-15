@@ -16,12 +16,31 @@ const SessionContext = createContext<SessionState | null>(null);
 const PUBLIC_PATHS = [
   "/sign-in",
   "/sign-up",
+  "/verify-email",
+  "/forgot-password",
+  "/reset-password",
+  "/account-deleted",
   "/privacy",
   "/terms",
   "/impressum",
   "/subprocessors",
   "/dpa",
 ];
+
+/**
+ * Client counterpart of the middleware's public-path rules: exact matches
+ * plus the invitation detail prefix. Deliberately omits `/consent`, which
+ * middleware exempts: the OAuth consent surface needs a session
+ * client-side, so this guard's sign-in bounce is correct there.
+ *
+ * @param pathname - Current route pathname.
+ * @returns True when the path renders without a session.
+ */
+function isPublicPath(pathname: string): boolean {
+  return (
+    PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/invitations/")
+  );
+}
 
 /**
  * Provides reactive auth session state to client components.
@@ -38,14 +57,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (session.isPending) return;
-    if (PUBLIC_PATHS.includes(pathname)) return;
+    if (isPublicPath(pathname)) return;
     if (!session.data) {
       router.replace("/sign-in");
     }
   }, [session.isPending, session.data, pathname, router]);
 
   const shouldHide =
-    !session.isPending && !session.data && !PUBLIC_PATHS.includes(pathname);
+    !session.isPending && !session.data && !isPublicPath(pathname);
 
   return (
     <SessionContext.Provider value={session}>

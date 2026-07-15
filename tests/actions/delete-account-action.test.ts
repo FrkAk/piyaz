@@ -132,6 +132,10 @@ describe("deleteAccountAction sole-owner pre-check", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.verificationEmailSent).toBe(true);
     expect(deleteUserSpy).toHaveBeenCalledTimes(1);
+    const call = deleteUserSpy.mock.calls[0]?.[0] as {
+      body?: { callbackURL?: string };
+    };
+    expect(call.body?.callbackURL).toBe("/account-deleted");
   });
 
   test("email-disabled: skips the pre-check and forwards to Better Auth", async () => {

@@ -33,6 +33,7 @@ import {
   sendNewSignInEmail,
   sendPasswordChangedEmail,
   sendResetPasswordEmail,
+  sendTeamInviteEmail,
   sendVerificationEmail,
   type SignInContext,
 } from "@/lib/auth/emails";
@@ -238,6 +239,12 @@ export function createAuth() {
       organization({
         ac,
         roles: { owner, admin, member: memberRole },
+        // generateId:false (advanced.database above) would otherwise flip
+        // BA's verified-email requirement ON for get/accept/reject-invitation,
+        // locking out every unverified account (all of self-host). Verification
+        // enforcement is owned by the sign-in gate, not the invite flow.
+        requireEmailVerificationOnInvitation: false,
+        sendInvitationEmail: sendTeamInviteEmail,
         organizationHooks: {
           afterAddMember: async ({ member: added, organization: org }) => {
             await grantOrgAccess(added.userId, org.id);

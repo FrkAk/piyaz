@@ -13,6 +13,7 @@ import {
   passwordChangedEmail,
   newSignInEmail,
   deleteAccountEmail,
+  teamInviteEmail,
 } from "@/lib/email/templates";
 
 const neutral: BrandConfig = {
@@ -95,6 +96,18 @@ const samples = [
         confirmUrl: "https://app.example/delete?t=abc",
         expiresLabel: "24 hours",
         recipientName: "Dana",
+      }),
+  ],
+  [
+    "teamInvite",
+    (b: BrandConfig) =>
+      teamInviteEmail(b, {
+        inviteUrl: "https://app.example/invitations/abc",
+        teamName: "Acme Core",
+        inviterName: "Dana",
+        inviterEmail: "dana@acme.example",
+        recipientEmail: "new@acme.example",
+        expiresLabel: "48 hours",
       }),
   ],
 ] as const;
@@ -379,6 +392,16 @@ describe("hostile input is neutralized (AC #4)", () => {
     });
     expect(html).not.toContain("javascript:");
     expect(html).toContain("Confirm email");
+    expect(text).not.toContain("javascript:");
+  });
+
+  test("a hostile invite URL degrades to its label with no live link", () => {
+    const { html, text } = teamInviteEmail(neutral, {
+      inviteUrl: "javascript:alert(1)",
+      teamName: "Acme Core",
+    });
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain("View invitation");
     expect(text).not.toContain("javascript:");
   });
 

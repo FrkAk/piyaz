@@ -398,6 +398,16 @@ export function IconLock(props: IconProps) {
   );
 }
 
+/** Envelope — email delivery. */
+export function IconMail(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.5" />
+      <path d="M2.5 4.75L8 8.75l5.5-4" />
+    </IconBase>
+  );
+}
+
 /** Flag — priority / milestone. */
 export function IconFlag(props: IconProps) {
   return (

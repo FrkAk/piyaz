@@ -570,6 +570,55 @@ export async function acceptEmailInvitationAction(input: {
 }
 
 /**
+ * Decline an emailed invitation by id. Better Auth enforces that the
+ * session user's email matches `invitation.email` — wrong-recipient maps
+ * to the typed `wrong_recipient` failure code. Declining marks the row
+ * rejected so it leaves the team's pending list immediately.
+ *
+ * @param input - Invitation UUID.
+ * @returns Discriminated result.
+ */
+export async function rejectEmailInvitationAction(input: {
+  invitationId: string;
+}): Promise<TeamActionResult> {
+  let userId: string;
+  try {
+    const session = await requireSession();
+    userId = session.user.id;
+  } catch {
+    return teamFail("unauthorized");
+  }
+  await requireLegalConsent(userId);
+  const parsed = parseOrFail(acceptInvitationSchema, input);
+  if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.invite_reject",
+      windowSeconds: 60,
+      perUserMax: 10,
+      perIpMax: 20,
+    },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
+
+  try {
+    await auth.api.rejectInvitation({
+      body: { invitationId: parsed.data.invitationId },
+      headers: await headers(),
+    });
+    return { ok: true };
+  } catch (err) {
+    const code = mapBetterAuthError(err);
+    if (code === "unknown") {
+      console.error("rejectEmailInvitationAction failed", err);
+    }
+    return teamFail(code);
+  }
+}
+
+/**
  * Rename a team. BA enforces `organization:update` (admin + owner) at the
  * endpoint; we surface BA's authz rejection as a typed `forbidden` via
  * `mapBetterAuthError`. Either `name` or `slug` (or both) may be provided —

@@ -5,20 +5,36 @@ import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignUpForm } from "@/components/auth/SignUpForm";
 import { WaitlistForm } from "@/components/auth/WaitlistForm";
-import { signupsDisabled } from "@/lib/config/env";
+import { emailVerificationRequired, signupsDisabled } from "@/lib/config/env";
+import { safeInviteNext } from "@/lib/auth/invite-next";
+import { isEmailEnabled } from "@/lib/email";
+
+export const dynamic = "force-dynamic";
 
 const SIGNUPS_DISABLED = signupsDisabled();
+
+interface SignUpPageProps {
+  searchParams: Promise<{ next?: string }>;
+}
 
 /**
  * Sign-up page. Renders the registration form when signups are open
  * (self-host and dev) and an "invite only" notice when they are disabled
- * (hosted prod). Post-create the user lands on `/`; `requireMembership`
- * forwards to `/onboarding/team` because a fresh account has zero memberships.
+ * (hosted prod). Post-create the user lands on the validated `next`
+ * destination (invitation CTAs) or `/`; `requireMembership` forwards to
+ * `/onboarding/team` because a fresh account has zero memberships.
  *
+ * `verificationPending` is computed per request: only when email delivery
+ * is enabled AND the verification gate is on does sign-up actually send a
+ * mail, so only then does the form show its check-your-email state.
+ *
+ * @param props - Route search params carrying the optional `next` value.
  * @returns Server-rendered auth shell with form or invite-only notice
  *   depending on `signupsDisabled()`.
  */
-export default function SignUpPage() {
+export default async function SignUpPage({ searchParams }: SignUpPageProps) {
+  const next = safeInviteNext((await searchParams).next);
+  const verificationPending = isEmailEnabled() && emailVerificationRequired();
   return (
     <AuthShell
       form={
@@ -36,7 +52,7 @@ export default function SignUpPage() {
           >
             {SIGNUPS_DISABLED
               ? "Piyaz is in a closed beta. New accounts are opening soon, so sign-ups are invite-only for now."
-              : "Your project graph and decision history live here. Connect agents through MCP from your CLI once you’re in."}
+              : "Create your workspace, invite your team, and connect your agents from any harness."}
           </p>
 
           {SIGNUPS_DISABLED ? (
@@ -44,14 +60,19 @@ export default function SignUpPage() {
           ) : (
             <>
               <SocialButtons />
-              <SignUpForm />
+              <SignUpForm
+                verificationPending={verificationPending}
+                next={next}
+              />
             </>
           )}
 
           <p className="mt-3.5 text-center text-[12px] text-text-muted">
             {SIGNUPS_DISABLED ? "Already invited?" : "Already have an account?"}{" "}
             <Link
-              href="/sign-in"
+              href={
+                next ? `/sign-in?next=${encodeURIComponent(next)}` : "/sign-in"
+              }
               className="hover:underline"
               style={{ color: "var(--color-accent-light)" }}
             >

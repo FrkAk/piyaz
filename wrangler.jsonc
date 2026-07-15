@@ -117,6 +117,7 @@
         "EMAIL_FROM_SUPPORT": "hello@piyaz.ai",
         "EMAIL_FROM_INFO": "noreply@piyaz.ai",
         "EMAIL_REPLY_TO": "hello@piyaz.ai",
+        "REQUIRE_EMAIL_VERIFICATION": "true",
         "APP_NAME": "Piyaz",
         "BRAND_LOGO_URL": "https://app.piyaz.ai/piyaz-mark.png",
         "BRAND_COLOR": "#818cf8",

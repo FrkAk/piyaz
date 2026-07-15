@@ -2,25 +2,40 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { signUp } from "@/lib/auth-client";
+import { sendVerificationEmail, signUp } from "@/lib/auth-client";
+import { IconMail } from "@/components/shared/icons";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
+
+interface SignUpFormProps {
+  /** True when sign-up sends a verification email (email enabled AND the verification gate is on). */
+  verificationPending: boolean;
+  /** Validated invite return destination; falls back to `/` after sign-up. */
+  next?: string | null;
+}
 
 /**
  * Email/password sign-up form.
  *
- * On success the user lands on `/`, which `requireMembership` redirects
- * to `/onboarding/team` because a new account starts with zero teams.
- * No special-casing is needed here.
+ * When `verificationPending` is false the user lands on the validated
+ * `next` destination or `/`, which `requireMembership` redirects to
+ * `/onboarding/team` because a new account starts with zero teams. When
+ * it is true, the sign-up body carries `callbackURL` pointing at the
+ * `/verify-email` landing (threading `next` through its query) and the
+ * form swaps to a check-your-email panel with a cooldown-limited resend.
  *
  * Terms acceptance is affirmative: the checkbox paints unchecked and the
  * submit path refuses to call `signUp.email` until it is ticked. The flag
  * rides in the sign-up body so the server-side `user.create.before` gate
  * (`lib/auth.ts`) enforces the same rule against direct API calls.
  *
+ * @param props - Verification-flow flag and optional return destination.
  * @returns Vertical form: name + email + password + consent + submit.
  */
-export function SignUpForm() {
+export function SignUpForm({
+  verificationPending,
+  next = null,
+}: SignUpFormProps) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -28,12 +43,21 @@ export function SignUpForm() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [resendStatus, setResendStatus] = useState<"idle" | "sending" | "sent">(
+    "idle",
+  );
+
+  const callbackURL = next
+    ? `/verify-email?next=${encodeURIComponent(next)}`
+    : "/verify-email";
 
   /**
    * Create the account via Better Auth. Blocks until Terms are accepted,
    * then sends `termsAccepted` in the body for the server gate. Errors
-   * render inline in the danger-tinted strip; on success the App Router
-   * picks up the new session and the membership gate takes over.
+   * render inline in the danger-tinted strip; on success either the
+   * check-your-email panel takes over (verification flow) or the App
+   * Router picks up the new session and the membership gate takes over.
    *
    * @param event - The form submit event.
    */
@@ -47,7 +71,7 @@ export function SignUpForm() {
     }
 
     setLoading(true);
-    const payload = { name, email, password, termsAccepted };
+    const payload = { name, email, password, termsAccepted, callbackURL };
     const { error: authError } = await signUp.email(payload);
 
     if (authError) {
@@ -56,8 +80,88 @@ export function SignUpForm() {
       return;
     }
 
-    router.push("/");
+    if (verificationPending) {
+      setSentTo(email);
+      setLoading(false);
+      return;
+    }
+
+    router.push(next ?? "/");
     router.refresh();
+  }
+
+  /**
+   * Re-send the verification email to the address that just signed up,
+   * preserving the `/verify-email` callback. A 60s cooldown keeps the
+   * button quiet under the server's 3/60 rate rule.
+   */
+  async function handleResend() {
+    if (sentTo === null || resendStatus !== "idle") return;
+    setError(null);
+    setResendStatus("sending");
+    const { error: resendError } = await sendVerificationEmail({
+      email: sentTo,
+      callbackURL,
+    });
+    if (resendError) {
+      setError(resendError.message ?? "Could not resend the email");
+      setResendStatus("idle");
+      return;
+    }
+    setResendStatus("sent");
+    window.setTimeout(() => setResendStatus("idle"), 60_000);
+  }
+
+  if (sentTo !== null) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2.5">
+          <IconMail size={18} style={{ color: "var(--color-accent-light)" }} />
+          <h2 className="text-[16px] font-semibold text-text-primary">
+            Check your email
+          </h2>
+        </div>
+        <p className="text-[13px] leading-relaxed text-text-secondary">
+          We sent a verification link to{" "}
+          <span className="font-mono text-text-primary">{sentTo}</span>. Open it
+          to activate your account and sign in.
+        </p>
+        {resendStatus === "sent" ? (
+          <p
+            role="status"
+            className="rounded-md border border-border bg-base px-3 py-2 text-[12px] leading-relaxed text-text-secondary"
+          >
+            A new link is on its way. You can request another in a minute.
+          </p>
+        ) : null}
+        {error ? (
+          <p
+            role="alert"
+            className="rounded-md border px-3 py-2 text-[12px] text-danger"
+            style={{
+              background:
+                "color-mix(in srgb, var(--color-danger) 10%, transparent)",
+              borderColor:
+                "color-mix(in srgb, var(--color-danger) 24%, transparent)",
+            }}
+          >
+            {error}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          onClick={handleResend}
+          disabled={resendStatus !== "idle"}
+          className={`self-start text-[12px] underline-offset-2 ${
+            resendStatus === "idle"
+              ? "cursor-pointer text-text-muted hover:text-text-secondary hover:underline"
+              : "cursor-not-allowed text-text-faint"
+          }`}
+        >
+          {resendStatus === "sending" ? "Sending…" : "Resend email"}
+        </button>
+      </div>
+    );
   }
 
   return (

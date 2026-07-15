@@ -213,3 +213,117 @@ export async function cancelInvitationAction(input: {
     return teamFail(code);
   }
 }
+
+/**
+ * Resend a pending invitation's email. The pending row is resolved
+ * server-side and re-issued through BA's `createInvitation` with
+ * `resend: true`, which refreshes `expiresAt` on the existing row and
+ * refires `sendInvitationEmail` without creating a duplicate — the
+ * recipient address and role are never taken from the client, so a stale
+ * UI cannot re-invite a canceled row or mail an arbitrary address.
+ *
+ * Defense-in-depth mirrors {@link cancelInvitationAction}:
+ * `isCallerInInvitationOrg` verifies the id linkage without disclosing
+ * it (mismatch surfaces as `not_found`), then `isOrgAdmin` gates the
+ * role. Canceled, accepted, and expired rows also map to `not_found`.
+ *
+ * @param input - `{ invitationId, organizationId }` to resend.
+ * @returns Discriminated result.
+ */
+export async function resendInvitationAction(input: {
+  invitationId: string;
+  organizationId: string;
+}): Promise<TeamActionResult> {
+  let userId: string;
+  try {
+    const session = await requireSession();
+    userId = session.user.id;
+  } catch {
+    return teamFail("unauthorized");
+  }
+  await requireLegalConsent(userId);
+
+  const parsed = parseOrFail(cancelSchema, input);
+  if (!parsed.ok) return parsed;
+
+  const limit = await checkActionRateLimit(
+    {
+      action: "team.invite_resend",
+      windowSeconds: 60,
+      perUserMax: 10,
+      perIpMax: 20,
+    },
+    userId,
+  );
+  if (!limit.ok) return teamFail("rate_limited");
+
+  let inOrg: boolean;
+  try {
+    inOrg = await isCallerInInvitationOrg(
+      userId,
+      parsed.data.invitationId,
+      parsed.data.organizationId,
+    );
+  } catch (err) {
+    console.error("resendInvitationAction: isCallerInInvitationOrg failed", {
+      invitationId: parsed.data.invitationId,
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!inOrg) return teamFail("not_found");
+
+  let isAdmin: boolean;
+  try {
+    isAdmin = await isOrgAdmin(parsed.data.organizationId);
+  } catch (err) {
+    console.error("resendInvitationAction: isOrgAdmin failed", {
+      organizationId: parsed.data.organizationId,
+      err,
+    });
+    return teamFail("unknown");
+  }
+  if (!isAdmin) return teamFail("forbidden");
+
+  let row: BetterAuthInvitationRow | undefined;
+  try {
+    const result = await auth.api.listInvitations({
+      query: { organizationId: parsed.data.organizationId },
+      headers: await headers(),
+    });
+    const rows = (result ?? []) as BetterAuthInvitationRow[];
+    row = rows.find((r) => r.id === parsed.data.invitationId);
+  } catch (err) {
+    const code = mapBetterAuthError(err);
+    if (code === "unknown") {
+      console.error("resendInvitationAction: listInvitations failed", err);
+    }
+    return teamFail(code);
+  }
+  if (!row || row.status !== "pending") return teamFail("not_found");
+  const expiresAt =
+    row.expiresAt instanceof Date ? row.expiresAt : new Date(row.expiresAt);
+  if (expiresAt.getTime() <= Date.now()) return teamFail("not_found");
+
+  const role =
+    row.role === "admin" || row.role === "owner" ? row.role : "member";
+  try {
+    await auth.api.createInvitation({
+      body: {
+        email: row.email,
+        role,
+        organizationId: parsed.data.organizationId,
+        resend: true,
+      },
+      headers: await headers(),
+    });
+    return { ok: true };
+  } catch (err) {
+    const code = mapBetterAuthError(err);
+    if (code === "unknown") {
+      console.error("resendInvitationAction: createInvitation failed", err);
+    }
+    return teamFail(code);
+  }
+}
