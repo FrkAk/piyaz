@@ -2,7 +2,6 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { signIn } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
@@ -30,7 +29,6 @@ export function SignInForm({
   passwordResetEnabled,
   next = null,
 }: SignInFormProps) {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -40,8 +38,9 @@ export function SignInForm({
    * Submit credentials to Better Auth. A gated unverified account gets
    * the check-your-inbox explanation (BA's `sendOnSignIn` fires a fresh
    * verification link on the same blocked attempt); other errors surface
-   * the server-provided message inline. On success we let the App Router
-   * pick up the new session via push + refresh.
+   * the server-provided message inline. On success we hard-navigate to the
+   * destination so the app root loads as a fresh document: a soft push plus
+   * `router.refresh` raced the app-root RSC fetch and left the page blank.
    *
    * @param event - The form submit event.
    */
@@ -62,8 +61,7 @@ export function SignInForm({
       return;
     }
 
-    router.push(next ?? "/");
-    router.refresh();
+    window.location.href = next ?? "/";
   }
 
   return (

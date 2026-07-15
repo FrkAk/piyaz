@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
 import { sendVerificationEmail, signUp } from "@/lib/auth-client";
 import { IconMail } from "@/components/shared/icons";
 import { AuthInput } from "./AuthInput";
@@ -36,7 +35,6 @@ export function SignUpForm({
   verificationPending,
   next = null,
 }: SignUpFormProps) {
-  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -56,8 +54,9 @@ export function SignUpForm({
    * Create the account via Better Auth. Blocks until Terms are accepted,
    * then sends `termsAccepted` in the body for the server gate. Errors
    * render inline in the danger-tinted strip; on success either the
-   * check-your-email panel takes over (verification flow) or the App
-   * Router picks up the new session and the membership gate takes over.
+   * check-your-email panel takes over (verification flow) or we hard-navigate
+   * to the destination so the app root loads as a fresh document and the
+   * membership gate takes over.
    *
    * @param event - The form submit event.
    */
@@ -86,8 +85,7 @@ export function SignUpForm({
       return;
     }
 
-    router.push(next ?? "/");
-    router.refresh();
+    window.location.href = next ?? "/";
   }
 
   /**
