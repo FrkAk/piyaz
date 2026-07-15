@@ -37,8 +37,10 @@ export function SignInForm({
   const [loading, setLoading] = useState(false);
 
   /**
-   * Submit credentials to Better Auth. On error we surface the
-   * server-provided message inline; on success we let the App Router
+   * Submit credentials to Better Auth. A gated unverified account gets
+   * the check-your-inbox explanation (BA's `sendOnSignIn` fires a fresh
+   * verification link on the same blocked attempt); other errors surface
+   * the server-provided message inline. On success we let the App Router
    * pick up the new session via push + refresh.
    *
    * @param event - The form submit event.
@@ -51,7 +53,11 @@ export function SignInForm({
     const { error: authError } = await signIn.email({ email, password });
 
     if (authError) {
-      setError(authError.message ?? "Sign in failed");
+      setError(
+        authError.code === "EMAIL_NOT_VERIFIED"
+          ? "Your email address isn’t verified yet. We’ve emailed you a new verification link. Check your inbox."
+          : (authError.message ?? "Sign in failed"),
+      );
       setLoading(false);
       return;
     }
