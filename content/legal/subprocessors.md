@@ -1,6 +1,6 @@
 # Sub-processors
 
-Last updated: July 11, 2026
+Last updated: July 15, 2026
 
 ---
 
@@ -15,11 +15,12 @@ deployment: you are the data controller for your own instance.
 | --- | --- | --- | --- | --- |
 | **Neon, LLC** (a Databricks company, US) | Managed PostgreSQL database. | All service data at rest: account, workspace content, technical and session data, acceptance records. | AWS `eu-central-1` (Frankfurt, Germany) | EU SCCs; EU-US Data Privacy Framework |
 | **Amazon Web Services (AWS)** (US) | Underlying cloud infrastructure for the Neon database. | The same data at rest, as Neon's hosting provider. | Frankfurt region (EU) | EU SCCs; EU-US Data Privacy Framework |
-| **Cloudflare, Inc.** (US) | Application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, and operational logging. | Technical and session data; all service data transiently in processing. | Global edge network | EU SCCs; EU-US Data Privacy Framework |
+| **Cloudflare, Inc.** (US) | Application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, operational logging, and transactional email delivery (Email Sending). | Technical and session data; all service data transiently in processing; recipient email addresses and transactional message content. | Global edge network | EU SCCs; EU-US Data Privacy Framework |
 
-A transactional email provider is not yet engaged. Before one begins processing any
-personal data (such as recipient email addresses), it will be added to this list
-through the change process below.
+Transactional email (such as account and team notifications) is delivered through
+Cloudflare's Email Sending service, covered by the Cloudflare entry above. Any
+additional email provider will be added to this list through the change process below
+before it processes personal data.
 
 Coding agents, harnesses, and other tools you connect to your workspace are not
 sub-processors: they act on your instructions and receive data at your direction. See
