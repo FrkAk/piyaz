@@ -124,7 +124,9 @@ export default async function VerifyEmailPage({
       ) : null}
 
       {state === "success" || state === "already-verified" ? (
-        <AuthLinkButton href={next ?? "/"}>Continue</AuthLinkButton>
+        <AuthLinkButton href={next ?? "/"} hardNav>
+          Continue
+        </AuthLinkButton>
       ) : emailEnabled ? (
         <ResendVerificationForm
           email={session?.user.email ?? null}
