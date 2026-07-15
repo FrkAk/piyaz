@@ -47,7 +47,7 @@ export function ReconsentGate({ docs, email }: ReconsentGateProps) {
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  /** Record acceptance of every outstanding document, then leave the gate. */
+  /** Record acceptance of every outstanding document, then hard-navigate home so the app root loads fresh instead of racing a soft nav plus refresh. */
   const handleAccept = () => {
     setError(null);
     startAccept(async () => {
@@ -56,8 +56,7 @@ export function ReconsentGate({ docs, email }: ReconsentGateProps) {
         setError(result.message);
         return;
       }
-      router.replace("/");
-      router.refresh();
+      window.location.href = "/";
     });
   };
 
