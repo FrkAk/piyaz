@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
 import { useModalChrome } from "@/hooks/useModalChrome";
@@ -89,7 +88,6 @@ function DeleteTeamDialogBody({
   onClose,
   onError,
 }: DeleteTeamDialogBodyProps) {
-  const router = useRouter();
   const [typedName, setTypedName] = useState("");
   const [preview, setPreview] = useState<TeamDeletePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(true);
@@ -127,7 +125,7 @@ function DeleteTeamDialogBody({
         onError(result.message);
         return;
       }
-      router.replace("/");
+      window.location.href = "/";
     });
   };
 
