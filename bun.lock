@@ -50,6 +50,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@better-auth/core@1.6.14": "patches/@better-auth%2Fcore@1.6.14.patch",
+  },
   "overrides": {
     "form-data": ">=4.0.6",
     "hono": ">=4.12.25",

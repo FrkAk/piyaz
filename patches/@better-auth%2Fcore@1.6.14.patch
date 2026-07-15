@@ -1,0 +1,69 @@
+diff --git a/dist/context/endpoint-context.mjs b/dist/context/endpoint-context.mjs
+index 744175a4058c8e0cac9cf5dc84801eba6c73f267..609de1464fc926882aac769730b7f4505bc0f998 100644
+--- a/dist/context/endpoint-context.mjs
++++ b/dist/context/endpoint-context.mjs
+@@ -1,13 +1,12 @@
+ import { __getBetterAuthGlobal } from "./global.mjs";
+-import { getAsyncLocalStorage } from "@better-auth/core/async_hooks";
++import { AsyncLocalStorage } from "node:async_hooks";
+ //#region src/context/endpoint-context.ts
+ const ensureAsyncStorage = async () => {
+ 	const betterAuthGlobal = __getBetterAuthGlobal();
+-	if (!betterAuthGlobal.context.endpointContextAsyncStorage) {
+-		const AsyncLocalStorage = await getAsyncLocalStorage();
+-		betterAuthGlobal.context.endpointContextAsyncStorage = new AsyncLocalStorage();
+-	}
+-	return betterAuthGlobal.context.endpointContextAsyncStorage;
++	// PATCH better-auth #10300/#10315: build the ALS synchronously (no await
++	// gap, no cached init promise) so concurrent cold-start callers cannot race
++	// two instances or hang on an aborted init. Revert on better-auth >=1.6.24.
++	return betterAuthGlobal.context.endpointContextAsyncStorage ??= new AsyncLocalStorage();
+ };
+ /**
+ * This is for internal use only. Most users should use `getCurrentAuthContext` instead.
+diff --git a/dist/context/request-state.mjs b/dist/context/request-state.mjs
+index f5444b95d2ac656525b0429aabe88ebf9ab0ab6e..a55759d40769a5ca49ff245a9dd35ffb847ef9ed 100644
+--- a/dist/context/request-state.mjs
++++ b/dist/context/request-state.mjs
+@@ -1,13 +1,12 @@
+ import { __getBetterAuthGlobal } from "./global.mjs";
+-import { getAsyncLocalStorage } from "@better-auth/core/async_hooks";
++import { AsyncLocalStorage } from "node:async_hooks";
+ //#region src/context/request-state.ts
+ const ensureAsyncStorage = async () => {
+ 	const betterAuthGlobal = __getBetterAuthGlobal();
+-	if (!betterAuthGlobal.context.requestStateAsyncStorage) {
+-		const AsyncLocalStorage = await getAsyncLocalStorage();
+-		betterAuthGlobal.context.requestStateAsyncStorage = new AsyncLocalStorage();
+-	}
+-	return betterAuthGlobal.context.requestStateAsyncStorage;
++	// PATCH better-auth #10300/#10315: build the ALS synchronously (no await
++	// gap, no cached init promise) so concurrent cold-start callers cannot race
++	// two instances or hang on an aborted init. Revert on better-auth >=1.6.24.
++	return betterAuthGlobal.context.requestStateAsyncStorage ??= new AsyncLocalStorage();
+ };
+ async function getRequestStateAsyncLocalStorage() {
+ 	return ensureAsyncStorage();
+diff --git a/dist/context/transaction.mjs b/dist/context/transaction.mjs
+index 0389f33bdac2308ef8ba5c9ef63f459d5a89c902..152098689176f26501c39cf3ccacdeef4f92bbec 100644
+--- a/dist/context/transaction.mjs
++++ b/dist/context/transaction.mjs
+@@ -1,13 +1,12 @@
+ import { __getBetterAuthGlobal } from "./global.mjs";
+-import { getAsyncLocalStorage } from "@better-auth/core/async_hooks";
++import { AsyncLocalStorage } from "node:async_hooks";
+ //#region src/context/transaction.ts
+ const ensureAsyncStorage = async () => {
+ 	const betterAuthGlobal = __getBetterAuthGlobal();
+-	if (!betterAuthGlobal.context.adapterAsyncStorage) {
+-		const AsyncLocalStorage = await getAsyncLocalStorage();
+-		betterAuthGlobal.context.adapterAsyncStorage = new AsyncLocalStorage();
+-	}
+-	return betterAuthGlobal.context.adapterAsyncStorage;
++	// PATCH better-auth #10300/#10315: build the ALS synchronously (no await
++	// gap, no cached init promise) so concurrent cold-start callers cannot race
++	// two instances or hang on an aborted init. Revert on better-auth >=1.6.24.
++	return betterAuthGlobal.context.adapterAsyncStorage ??= new AsyncLocalStorage();
+ };
+ /**
+ * This is for internal use only. Most users should use `getCurrentAdapter` instead.
