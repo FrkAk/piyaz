@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/FrkAk/piyaz/compare/v0.4.1...v0.4.2) (2026-07-16)
+
+
+### Bug Fixes
+
+* enable public signups on production ([#230](https://github.com/FrkAk/piyaz/issues/230)) ([36b749b](https://github.com/FrkAk/piyaz/commit/36b749ba74d8aefe8125a6609c5109cfd42f7280))
+
 ## [0.4.1](https://github.com/FrkAk/piyaz/compare/v0.4.0...v0.4.1) (2026-07-15)
 
 
