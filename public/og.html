@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Piyaz · App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --color-base: #07080a;
+        --color-surface: #101111;
+        --color-surface-raised: #1b1c1e;
+        --color-border: rgba(255, 255, 255, 0.06);
+        --color-border-strong: rgba(255, 255, 255, 0.1);
+        --color-text-primary: #f9f9f9;
+        --color-text-secondary: #cecece;
+        --color-text-muted: #6a6b6c;
+        --color-accent: #976B68;
+        --color-accent-light: #C2A4A1;
+        --color-accent-glow: rgba(151, 107, 104, 0.14);
+        --color-draft: #9ca3af;
+        --color-planned: #55b3ff;
+        --color-progress: #ffbc33;
+        --color-done: #5fc992;
+        --color-edge-depends: #55b3ff;
+        --color-edge-relates: #a78bfa;
+        --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+        --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        background: var(--color-base);
+        color: var(--color-text-primary);
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        font-weight: 500;
+        letter-spacing: 0.012em;
+        font-feature-settings: "calt" 1, "kern" 1, "liga" 1, "ss03" 1;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+      }
+
+      /* Radial indigo atmosphere: top-left + bottom-right */
+      body::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(
+            900px 600px at 0% 0%,
+            rgba(151, 107, 104, 0.1) 0%,
+            transparent 55%
+          ),
+          radial-gradient(
+            700px 500px at 100% 100%,
+            rgba(110, 70, 62, 0.07) 0%,
+            transparent 55%
+          );
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      /* 48px grid overlay with radial mask */
+      body::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(151, 107, 104, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(151, 107, 104, 0.04) 1px, transparent 1px);
+        background-size: 48px 48px;
+        -webkit-mask-image: radial-gradient(
+          ellipse 80% 60% at 50% 50%,
+          black 0%,
+          transparent 85%
+        );
+        mask-image: radial-gradient(
+          ellipse 80% 60% at 50% 50%,
+          black 0%,
+          transparent 85%
+        );
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      /* Noise texture layer */
+      .noise {
+        position: absolute;
+        inset: 0;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+        opacity: 0.12;
+        mix-blend-mode: overlay;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      /* Bottom gradient line matching the site navbar accent */
+      .edge-top {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          rgba(151, 107, 104, 0.35) 50%,
+          transparent 100%
+        );
+        z-index: 2;
+      }
+
+      .edge-bottom {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          rgba(151, 107, 104, 0.25) 0%,
+          rgba(151, 107, 104, 0.05) 45%,
+          transparent 100%
+        );
+        z-index: 2;
+      }
+
+      .frame {
+        position: relative;
+        z-index: 3;
+        width: 1200px;
+        height: 630px;
+        padding: 56px 80px;
+        display: flex;
+        justify-content: space-between;
+        align-items: stretch;
+        gap: 56px;
+      }
+
+      /* -------------- LEFT: typography stack -------------- */
+
+      .left {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        flex: 1 1 0;
+        min-width: 0;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--color-text-muted);
+      }
+
+      .eyebrow-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--color-accent);
+        box-shadow: 0 0 10px rgba(151, 107, 104, 0.6);
+      }
+
+      .eyebrow-sep {
+        color: rgba(255, 255, 255, 0.15);
+      }
+
+      .brand-mark {
+        display: block;
+        width: 72px;
+        height: 72px;
+        margin-top: 12px;
+      }
+
+      .wordmark {
+        font-family: "Inter", system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 168px;
+        line-height: 1.0;
+        letter-spacing: -0.04em;
+        color: var(--color-text-primary);
+        margin-top: 12px;
+        padding-bottom: 0.12em;
+        background: linear-gradient(
+          135deg,
+          #ffffff 0%,
+          #f9f9f9 35%,
+          #C2A4A1 70%,
+          #976B68 88%,
+          #6E463E 100%
+        );
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .tagline {
+        margin-top: 16px;
+        font-size: 32px;
+        font-weight: 600;
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        color: var(--color-text-primary);
+        max-width: 540px;
+      }
+
+      .tagline strong {
+        color: var(--color-accent-light);
+        font-weight: 600;
+      }
+
+      .sub-tagline {
+        margin-top: 14px;
+        font-size: 17px;
+        font-weight: 500;
+        line-height: 1.45;
+        letter-spacing: 0.012em;
+        color: var(--color-text-muted);
+        max-width: 500px;
+      }
+
+      .footer-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 24px;
+      }
+
+      .url {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--color-text-secondary);
+      }
+
+      .url-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--color-accent);
+        box-shadow: 0 0 14px rgba(151, 107, 104, 0.8);
+      }
+
+      /* -------------- RIGHT: graph cluster -------------- */
+
+      .right {
+        position: relative;
+        flex: 0 0 460px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .graph {
+        position: relative;
+        width: 460px;
+        height: 460px;
+      }
+
+      .graph-edges {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .node {
+        position: absolute;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 14px;
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: 12px;
+        box-shadow: var(--shadow-card);
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--color-text-secondary);
+        white-space: nowrap;
+      }
+
+      .node--raised {
+        background: var(--color-surface-raised);
+        border-color: var(--color-border-strong);
+        box-shadow: var(--shadow-float);
+        color: var(--color-text-primary);
+      }
+
+      .node-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        flex-shrink: 0;
+      }
+
+      .node-dot--draft {
+        background: var(--color-draft);
+      }
+      .node-dot--planned {
+        background: var(--color-planned);
+        box-shadow: 0 0 8px rgba(85, 179, 255, 0.5);
+      }
+      .node-dot--progress {
+        background: var(--color-progress);
+        box-shadow: 0 0 8px rgba(255, 188, 51, 0.5);
+      }
+      .node-dot--done {
+        background: var(--color-done);
+        box-shadow: 0 0 8px rgba(95, 201, 146, 0.5);
+      }
+
+      /* Node positions arranged as a realistic task-graph cluster:
+         spec + migration (done) -> handler (in-progress) -> ui + tests (planned/draft) */
+      .node-spec {
+        top: 20px;
+        left: 50px;
+      }
+      .node-migration {
+        top: 110px;
+        right: 0;
+      }
+      .node-handler {
+        top: 220px;
+        left: 120px;
+      }
+      .node-ui {
+        top: 345px;
+        left: 10px;
+      }
+      .node-tests {
+        top: 370px;
+        right: 30px;
+      }
+
+      /* Handler is the focal in-progress node */
+      .node-handler {
+        padding: 12px 18px;
+        font-size: 12px;
+      }
+
+      .node-handler .node-label-small {
+        color: var(--color-text-muted);
+        font-size: 9px;
+        margin-right: 4px;
+      }
+
+      /* Tiny corner brand badge on graph */
+      .graph-chrome {
+        position: absolute;
+        top: -18px;
+        right: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 10px;
+        border: 1px solid var(--color-border);
+        border-radius: 999px;
+        background: rgba(16, 17, 17, 0.7);
+        backdrop-filter: blur(8px);
+        font-family: "Geist Mono", ui-monospace, monospace;
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--color-text-muted);
+      }
+
+      .graph-chrome-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 999px;
+        background: var(--color-accent);
+        animation: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="noise"></div>
+    <div class="edge-top"></div>
+    <div class="edge-bottom"></div>
+
+    <div class="frame">
+      <!-- LEFT: typography -->
+      <div class="left">
+        <div class="eyebrow">
+          <span class="eyebrow-dot"></span>
+          <span>Piyaz</span>
+          <span class="eyebrow-sep">/</span>
+          <span>App</span>
+        </div>
+
+        <div>
+          <img class="brand-mark" src="brand/piyaz-mark-gradient.png" alt="" />
+          <div class="wordmark">Piyaz</div>
+          <div class="tagline">
+            Where humans and <strong>agents</strong> share one understanding.
+          </div>
+          <div class="sub-tagline">
+            Every session picks up the full story: what shipped, what is next,
+            and why.
+          </div>
+        </div>
+
+        <div class="footer-row">
+          <div class="url">
+            <span class="url-dot"></span>
+            <span>app.piyaz.ai</span>
+          </div>
+          <div class="url" style="color: var(--color-text-muted)">
+            <span>Projects</span>
+            <span class="eyebrow-sep">·</span>
+            <span>Tasks</span>
+            <span class="eyebrow-sep">·</span>
+            <span>Graph</span>
+            <span class="eyebrow-sep">·</span>
+            <span>Notes</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: graph cluster -->
+      <div class="right">
+        <div class="graph">
+          <div class="graph-chrome">
+            <span class="graph-chrome-dot"></span>
+            <span>Context Network</span>
+          </div>
+
+          <!-- Edges drawn as SVG beneath the nodes -->
+          <svg
+            class="graph-edges"
+            viewBox="0 0 460 460"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            preserveAspectRatio="none"
+          >
+            <defs>
+              <linearGradient id="edge-depends" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#55b3ff" stop-opacity="0.55" />
+                <stop offset="100%" stop-color="#55b3ff" stop-opacity="0.15" />
+              </linearGradient>
+              <linearGradient id="edge-relates" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.5" />
+                <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.12" />
+              </linearGradient>
+              <linearGradient id="edge-accent" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#976B68" stop-opacity="0.6" />
+                <stop offset="100%" stop-color="#976B68" stop-opacity="0.15" />
+              </linearGradient>
+            </defs>
+
+            <!-- spec -> handler (depends_on, solid blue) -->
+            <path
+              d="M 130 50 Q 155 140 205 235"
+              stroke="url(#edge-depends)"
+              stroke-width="1.3"
+              stroke-linecap="round"
+            />
+            <!-- migration -> handler (depends_on, accent indigo, feature-critical) -->
+            <path
+              d="M 380 135 Q 325 185 260 235"
+              stroke="url(#edge-accent)"
+              stroke-width="1.5"
+              stroke-linecap="round"
+            />
+            <!-- handler -> ui (depends_on) -->
+            <path
+              d="M 200 255 Q 140 300 80 360"
+              stroke="url(#edge-depends)"
+              stroke-width="1.3"
+              stroke-linecap="round"
+            />
+            <!-- handler -> tests (depends_on) -->
+            <path
+              d="M 260 255 Q 320 320 370 380"
+              stroke="url(#edge-depends)"
+              stroke-width="1.3"
+              stroke-linecap="round"
+            />
+            <!-- spec ~ tests (relates_to, dashed violet, traceability) -->
+            <path
+              d="M 105 60 Q 40 240 340 385"
+              stroke="url(#edge-relates)"
+              stroke-width="1"
+              stroke-linecap="round"
+              stroke-dasharray="3 5"
+              opacity="0.7"
+            />
+          </svg>
+
+          <!-- Nodes: feature lifecycle. Spec & migration done, handler in progress,
+               ui planned, tests draft. Traceability edge from spec to tests. -->
+          <div class="node node-spec">
+            <span class="node-dot node-dot--done"></span>
+            <span>Spec / RFC</span>
+          </div>
+
+          <div class="node node-migration">
+            <span class="node-dot node-dot--done"></span>
+            <span>DB Migration</span>
+          </div>
+
+          <div class="node node--raised node-handler">
+            <span class="node-dot node-dot--progress"></span>
+            <span class="node-label-small">TASK</span>
+            <span>API Handler</span>
+          </div>
+
+          <div class="node node-ui">
+            <span class="node-dot node-dot--planned"></span>
+            <span>Client UI</span>
+          </div>
+
+          <div class="node node-tests">
+            <span class="node-dot node-dot--draft"></span>
+            <span>E2E Tests</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

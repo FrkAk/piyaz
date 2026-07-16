@@ -15,6 +15,7 @@ export const viewport: Viewport = {
 const siteUrl = "https://app.piyaz.ai";
 const description =
   "A structure that supports organic growth. Track projects created by your coding agent.";
+const ogImage = "/og.png?v=1";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -47,11 +48,20 @@ export const metadata: Metadata = {
     url: "/",
     title: "Piyaz",
     description,
+    images: [
+      {
+        url: ogImage,
+        width: 1200,
+        height: 630,
+        alt: "Piyaz. Where humans and agents share one understanding.",
+      },
+    ],
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "Piyaz",
     description,
+    images: [ogImage],
   },
 };
 
