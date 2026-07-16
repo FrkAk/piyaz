@@ -19,18 +19,19 @@ interface SignUpPageProps {
 
 /**
  * Sign-up page. Renders the registration form when signups are open
- * (self-host and dev) and an "invite only" notice when they are disabled
- * (hosted prod). Post-create the user lands on the validated `next`
- * destination (invitation CTAs) or `/`; `requireMembership` forwards to
- * `/onboarding/team` because a fresh account has zero memberships.
+ * (self-host and hosted deploys that opt in) and an "invite only" notice
+ * when they are disabled (a hosted build without the opt-in). Post-create
+ * the user lands on the validated `next` destination (invitation CTAs) or
+ * `/`; `requireMembership` forwards to `/onboarding/team` because a fresh
+ * account has zero memberships.
  *
  * `verificationPending` is computed per request: only when email delivery
  * is enabled AND the verification gate is on does sign-up actually send a
  * mail, so only then does the form show its check-your-email state.
  *
  * @param props - Route search params carrying the optional `next` value.
- * @returns Server-rendered auth shell with form or invite-only notice
- *   depending on `signupsDisabled()`.
+ * @returns Server-rendered auth shell with the form or the invite-only
+ *   notice depending on `signupsDisabled()`.
  */
 export default async function SignUpPage({ searchParams }: SignUpPageProps) {
   const next = safeInviteNext((await searchParams).next);
