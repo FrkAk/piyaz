@@ -65,14 +65,14 @@ describe("robots.txt", () => {
   test("allows fetching so preview bots can read og tags", () => {
     const rules = robots().rules;
     expect(Array.isArray(rules)).toBe(false);
-    const single = rules as {
-      userAgent?: string;
-      allow?: string;
-      disallow?: string;
-    };
+    const single = rules as { userAgent?: string; allow?: string };
     expect(single.userAgent).toBe("*");
     expect(single.allow).toBe("/");
-    expect(single.disallow).toBeUndefined();
+  });
+
+  test("keeps /api/ disallowed so a bot cannot burn an emailed auth token", () => {
+    const single = robots().rules as { disallow?: string | string[] };
+    expect(single.disallow).toBe("/api/");
   });
 });
 
