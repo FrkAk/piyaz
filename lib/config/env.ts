@@ -22,11 +22,11 @@ export function parseEnvInt(raw: string | undefined, fallback: number): number {
  *
  * Single source of truth for both the backend gate (`disableSignUp` in
  * `lib/auth.ts`) and the sign-up page UI, so the two cannot diverge. Fail
- * closed: signup is open only for self-hosters and the dev Worker; every other
- * hosted deploy is invite-only. Self-host is detected by the absence of the
- * Cloudflare deploy target; the dev Worker opts in via `SIGNUPS_ENABLED=true`
- * (set by `deploy:cf:dev`). Prod and any misconfigured hosted build get no
- * opt-in and stay disabled. Both flags are `NEXT_PUBLIC_*`, inlined at build,
+ * closed: signup is open only for self-hosters and hosted deploys that opt in;
+ * every other hosted deploy is invite-only. Self-host is detected by the absence
+ * of the Cloudflare deploy target; a hosted Worker opts in via
+ * `SIGNUPS_ENABLED=true` (set by `deploy:cf` and `deploy:cf:dev`). A
+ * misconfigured hosted build gets no opt-in and stays disabled. Both flags are `NEXT_PUBLIC_*`, inlined at build,
  * so the server gate and the static sign-up page read the same baked values.
  *
  * @returns `true` when signups are disabled (invite-only), else `false`.

@@ -72,7 +72,8 @@ async function buildNextConfig(): Promise<NextConfig> {
      * the same baked value. `NEXT_PUBLIC_DEPLOY_TARGET`: self-host builds get
      * an empty string, Cloudflare builds get `"cloudflare"`.
      * `NEXT_PUBLIC_SIGNUPS_ENABLED`: `"true"` opts a hosted deploy into open
-     * signup (set by `deploy:cf:dev`); hosted deploys are invite-only without it.
+     * signup (set by `deploy:cf` and `deploy:cf:dev`); hosted deploys are
+     * invite-only without it.
      */
     env: {
       NEXT_PUBLIC_DEPLOY_TARGET: process.env.DEPLOY_TARGET ?? "",

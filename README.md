@@ -25,11 +25,11 @@ Full setup, guides, and reference can be found at **[docs.piyaz.ai](https://docs
 
 ---
 
-## Hosted (closed beta)
+## Hosted (beta)
 
-Piyaz is in a closed beta, and new accounts open in batches. Feel free to join the waitlist at **[app.piyaz.ai/sign-up](https://app.piyaz.ai/sign-up)**.
+Piyaz is open for signup at **[app.piyaz.ai/sign-up](https://app.piyaz.ai/sign-up)**. Create an account and verify your email to get in.
 
-Once you're in, install the plugin for your agent (Claude Code, Codex, Cursor, or Antigravity) and sign in once. Piyaz is then available in every project you open. Per-harness setup instructions can be found at **[docs](https://docs.piyaz.ai)**.
+Then install the plugin for your agent (Claude Code, Codex, Cursor, or Antigravity) and sign in once. Piyaz is then available in every project you open. Per-harness setup instructions can be found at **[docs](https://docs.piyaz.ai)**.
 
 ## Self-host
 
