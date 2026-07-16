@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/FrkAk/piyaz/compare/v0.4.2...v0.4.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* add og image and enable link unfurls ([#232](https://github.com/FrkAk/piyaz/issues/232)) ([d7feb44](https://github.com/FrkAk/piyaz/commit/d7feb44419c0240060bab49d69b32513cd2c2e40))
+
 ## [0.4.2](https://github.com/FrkAk/piyaz/compare/v0.4.1...v0.4.2) (2026-07-16)
 
 

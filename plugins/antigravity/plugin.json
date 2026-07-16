@@ -1,5 +1,5 @@
 {
   "name": "piyaz",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Persistent context network for coding projects. Tracks tasks, dependencies, and decisions across sessions."
 }
