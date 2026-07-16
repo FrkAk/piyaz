@@ -1,5 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import { parseEnvInt, signupsDisabled } from "@/lib/config/env";
+import pkg from "@/package.json";
 
 test("parses a plain non-negative integer", () => {
   expect(parseEnvInt("42", 7)).toBe(42);
@@ -57,12 +58,12 @@ test("signup open on self-host (no Cloudflare target)", () => {
   expect(signupsDisabled()).toBe(false);
 });
 
-test("signup open on the dev Worker (hosted with explicit opt-in)", () => {
+test("signup open on a hosted build with the explicit opt-in", () => {
   setSignupEnv("cloudflare", "true");
   expect(signupsDisabled()).toBe(false);
 });
 
-test("signup disabled on hosted prod (no opt-in)", () => {
+test("signup disabled on a hosted build without the opt-in", () => {
   setSignupEnv("cloudflare", undefined);
   expect(signupsDisabled()).toBe(true);
 });
@@ -71,3 +72,20 @@ test("signup disabled on a misconfigured hosted build (opt-in not 'true')", () =
   setSignupEnv("cloudflare", "false");
   expect(signupsDisabled()).toBe(true);
 });
+
+/**
+ * Hosted scripts that must ship open signup. `signupsDisabled()` fails closed,
+ * so one of these losing `SIGNUPS_ENABLED=true` serves the invite-only waitlist
+ * instead of the sign-up form, with no build or deploy error to catch it.
+ */
+const OPEN_SIGNUP_SCRIPTS = ["deploy:cf", "deploy:cf:dev", "preview:cf"];
+
+for (const name of OPEN_SIGNUP_SCRIPTS) {
+  test(`${name} carries the signup opt-in into next build`, () => {
+    // The flag is inlined as NEXT_PUBLIC_*, so only the build step decides the
+    // baked value; setting it on the deploy step alone would be a no-op.
+    expect(pkg.scripts[name as keyof typeof pkg.scripts]).toContain(
+      "SIGNUPS_ENABLED=true DEPLOY_TARGET=cloudflare next build",
+    );
+  });
+}
