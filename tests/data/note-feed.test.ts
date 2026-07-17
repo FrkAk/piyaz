@@ -906,10 +906,12 @@ test("backfill migration inserts join rows from jsonb and drops dead ids", async
     WHERE id = ${note.id}
   `;
 
-  const backfill = readFileSync(
-    join(process.cwd(), "drizzle", "0013_backfill_note_feed_tasks.sql"),
+  const migration = readFileSync(
+    join(process.cwd(), "drizzle", "0012_lazy_wolverine.sql"),
     "utf8",
   );
+  const backfill = migration.split("--> statement-breakpoint").at(-1) ?? "";
+  expect(backfill).toContain("INSERT INTO note_feed_tasks");
   await su.unsafe(backfill);
 
   expect(await joinTaskIds(note.id)).toEqual([live]);
