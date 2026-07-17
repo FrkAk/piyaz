@@ -77,6 +77,7 @@ import {
   type NoteGroupKey,
   type NoteSortKey,
 } from "@/lib/ui/note-order";
+import { folderTree } from "@/lib/ui/note-folders";
 import {
   useCreateFolder,
   useDeleteFolder,
@@ -907,19 +908,14 @@ export function TreePane({
     [visibleRows, sort],
   );
 
-  const allFolders = useMemo(() => {
-    const set = new Set<string>(folders.data ?? []);
-    for (const r of rows ?? []) if (r.folder) set.add(r.folder);
-    for (const f of [...set]) {
-      const parts = f.split("/");
-      let acc = "";
-      for (const p of parts) {
-        acc = acc ? `${acc}/${p}` : p;
-        set.add(acc);
-      }
-    }
-    return [...set].sort();
-  }, [rows, folders.data]);
+  const allFolders = useMemo(
+    () =>
+      folderTree(
+        (rows ?? []).map((r) => r.folder),
+        folders.data ?? [],
+      ),
+    [rows, folders.data],
+  );
 
   const notesByFolder = useMemo(() => {
     const map = new Map<string, NoteTreeRow[]>();

@@ -79,12 +79,12 @@ export function useWikiAutocomplete(
   const candidates = useMemo<LinkSuggestion[]>(() => {
     if (ctx === null) return [];
     const list: LinkSuggestion[] = [];
-    for (const note of ctx.notesByTitle.values()) {
+    for (const [seq, note] of ctx.notesBySeq) {
       if (note.title.trim() === "") continue;
       list.push({
         id: `note-${note.id}`,
         title: note.title,
-        insert: `[[${note.title}]]`,
+        insert: `[[${ctx.identifier}-N${seq}]]`,
         color: NOTE_TYPE_META[note.type].color,
         hint: NOTE_TYPE_META[note.type].label,
       });

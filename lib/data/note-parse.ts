@@ -1,8 +1,10 @@
 /**
  * Pure markdown-body reference extractor for the Notes link-derivation
- * engine. Task refs (`[[<IDENTIFIER>-12]]`) and note links (`[[Title]]`)
- * share one `[[…]]` construct: the inner value is a task ref when it
- * matches `<IDENTIFIER>-<seq>` (case-insensitive), else a note title.
+ * engine. Task refs (`[[<IDENTIFIER>-12]]`), note refs
+ * (`[[<IDENTIFIER>-N12]]`), and note-title links (`[[Title]]`) share one
+ * `[[…]]` construct: the inner value is a task ref when it matches
+ * `<IDENTIFIER>-<seq>`, a note ref when it matches `<IDENTIFIER>-N<seq>`
+ * (both case-insensitive), else a note title.
  * Refs never match inside fenced code blocks (CommonMark fence rules) or
  * inline code spans; refs inside bold runs are matched, so a reference
  * always reads and backlinks as one. The Notes renderer shares this
@@ -21,6 +23,8 @@ const MAX_REFS_PER_KIND = 200;
 export type ExtractedRefs = {
   /** Task sequence numbers referenced as `<IDENTIFIER>-<seq>`. */
   taskSeqs: number[];
+  /** Note sequence numbers referenced as `<IDENTIFIER>-N<seq>`. */
+  noteSeqs: number[];
   /** Wiki-link titles referenced as `[[Title]]`, trimmed, original case. */
   titles: string[];
 };
@@ -112,27 +116,51 @@ export function buildTaskRefRe(projectIdentifier: string): RegExp {
   return new RegExp(`^${escapeRegExp(projectIdentifier)}-(\\d+)$`, "i");
 }
 
+/**
+ * Build the case-insensitive `<IDENTIFIER>-N<seq>` note-ref classifier.
+ * The `N` segment keeps note refs disjoint from task refs, so one inner
+ * value classifies as exactly one kind.
+ *
+ * @param projectIdentifier - The owning project's identifier.
+ * @returns A RegExp anchored to a full inner value; group 1 is the seq.
+ */
+export function buildNoteRefRe(projectIdentifier: string): RegExp {
+  return new RegExp(`^${escapeRegExp(projectIdentifier)}-N(\\d+)$`, "i");
+}
+
 /** A classified `[[…]]` reference. */
 export type RefKind =
   | { kind: "task"; seq: number }
+  | { kind: "note"; seq: number }
   | { kind: "wiki"; title: string };
 
 /**
  * Classify a `[[…]]` inner value. A `<IDENTIFIER>-<seq>` inner with a
- * positive safe-integer seq is a task ref; any other non-empty inner is a
- * note title; a blank inner is not a reference.
+ * positive safe-integer seq is a task ref; a `<IDENTIFIER>-N<seq>` inner is
+ * a note ref; any other non-empty inner is a note title; a blank inner is
+ * not a reference.
  *
  * @param inner - The text between `[[` and `]]`.
  * @param taskRe - The classifier from {@link buildTaskRefRe}.
+ * @param noteRe - The classifier from {@link buildNoteRefRe}.
  * @returns The classified ref, or `null` when it is not a reference.
  */
-export function classifyRef(inner: string, taskRe: RegExp): RefKind | null {
+export function classifyRef(
+  inner: string,
+  taskRe: RegExp,
+  noteRe: RegExp,
+): RefKind | null {
   const trimmed = inner.trim();
   if (trimmed === "") return null;
-  const match = taskRe.exec(trimmed);
-  if (match !== null) {
-    const seq = Number(match[1]);
+  const taskMatch = taskRe.exec(trimmed);
+  if (taskMatch !== null) {
+    const seq = Number(taskMatch[1]);
     return Number.isSafeInteger(seq) && seq > 0 ? { kind: "task", seq } : null;
+  }
+  const noteMatch = noteRe.exec(trimmed);
+  if (noteMatch !== null) {
+    const seq = Number(noteMatch[1]);
+    return Number.isSafeInteger(seq) && seq > 0 ? { kind: "note", seq } : null;
   }
   return { kind: "wiki", title: trimmed };
 }
@@ -154,18 +182,20 @@ export function classifyRef(inner: string, taskRe: RegExp): RefKind | null {
  *
  * @param body - Markdown note body.
  * @param projectIdentifier - The owning project's identifier.
- * @returns Deduped task sequence numbers and note titles, capped at 200
- *   per kind.
+ * @returns Deduped task sequence numbers, note sequence numbers, and note
+ *   titles, capped at 200 per kind.
  */
 export function extractNoteRefs(
   body: string,
   projectIdentifier: string,
 ): ExtractedRefs {
   const taskSeqs = new Set<number>();
+  const noteSeqs = new Set<number>();
   const titles = new Set<string>();
   const seenTitleKeys = new Set<string>();
   const inlineRe = buildInlineRe();
   const taskRe = buildTaskRefRe(projectIdentifier);
+  const noteRe = buildNoteRefRe(projectIdentifier);
 
   let fence: FenceState | null = null;
   for (const line of body.split("\n")) {
@@ -183,10 +213,14 @@ export function extractNoteRefs(
     ) {
       const inner = match[1];
       if (inner === undefined) continue;
-      const ref = classifyRef(inner, taskRe);
+      const ref = classifyRef(inner, taskRe, noteRe);
       if (ref === null) continue;
       if (ref.kind === "task") {
         taskSeqs.add(ref.seq);
+        continue;
+      }
+      if (ref.kind === "note") {
+        noteSeqs.add(ref.seq);
         continue;
       }
       const key = ref.title.toLowerCase();
@@ -198,6 +232,7 @@ export function extractNoteRefs(
 
   return {
     taskSeqs: [...taskSeqs].slice(0, MAX_REFS_PER_KIND),
+    noteSeqs: [...noteSeqs].slice(0, MAX_REFS_PER_KIND),
     titles: [...titles].slice(0, MAX_REFS_PER_KIND),
   };
 }

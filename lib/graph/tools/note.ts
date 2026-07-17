@@ -43,6 +43,7 @@ import { untrustedContentNotice } from "@/lib/context/format";
 import { budgetLines } from "@/lib/mcp/budget";
 import { NOTE_FIELD_ENUM } from "@/lib/mcp/schemas";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
+import { folderTree } from "@/lib/ui/note-folders";
 import type { AuthContext } from "@/lib/auth/context";
 import {
   ok,
@@ -638,10 +639,12 @@ async function handleEditAction(
 }
 
 /**
- * Handle the `list` action: the folder tree agents and humans share.
- * Folder headers union note-derived paths with explicit `note_folders`
- * markers, so an explicitly created folder with no notes yet still
- * renders (as a bare header) and agents can target it on create.
+ * Handle the `list` action: the folder tree agents and humans share. Uses
+ * the shared {@link folderTree} so note-derived paths, explicit
+ * `note_folders` markers, and every synthesized ancestor render the same
+ * way the web tree does. An explicitly created empty folder and a
+ * never-populated ancestor both render as a bare header; root notes render
+ * first under `(root)/`.
  *
  * @param p - Note params.
  * @param ctx - Resolved auth context.
@@ -666,12 +669,20 @@ async function handleList(
     if (group === undefined) notesByFolder.set(row.folder, [row]);
     else group.push(row);
   }
-  const folders = [
-    ...new Set([...notesByFolder.keys(), ...explicitFolders]),
-  ].sort();
   const lines: string[] = [];
+  const rootNotes = notesByFolder.get("");
+  if (rootNotes !== undefined) {
+    lines.push("(root)/");
+    for (const row of rootNotes) {
+      lines.push(`  ${noteLine(row, projectIdentifier)}`);
+    }
+  }
+  const folders = folderTree(
+    rows.map((row) => row.folder),
+    explicitFolders,
+  );
   for (const folder of folders) {
-    lines.push(folder === "" ? "(root)/" : `${folder}/`);
+    lines.push(`${folder}/`);
     for (const row of notesByFolder.get(folder) ?? []) {
       lines.push(`  ${noteLine(row, projectIdentifier)}`);
     }

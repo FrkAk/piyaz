@@ -280,15 +280,35 @@ function EditorBody({
     return map;
   }, [noteList.data]);
 
+  const notesBySeq = useMemo(() => {
+    const map = new Map<number, NoteLinkTarget>();
+    for (const row of noteList.data ?? []) {
+      map.set(row.sequenceNumber, {
+        id: row.id,
+        title: row.title,
+        type: row.type,
+      });
+    }
+    return map;
+  }, [noteList.data]);
+
   const linkContext = useMemo<NoteLinkContextValue>(
     () => ({
       identifier: projectIdentifier,
       tasksBySeq,
+      notesBySeq,
       notesByTitle,
       onTask: onSelectTask,
       onNote: onSelectNote,
     }),
-    [projectIdentifier, tasksBySeq, notesByTitle, onSelectTask, onSelectNote],
+    [
+      projectIdentifier,
+      tasksBySeq,
+      notesBySeq,
+      notesByTitle,
+      onSelectTask,
+      onSelectNote,
+    ],
   );
 
   if (note === undefined) {

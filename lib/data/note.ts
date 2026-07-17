@@ -36,6 +36,7 @@ import {
   ne,
   or,
   sql,
+  type AnyColumn,
   type SQL,
 } from "drizzle-orm";
 import type { AuthContext } from "@/lib/auth/context";
@@ -61,6 +62,7 @@ import { insertActivityEvents } from "@/lib/data/activity";
 import { escapeRegExp, extractNoteRefs } from "@/lib/data/note-parse";
 import {
   NOTE_BODY_MAX_CHARS,
+  NOTE_FOLDER_MAX_CHARS,
   NOTE_TITLE_MAX_BYTES,
   noteFolders,
   noteLinks,
@@ -71,6 +73,7 @@ import {
   tasks,
   type Note,
 } from "@/lib/db/schema";
+import { normalizeFolderPath } from "@/lib/ui/note-folders";
 import {
   executeRaw,
   normalizeExecuteResult,
@@ -151,9 +154,6 @@ export type NoteRevisionCheckpoint = {
 
 /** Byte cap for generated slugs; leaves suffix headroom under the CHECK. */
 const SLUG_MAX_BYTES = 240;
-
-/** Char cap for the normalized `folder` path. */
-const FOLDER_MAX_CHARS = 512;
 
 /** Char cap for a search query string. */
 const SEARCH_QUERY_MAX_CHARS = 256;
@@ -728,6 +728,19 @@ function escapeLike(value: string): string {
 }
 
 /**
+ * Build the "self or descendant of `srcPath`" predicate over a folder-path
+ * column. Shared by the move-folder and delete-folder subtree filters so the
+ * LIKE-escape stays identical across both.
+ *
+ * @param column - Folder-path column (`notes.folder` or `noteFolders.path`).
+ * @param srcPath - Normalized subtree root.
+ * @returns SQL predicate matching the path itself or any descendant.
+ */
+function folderSubtreePredicate(column: AnyColumn, srcPath: string): SQL {
+  return or(eq(column, srcPath), like(column, `${escapeLike(srcPath)}/%`))!;
+}
+
+/**
  * Pick the next free slug in a base's namespace: the base itself when
  * free, else `base-<n+1>` past the highest taken suffix (first duplicate
  * gets `-2`).
@@ -750,22 +763,20 @@ function nextFreeSlug(base: string, taken: ReadonlySet<string>): string {
 }
 
 /**
- * Normalize a folder path: split on `/`, trim segments, drop empties.
+ * Normalize a folder path and enforce the length cap. Segment normalization
+ * is the shared {@link normalizeFolderPath}; the cap is measured in code
+ * points to match the `char_length` DB CHECK.
  *
  * @param raw - Caller-supplied folder path.
  * @returns Canonical path (`""` = root).
  * @throws NoteValidationError when the normalized path exceeds the cap.
  */
 export function normalizeFolder(raw: string): string {
-  const folder = raw
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment !== "")
-    .join("/");
-  if (folder.length > FOLDER_MAX_CHARS) {
+  const folder = normalizeFolderPath(raw);
+  if ([...folder].length > NOTE_FOLDER_MAX_CHARS) {
     throw new NoteValidationError(
       "folder",
-      `folder exceeds ${FOLDER_MAX_CHARS} characters`,
+      `folder exceeds ${NOTE_FOLDER_MAX_CHARS} characters`,
     );
   }
   return folder;
@@ -1074,9 +1085,11 @@ function sameIdSet(
  * Deletes then reinserts ONLY the derivation-owned rows: `note_task_links`
  * with `kind='mention'` (user-managed `reference`/`spec_of` rows survive)
  * and the note's outgoing `note_links` (incoming rows belong to other
- * notes' derivations). Unresolved refs are not stored; RLS hides other
- * members' private notes from the title lookup, so derivation can never
- * link to a note the author cannot see.
+ * notes' derivations). Note links resolve from both `[[Title]]` and the
+ * stable `[[<IDENTIFIER>-N<seq>]]` ref form, unioned and deduped so one row
+ * covers a note referenced both ways. Unresolved refs are not stored; RLS
+ * hides other members' private notes from the lookup, so derivation can
+ * never link to a note the author cannot see.
  *
  * When the derived set matches the stored rows the rewrite is skipped
  * entirely — unchanged bodies stop churning link rows, and the return
@@ -1086,7 +1099,7 @@ function sameIdSet(
  * @param tx - Active RLS transaction handle.
  * @param noteId - Source note id.
  * @param projectId - Owning project id.
- * @param projectIdentifier - Identifier task refs are parsed against.
+ * @param projectIdentifier - Identifier task and note refs are parsed against.
  * @param body - The new note body.
  * @param isNew - Skip the scoped deletes for a freshly inserted note.
  * @returns True when the stored derivation-owned link set changed.
@@ -1099,7 +1112,10 @@ async function replaceDerivedLinks(
   body: string,
   isNew: boolean,
 ): Promise<boolean> {
-  const { taskSeqs, titles } = extractNoteRefs(body, projectIdentifier);
+  const { taskSeqs, noteSeqs, titles } = extractNoteRefs(
+    body,
+    projectIdentifier,
+  );
 
   let taskIds: string[] = [];
   if (taskSeqs.length > 0) {
@@ -1115,7 +1131,7 @@ async function replaceDerivedLinks(
     taskIds = rows.map((row) => row.id);
   }
 
-  let targetNoteIds: string[] = [];
+  const targetNoteIdSet = new Set<string>();
   if (titles.length > 0) {
     const lowered = titles.map((title) => title.toLowerCase());
     const rows = await tx
@@ -1132,8 +1148,23 @@ async function replaceDerivedLinks(
           )})`,
         ),
       );
-    targetNoteIds = rows.map((row) => row.id);
+    for (const row of rows) targetNoteIdSet.add(row.id);
   }
+  if (noteSeqs.length > 0) {
+    const rows = await tx
+      .select({ id: notes.id })
+      .from(notes)
+      .where(
+        and(
+          eq(notes.projectId, projectId),
+          isNull(notes.deletedAt),
+          ne(notes.id, noteId),
+          inArray(notes.sequenceNumber, noteSeqs),
+        ),
+      );
+    for (const row of rows) targetNoteIdSet.add(row.id);
+  }
+  const targetNoteIds = [...targetNoteIdSet];
 
   if (!isNew) {
     const [currentMentions, currentOut] = await Promise.all([
@@ -3545,10 +3576,10 @@ export async function moveFolder(
     throw new NoteValidationError("folder", "folder name cannot be empty");
   }
   const dest = destParentPath === "" ? leaf : `${destParentPath}/${leaf}`;
-  if (dest.length > FOLDER_MAX_CHARS) {
+  if ([...dest].length > NOTE_FOLDER_MAX_CHARS) {
     throw new NoteValidationError(
       "folder",
-      `folder exceeds ${FOLDER_MAX_CHARS} characters`,
+      `folder exceeds ${NOTE_FOLDER_MAX_CHARS} characters`,
     );
   }
   const growth = [...dest].length - [...srcPath].length;
@@ -3568,17 +3599,11 @@ export async function moveFolder(
     const subtreeFilter = and(
       eq(notes.projectId, projectId),
       isNull(notes.deletedAt),
-      or(
-        eq(notes.folder, srcPath),
-        like(notes.folder, `${escapeLike(srcPath)}/%`),
-      ),
+      folderSubtreePredicate(notes.folder, srcPath),
     );
     const explicitSubtreeFilter = and(
       eq(noteFolders.projectId, projectId),
-      or(
-        eq(noteFolders.path, srcPath),
-        like(noteFolders.path, `${escapeLike(srcPath)}/%`),
-      ),
+      folderSubtreePredicate(noteFolders.path, srcPath),
     );
     const [guard] = await tx
       .select({
@@ -3596,10 +3621,10 @@ export async function moveFolder(
       throw new NoteAgentReadOnlyError();
     }
     const longest = Math.max(guard?.longest ?? 0, guard?.explicitLongest ?? 0);
-    if (growth > 0 && longest + growth > FOLDER_MAX_CHARS) {
+    if (growth > 0 && longest + growth > NOTE_FOLDER_MAX_CHARS) {
       throw new NoteValidationError(
         "folder",
-        `move would push a descendant past ${FOLDER_MAX_CHARS} characters`,
+        `move would push a descendant past ${NOTE_FOLDER_MAX_CHARS} characters`,
       );
     }
     const subtreeNow = new Date();
@@ -3761,10 +3786,7 @@ export async function deleteNoteFolder(
       .where(
         and(
           eq(noteFolders.projectId, projectId),
-          or(
-            eq(noteFolders.path, path),
-            like(noteFolders.path, `${escapeLike(path)}/%`),
-          ),
+          folderSubtreePredicate(noteFolders.path, path),
         ),
       )
       .returning({ id: noteFolders.id });

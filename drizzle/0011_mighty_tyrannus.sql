@@ -1,0 +1,2 @@
+ALTER TABLE "note_folders" ADD CONSTRAINT "note_folders_path_len_check" CHECK (char_length("note_folders"."path") <= 512);--> statement-breakpoint
+ALTER TABLE "notes" ADD CONSTRAINT "notes_folder_len_check" CHECK (char_length("notes"."folder") <= 512);

@@ -21,12 +21,14 @@ export type NoteLinkTarget = { id: string; title: string; type: NoteType };
  * Resolved from data already loaded in the workspace, not the note's
  * server-derived payload, so a just-typed ref renders live without a
  * refetch. `tasksBySeq` keys on the numeric ref suffix (from the workspace
- * task map); `notesByTitle` keys on the lowercased title (from the note
- * tree list), deduped case-insensitively like the extractor.
+ * task map); `notesBySeq` keys on the note sequence number and
+ * `notesByTitle` on the lowercased title (both from the note tree list),
+ * deduped case-insensitively like the extractor.
  */
 export interface NoteLinkContextValue {
   identifier: string;
   tasksBySeq: ReadonlyMap<number, NoteTaskTarget>;
+  notesBySeq: ReadonlyMap<number, NoteLinkTarget>;
   notesByTitle: ReadonlyMap<string, NoteLinkTarget>;
   onTask: (taskId: string) => void;
   onNote: (noteId: string) => void;
@@ -108,6 +110,49 @@ export function DocLink({ title }: DocLinkProps) {
       }}
     >
       {title}
+    </button>
+  );
+}
+
+interface NoteRefLinkProps {
+  /** @param seq - The note sequence number from the ref (e.g. 12 in `[[RSC-N12]]`). */
+  seq: number;
+}
+
+/**
+ * Inline `[[<IDENTIFIER>-N<seq>]]` note-ref link. Resolves by immutable
+ * sequence number and renders the target's current title, so renaming the
+ * target updates every inbound link's text without touching any other body.
+ * An unresolved ref renders danger text, never a crash. Resolution and
+ * navigation come from the surrounding {@link NoteLinkContext}.
+ *
+ * @param props - The note sequence number.
+ * @returns The link button, or danger text for an unresolved ref.
+ */
+export function NoteRefLink({ seq }: NoteRefLinkProps) {
+  const ctx = useContext(NoteLinkContext);
+  const target = ctx?.notesBySeq.get(seq);
+  if (ctx === null || target === undefined) {
+    const label = ctx === null ? `-N${seq}` : `${ctx.identifier}-N${seq}`;
+    return (
+      <span style={{ color: "var(--color-danger)" }} title="Unresolved link">
+        [[{label}]]
+      </span>
+    );
+  }
+  const meta = NOTE_TYPE_META[target.type];
+  return (
+    <button
+      type="button"
+      title={`${meta.label} · ${target.title}`}
+      onClick={() => ctx.onNote(target.id)}
+      className="cursor-pointer bg-transparent p-0 align-baseline"
+      style={{
+        color: meta.color,
+        borderBottom: `1px solid ${tint(meta.color, 42)}`,
+      }}
+    >
+      {target.title}
     </button>
   );
 }

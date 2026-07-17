@@ -387,6 +387,28 @@ test("an overwritten body recovers through a revision snapshot", async () => {
   expect(clobberedSnapshot).toContain("clobbered");
 });
 
+test("list synthesizes ancestor headers for a note with no parent folder marker", async () => {
+  const fx = await seedUserOrgProject("NCA");
+  const ctx = makeAuthContext(fx.userId);
+  await handleNote(
+    {
+      action: "create",
+      project: "PRJNCA",
+      notes: [{ title: "Nested", folder: "a/b/c" }],
+    },
+    ctx,
+  );
+
+  const tree = okData<string>(
+    await handleNote({ action: "list", project: "PRJNCA" }, ctx),
+  );
+  const lines = tree.split("\n");
+  expect(lines).toContain("a/");
+  expect(lines).toContain("a/b/");
+  expect(lines).toContain("a/b/c/");
+  expect(tree).toContain('"Nested"');
+});
+
 test("list renders the folder tree; move handles notes and folder subtrees", async () => {
   const fx = await seedUserOrgProject("NC7");
   const ctx = makeAuthContext(fx.userId);

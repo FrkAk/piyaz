@@ -19,7 +19,11 @@ function refsIn(md: string) {
   visit(tree, (n: unknown) => {
     const data = (n as { data?: { hName?: string; hProperties?: object } })
       .data;
-    if (data?.hName === "noteref-task" || data?.hName === "noteref-wiki")
+    if (
+      data?.hName === "noteref-task" ||
+      data?.hName === "noteref-note" ||
+      data?.hName === "noteref-wiki"
+    )
       out.push({
         name: data.hName,
         props: data.hProperties as Record<string, unknown>,
@@ -28,11 +32,16 @@ function refsIn(md: string) {
   return out;
 }
 
-test("tags task refs and wiki links", () => {
-  expect(refsIn("see [[RSC-3]] and [[My Note]]")).toEqual([
+test("tags task refs, note refs, and wiki links", () => {
+  expect(refsIn("see [[RSC-3]], [[RSC-N12]], and [[My Note]]")).toEqual([
     { name: "noteref-task", props: { seq: 3 } },
+    { name: "noteref-note", props: { seq: 12 } },
     { name: "noteref-wiki", props: { title: "My Note" } },
   ]);
+});
+
+test("drops an out-of-range note seq to text", () => {
+  expect(refsIn("bad [[RSC-N0]] ref")).toEqual([]);
 });
 
 test("does not tag refs inside inline code", () => {
@@ -71,6 +80,7 @@ function rendererRefs(md: string) {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(md);
   remarkNoteRefs({ identifier: "RSC" })(tree);
   const seqs = new Set<number>();
+  const noteSeqs = new Set<number>();
   const seenTitle = new Set<string>();
   const titles: string[] = [];
   visit(tree, (n: unknown) => {
@@ -78,6 +88,7 @@ function rendererRefs(md: string) {
       .data;
     const props = data?.hProperties as Record<string, unknown> | undefined;
     if (data?.hName === "noteref-task") seqs.add(Number(props?.seq));
+    if (data?.hName === "noteref-note") noteSeqs.add(Number(props?.seq));
     if (data?.hName === "noteref-wiki") {
       const title = String(props?.title);
       const key = title.toLowerCase();
@@ -86,7 +97,7 @@ function rendererRefs(md: string) {
       titles.push(title);
     }
   });
-  return { taskSeqs: [...seqs], titles };
+  return { taskSeqs: [...seqs], noteSeqs: [...noteSeqs], titles };
 }
 
 const lockstepCorpus = [
@@ -100,6 +111,10 @@ const lockstepCorpus = [
   "dupes [[Same]] [[same]] [[RSC-10]] [[RSC-10]]",
   "foreign [[XXX-9]] and blank [[   ]]",
   "case [[rsc-11]] and out-of-range [[RSC-0]]",
+  "note ref [[RSC-N12]] and title [[Doc]]",
+  "mixed [[RSC-1]] [[RSC-N2]] [[Three]]",
+  "note ref in code `[[RSC-N9]]` skipped and [[RSC-N4]] kept",
+  "note dupes [[RSC-N5]] [[rsc-n5]] and out-of-range [[RSC-N0]]",
 ];
 
 test.each(lockstepCorpus)("renderer refs match extractNoteRefs: %s", (md) => {
@@ -107,6 +122,9 @@ test.each(lockstepCorpus)("renderer refs match extractNoteRefs: %s", (md) => {
   const extracted = extractNoteRefs(md, "RSC");
   expect(rendered.taskSeqs.toSorted((a, b) => a - b)).toEqual(
     extracted.taskSeqs.toSorted((a, b) => a - b),
+  );
+  expect(rendered.noteSeqs.toSorted((a, b) => a - b)).toEqual(
+    extracted.noteSeqs.toSorted((a, b) => a - b),
   );
   expect(rendered.titles.toSorted()).toEqual(extracted.titles.toSorted());
 });
