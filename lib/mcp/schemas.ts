@@ -806,7 +806,7 @@ const noteCreateItemSchema = z.object({
     .max(LIMITS.noteBody)
     .optional()
     .describe(
-      "Markdown body. [[DLK-42]] links a task, [[Title]] links a note; both derive live relations on every save.",
+      "Markdown body. [[DLK-42]] links a task, [[DLK-N12]] links a note by its stable ref, [[Title]] links a note by title; all derive live relations on every save. Prefer the note ref: a title link breaks when the note is renamed.",
     ),
   folder: z
     .string()

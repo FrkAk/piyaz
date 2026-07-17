@@ -2,6 +2,7 @@ import type { NoteFull, NoteTreeRow } from "@/lib/data/note";
 import type { NoteType } from "@/lib/types";
 import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
 import { NOTE_TYPE_RANK, type NoteSortKey } from "@/lib/ui/note-order";
+import { normalizeFolderPath } from "@/lib/ui/note-folders";
 
 /** Display metadata and context behavior for one note type. */
 export interface NoteTypeMeta {
@@ -105,20 +106,16 @@ export function leafOf(path: string): string {
 }
 
 /**
- * Normalize user-entered folder text with the server's segment rules:
- * split on `/`, trim segments, drop empties. Shared by the inline
- * rename and the naming-first folder create so both compute the exact
- * path the server will persist.
+ * Normalize user-entered folder text with the server's segment rules,
+ * delegating to the shared {@link normalizeFolderPath} so the client and the
+ * data layer compute the exact path the server will persist. Used by the
+ * inline rename and the naming-first folder create.
  *
  * @param raw - User-entered folder name or path.
  * @returns Canonical path (`""` when nothing survives normalization).
  */
 export function normalizeFolderInput(raw: string): string {
-  return raw
-    .split("/")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment !== "")
-    .join("/");
+  return normalizeFolderPath(raw);
 }
 
 /**

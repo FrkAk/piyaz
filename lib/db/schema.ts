@@ -79,6 +79,14 @@ export const NOTE_BODY_MAX_CHARS = 200_000;
 export const NOTE_SEARCH_INDEXED_CHARS = 131_072;
 
 /**
+ * Code-point cap for `notes.folder` and `note_folders.path`. Folder paths
+ * are materialized on the note and duplicated across marker rows; the cap
+ * bounds both. Measured in code points (`char_length`) so the DB CHECK, the
+ * data-layer guard, and the move-folder arithmetic agree on one unit.
+ */
+export const NOTE_FOLDER_MAX_CHARS = 512;
+
+/**
  * Inline an integer constant into SQL DDL text.
  *
  * drizzle-kit serializes CHECK and generated-column expressions into the
@@ -516,6 +524,10 @@ export const notes = pgTable(
       "notes_body_len_check",
       sql`char_length(${t.body}) <= ${sqlInt(NOTE_BODY_MAX_CHARS)}`,
     ),
+    check(
+      "notes_folder_len_check",
+      sql`char_length(${t.folder}) <= ${sqlInt(NOTE_FOLDER_MAX_CHARS)}`,
+    ),
   ],
 ).enableRLS();
 
@@ -549,6 +561,10 @@ export const noteFolders = pgTable(
   },
   (t) => [
     uniqueIndex("note_folders_project_path_unique").on(t.projectId, t.path),
+    check(
+      "note_folders_path_len_check",
+      sql`char_length(${t.path}) <= ${sqlInt(NOTE_FOLDER_MAX_CHARS)}`,
+    ),
   ],
 ).enableRLS();
 

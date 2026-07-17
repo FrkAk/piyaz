@@ -74,6 +74,22 @@ test("extractNoteRefs escapes identifier metacharacters", () => {
   expect(extractNoteRefs("[[  ]] [[real]]", "PRJ1").titles).toEqual(["real"]);
 });
 
+test("extractNoteRefs classifies note refs by the N segment, disjoint from tasks", () => {
+  const refs = extractNoteRefs(
+    "[[PRJ1-12]] [[PRJ1-N7]] [[prj1-n7]] [[Title]]",
+    "PRJ1",
+  );
+  expect(refs.taskSeqs).toEqual([12]);
+  expect(refs.noteSeqs).toEqual([7]);
+  expect(refs.titles).toEqual(["Title"]);
+});
+
+test("extractNoteRefs treats a note ref for another identifier as a title", () => {
+  const refs = extractNoteRefs("[[OTHER-N7]]", "PRJ1");
+  expect(refs.noteSeqs).toEqual([]);
+  expect(refs.titles).toEqual(["OTHER-N7"]);
+});
+
 test("body writes derive task mentions and note links", async () => {
   const f = await seedUserOrgProject("lnk1");
   const ctx = makeAuthContext(f.userId);
@@ -191,7 +207,7 @@ test("broken refs and self links are never stored", async () => {
   expect(noteLinks.length).toBe(0);
 });
 
-test("retitling a target note keeps existing links and affects only future derivations", async () => {
+test("a title link is best-effort: a stale row survives a rename, then clears on the next save", async () => {
   const f = await seedUserOrgProject("lnk4");
   const ctx = makeAuthContext(f.userId);
   const target = await createNote(ctx, {
@@ -212,4 +228,59 @@ test("retitling a target note keeps existing links and affects only future deriv
   await updateNote(ctx, source.id, { body: "see [[Old name]] again" });
   const rederived = await getNoteFull(ctx, source.id);
   expect(rederived.linksOut.length).toBe(0);
+});
+
+test("a note-ref link survives the target's rename and the source's next save", async () => {
+  const f = await seedUserOrgProject("lnk7");
+  const ctx = makeAuthContext(f.userId);
+  const target = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Old name",
+  });
+  const targetFull = await getNoteFull(ctx, target.id);
+  const ref = `${targetFull.projectIdentifier}-N${targetFull.note.sequenceNumber}`;
+
+  const source = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Source",
+    body: `see [[${ref}]]`,
+  });
+  const initial = await getNoteFull(ctx, source.id);
+  expect(initial.linksOut.length).toBe(1);
+  expect(initial.linksOut[0].id).toBe(target.id);
+
+  await updateNote(ctx, target.id, { title: "New name" });
+  const afterRename = await getNoteFull(ctx, source.id);
+  expect(afterRename.linksOut.length).toBe(1);
+  expect(afterRename.linksOut[0].id).toBe(target.id);
+
+  await updateNote(ctx, source.id, { body: `see [[${ref}]] still` });
+  const afterSave = await getNoteFull(ctx, source.id);
+  expect(afterSave.linksOut.length).toBe(1);
+  expect(afterSave.linksOut[0].id).toBe(target.id);
+});
+
+test("a title link and a note-ref link to the same note collapse to one row", async () => {
+  const f = await seedUserOrgProject("lnk8");
+  const ctx = makeAuthContext(f.userId);
+  const target = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Data model",
+  });
+  const targetFull = await getNoteFull(ctx, target.id);
+  const ref = `${targetFull.projectIdentifier}-N${targetFull.note.sequenceNumber}`;
+
+  const source = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "Source",
+    body: `[[Data model]] and [[${ref}]]`,
+  });
+
+  const sr = serviceRoleConnect();
+  const rows = await sr<{ id: string }[]>`
+    SELECT id FROM note_links WHERE source_note_id = ${source.id}`;
+  expect(rows.length).toBe(1);
+  const full = await getNoteFull(ctx, source.id);
+  expect(full.linksOut.length).toBe(1);
+  expect(full.linksOut[0].id).toBe(target.id);
 });

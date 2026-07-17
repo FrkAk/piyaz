@@ -21,7 +21,11 @@ import {
 } from "@/components/workspace/notes/note-meta";
 import { NoteSquareGlyph } from "@/components/workspace/graph/NoteSquareGlyph";
 import { useNoteDetail } from "@/components/workspace/notes/useNoteDetail";
-import { asIdentifier, composeNoteRef } from "@/lib/graph/identifier";
+import {
+  asIdentifier,
+  composeNoteRef,
+  NOTE_REF_PATTERN,
+} from "@/lib/graph/identifier";
 import type { NoteGraphSlim } from "@/lib/data/views";
 import type { NoteMention } from "@/lib/data/note";
 import { NOTE_TASK_LINK_KIND_RANK, type TaskStatus } from "@/lib/types";
@@ -113,15 +117,36 @@ export function NotePreviewPanel({
     return map;
   }, [notes]);
 
+  const notesBySeq = useMemo(() => {
+    const map = new Map<number, NoteLinkTarget>();
+    for (const n of notes) {
+      const match = NOTE_REF_PATTERN.exec(n.noteRef);
+      if (match === null) continue;
+      const seq = Number(match[2]);
+      if (Number.isSafeInteger(seq)) {
+        map.set(seq, { id: n.id, title: n.title, type: n.type });
+      }
+    }
+    return map;
+  }, [notes]);
+
   const linkContext = useMemo<NoteLinkContextValue>(
     () => ({
       identifier: projectIdentifier,
       tasksBySeq,
+      notesBySeq,
       notesByTitle,
       onTask: onSelectTask,
       onNote: onSelectNote,
     }),
-    [projectIdentifier, tasksBySeq, notesByTitle, onSelectTask, onSelectNote],
+    [
+      projectIdentifier,
+      tasksBySeq,
+      notesBySeq,
+      notesByTitle,
+      onSelectTask,
+      onSelectNote,
+    ],
   );
 
   const note = detail?.note;

@@ -5,7 +5,7 @@ import type { Root } from "mdast";
 import { defaultSchema } from "rehype-sanitize";
 import { Markdown } from "@/components/shared/Markdown";
 import { remarkNoteRefs } from "./remark-note-refs";
-import { DocLink, TaskChip } from "./NoteInline";
+import { DocLink, NoteRefLink, TaskChip } from "./NoteInline";
 
 /**
  * Tag each top-level block with its source line so a double-click enters
@@ -29,11 +29,17 @@ function remarkSrcLine() {
 /** Sanitize schema that also permits the tagged ref elements + src line. */
 export const noteSchema = {
   ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), "noteref-task", "noteref-wiki"],
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []),
+    "noteref-task",
+    "noteref-note",
+    "noteref-wiki",
+  ],
   attributes: {
     ...defaultSchema.attributes,
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "data-src-line"],
     "noteref-task": ["seq"],
+    "noteref-note": ["seq"],
     "noteref-wiki": ["title"],
   },
 };
@@ -42,6 +48,9 @@ export const noteSchema = {
 const components = {
   "noteref-task": ({ seq }: { seq?: string | number }) => (
     <TaskChip seq={Number(seq)} />
+  ),
+  "noteref-note": ({ seq }: { seq?: string | number }) => (
+    <NoteRefLink seq={Number(seq)} />
   ),
   "noteref-wiki": ({ title }: { title?: string }) => (
     <DocLink title={String(title ?? "")} />
