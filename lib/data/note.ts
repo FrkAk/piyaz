@@ -1232,7 +1232,9 @@ async function replaceDerivedLinks(
  * rejecting a dangling or cross-project id (mirrors the "unresolved refs
  * not stored" rule for note links). When the filtered set already matches
  * the stored rows the rewrite is skipped and `false` is returned, so a
- * no-op feed edit does not churn rows or move the note's clocks.
+ * no-op feed edit does not churn rows or move the note's clocks. A new
+ * note has no stored rows, so `isNew` skips the current-set read and the
+ * delete (mirrors {@link replaceDerivedLinks}).
  *
  * Runs in the note-write transaction so the join writes see the RLS GUC.
  *
@@ -1240,6 +1242,7 @@ async function replaceDerivedLinks(
  * @param noteId - Note whose feed-task set is replaced.
  * @param projectId - Owning project; the same-project filter scope.
  * @param nextIds - Desired feed-task ids (may contain dangling/foreign ids).
+ * @param isNew - True when the note was created in this transaction.
  * @returns True when the stored feed-task set changed.
  */
 async function replaceFeedTaskLinks(
@@ -1247,6 +1250,7 @@ async function replaceFeedTaskLinks(
   noteId: string,
   projectId: string,
   nextIds: readonly string[],
+  isNew: boolean,
 ): Promise<boolean> {
   const desired = [...new Set(nextIds)];
   let liveIds: string[] = [];
@@ -1258,26 +1262,28 @@ async function replaceFeedTaskLinks(
     liveIds = rows.map((row) => row.id);
   }
 
-  const current = await tx
-    .select({ taskId: noteFeedTasks.taskId })
-    .from(noteFeedTasks)
-    .where(eq(noteFeedTasks.noteId, noteId));
-  if (
-    sameIdSet(
-      liveIds,
-      current.map((row) => row.taskId),
-    )
-  ) {
-    return false;
+  if (!isNew) {
+    const current = await tx
+      .select({ taskId: noteFeedTasks.taskId })
+      .from(noteFeedTasks)
+      .where(eq(noteFeedTasks.noteId, noteId));
+    if (
+      sameIdSet(
+        liveIds,
+        current.map((row) => row.taskId),
+      )
+    ) {
+      return false;
+    }
+    await tx.delete(noteFeedTasks).where(eq(noteFeedTasks.noteId, noteId));
   }
 
-  await tx.delete(noteFeedTasks).where(eq(noteFeedTasks.noteId, noteId));
   if (liveIds.length > 0) {
     await tx
       .insert(noteFeedTasks)
       .values(liveIds.map((taskId) => ({ noteId, taskId })));
   }
-  return true;
+  return !isNew || liveIds.length > 0;
 }
 
 /**
@@ -2765,6 +2771,7 @@ async function createNoteInTx(
     note.id,
     input.projectId,
     input.feedTaskIds ?? [],
+    true,
   );
 
   if (body !== "") {
@@ -3319,6 +3326,7 @@ async function updateNoteCore(
             noteId,
             current.projectId,
             nextFeedTaskIds,
+            false,
           )
         : false;
 

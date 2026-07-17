@@ -890,6 +890,7 @@ test("backfill migration inserts join rows from jsonb and drops dead ids", async
   const live = await seedTask(home.projectId, 1);
   const crossProject = await seedTask(foreign.projectId, 1);
   const dangling = crypto.randomUUID();
+  const malformed = "not-a-uuid";
 
   const note = await createNote(ctx, {
     projectId: home.projectId,
@@ -901,7 +902,7 @@ test("backfill migration inserts join rows from jsonb and drops dead ids", async
   const su = superuserPool();
   await su`DELETE FROM note_feed_tasks WHERE note_id = ${note.id}`;
   await su`
-    UPDATE notes SET feed_task_ids = ${su.json([live, crossProject, dangling])}
+    UPDATE notes SET feed_task_ids = ${su.json([live, crossProject, dangling, malformed])}
     WHERE id = ${note.id}
   `;
 

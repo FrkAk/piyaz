@@ -1074,6 +1074,44 @@ BEGIN
   END IF;
 END $$;
 
+-- note_feed_tasks pins note.project_id == task.project_id. SECURITY INVOKER
+-- for the same reason as reject_note_task_links_cross_project: a DEFINER
+-- lookup would bypass notes' RLS and leak an invisible note's existence via
+-- a different SQLSTATE; as the caller, an invisible row reads back NULL and
+-- this trigger's own 23514 covers both.
+CREATE OR REPLACE FUNCTION public.reject_note_feed_tasks_cross_project()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_note uuid;
+  v_task uuid;
+BEGIN
+  SELECT project_id INTO v_note FROM public.notes WHERE id = NEW.note_id;
+  SELECT project_id INTO v_task FROM public.tasks WHERE id = NEW.task_id;
+  IF v_note IS NULL OR v_task IS NULL OR v_note IS DISTINCT FROM v_task THEN
+    RAISE EXCEPTION 'note_feed_tasks: invalid note/task pair'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.reject_note_feed_tasks_cross_project() FROM public;
+GRANT EXECUTE ON FUNCTION public.reject_note_feed_tasks_cross_project() TO app_user;
+
+DO $$
+BEGIN
+  IF to_regclass('public.note_feed_tasks') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS note_feed_tasks_same_project_immutable ON public.note_feed_tasks';
+    EXECUTE 'CREATE TRIGGER note_feed_tasks_same_project_immutable
+      BEFORE INSERT OR UPDATE OF note_id, task_id ON public.note_feed_tasks
+      FOR EACH ROW
+      EXECUTE FUNCTION public.reject_note_feed_tasks_cross_project()';
+  END IF;
+END $$;
+
 -- service_role only. Used by the org-delete hook after the org row is
 -- queued for deletion — caller-scoped variants race the cascade.
 CREATE OR REPLACE FUNCTION public.find_org_member_user_ids_as_admin(p_org_id uuid)
