@@ -10,7 +10,14 @@ import {
   resolveWorkingData,
 } from "@/lib/context/_core/bundle";
 import { buildAgentContextParts } from "@/lib/context/_core/agent";
-import { buildBundleNoteView } from "@/lib/context/format";
+import {
+  buildBundleNoteView,
+  formatNotePointers,
+  NOTE_FEED_RULES,
+} from "@/lib/context/format";
+import { buildSummaryContext } from "@/lib/context/_core/summary";
+import { formatSummary } from "@/lib/graph/format-responses";
+import { makeAuthContext } from "@/lib/auth/context";
 import type { NoteFeedResolution } from "@/lib/data/note";
 import type { BundleKind } from "@/lib/context/parts";
 import { buildPlanningContextParts } from "@/lib/context/_core/planning";
@@ -243,5 +250,18 @@ describe("drawer/bundle parity (spec §3 item 1)", () => {
     expect(drawerOrder(parts, "record-cancelled")).toEqual([
       ...SECTIONS_BY_BUNDLE["record-cancelled"],
     ]);
+  });
+});
+
+describe("summary lens note-feed parity", () => {
+  test("summary note feed follows NOTE_FEED_RULES.summary", async () => {
+    const fx = await seedFullParityTask("parity-summary");
+    const data = await buildSummaryContext(
+      makeAuthContext(fx.userId),
+      fx.taskId,
+    );
+    const expected = formatNotePointers(data.feed, NOTE_FEED_RULES.summary);
+    expect(expected).not.toBe("");
+    expect(formatSummary(data)).toContain(`## Relevant Notes\n${expected}`);
   });
 });
