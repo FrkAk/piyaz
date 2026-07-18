@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.4](https://github.com/FrkAk/piyaz/compare/v0.4.3...v0.4.4) (2026-07-18)
+
+
+### Bug Fixes
+
+* adopt clay and sage brand palette ([#237](https://github.com/FrkAk/piyaz/issues/237)) ([b7a0866](https://github.com/FrkAk/piyaz/commit/b7a0866ee1990062bec3d23f5b0dfaa338d739c6))
+* unify note link and folder-tree resolution ([#234](https://github.com/FrkAk/piyaz/issues/234)) ([5e3cc41](https://github.com/FrkAk/piyaz/commit/5e3cc41bcf52819ef38a8e3169062cd8ce4a40dd))
+
+
+### Code Refactoring
+
+* store note feed task selectors in a join table ([#236](https://github.com/FrkAk/piyaz/issues/236)) ([9ac1660](https://github.com/FrkAk/piyaz/commit/9ac1660ee5f64159270334280a35ed74c1de060b))
+
 ## [0.4.3](https://github.com/FrkAk/piyaz/compare/v0.4.2...v0.4.3) (2026-07-16)
 
 
