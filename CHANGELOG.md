@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.5](https://github.com/FrkAk/piyaz/compare/v0.4.4...v0.4.5) (2026-07-18)
+
+
+### Bug Fixes
+
+* normalize note folder paths to unicode nfc ([#241](https://github.com/FrkAk/piyaz/issues/241)) ([a898a20](https://github.com/FrkAk/piyaz/commit/a898a206cd857d71f269d8a9486a9664bc322d55))
+
+
+### Code Refactoring
+
+* pin the summary lens note feed under the feed rules ([#239](https://github.com/FrkAk/piyaz/issues/239)) ([97bbf49](https://github.com/FrkAk/piyaz/commit/97bbf4997213b74ff4bb1d1fbd4c93013b56cbed))
+
 ## [0.4.4](https://github.com/FrkAk/piyaz/compare/v0.4.3...v0.4.4) (2026-07-18)
 
 
