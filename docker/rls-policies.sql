@@ -277,6 +277,56 @@ CREATE POLICY "note_task_links_delete_member_only" ON "note_task_links"
     AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_task_links.task_id)
   );
 
+-- note_feed_tasks — both endpoints checked in RLS (mirror note_task_links):
+-- the note via notes' RLS and the task via tasks' RLS. The same-project belt
+-- is the SECURITY INVOKER trigger reject_note_feed_tasks_cross_project
+-- (rls-functions.sql); the task-side predicate here is a second floor for the
+-- trigger-loss case and never rejects a legitimate row (the trigger pins
+-- note.project_id == task's). Correlated EXISTS per the note_task_links
+-- rationale above.
+DROP POLICY IF EXISTS "note_feed_tasks_member_access" ON "note_feed_tasks";
+CREATE POLICY "note_feed_tasks_member_access" ON "note_feed_tasks" AS PERMISSIVE FOR ALL TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_feed_tasks.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_feed_tasks.task_id)
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_feed_tasks.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_feed_tasks.task_id)
+  );
+
+-- RESTRICTIVE write floor on note_feed_tasks (mirror note_task_links). AND's
+-- with the OR of permissives so a future stray permissive cannot OR-relax
+-- both-endpoints-visible. Per-command to leave SELECT on permissive.
+DROP POLICY IF EXISTS "note_feed_tasks_insert_member_only" ON "note_feed_tasks";
+DROP POLICY IF EXISTS "note_feed_tasks_update_member_only" ON "note_feed_tasks";
+DROP POLICY IF EXISTS "note_feed_tasks_delete_member_only" ON "note_feed_tasks";
+
+CREATE POLICY "note_feed_tasks_insert_member_only" ON "note_feed_tasks"
+  AS RESTRICTIVE FOR INSERT TO app_user
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_feed_tasks.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_feed_tasks.task_id)
+  );
+
+CREATE POLICY "note_feed_tasks_update_member_only" ON "note_feed_tasks"
+  AS RESTRICTIVE FOR UPDATE TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_feed_tasks.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_feed_tasks.task_id)
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_feed_tasks.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_feed_tasks.task_id)
+  );
+
+CREATE POLICY "note_feed_tasks_delete_member_only" ON "note_feed_tasks"
+  AS RESTRICTIVE FOR DELETE TO app_user
+  USING (
+    EXISTS (SELECT 1 FROM public.notes n WHERE n.id = note_feed_tasks.note_id)
+    AND EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = note_feed_tasks.task_id)
+  );
+
 -- note_revisions — 3-hop via notes' RLS (append-only body history). USING
 -- fences pre-share snapshots: a non-creator reads a revision only when the
 -- note is currently shared (shared_since set) and the snapshot postdates the
@@ -404,6 +454,7 @@ ALTER TABLE "team_invite_code" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "activity_events" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "notes" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_task_links" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "note_feed_tasks" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_folders" ENABLE ROW LEVEL SECURITY;
@@ -422,6 +473,7 @@ ALTER TABLE "team_invite_code" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "activity_events" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "notes" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_task_links" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "note_feed_tasks" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_folders" FORCE ROW LEVEL SECURITY;

@@ -608,6 +608,33 @@ export type NoteTaskLink = typeof noteTaskLinks.$inferSelect;
 export type NewNoteTaskLink = typeof noteTaskLinks.$inferInsert;
 
 // ---------------------------------------------------------------------------
+// Note Feed Tasks (junction: feed_mode='tasks' notes select target tasks)
+// ---------------------------------------------------------------------------
+
+export const noteFeedTasks = pgTable(
+  "note_feed_tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    noteId: uuid("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("note_feed_tasks_task_id_idx").on(t.taskId),
+    unique("note_feed_tasks_note_task_unique").on(t.noteId, t.taskId),
+  ],
+).enableRLS();
+
+export type NoteFeedTask = typeof noteFeedTasks.$inferSelect;
+export type NewNoteFeedTask = typeof noteFeedTasks.$inferInsert;
+
+// ---------------------------------------------------------------------------
 // Note ↔ Note Links ([[wiki]]-style cross-references between notes)
 // ---------------------------------------------------------------------------
 

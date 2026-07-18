@@ -17,13 +17,15 @@
  * round trip. The CTE reads `tasks` under RLS, so a task the caller
  * cannot see yields no CTE row and therefore no notes.
  *
- * Raw SQL because the mode arms need jsonb containment (`@>`) and the
- * jsonb-to-`text[]` unfold for `?|`, which the type-safe builder cannot
- * express. Bound parameters bind as plain strings (`JSON.stringify`
- * + server-side `::jsonb` casts) so the fragment behaves identically on
- * postgres-js and neon-http. Task-side match values are canonicalized to
- * trimmed lowercase, the form the write path stores for feed labels and
- * task ids. `project_id` + `feed_mode <> 'none'` lead the WHERE to match
+ * Raw SQL because the `categories`/`tags` arms need jsonb containment
+ * (`@>`) and the jsonb-to-`text[]` unfold for `?|`, which the type-safe
+ * builder cannot express; the `tasks` arm is a correlated EXISTS over the
+ * `note_feed_tasks` join. Bound parameters bind as plain strings
+ * (`JSON.stringify` + server-side `::jsonb` casts) so the fragment behaves
+ * identically on postgres-js and neon-http. Feed-label match values
+ * (categories, tags) are canonicalized to trimmed lowercase, the form the
+ * write path stores; the `tasks` arm matches on the real task UUID.
+ * `project_id` + `feed_mode <> 'none'` lead the WHERE to match
  * the partial `notes_feed_idx`; the jsonb arms are post-filters over the
  * exposed subset only. A bound `LIMIT` caps the fetch, and `summary` is
  * blanked past the admission cap so rows that can only become pointers
@@ -34,7 +36,7 @@
  */
 
 import { sql, type SQL } from "drizzle-orm";
-import { notes, projects, tasks } from "@/lib/db/schema";
+import { noteFeedTasks, notes, projects, tasks } from "@/lib/db/schema";
 import { type ReadConn } from "@/lib/db/raw";
 
 /** The task shape feed resolution matches against; callers hold the row. */
@@ -155,7 +157,7 @@ function boundFeedSource(projectId: string, task: FeedTask): FeedSource {
       tags.length === 0
         ? sql`false`
         : sql`n.feed_tags ?| ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(tags)}::jsonb))`,
-      sql`n.feed_task_ids @> ${JSON.stringify([canonicalMatchValue(task.id)])}::jsonb`,
+      sql`EXISTS (SELECT 1 FROM ${noteFeedTasks} nft WHERE nft.note_id = n.id AND nft.task_id = ${task.id}::uuid)`,
     ),
   };
 }
@@ -180,7 +182,7 @@ function taskFeedSource(taskId: string): FeedSource {
     match: feedMatchSql(
       sql`btrim(coalesce(t.category, '')) <> '' AND n.feed_categories @> jsonb_build_array(lower(btrim(t.category)))`,
       sql`n.feed_tags ?| ARRAY(SELECT lower(btrim(tag)) FROM jsonb_array_elements_text(t.tags) AS tag WHERE btrim(tag) <> '')`,
-      sql`n.feed_task_ids @> jsonb_build_array(lower(t.id::text))`,
+      sql`EXISTS (SELECT 1 FROM ${noteFeedTasks} nft WHERE nft.note_id = n.id AND nft.task_id = t.id)`,
     ),
   };
 }

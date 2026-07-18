@@ -10,6 +10,7 @@ import {
   decodeFeedRows,
   deleteNote,
   feedFetchLimit,
+  getNoteFull,
   getTaskNoteContext,
   resolveExposedNotes,
   updateNote,
@@ -21,8 +22,11 @@ import {
   type NotePatch,
 } from "@/lib/data/note";
 import { notesFeedSql } from "@/lib/db/raw/notes-feed";
+import { feedSummary } from "@/components/workspace/notes/note-meta";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import { makeAuthContext } from "@/lib/auth/context";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 afterEach(async () => {
   await truncateAll();
@@ -52,6 +56,55 @@ async function seedTeamNote(
     visibility: "team",
   });
   return updateNote(ctx, note.id, feed);
+}
+
+/**
+ * Insert a live task directly and return its id, for feed-task join tests
+ * that need a real row the same-project-live filter will keep.
+ *
+ * @param projectId - Owning project.
+ * @param seq - Per-project sequence number.
+ * @returns The new task's id.
+ */
+async function seedTask(projectId: string, seq: number): Promise<string> {
+  const su = superuserPool();
+  const [row] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${projectId}, ${`Task ${seq}`}, ${seq})
+    RETURNING id
+  `;
+  return row.id;
+}
+
+/**
+ * Read a note's `note_feed_tasks` task ids directly, sorted, for asserting
+ * the join contents independent of the read path.
+ *
+ * @param noteId - Note whose join rows are read.
+ * @returns Sorted task ids in the note's feed-task join.
+ */
+async function joinTaskIds(noteId: string): Promise<string[]> {
+  const su = superuserPool();
+  const rows = await su<{ task_id: string }[]>`
+    SELECT task_id FROM note_feed_tasks WHERE note_id = ${noteId}
+  `;
+  return rows.map((r) => r.task_id).sort();
+}
+
+/**
+ * Read a note's content and metadata clocks directly.
+ *
+ * @param noteId - Note whose clocks are read.
+ * @returns The note's `updated_at` and `meta_updated_at`.
+ */
+async function noteClocks(
+  noteId: string,
+): Promise<{ updatedAt: Date; metaUpdatedAt: Date }> {
+  const su = superuserPool();
+  const [row] = await su<{ updated_at: Date; meta_updated_at: Date }[]>`
+    SELECT updated_at, meta_updated_at FROM notes WHERE id = ${noteId}
+  `;
+  return { updatedAt: row.updated_at, metaUpdatedAt: row.meta_updated_at };
 }
 
 /**
@@ -108,8 +161,14 @@ function makeBodyRow(i: number, bodyChars: number): NoteFeedRow {
 test("Notes spec (PYZ-264) §7 truth table: mode arms expose only matching tasks", async () => {
   const f = await seedUserOrgProject("feed1");
   const ctx = makeAuthContext(f.userId);
+  const su = superuserPool();
+  const [bt] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number", "category", "tags")
+    VALUES (${f.projectId}, 'Backend task', 1, 'Backend', ${su.json(["auth", "rls"])})
+    RETURNING id
+  `;
   const backendTask: FeedTask = {
-    id: crypto.randomUUID(),
+    id: bt.id,
     category: "Backend",
     tags: ["auth", "rls"],
   };
@@ -162,8 +221,14 @@ test("Notes spec (PYZ-264) §7 truth table: mode arms expose only matching tasks
 test("case-canonical matching: mixed-case labels, whitespace-padded task values, and uppercase feed task ids still match", async () => {
   const f = await seedUserOrgProject("feed7");
   const ctx = makeAuthContext(f.userId);
+  const su = superuserPool();
+  const [tk] = await su<{ id: string }[]>`
+    INSERT INTO tasks ("project_id", "title", "sequence_number")
+    VALUES (${f.projectId}, 'Upper task', 1)
+    RETURNING id
+  `;
   const task: FeedTask = {
-    id: crypto.randomUUID(),
+    id: tk.id,
     category: " Backend ",
     tags: [" RLS "],
   };
@@ -720,4 +785,134 @@ test("exposure query is index-backed via notes_feed_idx and stays slim", async (
     return rows.map((r) => Object.values(r)[0]).join("\n");
   });
   expect(planText).toMatch(/notes_feed_idx/);
+});
+
+test("deleting a task cascades its note_feed_tasks rows; count and chips stay agreed", async () => {
+  const f = await seedUserOrgProject("feedJoinA");
+  const ctx = makeAuthContext(f.userId);
+  const t1 = await seedTask(f.projectId, 1);
+  const t2 = await seedTask(f.projectId, 2);
+
+  const note = await seedTeamNote(ctx, f.projectId, "Selected", {
+    feedMode: "tasks",
+    feedTaskIds: [t1, t2],
+  });
+  expect(await joinTaskIds(note.id)).toEqual([t1, t2].sort());
+
+  const before = await getNoteFull(ctx, note.id);
+  expect([...before.note.feedTaskIds].sort()).toEqual([t1, t2].sort());
+  expect(feedSummary(before.note)).toBe("2 selected tasks");
+
+  await superuserPool()`DELETE FROM tasks WHERE id = ${t1}`;
+
+  expect(await joinTaskIds(note.id)).toEqual([t2]);
+  const after = await getNoteFull(ctx, note.id);
+  expect(after.note.feedTaskIds).toEqual([t2]);
+  expect(feedSummary(after.note)).toBe("1 selected task");
+
+  const forDeleted = await resolveExposedNotes(ctx, f.projectId, {
+    id: t1,
+    category: null,
+    tags: [],
+  });
+  expect(forDeleted.notes).toEqual([]);
+  const forKept = await resolveExposedNotes(ctx, f.projectId, {
+    id: t2,
+    category: null,
+    tags: [],
+  });
+  expect(forKept.notes.map((n) => n.id)).toEqual([note.id]);
+});
+
+test("feed_mode='tasks' exposure derives from the join and stops when the row is removed", async () => {
+  const f = await seedUserOrgProject("feedJoinB");
+  const ctx = makeAuthContext(f.userId);
+  const t1 = await seedTask(f.projectId, 1);
+  const task: FeedTask = { id: t1, category: null, tags: [] };
+
+  const note = await seedTeamNote(ctx, f.projectId, "Targeted", {
+    feedMode: "tasks",
+    feedTaskIds: [t1],
+  });
+
+  const injected = await resolveExposedNotes(ctx, f.projectId, task);
+  expect(injected.notes.map((n) => n.id)).toEqual([note.id]);
+
+  await updateNote(ctx, note.id, { feedTaskIds: [] });
+  const afterClear = await resolveExposedNotes(ctx, f.projectId, task);
+  expect(afterClear.notes).toEqual([]);
+});
+
+test("editing only feedTaskIds bumps updated_at and meta_updated_at and is not a no-op", async () => {
+  const f = await seedUserOrgProject("feedJoinC");
+  const ctx = makeAuthContext(f.userId);
+  const t1 = await seedTask(f.projectId, 1);
+  const note = await seedTeamNote(ctx, f.projectId, "Clocks", {
+    feedMode: "tasks",
+  });
+
+  const before = await noteClocks(note.id);
+  await updateNote(ctx, note.id, { feedTaskIds: [t1] });
+  const afterSet = await noteClocks(note.id);
+  expect(afterSet.updatedAt.getTime()).toBeGreaterThan(
+    before.updatedAt.getTime(),
+  );
+  expect(afterSet.metaUpdatedAt.getTime()).toBeGreaterThan(
+    before.metaUpdatedAt.getTime(),
+  );
+
+  await updateNote(ctx, note.id, { feedTaskIds: [t1] });
+  const afterNoop = await noteClocks(note.id);
+  expect(afterNoop.updatedAt.getTime()).toBe(afterSet.updatedAt.getTime());
+});
+
+test("writing dangling or cross-project feed task ids drops them silently", async () => {
+  const home = await seedUserOrgProject("feedJoinD1");
+  const foreign = await seedUserOrgProject("feedJoinD2");
+  const ctx = makeAuthContext(home.userId);
+  const live = await seedTask(home.projectId, 1);
+  const crossProject = await seedTask(foreign.projectId, 1);
+  const dangling = crypto.randomUUID();
+
+  const note = await seedTeamNote(ctx, home.projectId, "Filtered", {
+    feedMode: "tasks",
+    feedTaskIds: [live, crossProject, dangling],
+  });
+
+  expect(await joinTaskIds(note.id)).toEqual([live]);
+  expect((await getNoteFull(ctx, note.id)).note.feedTaskIds).toEqual([live]);
+});
+
+test("backfill migration inserts join rows from jsonb and drops dead ids", async () => {
+  const home = await seedUserOrgProject("feedJoinE1");
+  const foreign = await seedUserOrgProject("feedJoinE2");
+  const ctx = makeAuthContext(home.userId);
+  const live = await seedTask(home.projectId, 1);
+  const crossProject = await seedTask(foreign.projectId, 1);
+  const dangling = crypto.randomUUID();
+  const malformed = "not-a-uuid";
+
+  const note = await createNote(ctx, {
+    projectId: home.projectId,
+    title: "Legacy",
+    visibility: "team",
+    feedMode: "tasks",
+  });
+
+  const su = superuserPool();
+  await su`DELETE FROM note_feed_tasks WHERE note_id = ${note.id}`;
+  await su`
+    UPDATE notes SET feed_task_ids = ${su.json([live, crossProject, dangling, malformed])}
+    WHERE id = ${note.id}
+  `;
+
+  const migration = readFileSync(
+    join(process.cwd(), "drizzle", "0012_lazy_wolverine.sql"),
+    "utf8",
+  );
+  const backfill = migration.split("--> statement-breakpoint").at(-1) ?? "";
+  expect(backfill).toContain("INSERT INTO note_feed_tasks");
+  await su.unsafe(backfill);
+
+  expect(await joinTaskIds(note.id)).toEqual([live]);
 });

@@ -64,6 +64,7 @@ import {
   NOTE_BODY_MAX_CHARS,
   NOTE_FOLDER_MAX_CHARS,
   NOTE_TITLE_MAX_BYTES,
+  noteFeedTasks,
   noteFolders,
   noteLinks,
   noteRevisions,
@@ -625,7 +626,6 @@ const noteFullColumns = {
   feedMode: notes.feedMode,
   feedCategories: notes.feedCategories,
   feedTags: notes.feedTags,
-  feedTaskIds: notes.feedTaskIds,
   tags: notes.tags,
   category: notes.category,
   version: notes.version,
@@ -996,7 +996,6 @@ const JSON_PATCH_FIELDS = new Set<keyof NotePatch>([
   "tags",
   "feedCategories",
   "feedTags",
-  "feedTaskIds",
 ]);
 
 /**
@@ -1012,7 +1011,7 @@ const JSON_PATCH_FIELDS = new Set<keyof NotePatch>([
  */
 function dropUnchangedFields(
   applied: NotePatch,
-  current: Pick<Note, Exclude<keyof NotePatch, "body">>,
+  current: Pick<Note, Exclude<keyof NotePatch, "body" | "feedTaskIds">>,
   bodyChanged: boolean,
 ): string[] {
   for (const field of Object.keys(applied) as (keyof NotePatch)[]) {
@@ -1020,6 +1019,9 @@ function dropUnchangedFields(
       if (!bodyChanged) delete applied.body;
       continue;
     }
+    // feedTaskIds is stripped from `applied` before this runs (it writes to
+    // the join, not the notes column) and is never compared here.
+    if (field === "feedTaskIds") continue;
     const unchanged = JSON_PATCH_FIELDS.has(field)
       ? JSON.stringify(applied[field]) === JSON.stringify(current[field])
       : applied[field] === current[field];
@@ -1222,6 +1224,82 @@ async function replaceDerivedLinks(
     );
   }
   return !isNew || taskIds.length > 0 || targetNoteIds.length > 0;
+}
+
+/**
+ * Replace a note's `note_feed_tasks` rows with `nextIds`, filtered to
+ * same-project live tasks. The filter is what keeps the FK from ever
+ * rejecting a dangling or cross-project id (mirrors the "unresolved refs
+ * not stored" rule for note links). When the filtered set already matches
+ * the stored rows the rewrite is skipped and `false` is returned, so a
+ * no-op feed edit does not churn rows or move the note's clocks. A new
+ * note has no stored rows, so `isNew` skips the current-set read and the
+ * delete (mirrors {@link replaceDerivedLinks}).
+ *
+ * Runs in the note-write transaction so the join writes see the RLS GUC.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param noteId - Note whose feed-task set is replaced.
+ * @param projectId - Owning project; the same-project filter scope.
+ * @param nextIds - Desired feed-task ids (may contain dangling/foreign ids).
+ * @param isNew - True when the note was created in this transaction.
+ * @returns True when the stored feed-task set changed.
+ */
+async function replaceFeedTaskLinks(
+  tx: Tx,
+  noteId: string,
+  projectId: string,
+  nextIds: readonly string[],
+  isNew: boolean,
+): Promise<boolean> {
+  const desired = [...new Set(nextIds)];
+  let liveIds: string[] = [];
+  if (desired.length > 0) {
+    const rows = await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.projectId, projectId), inArray(tasks.id, desired)));
+    liveIds = rows.map((row) => row.id);
+  }
+
+  if (!isNew) {
+    const current = await tx
+      .select({ taskId: noteFeedTasks.taskId })
+      .from(noteFeedTasks)
+      .where(eq(noteFeedTasks.noteId, noteId));
+    if (
+      sameIdSet(
+        liveIds,
+        current.map((row) => row.taskId),
+      )
+    ) {
+      return false;
+    }
+    await tx.delete(noteFeedTasks).where(eq(noteFeedTasks.noteId, noteId));
+  }
+
+  if (liveIds.length > 0) {
+    await tx
+      .insert(noteFeedTasks)
+      .values(liveIds.map((taskId) => ({ noteId, taskId })));
+  }
+  return !isNew || liveIds.length > 0;
+}
+
+/**
+ * Read a note's selected feed-task ids from the `note_feed_tasks` join as
+ * a lazy statement, for batching into the full/scalar note reads that
+ * surface {@link NoteFull.feedTaskIds}.
+ *
+ * @param read - Read statement-building handle.
+ * @param noteId - Note whose feed-task ids are read.
+ * @returns Lazy select yielding one `{ taskId }` row per join row.
+ */
+function noteFeedTaskIdsStmt(read: ReadConn, noteId: string) {
+  return read
+    .select({ taskId: noteFeedTasks.taskId })
+    .from(noteFeedTasks)
+    .where(eq(noteFeedTasks.noteId, noteId));
 }
 
 /**
@@ -1649,15 +1727,23 @@ export async function getNoteFull(
   noteId: string,
 ): Promise<NoteFullResult> {
   assertValidNoteId(noteId);
-  const [gateRows, noteRows, mentionRows, linksOut, linksIn, updaterRows] =
-    await withUserContextRead(ctx.userId, (read) => [
-      noteAccessGateStmt(read, noteId),
-      noteRowStmt(read, noteId),
-      noteMentionsStmt(read, noteId),
-      noteLinksOutStmt(read, noteId),
-      noteLinksInStmt(read, noteId),
-      noteUpdaterNameStmt(read, noteId),
-    ]);
+  const [
+    gateRows,
+    noteRows,
+    feedTaskRows,
+    mentionRows,
+    linksOut,
+    linksIn,
+    updaterRows,
+  ] = await withUserContextRead(ctx.userId, (read) => [
+    noteAccessGateStmt(read, noteId),
+    noteRowStmt(read, noteId),
+    noteFeedTaskIdsStmt(read, noteId),
+    noteMentionsStmt(read, noteId),
+    noteLinksOutStmt(read, noteId),
+    noteLinksInStmt(read, noteId),
+    noteUpdaterNameStmt(read, noteId),
+  ]);
   const gate = assertNoteGateRows(noteId, gateRows);
   const [note] = noteRows;
   if (!note) throw new ForbiddenError("Forbidden", "note", noteId);
@@ -1666,7 +1752,7 @@ export async function getNoteFull(
     is_agent: boolean;
   }>(updaterRows);
   return {
-    note,
+    note: { ...note, feedTaskIds: feedTaskRows.map((row) => row.taskId) },
     projectIdentifier: gate.projectIdentifier,
     updatedByName: updater?.name ?? null,
     updatedByAgent: updater?.is_agent ?? false,
@@ -1693,19 +1779,27 @@ export async function getNoteScalarFields(
   noteId: string,
 ): Promise<NoteFullResult> {
   assertValidNoteId(noteId);
-  const [gateRows, noteRows] = await withUserContextRead(ctx.userId, (read) => [
-    noteAccessGateStmt(read, noteId),
-    read
-      .select(noteScalarColumns)
-      .from(notes)
-      .where(and(eq(notes.id, noteId), isNull(notes.deletedAt)))
-      .limit(1),
-  ]);
+  const [gateRows, noteRows, feedTaskRows] = await withUserContextRead(
+    ctx.userId,
+    (read) => [
+      noteAccessGateStmt(read, noteId),
+      read
+        .select(noteScalarColumns)
+        .from(notes)
+        .where(and(eq(notes.id, noteId), isNull(notes.deletedAt)))
+        .limit(1),
+      noteFeedTaskIdsStmt(read, noteId),
+    ],
+  );
   const gate = assertNoteGateRows(noteId, gateRows);
   const [row] = noteRows;
   if (!row) throw new ForbiddenError("Forbidden", "note", noteId);
   return {
-    note: { ...row, body: "" },
+    note: {
+      ...row,
+      body: "",
+      feedTaskIds: feedTaskRows.map((r) => r.taskId),
+    },
     projectIdentifier: gate.projectIdentifier,
     updatedByName: null,
     updatedByAgent: false,
@@ -2665,13 +2759,20 @@ async function createNoteInTx(
       feedMode: input.feedMode ?? "none",
       feedCategories: canonicalizeFeedLabels(input.feedCategories ?? []),
       feedTags: canonicalizeFeedLabels(input.feedTags ?? []),
-      feedTaskIds: canonicalizeFeedLabels(input.feedTaskIds ?? []),
       agentWritable: true,
       locked: false,
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
     })
     .returning(noteSummaryColumns);
+
+  await replaceFeedTaskLinks(
+    tx,
+    note.id,
+    input.projectId,
+    input.feedTaskIds ?? [],
+    true,
+  );
 
   if (body !== "") {
     await replaceDerivedLinks(
@@ -3136,13 +3237,17 @@ async function updateNoteCore(
       (applied as Record<string, unknown>)[field] = patch[field];
     }
   }
-  for (const field of ["feedCategories", "feedTags", "feedTaskIds"] as const) {
+  for (const field of ["feedCategories", "feedTags"] as const) {
     const values = applied[field];
     if (values !== undefined) applied[field] = canonicalizeFeedLabels(values);
   }
   if (applied.title !== undefined) assertTitleWithinCap(applied.title);
   if (applied.body !== undefined) assertBodyWithinCap(applied.body);
   assertMetadataWithinCaps(applied);
+  // feedTaskIds now lives in the note_feed_tasks join, not the notes column,
+  // so pull it out of the column patch and drive the join write manually.
+  const nextFeedTaskIds = applied.feedTaskIds;
+  delete applied.feedTaskIds;
   if (applied.folder !== undefined) {
     applied.folder = normalizeFolder(applied.folder);
   }
@@ -3167,7 +3272,6 @@ async function updateNoteCore(
         feedMode: notes.feedMode,
         feedCategories: notes.feedCategories,
         feedTags: notes.feedTags,
-        feedTaskIds: notes.feedTaskIds,
         agentWritable: notes.agentWritable,
         locked: notes.locked,
         visibility: notes.visibility,
@@ -3210,8 +3314,24 @@ async function updateNoteCore(
       assertBodyWithinCap(newBody);
       applied.body = newBody;
     }
+    // Feed-task set writes to the note_feed_tasks join, not the notes
+    // column, so its change verdict cannot ride the notes UPDATE's
+    // change-detection. Replace the rows here (filtered to same-project live
+    // tasks) and fold the boolean into the no-op guards and clock bumps
+    // below, mirroring replaceDerivedLinks.
+    const feedTaskIdsChanged =
+      nextFeedTaskIds !== undefined
+        ? await replaceFeedTaskLinks(
+            tx,
+            noteId,
+            current.projectId,
+            nextFeedTaskIds,
+            false,
+          )
+        : false;
+
     const currentSummary = gateSummary(current);
-    if (Object.keys(applied).length === 0) {
+    if (Object.keys(applied).length === 0 && !feedTaskIdsChanged) {
       return {
         summary: currentSummary,
         wasNoOp: true,
@@ -3225,7 +3345,7 @@ async function updateNoteCore(
 
     const bodyChanged = needsBody && applied.body !== current.body;
     const changedFields = dropUnchangedFields(applied, current, bodyChanged);
-    if (changedFields.length === 0) {
+    if (changedFields.length === 0 && !feedTaskIdsChanged) {
       return {
         summary: currentSummary,
         wasNoOp: true,
@@ -3236,6 +3356,7 @@ async function updateNoteCore(
         flippedToPrivate: false,
       };
     }
+    if (feedTaskIdsChanged) changedFields.push("feedTaskIds");
     const newVersion = bodyChanged ? current.version + 1 : current.version;
     const now = new Date();
     const changes: Record<string, unknown> = {
@@ -3276,7 +3397,9 @@ async function updateNoteCore(
     // body autosaves stay 304-cheap while any rendered field (or a derived
     // link set) revalidates.
     const metaChanged =
-      derivedLinksChanged || changedFields.some((field) => field !== "body");
+      derivedLinksChanged ||
+      feedTaskIdsChanged ||
+      changedFields.some((field) => field !== "body");
     if (metaChanged) {
       changes.metaUpdatedAt = now;
     }
