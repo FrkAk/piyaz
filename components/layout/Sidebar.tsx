@@ -169,7 +169,7 @@ export function SidebarPanel({
       <div className="mx-2 mt-2 mb-1 flex items-center gap-1">
         <Link
           href="/"
-          title={`${workspaceLabel} — workspace home`}
+          title={`${workspaceLabel}, workspace home`}
           className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-hover"
         >
           <BrandMark />
@@ -335,7 +335,7 @@ function CompactSidebar({
       <div className="flex flex-col items-center gap-1 px-2 pt-2 pb-1">
         <Link
           href="/"
-          title={`${workspaceLabel} — workspace home`}
+          title={`${workspaceLabel}, workspace home`}
           className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-surface-hover"
         >
           <BrandMark />
@@ -359,7 +359,7 @@ function CompactSidebar({
         />
         <CompactNavIcon
           icon={<IconInbox size={14} />}
-          label="Inbox — coming soon"
+          label="Inbox coming soon"
           disabled
         />
         <CompactNavIcon
@@ -781,7 +781,7 @@ function ShowMoreProjects({ loading, error, onClick }: ShowMoreProjectsProps) {
       type="button"
       onClick={onClick}
       disabled={loading}
-      title={error ? "Couldn't load more projects — click to retry" : undefined}
+      title={error ? "Couldn't load more projects. Click to retry" : undefined}
       className="mt-1 flex h-[26px] w-full cursor-pointer items-center justify-center gap-1.5 rounded-md font-mono text-[10px] font-semibold uppercase tracking-[0.10em] text-text-muted transition-colors hover:bg-surface-hover/50 hover:text-text-secondary disabled:cursor-default disabled:opacity-70"
     >
       {!loading && (
@@ -826,7 +826,7 @@ function UserFooter({ user, settingsActive }: UserFooterProps) {
       <Link
         href="/settings"
         title={displayName}
-        aria-label={`${displayName} — account settings`}
+        aria-label={`${displayName}, account settings`}
         className="inline-flex flex-shrink-0 items-center rounded-full transition-opacity hover:opacity-90"
       >
         <Avatar name={displayName} src={user.image ?? undefined} size={26} />
@@ -834,7 +834,7 @@ function UserFooter({ user, settingsActive }: UserFooterProps) {
       <Link
         href="/settings"
         title={displayName}
-        aria-label={`${displayName} — account settings`}
+        aria-label={`${displayName}, account settings`}
         className="min-w-0 flex-1 truncate text-[12px] font-medium text-text-primary no-underline transition-colors hover:text-accent-light"
       >
         {displayName}

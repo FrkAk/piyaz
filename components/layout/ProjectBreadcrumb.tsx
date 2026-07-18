@@ -65,7 +65,7 @@ export function ProjectBreadcrumb({
       whileTap={{ scale: 0.98 }}
       type="button"
       onClick={onOpenSettings}
-      aria-label={`${projectName} — open project settings`}
+      aria-label={`${projectName}, open project settings`}
       title="Project settings"
       className="group/proj flex min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-md border border-border-strong/40 bg-surface/40 px-2.5 py-1 transition-all hover:border-accent/40 hover:bg-surface-hover"
     >

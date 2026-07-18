@@ -392,7 +392,7 @@ function EditorBody({
         <div className="ml-auto flex items-center gap-2">
           {note.locked && (
             <span className="font-mono text-[10px] text-text-faint">
-              locked — unlock to edit
+              locked · unlock to edit
             </span>
           )}
           <PresenceAvatars noteId={noteId} visibility={note.visibility} />

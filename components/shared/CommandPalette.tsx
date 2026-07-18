@@ -606,7 +606,7 @@ const ERROR_MESSAGES: Record<
   "rate_limited" | "unauthorized" | "unknown",
   string
 > = {
-  rate_limited: "Slow down — too many searches. Try again in a moment.",
+  rate_limited: "Slow down: too many searches. Try again in a moment.",
   unauthorized: "Sign in to search across your projects.",
   unknown: "Couldn't load results. Try again.",
 };

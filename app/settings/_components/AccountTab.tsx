@@ -142,7 +142,7 @@ export function AccountTab({
               disabled
               className="opacity-80"
             >
-              <span title="Photo upload — coming soon">Upload photo</span>
+              <span title="Photo upload coming soon">Upload photo</span>
             </Button>
             <p className="mt-1.5 text-[11.5px] text-text-muted">
               JPG or PNG, max 2MB
@@ -175,7 +175,7 @@ export function AccountTab({
                 title="Email is your sign-in identity and can't be changed here."
               />
               <p className="mt-1 text-[11px] text-text-muted">
-                Sign-in identity — managed by your auth provider.
+                Your sign-in identity is managed by your auth provider.
               </p>
             </label>
           ) : null}
@@ -311,7 +311,7 @@ function EmailSection({ email }: { email: string }) {
           <p className="text-[13px] font-semibold text-text-primary">Email</p>
           <p className="mt-0.5 truncate text-[13px] text-text-muted">{email}</p>
           <p className="mt-1.5 text-[11.5px] text-text-muted">
-            Sign-in identity — changing it requires approval from this address.
+            Changing your sign-in identity requires approval from this address.
           </p>
         </div>
         {!open ? (

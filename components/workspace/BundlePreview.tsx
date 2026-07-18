@@ -558,12 +558,12 @@ export function BundlePreview(props: BundlePreviewProps) {
             }`}
           >
             {bundleError
-              ? "// failed to load bundle — retry above"
+              ? "// failed to load bundle. retry above"
               : bundleFetching && !rawText
                 ? "// loading bundle…"
                 : rawText.trim().length > 0
                   ? rawText
-                  : "// bundle empty — add a description and prerequisites"}
+                  : "// bundle empty. add a description and prerequisites"}
           </pre>
         </div>
       ) : (
@@ -936,7 +936,7 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
     return (
       <MarkdownBody
         text={props.spec}
-        emptyHint="No spec yet — add a description above."
+        emptyHint="No spec yet. Add a description above."
       />
     );
   if (id === "meta") return <MetaBody props={props} />;
@@ -1045,7 +1045,7 @@ function SectionBody({ id, props, onSelectTask }: SectionBodyProps) {
   return (
     <MarkdownBody
       text={props.executionRecord ?? ""}
-      emptyHint="No execution record yet — populated when the task ships."
+      emptyHint="No execution record yet. It is written when the task ships."
     />
   );
 }
@@ -1269,7 +1269,7 @@ function BlockedBody({ props, onSelectTask }: BlockedBodyProps) {
   return (
     <div className="space-y-2">
       <p className="text-[12px] leading-snug text-text-secondary">
-        Prerequisites are not done — building now means building against
+        Prerequisites are not done. Building now means building against
         unshipped interfaces. Read-ahead context only.
       </p>
       <NeighborList

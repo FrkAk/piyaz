@@ -20,12 +20,12 @@ export function SocialButtons() {
         <SocialButton
           label="Continue with GitHub"
           icon={<GithubMark />}
-          tooltip="GitHub sign-in — coming soon"
+          tooltip="GitHub sign-in coming soon"
         />
         <SocialButton
           label="Continue with Google"
           icon={<GoogleMark />}
-          tooltip="Google sign-in — coming soon"
+          tooltip="Google sign-in coming soon"
         />
       </div>
       <EmailDivider />

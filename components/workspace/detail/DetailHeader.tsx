@@ -146,8 +146,8 @@ export function DetailHeader({
               aria-label={navigatorClosed ? "Show structure" : "Hide structure"}
               title={
                 navigatorClosed
-                  ? "Show structure — slide back"
-                  : "Hide structure — focus on task"
+                  ? "Show structure"
+                  : "Hide structure to focus on the task"
               }
               className={`hidden h-7 w-7 cursor-pointer items-center justify-center rounded-md border transition-colors xl:inline-flex ${
                 navigatorClosed
@@ -167,7 +167,7 @@ export function DetailHeader({
               aria-label={propRailOpen ? "Hide properties" : "Show properties"}
               title={
                 propRailOpen
-                  ? "Hide properties — give the canvas more room"
+                  ? "Hide properties to give the canvas more room"
                   : "Show properties"
               }
               className={`hidden h-7 w-7 cursor-pointer items-center justify-center rounded-md border transition-colors xl:inline-flex ${
