@@ -26,6 +26,7 @@ import {
 import { untrustedContentNotice } from "@/lib/context/format";
 import { composeTaskRef, asIdentifier } from "@/lib/graph/identifier";
 import type { AuthContext } from "@/lib/auth/context";
+import { assertTaskAccess } from "@/lib/auth/authorization";
 import {
   ok,
   fail,
@@ -175,6 +176,7 @@ export async function handleGet(
 
     if (p.task) {
       const taskId = await requireTaskId(ctx, p.task);
+      await assertTaskAccess(taskId, ctx);
       if (p.fields && p.fields.length > 0) {
         return await handleFieldsRead(ctx, taskId, p.fields);
       }

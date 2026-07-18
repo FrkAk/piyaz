@@ -18,6 +18,8 @@ import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
 import {
   demoteMemberWithGuard,
   findMemberById,
+  guardedLeaveTeam,
+  guardedRemoveMember,
   previewTeamDelete,
 } from "@/lib/data/membership";
 import { parseMemberRoles } from "@/lib/auth/permissions";
@@ -302,23 +304,32 @@ export async function removeMemberAction(input: {
   }
   if (!isAdmin) return teamFail("forbidden");
 
-  try {
-    const reqHeaders = await headers();
-    await auth.api.removeMember({
-      body: {
-        memberIdOrEmail: parsed.data.memberIdOrEmail,
-        organizationId: parsed.data.organizationId,
-      },
-      headers: reqHeaders,
-    });
-    return { ok: true };
-  } catch (err) {
-    const code = mapBetterAuthError(err);
-    if (code === "unknown") {
-      console.error("removeMemberAction failed", err);
-    }
-    return teamFail(code);
+  const reqHeaders = await headers();
+  const outcome = await guardedRemoveMember(
+    userId,
+    {
+      organizationId: parsed.data.organizationId,
+      memberIdOrEmail: parsed.data.memberIdOrEmail,
+      roleIncludesOwner,
+    },
+    async () => {
+      await auth.api.removeMember({
+        body: {
+          memberIdOrEmail: parsed.data.memberIdOrEmail,
+          organizationId: parsed.data.organizationId,
+        },
+        headers: reqHeaders,
+      });
+    },
+  );
+
+  if (outcome.kind === "ok") return { ok: true };
+  if (outcome.kind === "fail") return teamFail(outcome.code);
+  const code = mapBetterAuthError(outcome.err);
+  if (code === "unknown") {
+    console.error("removeMemberAction failed", outcome.err);
   }
+  return teamFail(code);
 }
 
 /**
@@ -472,16 +483,23 @@ export async function leaveTeamAction(input: {
   );
   if (!limit.ok) return teamFail("rate_limited");
 
-  try {
-    const reqHeaders = await headers();
-    await auth.api.leaveOrganization({
-      body: { organizationId: parsed.data.organizationId },
-      headers: reqHeaders,
-    });
-  } catch (err) {
-    const code = mapBetterAuthError(err);
+  const reqHeaders = await headers();
+  const outcome = await guardedLeaveTeam(
+    userId,
+    { organizationId: parsed.data.organizationId, roleIncludesOwner },
+    async () => {
+      await auth.api.leaveOrganization({
+        body: { organizationId: parsed.data.organizationId },
+        headers: reqHeaders,
+      });
+    },
+  );
+
+  if (outcome.kind === "fail") return teamFail(outcome.code);
+  if (outcome.kind === "callback_error") {
+    const code = mapBetterAuthError(outcome.err);
     if (code === "unknown") {
-      console.error("leaveTeamAction failed", err);
+      console.error("leaveTeamAction failed", outcome.err);
     }
     return teamFail(code);
   }

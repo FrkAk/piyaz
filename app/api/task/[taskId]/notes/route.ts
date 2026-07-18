@@ -1,6 +1,6 @@
 import { getTaskNoteContext } from "@/lib/data/note";
 import { getAuthContext } from "@/lib/auth/context";
-import { ForbiddenError } from "@/lib/auth/authorization";
+import { assertTaskAccess, ForbiddenError } from "@/lib/auth/authorization";
 import { conditionalRespond } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
 import { error } from "@/lib/api/response";
@@ -65,6 +65,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
   const bundle = kind as BundleKind;
 
   try {
+    await assertTaskAccess(taskId, ctx);
     const context = await getTaskNoteContext(
       ctx,
       taskId,
