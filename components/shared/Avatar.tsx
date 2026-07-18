@@ -1,10 +1,10 @@
 /** Deterministic 5-stop palette used to colour initial-only avatars. */
 const AVATAR_PALETTE: ReadonlyArray<readonly [string, string]> = [
-  ["#818cf8", "#6ee7d8"],
-  ["#f472b6", "#fb923c"],
-  ["#34d399", "#60a5fa"],
-  ["#fbbf24", "#f87171"],
-  ["#a78bfa", "#22d3ee"],
+  ["#c2a4a1", "#9db2ab"],
+  ["#c98da4", "#d9a778"],
+  ["#8fbca6", "#8fa9cf"],
+  ["#d9b878", "#cf8d84"],
+  ["#a578a1", "#84aab4"],
 ];
 
 interface AvatarProps {

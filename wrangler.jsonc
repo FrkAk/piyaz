@@ -120,7 +120,7 @@
         "REQUIRE_EMAIL_VERIFICATION": "true",
         "APP_NAME": "Piyaz",
         "BRAND_LOGO_URL": "https://app.piyaz.ai/piyaz-mark.png",
-        "BRAND_COLOR": "#818cf8",
+        "BRAND_COLOR": "#976b68",
         "BRAND_FOOTER_LINKS": "[{\"label\":\"Privacy\",\"url\":\"https://app.piyaz.ai/privacy\"},{\"label\":\"Terms\",\"url\":\"https://app.piyaz.ai/terms\"}]"
       }
     },
@@ -229,7 +229,7 @@
         "REQUIRE_EMAIL_VERIFICATION": "true",
         "APP_NAME": "Piyaz (dev)",
         "BRAND_LOGO_URL": "https://app.piyaz.ai/piyaz-mark.png",
-        "BRAND_COLOR": "#818cf8",
+        "BRAND_COLOR": "#976b68",
         "BRAND_FOOTER_LINKS": "[{\"label\":\"Privacy\",\"url\":\"https://dev.app.piyaz.ai/privacy\"},{\"label\":\"Terms\",\"url\":\"https://dev.app.piyaz.ai/terms\"}]"
       }
     }

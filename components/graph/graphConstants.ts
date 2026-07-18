@@ -148,7 +148,7 @@ export const NOTE_EDGE_STYLE: Record<
   },
 };
 
-export const ACCENT = "#818cf8";
+export const ACCENT = "#976b68";
 
 export const ZOOM_FACTOR = 1.2;
 export const MIN_ZOOM = 0.1;
@@ -382,7 +382,7 @@ export function noteTypeColor(type: NoteType, t: ThemeColors): string {
 
 /**
  * Parse hex color to RGB.
- * @param hex - Hex color string (e.g. "#6366f1").
+ * @param hex - Hex color string (e.g. "#976b68").
  * @returns [r, g, b] tuple.
  */
 export function hexToRgb(hex: string): [number, number, number] {
