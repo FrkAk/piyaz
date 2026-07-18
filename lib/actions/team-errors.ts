@@ -57,7 +57,7 @@ export const TEAM_ACTION_MESSAGES: Record<TeamActionFailureCode, string> = {
   membership_limit_reached:
     "This team has reached its member limit. Contact the owner.",
   cannot_leave_only_owner:
-    "You're the only owner — promote another member first, then leave.",
+    "You're the only owner. Promote another member to owner first, or delete the team instead.",
   cannot_delete_sole_owner:
     "You solely own a team that still has other members. Transfer ownership or delete that team first, then delete your account.",
   slug_taken: "That URL slug is already in use. Try a different one.",
