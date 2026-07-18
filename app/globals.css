@@ -21,7 +21,7 @@
   --color-text-muted: #6a6b6c;
   --color-text-faint: #4a4b4c;
 
-  --color-accent: #976b68;
+  --color-accent: #a67d79;
   --color-accent-2: #768989;
   --color-accent-light: #c2a4a1;
   --color-accent-glow: rgba(151, 107, 104, 0.14);
@@ -54,7 +54,7 @@
   /* Status glyph fills — graph + list */
   --color-glyph-draft: rgba(156, 163, 175, 0.45);
   --color-glyph-planned: #55b3ff;
-  --color-glyph-ready: #976b68;
+  --color-glyph-ready: #a67d79;
   --color-glyph-progress: #ffbc33;
   --color-glyph-review: #a78bfa;
   --color-glyph-done: #5fc992;

@@ -4,7 +4,7 @@ const AVATAR_PALETTE: ReadonlyArray<readonly [string, string]> = [
   ["#c98da4", "#d9a778"],
   ["#8fbca6", "#8fa9cf"],
   ["#d9b878", "#cf8d84"],
-  ["#a578a1", "#84aab4"],
+  ["#b995b4", "#84aab4"],
 ];
 
 interface AvatarProps {

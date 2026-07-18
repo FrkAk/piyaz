@@ -148,7 +148,7 @@ export const NOTE_EDGE_STYLE: Record<
   },
 };
 
-export const ACCENT = "#976b68";
+export const ACCENT = "#a67d79";
 
 export const ZOOM_FACTOR = 1.2;
 export const MIN_ZOOM = 0.1;
