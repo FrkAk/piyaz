@@ -1178,6 +1178,20 @@ test("moveFolder cap guard considers explicit descendant paths", async () => {
   expect(untouched.paths).toEqual([`a/${"f".repeat(505)}`]);
 });
 
+test("createNote stores an NFD folder as NFC", async () => {
+  const f = await seedUserOrgProject("notenfc");
+  const ctx = makeAuthContext(f.userId);
+  const note = await createNote(ctx, {
+    projectId: f.projectId,
+    title: "NFD folder",
+    folder: "cafe\u0301/menu",
+  });
+
+  const tree = await getNoteTreeList(ctx, f.projectId);
+  const folders = new Map(tree.map((n) => [n.id, n.folder]));
+  expect(folders.get(note.id)).toBe("caf\u00e9/menu");
+});
+
 test("getNoteFull attributes the last edit to the updater's agent", async () => {
   const f = await seedUserOrgProject("agentattr");
   const webCtx = makeAuthContext(f.userId, { source: "web", userId: f.userId });

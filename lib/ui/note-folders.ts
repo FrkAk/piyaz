@@ -6,15 +6,19 @@
  */
 
 /**
- * Normalize a folder path: split on `/`, trim each segment, drop empties.
- * `""` is root. Pure segment normalization with no length enforcement; the
- * data layer applies the length cap and its `NoteValidationError`.
+ * Normalize a folder path: fold to Unicode NFC, split on `/`, trim each
+ * segment, drop empties. `""` is root. NFC applies to the whole string
+ * before splitting; `/` (U+002F) never composes, so segment structure is
+ * stable. No length enforcement; the data layer applies the code-point cap
+ * and its `NoteValidationError` against the NFC form, matching the DB
+ * CHECKs on stored values.
  *
  * @param raw - Caller-supplied folder path.
- * @returns Canonical path (`""` = root).
+ * @returns Canonical NFC path (`""` = root).
  */
 export function normalizeFolderPath(raw: string): string {
   return raw
+    .normalize("NFC")
     .split("/")
     .map((segment) => segment.trim())
     .filter((segment) => segment !== "")
