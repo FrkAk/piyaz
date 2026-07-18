@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.6](https://github.com/FrkAk/piyaz/compare/v0.4.5...v0.4.6) (2026-07-18)
+
+
+### Bug Fixes
+
+* enforce nfc on note folder paths with db checks ([#242](https://github.com/FrkAk/piyaz/issues/242)) ([8a3191e](https://github.com/FrkAk/piyaz/commit/8a3191eff632578810e0729a3302b9510d322c8b))
+
 ## [0.4.5](https://github.com/FrkAk/piyaz/compare/v0.4.4...v0.4.5) (2026-07-18)
 
 
