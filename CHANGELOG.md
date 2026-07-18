@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.8](https://github.com/FrkAk/piyaz/compare/v0.4.7...v0.4.8) (2026-07-18)
+
+
+### Bug Fixes
+
+* marketing crosslinks, auth voice, and password field UX ([#246](https://github.com/FrkAk/piyaz/issues/246)) ([1bc870c](https://github.com/FrkAk/piyaz/commit/1bc870c023e31f0df315d63f6aa340cf0aa7a20e))
+
 ## [0.4.7](https://github.com/FrkAk/piyaz/compare/v0.4.6...v0.4.7) (2026-07-18)
 
 
