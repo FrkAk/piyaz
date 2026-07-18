@@ -317,15 +317,21 @@ export function formatNotePointers(
   return [...capped, "", NOTE_READ_HINT].join("\n");
 }
 
+/** Feed-rule key: every bundle kind plus the summary lens, whose note
+ *  rendering lives in `lib/graph/format-responses.ts` instead of
+ *  `lib/context/_core/`. */
+export type NoteFeedKind = BundleKind | "summary";
+
 /**
- * How each bundle kind renders the note feed. Mirrors the `buildNotesPart`
- * and `buildGuidancePart` calls in `lib/context/_core/*`: deep kinds inline
- * guidance full-body and list only reference/knowledge pointers; slim kinds
- * ship no guidance section and pointer every type. `tests/context/parity`
- * pins this against the builders: change both together.
+ * How each lens renders the note feed. Mirrors the `buildNotesPart` and
+ * `buildGuidancePart` calls in `lib/context/_core/*` and the
+ * `formatNotePointers` call in `formatSummary`: deep kinds inline guidance
+ * full-body and list only reference/knowledge pointers; slim kinds ship no
+ * guidance section and pointer every type. `tests/context/parity` pins
+ * this against the renderers: change both together.
  */
 export const NOTE_FEED_RULES: Record<
-  BundleKind,
+  NoteFeedKind,
   {
     deep: boolean;
     guidanceSection: boolean;
@@ -358,6 +364,12 @@ export const NOTE_FEED_RULES: Record<
     limit: MAX_BUNDLE_LIST_LINES,
   },
   record: {
+    deep: false,
+    guidanceSection: false,
+    guidanceAsPointers: true,
+    limit: MAX_SLIM_NOTE_LINES,
+  },
+  summary: {
     deep: false,
     guidanceSection: false,
     guidanceAsPointers: true,

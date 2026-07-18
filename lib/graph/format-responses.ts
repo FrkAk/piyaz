@@ -22,7 +22,7 @@ import type { SummaryContext } from "@/lib/context/_core/summary";
 import {
   capLines,
   formatNotePointers,
-  MAX_SLIM_NOTE_LINES,
+  NOTE_FEED_RULES,
   untrustedContentNotice,
 } from "@/lib/context/format";
 import { budgetLines } from "@/lib/mcp/budget";
@@ -141,10 +141,7 @@ export function formatSummary(ctx: SummaryContext): string {
     );
   }
 
-  const notePointers = formatNotePointers(ctx.feed, {
-    guidanceAsPointers: true,
-    limit: MAX_SLIM_NOTE_LINES,
-  });
+  const notePointers = formatNotePointers(ctx.feed, NOTE_FEED_RULES.summary);
   if (notePointers) {
     parts.push("\n## Relevant Notes");
     parts.push(notePointers);
