@@ -7,6 +7,8 @@ import { SignInForm } from "@/components/auth/SignInForm";
 import { safeInviteNext } from "@/lib/auth/invite-next";
 import { isEmailEnabled } from "@/lib/email";
 
+const MARKETING_URL = "https://piyaz.ai";
+
 export const dynamic = "force-dynamic";
 
 interface SignInPageProps {
@@ -36,12 +38,21 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     <AuthShell
       form={
         <>
-          <AuthBrand />
+          <AuthBrand href={MARKETING_URL} />
+          <span
+            className="mb-2 block font-mono text-[10px] font-semibold uppercase"
+            style={{
+              color: "var(--color-accent-light)",
+              letterSpacing: "0.14em",
+            }}
+          >
+            Sign in
+          </span>
           <h1
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            One workspace for your team and your agents.
+            One workspace for your team and your agents
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"

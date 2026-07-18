@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+const MARKETING_URL = "https://piyaz.ai";
+
 /** Legal documents linked from the shell footer, in reading order. */
 const LEGAL_NAV = [
   { href: "/terms", label: "Terms" },
@@ -11,10 +13,11 @@ const LEGAL_NAV = [
 ];
 
 /**
- * Shell for the unauthenticated legal pages: brand header with a sign-in
- * escape hatch, a centered readable column with the document-scale
- * `legal-doc` prose treatment, and a footer cross-linking every legal
- * document so a visitor can move between them without the app chrome.
+ * Shell for the unauthenticated legal pages: a header whose brand links out
+ * to the marketing site and whose action opens the app at `/`, a centered
+ * readable column with the document-scale `legal-doc` prose treatment, and a
+ * footer cross-linking every legal document so a visitor can move between
+ * them without the app chrome.
  *
  * @param props - Route children.
  * @returns Header, content column, and legal footer.
@@ -22,9 +25,17 @@ const LEGAL_NAV = [
 export default function PublicLayout({ children }: { children: ReactNode }) {
   return (
     <div className="legal-doc flex min-h-dvh flex-col">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{
+          background:
+            "radial-gradient(80% 60% at 85% 5%, rgba(151, 107, 104, 0.12), transparent 70%), radial-gradient(50% 40% at 15% 95%, rgba(118, 137, 137, 0.09), transparent 70%)",
+        }}
+      />
       <header className="border-b border-border">
         <div className="mx-auto flex w-full max-w-[720px] items-center justify-between px-6 py-4">
-          <Link href="/" className="flex items-center gap-2">
+          <a href={MARKETING_URL} className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element -- brand mark is a 22px static asset; next/image optimization is overkill and unconfigured on the Cloudflare build */}
             <img
               src="/piyaz-mark.png"
@@ -40,12 +51,12 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
             >
               piyaz
             </span>
-          </Link>
+          </a>
           <Link
-            href="/sign-in"
+            href="/"
             className="text-[12.5px] text-text-muted transition-colors hover:text-text-primary"
           >
-            Sign in
+            Open app
           </Link>
         </div>
       </header>

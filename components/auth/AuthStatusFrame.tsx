@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { AuthBrand } from "@/components/auth/AuthBrand";
 import { AuthThemeToggle } from "@/components/auth/AuthThemeToggle";
 
+const MARKETING_URL = "https://piyaz.ai";
+
 interface AuthStatusFrameProps {
   /** Mono uppercase context label above the heading; omitted when unset. */
   eyebrow?: string;
@@ -31,7 +33,7 @@ export function AuthStatusFrame({
     <div className="relative flex min-h-dvh items-center justify-center px-4">
       <AuthThemeToggle />
       <div className="w-full max-w-md">
-        <AuthBrand className="mb-7 justify-center" />
+        <AuthBrand className="mb-7 justify-center" href={MARKETING_URL} />
         <div className="space-y-4">
           <div className="text-center">
             {eyebrow ? (
