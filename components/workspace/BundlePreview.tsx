@@ -42,12 +42,12 @@ interface BundleSectionMeta {
 
 /** Section metadata table — color cues match DESIGN.md §3.9. */
 const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
-  spec: { id: "spec", label: "spec", color: "var(--color-accent-light)" },
+  spec: { id: "spec", label: "spec", color: "var(--color-planned)" },
   meta: { id: "meta", label: "meta", color: "var(--color-planned)" },
   criteria: {
     id: "criteria",
     label: "criteria",
-    color: "var(--color-accent-light)",
+    color: "var(--color-planned)",
   },
   plan: { id: "plan", label: "plan", color: "var(--color-accent)" },
   "work-so-far": {
@@ -74,12 +74,12 @@ const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
   constraints: {
     id: "constraints",
     label: "constraints",
-    color: "var(--color-accent)",
+    color: "var(--color-progress)",
   },
   connected: {
     id: "connected",
     label: "connected",
-    color: "var(--color-accent-2)",
+    color: "var(--color-relates)",
   },
   links: { id: "links", label: "links", color: "var(--color-accent-light)" },
   downstream: {
@@ -108,7 +108,7 @@ const SECTION_META: Record<BundleSectionId, BundleSectionMeta> = {
   guidance: {
     id: "guidance",
     label: "guidance",
-    color: "var(--color-accent)",
+    color: "var(--color-progress)",
   },
   notes: { id: "notes", label: "notes", color: "var(--color-accent-2)" },
 };
