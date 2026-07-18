@@ -422,7 +422,6 @@ export const notes = pgTable(
       .notNull()
       .default([]),
     feedTags: jsonb("feed_tags").$type<string[]>().notNull().default([]),
-    feedTaskIds: jsonb("feed_task_ids").$type<string[]>().notNull().default([]),
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
     category: text("category"),
     version: integer("version").notNull().default(1),

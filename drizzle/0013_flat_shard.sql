@@ -1,0 +1,1 @@
+ALTER TABLE "notes" DROP COLUMN "feed_task_ids";

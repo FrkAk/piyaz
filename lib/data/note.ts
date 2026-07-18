@@ -380,11 +380,14 @@ export type TaskNoteBacklink = NoteTreeRow & {
 
 /** Full note row minus the server-side columns no client reads:
  *  `search_tsv`, `shared_since` (RLS fence state), and `meta_updated_at`
- *  (graph-ETag clock). */
+ *  (graph-ETag clock), plus the join-derived feed task selectors. */
 export type NoteFull = Omit<
   Note,
   "searchTsv" | "sharedSince" | "metaUpdatedAt"
->;
+> & {
+  /** Feed task selector ids, read from the `note_feed_tasks` join. */
+  feedTaskIds: string[];
+};
 
 /** Single-note read: the full row plus its derived link context. */
 export type NoteFullResult = {

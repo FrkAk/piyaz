@@ -25,8 +25,6 @@ import { notesFeedSql } from "@/lib/db/raw/notes-feed";
 import { feedSummary } from "@/components/workspace/notes/note-meta";
 import { ForbiddenError } from "@/lib/auth/authorization";
 import { makeAuthContext } from "@/lib/auth/context";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
 afterEach(async () => {
   await truncateAll();
@@ -881,38 +879,4 @@ test("writing dangling or cross-project feed task ids drops them silently", asyn
 
   expect(await joinTaskIds(note.id)).toEqual([live]);
   expect((await getNoteFull(ctx, note.id)).note.feedTaskIds).toEqual([live]);
-});
-
-test("backfill migration inserts join rows from jsonb and drops dead ids", async () => {
-  const home = await seedUserOrgProject("feedJoinE1");
-  const foreign = await seedUserOrgProject("feedJoinE2");
-  const ctx = makeAuthContext(home.userId);
-  const live = await seedTask(home.projectId, 1);
-  const crossProject = await seedTask(foreign.projectId, 1);
-  const dangling = crypto.randomUUID();
-  const malformed = "not-a-uuid";
-
-  const note = await createNote(ctx, {
-    projectId: home.projectId,
-    title: "Legacy",
-    visibility: "team",
-    feedMode: "tasks",
-  });
-
-  const su = superuserPool();
-  await su`DELETE FROM note_feed_tasks WHERE note_id = ${note.id}`;
-  await su`
-    UPDATE notes SET feed_task_ids = ${su.json([live, crossProject, dangling, malformed])}
-    WHERE id = ${note.id}
-  `;
-
-  const migration = readFileSync(
-    join(process.cwd(), "drizzle", "0012_lazy_wolverine.sql"),
-    "utf8",
-  );
-  const backfill = migration.split("--> statement-breakpoint").at(-1) ?? "";
-  expect(backfill).toContain("INSERT INTO note_feed_tasks");
-  await su.unsafe(backfill);
-
-  expect(await joinTaskIds(note.id)).toEqual([live]);
 });
