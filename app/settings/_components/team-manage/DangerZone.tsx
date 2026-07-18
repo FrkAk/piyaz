@@ -40,8 +40,8 @@ export function DangerZone({ teamId, teamName, onError }: DangerZoneProps) {
             <p className="mt-1 text-xs text-text-muted">
               Removes every project, task, dependency, and pending invitation in
               this team. All members lose access immediately. User accounts are
-              not touched — members keep their accounts and any other teams.
-              This action cannot be undone.
+              not touched: members keep their accounts and any other teams. This
+              action cannot be undone.
             </p>
           </div>
           <motion.button

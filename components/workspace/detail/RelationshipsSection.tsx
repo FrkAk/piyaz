@@ -196,7 +196,7 @@ export function RelationshipsSection({
     if (!selectedTarget || submitting) return;
     const trimmedNote = note.trim();
     if (!trimmedNote) {
-      setError("Note is required — describe why this relationship exists");
+      setError("Note is required. Describe why this relationship exists");
       noteRef.current?.focus();
       return;
     }
@@ -287,7 +287,7 @@ export function RelationshipsSection({
 
         {totalEdges === 0 && !adding && (
           <p className="font-mono text-[11px] italic text-text-muted">
-            No relationships yet — link upstream deps, blocked tasks, or
+            No relationships yet. Link upstream deps, blocked tasks, or
             siblings.
           </p>
         )}

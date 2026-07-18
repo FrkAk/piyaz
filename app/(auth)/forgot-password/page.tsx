@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { AuthBrand } from "@/components/auth/AuthBrand";
+import { AuthEyebrow } from "@/components/auth/AuthEyebrow";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
+import { MARKETING_URL } from "@/lib/config/urls";
 import { isEmailEnabled } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
@@ -21,12 +23,13 @@ export default function ForgotPasswordPage() {
     <AuthShell
       form={
         <>
-          <AuthBrand />
+          <AuthBrand href={MARKETING_URL} />
+          <AuthEyebrow>Password reset</AuthEyebrow>
           <h1
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            Reset your password.
+            Reset your password
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"

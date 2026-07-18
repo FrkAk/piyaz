@@ -94,10 +94,10 @@ export function InviteCodePanel({
           </p>
           <p className="mt-0.5 text-sm text-text-primary">
             {isRevoked
-              ? "Revoked — rotate to issue a new code"
+              ? "Revoked. Rotate to issue a new code"
               : inviteCode
                 ? "One-tap join code for new teammates"
-                : "No code yet — open to mint one"}
+                : "No code yet. Open to mint one"}
           </p>
         </div>
         <motion.svg

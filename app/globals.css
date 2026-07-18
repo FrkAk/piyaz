@@ -183,6 +183,11 @@ textarea:focus-visible,
 select:focus-visible {
   outline: none;
 }
+/* PasswordInput owns password visibility; hide the browser-native reveal. */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
 
 html {
   background-color: var(--color-base);

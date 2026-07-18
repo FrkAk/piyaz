@@ -19,9 +19,7 @@ import {
   teamFail,
   type TeamActionResult,
 } from "@/lib/actions/team-errors";
-
-const PASSWORD_MIN = 8;
-const PASSWORD_MAX = 128;
+import { PASSWORD_MAX, PASSWORD_MIN } from "@/lib/auth/password-policy";
 
 // Per-PoP enforcement on Workers via the auth binding. The default
 // "actions" slot is per-isolate memory, which a distributed attacker

@@ -219,7 +219,7 @@ function GroupedGrid({ projects, teams }: GroupedGridProps) {
                 </span>
               ) : (
                 <span className="text-xs italic text-text-muted/80">
-                  — no projects yet
+                  no projects yet
                 </span>
               )}
             </header>

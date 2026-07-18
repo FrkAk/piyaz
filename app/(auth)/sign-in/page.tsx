@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { AuthBrand } from "@/components/auth/AuthBrand";
+import { AuthEyebrow } from "@/components/auth/AuthEyebrow";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignInForm } from "@/components/auth/SignInForm";
 import { safeInviteNext } from "@/lib/auth/invite-next";
+import { MARKETING_URL } from "@/lib/config/urls";
 import { isEmailEnabled } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
@@ -36,12 +38,13 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     <AuthShell
       form={
         <>
-          <AuthBrand />
+          <AuthBrand href={MARKETING_URL} />
+          <AuthEyebrow>Sign in</AuthEyebrow>
           <h1
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            One workspace for your team and your agents.
+            One workspace for your team and your agents
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"

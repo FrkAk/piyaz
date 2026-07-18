@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { AuthBrand } from "@/components/auth/AuthBrand";
+import { AuthEyebrow } from "@/components/auth/AuthEyebrow";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignUpForm } from "@/components/auth/SignUpForm";
 import { WaitlistForm } from "@/components/auth/WaitlistForm";
 import { emailVerificationRequired, signupsDisabled } from "@/lib/config/env";
 import { safeInviteNext } from "@/lib/auth/invite-next";
+import { MARKETING_URL } from "@/lib/config/urls";
 import { isEmailEnabled } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
@@ -40,12 +42,15 @@ export default async function SignUpPage({ searchParams }: SignUpPageProps) {
     <AuthShell
       form={
         <>
-          <AuthBrand />
+          <AuthBrand href={MARKETING_URL} />
+          <AuthEyebrow>
+            {SIGNUPS_DISABLED ? "Waitlist" : "Create account"}
+          </AuthEyebrow>
           <h1
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            {SIGNUPS_DISABLED ? "Invite only for now." : "Create an account."}
+            {SIGNUPS_DISABLED ? "Invite only for now" : "Create an account"}
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"

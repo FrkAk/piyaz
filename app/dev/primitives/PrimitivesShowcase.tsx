@@ -248,14 +248,13 @@ export function PrimitivesShowcase() {
               fontSize: 13.5,
             }}
           >
-            Phase 0 design system — every shared primitive in every state.
-            Toggle the theme via the existing app theme to verify light/dark
-            parity.
+            Phase 0 design system: every shared primitive in every state. Toggle
+            the theme via the existing app theme to verify light/dark parity.
           </p>
         </header>
 
         <Section
-          title="Tokens — colour"
+          title="Tokens · colour"
           caption="Surfaces, text, accents, status glyph fills."
         >
           <div
@@ -320,7 +319,7 @@ export function PrimitivesShowcase() {
                 lineHeight: 1.15,
               }}
             >
-              Page H1 — 26 / 600 / -0.01em
+              Page H1 · 26 / 600 / -0.01em
             </p>
             <p
               style={{
@@ -331,10 +330,10 @@ export function PrimitivesShowcase() {
                 lineHeight: 1.2,
               }}
             >
-              Detail title — 22 / 600
+              Detail title · 22 / 600
             </p>
             <p style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
-              Section H2 — 16 / 600
+              Section H2 · 16 / 600
             </p>
             <p
               style={{
@@ -344,7 +343,7 @@ export function PrimitivesShowcase() {
                 lineHeight: 1.55,
               }}
             >
-              Body — 13.5 / 450 with leading 1.55. The agent-native project
+              Body · 13.5 / 450 with leading 1.55. The agent-native project
               graph. Walk into every session knowing what to do next.
             </p>
             <p
@@ -355,7 +354,7 @@ export function PrimitivesShowcase() {
                 color: "var(--color-text-secondary)",
               }}
             >
-              Label — 12 / 500 muted
+              Label · 12 / 500 muted
             </p>
             <p
               style={{
@@ -368,7 +367,7 @@ export function PrimitivesShowcase() {
                 color: "var(--color-text-muted)",
               }}
             >
-              Section label — 11 / 600 mono uppercase 0.08em
+              Section label · 11 / 600 mono uppercase 0.08em
             </p>
             <p
               style={{
@@ -379,7 +378,7 @@ export function PrimitivesShowcase() {
                 letterSpacing: "0.02em",
               }}
             >
-              PYZ-104 — mono 11 / 500
+              PYZ-104 · mono 11 / 500
             </p>
           </div>
         </Section>
@@ -607,7 +606,7 @@ export function PrimitivesShowcase() {
           />
         </Section>
 
-        <Section title="Card" caption="Two examples — plain and hoverable.">
+        <Section title="Card" caption="Two examples: plain and hoverable.">
           <div
             style={{
               display: "grid",

@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { AuthBrand } from "@/components/auth/AuthBrand";
+import { AuthEyebrow } from "@/components/auth/AuthEyebrow";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { AuthLinkButton } from "@/components/auth/AuthLinkButton";
 import { ResetPasswordForm } from "@/components/auth/ResetPasswordForm";
+import { MARKETING_URL } from "@/lib/config/urls";
 
 export const dynamic = "force-dynamic";
 
@@ -31,12 +33,13 @@ export default async function ResetPasswordPage({
     <AuthShell
       form={
         <>
-          <AuthBrand />
+          <AuthBrand href={MARKETING_URL} />
+          <AuthEyebrow>Password reset</AuthEyebrow>
           <h1
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}
           >
-            {invalid ? "This link has expired." : "Choose a new password."}
+            {invalid ? "This link has expired" : "Choose a new password"}
           </h1>
           <p
             className="mb-7 mt-2.5 text-[13.5px] text-text-muted"

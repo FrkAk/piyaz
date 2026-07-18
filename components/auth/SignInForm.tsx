@@ -69,7 +69,7 @@ export function SignInForm({
       <AuthInput
         label="Email"
         type="email"
-        autoComplete="email"
+        autoComplete="username"
         required
         value={email}
         onChange={(event) => setEmail(event.target.value)}
@@ -80,7 +80,6 @@ export function SignInForm({
         type="password"
         autoComplete="current-password"
         required
-        minLength={8}
         value={password}
         onChange={(event) => setPassword(event.target.value)}
         placeholder="••••••••"

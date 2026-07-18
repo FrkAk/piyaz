@@ -4,6 +4,7 @@ import { useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 import { initials } from "@/lib/ui/initials";
 import { teamAvatarGradient } from "@/lib/ui/team-avatar";
 import { formatAbsolute } from "@/lib/ui/relative-time";
@@ -13,10 +14,10 @@ import {
   updateProfileAction,
 } from "@/lib/actions/profile";
 import { changePasswordAction } from "@/lib/actions/password";
+import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
 
 const NAME_MAX = 80;
-const PASSWORD_MIN = 8;
 
 /** Legal documents linked from the account tab, opened in a new tab. */
 const LEGAL_DOC_LINKS = [
@@ -141,7 +142,7 @@ export function AccountTab({
               disabled
               className="opacity-80"
             >
-              <span title="Photo upload — coming soon">Upload photo</span>
+              <span title="Photo upload coming soon">Upload photo</span>
             </Button>
             <p className="mt-1.5 text-[11.5px] text-text-muted">
               JPG or PNG, max 2MB
@@ -174,7 +175,7 @@ export function AccountTab({
                 title="Email is your sign-in identity and can't be changed here."
               />
               <p className="mt-1 text-[11px] text-text-muted">
-                Sign-in identity — managed by your auth provider.
+                Your sign-in identity is managed by your auth provider.
               </p>
             </label>
           ) : null}
@@ -310,7 +311,7 @@ function EmailSection({ email }: { email: string }) {
           <p className="text-[13px] font-semibold text-text-primary">Email</p>
           <p className="mt-0.5 truncate text-[13px] text-text-muted">{email}</p>
           <p className="mt-1.5 text-[11.5px] text-text-muted">
-            Sign-in identity — changing it requires approval from this address.
+            Changing your sign-in identity requires approval from this address.
           </p>
         </div>
         {!open ? (
@@ -377,16 +378,21 @@ function EmailSection({ email }: { email: string }) {
                 ) : null}
               </label>
 
-              <label className="block">
-                <span className={FIELD_LABEL_CLASS}>Current password</span>
-                <input
-                  type="password"
+              <div>
+                <label
+                  htmlFor={`${fieldId}-current`}
+                  className={FIELD_LABEL_CLASS}
+                >
+                  Current password
+                </label>
+                <PasswordInput
+                  id={`${fieldId}-current`}
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   autoComplete="current-password"
                   className={INPUT_CLASS}
                 />
-              </label>
+              </div>
 
               <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
                 <p className="min-w-0 text-[11.5px] leading-relaxed text-text-muted">
@@ -562,25 +568,32 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
               onKeyDown={handleKeyDown}
               className="mt-5 space-y-4"
             >
-              <label className="block">
-                <span className={FIELD_LABEL_CLASS}>Current password</span>
-                <input
-                  type="password"
+              <div>
+                <label
+                  htmlFor={`${fieldId}-current`}
+                  className={FIELD_LABEL_CLASS}
+                >
+                  Current password
+                </label>
+                <PasswordInput
+                  id={`${fieldId}-current`}
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   autoComplete="current-password"
                   autoFocus
                   className={INPUT_CLASS}
                 />
-              </label>
+              </div>
 
-              <label className="block">
-                <span className={FIELD_LABEL_CLASS}>New password</span>
+              <div>
+                <label htmlFor={`${fieldId}-new`} className={FIELD_LABEL_CLASS}>
+                  New password
+                </label>
                 {/* No maxLength: clipping a pasted 140-char generated
                     password here would silently store the truncated form.
                     The zod max in changePasswordAction rejects loudly. */}
-                <input
-                  type="password"
+                <PasswordInput
+                  id={`${fieldId}-new`}
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
                   autoComplete="new-password"
@@ -605,15 +618,20 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                     id={`${fieldId}-new-hint`}
                     className="mt-1 text-[11px] text-text-muted"
                   >
-                    At least {PASSWORD_MIN} characters.
+                    {PASSWORD_HINT}
                   </p>
                 )}
-              </label>
+              </div>
 
-              <label className="block">
-                <span className={FIELD_LABEL_CLASS}>Confirm new password</span>
-                <input
-                  type="password"
+              <div>
+                <label
+                  htmlFor={`${fieldId}-confirm`}
+                  className={FIELD_LABEL_CLASS}
+                >
+                  Confirm new password
+                </label>
+                <PasswordInput
+                  id={`${fieldId}-confirm`}
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   autoComplete="new-password"
@@ -632,7 +650,7 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                     Passwords don&apos;t match.
                   </p>
                 ) : null}
-              </label>
+              </div>
 
               <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
                 <p className="min-w-0 text-[11.5px] leading-relaxed text-text-muted">
