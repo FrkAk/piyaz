@@ -398,6 +398,27 @@ export function IconLock(props: IconProps) {
   );
 }
 
+/** Eye — reveal a masked value. */
+export function IconEye(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M1.5 8s2.25-4.5 6.5-4.5S14.5 8 14.5 8s-2.25 4.5-6.5 4.5S1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="2" />
+    </IconBase>
+  );
+}
+
+/** Eye with slash — mask a revealed value. */
+export function IconEyeOff(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M1.5 8s2.25-4.5 6.5-4.5S14.5 8 14.5 8s-2.25 4.5-6.5 4.5S1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="2" />
+      <path d="M3 2.5l10 11" />
+    </IconBase>
+  );
+}
+
 /** Envelope — email delivery. */
 export function IconMail(props: IconProps) {
   return (

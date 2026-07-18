@@ -21,6 +21,7 @@ import {
 import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
+import { PASSWORD_MAX, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import {
   countOwnedOrganizations,
   findOrgMemberUserIdsAsAdmin,
@@ -151,6 +152,8 @@ export function createAuth() {
     secondaryStorage: getKvSecondaryStorage(),
     emailAndPassword: {
       enabled: true,
+      minPasswordLength: PASSWORD_MIN,
+      maxPasswordLength: PASSWORD_MAX,
       requireEmailVerification: emailVerificationRequired(),
       revokeSessionsOnPasswordReset: true,
       disableSignUp: signupsDisabled(),

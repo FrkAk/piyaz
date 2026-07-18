@@ -25,6 +25,7 @@ import {
   planOwnedOrgDeletion,
   type AccountExport,
 } from "@/lib/data/account";
+import { PASSWORD_MAX } from "@/lib/auth/password-policy";
 
 const NAME_MAX = 80;
 
@@ -84,7 +85,6 @@ export async function updateProfileAction(input: {
 }
 
 const EMAIL_MAX = 254;
-const PASSWORD_MAX = 128;
 
 // Same per-PoP `auth` binding and 5/60 bounds as the password action: the
 // current-password verify is the same scrypt brute-force surface, and any

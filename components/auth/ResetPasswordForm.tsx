@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { resetPassword } from "@/lib/auth-client";
+import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { AuthLinkButton } from "./AuthLinkButton";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
@@ -107,10 +108,10 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
         type="password"
         autoComplete="new-password"
         required
-        minLength={8}
+        minLength={PASSWORD_MIN}
         value={password}
         onChange={(event) => setPassword(event.target.value)}
-        hint="At least 8 characters."
+        hint={PASSWORD_HINT}
         placeholder="••••••••"
       />
 

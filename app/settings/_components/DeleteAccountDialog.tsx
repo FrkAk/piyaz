@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 import { useModalChrome } from "@/hooks/useModalChrome";
 import { deleteAccountAction } from "@/lib/actions/profile";
 
@@ -212,8 +213,7 @@ function DeleteAccountDialogBody({
           <span className="mb-1 block text-xs font-medium text-text-secondary">
             Your password (leave blank if you sign in with a provider)
           </span>
-          <input
-            type="password"
+          <PasswordInput
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             disabled={pending}

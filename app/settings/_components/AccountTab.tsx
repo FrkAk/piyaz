@@ -4,6 +4,7 @@ import { useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 import { initials } from "@/lib/ui/initials";
 import { teamAvatarGradient } from "@/lib/ui/team-avatar";
 import { formatAbsolute } from "@/lib/ui/relative-time";
@@ -13,10 +14,10 @@ import {
   updateProfileAction,
 } from "@/lib/actions/profile";
 import { changePasswordAction } from "@/lib/actions/password";
+import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
 
 const NAME_MAX = 80;
-const PASSWORD_MIN = 8;
 
 /** Legal documents linked from the account tab, opened in a new tab. */
 const LEGAL_DOC_LINKS = [
@@ -379,8 +380,7 @@ function EmailSection({ email }: { email: string }) {
 
               <label className="block">
                 <span className={FIELD_LABEL_CLASS}>Current password</span>
-                <input
-                  type="password"
+                <PasswordInput
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   autoComplete="current-password"
@@ -564,8 +564,7 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
             >
               <label className="block">
                 <span className={FIELD_LABEL_CLASS}>Current password</span>
-                <input
-                  type="password"
+                <PasswordInput
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   autoComplete="current-password"
@@ -579,8 +578,7 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                 {/* No maxLength: clipping a pasted 140-char generated
                     password here would silently store the truncated form.
                     The zod max in changePasswordAction rejects loudly. */}
-                <input
-                  type="password"
+                <PasswordInput
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
                   autoComplete="new-password"
@@ -605,15 +603,14 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                     id={`${fieldId}-new-hint`}
                     className="mt-1 text-[11px] text-text-muted"
                   >
-                    At least {PASSWORD_MIN} characters.
+                    {PASSWORD_HINT}
                   </p>
                 )}
               </label>
 
               <label className="block">
                 <span className={FIELD_LABEL_CLASS}>Confirm new password</span>
-                <input
-                  type="password"
+                <PasswordInput
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   autoComplete="new-password"
