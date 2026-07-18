@@ -128,7 +128,7 @@ async function verifyMcpAuth(request: Request) {
   try {
     return await verifyJwsAccessToken(token, {
       jwksFetch: fetchJwksInProcess,
-      verifyOptions: { audience: audiences, issuer },
+      verifyOptions: { audience: audiences, issuer, algorithms: ["EdDSA"] },
     });
   } catch (err) {
     const classification = classifyVerifyError(err);

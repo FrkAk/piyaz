@@ -10,6 +10,20 @@ import { teamInviteCodes } from "@/lib/db/team-schema";
 /** Full invite-code row, inferred from the schema. */
 export type InviteCodeRow = typeof teamInviteCodes.$inferSelect;
 
+/** Days a freshly issued or rotated invite code stays valid. */
+const INVITE_CODE_TTL_DAYS = 7;
+
+/**
+ * SQL expression for a fresh code's expiry, computed off the database
+ * clock so it is immune to app/server clock skew. Applied on both create
+ * and rotate so no code is ever open-ended.
+ *
+ * @returns A `timestamptz` SQL expression `INVITE_CODE_TTL_DAYS` days ahead.
+ */
+function inviteCodeExpiresAt() {
+  return sql`NOW() + (${INVITE_CODE_TTL_DAYS} * INTERVAL '1 day')`;
+}
+
 /**
  * Look up the existing invite-code row for a team.
  *
@@ -51,7 +65,8 @@ export type CreateInviteCodeInput = {
  * `createdBy` and the GUC identity both come from `ctx.userId` — a branded
  * value the auth layer minted from `requireSession()`. The action layer
  * gates with `isOrgAdmin(organizationId)`, and the RESTRICTIVE write
- * policy enforces the same predicate at the DB.
+ * policy enforces the same predicate at the DB. `expiresAt` is set so the
+ * code is time-bounded from creation.
  *
  * @param ctx - Verified caller context.
  * @param input - Team UUID and generated code.
@@ -68,6 +83,7 @@ export async function createTeamInviteCode(
         organizationId: input.organizationId,
         code: input.code,
         createdBy: ctx.userId,
+        expiresAt: inviteCodeExpiresAt(),
       })
       .returning();
     return row;
@@ -82,8 +98,8 @@ export type RotateInviteCodeInput = {
 
 /**
  * Rotate the team's existing code: replace `code`, reset `use_count`, clear
- * `revoked_at`. Old codes stop working immediately because lookups are by
- * `code` (UNIQUE).
+ * `revoked_at`, and refresh `expires_at`. Old codes stop working immediately
+ * because lookups are by `code` (UNIQUE).
  *
  * @param ctx - Verified caller context.
  * @param input - Team UUID and freshly generated code.
@@ -100,6 +116,7 @@ export async function rotateTeamInviteCode(
         code: input.newCode,
         useCount: 0,
         revokedAt: null,
+        expiresAt: inviteCodeExpiresAt(),
         updatedAt: sql`NOW()`,
       })
       .where(eq(teamInviteCodes.organizationId, input.organizationId))

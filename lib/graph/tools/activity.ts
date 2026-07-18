@@ -11,6 +11,11 @@ import {
 import { formatActivityPage } from "@/lib/graph/format-responses";
 import type { AuthContext } from "@/lib/auth/context";
 import {
+  assertNoteAccess,
+  assertProjectAccess,
+  assertTaskAccess,
+} from "@/lib/auth/authorization";
+import {
   ok,
   fail,
   requireNoteId,
@@ -64,23 +69,17 @@ export async function handleActivity(
       const projectId = p.project
         ? await requireProjectId(ctx, p.project)
         : undefined;
-      page = await listNoteActivity(
-        ctx,
-        await requireNoteId(ctx, p.note, projectId),
-        opts,
-      );
+      const noteId = await requireNoteId(ctx, p.note, projectId);
+      await assertNoteAccess(noteId, ctx);
+      page = await listNoteActivity(ctx, noteId, opts);
     } else if (p.project) {
-      page = await listProjectActivity(
-        ctx,
-        await requireProjectId(ctx, p.project),
-        opts,
-      );
+      const projectId = await requireProjectId(ctx, p.project);
+      await assertProjectAccess(projectId, ctx);
+      page = await listProjectActivity(ctx, projectId, opts);
     } else {
-      page = await listTaskActivity(
-        ctx,
-        await requireTaskId(ctx, p.task as string),
-        opts,
-      );
+      const taskId = await requireTaskId(ctx, p.task as string);
+      await assertTaskAccess(taskId, ctx);
+      page = await listTaskActivity(ctx, taskId, opts);
     }
     return ok(formatActivityPage(page.events, page.nextCursor));
   } catch (e) {

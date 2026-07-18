@@ -4,7 +4,11 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
-import { evaluateRedirect, safeLinkHost } from "@/lib/auth/safe-redirect";
+import {
+  evaluateRedirect,
+  isNavigableRedirectUrl,
+  safeLinkHost,
+} from "@/lib/auth/safe-redirect";
 import { Avatar } from "@/components/shared/Avatar";
 import { Button } from "@/components/shared/Button";
 import { MonoId } from "@/components/shared/MonoId";
@@ -196,8 +200,14 @@ export default function ConsentPage() {
       });
 
       if (res.data?.url) {
-        const isHttp = /^https?:/i.test(res.data.url);
-        window.location.href = res.data.url;
+        const url = res.data.url;
+        if (!isNavigableRedirectUrl(url)) {
+          setError("Refusing to redirect to an unsupported destination.");
+          setSubmitting(false);
+          return;
+        }
+        const isHttp = /^https?:/i.test(url);
+        window.location.href = url;
         if (!isHttp) {
           setDone(true);
           setSubmitting(false);

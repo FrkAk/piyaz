@@ -29,6 +29,7 @@ export type TeamActionFailureCode =
   | "email_not_configured"
   | "rate_limited"
   | "dpa_not_accepted"
+  | "organization_limit_reached"
   | "unknown";
 
 /** Discriminated result. `T = void` shrinks to `{ ok: true }` (no `data`). */
@@ -56,7 +57,7 @@ export const TEAM_ACTION_MESSAGES: Record<TeamActionFailureCode, string> = {
   membership_limit_reached:
     "This team has reached its member limit. Contact the owner.",
   cannot_leave_only_owner:
-    "You're the only owner — promote another member first, then leave.",
+    "You're the only owner. Promote another member to owner first, or delete the team instead.",
   cannot_delete_sole_owner:
     "You solely own a team that still has other members. Transfer ownership or delete that team first, then delete your account.",
   slug_taken: "That URL slug is already in use. Try a different one.",
@@ -68,6 +69,8 @@ export const TEAM_ACTION_MESSAGES: Record<TeamActionFailureCode, string> = {
   rate_limited: "Too many attempts. Please wait a moment and try again.",
   dpa_not_accepted:
     "You must accept the data processing agreement to create a team.",
+  organization_limit_reached:
+    "You've reached the limit of teams you can own. Delete or leave a team before creating another.",
   unknown: "Something went wrong. Please try again.",
 };
 
@@ -166,6 +169,9 @@ export function mapBetterAuthError(err: unknown): TeamActionFailureCode {
     // organization/create rejected by the DPA consent gate in lib/auth.ts.
     case "DPA_NOT_ACCEPTED":
       return "dpa_not_accepted";
+    // organization/create rejected by the owned-org ceiling in lib/auth.ts.
+    case "ORGANIZATION_LIMIT_REACHED":
+      return "organization_limit_reached";
     default:
       if (FORBIDDEN_CODES.has(code)) return "forbidden";
       if (code.startsWith("YOU_ARE_NOT_ALLOWED_TO_")) {

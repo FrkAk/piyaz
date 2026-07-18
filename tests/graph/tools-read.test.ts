@@ -63,6 +63,35 @@ test("search never returns another org's tasks", async () => {
   expect(text).toContain("No results");
 });
 
+test("get denies another org's task addressed by raw UUID", async () => {
+  const a = await seedUserOrgProject("TGETXORGA");
+  const b = await seedUserOrgProject("TGETXORGB");
+  const task = await createTask(makeAuthContext(a.userId), {
+    projectId: a.projectId,
+    title: "Cross-team get probe",
+  });
+
+  const result = await handleGet({ task: task.id }, makeAuthContext(b.userId));
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toContain("not found in any team");
+});
+
+test("activity denies another org's task addressed by raw UUID", async () => {
+  const a = await seedUserOrgProject("TACTXORGA");
+  const b = await seedUserOrgProject("TACTXORGB");
+  const task = await createTask(makeAuthContext(a.userId), {
+    projectId: a.projectId,
+    title: "Cross-team activity probe",
+  });
+
+  const result = await handleActivity(
+    { task: task.id },
+    makeAuthContext(b.userId),
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toContain("not found in any team");
+});
+
 test("search scoped by project identifier carries derived state", async () => {
   const fx = await seedUserOrgProject("TSEARCHSC");
   const ctx = makeAuthContext(fx.userId);

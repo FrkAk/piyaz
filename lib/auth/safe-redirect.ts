@@ -23,6 +23,31 @@ export const SAFE_REDIRECT_SCHEMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Decide whether a resolved redirect URL is safe to hand to
+ * `window.location.href`. Accepts only `http(s)` and the audited custom
+ * schemes in {@link SAFE_REDIRECT_SCHEMES}; every other scheme
+ * (`javascript:`, `data:`, `blob:`, ...) and any unparseable value is
+ * rejected. This is the navigation gate — distinct from
+ * {@link evaluateRedirect}, which only computes the display warning.
+ *
+ * @param url - The final redirect URL returned by the OAuth provider.
+ * @returns True when the URL is safe to navigate to.
+ */
+export function isNavigableRedirectUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === "http:" ||
+    parsed.protocol === "https:" ||
+    SAFE_REDIRECT_SCHEMES.has(parsed.protocol)
+  );
+}
+
+/**
  * Result of evaluating the OAuth `redirect_uri` against the safe-redirect
  * allowlist. Carries the user-facing host string so the page renders the
  * same value in both the "Redirecting to" row and the warning banner.

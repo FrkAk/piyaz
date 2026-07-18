@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { evaluateRedirect, safeLinkHost } from "@/lib/auth/safe-redirect";
+import {
+  evaluateRedirect,
+  isNavigableRedirectUrl,
+  safeLinkHost,
+} from "@/lib/auth/safe-redirect";
 
 test("evaluateRedirect: null URI fails closed with (missing)", () => {
   const result = evaluateRedirect(null, "piyaz.com");
@@ -103,4 +107,36 @@ test("safeLinkHost: returns null for data: scheme", () => {
 
 test("safeLinkHost: returns null for vscode: scheme (not a web link)", () => {
   expect(safeLinkHost("vscode://callback")).toBeNull();
+});
+
+test("isNavigableRedirectUrl: https target is navigable", () => {
+  expect(isNavigableRedirectUrl("https://app.example.com/cb?code=abc")).toBe(
+    true,
+  );
+});
+
+test("isNavigableRedirectUrl: http target is navigable", () => {
+  expect(isNavigableRedirectUrl("http://127.0.0.1:54321/cb")).toBe(true);
+});
+
+test("isNavigableRedirectUrl: audited custom schemes are navigable", () => {
+  expect(isNavigableRedirectUrl("vscode://mcp-callback?code=abc")).toBe(true);
+  expect(isNavigableRedirectUrl("cursor://callback")).toBe(true);
+  expect(isNavigableRedirectUrl("claude://oauth/return")).toBe(true);
+});
+
+test("isNavigableRedirectUrl: javascript: scheme is rejected", () => {
+  expect(isNavigableRedirectUrl("javascript:alert(document.domain)")).toBe(
+    false,
+  );
+});
+
+test("isNavigableRedirectUrl: data: scheme is rejected", () => {
+  expect(isNavigableRedirectUrl("data:text/html,<script>x</script>")).toBe(
+    false,
+  );
+});
+
+test("isNavigableRedirectUrl: unparseable value is rejected", () => {
+  expect(isNavigableRedirectUrl("not a url")).toBe(false);
 });

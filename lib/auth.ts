@@ -21,7 +21,10 @@ import {
 import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
-import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
+import {
+  countOwnedOrganizations,
+  findOrgMemberUserIdsAsAdmin,
+} from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
@@ -43,6 +46,14 @@ import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
+
+/** Ceiling on how many organizations a single user may own. Enforced at
+ *  organization-create time in the un-bypassable `/organization/*` hook. */
+const MAX_OWNED_ORGANIZATIONS = 10;
+
+/** Ceiling on members per organization, passed to Better Auth's
+ *  `organization` plugin instead of relying on the library default. */
+const ORGANIZATION_MEMBERSHIP_LIMIT = 50;
 
 /**
  * Canonical set of OAuth scopes this provider grants. Single source of
@@ -238,6 +249,7 @@ export function createAuth() {
       jwt(),
       organization({
         ac,
+        membershipLimit: ORGANIZATION_MEMBERSHIP_LIMIT,
         roles: { owner, admin, member: memberRole },
         // generateId:false (advanced.database above) would otherwise flip
         // BA's verified-email requirement ON for get/accept/reject-invitation,
@@ -536,6 +548,15 @@ export function createAuth() {
           }
         }
         if (ctx.path !== "/organization/create") return;
+        if (session) {
+          const ownedCount = await countOwnedOrganizations(session.user.id);
+          if (ownedCount >= MAX_OWNED_ORGANIZATIONS) {
+            throw new APIError("FORBIDDEN", {
+              message: TEAM_ACTION_MESSAGES.organization_limit_reached,
+              code: "ORGANIZATION_LIMIT_REACHED",
+            });
+          }
+        }
         const body = ctx.body as { dpaAccepted?: unknown } | undefined;
         if (body?.dpaAccepted !== true) {
           throw new APIError("BAD_REQUEST", {

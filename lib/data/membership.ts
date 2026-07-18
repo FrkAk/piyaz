@@ -136,6 +136,24 @@ export async function userHasAnyMembership(userId: string): Promise<boolean> {
   return rows[0]?.current_user_has_any_membership ?? false;
 }
 
+/**
+ * Count the organizations the caller owns. Reads the caller's memberships
+ * via `current_user_orgs()` and tallies the owner-role rows. Drives the
+ * per-user owned-org ceiling at organization-create time.
+ *
+ * @param userId - Verified user id.
+ * @returns Number of organizations where the caller's role includes owner.
+ */
+export async function countOwnedOrganizations(userId: string): Promise<number> {
+  const rows = await withUserContext(userId, async (tx) =>
+    executeRaw<{ member_role: string }>(
+      tx,
+      sql`SELECT member_role FROM public.current_user_orgs()`,
+    ),
+  );
+  return rows.filter((r) => r.member_role.includes("owner")).length;
+}
+
 /** Member row returned to admin flows. `organizationId` lets the action layer
  * verify the row belongs to the targeted team. */
 export type VisibleMember = {
@@ -419,6 +437,165 @@ export async function demoteMemberWithGuard(
       if (!isBetterAuthError) throw err;
       return { kind: "callback_error", err };
     }
+  });
+}
+
+/** Matches a canonical lowercase UUID; screens `memberIdOrEmail` before the
+ *  `::uuid` cast in {@link findMemberByIdTx}. */
+const MEMBER_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Read the caller's own role in an org inside an existing tx frame.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param organizationId - UUID of the org.
+ * @returns The caller's role, or null when they are not a member.
+ */
+async function currentUserOrgRoleTx(
+  tx: Tx,
+  organizationId: string,
+): Promise<string | null> {
+  const rows = await executeRaw<{ current_user_org_role: string | null }>(
+    tx,
+    sql`SELECT public.current_user_org_role(${organizationId}::uuid)`,
+  );
+  return rows[0]?.current_user_org_role ?? null;
+}
+
+/**
+ * Resolve whether removing `memberIdOrEmail` would take out an owner, read
+ * inside the caller's tx frame. Returns `true`/`false` for a resolvable
+ * member-id target, and `null` for an email target — RLS does not disclose
+ * member emails, so ownership cannot be confirmed and the caller must fail
+ * closed.
+ *
+ * @param tx - Active RLS transaction handle.
+ * @param organizationId - UUID of the org.
+ * @param memberIdOrEmail - Target member id or email.
+ * @param roleIncludesOwner - Predicate deciding if a role string is owner.
+ * @returns True/false when resolvable, null when the target is unresolvable.
+ */
+async function targetRemovalHitsOwner(
+  tx: Tx,
+  organizationId: string,
+  memberIdOrEmail: string,
+  roleIncludesOwner: (role: string) => boolean,
+): Promise<boolean | null> {
+  if (!MEMBER_UUID_PATTERN.test(memberIdOrEmail)) return null;
+  const target = await findMemberByIdTx(tx, memberIdOrEmail);
+  if (!target || target.organizationId !== organizationId) return false;
+  return roleIncludesOwner(target.role);
+}
+
+/**
+ * Invoke the removal callback, classifying Better Auth API errors as
+ * `callback_error` (mapped by the action layer) and rethrowing anything
+ * else so the transaction rolls back.
+ *
+ * @param remove - Callback performing the actual Better Auth removal.
+ * @returns Outcome discriminating success from a Better Auth API error.
+ * @throws Whatever `remove` throws when not a Better Auth API error.
+ */
+async function runGuardedRemoval(
+  remove: () => Promise<void>,
+): Promise<DemoteOutcome> {
+  try {
+    await remove();
+    return { kind: "ok" };
+  } catch (err) {
+    const isBetterAuthError =
+      (err as { body?: { code?: string } } | null)?.body?.code !== undefined;
+    if (!isBetterAuthError) throw err;
+    return { kind: "callback_error", err };
+  }
+}
+
+/**
+ * Remove a member under the per-org owner advisory lock so concurrent
+ * removals cannot race a two-owner team down to zero owners. Serializes on
+ * the same lock as {@link demoteMemberWithGuard}: when the owner set has
+ * more than one member the removal cannot orphan the team and proceeds;
+ * otherwise it rejects unless the target is provably not that sole owner.
+ * The `remove` callback performs the Better Auth write on its own
+ * autocommit connection (separate connection — no deadlock).
+ *
+ * @param userId - Verified caller user id.
+ * @param input - Target org, member id-or-email, and owner-role predicate.
+ * @param remove - Callback performing the actual removal.
+ * @returns Outcome discriminating success, the last-owner block, and callback errors.
+ * @throws Whatever `remove` throws when not a Better Auth API error.
+ */
+export async function guardedRemoveMember(
+  userId: string,
+  input: {
+    organizationId: string;
+    memberIdOrEmail: string;
+    roleIncludesOwner: (role: string) => boolean;
+  },
+  remove: () => Promise<void>,
+): Promise<DemoteOutcome> {
+  return withUserContext(userId, async (tx) => {
+    await acquireOwnerDemoteLock(tx, input.organizationId);
+
+    const roles = await listMemberRolesTx(tx, input.organizationId);
+    const ownerCount = roles.filter((m) =>
+      input.roleIncludesOwner(m.role),
+    ).length;
+
+    if (ownerCount <= 1) {
+      const hitsOwner = await targetRemovalHitsOwner(
+        tx,
+        input.organizationId,
+        input.memberIdOrEmail,
+        input.roleIncludesOwner,
+      );
+      if (hitsOwner !== false) {
+        return { kind: "fail", code: "cannot_leave_only_owner" };
+      }
+    }
+
+    return runGuardedRemoval(remove);
+  });
+}
+
+/**
+ * Leave an org under the per-org owner advisory lock. Mirrors
+ * {@link guardedRemoveMember} for the self-removal path: when the caller is
+ * the sole owner the leave is rejected so the team is never orphaned. The
+ * `leave` callback performs the Better Auth write on its own autocommit
+ * connection.
+ *
+ * @param userId - Verified caller user id.
+ * @param input - Target org and owner-role predicate.
+ * @param leave - Callback performing the actual leave.
+ * @returns Outcome discriminating success, the last-owner block, and callback errors.
+ * @throws Whatever `leave` throws when not a Better Auth API error.
+ */
+export async function guardedLeaveTeam(
+  userId: string,
+  input: {
+    organizationId: string;
+    roleIncludesOwner: (role: string) => boolean;
+  },
+  leave: () => Promise<void>,
+): Promise<DemoteOutcome> {
+  return withUserContext(userId, async (tx) => {
+    await acquireOwnerDemoteLock(tx, input.organizationId);
+
+    const roles = await listMemberRolesTx(tx, input.organizationId);
+    const ownerCount = roles.filter((m) =>
+      input.roleIncludesOwner(m.role),
+    ).length;
+
+    if (ownerCount <= 1) {
+      const callerRole = await currentUserOrgRoleTx(tx, input.organizationId);
+      if (callerRole && input.roleIncludesOwner(callerRole)) {
+        return { kind: "fail", code: "cannot_leave_only_owner" };
+      }
+    }
+
+    return runGuardedRemoval(leave);
   });
 }
 

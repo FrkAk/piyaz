@@ -1,5 +1,5 @@
 import { getAuthContext } from "@/lib/auth/context";
-import { ForbiddenError } from "@/lib/auth/authorization";
+import { assertTaskAccess, ForbiddenError } from "@/lib/auth/authorization";
 import { getTaskActivityHead, listTaskActivity } from "@/lib/data/activity";
 import { conditionalRespond, etagMatches } from "@/lib/api/conditional";
 import { internalError } from "@/lib/api/error";
@@ -50,6 +50,7 @@ async function handle(req: Request, taskId: string): Promise<Response> {
       }
     }
 
+    await assertTaskAccess(taskId, ctx);
     const limitRaw = url.searchParams.get("limit");
     const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
     const page = await listTaskActivity(ctx, taskId, {

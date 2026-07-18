@@ -5,8 +5,10 @@ import { appUserConnect, seedUserOrgProject } from "@/tests/setup/seed";
 import { expectQueryRejects } from "@/tests/setup/expect-query";
 import { makeAuthContext } from "@/lib/auth/context";
 import {
+  createTeamInviteCode,
   releaseInviteCodeSlot,
   reserveInviteCodeSlot,
+  rotateTeamInviteCode,
 } from "@/lib/data/team-invite-code";
 
 /**
@@ -320,6 +322,60 @@ describe("team_invite_code RLS — admin-only writes", () => {
     } finally {
       await verify.end({ timeout: 5 });
     }
+  });
+
+  test("createTeamInviteCode sets a ~7-day expiry", async () => {
+    const fx = await seedUserOrgProject("ic-expiry-create");
+    const row = await createTeamInviteCode(makeAuthContext(fx.userId), {
+      organizationId: fx.organizationId,
+      code: "EXPIRY-CREATE",
+    });
+    expect(row.expiresAt).not.toBeNull();
+    const ms = row.expiresAt!.getTime() - Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    expect(ms).toBeGreaterThan(6 * day);
+    expect(ms).toBeLessThan(8 * day);
+  });
+
+  test("rotateTeamInviteCode refreshes an already-expired code's expiry", async () => {
+    const fx = await seedUserOrgProject("ic-expiry-rotate");
+    const seed = superuserPool();
+    try {
+      await seed`
+        INSERT INTO team_invite_code (organization_id, code, created_by, expires_at)
+        VALUES (${fx.organizationId}, 'STALE-CODE', ${fx.userId}, NOW() - INTERVAL '1 hour')
+      `;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const rotated = await rotateTeamInviteCode(makeAuthContext(fx.userId), {
+      organizationId: fx.organizationId,
+      newCode: "FRESH-CODE",
+    });
+    expect(rotated).not.toBeNull();
+    expect(rotated!.expiresAt).not.toBeNull();
+    expect(rotated!.expiresAt!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  test("reserveInviteCodeSlot rejects an expired code", async () => {
+    const owner = await seedUserOrgProject("ic-expired-owner");
+    const joiner = await seedUserOrgProject("ic-expired-joiner");
+    const seed = superuserPool();
+    try {
+      await seed`
+        INSERT INTO team_invite_code (organization_id, code, created_by, expires_at)
+        VALUES (${owner.organizationId}, 'EXPIRED-ONE', ${owner.userId}, NOW() - INTERVAL '1 hour')
+      `;
+    } finally {
+      await seed.end({ timeout: 5 });
+    }
+
+    const reserved = await reserveInviteCodeSlot(
+      makeAuthContext(joiner.userId),
+      "EXPIRED-ONE",
+    );
+    expect(reserved).toBeNull();
   });
 
   test("regular member CANNOT SELECT team_invite_code rows via direct SQL", async () => {
