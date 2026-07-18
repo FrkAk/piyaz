@@ -1,0 +1,2 @@
+ALTER TABLE "note_folders" ADD CONSTRAINT "note_folders_path_nfc_check" CHECK ("note_folders"."path" IS NFC NORMALIZED);--> statement-breakpoint
+ALTER TABLE "notes" ADD CONSTRAINT "notes_folder_nfc_check" CHECK ("notes"."folder" IS NFC NORMALIZED);

@@ -527,6 +527,7 @@ export const notes = pgTable(
       "notes_folder_len_check",
       sql`char_length(${t.folder}) <= ${sqlInt(NOTE_FOLDER_MAX_CHARS)}`,
     ),
+    check("notes_folder_nfc_check", sql`${t.folder} IS NFC NORMALIZED`),
   ],
 ).enableRLS();
 
@@ -564,6 +565,7 @@ export const noteFolders = pgTable(
       "note_folders_path_len_check",
       sql`char_length(${t.path}) <= ${sqlInt(NOTE_FOLDER_MAX_CHARS)}`,
     ),
+    check("note_folders_path_nfc_check", sql`${t.path} IS NFC NORMALIZED`),
   ],
 ).enableRLS();
 
