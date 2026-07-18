@@ -378,15 +378,21 @@ function EmailSection({ email }: { email: string }) {
                 ) : null}
               </label>
 
-              <label className="block">
-                <span className={FIELD_LABEL_CLASS}>Current password</span>
+              <div>
+                <label
+                  htmlFor={`${fieldId}-current`}
+                  className={FIELD_LABEL_CLASS}
+                >
+                  Current password
+                </label>
                 <PasswordInput
+                  id={`${fieldId}-current`}
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   autoComplete="current-password"
                   className={INPUT_CLASS}
                 />
-              </label>
+              </div>
 
               <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
                 <p className="min-w-0 text-[11.5px] leading-relaxed text-text-muted">
@@ -562,23 +568,32 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
               onKeyDown={handleKeyDown}
               className="mt-5 space-y-4"
             >
-              <label className="block">
-                <span className={FIELD_LABEL_CLASS}>Current password</span>
+              <div>
+                <label
+                  htmlFor={`${fieldId}-current`}
+                  className={FIELD_LABEL_CLASS}
+                >
+                  Current password
+                </label>
                 <PasswordInput
+                  id={`${fieldId}-current`}
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   autoComplete="current-password"
                   autoFocus
                   className={INPUT_CLASS}
                 />
-              </label>
+              </div>
 
-              <label className="block">
-                <span className={FIELD_LABEL_CLASS}>New password</span>
+              <div>
+                <label htmlFor={`${fieldId}-new`} className={FIELD_LABEL_CLASS}>
+                  New password
+                </label>
                 {/* No maxLength: clipping a pasted 140-char generated
                     password here would silently store the truncated form.
                     The zod max in changePasswordAction rejects loudly. */}
                 <PasswordInput
+                  id={`${fieldId}-new`}
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
                   autoComplete="new-password"
@@ -606,11 +621,17 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                     {PASSWORD_HINT}
                   </p>
                 )}
-              </label>
+              </div>
 
-              <label className="block">
-                <span className={FIELD_LABEL_CLASS}>Confirm new password</span>
+              <div>
+                <label
+                  htmlFor={`${fieldId}-confirm`}
+                  className={FIELD_LABEL_CLASS}
+                >
+                  Confirm new password
+                </label>
                 <PasswordInput
+                  id={`${fieldId}-confirm`}
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   autoComplete="new-password"
@@ -629,7 +650,7 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
                     Passwords don&apos;t match.
                   </p>
                 ) : null}
-              </label>
+              </div>
 
               <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
                 <p className="min-w-0 text-[11.5px] leading-relaxed text-text-muted">

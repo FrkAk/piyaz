@@ -1,15 +1,15 @@
 import Link from "next/link";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { AuthBrand } from "@/components/auth/AuthBrand";
+import { AuthEyebrow } from "@/components/auth/AuthEyebrow";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignUpForm } from "@/components/auth/SignUpForm";
 import { WaitlistForm } from "@/components/auth/WaitlistForm";
 import { emailVerificationRequired, signupsDisabled } from "@/lib/config/env";
 import { safeInviteNext } from "@/lib/auth/invite-next";
+import { MARKETING_URL } from "@/lib/config/urls";
 import { isEmailEnabled } from "@/lib/email";
-
-const MARKETING_URL = "https://piyaz.ai";
 
 export const dynamic = "force-dynamic";
 
@@ -43,15 +43,9 @@ export default async function SignUpPage({ searchParams }: SignUpPageProps) {
       form={
         <>
           <AuthBrand href={MARKETING_URL} />
-          <span
-            className="mb-2 block font-mono text-[10px] font-semibold uppercase"
-            style={{
-              color: "var(--color-accent-light)",
-              letterSpacing: "0.14em",
-            }}
-          >
+          <AuthEyebrow>
             {SIGNUPS_DISABLED ? "Waitlist" : "Create account"}
-          </span>
+          </AuthEyebrow>
           <h1
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}

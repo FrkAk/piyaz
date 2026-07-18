@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-
-const MARKETING_URL = "https://piyaz.ai";
+import { MARKETING_URL } from "@/lib/config/urls";
 
 /** Legal documents linked from the shell footer, in reading order. */
 const LEGAL_NAV = [

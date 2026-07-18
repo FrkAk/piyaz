@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { AuthBrand } from "@/components/auth/AuthBrand";
 import { AuthThemeToggle } from "@/components/auth/AuthThemeToggle";
-
-const MARKETING_URL = "https://piyaz.ai";
+import { MARKETING_URL } from "@/lib/config/urls";
 
 interface AuthStatusFrameProps {
   /** Mono uppercase context label above the heading; omitted when unset. */

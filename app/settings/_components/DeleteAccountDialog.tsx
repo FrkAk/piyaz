@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
@@ -79,6 +79,7 @@ function DeleteAccountDialogBody({
   const [emailSent, setEmailSent] = useState(false);
   const [pending, startTransition] = useTransition();
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const passwordFieldId = useId();
 
   useModalChrome(true, onClose, panelRef);
 
@@ -209,18 +210,22 @@ function DeleteAccountDialogBody({
           />
         </label>
 
-        <label className="mt-3 block">
-          <span className="mb-1 block text-xs font-medium text-text-secondary">
+        <div className="mt-3">
+          <label
+            htmlFor={passwordFieldId}
+            className="mb-1 block text-xs font-medium text-text-secondary"
+          >
             Your password (leave blank if you sign in with a provider)
-          </span>
+          </label>
           <PasswordInput
+            id={passwordFieldId}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             disabled={pending}
             autoComplete="current-password"
             className={INPUT_CLASS}
           />
-        </label>
+        </div>
 
         {error ? (
           <p

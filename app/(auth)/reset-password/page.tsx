@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { AuthBrand } from "@/components/auth/AuthBrand";
+import { AuthEyebrow } from "@/components/auth/AuthEyebrow";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { AuthLinkButton } from "@/components/auth/AuthLinkButton";
 import { ResetPasswordForm } from "@/components/auth/ResetPasswordForm";
-
-const MARKETING_URL = "https://piyaz.ai";
+import { MARKETING_URL } from "@/lib/config/urls";
 
 export const dynamic = "force-dynamic";
 
@@ -34,15 +34,7 @@ export default async function ResetPasswordPage({
       form={
         <>
           <AuthBrand href={MARKETING_URL} />
-          <span
-            className="mb-2 block font-mono text-[10px] font-semibold uppercase"
-            style={{
-              color: "var(--color-accent-light)",
-              letterSpacing: "0.14em",
-            }}
-          >
-            Password reset
-          </span>
+          <AuthEyebrow>Password reset</AuthEyebrow>
           <h1
             className="text-[26px] font-semibold text-text-primary"
             style={{ letterSpacing: "-0.01em", lineHeight: 1.15 }}

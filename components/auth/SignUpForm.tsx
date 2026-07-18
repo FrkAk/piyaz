@@ -177,7 +177,7 @@ export function SignUpForm({
       <AuthInput
         label="Email"
         type="email"
-        autoComplete="email"
+        autoComplete="username"
         required
         value={email}
         onChange={(event) => setEmail(event.target.value)}
