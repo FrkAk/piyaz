@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.7](https://github.com/FrkAk/piyaz/compare/v0.4.6...v0.4.7) (2026-07-18)
+
+
+### Bug Fixes
+
+* harden team authz, invite-code expiry, and consent redirect ([#244](https://github.com/FrkAk/piyaz/issues/244)) ([a2245fb](https://github.com/FrkAk/piyaz/commit/a2245fb6824e5deee789699cbd0c79e03f72370c))
+
 ## [0.4.6](https://github.com/FrkAk/piyaz/compare/v0.4.5...v0.4.6) (2026-07-18)
 
 
