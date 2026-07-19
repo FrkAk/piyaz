@@ -41,7 +41,7 @@ import {
 import { getProjectListMaxUpdatedAtRaw } from "@/lib/db/raw/get-project-list-max-updated-at";
 import {
   getProjectMaxUpdatedAtRaw,
-  type ProjectValidatorNotesMode,
+  type ProjectValidatorMode,
 } from "@/lib/db/raw/get-project-max-updated-at";
 import { insertActivityEvents } from "@/lib/data/activity";
 import {
@@ -229,7 +229,7 @@ export async function getProjectGraphSlim(
         priority: tasks.priority,
         estimate: tasks.estimate,
         order: tasks.order,
-        updatedAt: tasks.updatedAt,
+        updatedAt: tasks.metaUpdatedAt,
         sequenceNumber: tasks.sequenceNumber,
         hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
         hasCriteria: hasCriteriaExpr(),
@@ -338,7 +338,7 @@ export async function getProjectGraphSlim(
         title: project.title,
         description: project.description,
         status: project.status,
-        updatedAt: project.updatedAt,
+        updatedAt: project.metaUpdatedAt,
         categories: project.categories,
       },
       tasks: slimTasks,
@@ -397,28 +397,28 @@ export async function getProjectChrome(
 }
 
 /**
- * Latest `updated_at` across the project, its tasks, and its edges (and a
- * notes clock per `notesMode`). Used by the conditional-GET path on the
- * workspace graph and context-bundle endpoints to short-circuit the heavy
- * read on a 304 response. The context route passes `content` (it embeds
- * note bodies, so any note edit must move it); the graph route passes
- * `meta` (it renders only note metadata and links, so body-only edits
- * must not move it).
+ * Latest clock across the project, its tasks, and its edges (and a notes
+ * clock per `mode`). Used by the conditional-GET path on the workspace
+ * graph and context-bundle endpoints to short-circuit the heavy read on a
+ * 304 response. The context route passes `content` (it embeds task and
+ * note bodies, so any edit must move it); the graph route passes `meta`
+ * (it renders only slim metadata, so plan/record/decision/link writes,
+ * edge note edits, and note body edits must not move it).
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @param notesMode - Which notes clock to fold into the validator.
+ * @param mode - Which clocks to fold into the validator.
  * @returns The latest timestamp.
  * @throws ForbiddenError on missing or cross-team project.
  */
 export async function getProjectMaxUpdatedAt(
   ctx: AuthContext,
   projectId: string,
-  notesMode: ProjectValidatorNotesMode = "none",
+  mode: ProjectValidatorMode = "none",
 ): Promise<Date> {
   return withUserContext(ctx.userId, async (tx) => {
     await assertProjectAccessTx(tx, projectId);
-    const max = await getProjectMaxUpdatedAtRaw(tx, projectId, notesMode);
+    const max = await getProjectMaxUpdatedAtRaw(tx, projectId, mode);
     if (!max) {
       throw new Error(
         `getProjectMaxUpdatedAt: project ${projectId} disappeared after access check`,
@@ -1357,9 +1357,13 @@ export async function updateProject(
   }
   const updated = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
+    // Every editable field (title, description, status, categories) ships
+    // in the slim payload's project block, so the metadata clock always
+    // moves with the content clock here.
+    const now = new Date();
     const [row] = await tx
       .update(projects)
-      .set({ ...safe, updatedAt: new Date() })
+      .set({ ...safe, updatedAt: now, metaUpdatedAt: now })
       .where(eq(projects.id, projectId))
       .returning();
     return { ...row, priorStatus: access.project.status };
@@ -1412,9 +1416,13 @@ export async function renameProjectIdentifier(
       project: ["rename"],
     });
     await acquireOrgIdentifierLock(tx, project.organizationId);
+    // Every taskRef and noteRef in the slim payload derives from the
+    // identifier at read time, so a rename is slim-visible without
+    // touching a single task row.
+    const now = new Date();
     const [row] = await tx
       .update(projects)
-      .set({ identifier, updatedAt: new Date() })
+      .set({ identifier, updatedAt: now, metaUpdatedAt: now })
       .where(eq(projects.id, projectId))
       .returning();
     if (!row) throw new ProjectNotFoundError(projectId);
@@ -1452,14 +1460,21 @@ export async function renameCategory(
     const updatedCategories = project.categories.map((c) =>
       c === oldName ? newName : c,
     );
+    const now = new Date();
     await tx
       .update(projects)
-      .set({ categories: updatedCategories, updatedAt: new Date() })
+      .set({
+        categories: updatedCategories,
+        updatedAt: now,
+        metaUpdatedAt: now,
+      })
       .where(eq(projects.id, projectId));
 
+    // Category is slim-visible; stamping the task rows' meta clock in the
+    // same bulk statement keeps the trigger propagation consistent.
     await tx
       .update(tasks)
-      .set({ category: newName, updatedAt: new Date() })
+      .set({ category: newName, updatedAt: now, metaUpdatedAt: now })
       .where(and(eq(tasks.projectId, projectId), eq(tasks.category, oldName)));
   });
   emitProjectEvent(projectId);
@@ -1487,14 +1502,19 @@ export async function deleteCategory(
     const updatedCategories = project.categories.filter(
       (c) => c !== categoryName,
     );
+    const now = new Date();
     await tx
       .update(projects)
-      .set({ categories: updatedCategories, updatedAt: new Date() })
+      .set({
+        categories: updatedCategories,
+        updatedAt: now,
+        metaUpdatedAt: now,
+      })
       .where(eq(projects.id, projectId));
 
     await tx
       .update(tasks)
-      .set({ category: null, updatedAt: new Date() })
+      .set({ category: null, updatedAt: now, metaUpdatedAt: now })
       .where(
         and(eq(tasks.projectId, projectId), eq(tasks.category, categoryName)),
       );

@@ -595,7 +595,7 @@ export async function createEdge(
       };
     });
 
-  emitEdgeMutation(projectId, data.sourceTaskId, data.targetTaskId);
+  emitEdgeMutation(projectId, data.sourceTaskId, data.targetTaskId, true);
   return {
     id: edge.id,
     sourceTaskId: edge.sourceTaskId,
@@ -671,13 +671,20 @@ export async function updateEdge(
   if (updates.edgeType !== undefined) setClause.edgeType = updates.edgeType;
   if (updates.note !== undefined) setClause.note = updates.note;
 
-  const { updated, existing, projectId } = await withUserContext(
+  const { updated, existing, projectId, typeChanged } = await withUserContext(
     ctx.userId,
     async (tx) => {
       const { edge: existing, projectId } = await loadAuthorizedEdgeTx(
         tx,
         edgeId,
       );
+
+      // Edge type is the only slim-graph-visible column here; note-only
+      // annotation edits keep the metadata clock still.
+      const typeChanged =
+        updates.edgeType !== undefined &&
+        updates.edgeType !== existing.edgeType;
+      if (typeChanged) setClause.metaUpdatedAt = new Date();
 
       let targetProjectIdForCycle: string | undefined;
       if (
@@ -756,11 +763,16 @@ export async function updateEdge(
         },
       ]);
 
-      return { updated: row, existing, projectId };
+      return { updated: row, existing, projectId, typeChanged };
     },
   );
 
-  emitEdgeMutation(projectId, existing.sourceTaskId, existing.targetTaskId);
+  emitEdgeMutation(
+    projectId,
+    existing.sourceTaskId,
+    existing.targetTaskId,
+    typeChanged,
+  );
   return {
     id: updated.id,
     sourceTaskId: updated.sourceTaskId,
@@ -804,5 +816,5 @@ export async function removeEdge(ctx: AuthContext, edgeId: string) {
     return { edge, projectId };
   });
 
-  emitEdgeMutation(projectId, edge.sourceTaskId, edge.targetTaskId);
+  emitEdgeMutation(projectId, edge.sourceTaskId, edge.targetTaskId, true);
 }

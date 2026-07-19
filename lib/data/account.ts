@@ -19,6 +19,7 @@ import {
 } from "@/lib/db/schema";
 import { parseMemberRoles } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/context";
+import { emitProjectEvent } from "@/lib/realtime/events";
 
 /** The caller's own profile, resolved for the MCP whoami surface. */
 export type Whoami = { userId: string; name: string; email: string };
@@ -82,8 +83,11 @@ export async function getPasswordUpdatedAt(
 
 /**
  * Wipe every artifact that referenced (userId, orgId) so a removed member
- * cannot keep operating with stale credentials. All four writes commit
- * together — concurrent readers see either the pre- or post-state.
+ * cannot keep operating with stale credentials. All writes commit
+ * together — concurrent readers see either the pre- or post-state. Tasks
+ * that lose an assignee get both clocks bumped and their projects a
+ * realtime event, so open graph and my-tasks views drop the member
+ * immediately.
  *
  * Called from:
  * - `organizationHooks.afterRemoveMember` (admin removes another member)
@@ -104,7 +108,7 @@ export async function clearOrgMembershipArtifacts(
   userId: string,
   orgId: string,
 ): Promise<void> {
-  await serviceRoleDb.transaction(async (tx) => {
+  const affectedProjectIds = await serviceRoleDb.transaction(async (tx) => {
     await tx
       .update(session)
       .set({ activeOrganizationId: null })
@@ -153,15 +157,35 @@ export async function clearOrgMembershipArtifacts(
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(eq(projects.organizationId, orgId));
-    await tx
+    const removed = await tx
       .delete(taskAssignees)
       .where(
         and(
           eq(taskAssignees.userId, userId),
           inArray(taskAssignees.taskId, orgTaskIds),
         ),
-      );
+      )
+      .returning({ taskId: taskAssignees.taskId });
+    if (removed.length === 0) return [];
+
+    // The assignee set is slim-graph-visible, so the scrub bumps both
+    // task clocks (the statement trigger propagates them to the project
+    // clocks); without the bump every open graph and my-tasks view keeps
+    // rendering the removed member until an unrelated write lands.
+    const now = new Date();
+    const bumped = await tx
+      .update(tasks)
+      .set({ updatedAt: now, metaUpdatedAt: now })
+      .where(
+        inArray(
+          tasks.id,
+          removed.map((r) => r.taskId),
+        ),
+      )
+      .returning({ projectId: tasks.projectId });
+    return [...new Set(bumped.map((b) => b.projectId))];
   });
+  for (const projectId of affectedProjectIds) emitProjectEvent(projectId);
 }
 
 /** One org the caller owns, with its member and owner counts. */

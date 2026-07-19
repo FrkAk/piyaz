@@ -48,6 +48,7 @@ const projectGateColumns = {
   status: projects.status,
   categories: projects.categories,
   updatedAt: projects.updatedAt,
+  metaUpdatedAt: projects.metaUpdatedAt,
 } as const;
 
 /**
@@ -63,7 +64,8 @@ export type TaskAccessGate = Pick<
 /**
  * Project columns the access check returns. Omits `createdAt` to reduce DB
  * egress; callers only read id, organizationId, identifier, title, status,
- * description, categories, updatedAt.
+ * description, categories, updatedAt, metaUpdatedAt (the slim graph
+ * payload's project clock).
  */
 export type ProjectAccessProject = Omit<Project, "createdAt">;
 

@@ -8,8 +8,27 @@
 
 /** Discriminated payload shape sent on the SSE wire. */
 export type RealtimeEvent =
-  | { kind: "project"; projectId: string }
-  | { kind: "task"; projectId: string; taskId: string }
+  | {
+      kind: "project";
+      projectId: string;
+      /** False when the originating task/edge write cannot change the slim
+       *  graph payload (plan/record/decision/link writes, edge note-only
+       *  edits); consumers skip the graph and my-tasks refetches. Absent
+       *  means unknown; treat as changed. */
+      metaChanged?: boolean;
+    }
+  | {
+      kind: "task";
+      projectId: string;
+      taskId: string;
+      /** The task's post-mutation content `updatedAt`; lets consumers
+       *  patch cached list rows in place when the refetch is skipped. */
+      updatedAt?: string;
+      /** False when the write cannot change the slim graph payload;
+       *  mirrors the paired project event's flag. Absent means unknown;
+       *  treat as changed. */
+      metaChanged?: boolean;
+    }
   | {
       kind: "note";
       projectId: string;

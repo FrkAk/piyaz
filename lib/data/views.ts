@@ -139,7 +139,12 @@ export type ProjectListEntryMcp = Pick<
   progress: number;
 };
 
-/** Slim task entry returned by the project graph payload. */
+/**
+ * Slim task entry returned by the project graph payload. `updatedAt`
+ * carries the metadata clock (`tasks.meta_updated_at`, the last
+ * slim-visible change), not the content clock, so the payload stays
+ * byte-stable whenever the graph route's meta validator answers 304.
+ */
 export type TaskGraphSlim = Pick<
   Task,
   | "id"
@@ -220,7 +225,9 @@ export type NoteTaskGraphEdge = Pick<
 >;
 
 /** Slim project graph for the workspace canvas + list. Edges, tasks, and
- * notes are projected down to the fields the graph surfaces render. */
+ * notes are projected down to the fields the graph surfaces render. The
+ * project block's `updatedAt` carries the metadata clock
+ * (`projects.meta_updated_at`), matching the route's meta validator. */
 export type ProjectGraphSlim = {
   project: Pick<
     Project,
@@ -281,6 +288,10 @@ export type ProjectMeta = Pick<
  * `state` and `blockedBy` are likewise derived from direct dependencies:
  * `blockedBy` carries the taskRef of the lowest-sequence direct upstream
  * that is neither done nor cancelled, when one exists.
+ *
+ * Unlike the graph payload, `updatedAt` here carries the content clock
+ * (`tasks.updated_at`): the list sorts on recency of any change, and
+ * realtime patches the row in place when a heavy write skips the refetch.
  */
 export type MyTask = Omit<
   TaskGraphSlim,
@@ -328,9 +339,11 @@ export type TaskSlim = {
  * links for project page detail surfaces. Criteria and decisions live in
  * relational child tables (`task_acceptance_criteria`, `task_decisions`);
  * this type carries them via join so consumers read
- * `task.acceptanceCriteria` and `task.decisions` directly.
+ * `task.acceptanceCriteria` and `task.decisions` directly. Omits
+ * `metaUpdatedAt`: the metadata clock feeds validators and the slim graph
+ * payload, and detail surfaces have no use for it.
  */
-export type TaskFull = Task & {
+export type TaskFull = Omit<Task, "metaUpdatedAt"> & {
   taskRef: string;
   assignees: AssigneeRef[];
   acceptanceCriteria: AcceptanceCriterion[];

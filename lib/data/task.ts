@@ -110,6 +110,7 @@ import type {
 } from "@/lib/data/views";
 import { edgeRefColumns } from "@/lib/data/edge-columns";
 import { projectColor } from "@/lib/ui/project-color";
+import { assigneeSetChanged, taskRowMetaChanged } from "@/lib/data/task-clock";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import {
   classifyLink,
@@ -2836,7 +2837,7 @@ export async function createTask(
     return task;
   });
 
-  emitTaskEvent(result.projectId, result.id);
+  emitTaskEvent(result.projectId, result.id, { metaChanged: true });
   return result;
 }
 
@@ -3118,7 +3119,12 @@ export async function updateTask(
       formattedDecisions === undefined
     ) {
       wasNoOp = true;
-      return { row: current, criteriaResult: null, decisionsResult: null };
+      return {
+        row: current,
+        criteriaResult: null,
+        decisionsResult: null,
+        metaChanged: false,
+      };
     }
 
     if (!overwriteArrays && Array.isArray(changes.files)) {
@@ -3128,12 +3134,15 @@ export async function updateTask(
     }
 
     let row = current;
+    const now = new Date();
+    const rowMetaChanged = taskRowMetaChanged(current, changes);
     if (Object.keys(changes).length > 0) {
       const [updatedRow] = await tx
         .update(tasks)
         .set({
           ...changes,
-          updatedAt: new Date(),
+          updatedAt: now,
+          ...(rowMetaChanged ? { metaUpdatedAt: now } : {}),
         })
         .where(eq(tasks.id, taskId))
         .returning();
@@ -3144,7 +3153,7 @@ export async function updateTask(
       const [updatedRow] = await tx
         .update(tasks)
         .set({
-          updatedAt: new Date(),
+          updatedAt: now,
         })
         .where(eq(tasks.id, taskId))
         .returning();
@@ -3239,6 +3248,7 @@ export async function updateTask(
         );
       }
     }
+    let assigneesChanged = false;
     if (assigneesBefore && assigneeIds !== undefined) {
       const assigneesAfter = (
         await tx
@@ -3246,6 +3256,7 @@ export async function updateTask(
           .from(taskAssignees)
           .where(eq(taskAssignees.taskId, taskId))
       ).map((a) => a.userId);
+      assigneesChanged = assigneeSetChanged(assigneesBefore, assigneesAfter);
       eventInputs.push(
         ...diffAssignees(
           current.projectId,
@@ -3288,7 +3299,24 @@ export async function updateTask(
         date: d.date,
       }));
     }
-    return { row, criteriaResult, decisionsResult };
+
+    // Child-table writes land after the row update, so a criteria-presence
+    // flip or assignee-set change stamps the meta clock in a follow-up
+    // write (the statement trigger propagates it to the project clock).
+    const criteriaPresenceFlipped =
+      childrenBefore !== null &&
+      childrenAfter !== null &&
+      (childrenBefore.acceptance_criteria ?? []).length > 0 !==
+        (childrenAfter.acceptance_criteria ?? []).length > 0;
+    const metaChanged =
+      rowMetaChanged || criteriaPresenceFlipped || assigneesChanged;
+    if (metaChanged && !rowMetaChanged) {
+      await tx
+        .update(tasks)
+        .set({ metaUpdatedAt: now })
+        .where(eq(tasks.id, taskId));
+    }
+    return { row, criteriaResult, decisionsResult, metaChanged };
   });
 
   // Reflect a prUrl- or criteria/decisions-only call (no other field
@@ -3300,7 +3328,10 @@ export async function updateTask(
     formattedCriteria !== undefined ||
     formattedDecisions !== undefined
   ) {
-    emitTaskEvent(result.row.projectId, taskId);
+    emitTaskEvent(result.row.projectId, taskId, {
+      metaChanged: result.metaChanged,
+      updatedAt: result.row.updatedAt,
+    });
   }
   return Object.assign(result.row, {
     acceptanceCriteria: result.criteriaResult,
@@ -3351,7 +3382,7 @@ export async function deleteTask(ctx: AuthContext, taskId: string) {
     },
   );
 
-  emitTaskEvent(projectId, taskId);
+  emitTaskEvent(projectId, taskId, { metaChanged: true });
   return {
     deleted: { id: taskId },
     edgesRemoved: deletedEdges.length,
@@ -3420,58 +3451,65 @@ export async function addTaskLink(
     throw e;
   }
 
-  const { row, projectId } = await withUserContext(ctx.userId, async (tx) => {
-    const task = await assertTaskAccessTx(tx, taskId);
-    const [inserted] = await tx
-      .insert(taskLinks)
-      .values({
-        taskId,
-        kind: classified.kind,
-        url: classified.url,
-        label: classified.label,
-        createdBy: ctx.userId,
-      })
-      .onConflictDoNothing({
-        target: [taskLinks.taskId, taskLinks.url],
-      })
-      .returning();
-
-    let row = inserted;
-    if (!row) {
-      // Conflict: surface the existing row so the UI shows the duplicate
-      // gracefully instead of toggling between empty and present states.
-      const [existing] = await tx
-        .select()
-        .from(taskLinks)
-        .where(
-          and(eq(taskLinks.taskId, taskId), eq(taskLinks.url, classified.url)),
-        )
-        .limit(1);
-      if (!existing)
-        throw new Error("Link insert reported conflict but no row exists");
-      row = existing;
-    }
-
-    await tx
-      .update(tasks)
-      .set({ updatedAt: new Date() })
-      .where(eq(tasks.id, taskId));
-
-    if (inserted) {
-      await insertActivityEvents(tx, ctx.actor, [
-        {
-          projectId: task.projectId,
+  const { row, projectId, updatedAt } = await withUserContext(
+    ctx.userId,
+    async (tx) => {
+      const task = await assertTaskAccessTx(tx, taskId);
+      const [inserted] = await tx
+        .insert(taskLinks)
+        .values({
           taskId,
-          type: "link_added",
-          summary: `linked ${classified.label ?? classified.kind}`,
-          targetRef: classified.url,
-        },
-      ]);
-    }
-    return { row, projectId: task.projectId };
-  });
+          kind: classified.kind,
+          url: classified.url,
+          label: classified.label,
+          createdBy: ctx.userId,
+        })
+        .onConflictDoNothing({
+          target: [taskLinks.taskId, taskLinks.url],
+        })
+        .returning();
 
-  emitTaskEvent(projectId, taskId);
+      let row = inserted;
+      if (!row) {
+        // Conflict: surface the existing row so the UI shows the duplicate
+        // gracefully instead of toggling between empty and present states.
+        const [existing] = await tx
+          .select()
+          .from(taskLinks)
+          .where(
+            and(
+              eq(taskLinks.taskId, taskId),
+              eq(taskLinks.url, classified.url),
+            ),
+          )
+          .limit(1);
+        if (!existing)
+          throw new Error("Link insert reported conflict but no row exists");
+        row = existing;
+      }
+
+      const now = new Date();
+      await tx
+        .update(tasks)
+        .set({ updatedAt: now })
+        .where(eq(tasks.id, taskId));
+
+      if (inserted) {
+        await insertActivityEvents(tx, ctx.actor, [
+          {
+            projectId: task.projectId,
+            taskId,
+            type: "link_added",
+            summary: `linked ${classified.label ?? classified.kind}`,
+            targetRef: classified.url,
+          },
+        ]);
+      }
+      return { row, projectId: task.projectId, updatedAt: now };
+    },
+  );
+
+  emitTaskEvent(projectId, taskId, { metaChanged: false, updatedAt });
   return row;
 }
 
@@ -3507,9 +3545,10 @@ export async function removeTaskLink(
     if (!row) throw new ForbiddenError("Forbidden", "task", linkId);
 
     await tx.delete(taskLinks).where(eq(taskLinks.id, linkId));
+    const now = new Date();
     await tx
       .update(tasks)
-      .set({ updatedAt: new Date() })
+      .set({ updatedAt: now })
       .where(eq(tasks.id, row.taskId));
 
     await insertActivityEvents(tx, ctx.actor, [
@@ -3521,10 +3560,13 @@ export async function removeTaskLink(
         targetRef: row.url,
       },
     ]);
-    return row;
+    return { ...row, updatedAt: now };
   });
 
-  emitTaskEvent(result.projectId, result.taskId);
+  emitTaskEvent(result.projectId, result.taskId, {
+    metaChanged: false,
+    updatedAt: result.updatedAt,
+  });
   return { id: result.linkId };
 }
 
@@ -3599,9 +3641,10 @@ export async function updateTaskLink(
       })
       .where(eq(taskLinks.id, linkId))
       .returning();
+    const now = new Date();
     await tx
       .update(tasks)
-      .set({ updatedAt: new Date() })
+      .set({ updatedAt: now })
       .where(eq(tasks.id, row.link.taskId));
 
     await insertActivityEvents(tx, ctx.actor, [
@@ -3613,9 +3656,17 @@ export async function updateTaskLink(
         targetRef: classified.url,
       },
     ]);
-    return { updated, projectId: row.projectId, taskId: row.link.taskId };
+    return {
+      updated,
+      projectId: row.projectId,
+      taskId: row.link.taskId,
+      updatedAt: now,
+    };
   });
 
-  emitTaskEvent(result.projectId, result.taskId);
+  emitTaskEvent(result.projectId, result.taskId, {
+    metaChanged: false,
+    updatedAt: result.updatedAt,
+  });
   return result.updated;
 }
