@@ -1249,9 +1249,11 @@ test("project chrome edits, identifier renames, and category cascades move the m
   prev = cur;
 
   await settleClock();
+  const taskMetaBeforeDelete = await taskMetaEpoch(task.id);
   await deleteCategory(ctx, f.projectId, "core");
   cur = (await readNoteClocks(ctx, f.projectId)).meta;
   expect(cur).toBeGreaterThan(prev);
+  expect(await taskMetaEpoch(task.id)).toBeGreaterThan(taskMetaBeforeDelete);
 });
 
 test("the home-grid list validator still moves on heavy-only task writes", async () => {
@@ -1265,4 +1267,79 @@ test("the home-grid list validator still moves on heavy-only task writes", async
   ]);
   const after = await getProjectListMaxUpdatedAt(ctx);
   expect(after.getTime()).toBeGreaterThan(before.getTime());
+});
+
+test("updateTask child-driven writes stamp the meta clock via the follow-up branch", async () => {
+  const f = await seedUserOrgProject("taskmeta-web");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await settleClock();
+  let prev = (await readNoteClocks(ctx, f.projectId)).meta;
+  await updateTask(ctx, task.id, { assigneeIds: [f.userId] });
+  let cur = (await readNoteClocks(ctx, f.projectId)).meta;
+  expect(cur).toBeGreaterThan(prev);
+  prev = cur;
+
+  await settleClock();
+  await updateTask(ctx, task.id, { acceptanceCriteria: ["First criterion"] });
+  cur = (await readNoteClocks(ctx, f.projectId)).meta;
+  expect(cur).toBeGreaterThan(prev);
+
+  await settleClock();
+  const stable = await readNoteClocks(ctx, f.projectId);
+  await updateTask(ctx, task.id, { acceptanceCriteria: ["Second criterion"] });
+  const afterAppend = await readNoteClocks(ctx, f.projectId);
+  expect(afterAppend.content).toBeGreaterThan(stable.content);
+  expect(afterAppend.meta).toBe(stable.meta);
+
+  await settleClock();
+  const beforeClear = (await readNoteClocks(ctx, f.projectId)).meta;
+  await updateTask(ctx, task.id, { assigneeIds: [] }, true);
+  const afterClear = (await readNoteClocks(ctx, f.projectId)).meta;
+  expect(afterClear).toBeGreaterThan(beforeClear);
+});
+
+test("clearing the executionRecord flips hasExecutionRecord and moves the meta validator", async () => {
+  const f = await seedUserOrgProject("taskmeta-clear");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "executionRecord", value: "record body" },
+  ]);
+  await settleClock();
+  const before = (await readNoteClocks(ctx, f.projectId)).meta;
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "executionRecord", value: null },
+  ]);
+  const after = (await readNoteClocks(ctx, f.projectId)).meta;
+  expect(after).toBeGreaterThan(before);
+});
+
+test("the slim graph payload sources task and project updatedAt from the meta clocks", async () => {
+  const f = await seedUserOrgProject("slimclock");
+  const ctx = makeAuthContext(f.userId);
+  const sqlc = superuserPool();
+  try {
+    const contentFuture = new Date(Date.now() + 7200_000);
+    const metaPast = new Date(Date.now() - 3600_000);
+    const [t] = await sqlc<{ id: string }[]>`
+      INSERT INTO tasks ("project_id", "title", "sequence_number", "updated_at", "meta_updated_at")
+      VALUES (${f.projectId}, 'T', 1, ${contentFuture}, ${metaPast})
+      RETURNING id
+    `;
+    await sqlc`
+      UPDATE projects
+      SET updated_at = ${contentFuture}, meta_updated_at = ${metaPast}
+      WHERE id = ${f.projectId}
+    `;
+
+    const g = await getProjectGraphSlim(ctx, f.projectId);
+
+    const task = g.tasks.find((x) => x.id === t.id);
+    expect(task?.updatedAt.getTime()).toBe(metaPast.getTime());
+    expect(g.project.updatedAt.getTime()).toBe(metaPast.getTime());
+  } finally {
+    await sqlc.end({ timeout: 5 });
+  }
 });

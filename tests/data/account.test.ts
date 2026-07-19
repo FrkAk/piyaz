@@ -4,6 +4,7 @@ import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask } from "@/lib/data/task";
+import { broker } from "@/lib/realtime/broker";
 import {
   clearOrgMembershipArtifacts,
   enumerateOwnedOrgsForDeletion,
@@ -216,6 +217,13 @@ describe("clearOrgMembershipArtifacts", () => {
       `;
       await new Promise((r) => setTimeout(r, 50));
 
+      const frames: string[] = [];
+      broker.attach(f.userId, {
+        send: (data) => frames.push(data),
+        close: () => {},
+      });
+      broker.register(f.userId, `project:${f.projectId}`);
+
       await clearOrgMembershipArtifacts(f.userId, f.organizationId);
 
       const [{ n }] = await sqlc<{ n: number }[]>`
@@ -235,7 +243,19 @@ describe("clearOrgMembershipArtifacts", () => {
         FROM projects WHERE id = ${f.projectId}
       `;
       expect(afterProj.m).toBeGreaterThan(beforeProj.m);
+
+      const projectEvents = frames
+        .map(
+          (fr) =>
+            JSON.parse(fr.slice("data: ".length)) as {
+              kind: string;
+              projectId?: string;
+            },
+        )
+        .filter((e) => e.kind === "project");
+      expect(projectEvents.map((e) => e.projectId)).toContain(f.projectId);
     } finally {
+      broker._resetForTests();
       await sqlc.end({ timeout: 5 });
     }
   });

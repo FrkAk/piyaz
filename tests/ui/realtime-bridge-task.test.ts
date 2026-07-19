@@ -82,21 +82,28 @@ function taskEvent(opts: { updatedAt?: Date; metaChanged?: boolean }): string {
 /**
  * Encode a project realtime event.
  *
- * @param metaChanged - Optional metaChanged payload field.
+ * @param opts - Optional `metaChanged`, paired `taskId`, and `updatedAt`
+ *   payload fields.
  * @returns The JSON wire string.
  */
-function projectEvent(metaChanged?: boolean): string {
+function projectEvent(
+  opts: { metaChanged?: boolean; taskId?: string; updatedAt?: Date } = {},
+): string {
   return JSON.stringify({
     kind: "project",
     projectId: PROJECT,
-    ...(metaChanged !== undefined ? { metaChanged } : {}),
+    ...(opts.taskId !== undefined ? { taskId: opts.taskId } : {}),
+    ...(opts.updatedAt ? { updatedAt: opts.updatedAt.toISOString() } : {}),
+    ...(opts.metaChanged !== undefined
+      ? { metaChanged: opts.metaChanged }
+      : {}),
   });
 }
 
 test("a project event with metaChanged false skips the graph and my-tasks refetches", async () => {
   const qc = seededClient(when);
 
-  await applyRealtimeEvent(qc, projectEvent(false));
+  await applyRealtimeEvent(qc, projectEvent({ metaChanged: false }));
 
   expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(false);
   expect(invalidated(qc, myTasksKeys.list())).toBe(false);
@@ -114,10 +121,35 @@ test("a project event without the flag invalidates the graph and my-tasks list",
 test("a project event with metaChanged true invalidates the graph and my-tasks list", async () => {
   const qc = seededClient(when);
 
-  await applyRealtimeEvent(qc, projectEvent(true));
+  await applyRealtimeEvent(qc, projectEvent({ metaChanged: true }));
 
   expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(true);
   expect(invalidated(qc, myTasksKeys.list())).toBe(true);
+});
+
+test("a metaChanged:false project event with the paired task fields patches the my-tasks row in place", async () => {
+  const qc = seededClient(when);
+  const newer = new Date(when.getTime() + 60_000);
+
+  await applyRealtimeEvent(
+    qc,
+    projectEvent({ metaChanged: false, taskId: TASK, updatedAt: newer }),
+  );
+
+  expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(false);
+  expect(invalidated(qc, myTasksKeys.list())).toBe(false);
+  const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
+  expect(rows?.find((r) => r.id === TASK)?.updatedAt).toEqual(newer);
+});
+
+test("a metaChanged:false task event without updatedAt leaves the cached row untouched", async () => {
+  const qc = seededClient(when);
+
+  await applyRealtimeEvent(qc, taskEvent({ metaChanged: false }));
+
+  expect(invalidated(qc, myTasksKeys.list())).toBe(false);
+  const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
+  expect(rows?.find((r) => r.id === TASK)?.updatedAt).toEqual(when);
 });
 
 test("a metaChanged:false task event patches the cached my-tasks row in place", async () => {

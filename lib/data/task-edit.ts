@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, sql } from "drizzle-orm";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import {
   projects,
@@ -1636,11 +1636,11 @@ export async function applyTaskEdit(
  * @returns The number of criteria rows.
  */
 async function countCriteriaRows(tx: Tx, taskId: string): Promise<number> {
-  const rows = await tx
-    .select({ id: taskAcceptanceCriteria.id })
+  const [row] = await tx
+    .select({ n: count() })
     .from(taskAcceptanceCriteria)
     .where(eq(taskAcceptanceCriteria.taskId, taskId));
-  return rows.length;
+  return row?.n ?? 0;
 }
 
 /**

@@ -129,7 +129,8 @@ export const projects = pgTable(
     // chrome edits, identifier renames, and the touch triggers' propagation
     // of task/edge meta bumps plus unconditional insert/delete arms). The
     // graph validator's `meta` mode reads it; updated_at stays the content
-    // clock feeding the home-grid sort and strictly dominates.
+    // clock feeding the home-grid sort, and every meta bump rides a write
+    // that also bumps it.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -177,7 +178,8 @@ export const tasks = pgTable(
     // the hasDescription/hasCriteria/hasExecutionRecord flips), never on
     // plan/record/decision/link writes. The graph validator's `meta` mode
     // reads it so those heavy writes stay 304-cheap; updated_at stays the
-    // content clock / CAS token and strictly dominates.
+    // content clock / CAS token, and every meta bump rides a write that
+    // also bumps it.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -215,7 +217,8 @@ export const taskEdges = pgTable(
       .defaultNow(),
     // Metadata clock: bumped on create and edge-type changes, never on
     // note-only annotation edits. The graph validator's `meta` mode reads
-    // it; updated_at stays the content clock and strictly dominates.
+    // it; updated_at stays the content clock, and every meta bump rides a
+    // write that also bumps it.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

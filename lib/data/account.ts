@@ -84,7 +84,7 @@ export async function getPasswordUpdatedAt(
 /**
  * Wipe every artifact that referenced (userId, orgId) so a removed member
  * cannot keep operating with stale credentials. All writes commit
- * together — concurrent readers see either the pre- or post-state. Tasks
+ * together; concurrent readers see either the pre- or post-state. Tasks
  * that lose an assignee get both clocks bumped and their projects a
  * realtime event, so open graph and my-tasks views drop the member
  * immediately.
@@ -172,10 +172,12 @@ export async function clearOrgMembershipArtifacts(
     // task clocks (the statement trigger propagates them to the project
     // clocks); without the bump every open graph and my-tasks view keeps
     // rendering the removed member until an unrelated write lands.
-    const now = new Date();
     const bumped = await tx
       .update(tasks)
-      .set({ updatedAt: now, metaUpdatedAt: now })
+      .set({
+        updatedAt: sql`GREATEST(updated_at, now())`,
+        metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+      })
       .where(
         inArray(
           tasks.id,

@@ -10,25 +10,22 @@ export type { RealtimeEvent };
  * Emit a slim-graph-affecting event for a project.
  *
  * @param projectId - Project that changed (chrome, tasks, edges).
- * @param metaChanged - Whether the originating write moved the slim-graph
- *   metadata clocks. Pass `false` on graph-inert writes so consumers skip
- *   the graph and my-tasks refetches; omit when unknown or always visible.
  */
-export function emitProjectEvent(
-  projectId: string,
-  metaChanged?: boolean,
-): void {
+export function emitProjectEvent(projectId: string): void {
   broker.dispatch(`project:${projectId}`, {
     kind: "project",
     projectId,
-    ...(metaChanged !== undefined ? { metaChanged } : {}),
   } satisfies RealtimeEvent);
 }
 
 /**
  * Emit a task-affecting event. Always paired with the project event, which
- * owns the graph and my-tasks invalidations. Batched via `dispatchMany` so
- * the Workers backend costs one DO sub-request instead of two.
+ * owns the graph and my-tasks invalidations; the paired payload carries
+ * the task id and content clock because `project:<id>` is the channel
+ * every member holds (task channels are fetch-implicit), so the my-tasks
+ * in-place patch must ride it to reliably reach list viewers. Batched via
+ * `dispatchMany` so the Workers backend costs one DO sub-request instead
+ * of two.
  *
  * @param projectId - Owning project id.
  * @param taskId - Task that changed.
@@ -45,6 +42,11 @@ export function emitTaskEvent(
   opts?: { metaChanged?: boolean; updatedAt?: Date },
 ): void {
   const metaChanged = opts?.metaChanged;
+  const updatedAt =
+    opts?.updatedAt !== undefined
+      ? { updatedAt: opts.updatedAt.toISOString() }
+      : {};
+  const flag = metaChanged !== undefined ? { metaChanged } : {};
   broker.dispatchMany([
     {
       key: `task:${taskId}`,
@@ -52,10 +54,8 @@ export function emitTaskEvent(
         kind: "task",
         projectId,
         taskId,
-        ...(opts?.updatedAt !== undefined
-          ? { updatedAt: opts.updatedAt.toISOString() }
-          : {}),
-        ...(metaChanged !== undefined ? { metaChanged } : {}),
+        ...updatedAt,
+        ...flag,
       } satisfies RealtimeEvent,
     },
     {
@@ -63,7 +63,9 @@ export function emitTaskEvent(
       payload: {
         kind: "project",
         projectId,
-        ...(metaChanged !== undefined ? { metaChanged } : {}),
+        taskId,
+        ...updatedAt,
+        ...flag,
       } satisfies RealtimeEvent,
     },
   ]);

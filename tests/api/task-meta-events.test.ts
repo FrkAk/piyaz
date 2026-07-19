@@ -57,6 +57,10 @@ test("task and project events carry metaChanged false on heavy writes and true o
   expect(taskEvs.map((e) => e.metaChanged)).toEqual([false, false, true]);
   expect(projEvs.map((e) => e.metaChanged)).toEqual([false, false, true]);
   for (const ev of taskEvs) expect(ev.updatedAt).toBeDefined();
+  for (const ev of projEvs) {
+    expect(ev.taskId).toBe(task.id);
+    expect(ev.updatedAt).toBeDefined();
+  }
 });
 
 test("edge note-only updates emit metaChanged false; type changes emit true", async () => {

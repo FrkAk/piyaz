@@ -15,8 +15,9 @@ export type ProjectValidatorMode = "none" | "meta" | "content";
  * renders only slim metadata, so plan/record/decision/link writes and
  * note body edits must not move its validator), the context-bundle route
  * uses `content` because it embeds bodies, and consumers that render no
- * notes use `none`. Every meta bump also bumps `updated_at`, so `content`
- * strictly dominates `meta`.
+ * notes use `none`. Every meta bump rides a write that also bumps
+ * `updated_at`, so the `content` validator never sleeps through a change
+ * `meta` observes.
  *
  * Single round trip via `GREATEST` over correlated subqueries so the
  * conditional-GET path fans out one DB query per request, not several.

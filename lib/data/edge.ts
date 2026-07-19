@@ -680,11 +680,12 @@ export async function updateEdge(
       );
 
       // Edge type is the only slim-graph-visible column here; note-only
-      // annotation edits keep the metadata clock still.
+      // annotation edits keep the metadata clock still. Reuse the content
+      // stamp so the meta clock never runs ahead of updated_at.
       const typeChanged =
         updates.edgeType !== undefined &&
         updates.edgeType !== existing.edgeType;
-      if (typeChanged) setClause.metaUpdatedAt = new Date();
+      if (typeChanged) setClause.metaUpdatedAt = setClause.updatedAt;
 
       let targetProjectIdForCycle: string | undefined;
       if (

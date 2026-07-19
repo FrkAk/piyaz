@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { broker } from "@/lib/realtime/broker";
-import { GET, HEAD } from "@/app/api/project/[projectId]/graph/route";
+import { GET } from "@/app/api/project/[projectId]/graph/route";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createTask } from "@/lib/data/task";
 import { applyTaskEdit } from "@/lib/data/task-edit";
@@ -19,23 +19,18 @@ afterEach(async () => {
 });
 
 /**
- * Invoke the graph route handler directly.
+ * Invoke the graph route GET handler directly.
  *
  * @param projectId - Project UUID for the route param.
  * @param headers - Request headers.
- * @param method - HTTP method.
  * @returns The handler response.
  */
 function call(
   projectId: string,
   headers: Record<string, string> = {},
-  method: "GET" | "HEAD" = "GET",
 ): Promise<Response> {
-  return (method === "HEAD" ? HEAD : GET)(
-    new Request(`http://test/api/project/${projectId}/graph`, {
-      method,
-      headers,
-    }),
+  return GET(
+    new Request(`http://test/api/project/${projectId}/graph`, { headers }),
     { params: Promise.resolve({ projectId }) },
   );
 }

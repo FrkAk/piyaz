@@ -11,6 +11,14 @@ export type RealtimeEvent =
   | {
       kind: "project";
       projectId: string;
+      /** Set on the paired event emitted per task write: the task whose
+       *  write produced this project event. Rides the project channel
+       *  (the one every member holds) so list surfaces can patch cached
+       *  rows in place when `metaChanged: false` skips the refetch. */
+      taskId?: string;
+      /** The task's post-mutation content `updatedAt`; rides beside
+       *  `taskId` for the in-place patch. */
+      updatedAt?: string;
       /** False when the originating task/edge write cannot change the slim
        *  graph payload (plan/record/decision/link writes, edge note-only
        *  edits); consumers skip the graph and my-tasks refetches. Absent

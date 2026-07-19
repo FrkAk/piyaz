@@ -77,12 +77,17 @@ export async function applyRealtimeEvent(
       // `metaChanged: false` marks task/edge writes that cannot alter the
       // slim graph payload (plan/record/decision/link writes, edge
       // note-only edits); the graph and my-tasks refetches are skipped
-      // for those. Anything else, and any event without the flag,
-      // invalidates; the graph refetch rides the conditional-GET path,
-      // so an unmoved validator answers 304.
+      // for those, and the paired task write's content clock patches the
+      // cached my-tasks row in place instead. This channel is the one
+      // every member holds, so the patch must ride here (task channels
+      // are fetch-implicit). Anything else, and any event without the
+      // flag, invalidates; the graph refetch rides the conditional-GET
+      // path, so an unmoved validator answers 304.
       if (ev.metaChanged !== false) {
         qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
         qc.invalidateQueries({ queryKey: myTasksKeys.list() });
+      } else if (ev.taskId !== undefined && ev.updatedAt !== undefined) {
+        patchMyTasksRow(qc, ev.taskId, ev.updatedAt);
       }
       break;
     case "task":
@@ -100,20 +105,11 @@ export async function applyRealtimeEvent(
       qc.invalidateQueries({
         queryKey: noteKeys.backlinksTask(ev.projectId, ev.taskId),
       });
-      // A metaChanged:false write skipped the my-tasks refetch, but the
-      // rows render the content clock and the "Updated" sort orders on it,
-      // so patch the cached row's `updatedAt` in place instead, never
-      // rewinding a row a newer write already advanced.
+      // Mirror the project-event patch for viewers holding this task's
+      // fetch-implicit channel; `patchMyTasksRow` is idempotent, so the
+      // paired events applying it twice is harmless.
       if (ev.metaChanged === false && ev.updatedAt !== undefined) {
-        const evMs = Date.parse(ev.updatedAt);
-        const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
-        const row = rows?.find((r) => r.id === ev.taskId);
-        if (row !== undefined && updatedAtMs(row.updatedAt) < evMs) {
-          const updatedAt = new Date(ev.updatedAt);
-          qc.setQueryData<MyTask[]>(myTasksKeys.list(), (data) =>
-            data?.map((r) => (r.id === ev.taskId ? { ...r, updatedAt } : r)),
-          );
-        }
+        patchMyTasksRow(qc, ev.taskId, ev.updatedAt);
       }
       break;
     case "note":
@@ -147,6 +143,32 @@ export async function applyRealtimeEvent(
       qc.removeQueries({ queryKey: projectKeys.graph(ev.projectId) });
       break;
   }
+}
+
+/**
+ * Patch a cached my-tasks row's `updatedAt` in place after a
+ * `metaChanged: false` write skipped the list refetch. The rows render
+ * the content clock and the "Updated" sort orders on it; the guard never
+ * rewinds a row a newer write already advanced. No-op when the task is
+ * not in the cache.
+ *
+ * @param qc - Active query client.
+ * @param taskId - Task whose cached row to patch.
+ * @param updatedAtIso - The write's post-mutation content clock.
+ */
+function patchMyTasksRow(
+  qc: QueryClient,
+  taskId: string,
+  updatedAtIso: string,
+): void {
+  const evMs = Date.parse(updatedAtIso);
+  const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
+  const row = rows?.find((r) => r.id === taskId);
+  if (row === undefined || updatedAtMs(row.updatedAt) >= evMs) return;
+  const updatedAt = new Date(updatedAtIso);
+  qc.setQueryData<MyTask[]>(myTasksKeys.list(), (data) =>
+    data?.map((r) => (r.id === taskId ? { ...r, updatedAt } : r)),
+  );
 }
 
 /**

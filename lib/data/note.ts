@@ -3413,7 +3413,7 @@ async function updateNoteCore(
     // disappearance; the GREATEST floor keeps the bump monotonic under
     // app/DB clock skew (the trigger idiom in `rls-functions.sql`). The
     // refetch that consults those validators is triggered by the
-    // post-commit project event below — the note event itself rides
+    // post-commit project event below; the note event itself rides
     // `note:<id>` after the flip, which other members never subscribed to.
     const flippedToPrivate =
       applied.visibility === "private" && current.visibility === "team";

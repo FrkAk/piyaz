@@ -3100,9 +3100,15 @@ export async function updateTask(
   const refetchNeeded = wroteChildren || statusChanged;
   const result = await withUserContext(ctx.userId, async (tx) => {
     await assertTaskAccessTx(tx, taskId);
-    // Child-table writes are atomic per row (MVCC + ON CONFLICT (id) DO
-    // UPDATE); no FOR UPDATE lock needed for this baseline SELECT.
-    const [current] = await tx.select().from(tasks).where(eq(tasks.id, taskId));
+    // FOR UPDATE serializes concurrent writers on the row: the slim
+    // visibility gate compares `changes` against this baseline, and a
+    // stale read could revert a concurrent slim write without moving the
+    // meta clock, freezing the graph validator on a stale 304.
+    const [current] = await tx
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .for("update");
     if (!current) throw new ForbiddenError("Forbidden", "task", taskId);
 
     // After normalization above, an `assigneeIds: []` in default-append

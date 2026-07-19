@@ -1220,6 +1220,14 @@ GRANT EXECUTE ON FUNCTION public.delete_sole_member_org_as_admin(uuid, uuid) TO 
 -- these triggers only propagate it.
 -- ---------------------------------------------------------------------------
 
+-- Apply-order guard: the touch triggers below reference meta_updated_at
+-- (drizzle migration 0015). These SELECTs fail the whole apply loudly
+-- when db:rls runs against a database that has not migrated yet, instead
+-- of letting every task/edge write fail at trigger runtime.
+SELECT meta_updated_at FROM public.tasks LIMIT 0;
+SELECT meta_updated_at FROM public.task_edges LIMIT 0;
+SELECT meta_updated_at FROM public.projects LIMIT 0;
+
 CREATE OR REPLACE FUNCTION public.touch_projects_for_changed_tasks()
 RETURNS trigger
 LANGUAGE plpgsql
