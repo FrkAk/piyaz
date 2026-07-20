@@ -13,6 +13,13 @@ import { sql, type SQL } from "drizzle-orm";
  * clock columns to each other, and every read-back truncates to
  * milliseconds in the driver.
  *
+ * Never wrap this in a GREATEST floor at a writer call site. The writer's
+ * stamp is the primary validator mover, and a floored stamp that keeps the
+ * old value masks a real change behind an unchanged validator (a stale
+ * 304), while an unfloored rewind only costs a spurious 200. The touch
+ * triggers keep their GREATEST wrapper because their bump is supplementary:
+ * the firing write has already moved its own row's clock.
+ *
  * @returns A fresh `clock_timestamp()` SQL fragment.
  */
 export function dbClockStamp(): SQL<Date> {

@@ -244,6 +244,27 @@ test("note writers stamp the DB clock when the app clock lags", async () => {
   );
 });
 
+test("a primary writer stamp is never floored: a change to a future-dated row still moves the validator", async () => {
+  const f = await seedUserOrgProject("clockdom-nofloor");
+  const ctx = makeAuthContext(f.userId);
+  const su = superuserPool();
+  await su`
+    UPDATE projects
+    SET updated_at = clock_timestamp() + interval '1 hour',
+        meta_updated_at = clock_timestamp() + interval '1 hour'
+    WHERE id = ${f.projectId}
+  `;
+  const before = await getProjectMaxUpdatedAt(ctx, f.projectId, "content");
+  const beforeMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+
+  await updateProject(ctx, f.projectId, { title: "Changed" });
+
+  const after = await getProjectMaxUpdatedAt(ctx, f.projectId, "content");
+  const afterMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  expect(after.getTime()).not.toBe(before.getTime());
+  expect(afterMeta.getTime()).not.toBe(beforeMeta.getTime());
+});
+
 test("the membership scrub stamps the DB clock when the app clock lags", async () => {
   const f = await seedUserOrgProject("clockdom-scrub", { legalCurrent: false });
   const ctx = makeAuthContext(f.userId);

@@ -1210,7 +1210,12 @@ GRANT EXECUTE ON FUNCTION public.delete_sole_member_org_as_admin(uuid, uuid) TO 
 -- so a delete or insert landing from a long-open transaction still moves
 -- the validator past stamps committed meanwhile (now() would stamp
 -- transaction start and could land below the current MAX). GREATEST
--- stays as zero-cost defense against back- or future-dated rows.
+-- stays here as zero-cost defense against back- or future-dated rows:
+-- this bump is supplementary (the firing write already moved its own
+-- row's clock), so a floored no-op cannot mask a change. Writer-level
+-- stamps are the primary validator movers and are deliberately NOT
+-- floored; a floored primary stamp would keep the validator still
+-- across a real change (see lib/db/clock.ts).
 --
 -- Two project clocks: updated_at (content) bumps on every arm and keeps
 -- feeding the home-grid sort; meta_updated_at (slim-graph metadata) bumps
