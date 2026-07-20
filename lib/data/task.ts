@@ -3499,6 +3499,7 @@ export async function addTaskLink(
         .set({ updatedAt: dbClockStamp() })
         .where(eq(tasks.id, taskId))
         .returning({ updatedAt: tasks.updatedAt });
+      if (!stamped) throw new ForbiddenError("Forbidden", "task", taskId);
 
       if (inserted) {
         await insertActivityEvents(tx, ctx.actor, [
@@ -3556,6 +3557,7 @@ export async function removeTaskLink(
       .set({ updatedAt: dbClockStamp() })
       .where(eq(tasks.id, row.taskId))
       .returning({ updatedAt: tasks.updatedAt });
+    if (!stamped) throw new ForbiddenError("Forbidden", "task", row.taskId);
 
     await insertActivityEvents(tx, ctx.actor, [
       {
@@ -3652,6 +3654,8 @@ export async function updateTaskLink(
       .set({ updatedAt: dbClockStamp() })
       .where(eq(tasks.id, row.link.taskId))
       .returning({ updatedAt: tasks.updatedAt });
+    if (!stamped)
+      throw new ForbiddenError("Forbidden", "task", row.link.taskId);
 
     await insertActivityEvents(tx, ctx.actor, [
       {
