@@ -436,12 +436,13 @@ export async function createTasksBatch(
   });
 
   if (result.lastCreated) {
-    emitTaskEvent(projectId, result.lastCreated);
+    emitTaskEvent(projectId, result.lastCreated, { metaChanged: true });
   } else if (result.firstEdge) {
     emitEdgeMutation(
       projectId,
       result.firstEdge.sourceId,
       result.firstEdge.targetId,
+      true,
     );
   }
   return {

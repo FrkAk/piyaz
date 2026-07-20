@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, sql } from "drizzle-orm";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import {
   projects,
@@ -30,6 +30,7 @@ import {
 import type { ProjectStatus } from "@/lib/types";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { emitTaskEvent } from "@/lib/realtime/events";
+import { assigneeSetChanged, taskRowMetaChanged } from "@/lib/data/task-clock";
 import {
   insertActivityEvents,
   type ActivityEventInput,
@@ -1516,6 +1517,20 @@ export async function applyTaskEdit(
     const applied: string[] = [];
     let refetchNeeded = false;
 
+    // Snapshot the child state the slim-visibility gate needs: the
+    // hasCriteria flip compares row counts crossing zero, the assignee
+    // gate compares the id set. Fetched only when matching ops exist.
+    const hasCriteriaCountOps = prepared.some(
+      (p) => p.kind === "criteria" && (p.op.t === "add" || p.op.t === "remove"),
+    );
+    const hasAssigneeOps = prepared.some((p) => p.kind === "assignee");
+    const criteriaCountBefore = hasCriteriaCountOps
+      ? await countCriteriaRows(tx, taskId)
+      : 0;
+    const assigneesBefore = hasAssigneeOps
+      ? await listAssigneeUserIds(tx, taskId)
+      : null;
+
     for (const prep of prepared) {
       const outcome = await applyPreparedOp(
         tx,
@@ -1530,10 +1545,29 @@ export async function applyTaskEdit(
       if (outcome.refetch) refetchNeeded = true;
     }
 
+    const criteriaCountAfter = hasCriteriaCountOps
+      ? await countCriteriaRows(tx, taskId)
+      : 0;
+    const assigneesAfter = hasAssigneeOps
+      ? await listAssigneeUserIds(tx, taskId)
+      : null;
+
     await foldFormattedText(acc);
+    const metaChanged =
+      taskRowMetaChanged(current, acc.rowChanges) ||
+      (hasCriteriaCountOps &&
+        criteriaCountBefore > 0 !== criteriaCountAfter > 0) ||
+      (assigneesBefore !== null &&
+        assigneesAfter !== null &&
+        assigneeSetChanged(assigneesBefore, assigneesAfter));
+    const now = new Date();
     const [row] = await tx
       .update(tasks)
-      .set({ ...acc.rowChanges, updatedAt: new Date() })
+      .set({
+        ...acc.rowChanges,
+        updatedAt: now,
+        ...(metaChanged ? { metaUpdatedAt: now } : {}),
+      })
       .where(eq(tasks.id, taskId))
       .returning();
 
@@ -1575,10 +1609,14 @@ export async function applyTaskEdit(
       previousStatus: current.status,
       projectStatus: gate.projectStatus,
       projectIdentifier: gate.projectIdentifier,
+      metaChanged,
     };
   });
 
-  emitTaskEvent(result.row.projectId, taskId);
+  emitTaskEvent(result.row.projectId, taskId, {
+    metaChanged: result.metaChanged,
+    updatedAt: result.row.updatedAt,
+  });
   return Object.assign(result.row, {
     acceptanceCriteria: result.criteriaResult,
     decisions: result.decisionsResult,
@@ -1588,6 +1626,36 @@ export async function applyTaskEdit(
     projectStatus: result.projectStatus,
     projectIdentifier: result.projectIdentifier,
   });
+}
+
+/**
+ * Count acceptance-criteria rows for a task.
+ *
+ * @param tx - Active RLS-scoped transaction.
+ * @param taskId - UUID of the task.
+ * @returns The number of criteria rows.
+ */
+async function countCriteriaRows(tx: Tx, taskId: string): Promise<number> {
+  const [row] = await tx
+    .select({ n: count() })
+    .from(taskAcceptanceCriteria)
+    .where(eq(taskAcceptanceCriteria.taskId, taskId));
+  return row?.n ?? 0;
+}
+
+/**
+ * List assignee user ids for a task.
+ *
+ * @param tx - Active RLS-scoped transaction.
+ * @param taskId - UUID of the task.
+ * @returns The assignee user ids.
+ */
+async function listAssigneeUserIds(tx: Tx, taskId: string): Promise<string[]> {
+  const rows = await tx
+    .select({ userId: taskAssignees.userId })
+    .from(taskAssignees)
+    .where(eq(taskAssignees.taskId, taskId));
+  return rows.map((r) => r.userId);
 }
 
 /**

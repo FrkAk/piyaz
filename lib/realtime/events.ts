@@ -19,23 +19,54 @@ export function emitProjectEvent(projectId: string): void {
 }
 
 /**
- * Emit a task-body-affecting event. Always paired with the project event
- * since the slim graph carries title/status/tags/category/order — a body
- * change is also a slim graph change. Batched via `dispatchMany` so the
- * Workers backend costs one DO sub-request instead of two.
+ * Emit a task-affecting event. Always paired with the project event, which
+ * owns the graph and my-tasks invalidations; the paired payload carries
+ * the task id and content clock because `project:<id>` is the channel
+ * every member holds (task channels are fetch-implicit), so the my-tasks
+ * in-place patch must ride it to reliably reach list viewers. Batched via
+ * `dispatchMany` so the Workers backend costs one DO sub-request instead
+ * of two.
  *
  * @param projectId - Owning project id.
  * @param taskId - Task that changed.
+ * @param opts - `metaChanged`: whether the write moved
+ *   `tasks.meta_updated_at` (rides both payloads; `false` marks
+ *   plan/record/decision/link writes so consumers skip the slim-graph and
+ *   my-tasks refetches; omit when unknown). `updatedAt`: the post-mutation
+ *   content clock so consumers can patch cached list rows in place when
+ *   the refetch is skipped.
  */
-export function emitTaskEvent(projectId: string, taskId: string): void {
+export function emitTaskEvent(
+  projectId: string,
+  taskId: string,
+  opts?: { metaChanged?: boolean; updatedAt?: Date },
+): void {
+  const metaChanged = opts?.metaChanged;
+  const updatedAt =
+    opts?.updatedAt !== undefined
+      ? { updatedAt: opts.updatedAt.toISOString() }
+      : {};
+  const flag = metaChanged !== undefined ? { metaChanged } : {};
   broker.dispatchMany([
     {
       key: `task:${taskId}`,
-      payload: { kind: "task", projectId, taskId } satisfies RealtimeEvent,
+      payload: {
+        kind: "task",
+        projectId,
+        taskId,
+        ...updatedAt,
+        ...flag,
+      } satisfies RealtimeEvent,
     },
     {
       key: `project:${projectId}`,
-      payload: { kind: "project", projectId } satisfies RealtimeEvent,
+      payload: {
+        kind: "project",
+        projectId,
+        taskId,
+        ...updatedAt,
+        ...flag,
+      } satisfies RealtimeEvent,
     },
   ]);
 }
@@ -210,12 +241,18 @@ export function emitNoteFoldersEvent(projectId: string): void {
  * @param projectId - Owning project id.
  * @param sourceTaskId - Edge source.
  * @param targetTaskId - Edge target.
+ * @param metaChanged - Whether the write moved `task_edges.meta_updated_at`
+ *   (create/remove/type change yes, note-only annotation edits no). Rides
+ *   all three payloads; `false` lets consumers skip the slim-graph and
+ *   my-tasks refetches. Omit when unknown.
  */
 export function emitEdgeMutation(
   projectId: string,
   sourceTaskId: string,
   targetTaskId: string,
+  metaChanged?: boolean,
 ): void {
+  const flag = metaChanged !== undefined ? { metaChanged } : {};
   broker.dispatchMany([
     {
       key: `task:${sourceTaskId}`,
@@ -223,6 +260,7 @@ export function emitEdgeMutation(
         kind: "task",
         projectId,
         taskId: sourceTaskId,
+        ...flag,
       } satisfies RealtimeEvent,
     },
     {
@@ -231,11 +269,12 @@ export function emitEdgeMutation(
         kind: "task",
         projectId,
         taskId: targetTaskId,
+        ...flag,
       } satisfies RealtimeEvent,
     },
     {
       key: `project:${projectId}`,
-      payload: { kind: "project", projectId } satisfies RealtimeEvent,
+      payload: { kind: "project", projectId, ...flag } satisfies RealtimeEvent,
     },
   ]);
 }

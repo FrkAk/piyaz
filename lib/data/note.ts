@@ -3408,19 +3408,22 @@ async function updateNoteCore(
     }
     // A team-to-private flip hides the row from other members under RLS,
     // so their note-clock MAX can no longer observe the bump above.
-    // Moving the project clock (visible to every member) makes their
-    // graph and context validators register the disappearance; the
-    // GREATEST floor keeps the bump monotonic under app/DB clock skew
-    // (the trigger idiom in `rls-functions.sql`). The refetch that
-    // consults those validators is triggered by the post-commit project
-    // event below — the note event itself rides `note:<id>` after the
-    // flip, which other members never subscribed to.
+    // Moving both project clocks (visible to every member) makes their
+    // graph (meta) and context (content) validators register the
+    // disappearance; the GREATEST floor keeps the bump monotonic under
+    // app/DB clock skew (the trigger idiom in `rls-functions.sql`). The
+    // refetch that consults those validators is triggered by the
+    // post-commit project event below; the note event itself rides
+    // `note:<id>` after the flip, which other members never subscribed to.
     const flippedToPrivate =
       applied.visibility === "private" && current.visibility === "team";
     if (flippedToPrivate) {
       await tx
         .update(projects)
-        .set({ updatedAt: sql`GREATEST(updated_at, now())` })
+        .set({
+          updatedAt: sql`GREATEST(updated_at, now())`,
+          metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+        })
         .where(eq(projects.id, current.projectId));
     }
 

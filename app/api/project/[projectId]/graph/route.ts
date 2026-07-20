@@ -23,10 +23,12 @@ import { consentGateResponse } from "@/lib/auth/consent";
  * `acceptanceCriteria`, `executionRecord`, `files`) are
  * deliberately omitted — fetch them per-task via `GET /api/task/[id]`.
  *
- * The validator folds the notes `meta` clock in (`notes.meta_updated_at`):
- * the payload carries note nodes and their edges, so metadata and link
- * changes must move it — but body-only edits must not, or every keystroke
- * autosave would ship a full graph payload to every open viewer.
+ * The validator reads the metadata clocks (`projects.meta_updated_at`,
+ * `tasks.meta_updated_at`, `task_edges.meta_updated_at`,
+ * `notes.meta_updated_at`): the payload renders only slim metadata, so
+ * plan/record/decision/link writes, edge note-only edits, and note body
+ * autosaves must not move it, or every heavy write would ship a full
+ * graph payload to every open viewer.
  *
  * @param req - Incoming request.
  * @param projectId - Project UUID from the route params.

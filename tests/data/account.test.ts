@@ -3,6 +3,8 @@ import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
+import { createTask } from "@/lib/data/task";
+import { broker } from "@/lib/realtime/broker";
 import {
   clearOrgMembershipArtifacts,
   enumerateOwnedOrgsForDeletion,
@@ -189,6 +191,71 @@ describe("clearOrgMembershipArtifacts", () => {
 
       expect(tokens).toEqual(["at-a-b", "at-b-a", "at-b-b"]);
     } finally {
+      await sqlc.end({ timeout: 5 });
+    }
+  });
+
+  test("bumps both clocks on tasks that lose an assignee", async () => {
+    const f = await seedUserOrgProject("clear-clocks", { legalCurrent: false });
+    const ctx = makeAuthContext(f.userId);
+    const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+    const sqlc = superuserPool();
+    try {
+      await sqlc`
+        INSERT INTO task_assignees ("task_id", "user_id")
+        VALUES (${task.id}, ${f.userId})
+      `;
+      const [before] = await sqlc<{ u: number; m: number }[]>`
+        SELECT extract(epoch FROM updated_at)::float8 AS u,
+               extract(epoch FROM meta_updated_at)::float8 AS m
+        FROM tasks WHERE id = ${task.id}
+      `;
+      const [beforeProj] = await sqlc<{ m: number }[]>`
+        SELECT extract(epoch FROM meta_updated_at)::float8 AS m
+        FROM projects WHERE id = ${f.projectId}
+      `;
+      await new Promise((r) => setTimeout(r, 50));
+
+      const frames: string[] = [];
+      broker.attach(f.userId, {
+        send: (data) => frames.push(data),
+        close: () => {},
+      });
+      broker.register(f.userId, `project:${f.projectId}`);
+
+      await clearOrgMembershipArtifacts(f.userId, f.organizationId);
+
+      const [{ n }] = await sqlc<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM task_assignees
+        WHERE task_id = ${task.id}
+      `;
+      expect(n).toBe(0);
+      const [after] = await sqlc<{ u: number; m: number }[]>`
+        SELECT extract(epoch FROM updated_at)::float8 AS u,
+               extract(epoch FROM meta_updated_at)::float8 AS m
+        FROM tasks WHERE id = ${task.id}
+      `;
+      expect(after.u).toBeGreaterThan(before.u);
+      expect(after.m).toBeGreaterThan(before.m);
+      const [afterProj] = await sqlc<{ m: number }[]>`
+        SELECT extract(epoch FROM meta_updated_at)::float8 AS m
+        FROM projects WHERE id = ${f.projectId}
+      `;
+      expect(afterProj.m).toBeGreaterThan(beforeProj.m);
+
+      const projectEvents = frames
+        .map(
+          (fr) =>
+            JSON.parse(fr.slice("data: ".length)) as {
+              kind: string;
+              projectId?: string;
+            },
+        )
+        .filter((e) => e.kind === "project");
+      expect(projectEvents.map((e) => e.projectId)).toContain(f.projectId);
+    } finally {
+      broker._resetForTests();
       await sqlc.end({ timeout: 5 });
     }
   });
