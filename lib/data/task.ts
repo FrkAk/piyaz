@@ -20,6 +20,7 @@ import {
   type Conn,
   type ReadConn,
 } from "@/lib/db/raw";
+import { dbClockStamp } from "@/lib/db/clock";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import {
   projects,
@@ -3140,15 +3141,14 @@ export async function updateTask(
     }
 
     let row = current;
-    const now = new Date();
     const rowMetaChanged = taskRowMetaChanged(current, changes);
     if (Object.keys(changes).length > 0) {
       const [updatedRow] = await tx
         .update(tasks)
         .set({
           ...changes,
-          updatedAt: now,
-          ...(rowMetaChanged ? { metaUpdatedAt: now } : {}),
+          updatedAt: dbClockStamp(),
+          ...(rowMetaChanged ? { metaUpdatedAt: dbClockStamp() } : {}),
         })
         .where(eq(tasks.id, taskId))
         .returning();
@@ -3159,7 +3159,7 @@ export async function updateTask(
       const [updatedRow] = await tx
         .update(tasks)
         .set({
-          updatedAt: now,
+          updatedAt: dbClockStamp(),
         })
         .where(eq(tasks.id, taskId))
         .returning();
@@ -3319,7 +3319,7 @@ export async function updateTask(
     if (metaChanged && !rowMetaChanged) {
       await tx
         .update(tasks)
-        .set({ metaUpdatedAt: now })
+        .set({ metaUpdatedAt: dbClockStamp() })
         .where(eq(tasks.id, taskId));
     }
     return { row, criteriaResult, decisionsResult, metaChanged };
@@ -3494,11 +3494,11 @@ export async function addTaskLink(
         row = existing;
       }
 
-      const now = new Date();
-      await tx
+      const [stamped] = await tx
         .update(tasks)
-        .set({ updatedAt: now })
-        .where(eq(tasks.id, taskId));
+        .set({ updatedAt: dbClockStamp() })
+        .where(eq(tasks.id, taskId))
+        .returning({ updatedAt: tasks.updatedAt });
 
       if (inserted) {
         await insertActivityEvents(tx, ctx.actor, [
@@ -3511,7 +3511,7 @@ export async function addTaskLink(
           },
         ]);
       }
-      return { row, projectId: task.projectId, updatedAt: now };
+      return { row, projectId: task.projectId, updatedAt: stamped.updatedAt };
     },
   );
 
@@ -3551,11 +3551,11 @@ export async function removeTaskLink(
     if (!row) throw new ForbiddenError("Forbidden", "task", linkId);
 
     await tx.delete(taskLinks).where(eq(taskLinks.id, linkId));
-    const now = new Date();
-    await tx
+    const [stamped] = await tx
       .update(tasks)
-      .set({ updatedAt: now })
-      .where(eq(tasks.id, row.taskId));
+      .set({ updatedAt: dbClockStamp() })
+      .where(eq(tasks.id, row.taskId))
+      .returning({ updatedAt: tasks.updatedAt });
 
     await insertActivityEvents(tx, ctx.actor, [
       {
@@ -3566,7 +3566,7 @@ export async function removeTaskLink(
         targetRef: row.url,
       },
     ]);
-    return { ...row, updatedAt: now };
+    return { ...row, updatedAt: stamped.updatedAt };
   });
 
   emitTaskEvent(result.projectId, result.taskId, {
@@ -3647,11 +3647,11 @@ export async function updateTaskLink(
       })
       .where(eq(taskLinks.id, linkId))
       .returning();
-    const now = new Date();
-    await tx
+    const [stamped] = await tx
       .update(tasks)
-      .set({ updatedAt: now })
-      .where(eq(tasks.id, row.link.taskId));
+      .set({ updatedAt: dbClockStamp() })
+      .where(eq(tasks.id, row.link.taskId))
+      .returning({ updatedAt: tasks.updatedAt });
 
     await insertActivityEvents(tx, ctx.actor, [
       {
@@ -3666,7 +3666,7 @@ export async function updateTaskLink(
       updated,
       projectId: row.projectId,
       taskId: row.link.taskId,
-      updatedAt: now,
+      updatedAt: stamped.updatedAt,
     };
   });
 

@@ -14,6 +14,7 @@ import {
   customType,
 } from "drizzle-orm/pg-core";
 import { sql, type SQL } from "drizzle-orm";
+import { dbClockStamp } from "@/lib/db/clock";
 import { organization, user } from "@/lib/db/auth-schema";
 import type {
   ProjectStatus,
@@ -124,7 +125,7 @@ export const projects = pgTable(
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(dbClockStamp()),
     // Metadata clock: bumped only on slim-graph-visible changes (project
     // chrome edits, identifier renames, and the touch triggers' propagation
     // of task/edge meta bumps plus unconditional insert/delete arms). The
@@ -133,7 +134,7 @@ export const projects = pgTable(
     // that also bumps it.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(dbClockStamp()),
   },
   (t) => [
     index("projects_organization_id_idx").on(t.organizationId),
@@ -172,7 +173,7 @@ export const tasks = pgTable(
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(dbClockStamp()),
     // Metadata clock: bumped only on slim-graph-visible changes (title,
     // status, category, tags, priority, estimate, order, assignee set, and
     // the hasDescription/hasCriteria/hasExecutionRecord flips), never on
@@ -182,7 +183,7 @@ export const tasks = pgTable(
     // also bumps it.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(dbClockStamp()),
   },
   (t) => [
     index("tasks_project_id_idx").on(t.projectId),
@@ -214,14 +215,14 @@ export const taskEdges = pgTable(
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(dbClockStamp()),
     // Metadata clock: bumped on create and edge-type changes, never on
     // note-only annotation edits. The graph validator's `meta` mode reads
     // it; updated_at stays the content clock, and every meta bump rides a
     // write that also bumps it.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(dbClockStamp()),
   },
   (t) => [
     index("task_edges_source_idx").on(t.sourceTaskId),
@@ -473,7 +474,7 @@ export const notes = pgTable(
       .defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(dbClockStamp()),
     // Metadata clock: bumped on every change except pure body edits
     // (fields, folder, links, trash/restore). The graph and notes-tree
     // validators read it so body autosaves stay 304-cheap. updated_at stays
@@ -481,7 +482,7 @@ export const notes = pgTable(
     // so content strictly dominates.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
+      .default(dbClockStamp()),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     // Consumed only server-side by notes_search_idx and large (up to hundreds
     // of KB for a max-size body): reads must project explicit columns that

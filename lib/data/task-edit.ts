@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, asc, count, eq, sql } from "drizzle-orm";
+import { dbClockStamp } from "@/lib/db/clock";
 import { withUserContext, type Tx } from "@/lib/db/rls";
 import {
   projects,
@@ -1560,13 +1561,12 @@ export async function applyTaskEdit(
       (assigneesBefore !== null &&
         assigneesAfter !== null &&
         assigneeSetChanged(assigneesBefore, assigneesAfter));
-    const now = new Date();
     const [row] = await tx
       .update(tasks)
       .set({
         ...acc.rowChanges,
-        updatedAt: now,
-        ...(metaChanged ? { metaUpdatedAt: now } : {}),
+        updatedAt: dbClockStamp(),
+        ...(metaChanged ? { metaUpdatedAt: dbClockStamp() } : {}),
       })
       .where(eq(tasks.id, taskId))
       .returning();
