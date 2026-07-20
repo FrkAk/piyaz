@@ -610,7 +610,11 @@ export async function createEdge(
 /**
  * Fetch an edge and assert caller access via the parent project on a
  * supplied tx. Missing edge and cross-team access both surface as
- * `ForbiddenError({ resource: "edge" })`.
+ * `ForbiddenError({ resource: "edge" })`. Both callers are writers, so
+ * the read takes `FOR UPDATE`: `updateEdge` compares the incoming type
+ * against this baseline to gate the meta clock, and a stale read could
+ * revert a concurrent type flip without moving it, freezing the graph
+ * validator on a stale 304 (the `updateTask` baseline idiom).
  *
  * @param tx - Active RLS transaction handle.
  * @param edgeId - UUID of the edge.
@@ -625,7 +629,8 @@ async function loadAuthorizedEdgeTx(tx: Tx, edgeId: string) {
   const [edge] = await tx
     .select()
     .from(taskEdges)
-    .where(eq(taskEdges.id, edgeId));
+    .where(eq(taskEdges.id, edgeId))
+    .for("update");
   if (!edge) throw new ForbiddenError("Forbidden", "edge", edgeId);
   let sourceTask;
   try {
