@@ -17,6 +17,7 @@ import {
   type Conn,
   type ReadConn,
 } from "@/lib/db/raw";
+import { dbClockStamp } from "@/lib/db/clock";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import {
   noteLinks,
@@ -1359,15 +1360,14 @@ export async function updateProject(
     const access = await assertProjectAccessTx(tx, projectId);
     // Every editable field (title, description, status, categories) ships
     // in the slim payload's project block, so the metadata clock always
-    // moves with the content clock here. No touch trigger fires on the
-    // projects row itself, so the GREATEST floor (the trigger idiom)
-    // keeps the meta clock monotonic under app/DB clock skew.
+    // moves with the content clock here. clock_timestamp() re-evaluates
+    // after a lock wait, so the stamp stays monotonic without a floor.
     const [row] = await tx
       .update(projects)
       .set({
         ...safe,
-        updatedAt: new Date(),
-        metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(projects.id, projectId))
       .returning();
@@ -1423,14 +1423,13 @@ export async function renameProjectIdentifier(
     await acquireOrgIdentifierLock(tx, project.organizationId);
     // Every taskRef and noteRef in the slim payload derives from the
     // identifier at read time, so a rename is slim-visible without
-    // touching a single task row. GREATEST keeps the meta clock
-    // monotonic: no touch trigger fires on the projects row itself.
+    // touching a single task row.
     const [row] = await tx
       .update(projects)
       .set({
         identifier,
-        updatedAt: new Date(),
-        metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(projects.id, projectId))
       .returning();
@@ -1473,20 +1472,19 @@ export async function renameCategory(
       .update(projects)
       .set({
         categories: updatedCategories,
-        updatedAt: new Date(),
-        metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(projects.id, projectId));
 
     // Category is slim-visible; stamping the task rows' meta clock in the
-    // same bulk statement keeps the trigger propagation consistent, and
-    // the GREATEST floor keeps every clock monotonic under skew.
+    // same bulk statement keeps the trigger propagation consistent.
     await tx
       .update(tasks)
       .set({
         category: newName,
-        updatedAt: new Date(),
-        metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(and(eq(tasks.projectId, projectId), eq(tasks.category, oldName)));
   });
@@ -1519,8 +1517,8 @@ export async function deleteCategory(
       .update(projects)
       .set({
         categories: updatedCategories,
-        updatedAt: new Date(),
-        metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(projects.id, projectId));
 
@@ -1528,8 +1526,8 @@ export async function deleteCategory(
       .update(tasks)
       .set({
         category: null,
-        updatedAt: new Date(),
-        metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(
         and(eq(tasks.projectId, projectId), eq(tasks.category, categoryName)),

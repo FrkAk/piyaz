@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { dbClockStamp } from "@/lib/db/clock";
 import { uuidArray, type Conn, type ReadConn } from "@/lib/db/raw";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { projects, tasks, taskEdges, type NewTaskEdge } from "@/lib/db/schema";
@@ -672,7 +673,7 @@ export async function updateEdge(
     };
   }
 
-  const setClause: Record<string, unknown> = { updatedAt: new Date() };
+  const setClause: Record<string, unknown> = { updatedAt: dbClockStamp() };
   if (updates.edgeType !== undefined) setClause.edgeType = updates.edgeType;
   if (updates.note !== undefined) setClause.note = updates.note;
 
@@ -685,12 +686,13 @@ export async function updateEdge(
       );
 
       // Edge type is the only slim-graph-visible column here; note-only
-      // annotation edits keep the metadata clock still. Reuse the content
-      // stamp so the meta clock never runs ahead of updated_at.
+      // annotation edits keep the metadata clock still. Both columns stamp
+      // clock_timestamp() and may differ by microseconds; nothing compares
+      // them to each other.
       const typeChanged =
         updates.edgeType !== undefined &&
         updates.edgeType !== existing.edgeType;
-      if (typeChanged) setClause.metaUpdatedAt = setClause.updatedAt;
+      if (typeChanged) setClause.metaUpdatedAt = dbClockStamp();
 
       let targetProjectIdForCycle: string | undefined;
       if (

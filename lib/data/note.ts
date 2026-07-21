@@ -104,6 +104,7 @@ import {
   noteSubstringSearchStmt,
   type NoteSearchRawRow,
 } from "@/lib/db/raw/search-notes";
+import { dbClockStamp } from "@/lib/db/clock";
 import { withUserContext, withUserContextRead, type Tx } from "@/lib/db/rls";
 import { seqInRange } from "@/lib/data/resolve-ref";
 import { BatchInputError } from "@/lib/data/task-batch";
@@ -3361,11 +3362,10 @@ async function updateNoteCore(
     }
     if (feedTaskIdsChanged) changedFields.push("feedTaskIds");
     const newVersion = bodyChanged ? current.version + 1 : current.version;
-    const now = new Date();
     const changes: Record<string, unknown> = {
       ...applied,
       updatedBy: ctx.userId,
-      updatedAt: now,
+      updatedAt: dbClockStamp(),
     };
     if (bodyChanged) {
       changes.version = newVersion;
@@ -3404,25 +3404,24 @@ async function updateNoteCore(
       feedTaskIdsChanged ||
       changedFields.some((field) => field !== "body");
     if (metaChanged) {
-      changes.metaUpdatedAt = now;
+      changes.metaUpdatedAt = dbClockStamp();
     }
     // A team-to-private flip hides the row from other members under RLS,
     // so their note-clock MAX can no longer observe the bump above.
     // Moving both project clocks (visible to every member) makes their
     // graph (meta) and context (content) validators register the
-    // disappearance; the GREATEST floor keeps the bump monotonic under
-    // app/DB clock skew (the trigger idiom in `rls-functions.sql`). The
-    // refetch that consults those validators is triggered by the
-    // post-commit project event below; the note event itself rides
-    // `note:<id>` after the flip, which other members never subscribed to.
+    // disappearance. The refetch that consults those validators is
+    // triggered by the post-commit project event below; the note event
+    // itself rides `note:<id>` after the flip, which other members never
+    // subscribed to.
     const flippedToPrivate =
       applied.visibility === "private" && current.visibility === "team";
     if (flippedToPrivate) {
       await tx
         .update(projects)
         .set({
-          updatedAt: sql`GREATEST(updated_at, now())`,
-          metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+          updatedAt: dbClockStamp(),
+          metaUpdatedAt: dbClockStamp(),
         })
         .where(eq(projects.id, current.projectId));
     }
@@ -3600,14 +3599,13 @@ export async function moveNote(
         visibility: gate.visibility,
       };
     }
-    const now = new Date();
     const [summary] = await tx
       .update(notes)
       .set({
         folder: dest,
         updatedBy: ctx.userId,
-        updatedAt: now,
-        metaUpdatedAt: now,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
@@ -3756,14 +3754,13 @@ export async function moveFolder(
         `move would push a descendant past ${NOTE_FOLDER_MAX_CHARS} characters`,
       );
     }
-    const subtreeNow = new Date();
     const rows = await tx
       .update(notes)
       .set({
         folder: sql`${dest} || substr(${notes.folder}, char_length(${srcPath}::text) + 1)`,
         updatedBy: ctx.userId,
-        updatedAt: subtreeNow,
-        metaUpdatedAt: subtreeNow,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(subtreeFilter)
       .returning({
@@ -3978,14 +3975,13 @@ export async function deleteNote(
         wasNoOp: true as const,
       };
     }
-    const now = new Date();
     const [row] = await tx
       .update(notes)
       .set({
-        deletedAt: now,
+        deletedAt: dbClockStamp(),
         updatedBy: ctx.userId,
-        updatedAt: now,
-        metaUpdatedAt: now,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(notes.id, noteId))
       .returning({
@@ -4096,15 +4092,14 @@ export async function restoreNote(
       ? nextFreeSlug(base, taken)
       : current.slug;
 
-    const now = new Date();
     const [summary] = await tx
       .update(notes)
       .set({
         deletedAt: null,
         slug,
         updatedBy: ctx.userId,
-        updatedAt: now,
-        metaUpdatedAt: now,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
@@ -4169,7 +4164,7 @@ export async function requestShare(
       .set({
         shareRequestedBy: ctx.userId,
         updatedBy: ctx.userId,
-        updatedAt: new Date(),
+        updatedAt: dbClockStamp(),
       })
       .where(eq(notes.id, noteId))
       .returning(noteSummaryColumns);
@@ -4265,7 +4260,7 @@ export async function declineShareRequest(
       .set({
         shareRequestedBy: null,
         updatedBy: ctx.userId,
-        updatedAt: new Date(),
+        updatedAt: dbClockStamp(),
       })
       .where(eq(notes.id, gate.id))
       .returning(noteSummaryColumns);
@@ -4305,7 +4300,6 @@ async function applyVisibilityTx(
   gate: NoteAccessGate,
   visibility: Visibility,
 ): Promise<NoteSummary> {
-  const now = new Date();
   const [row] = await tx
     .update(notes)
     .set({
@@ -4314,8 +4308,8 @@ async function applyVisibilityTx(
         ? { shareRequestedBy: null, sharedSince: sql`now()` }
         : { sharedSince: null }),
       updatedBy: ctx.userId,
-      updatedAt: now,
-      metaUpdatedAt: now,
+      updatedAt: dbClockStamp(),
+      metaUpdatedAt: dbClockStamp(),
     })
     .where(eq(notes.id, gate.id))
     .returning(noteSummaryColumns);
@@ -4470,10 +4464,9 @@ export async function createNoteTaskLink(
       .returning({ id: noteTaskLinks.id });
     const created = rows.length > 0;
     if (created) {
-      const now = new Date();
       await tx
         .update(notes)
-        .set({ updatedAt: now, metaUpdatedAt: now })
+        .set({ updatedAt: dbClockStamp(), metaUpdatedAt: dbClockStamp() })
         .where(eq(notes.id, noteId));
       await insertActivityEvents(tx, ctx.actor, [
         {
@@ -4552,10 +4545,9 @@ export async function removeNoteTaskLink(
       .returning({ id: noteTaskLinks.id });
     const removed = rows.length > 0;
     if (removed) {
-      const now = new Date();
       await tx
         .update(notes)
-        .set({ updatedAt: now, metaUpdatedAt: now })
+        .set({ updatedAt: dbClockStamp(), metaUpdatedAt: dbClockStamp() })
         .where(eq(notes.id, noteId));
       await insertActivityEvents(tx, ctx.actor, [
         {

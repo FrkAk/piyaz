@@ -3,6 +3,7 @@ import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { serviceRoleDb } from "@/lib/db";
 import { authDb } from "@/lib/db/connection";
 import { executeRaw, normalizeExecuteResult, toDate } from "@/lib/db/raw";
+import { dbClockStamp } from "@/lib/db/clock";
 import { withUserContextRead } from "@/lib/db/rls";
 import {
   account,
@@ -175,8 +176,8 @@ export async function clearOrgMembershipArtifacts(
     const bumped = await tx
       .update(tasks)
       .set({
-        updatedAt: sql`GREATEST(updated_at, now())`,
-        metaUpdatedAt: sql`GREATEST(meta_updated_at, now())`,
+        updatedAt: dbClockStamp(),
+        metaUpdatedAt: dbClockStamp(),
       })
       .where(
         inArray(

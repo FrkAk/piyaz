@@ -1206,10 +1206,16 @@ GRANT EXECUTE ON FUNCTION public.delete_sole_member_org_as_admin(uuid, uuid) TO 
 -- bumps each distinct parent project once, not N times. SECURITY DEFINER
 -- so the bump skips the projects RLS InitPlan — the firing DML already
 -- passed RLS on tasks/task_edges, and the function only widens writes to
--- the parent project's clocks. GREATEST keeps the bump monotonic:
--- now() is transaction start, so a flow that stamps the project with a
--- fresh client-clock timestamp and then writes tasks in the same
--- transaction (renameCategory, deleteCategory) must not be rewound.
+-- the parent project's clocks. clock_timestamp() is row-write wall time,
+-- so a delete or insert landing from a long-open transaction still moves
+-- the validator past stamps committed meanwhile (now() would stamp
+-- transaction start and could land below the current MAX). GREATEST
+-- stays here as zero-cost defense against back- or future-dated rows:
+-- this bump is supplementary (the firing write already moved its own
+-- row's clock), so a floored no-op cannot mask a change. Writer-level
+-- stamps are the primary validator movers and are deliberately NOT
+-- floored; a floored primary stamp would keep the validator still
+-- across a real change (see lib/db/clock.ts).
 --
 -- Two project clocks: updated_at (content) bumps on every arm and keeps
 -- feeding the home-grid sort; meta_updated_at (slim-graph metadata) bumps
@@ -1236,8 +1242,8 @@ SET search_path = public, pg_catalog, pg_temp
 AS $$
 BEGIN
   UPDATE public.projects
-  SET updated_at = GREATEST(updated_at, now()),
-      meta_updated_at = GREATEST(meta_updated_at, now())
+  SET updated_at = GREATEST(updated_at, clock_timestamp()),
+      meta_updated_at = GREATEST(meta_updated_at, clock_timestamp())
   WHERE id IN (SELECT DISTINCT project_id FROM changed_tasks);
   RETURN NULL;
 END;
@@ -1259,10 +1265,10 @@ SET search_path = public, pg_catalog, pg_temp
 AS $$
 BEGIN
   UPDATE public.projects
-  SET updated_at = GREATEST(updated_at, now())
+  SET updated_at = GREATEST(updated_at, clock_timestamp())
   WHERE id IN (SELECT DISTINCT project_id FROM changed_tasks);
   UPDATE public.projects
-  SET meta_updated_at = GREATEST(meta_updated_at, now())
+  SET meta_updated_at = GREATEST(meta_updated_at, clock_timestamp())
   WHERE id IN (
     SELECT DISTINCT nt.project_id
     FROM changed_tasks nt
@@ -1309,8 +1315,8 @@ SET search_path = public, pg_catalog, pg_temp
 AS $$
 BEGIN
   UPDATE public.projects
-  SET updated_at = GREATEST(updated_at, now()),
-      meta_updated_at = GREATEST(meta_updated_at, now())
+  SET updated_at = GREATEST(updated_at, clock_timestamp()),
+      meta_updated_at = GREATEST(meta_updated_at, clock_timestamp())
   WHERE id IN (
     SELECT DISTINCT t.project_id
     FROM public.tasks t
@@ -1338,7 +1344,7 @@ SET search_path = public, pg_catalog, pg_temp
 AS $$
 BEGIN
   UPDATE public.projects
-  SET updated_at = GREATEST(updated_at, now())
+  SET updated_at = GREATEST(updated_at, clock_timestamp())
   WHERE id IN (
     SELECT DISTINCT t.project_id
     FROM public.tasks t
@@ -1349,7 +1355,7 @@ BEGIN
     )
   );
   UPDATE public.projects
-  SET meta_updated_at = GREATEST(meta_updated_at, now())
+  SET meta_updated_at = GREATEST(meta_updated_at, clock_timestamp())
   WHERE id IN (
     SELECT DISTINCT t.project_id
     FROM public.tasks t
