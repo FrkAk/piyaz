@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.9](https://github.com/FrkAk/piyaz/compare/v0.4.8...v0.4.9) (2026-07-21)
+
+
+### Bug Fixes
+
+* unify validator clock sources across conditional-GET paths ([#251](https://github.com/FrkAk/piyaz/issues/251)) ([b4be0ed](https://github.com/FrkAk/piyaz/commit/b4be0ed3475c1d366a50e9b5ee2f34ec910e4937))
+
+
+### Performance Improvements
+
+* split task and edge metadata clocks from the graph validator ([#248](https://github.com/FrkAk/piyaz/issues/248)) ([9b27572](https://github.com/FrkAk/piyaz/commit/9b2757207535056f30eceb8d00c3652b3ad4db62))
+
 ## [0.4.8](https://github.com/FrkAk/piyaz/compare/v0.4.7...v0.4.8) (2026-07-18)
 
 
