@@ -20,12 +20,13 @@ const FORBIDDEN = [
   "skipHtml={false}",
 ];
 
-test.each(
-  RENDER_PATH_FILES,
-)("%s introduces no raw-HTML rendering vector", async (path) => {
-  const src = await Bun.file(path).text();
-  for (const needle of FORBIDDEN) expect(src).not.toContain(needle);
-});
+test.each(RENDER_PATH_FILES)(
+  "%s introduces no raw-HTML rendering vector",
+  async (path) => {
+    const src = await Bun.file(path).text();
+    for (const needle of FORBIDDEN) expect(src).not.toContain(needle);
+  },
+);
 
 test("the guard actually covers the note render-path files", () => {
   expect(RENDER_PATH_FILES).toContain(
