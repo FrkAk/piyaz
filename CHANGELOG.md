@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.10](https://github.com/FrkAk/piyaz/compare/v0.4.9...v0.4.10) (2026-07-24)
+
+
+### Bug Fixes
+
+* restore task content recency in graph views ([#253](https://github.com/FrkAk/piyaz/issues/253)) ([f8ac46c](https://github.com/FrkAk/piyaz/commit/f8ac46ce4d04915f8787310145cff710bf3feb52))
+
 ## [0.4.9](https://github.com/FrkAk/piyaz/compare/v0.4.8...v0.4.9) (2026-07-21)
 
 
