@@ -3261,11 +3261,14 @@ export async function updateTask(
     let assigneesChanged = false;
     let assigneesAfter: string[] | null = null;
     if (assigneesBefore && assigneeIds !== undefined) {
+      // Ordered by user id to match the slim payload's `assigneeUserIds`
+      // projection, so a realtime patch and a refetch produce the same array.
       assigneesAfter = (
         await tx
           .select({ userId: taskAssignees.userId })
           .from(taskAssignees)
           .where(eq(taskAssignees.taskId, taskId))
+          .orderBy(asc(taskAssignees.userId))
       ).map((a) => a.userId);
       assigneesChanged = assigneeSetChanged(assigneesBefore, assigneesAfter);
       eventInputs.push(
@@ -3327,7 +3330,7 @@ export async function updateTask(
       metaChanged && !stateAffecting
         ? {
             ...taskSlimPatchFromRow(row),
-            ...(assigneesAfter !== null
+            ...(assigneesChanged && assigneesAfter !== null
               ? {
                   assigneeUserIds: assigneesAfter,
                   assigneeCount: assigneesAfter.length,

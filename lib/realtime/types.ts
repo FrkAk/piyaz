@@ -23,7 +23,12 @@ export type TaskSlimPatch = {
   estimate?: Estimate | null;
   order?: number;
   hasExecutionRecord?: boolean;
+  /** Present only when the write changed the assignee set, ascending by
+   *  user id to match the payload's projection. Consumers read its
+   *  presence as the membership-changed signal for assignment-scoped
+   *  lists, so a write that restates an unchanged set must omit it. */
   assigneeUserIds?: string[];
+  /** Rides with {@link TaskSlimPatch.assigneeUserIds}. */
   assigneeCount?: number;
 };
 

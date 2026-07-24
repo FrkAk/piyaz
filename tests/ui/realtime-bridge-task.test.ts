@@ -277,6 +277,71 @@ test("the in-place patches never rewind a newer cached row", async () => {
   const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
   expect(rows?.find((r) => r.id === TASK)?.updatedAt).toEqual(newerCache);
   expect(graphRowUpdatedAt(qc)).toEqual(newerCache);
+  expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(false);
+  expect(invalidated(qc, myTasksKeys.list())).toBe(false);
+});
+
+test("a patch the rewind guard rejects invalidates instead of dropping the fields", async () => {
+  const newerCache = new Date(when.getTime() + 120_000);
+  const qc = seededClient(newerCache);
+  const older = new Date(when.getTime() + 60_000);
+
+  await applyRealtimeEvent(
+    qc,
+    projectEvent({
+      metaChanged: true,
+      taskId: TASK,
+      updatedAt: older,
+      patch: { title: "T2" },
+    }),
+  );
+
+  expect(graphRowUpdatedAt(qc)).toEqual(newerCache);
+  expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(true);
+  expect(invalidated(qc, myTasksKeys.list())).toBe(true);
+});
+
+test("a patch for a task missing from the cached graph invalidates it", async () => {
+  const qc = seededClient(when);
+  qc.setQueryData(projectKeys.graph(PROJECT), { tasks: [] });
+  const newer = new Date(when.getTime() + 60_000);
+
+  await applyRealtimeEvent(
+    qc,
+    projectEvent({
+      metaChanged: true,
+      taskId: TASK,
+      updatedAt: newer,
+      patch: { title: "T2" },
+    }),
+  );
+
+  expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(true);
+});
+
+test("patch values that do not match their declared shape are dropped", async () => {
+  const qc = seededClient(when);
+  qc.setQueryData(projectKeys.graph(PROJECT), {
+    tasks: [{ id: TASK, updatedAt: when, tags: ["kept"] }],
+  });
+  const newer = new Date(when.getTime() + 60_000);
+
+  await applyRealtimeEvent(
+    qc,
+    projectEvent({
+      metaChanged: true,
+      taskId: TASK,
+      updatedAt: newer,
+      patch: { title: "T2", tags: null as unknown as string[] },
+    }),
+  );
+
+  const g = qc.getQueryData<{
+    tasks: Array<Record<string, unknown>>;
+  }>(projectKeys.graph(PROJECT));
+  const graphRow = g?.tasks.find((t) => t.id === TASK);
+  expect(graphRow?.title).toBe("T2");
+  expect(graphRow?.tags).toEqual(["kept"]);
 });
 
 test("a metaChanged:true task event leaves the my-tasks patch to the paired project event", async () => {

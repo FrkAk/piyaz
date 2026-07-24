@@ -341,8 +341,8 @@ export type TaskSlim = {
  * relational child tables (`task_acceptance_criteria`, `task_decisions`);
  * this type carries them via join so consumers read
  * `task.acceptanceCriteria` and `task.decisions` directly. Omits
- * `metaUpdatedAt`: the metadata clock feeds validators and the slim graph
- * payload, and detail surfaces have no use for it.
+ * `metaUpdatedAt`: no writer or validator reads the task metadata clock
+ * (see `lib/db/schema.ts`), and detail surfaces render `updatedAt`.
  */
 export type TaskFull = Omit<Task, "metaUpdatedAt"> & {
   taskRef: string;

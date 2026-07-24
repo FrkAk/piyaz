@@ -26,6 +26,14 @@ export type ProjectValidatorMode = "none" | "graph" | "content";
  * Single round trip via `GREATEST` over correlated subqueries so the
  * conditional-GET path fans out one DB query per request, not several.
  *
+ * The task and edge terms are dominated by `p.updated_at` while the touch
+ * triggers in `docker/rls-functions.sql` hold: they bump the project row
+ * with an AFTER STATEMENT `clock_timestamp()`, later than the row stamps
+ * of the write that fired them, in the same transaction. They are kept as
+ * the validator's own guarantee, so a writer that ever reaches these
+ * tables without firing a trigger cannot freeze the validator on a stale
+ * 304. Drop them only together with that invariant.
+ *
  * @param conn - Drizzle client or transaction handle.
  * @param projectId - UUID of the project.
  * @param mode - Which clocks to fold into the validator.

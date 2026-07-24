@@ -436,10 +436,12 @@ export function PropRail({
             onGraphChange?.();
           } else {
             // More clicks queued: an SSE event from this step's response is
-            // about to (or already has) triggered an invalidating refetch
-            // that would land an intermediate snapshot on the cache. Cancel
-            // it and re-apply the latest intent so the trigger stays at the
-            // user's latest selection.
+            // about to (or already has) landed an intermediate snapshot on
+            // the cache, through an invalidating refetch or through
+            // `RealtimeBridge`'s in-place merge, which no cancellation can
+            // reach. Cancel the refetch and re-apply the latest intent —
+            // the re-apply, not the cancel, is what settles both paths on
+            // the user's latest selection.
             void queryClient.cancelQueries({ queryKey: taskKey });
             void queryClient.cancelQueries({ queryKey: graphKey });
             const latest = latestAssigneeIntentRef.current;

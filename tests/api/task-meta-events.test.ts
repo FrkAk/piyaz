@@ -1,10 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { truncateAll } from "@/tests/setup/schema";
-import { seedUserOrgProject } from "@/tests/setup/seed";
+import { seedSecondMember, seedUserOrgProject } from "@/tests/setup/seed";
 import { broker } from "@/lib/realtime/broker";
 import type { RealtimeEvent } from "@/lib/realtime/types";
 import { makeAuthContext } from "@/lib/auth/context";
 import { addTaskLink, createTask, updateTask } from "@/lib/data/task";
+import { getProjectGraphSlim } from "@/lib/data/project";
 import { applyTaskEdit } from "@/lib/data/task-edit";
 import { createEdge, updateEdge } from "@/lib/data/edge";
 
@@ -143,6 +144,61 @@ test("assignee-set changes ride the patch; criteria presence flips do not", asyn
 
   expect(projEvs[1].metaChanged).toBe(true);
   expect(projEvs[1].patch).toBeUndefined();
+});
+
+test("a write that restates an unchanged assignee set omits it from the patch", async () => {
+  const fx = await seedUserOrgProject("task-assign-noop");
+  const ctx = makeAuthContext(fx.userId);
+  const task = await createTask(ctx, { projectId: fx.projectId, title: "T" });
+  await updateTask(ctx, task.id, { assigneeIds: [fx.userId] });
+
+  const frames: string[] = [];
+  broker.attach(fx.userId, {
+    send: (data) => frames.push(data),
+    close: () => {},
+  });
+  broker.register(fx.userId, `project:${fx.projectId}`);
+
+  await updateTask(
+    ctx,
+    task.id,
+    { title: "T2", assigneeIds: [fx.userId] },
+    true,
+  );
+
+  const projEvs = eventsFrom(frames).filter(
+    (e): e is Extract<RealtimeEvent, { kind: "project" }> =>
+      e.kind === "project",
+  );
+  expect(projEvs).toHaveLength(1);
+  expect(projEvs[0].patch).toMatchObject({ title: "T2" });
+  expect(projEvs[0].patch?.assigneeUserIds).toBeUndefined();
+  expect(projEvs[0].patch?.assigneeCount).toBeUndefined();
+});
+
+test("the patch assignee ids match the slim payload's ordered projection", async () => {
+  const fx = await seedUserOrgProject("task-assign-order");
+  const ctx = makeAuthContext(fx.userId);
+  const other = await seedSecondMember(fx.organizationId, "assignorder");
+  const task = await createTask(ctx, { projectId: fx.projectId, title: "T" });
+
+  const frames: string[] = [];
+  broker.attach(fx.userId, {
+    send: (data) => frames.push(data),
+    close: () => {},
+  });
+  broker.register(fx.userId, `project:${fx.projectId}`);
+
+  const ids = [fx.userId, other].sort((a, b) => (a < b ? 1 : -1));
+  await updateTask(ctx, task.id, { assigneeIds: ids }, true);
+
+  const projEv = eventsFrom(frames).find(
+    (e): e is Extract<RealtimeEvent, { kind: "project" }> =>
+      e.kind === "project",
+  );
+  const graph = await getProjectGraphSlim(ctx, fx.projectId);
+  const row = graph.tasks.find((t) => t.id === task.id);
+  expect(projEv?.patch?.assigneeUserIds).toEqual(row?.assigneeUserIds);
 });
 
 test("edge note-only updates emit metaChanged false; type changes emit true", async () => {

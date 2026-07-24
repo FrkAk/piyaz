@@ -1580,7 +1580,7 @@ export async function applyTaskEdit(
       metaChanged && !stateAffecting
         ? {
             ...taskSlimPatchFromRow(row),
-            ...(assigneesAfter !== null
+            ...(assigneesChanged && assigneesAfter !== null
               ? {
                   assigneeUserIds: assigneesAfter,
                   assigneeCount: assigneesAfter.length,
@@ -1664,17 +1664,20 @@ async function countCriteriaRows(tx: Tx, taskId: string): Promise<number> {
 }
 
 /**
- * List assignee user ids for a task.
+ * List assignee user ids for a task, ordered by user id to match the slim
+ * payload's `assigneeUserIds` projection (`array_agg ... ORDER BY user_id`)
+ * so a realtime patch and a refetch produce the same array.
  *
  * @param tx - Active RLS-scoped transaction.
  * @param taskId - UUID of the task.
- * @returns The assignee user ids.
+ * @returns The assignee user ids, ascending.
  */
 async function listAssigneeUserIds(tx: Tx, taskId: string): Promise<string[]> {
   const rows = await tx
     .select({ userId: taskAssignees.userId })
     .from(taskAssignees)
-    .where(eq(taskAssignees.taskId, taskId));
+    .where(eq(taskAssignees.taskId, taskId))
+    .orderBy(asc(taskAssignees.userId));
   return rows.map((r) => r.userId);
 }
 
