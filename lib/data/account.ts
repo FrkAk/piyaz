@@ -169,15 +169,15 @@ export async function clearOrgMembershipArtifacts(
       .returning({ taskId: taskAssignees.taskId });
     if (removed.length === 0) return [];
 
-    // The assignee set is slim-graph-visible, so the scrub bumps both
-    // task clocks (the statement trigger propagates them to the project
-    // clocks); without the bump every open graph and my-tasks view keeps
-    // rendering the removed member until an unrelated write lands.
+    // The assignee set is slim-graph-visible, so the scrub bumps the
+    // task content clock (the statement trigger propagates it to the
+    // project clock); without the bump every open graph and my-tasks
+    // view keeps rendering the removed member until an unrelated write
+    // lands.
     const bumped = await tx
       .update(tasks)
       .set({
         updatedAt: dbClockStamp(),
-        metaUpdatedAt: dbClockStamp(),
       })
       .where(
         inArray(

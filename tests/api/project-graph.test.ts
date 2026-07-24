@@ -4,6 +4,7 @@ import { seedUserOrgProject } from "@/tests/setup/seed";
 import { broker } from "@/lib/realtime/broker";
 import { GET } from "@/app/api/project/[projectId]/graph/route";
 import { makeAuthContext } from "@/lib/auth/context";
+import { createNote, updateNote } from "@/lib/data/note";
 import { createTask } from "@/lib/data/task";
 import { applyTaskEdit } from "@/lib/data/task-edit";
 
@@ -35,16 +36,21 @@ function call(
   );
 }
 
-test("heavy-only task writes answer 304 on the cached graph ETag; slim writes answer 200", async () => {
-  const fx = await seedUserOrgProject("graph-meta-304");
+test("task writes answer 200 with a moved task clock; note body autosaves answer 304", async () => {
+  const fx = await seedUserOrgProject("graph-clock-200");
   const ctx = makeAuthContext(fx.userId);
   const task = await createTask(ctx, { projectId: fx.projectId, title: "T" });
+  const note = await createNote(ctx, { projectId: fx.projectId, title: "N" });
   setSession({ user: { id: fx.userId } });
 
   const first = await call(fx.projectId);
   expect(first.status).toBe(200);
   const etag = first.headers.get("etag");
   expect(etag).not.toBeNull();
+  const firstBody = (await first.json()) as {
+    tasks: Array<{ id: string; updatedAt: string }>;
+  };
+  const firstClock = firstBody.tasks.find((t) => t.id === task.id)?.updatedAt;
 
   await applyTaskEdit(ctx, task.id, [
     { op: "set", field: "implementationPlan", value: "plan body" },
@@ -53,17 +59,32 @@ test("heavy-only task writes answer 304 on the cached graph ETag; slim writes an
   const afterHeavy = await call(fx.projectId, {
     "if-none-match": etag as string,
   });
-  expect(afterHeavy.status).toBe(304);
-  expect(await afterHeavy.text()).toBe("");
+  expect(afterHeavy.status).toBe(200);
+  const heavyEtag = afterHeavy.headers.get("etag");
+  expect(heavyEtag).not.toBe(etag);
+  const heavyBody = (await afterHeavy.json()) as {
+    tasks: Array<{ id: string; updatedAt: string }>;
+  };
+  const heavyClock = heavyBody.tasks.find((t) => t.id === task.id)?.updatedAt;
+  expect(Date.parse(heavyClock as string)).toBeGreaterThan(
+    Date.parse(firstClock as string),
+  );
+
+  await updateNote(ctx, note.id, { body: "autosaved body" });
+  const afterAutosave = await call(fx.projectId, {
+    "if-none-match": heavyEtag as string,
+  });
+  expect(afterAutosave.status).toBe(304);
+  expect(await afterAutosave.text()).toBe("");
 
   await applyTaskEdit(ctx, task.id, [
     { op: "set", field: "status", value: "planned" },
   ]);
   const afterSlim = await call(fx.projectId, {
-    "if-none-match": etag as string,
+    "if-none-match": heavyEtag as string,
   });
   expect(afterSlim.status).toBe(200);
-  expect(afterSlim.headers.get("etag")).not.toBe(etag);
+  expect(afterSlim.headers.get("etag")).not.toBe(heavyEtag);
   const body = (await afterSlim.json()) as {
     tasks: Array<{ id: string; status: string }>;
   };

@@ -162,7 +162,6 @@ test("task writers stamp the DB clock when the app clock lags", async () => {
 
   const clocks = await rowClocks("tasks", task.id);
   expectDbStamp(clocks.u, dbNow);
-  expectDbStamp(clocks.m, dbNow);
   const after = await getProjectMaxUpdatedAt(ctx, f.projectId, "content");
   expect(after.getTime()).toBeGreaterThan(before.getTime());
 });
@@ -179,7 +178,7 @@ test("edge and project writers stamp the DB clock when the app clock lags", asyn
   });
   await updateProject(ctx, f.projectId, { categories: ["old"] });
   await updateTask(ctx, a.id, { category: "old" });
-  const beforeMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const beforeMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "graph");
   const beforeList = await getProjectListMaxUpdatedAt(ctx);
   await settle();
   const dbNow = await dbNowEpoch();
@@ -196,11 +195,9 @@ test("edge and project writers stamp the DB clock when the app clock lags", asyn
   expectDbStamp(e.m, dbNow);
   const p = await rowClocks("projects", f.projectId);
   expectDbStamp(p.u, dbNow);
-  expectDbStamp(p.m, dbNow);
   const cascaded = await rowClocks("tasks", a.id);
   expectDbStamp(cascaded.u, dbNow);
-  expectDbStamp(cascaded.m, dbNow);
-  const afterMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const afterMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "graph");
   expect(afterMeta.getTime()).toBeGreaterThan(beforeMeta.getTime());
   const afterList = await getProjectListMaxUpdatedAt(ctx);
   expect(afterList.getTime()).toBeGreaterThan(beforeList.getTime());
@@ -237,7 +234,6 @@ test("note writers stamp the DB clock when the app clock lags", async () => {
   expectDbStamp(n.m, dbNow);
   const p = await rowClocks("projects", f.projectId);
   expectDbStamp(p.u, dbNow);
-  expectDbStamp(p.m, dbNow);
   const afterTree = await getNotesTreeVersion(ctx, f.projectId);
   expect(afterTree.maxUpdatedAt?.getTime() ?? 0).toBeGreaterThan(
     beforeTree.maxUpdatedAt?.getTime() ?? 0,
@@ -255,12 +251,12 @@ test("a primary writer stamp is never floored: a change to a future-dated row st
     WHERE id = ${f.projectId}
   `;
   const before = await getProjectMaxUpdatedAt(ctx, f.projectId, "content");
-  const beforeMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const beforeMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "graph");
 
   await updateProject(ctx, f.projectId, { title: "Changed" });
 
   const after = await getProjectMaxUpdatedAt(ctx, f.projectId, "content");
-  const afterMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const afterMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "graph");
   expect(after.getTime()).not.toBe(before.getTime());
   expect(afterMeta.getTime()).not.toBe(beforeMeta.getTime());
 });
@@ -283,5 +279,4 @@ test("the membership scrub stamps the DB clock when the app clock lags", async (
 
   const clocks = await rowClocks("tasks", task.id);
   expectDbStamp(clocks.u, dbNow);
-  expectDbStamp(clocks.m, dbNow);
 });

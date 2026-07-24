@@ -111,7 +111,11 @@ import type {
 } from "@/lib/data/views";
 import { edgeRefColumns } from "@/lib/data/edge-columns";
 import { projectColor } from "@/lib/ui/project-color";
-import { assigneeSetChanged, taskRowMetaChanged } from "@/lib/data/task-clock";
+import {
+  assigneeSetChanged,
+  classifyTaskRowChanges,
+  taskSlimPatchFromRow,
+} from "@/lib/data/task-clock";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import {
   classifyLink,
@@ -3101,10 +3105,11 @@ export async function updateTask(
   const refetchNeeded = wroteChildren || statusChanged;
   const result = await withUserContext(ctx.userId, async (tx) => {
     await assertTaskAccessTx(tx, taskId);
-    // FOR UPDATE serializes concurrent writers on the row: the slim
-    // visibility gate compares `changes` against this baseline, and a
-    // stale read could revert a concurrent slim write without moving the
-    // meta clock, freezing the graph validator on a stale 304.
+    // FOR UPDATE serializes concurrent writers on the row: the event
+    // classification compares `changes` against this baseline, and a
+    // stale read could revert a concurrent slim write while emitting a
+    // patch (or a metaChanged:false flag) that hides the revert from
+    // open viewers until their next full fetch.
     const [current] = await tx
       .select()
       .from(tasks)
@@ -3141,14 +3146,13 @@ export async function updateTask(
     }
 
     let row = current;
-    const rowMetaChanged = taskRowMetaChanged(current, changes);
+    const rowClass = classifyTaskRowChanges(current, changes);
     if (Object.keys(changes).length > 0) {
       const [updatedRow] = await tx
         .update(tasks)
         .set({
           ...changes,
           updatedAt: dbClockStamp(),
-          ...(rowMetaChanged ? { metaUpdatedAt: dbClockStamp() } : {}),
         })
         .where(eq(tasks.id, taskId))
         .returning();
@@ -3255,12 +3259,16 @@ export async function updateTask(
       }
     }
     let assigneesChanged = false;
+    let assigneesAfter: string[] | null = null;
     if (assigneesBefore && assigneeIds !== undefined) {
-      const assigneesAfter = (
+      // Ordered by user id to match the slim payload's `assigneeUserIds`
+      // projection, so a realtime patch and a refetch produce the same array.
+      assigneesAfter = (
         await tx
           .select({ userId: taskAssignees.userId })
           .from(taskAssignees)
           .where(eq(taskAssignees.taskId, taskId))
+          .orderBy(asc(taskAssignees.userId))
       ).map((a) => a.userId);
       assigneesChanged = assigneeSetChanged(assigneesBefore, assigneesAfter);
       eventInputs.push(
@@ -3306,23 +3314,31 @@ export async function updateTask(
       }));
     }
 
-    // Child-table writes land after the row update, so a criteria-presence
-    // flip or assignee-set change stamps the meta clock in a follow-up
-    // write (the statement trigger propagates it to the project clock).
+    // Child-table writes land after the row update: a criteria-presence
+    // flip changes the task's own derived state, so it counts as
+    // state-affecting; an assignee-set change is slim-visible but
+    // state-neutral, so it rides the patch.
     const criteriaPresenceFlipped =
       childrenBefore !== null &&
       childrenAfter !== null &&
       (childrenBefore.acceptance_criteria ?? []).length > 0 !==
         (childrenAfter.acceptance_criteria ?? []).length > 0;
     const metaChanged =
-      rowMetaChanged || criteriaPresenceFlipped || assigneesChanged;
-    if (metaChanged && !rowMetaChanged) {
-      await tx
-        .update(tasks)
-        .set({ metaUpdatedAt: dbClockStamp() })
-        .where(eq(tasks.id, taskId));
-    }
-    return { row, criteriaResult, decisionsResult, metaChanged };
+      rowClass.metaChanged || criteriaPresenceFlipped || assigneesChanged;
+    const stateAffecting = rowClass.stateAffecting || criteriaPresenceFlipped;
+    const patch =
+      metaChanged && !stateAffecting
+        ? {
+            ...taskSlimPatchFromRow(row),
+            ...(assigneesChanged && assigneesAfter !== null
+              ? {
+                  assigneeUserIds: assigneesAfter,
+                  assigneeCount: assigneesAfter.length,
+                }
+              : {}),
+          }
+        : undefined;
+    return { row, criteriaResult, decisionsResult, metaChanged, patch };
   });
 
   // Reflect a prUrl- or criteria/decisions-only call (no other field
@@ -3337,6 +3353,7 @@ export async function updateTask(
     emitTaskEvent(result.row.projectId, taskId, {
       metaChanged: result.metaChanged,
       updatedAt: result.row.updatedAt,
+      ...(result.patch !== undefined ? { patch: result.patch } : {}),
     });
   }
   return Object.assign(result.row, {

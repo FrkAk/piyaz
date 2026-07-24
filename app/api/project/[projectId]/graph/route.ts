@@ -23,12 +23,17 @@ import { consentGateResponse } from "@/lib/auth/consent";
  * `acceptanceCriteria`, `executionRecord`, `files`) are
  * deliberately omitted — fetch them per-task via `GET /api/task/[id]`.
  *
- * The validator reads the metadata clocks (`projects.meta_updated_at`,
- * `tasks.meta_updated_at`, `task_edges.meta_updated_at`,
- * `notes.meta_updated_at`): the payload renders only slim metadata, so
- * plan/record/decision/link writes, edge note-only edits, and note body
- * autosaves must not move it, or every heavy write would ship a full
- * graph payload to every open viewer.
+ * The validator matches the payload's clock sources (`graph` mode):
+ * content clocks for the project row and tasks because the payload
+ * renders their `updatedAt` (StructureView's lastActive chip and recency
+ * sort), meta clocks for edges and notes because their projections ship
+ * no timestamps or bodies. Note body autosaves keep answering 304; edge
+ * note-only edits move the validator through the project term (the edge
+ * touch trigger bumps `projects.updated_at`), a spurious full response,
+ * never a stale 304. Realtime `metaChanged:false` and `patch` events
+ * keep open viewers from refetching on heavy and state-neutral slim
+ * task writes; the fresh validator only costs a full payload on
+ * revalidation (reload, reconnect).
  *
  * @param req - Incoming request.
  * @param projectId - Project UUID from the route params.
@@ -46,7 +51,7 @@ async function handle(req: Request, projectId: string): Promise<Response> {
   if (gate) return gate;
 
   try {
-    const max = await getProjectMaxUpdatedAt(ctx, projectId, "meta");
+    const max = await getProjectMaxUpdatedAt(ctx, projectId, "graph");
 
     if (req.method === "HEAD" || etagMatches(req, max)) {
       return conditionalRespond(req, null, max);

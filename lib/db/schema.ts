@@ -126,12 +126,9 @@ export const projects = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .default(dbClockStamp()),
-    // Metadata clock: bumped only on slim-graph-visible changes (project
-    // chrome edits, identifier renames, and the touch triggers' propagation
-    // of task/edge meta bumps plus unconditional insert/delete arms). The
-    // graph validator's `meta` mode reads it; updated_at stays the content
-    // clock feeding the home-grid sort, and every meta bump rides a write
-    // that also bumps it.
+    // Unread legacy clock: no writer, trigger, or validator references it
+    // since the graph validator moved to the project content clock.
+    // Dropped in a follow-up migration once no deployed build selects it.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
       .default(dbClockStamp()),
@@ -174,13 +171,11 @@ export const tasks = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .default(dbClockStamp()),
-    // Metadata clock: bumped only on slim-graph-visible changes (title,
-    // status, category, tags, priority, estimate, order, assignee set, and
-    // the hasDescription/hasCriteria/hasExecutionRecord flips), never on
-    // plan/record/decision/link writes. The graph validator's `meta` mode
-    // reads it so those heavy writes stay 304-cheap; updated_at stays the
-    // content clock / CAS token, and every meta bump rides a write that
-    // also bumps it.
+    // Unread legacy clock: no writer, trigger, or validator references it
+    // since the graph validator moved to the task content clock (slim
+    // visibility now classifies realtime events instead; see
+    // lib/data/task-clock.ts). Dropped in a follow-up migration once no
+    // deployed build selects it.
     metaUpdatedAt: timestamp("meta_updated_at", { withTimezone: true })
       .notNull()
       .default(dbClockStamp()),

@@ -1,12 +1,14 @@
 import type { Task } from "@/lib/db/schema";
+import type { TaskSlimPatch } from "@/lib/realtime/types";
 
 /**
- * Slim-visibility predicates for the task metadata clock
- * (`tasks.meta_updated_at`). The slim graph payload renders only a narrow
- * projection of each task, so writers consult these predicates to decide
- * whether a write bumps `meta_updated_at` (slim-visible) or only
- * `updated_at` (content). The touch triggers in `docker/rls-functions.sql`
- * propagate row meta bumps to `projects.meta_updated_at`.
+ * Slim-visibility predicates for task-row writes. The slim graph payload
+ * renders only a narrow projection of each task, so writers consult these
+ * to classify a write for the realtime event contract: graph-inert writes
+ * emit `metaChanged: false`, state-neutral slim writes ride a
+ * {@link TaskSlimPatch} consumers merge in place, and state-affecting
+ * writes (status, hasDescription/hasCriteria flips) force a graph
+ * refetch because derived task states must be recomputed server-side.
  */
 
 /** Task row columns rendered in the slim graph payload. */
@@ -65,29 +67,44 @@ export function executionRecordPresenceFlipped(
   return (before === null) !== (after === null);
 }
 
+/** Classification of a pending tasks-row update for the event contract. */
+export type TaskRowChangeClass = {
+  /** Whether anything the slim graph payload renders changed. */
+  metaChanged: boolean;
+  /** Whether the change can alter a derived task state, own or
+   *  downstream: status changes and hasDescription flips. These require
+   *  a graph refetch; every other slim change patches in place. */
+  stateAffecting: boolean;
+};
+
 /**
- * Whether a pending tasks-row update changes anything the slim graph
- * payload renders: a slim-visible column, the `hasDescription` flip, or
- * the `hasExecutionRecord` flip.
+ * Classify a pending tasks-row update against the slim graph payload:
+ * whether it changes anything slim-rendered, and whether it touches a
+ * derived-state input (status; the `hasDescription` flip). The
+ * `hasExecutionRecord` flip is slim-rendered but state-neutral, so it
+ * counts as a patchable change.
  *
  * @param current - The task row before the write.
  * @param changes - Column changes about to be applied.
- * @returns Whether the write must bump `meta_updated_at`.
+ * @returns The change classification.
  */
-export function taskRowMetaChanged(
+export function classifyTaskRowChanges(
   current: Task,
   changes: Record<string, unknown>,
-): boolean {
+): TaskRowChangeClass {
+  let patchable = false;
+  let stateAffecting = false;
   for (const field of SLIM_VISIBLE_TASK_FIELDS) {
     if (field in changes && !columnEqual(current[field], changes[field])) {
-      return true;
+      if (field === "status") stateAffecting = true;
+      else patchable = true;
     }
   }
   if (
     typeof changes.description === "string" &&
     descriptionPresenceFlipped(current.description, changes.description)
   ) {
-    return true;
+    stateAffecting = true;
   }
   if (
     "executionRecord" in changes &&
@@ -96,9 +113,30 @@ export function taskRowMetaChanged(
       changes.executionRecord as string | null,
     )
   ) {
-    return true;
+    patchable = true;
   }
-  return false;
+  return { metaChanged: patchable || stateAffecting, stateAffecting };
+}
+
+/**
+ * Snapshot the state-neutral slim fields of a post-write task row for the
+ * realtime patch payload. A full snapshot (not a changed-fields diff)
+ * keeps every applied patch a complete sync of these fields, so a merged
+ * patch never leaves a cached row partially stale.
+ *
+ * @param row - The task row after the write.
+ * @returns The patch payload.
+ */
+export function taskSlimPatchFromRow(row: Task): TaskSlimPatch {
+  return {
+    title: row.title,
+    category: row.category,
+    tags: row.tags,
+    priority: row.priority,
+    estimate: row.estimate,
+    order: row.order,
+    hasExecutionRecord: row.executionRecord !== null,
+  };
 }
 
 /**

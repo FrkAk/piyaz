@@ -1,7 +1,7 @@
 import "server-only";
 import { findOrgMemberUserIdsAsAdmin } from "@/lib/data/membership";
 import { broker } from "@/lib/realtime/broker";
-import type { RealtimeEvent } from "@/lib/realtime/types";
+import type { RealtimeEvent, TaskSlimPatch } from "@/lib/realtime/types";
 import type { Visibility } from "@/lib/types";
 
 export type { RealtimeEvent };
@@ -29,17 +29,20 @@ export function emitProjectEvent(projectId: string): void {
  *
  * @param projectId - Owning project id.
  * @param taskId - Task that changed.
- * @param opts - `metaChanged`: whether the write moved
- *   `tasks.meta_updated_at` (rides both payloads; `false` marks
+ * @param opts - `metaChanged`: whether the write changed anything the
+ *   slim graph payload renders (rides both payloads; `false` marks
  *   plan/record/decision/link writes so consumers skip the slim-graph and
  *   my-tasks refetches; omit when unknown). `updatedAt`: the post-mutation
  *   content clock so consumers can patch cached list rows in place when
- *   the refetch is skipped.
+ *   the refetch is skipped. `patch`: post-write snapshot of the task's
+ *   state-neutral slim fields; pass it when the write's slim changes
+ *   cannot alter any derived task state so consumers merge it in place
+ *   instead of refetching the graph.
  */
 export function emitTaskEvent(
   projectId: string,
   taskId: string,
-  opts?: { metaChanged?: boolean; updatedAt?: Date },
+  opts?: { metaChanged?: boolean; updatedAt?: Date; patch?: TaskSlimPatch },
 ): void {
   const metaChanged = opts?.metaChanged;
   const updatedAt =
@@ -47,6 +50,7 @@ export function emitTaskEvent(
       ? { updatedAt: opts.updatedAt.toISOString() }
       : {};
   const flag = metaChanged !== undefined ? { metaChanged } : {};
+  const patch = opts?.patch !== undefined ? { patch: opts.patch } : {};
   broker.dispatchMany([
     {
       key: `task:${taskId}`,
@@ -56,6 +60,7 @@ export function emitTaskEvent(
         taskId,
         ...updatedAt,
         ...flag,
+        ...patch,
       } satisfies RealtimeEvent,
     },
     {
@@ -66,6 +71,7 @@ export function emitTaskEvent(
         taskId,
         ...updatedAt,
         ...flag,
+        ...patch,
       } satisfies RealtimeEvent,
     },
   ]);

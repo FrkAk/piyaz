@@ -31,7 +31,11 @@ import {
 import type { ProjectStatus } from "@/lib/types";
 import { formatTaskMarkdownFields } from "@/lib/markdown/format";
 import { emitTaskEvent } from "@/lib/realtime/events";
-import { assigneeSetChanged, taskRowMetaChanged } from "@/lib/data/task-clock";
+import {
+  assigneeSetChanged,
+  classifyTaskRowChanges,
+  taskSlimPatchFromRow,
+} from "@/lib/data/task-clock";
 import {
   insertActivityEvents,
   type ActivityEventInput,
@@ -1554,22 +1558,36 @@ export async function applyTaskEdit(
       : null;
 
     await foldFormattedText(acc);
+    const rowClass = classifyTaskRowChanges(current, acc.rowChanges);
+    const criteriaPresenceFlipped =
+      hasCriteriaCountOps && criteriaCountBefore > 0 !== criteriaCountAfter > 0;
+    const assigneesChanged =
+      assigneesBefore !== null &&
+      assigneesAfter !== null &&
+      assigneeSetChanged(assigneesBefore, assigneesAfter);
     const metaChanged =
-      taskRowMetaChanged(current, acc.rowChanges) ||
-      (hasCriteriaCountOps &&
-        criteriaCountBefore > 0 !== criteriaCountAfter > 0) ||
-      (assigneesBefore !== null &&
-        assigneesAfter !== null &&
-        assigneeSetChanged(assigneesBefore, assigneesAfter));
+      rowClass.metaChanged || criteriaPresenceFlipped || assigneesChanged;
+    const stateAffecting = rowClass.stateAffecting || criteriaPresenceFlipped;
     const [row] = await tx
       .update(tasks)
       .set({
         ...acc.rowChanges,
         updatedAt: dbClockStamp(),
-        ...(metaChanged ? { metaUpdatedAt: dbClockStamp() } : {}),
       })
       .where(eq(tasks.id, taskId))
       .returning();
+    const patch =
+      metaChanged && !stateAffecting
+        ? {
+            ...taskSlimPatchFromRow(row),
+            ...(assigneesChanged && assigneesAfter !== null
+              ? {
+                  assigneeUserIds: assigneesAfter,
+                  assigneeCount: assigneesAfter.length,
+                }
+              : {}),
+          }
+        : undefined;
 
     const diffEvents = diffTaskChanges(
       projectId,
@@ -1610,12 +1628,14 @@ export async function applyTaskEdit(
       projectStatus: gate.projectStatus,
       projectIdentifier: gate.projectIdentifier,
       metaChanged,
+      patch,
     };
   });
 
   emitTaskEvent(result.row.projectId, taskId, {
     metaChanged: result.metaChanged,
     updatedAt: result.row.updatedAt,
+    ...(result.patch !== undefined ? { patch: result.patch } : {}),
   });
   return Object.assign(result.row, {
     acceptanceCriteria: result.criteriaResult,
@@ -1644,17 +1664,20 @@ async function countCriteriaRows(tx: Tx, taskId: string): Promise<number> {
 }
 
 /**
- * List assignee user ids for a task.
+ * List assignee user ids for a task, ordered by user id to match the slim
+ * payload's `assigneeUserIds` projection (`array_agg ... ORDER BY user_id`)
+ * so a realtime patch and a refetch produce the same array.
  *
  * @param tx - Active RLS-scoped transaction.
  * @param taskId - UUID of the task.
- * @returns The assignee user ids.
+ * @returns The assignee user ids, ascending.
  */
 async function listAssigneeUserIds(tx: Tx, taskId: string): Promise<string[]> {
   const rows = await tx
     .select({ userId: taskAssignees.userId })
     .from(taskAssignees)
-    .where(eq(taskAssignees.taskId, taskId));
+    .where(eq(taskAssignees.taskId, taskId))
+    .orderBy(asc(taskAssignees.userId));
   return rows.map((r) => r.userId);
 }
 

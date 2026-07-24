@@ -4,23 +4,35 @@ import { executeRaw, type Conn } from "@/lib/db/raw";
 
 /** Which clocks the project validator reads: `none` reads content clocks
  *  and ignores notes, `content` also folds the notes content clock, and
- *  `meta` switches every term (project, tasks, edges, notes) to the
- *  metadata clocks so heavy-only writes leave the validator unmoved. */
-export type ProjectValidatorMode = "none" | "meta" | "content";
+ *  `graph` matches the slim graph payload: content clocks for the
+ *  project row and tasks (the payload renders their `updatedAt`), meta
+ *  clocks for edges and notes. Note body autosaves leave the validator
+ *  unmoved; edge annotation edits move it anyway through the project
+ *  term, because the edge touch trigger bumps `projects.updated_at` on
+ *  every edge update (a spurious full response, never a stale 304). */
+export type ProjectValidatorMode = "none" | "graph" | "content";
 
 /**
  * Resolve the latest clock across a project's row, every task in the
  * project, and every edge whose source OR target is in the project.
- * `mode` picks the clocks: the graph route uses `meta` (the payload
- * renders only slim metadata, so plan/record/decision/link writes and
- * note body edits must not move its validator), the context-bundle route
- * uses `content` because it embeds bodies, and consumers that render no
- * notes use `none`. Every meta bump rides a write that also bumps
- * `updated_at`, so the `content` validator never sleeps through a change
- * `meta` observes.
+ * `mode` picks the clocks: the graph route uses `graph` (the payload
+ * renders each task's content clock, so heavy task writes must move the
+ * validator, while note body autosaves must not), the context-bundle
+ * route uses `content` because it embeds bodies, and consumers that
+ * render no notes use `none`. Every edge and note meta bump rides a
+ * write that also bumps `updated_at`, so the `content` validator never
+ * sleeps through a change `graph` observes.
  *
  * Single round trip via `GREATEST` over correlated subqueries so the
  * conditional-GET path fans out one DB query per request, not several.
+ *
+ * The task and edge terms are dominated by `p.updated_at` while the touch
+ * triggers in `docker/rls-functions.sql` hold: they bump the project row
+ * with an AFTER STATEMENT `clock_timestamp()`, later than the row stamps
+ * of the write that fired them, in the same transaction. They are kept as
+ * the validator's own guarantee, so a writer that ever reaches these
+ * tables without firing a trigger cannot freeze the validator on a stale
+ * 304. Drop them only together with that invariant.
  *
  * @param conn - Drizzle client or transaction handle.
  * @param projectId - UUID of the project.
@@ -32,31 +44,31 @@ export async function getProjectMaxUpdatedAtRaw(
   projectId: string,
   mode: ProjectValidatorMode = "none",
 ): Promise<Date | null> {
-  const clock =
-    mode === "meta" ? sql.raw("meta_updated_at") : sql.raw("updated_at");
+  const slimClock =
+    mode === "graph" ? sql.raw("meta_updated_at") : sql.raw("updated_at");
   const notesTerm =
     mode === "none"
       ? sql``
       : sql`,
         COALESCE(
-          (SELECT MAX(${clock}) FROM ${notes} WHERE project_id = p.id),
-          p.${clock}
+          (SELECT MAX(${slimClock}) FROM ${notes} WHERE project_id = p.id),
+          p.updated_at
         )`;
   const rows = await executeRaw<{ max_updated_at: string | Date }>(
     conn,
     sql`
       SELECT GREATEST(
-        p.${clock},
+        p.updated_at,
         COALESCE(
-          (SELECT MAX(${clock}) FROM ${tasks} WHERE project_id = p.id),
-          p.${clock}
+          (SELECT MAX(updated_at) FROM ${tasks} WHERE project_id = p.id),
+          p.updated_at
         ),
         COALESCE(
-          (SELECT MAX(e.${clock})
+          (SELECT MAX(e.${slimClock})
            FROM ${taskEdges} e
            WHERE e.source_task_id IN (SELECT id FROM ${tasks} WHERE project_id = p.id)
               OR e.target_task_id IN (SELECT id FROM ${tasks} WHERE project_id = p.id)),
-          p.${clock}
+          p.updated_at
         )${notesTerm}
       ) AS max_updated_at
       FROM ${projects} p

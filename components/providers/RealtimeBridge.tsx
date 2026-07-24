@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth-client";
 import type { NoteFullResult, NoteTreeRow } from "@/lib/data/note";
-import type { MyTask } from "@/lib/data/views";
+import type { MyTask, ProjectGraphSlim } from "@/lib/data/views";
 import { myTasksKeys, noteKeys, projectKeys, taskKeys } from "@/lib/query/keys";
 import {
   clearNoteTrashedIfRestoredRemotely,
@@ -12,7 +12,7 @@ import {
   whenNoteWritesSettle,
 } from "@/lib/query/note-cache";
 import { applyPresence } from "@/lib/realtime/presence-store";
-import type { RealtimeEvent } from "@/lib/realtime/types";
+import type { RealtimeEvent, TaskSlimPatch } from "@/lib/realtime/types";
 
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
@@ -33,7 +33,9 @@ const IS_CLOUDFLARE = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare";
  * Apply one realtime event to the shared TanStack Query cache.
  *
  * - `project` events invalidate `projectKeys.graph(projectId)` (slim graph
- *   refetch on workspace tabs viewing that project) plus the my-tasks list.
+ *   refetch on workspace tabs viewing that project) plus the my-tasks list,
+ *   unless the paired task write merges in place ({@link
+ *   applyTaskSlimWrite}).
  * - `task` events invalidate the task body and context bundle but
  *   intentionally NOT the slim graph: every `task` dispatch in
  *   `lib/realtime/events.ts` is paired with a `project` dispatch that already
@@ -74,20 +76,26 @@ export async function applyRealtimeEvent(
   }
   switch (ev.kind) {
     case "project":
-      // `metaChanged: false` marks task/edge writes that cannot alter the
-      // slim graph payload (plan/record/decision/link writes, edge
-      // note-only edits); the graph and my-tasks refetches are skipped
-      // for those, and the paired task write's content clock patches the
-      // cached my-tasks row in place instead. This channel is the one
-      // every member holds, so the patch must ride here (task channels
-      // are fetch-implicit). Anything else, and any event without the
-      // flag, invalidates; the graph refetch rides the conditional-GET
-      // path, so an unmoved validator answers 304.
-      if (ev.metaChanged !== false) {
+      // `metaChanged: false` marks writes whose only slim-payload effect
+      // is the task's content clock (plan/record/decision/link writes,
+      // edge note-only edits); a `patch` payload marks state-neutral slim
+      // writes (title, tags, priority, assignees, ...). Both skip the
+      // graph refetch and merge into the cached rows instead (see
+      // {@link applyTaskSlimWrite}). This channel is the one every member
+      // holds, so the patch must ride here (task channels are
+      // fetch-implicit). Anything else (status changes, presence flips,
+      // create/delete, edges, and events without the flag) invalidates;
+      // the graph refetch rides the conditional-GET path, so an unmoved
+      // validator answers 304.
+      if (
+        ev.taskId !== undefined &&
+        ev.updatedAt !== undefined &&
+        (ev.metaChanged === false || ev.patch !== undefined)
+      ) {
+        applyTaskSlimWrite(qc, ev.projectId, ev.taskId, ev.updatedAt, ev.patch);
+      } else if (ev.metaChanged !== false) {
         qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
         qc.invalidateQueries({ queryKey: myTasksKeys.list() });
-      } else if (ev.taskId !== undefined && ev.updatedAt !== undefined) {
-        patchMyTasksRow(qc, ev.taskId, ev.updatedAt);
       }
       break;
     case "task":
@@ -106,10 +114,13 @@ export async function applyRealtimeEvent(
         queryKey: noteKeys.backlinksTask(ev.projectId, ev.taskId),
       });
       // Mirror the project-event patch for viewers holding this task's
-      // fetch-implicit channel; `patchMyTasksRow` is idempotent, so the
-      // paired events applying it twice is harmless.
-      if (ev.metaChanged === false && ev.updatedAt !== undefined) {
-        patchMyTasksRow(qc, ev.taskId, ev.updatedAt);
+      // fetch-implicit channel; the patches and invalidations are
+      // idempotent, so the paired events applying them twice is harmless.
+      if (
+        (ev.metaChanged === false || ev.patch !== undefined) &&
+        ev.updatedAt !== undefined
+      ) {
+        applyTaskSlimWrite(qc, ev.projectId, ev.taskId, ev.updatedAt, ev.patch);
       }
       break;
     case "note":
@@ -145,30 +156,182 @@ export async function applyRealtimeEvent(
   }
 }
 
+/** Patch fields the my-tasks rows carry (no assignee or record fields). */
+const MY_TASK_PATCH_FIELDS = [
+  "title",
+  "category",
+  "tags",
+  "priority",
+  "estimate",
+  "order",
+] as const;
+
+/** Patch fields the slim-graph rows carry: every TaskSlimPatch key. The
+ *  allowlist keeps the wire payload from merging unexpected keys into
+ *  the cache, mirroring the my-tasks path. */
+const GRAPH_PATCH_FIELDS = [
+  ...MY_TASK_PATCH_FIELDS,
+  "hasExecutionRecord",
+  "assigneeUserIds",
+  "assigneeCount",
+] as const;
+
+/** Runtime shape of each patch field. The payload reaches the cache as
+ *  parsed JSON, so a value that does not match its declared type is
+ *  dropped rather than merged into a row the UI then renders. */
+const PATCH_FIELD_SHAPE: {
+  [K in keyof TaskSlimPatch]-?: (value: unknown) => boolean;
+} = {
+  title: (v) => typeof v === "string",
+  category: (v) => v === null || typeof v === "string",
+  tags: (v) => Array.isArray(v),
+  priority: (v) => v === null || typeof v === "string",
+  estimate: (v) => v === null || typeof v === "string",
+  order: (v) => typeof v === "number",
+  hasExecutionRecord: (v) => typeof v === "boolean",
+  assigneeUserIds: (v) => Array.isArray(v),
+  assigneeCount: (v) => typeof v === "number",
+};
+
 /**
- * Patch a cached my-tasks row's `updatedAt` in place after a
- * `metaChanged: false` write skipped the list refetch. The rows render
- * the content clock and the "Updated" sort orders on it; the guard never
- * rewinds a row a newer write already advanced. No-op when the task is
- * not in the cache.
+ * Subset of a slim patch restricted to the given field names and to
+ * values matching their declared shape.
+ *
+ * @param patch - The event's patch payload.
+ * @param fields - Field names the target row shape carries.
+ * @returns The restricted patch object.
+ */
+function pickPatchFields(
+  patch: TaskSlimPatch,
+  fields: readonly (keyof TaskSlimPatch)[],
+): Partial<TaskSlimPatch> {
+  const out: Partial<TaskSlimPatch> = {};
+  for (const f of fields) {
+    const value = patch[f];
+    if (value !== undefined && PATCH_FIELD_SHAPE[f](value)) {
+      (out as Record<string, unknown>)[f] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Apply one task write's slim effects to the cached list surfaces without
+ * refetching: merge the graph row, then either patch the my-tasks row or
+ * invalidate the list when the write changed the assignee set (membership
+ * there is assignment-scoped, so it can add or remove the viewer's own
+ * row, which an in-place merge cannot express). A patch that cannot be
+ * merged in place falls back to invalidating that cache: dropping a clock
+ * a newer write already advanced is correct, dropping field content is
+ * not, and the refetch rides the conditional-GET path.
+ *
+ * @param qc - Active query client.
+ * @param projectId - Project whose cached graph to patch.
+ * @param taskId - Task whose cached rows to patch.
+ * @param updatedAtIso - The write's post-mutation content clock.
+ * @param patch - Optional state-neutral slim-field snapshot to merge.
+ */
+function applyTaskSlimWrite(
+  qc: QueryClient,
+  projectId: string,
+  taskId: string,
+  updatedAtIso: string,
+  patch?: TaskSlimPatch,
+): void {
+  const graphStale = patchGraphTaskRow(
+    qc,
+    projectId,
+    taskId,
+    updatedAtIso,
+    patch,
+  );
+  if (patch !== undefined && graphStale) {
+    qc.invalidateQueries({ queryKey: projectKeys.graph(projectId) });
+  }
+  if (patch?.assigneeUserIds !== undefined) {
+    qc.invalidateQueries({ queryKey: myTasksKeys.list() });
+    return;
+  }
+  const listStale = patchMyTasksRow(qc, taskId, updatedAtIso, patch);
+  if (patch !== undefined && listStale) {
+    qc.invalidateQueries({ queryKey: myTasksKeys.list() });
+  }
+}
+
+/**
+ * Patch a cached my-tasks row in place after a skipped list refetch: the
+ * content clock always, plus any state-neutral slim fields riding the
+ * event's patch snapshot. The rows render the content clock and the
+ * "Updated" sort orders on it; the guard never rewinds a row a newer
+ * write already advanced. No-op when the task is not in the cache.
  *
  * @param qc - Active query client.
  * @param taskId - Task whose cached row to patch.
  * @param updatedAtIso - The write's post-mutation content clock.
+ * @param patch - Optional state-neutral slim-field snapshot to merge.
+ * @returns Whether a cached row was left behind the write. A task absent
+ *   from the list is not staleness: the viewer is simply not assigned.
  */
 function patchMyTasksRow(
   qc: QueryClient,
   taskId: string,
   updatedAtIso: string,
-): void {
+  patch?: TaskSlimPatch,
+): boolean {
   const evMs = Date.parse(updatedAtIso);
   const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
   const row = rows?.find((r) => r.id === taskId);
-  if (row === undefined || updatedAtMs(row.updatedAt) >= evMs) return;
+  if (row === undefined) return false;
+  if (updatedAtMs(row.updatedAt) >= evMs) return true;
   const updatedAt = new Date(updatedAtIso);
+  const fields = patch ? pickPatchFields(patch, MY_TASK_PATCH_FIELDS) : {};
   qc.setQueryData<MyTask[]>(myTasksKeys.list(), (data) =>
-    data?.map((r) => (r.id === taskId ? { ...r, updatedAt } : r)),
+    data?.map((r) => (r.id === taskId ? { ...r, ...fields, updatedAt } : r)),
   );
+  return false;
+}
+
+/**
+ * Patch a cached slim-graph task row in place after a skipped graph
+ * refetch: the content clock always (StructureView's lastActive chip and
+ * recency sort render it), plus any state-neutral slim fields riding the
+ * event's patch snapshot. The guard never rewinds a row a newer write
+ * already advanced. No-op when the project graph is not in the cache.
+ *
+ * @param qc - Active query client.
+ * @param projectId - Project whose cached graph to patch.
+ * @param taskId - Task whose cached row to patch.
+ * @param updatedAtIso - The write's post-mutation content clock.
+ * @param patch - Optional state-neutral slim-field snapshot to merge.
+ * @returns Whether a cached graph was left behind the write, either
+ *   because its row is already newer or because it predates the task.
+ */
+function patchGraphTaskRow(
+  qc: QueryClient,
+  projectId: string,
+  taskId: string,
+  updatedAtIso: string,
+  patch?: TaskSlimPatch,
+): boolean {
+  const evMs = Date.parse(updatedAtIso);
+  const graph = qc.getQueryData<ProjectGraphSlim>(projectKeys.graph(projectId));
+  if (graph === undefined) return false;
+  const row = graph.tasks.find((t) => t.id === taskId);
+  if (row === undefined) return true;
+  if (updatedAtMs(row.updatedAt) >= evMs) return true;
+  const updatedAt = new Date(updatedAtIso);
+  const fields = patch ? pickPatchFields(patch, GRAPH_PATCH_FIELDS) : {};
+  qc.setQueryData<ProjectGraphSlim>(projectKeys.graph(projectId), (data) =>
+    data === undefined
+      ? undefined
+      : {
+          ...data,
+          tasks: data.tasks.map((t) =>
+            t.id === taskId ? { ...t, ...fields, updatedAt } : t,
+          ),
+        },
+  );
+  return false;
 }
 
 /**
