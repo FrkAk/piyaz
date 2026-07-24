@@ -79,8 +79,7 @@ test("a direct UPDATE blocked on the projects row re-evaluates its stamp after t
     await su.begin(async (t1) => {
       const [held] = await t1<{ u: number }[]>`
         UPDATE projects
-        SET updated_at = clock_timestamp(),
-            meta_updated_at = clock_timestamp()
+        SET updated_at = clock_timestamp()
         WHERE id = ${f.projectId}
         RETURNING extract(epoch FROM updated_at)::float8 AS u
       `;
@@ -93,20 +92,18 @@ test("a direct UPDATE blocked on the projects row re-evaluates its stamp after t
     await blocked;
     setSystemTime();
 
-    const [after] = await su<{ u: number; m: number }[]>`
-      SELECT extract(epoch FROM updated_at)::float8 AS u,
-             extract(epoch FROM meta_updated_at)::float8 AS m
+    const [after] = await su<{ u: number }[]>`
+      SELECT extract(epoch FROM updated_at)::float8 AS u
       FROM projects WHERE id = ${f.projectId}
     `;
     expect(after.u).toBeGreaterThan(heldEpoch);
-    expect(after.m).toBeGreaterThan(heldEpoch);
   } finally {
     setSystemTime();
     await su.end({ timeout: 5 });
   }
 });
 
-test("a task delete from a long-open transaction still moves the project clocks", async () => {
+test("a task delete from a long-open transaction still moves the project clock", async () => {
   const f = await seedUserOrgProject("clockrace-del");
   const ctx = makeAuthContext(f.userId);
   const a = await createTask(ctx, { projectId: f.projectId, title: "A" });
@@ -128,13 +125,11 @@ test("a task delete from a long-open transaction still moves the project clocks"
       await t1`DELETE FROM tasks WHERE id = ${a.id}`;
     });
 
-    const [project] = await su<{ u: number; m: number }[]>`
-      SELECT extract(epoch FROM updated_at)::float8 AS u,
-             extract(epoch FROM meta_updated_at)::float8 AS m
+    const [project] = await su<{ u: number }[]>`
+      SELECT extract(epoch FROM updated_at)::float8 AS u
       FROM projects WHERE id = ${f.projectId}
     `;
     expect(project.u).toBeGreaterThan(concurrentEpoch);
-    expect(project.m).toBeGreaterThan(concurrentEpoch);
   } finally {
     await su.end({ timeout: 5 });
   }

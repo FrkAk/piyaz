@@ -111,7 +111,11 @@ import type {
 } from "@/lib/data/views";
 import { edgeRefColumns } from "@/lib/data/edge-columns";
 import { projectColor } from "@/lib/ui/project-color";
-import { assigneeSetChanged, taskRowMetaChanged } from "@/lib/data/task-clock";
+import {
+  assigneeSetChanged,
+  classifyTaskRowChanges,
+  taskSlimPatchFromRow,
+} from "@/lib/data/task-clock";
 import { emitTaskEvent } from "@/lib/realtime/events";
 import {
   classifyLink,
@@ -3141,14 +3145,13 @@ export async function updateTask(
     }
 
     let row = current;
-    const rowMetaChanged = taskRowMetaChanged(current, changes);
+    const rowClass = classifyTaskRowChanges(current, changes);
     if (Object.keys(changes).length > 0) {
       const [updatedRow] = await tx
         .update(tasks)
         .set({
           ...changes,
           updatedAt: dbClockStamp(),
-          ...(rowMetaChanged ? { metaUpdatedAt: dbClockStamp() } : {}),
         })
         .where(eq(tasks.id, taskId))
         .returning();
@@ -3255,8 +3258,9 @@ export async function updateTask(
       }
     }
     let assigneesChanged = false;
+    let assigneesAfter: string[] | null = null;
     if (assigneesBefore && assigneeIds !== undefined) {
-      const assigneesAfter = (
+      assigneesAfter = (
         await tx
           .select({ userId: taskAssignees.userId })
           .from(taskAssignees)
@@ -3306,23 +3310,31 @@ export async function updateTask(
       }));
     }
 
-    // Child-table writes land after the row update, so a criteria-presence
-    // flip or assignee-set change stamps the meta clock in a follow-up
-    // write (the statement trigger propagates it to the project clock).
+    // Child-table writes land after the row update: a criteria-presence
+    // flip changes the task's own derived state, so it counts as
+    // state-affecting; an assignee-set change is slim-visible but
+    // state-neutral, so it rides the patch.
     const criteriaPresenceFlipped =
       childrenBefore !== null &&
       childrenAfter !== null &&
       (childrenBefore.acceptance_criteria ?? []).length > 0 !==
         (childrenAfter.acceptance_criteria ?? []).length > 0;
     const metaChanged =
-      rowMetaChanged || criteriaPresenceFlipped || assigneesChanged;
-    if (metaChanged && !rowMetaChanged) {
-      await tx
-        .update(tasks)
-        .set({ metaUpdatedAt: dbClockStamp() })
-        .where(eq(tasks.id, taskId));
-    }
-    return { row, criteriaResult, decisionsResult, metaChanged };
+      rowClass.metaChanged || criteriaPresenceFlipped || assigneesChanged;
+    const stateAffecting = rowClass.stateAffecting || criteriaPresenceFlipped;
+    const patch =
+      metaChanged && !stateAffecting
+        ? {
+            ...taskSlimPatchFromRow(row),
+            ...(assigneesAfter !== null
+              ? {
+                  assigneeUserIds: assigneesAfter,
+                  assigneeCount: assigneesAfter.length,
+                }
+              : {}),
+          }
+        : undefined;
+    return { row, criteriaResult, decisionsResult, metaChanged, patch };
   });
 
   // Reflect a prUrl- or criteria/decisions-only call (no other field
@@ -3337,6 +3349,7 @@ export async function updateTask(
     emitTaskEvent(result.row.projectId, taskId, {
       metaChanged: result.metaChanged,
       updatedAt: result.row.updatedAt,
+      ...(result.patch !== undefined ? { patch: result.patch } : {}),
     });
   }
   return Object.assign(result.row, {

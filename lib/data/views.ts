@@ -141,9 +141,10 @@ export type ProjectListEntryMcp = Pick<
 
 /**
  * Slim task entry returned by the project graph payload. `updatedAt`
- * carries the metadata clock (`tasks.meta_updated_at`, the last
- * slim-visible change), not the content clock, so the payload stays
- * byte-stable whenever the graph route's meta validator answers 304.
+ * carries the content clock (`tasks.updated_at`): StructureView renders
+ * it as lastActive and sorts on it, so heavy writes must surface here.
+ * The graph route's `graph`-mode validator folds the same clock, keeping
+ * the payload byte-stable under a 304.
  */
 export type TaskGraphSlim = Pick<
   Task,
@@ -226,8 +227,8 @@ export type NoteTaskGraphEdge = Pick<
 
 /** Slim project graph for the workspace canvas + list. Edges, tasks, and
  * notes are projected down to the fields the graph surfaces render. The
- * project block's `updatedAt` carries the metadata clock
- * (`projects.meta_updated_at`), matching the route's meta validator. */
+ * project block's `updatedAt` carries the content clock
+ * (`projects.updated_at`), matching the route's `graph` validator. */
 export type ProjectGraphSlim = {
   project: Pick<
     Project,
@@ -289,8 +290,8 @@ export type ProjectMeta = Pick<
  * `blockedBy` carries the taskRef of the lowest-sequence direct upstream
  * that is neither done nor cancelled, when one exists.
  *
- * Unlike the graph payload, `updatedAt` here carries the content clock
- * (`tasks.updated_at`): the list sorts on recency of any change, and
+ * `updatedAt` carries the content clock (`tasks.updated_at`), matching
+ * the graph payload: the list sorts on recency of any change, and
  * realtime patches the row in place when a heavy write skips the refetch.
  */
 export type MyTask = Omit<

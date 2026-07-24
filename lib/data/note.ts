@@ -3408,12 +3408,12 @@ async function updateNoteCore(
     }
     // A team-to-private flip hides the row from other members under RLS,
     // so their note-clock MAX can no longer observe the bump above.
-    // Moving both project clocks (visible to every member) makes their
-    // graph (meta) and context (content) validators register the
-    // disappearance. The refetch that consults those validators is
-    // triggered by the post-commit project event below; the note event
-    // itself rides `note:<id>` after the flip, which other members never
-    // subscribed to.
+    // Moving the project content clock (visible to every member) makes
+    // their graph and context validators register the disappearance. The
+    // refetch that consults those validators is triggered by the
+    // post-commit project event below; the note event itself rides
+    // `note:<id>` after the flip, which other members never subscribed
+    // to.
     const flippedToPrivate =
       applied.visibility === "private" && current.visibility === "team";
     if (flippedToPrivate) {
@@ -3421,7 +3421,6 @@ async function updateNoteCore(
         .update(projects)
         .set({
           updatedAt: dbClockStamp(),
-          metaUpdatedAt: dbClockStamp(),
         })
         .where(eq(projects.id, current.projectId));
     }

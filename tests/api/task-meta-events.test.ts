@@ -4,7 +4,7 @@ import { seedUserOrgProject } from "@/tests/setup/seed";
 import { broker } from "@/lib/realtime/broker";
 import type { RealtimeEvent } from "@/lib/realtime/types";
 import { makeAuthContext } from "@/lib/auth/context";
-import { addTaskLink, createTask } from "@/lib/data/task";
+import { addTaskLink, createTask, updateTask } from "@/lib/data/task";
 import { applyTaskEdit } from "@/lib/data/task-edit";
 import { createEdge, updateEdge } from "@/lib/data/edge";
 
@@ -61,6 +61,88 @@ test("task and project events carry metaChanged false on heavy writes and true o
     expect(ev.taskId).toBe(task.id);
     expect(ev.updatedAt).toBeDefined();
   }
+});
+
+test("state-neutral slim writes carry a patch snapshot; status and heavy writes do not", async () => {
+  const fx = await seedUserOrgProject("task-patch-ev");
+  const ctx = makeAuthContext(fx.userId);
+  const task = await createTask(ctx, { projectId: fx.projectId, title: "T" });
+
+  const frames: string[] = [];
+  broker.attach(fx.userId, {
+    send: (data) => frames.push(data),
+    close: () => {},
+  });
+  broker.register(fx.userId, `project:${fx.projectId}`);
+
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "title", value: "T2" },
+    { op: "set", field: "priority", value: "core" },
+    { op: "set", field: "tags", value: ["feature"] },
+  ]);
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "executionRecord", value: "record body" },
+  ]);
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "status", value: "planned" },
+  ]);
+  await applyTaskEdit(ctx, task.id, [
+    { op: "set", field: "implementationPlan", value: "plan body" },
+  ]);
+
+  const projEvs = eventsFrom(frames).filter(
+    (e): e is Extract<RealtimeEvent, { kind: "project" }> =>
+      e.kind === "project",
+  );
+  expect(projEvs).toHaveLength(4);
+
+  expect(projEvs[0].metaChanged).toBe(true);
+  expect(projEvs[0].patch).toMatchObject({
+    title: "T2",
+    priority: "core",
+    tags: ["feature"],
+    hasExecutionRecord: false,
+  });
+
+  expect(projEvs[1].metaChanged).toBe(true);
+  expect(projEvs[1].patch).toMatchObject({ hasExecutionRecord: true });
+
+  expect(projEvs[2].metaChanged).toBe(true);
+  expect(projEvs[2].patch).toBeUndefined();
+
+  expect(projEvs[3].metaChanged).toBe(false);
+  expect(projEvs[3].patch).toBeUndefined();
+});
+
+test("assignee-set changes ride the patch; criteria presence flips do not", async () => {
+  const fx = await seedUserOrgProject("task-assign-ev");
+  const ctx = makeAuthContext(fx.userId);
+  const task = await createTask(ctx, { projectId: fx.projectId, title: "T" });
+
+  const frames: string[] = [];
+  broker.attach(fx.userId, {
+    send: (data) => frames.push(data),
+    close: () => {},
+  });
+  broker.register(fx.userId, `project:${fx.projectId}`);
+
+  await updateTask(ctx, task.id, { assigneeIds: [fx.userId] });
+  await updateTask(ctx, task.id, { acceptanceCriteria: ["First criterion"] });
+
+  const projEvs = eventsFrom(frames).filter(
+    (e): e is Extract<RealtimeEvent, { kind: "project" }> =>
+      e.kind === "project",
+  );
+  expect(projEvs).toHaveLength(2);
+
+  expect(projEvs[0].metaChanged).toBe(true);
+  expect(projEvs[0].patch).toMatchObject({
+    assigneeUserIds: [fx.userId],
+    assigneeCount: 1,
+  });
+
+  expect(projEvs[1].metaChanged).toBe(true);
+  expect(projEvs[1].patch).toBeUndefined();
 });
 
 test("edge note-only updates emit metaChanged false; type changes emit true", async () => {

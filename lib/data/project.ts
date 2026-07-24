@@ -230,7 +230,7 @@ export async function getProjectGraphSlim(
         priority: tasks.priority,
         estimate: tasks.estimate,
         order: tasks.order,
-        updatedAt: tasks.metaUpdatedAt,
+        updatedAt: tasks.updatedAt,
         sequenceNumber: tasks.sequenceNumber,
         hasDescription: sql<boolean>`length(btrim(${tasks.description})) > 0`,
         hasCriteria: hasCriteriaExpr(),
@@ -339,7 +339,7 @@ export async function getProjectGraphSlim(
         title: project.title,
         description: project.description,
         status: project.status,
-        updatedAt: project.metaUpdatedAt,
+        updatedAt: project.updatedAt,
         categories: project.categories,
       },
       tasks: slimTasks,
@@ -402,9 +402,9 @@ export async function getProjectChrome(
  * clock per `mode`). Used by the conditional-GET path on the workspace
  * graph and context-bundle endpoints to short-circuit the heavy read on a
  * 304 response. The context route passes `content` (it embeds task and
- * note bodies, so any edit must move it); the graph route passes `meta`
- * (it renders only slim metadata, so plan/record/decision/link writes,
- * edge note edits, and note body edits must not move it).
+ * note bodies, so any edit must move it); the graph route passes `graph`
+ * (the payload renders each task's content clock, so task writes must
+ * move it, while edge note edits and note body edits must not).
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
@@ -1358,16 +1358,13 @@ export async function updateProject(
   }
   const updated = await withUserContext(ctx.userId, async (tx) => {
     const access = await assertProjectAccessTx(tx, projectId);
-    // Every editable field (title, description, status, categories) ships
-    // in the slim payload's project block, so the metadata clock always
-    // moves with the content clock here. clock_timestamp() re-evaluates
-    // after a lock wait, so the stamp stays monotonic without a floor.
+    // clock_timestamp() re-evaluates after a lock wait, so the stamp
+    // stays monotonic without a floor.
     const [row] = await tx
       .update(projects)
       .set({
         ...safe,
         updatedAt: dbClockStamp(),
-        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(projects.id, projectId))
       .returning();
@@ -1429,7 +1426,6 @@ export async function renameProjectIdentifier(
       .set({
         identifier,
         updatedAt: dbClockStamp(),
-        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(projects.id, projectId))
       .returning();
@@ -1473,18 +1469,14 @@ export async function renameCategory(
       .set({
         categories: updatedCategories,
         updatedAt: dbClockStamp(),
-        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(projects.id, projectId));
 
-    // Category is slim-visible; stamping the task rows' meta clock in the
-    // same bulk statement keeps the trigger propagation consistent.
     await tx
       .update(tasks)
       .set({
         category: newName,
         updatedAt: dbClockStamp(),
-        metaUpdatedAt: dbClockStamp(),
       })
       .where(and(eq(tasks.projectId, projectId), eq(tasks.category, oldName)));
   });
@@ -1518,7 +1510,6 @@ export async function deleteCategory(
       .set({
         categories: updatedCategories,
         updatedAt: dbClockStamp(),
-        metaUpdatedAt: dbClockStamp(),
       })
       .where(eq(projects.id, projectId));
 
@@ -1527,7 +1518,6 @@ export async function deleteCategory(
       .set({
         category: null,
         updatedAt: dbClockStamp(),
-        metaUpdatedAt: dbClockStamp(),
       })
       .where(
         and(eq(tasks.projectId, projectId), eq(tasks.category, categoryName)),

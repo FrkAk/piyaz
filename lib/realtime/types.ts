@@ -6,6 +6,27 @@
  * `broker.ts` (which holds connections in process memory).
  */
 
+import type { Estimate, Priority } from "@/lib/types";
+
+/**
+ * Post-write snapshot of a task's state-neutral slim fields. None of
+ * these feed the derived task state, so consumers merge the snapshot
+ * into cached graph and my-tasks rows and skip the refetch. Always a
+ * full snapshot of these fields (never a diff) so an applied patch
+ * fully syncs them.
+ */
+export type TaskSlimPatch = {
+  title?: string;
+  category?: string | null;
+  tags?: string[];
+  priority?: Priority | null;
+  estimate?: Estimate | null;
+  order?: number;
+  hasExecutionRecord?: boolean;
+  assigneeUserIds?: string[];
+  assigneeCount?: number;
+};
+
 /** Discriminated payload shape sent on the SSE wire. */
 export type RealtimeEvent =
   | {
@@ -14,7 +35,7 @@ export type RealtimeEvent =
       /** Set on the paired event emitted per task write: the task whose
        *  write produced this project event. Rides the project channel
        *  (the one every member holds) so list surfaces can patch cached
-       *  rows in place when `metaChanged: false` skips the refetch. */
+       *  rows in place when the refetch is skipped. */
       taskId?: string;
       /** The task's post-mutation content `updatedAt`; rides beside
        *  `taskId` for the in-place patch. */
@@ -24,6 +45,11 @@ export type RealtimeEvent =
        *  edits); consumers skip the graph and my-tasks refetches. Absent
        *  means unknown; treat as changed. */
       metaChanged?: boolean;
+      /** Present when the write's slim changes are state-neutral:
+       *  consumers merge it into cached rows instead of refetching.
+       *  Absent on state-affecting writes (status, presence flips,
+       *  create/delete, edges), which must invalidate. */
+      patch?: TaskSlimPatch;
     }
   | {
       kind: "task";
@@ -36,6 +62,8 @@ export type RealtimeEvent =
        *  mirrors the paired project event's flag. Absent means unknown;
        *  treat as changed. */
       metaChanged?: boolean;
+      /** Mirrors the paired project event's patch snapshot. */
+      patch?: TaskSlimPatch;
     }
   | {
       kind: "note";

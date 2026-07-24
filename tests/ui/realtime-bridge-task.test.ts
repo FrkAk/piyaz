@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
 import { applyRealtimeEvent } from "@/components/providers/RealtimeBridge";
 import type { MyTask } from "@/lib/data/views";
+import type { TaskSlimPatch } from "@/lib/realtime/types";
 import { myTasksKeys, projectKeys, taskKeys } from "@/lib/query/keys";
 
 const when = new Date("2026-07-01T10:00:00.000Z");
@@ -39,15 +40,30 @@ function myTaskRow(updatedAt: Date): MyTask {
 /**
  * Seed a QueryClient with graph, my-tasks, and detail caches.
  *
- * @param updatedAt - Content clock for the cached my-tasks row.
+ * @param updatedAt - Content clock for the cached my-tasks and graph rows.
  * @returns The seeded client.
  */
 function seededClient(updatedAt: Date): QueryClient {
   const qc = new QueryClient();
-  qc.setQueryData(projectKeys.graph(PROJECT), { tasks: [] });
+  qc.setQueryData(projectKeys.graph(PROJECT), {
+    tasks: [{ id: TASK, updatedAt }],
+  });
   qc.setQueryData(myTasksKeys.list(), [myTaskRow(updatedAt)]);
   qc.setQueryData(taskKeys.detail(PROJECT, TASK), { id: TASK });
   return qc;
+}
+
+/**
+ * Read the cached slim-graph row's `updatedAt` for the shared task id.
+ *
+ * @param qc - The query client.
+ * @returns The cached clock, or undefined when the row is absent.
+ */
+function graphRowUpdatedAt(qc: QueryClient): Date | string | undefined {
+  const g = qc.getQueryData<{
+    tasks: Array<{ id: string; updatedAt: Date | string }>;
+  }>(projectKeys.graph(PROJECT));
+  return g?.tasks.find((t) => t.id === TASK)?.updatedAt;
 }
 
 /**
@@ -82,12 +98,17 @@ function taskEvent(opts: { updatedAt?: Date; metaChanged?: boolean }): string {
 /**
  * Encode a project realtime event.
  *
- * @param opts - Optional `metaChanged`, paired `taskId`, and `updatedAt`
- *   payload fields.
+ * @param opts - Optional `metaChanged`, paired `taskId`, `updatedAt`, and
+ *   `patch` payload fields.
  * @returns The JSON wire string.
  */
 function projectEvent(
-  opts: { metaChanged?: boolean; taskId?: string; updatedAt?: Date } = {},
+  opts: {
+    metaChanged?: boolean;
+    taskId?: string;
+    updatedAt?: Date;
+    patch?: TaskSlimPatch;
+  } = {},
 ): string {
   return JSON.stringify({
     kind: "project",
@@ -97,6 +118,7 @@ function projectEvent(
     ...(opts.metaChanged !== undefined
       ? { metaChanged: opts.metaChanged }
       : {}),
+    ...(opts.patch !== undefined ? { patch: opts.patch } : {}),
   });
 }
 
@@ -127,7 +149,7 @@ test("a project event with metaChanged true invalidates the graph and my-tasks l
   expect(invalidated(qc, myTasksKeys.list())).toBe(true);
 });
 
-test("a metaChanged:false project event with the paired task fields patches the my-tasks row in place", async () => {
+test("a metaChanged:false project event with the paired task fields patches the my-tasks and graph rows in place", async () => {
   const qc = seededClient(when);
   const newer = new Date(when.getTime() + 60_000);
 
@@ -140,6 +162,7 @@ test("a metaChanged:false project event with the paired task fields patches the 
   expect(invalidated(qc, myTasksKeys.list())).toBe(false);
   const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
   expect(rows?.find((r) => r.id === TASK)?.updatedAt).toEqual(newer);
+  expect(graphRowUpdatedAt(qc)).toEqual(newer);
 });
 
 test("a metaChanged:false task event without updatedAt leaves the cached row untouched", async () => {
@@ -150,9 +173,10 @@ test("a metaChanged:false task event without updatedAt leaves the cached row unt
   expect(invalidated(qc, myTasksKeys.list())).toBe(false);
   const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
   expect(rows?.find((r) => r.id === TASK)?.updatedAt).toEqual(when);
+  expect(graphRowUpdatedAt(qc)).toEqual(when);
 });
 
-test("a metaChanged:false task event patches the cached my-tasks row in place", async () => {
+test("a metaChanged:false task event patches the cached my-tasks and graph rows in place", async () => {
   const qc = seededClient(when);
   const newer = new Date(when.getTime() + 60_000);
 
@@ -169,9 +193,53 @@ test("a metaChanged:false task event patches the cached my-tasks row in place", 
   expect(
     typeof patched === "string" ? Date.parse(patched) : patched?.getTime(),
   ).toBe(newer.getTime());
+  expect(graphRowUpdatedAt(qc)).toEqual(newer);
 });
 
-test("the my-tasks patch never rewinds a newer cached row", async () => {
+test("a project event with a patch merges slim fields in place and skips the refetches", async () => {
+  const qc = seededClient(when);
+  const newer = new Date(when.getTime() + 60_000);
+
+  await applyRealtimeEvent(
+    qc,
+    projectEvent({
+      metaChanged: true,
+      taskId: TASK,
+      updatedAt: newer,
+      patch: {
+        title: "T2",
+        priority: "core",
+        tags: ["feature"],
+        hasExecutionRecord: true,
+        assigneeUserIds: ["u1"],
+        assigneeCount: 1,
+      },
+    }),
+  );
+
+  expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(false);
+  expect(invalidated(qc, myTasksKeys.list())).toBe(false);
+
+  const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
+  const listRow = rows?.find((r) => r.id === TASK);
+  expect(listRow?.title).toBe("T2");
+  expect(listRow?.priority).toBe("core");
+  expect(listRow?.tags).toEqual(["feature"]);
+  expect(listRow?.updatedAt).toEqual(newer);
+  expect("assigneeUserIds" in (listRow as object)).toBe(false);
+
+  const g = qc.getQueryData<{
+    tasks: Array<Record<string, unknown>>;
+  }>(projectKeys.graph(PROJECT));
+  const graphRow = g?.tasks.find((t) => t.id === TASK);
+  expect(graphRow?.title).toBe("T2");
+  expect(graphRow?.hasExecutionRecord).toBe(true);
+  expect(graphRow?.assigneeUserIds).toEqual(["u1"]);
+  expect(graphRow?.assigneeCount).toBe(1);
+  expect(graphRow?.updatedAt).toEqual(newer);
+});
+
+test("the in-place patches never rewind a newer cached row", async () => {
   const newerCache = new Date(when.getTime() + 120_000);
   const qc = seededClient(newerCache);
   const older = new Date(when.getTime() + 60_000);
@@ -183,6 +251,7 @@ test("the my-tasks patch never rewinds a newer cached row", async () => {
 
   const rows = qc.getQueryData<MyTask[]>(myTasksKeys.list());
   expect(rows?.find((r) => r.id === TASK)?.updatedAt).toEqual(newerCache);
+  expect(graphRowUpdatedAt(qc)).toEqual(newerCache);
 });
 
 test("a metaChanged:true task event leaves the my-tasks patch to the paired project event", async () => {

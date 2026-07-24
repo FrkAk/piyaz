@@ -195,7 +195,7 @@ describe("clearOrgMembershipArtifacts", () => {
     }
   });
 
-  test("bumps both clocks on tasks that lose an assignee", async () => {
+  test("bumps the content clock on tasks that lose an assignee", async () => {
     const f = await seedUserOrgProject("clear-clocks", { legalCurrent: false });
     const ctx = makeAuthContext(f.userId);
     const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
@@ -206,13 +206,12 @@ describe("clearOrgMembershipArtifacts", () => {
         INSERT INTO task_assignees ("task_id", "user_id")
         VALUES (${task.id}, ${f.userId})
       `;
-      const [before] = await sqlc<{ u: number; m: number }[]>`
-        SELECT extract(epoch FROM updated_at)::float8 AS u,
-               extract(epoch FROM meta_updated_at)::float8 AS m
+      const [before] = await sqlc<{ u: number }[]>`
+        SELECT extract(epoch FROM updated_at)::float8 AS u
         FROM tasks WHERE id = ${task.id}
       `;
-      const [beforeProj] = await sqlc<{ m: number }[]>`
-        SELECT extract(epoch FROM meta_updated_at)::float8 AS m
+      const [beforeProj] = await sqlc<{ u: number }[]>`
+        SELECT extract(epoch FROM updated_at)::float8 AS u
         FROM projects WHERE id = ${f.projectId}
       `;
       await new Promise((r) => setTimeout(r, 50));
@@ -231,18 +230,16 @@ describe("clearOrgMembershipArtifacts", () => {
         WHERE task_id = ${task.id}
       `;
       expect(n).toBe(0);
-      const [after] = await sqlc<{ u: number; m: number }[]>`
-        SELECT extract(epoch FROM updated_at)::float8 AS u,
-               extract(epoch FROM meta_updated_at)::float8 AS m
+      const [after] = await sqlc<{ u: number }[]>`
+        SELECT extract(epoch FROM updated_at)::float8 AS u
         FROM tasks WHERE id = ${task.id}
       `;
       expect(after.u).toBeGreaterThan(before.u);
-      expect(after.m).toBeGreaterThan(before.m);
-      const [afterProj] = await sqlc<{ m: number }[]>`
-        SELECT extract(epoch FROM meta_updated_at)::float8 AS m
+      const [afterProj] = await sqlc<{ u: number }[]>`
+        SELECT extract(epoch FROM updated_at)::float8 AS u
         FROM projects WHERE id = ${f.projectId}
       `;
-      expect(afterProj.m).toBeGreaterThan(beforeProj.m);
+      expect(afterProj.u).toBeGreaterThan(beforeProj.u);
 
       const projectEvents = frames
         .map(

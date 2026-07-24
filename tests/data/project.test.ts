@@ -45,14 +45,15 @@ import { makeAuthContext } from "@/lib/auth/context";
  *
  * @param ctx - Resolved auth context.
  * @param projectId - Project UUID.
- * @returns The meta- and content-mode validator timestamps.
+ * @returns The graph- and content-mode validator timestamps; `meta`
+ *   carries the graph mode (its notes term reads the notes meta clock).
  */
 async function readNoteClocks(
   ctx: ReturnType<typeof makeAuthContext>,
   projectId: string,
 ): Promise<{ meta: number; content: number }> {
   const [meta, content] = await Promise.all([
-    getProjectMaxUpdatedAt(ctx, projectId, "meta"),
+    getProjectMaxUpdatedAt(ctx, projectId, "graph"),
     getProjectMaxUpdatedAt(ctx, projectId, "content"),
   ]);
   return { meta: meta.getTime(), content: content.getTime() };
@@ -332,7 +333,7 @@ test("note-inclusive validator moves on deliberate link create and remove", asyn
     RETURNING id
   `;
 
-  const beforeMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
+  const beforeMeta = await getProjectMaxUpdatedAt(ctx, f.projectId, "graph");
   const beforeContent = await getProjectMaxUpdatedAt(
     ctx,
     f.projectId,
@@ -342,7 +343,7 @@ test("note-inclusive validator moves on deliberate link create and remove", asyn
   const afterCreateMeta = await getProjectMaxUpdatedAt(
     ctx,
     f.projectId,
-    "meta",
+    "graph",
   );
   const afterCreateContent = await getProjectMaxUpdatedAt(
     ctx,
@@ -356,7 +357,7 @@ test("note-inclusive validator moves on deliberate link create and remove", asyn
   const afterRemoveMeta = await getProjectMaxUpdatedAt(
     ctx,
     f.projectId,
-    "meta",
+    "graph",
   );
   const afterRemoveContent = await getProjectMaxUpdatedAt(
     ctx,
@@ -683,9 +684,9 @@ test("getProjectMaxUpdatedAt reads the notes clock selected by notesMode", async
     const none = await getProjectMaxUpdatedAt(ctx, f.projectId);
     expect(none.getTime()).toBeLessThan(metaFuture.getTime() - 1000);
 
-    const meta = await getProjectMaxUpdatedAt(ctx, f.projectId, "meta");
-    expect(meta.getTime()).toBeGreaterThanOrEqual(metaFuture.getTime() - 1000);
-    expect(meta.getTime()).toBeLessThan(contentFuture.getTime() - 1000);
+    const graph = await getProjectMaxUpdatedAt(ctx, f.projectId, "graph");
+    expect(graph.getTime()).toBeGreaterThanOrEqual(metaFuture.getTime() - 1000);
+    expect(graph.getTime()).toBeLessThan(contentFuture.getTime() - 1000);
 
     const content = await getProjectMaxUpdatedAt(ctx, f.projectId, "content");
     expect(content.getTime()).toBeGreaterThanOrEqual(
@@ -989,7 +990,7 @@ test("listProjectsForMcp skips teams with zero projects", async () => {
   ).toBeUndefined();
 });
 
-test("findProjectAccess access row omits createdAt", async () => {
+test("findProjectAccess access row omits createdAt and metaUpdatedAt", async () => {
   const f = await seedUserOrgProject("access-projection");
 
   const access = await findProjectAccess(f.userId, f.projectId);
@@ -997,12 +998,12 @@ test("findProjectAccess access row omits createdAt", async () => {
   expect(access).not.toBeNull();
   const keys = Object.keys(access!.project);
   expect(keys).not.toContain("createdAt");
+  expect(keys).not.toContain("metaUpdatedAt");
   expect(keys.sort()).toEqual([
     "categories",
     "description",
     "id",
     "identifier",
-    "metaUpdatedAt",
     "organizationId",
     "status",
     "title",
@@ -1026,16 +1027,16 @@ test("graph and chrome reads reject a pre-resolved access row for another projec
 });
 
 /**
- * Read a task row's meta clock as epoch seconds via superuser.
+ * Read a task row's content clock as epoch seconds via superuser.
  *
  * @param taskId - UUID of the task.
- * @returns `meta_updated_at` as a float epoch.
+ * @returns `updated_at` as a float epoch.
  */
-async function taskMetaEpoch(taskId: string): Promise<number> {
+async function taskContentEpoch(taskId: string): Promise<number> {
   const sqlc = superuserPool();
   try {
     const [row] = await sqlc<{ epoch: number }[]>`
-      SELECT extract(epoch FROM meta_updated_at)::float8 AS epoch
+      SELECT extract(epoch FROM updated_at)::float8 AS epoch
       FROM tasks WHERE id = ${taskId}
     `;
     return row.epoch;
@@ -1044,7 +1045,7 @@ async function taskMetaEpoch(taskId: string): Promise<number> {
   }
 }
 
-test("heavy-only task writes move the content clock but not the meta validator", async () => {
+test("heavy-only task writes move the content clock and the graph validator", async () => {
   const f = await seedUserOrgProject("taskmeta-heavy");
   const ctx = makeAuthContext(f.userId);
   const task = await createTask(ctx, {
@@ -1077,10 +1078,10 @@ test("heavy-only task writes move the content clock but not the meta validator",
 
   const after = await readNoteClocks(ctx, f.projectId);
   expect(after.content).toBeGreaterThan(before.content);
-  expect(after.meta).toBe(before.meta);
+  expect(after.meta).toBeGreaterThan(before.meta);
 });
 
-test("every slim-visible task change moves the meta validator", async () => {
+test("every slim-visible task change moves the graph validator", async () => {
   const f = await seedUserOrgProject("taskmeta-slim");
   const ctx = makeAuthContext(f.userId);
   const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
@@ -1118,7 +1119,7 @@ test("every slim-visible task change moves the meta validator", async () => {
   expect(afterOrder).toBeGreaterThan(prev);
 });
 
-test("criteria and check-state changes that keep the slim payload stable leave the meta validator still", async () => {
+test("criteria and check-state changes move the graph validator via the task content clock", async () => {
   const f = await seedUserOrgProject("taskmeta-stable");
   const ctx = makeAuthContext(f.userId);
   const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
@@ -1139,10 +1140,10 @@ test("criteria and check-state changes that keep the slim payload stable leave t
 
   const after = await readNoteClocks(ctx, f.projectId);
   expect(after.content).toBeGreaterThan(before.content);
-  expect(after.meta).toBe(before.meta);
+  expect(after.meta).toBeGreaterThan(before.meta);
 });
 
-test("edge type changes move the meta validator; note-only edge edits do not", async () => {
+test("edge structure changes and note-only edge edits move the graph validator", async () => {
   const f = await seedUserOrgProject("edgemeta");
   const ctx = makeAuthContext(f.userId);
   const a = await createTask(ctx, { projectId: f.projectId, title: "A" });
@@ -1162,7 +1163,7 @@ test("edge type changes move the meta validator; note-only edge edits do not", a
   await updateEdge(ctx, edge.id, { note: "Rewritten note body" });
   const afterNote = await readNoteClocks(ctx, f.projectId);
   expect(afterNote.content).toBeGreaterThan(afterCreate.content);
-  expect(afterNote.meta).toBe(afterCreate.meta);
+  expect(afterNote.meta).toBeGreaterThan(afterCreate.meta);
 
   await settleClock();
   await updateEdge(ctx, edge.id, { edgeType: "depends_on" });
@@ -1175,7 +1176,7 @@ test("edge type changes move the meta validator; note-only edge edits do not", a
   expect(afterRemove.meta).toBeGreaterThan(afterType.meta);
 });
 
-test("task deletion moves the meta validator monotonically", async () => {
+test("task deletion moves the graph validator monotonically", async () => {
   const f = await seedUserOrgProject("taskmeta-delete");
   const ctx = makeAuthContext(f.userId);
   const task = await createTask(ctx, {
@@ -1189,7 +1190,7 @@ test("task deletion moves the meta validator monotonically", async () => {
   expect(after.meta).toBeGreaterThan(before.meta);
 });
 
-test("project chrome edits, identifier renames, and category cascades move the meta validator", async () => {
+test("project chrome edits, identifier renames, and category cascades move the graph validator", async () => {
   const f = await seedUserOrgProject("projmeta");
   const ctx = makeAuthContext(f.userId);
   await updateProject(ctx, f.projectId, {
@@ -1214,19 +1215,21 @@ test("project chrome edits, identifier renames, and category cascades move the m
   prev = cur;
 
   await settleClock();
-  const taskMetaBefore = await taskMetaEpoch(task.id);
+  const taskClockBefore = await taskContentEpoch(task.id);
   await renameCategory(ctx, f.projectId, "backend", "core");
   cur = (await readNoteClocks(ctx, f.projectId)).meta;
   expect(cur).toBeGreaterThan(prev);
-  expect(await taskMetaEpoch(task.id)).toBeGreaterThan(taskMetaBefore);
+  expect(await taskContentEpoch(task.id)).toBeGreaterThan(taskClockBefore);
   prev = cur;
 
   await settleClock();
-  const taskMetaBeforeDelete = await taskMetaEpoch(task.id);
+  const taskClockBeforeDelete = await taskContentEpoch(task.id);
   await deleteCategory(ctx, f.projectId, "core");
   cur = (await readNoteClocks(ctx, f.projectId)).meta;
   expect(cur).toBeGreaterThan(prev);
-  expect(await taskMetaEpoch(task.id)).toBeGreaterThan(taskMetaBeforeDelete);
+  expect(await taskContentEpoch(task.id)).toBeGreaterThan(
+    taskClockBeforeDelete,
+  );
 });
 
 test("the home-grid list validator still moves on heavy-only task writes", async () => {
@@ -1242,38 +1245,7 @@ test("the home-grid list validator still moves on heavy-only task writes", async
   expect(after.getTime()).toBeGreaterThan(before.getTime());
 });
 
-test("updateTask child-driven writes stamp the meta clock via the follow-up branch", async () => {
-  const f = await seedUserOrgProject("taskmeta-web");
-  const ctx = makeAuthContext(f.userId);
-  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
-
-  await settleClock();
-  let prev = (await readNoteClocks(ctx, f.projectId)).meta;
-  await updateTask(ctx, task.id, { assigneeIds: [f.userId] });
-  let cur = (await readNoteClocks(ctx, f.projectId)).meta;
-  expect(cur).toBeGreaterThan(prev);
-  prev = cur;
-
-  await settleClock();
-  await updateTask(ctx, task.id, { acceptanceCriteria: ["First criterion"] });
-  cur = (await readNoteClocks(ctx, f.projectId)).meta;
-  expect(cur).toBeGreaterThan(prev);
-
-  await settleClock();
-  const stable = await readNoteClocks(ctx, f.projectId);
-  await updateTask(ctx, task.id, { acceptanceCriteria: ["Second criterion"] });
-  const afterAppend = await readNoteClocks(ctx, f.projectId);
-  expect(afterAppend.content).toBeGreaterThan(stable.content);
-  expect(afterAppend.meta).toBe(stable.meta);
-
-  await settleClock();
-  const beforeClear = (await readNoteClocks(ctx, f.projectId)).meta;
-  await updateTask(ctx, task.id, { assigneeIds: [] }, true);
-  const afterClear = (await readNoteClocks(ctx, f.projectId)).meta;
-  expect(afterClear).toBeGreaterThan(beforeClear);
-});
-
-test("clearing the executionRecord flips hasExecutionRecord and moves the meta validator", async () => {
+test("clearing the executionRecord flips hasExecutionRecord and moves the graph validator", async () => {
   const f = await seedUserOrgProject("taskmeta-clear");
   const ctx = makeAuthContext(f.userId);
   const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
@@ -1289,7 +1261,7 @@ test("clearing the executionRecord flips hasExecutionRecord and moves the meta v
   expect(after).toBeGreaterThan(before);
 });
 
-test("the slim graph payload sources task and project updatedAt from the meta clocks", async () => {
+test("the slim graph payload sources task and project updatedAt from the content clocks", async () => {
   const f = await seedUserOrgProject("slimclock");
   const ctx = makeAuthContext(f.userId);
   const sqlc = superuserPool();
@@ -1310,8 +1282,8 @@ test("the slim graph payload sources task and project updatedAt from the meta cl
     const g = await getProjectGraphSlim(ctx, f.projectId);
 
     const task = g.tasks.find((x) => x.id === t.id);
-    expect(task?.updatedAt.getTime()).toBe(metaPast.getTime());
-    expect(g.project.updatedAt.getTime()).toBe(metaPast.getTime());
+    expect(task?.updatedAt.getTime()).toBe(contentFuture.getTime());
+    expect(g.project.updatedAt.getTime()).toBe(contentFuture.getTime());
   } finally {
     await sqlc.end({ timeout: 5 });
   }

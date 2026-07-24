@@ -1217,22 +1217,11 @@ GRANT EXECUTE ON FUNCTION public.delete_sole_member_org_as_admin(uuid, uuid) TO 
 -- floored; a floored primary stamp would keep the validator still
 -- across a real change (see lib/db/clock.ts).
 --
--- Two project clocks: updated_at (content) bumps on every arm and keeps
--- feeding the home-grid sort; meta_updated_at (slim-graph metadata) bumps
--- unconditionally on INSERT/DELETE (row appearance/disappearance is always
--- slim-visible, and the delete bump keeps the clock monotonic when the row
--- carrying the MAX disappears) but on UPDATE only for rows whose own
--- meta_updated_at moved: the writers own the slim-visibility decision,
--- these triggers only propagate it.
+-- Every arm bumps projects.updated_at only: it feeds the home-grid sort
+-- and the graph validator's project term. The graph validator reads the
+-- edge and note metadata clocks directly, so no meta propagation to the
+-- projects row is needed.
 -- ---------------------------------------------------------------------------
-
--- Apply-order guard: the touch triggers below reference meta_updated_at
--- (drizzle migration 0015). These SELECTs fail the whole apply loudly
--- when db:rls runs against a database that has not migrated yet, instead
--- of letting every task/edge write fail at trigger runtime.
-SELECT meta_updated_at FROM public.tasks LIMIT 0;
-SELECT meta_updated_at FROM public.task_edges LIMIT 0;
-SELECT meta_updated_at FROM public.projects LIMIT 0;
 
 CREATE OR REPLACE FUNCTION public.touch_projects_for_changed_tasks()
 RETURNS trigger
@@ -1242,8 +1231,7 @@ SET search_path = public, pg_catalog, pg_temp
 AS $$
 BEGIN
   UPDATE public.projects
-  SET updated_at = GREATEST(updated_at, clock_timestamp()),
-      meta_updated_at = GREATEST(meta_updated_at, clock_timestamp())
+  SET updated_at = GREATEST(updated_at, clock_timestamp())
   WHERE id IN (SELECT DISTINCT project_id FROM changed_tasks);
   RETURN NULL;
 END;
@@ -1255,33 +1243,6 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.touch_projects_for_changed_tasks() FROM public;
 GRANT EXECUTE ON FUNCTION public.touch_projects_for_changed_tasks() TO app_user, service_role;
 
--- UPDATE arm: content clock always, meta clock only where the writer moved
--- the row's own meta_updated_at (old/new transition-table join on id).
-CREATE OR REPLACE FUNCTION public.touch_projects_for_updated_tasks()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_catalog, pg_temp
-AS $$
-BEGIN
-  UPDATE public.projects
-  SET updated_at = GREATEST(updated_at, clock_timestamp())
-  WHERE id IN (SELECT DISTINCT project_id FROM changed_tasks);
-  UPDATE public.projects
-  SET meta_updated_at = GREATEST(meta_updated_at, clock_timestamp())
-  WHERE id IN (
-    SELECT DISTINCT nt.project_id
-    FROM changed_tasks nt
-    JOIN old_tasks ot ON ot.id = nt.id
-    WHERE nt.meta_updated_at IS DISTINCT FROM ot.meta_updated_at
-  );
-  RETURN NULL;
-END;
-$$;
-
-REVOKE EXECUTE ON FUNCTION public.touch_projects_for_updated_tasks() FROM public;
-GRANT EXECUTE ON FUNCTION public.touch_projects_for_updated_tasks() TO app_user, service_role;
-
 DROP TRIGGER IF EXISTS tasks_touch_project_insert ON public.tasks;
 CREATE TRIGGER tasks_touch_project_insert
   AFTER INSERT ON public.tasks
@@ -1292,9 +1253,11 @@ CREATE TRIGGER tasks_touch_project_insert
 DROP TRIGGER IF EXISTS tasks_touch_project_update ON public.tasks;
 CREATE TRIGGER tasks_touch_project_update
   AFTER UPDATE ON public.tasks
-  REFERENCING OLD TABLE AS old_tasks NEW TABLE AS changed_tasks
+  REFERENCING NEW TABLE AS changed_tasks
   FOR EACH STATEMENT
-  EXECUTE FUNCTION public.touch_projects_for_updated_tasks();
+  EXECUTE FUNCTION public.touch_projects_for_changed_tasks();
+
+DROP FUNCTION IF EXISTS public.touch_projects_for_updated_tasks();
 
 DROP TRIGGER IF EXISTS tasks_touch_project_delete ON public.tasks;
 CREATE TRIGGER tasks_touch_project_delete
@@ -1315,8 +1278,7 @@ SET search_path = public, pg_catalog, pg_temp
 AS $$
 BEGIN
   UPDATE public.projects
-  SET updated_at = GREATEST(updated_at, clock_timestamp()),
-      meta_updated_at = GREATEST(meta_updated_at, clock_timestamp())
+  SET updated_at = GREATEST(updated_at, clock_timestamp())
   WHERE id IN (
     SELECT DISTINCT t.project_id
     FROM public.tasks t
@@ -1333,51 +1295,6 @@ $$;
 REVOKE EXECUTE ON FUNCTION public.touch_projects_for_changed_task_edges() FROM public;
 GRANT EXECUTE ON FUNCTION public.touch_projects_for_changed_task_edges() TO app_user, service_role;
 
--- UPDATE arm for edges: content clock always, meta clock only where the
--- writer moved the edge row's own meta_updated_at (type changes yes,
--- note-only annotation edits no).
-CREATE OR REPLACE FUNCTION public.touch_projects_for_updated_task_edges()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_catalog, pg_temp
-AS $$
-BEGIN
-  UPDATE public.projects
-  SET updated_at = GREATEST(updated_at, clock_timestamp())
-  WHERE id IN (
-    SELECT DISTINCT t.project_id
-    FROM public.tasks t
-    WHERE t.id IN (
-      SELECT source_task_id FROM changed_edges
-      UNION
-      SELECT target_task_id FROM changed_edges
-    )
-  );
-  UPDATE public.projects
-  SET meta_updated_at = GREATEST(meta_updated_at, clock_timestamp())
-  WHERE id IN (
-    SELECT DISTINCT t.project_id
-    FROM public.tasks t
-    WHERE t.id IN (
-      SELECT ne.source_task_id
-      FROM changed_edges ne
-      JOIN old_edges oe ON oe.id = ne.id
-      WHERE ne.meta_updated_at IS DISTINCT FROM oe.meta_updated_at
-      UNION
-      SELECT ne.target_task_id
-      FROM changed_edges ne
-      JOIN old_edges oe ON oe.id = ne.id
-      WHERE ne.meta_updated_at IS DISTINCT FROM oe.meta_updated_at
-    )
-  );
-  RETURN NULL;
-END;
-$$;
-
-REVOKE EXECUTE ON FUNCTION public.touch_projects_for_updated_task_edges() FROM public;
-GRANT EXECUTE ON FUNCTION public.touch_projects_for_updated_task_edges() TO app_user, service_role;
-
 DROP TRIGGER IF EXISTS task_edges_touch_project_insert ON public.task_edges;
 CREATE TRIGGER task_edges_touch_project_insert
   AFTER INSERT ON public.task_edges
@@ -1388,9 +1305,11 @@ CREATE TRIGGER task_edges_touch_project_insert
 DROP TRIGGER IF EXISTS task_edges_touch_project_update ON public.task_edges;
 CREATE TRIGGER task_edges_touch_project_update
   AFTER UPDATE ON public.task_edges
-  REFERENCING OLD TABLE AS old_edges NEW TABLE AS changed_edges
+  REFERENCING NEW TABLE AS changed_edges
   FOR EACH STATEMENT
-  EXECUTE FUNCTION public.touch_projects_for_updated_task_edges();
+  EXECUTE FUNCTION public.touch_projects_for_changed_task_edges();
+
+DROP FUNCTION IF EXISTS public.touch_projects_for_updated_task_edges();
 
 DROP TRIGGER IF EXISTS task_edges_touch_project_delete ON public.task_edges;
 CREATE TRIGGER task_edges_touch_project_delete
