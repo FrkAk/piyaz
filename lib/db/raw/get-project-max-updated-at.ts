@@ -6,9 +6,10 @@ import { executeRaw, type Conn } from "@/lib/db/raw";
  *  and ignores notes, `content` also folds the notes content clock, and
  *  `graph` matches the slim graph payload: content clocks for the
  *  project row and tasks (the payload renders their `updatedAt`), meta
- *  clocks for edges and notes (their projections render no timestamps or
- *  bodies, so annotation-only and body-only writes leave the validator
- *  unmoved). */
+ *  clocks for edges and notes. Note body autosaves leave the validator
+ *  unmoved; edge annotation edits move it anyway through the project
+ *  term, because the edge touch trigger bumps `projects.updated_at` on
+ *  every edge update (a spurious full response, never a stale 304). */
 export type ProjectValidatorMode = "none" | "graph" | "content";
 
 /**
@@ -16,11 +17,11 @@ export type ProjectValidatorMode = "none" | "graph" | "content";
  * project, and every edge whose source OR target is in the project.
  * `mode` picks the clocks: the graph route uses `graph` (the payload
  * renders each task's content clock, so heavy task writes must move the
- * validator, while edge annotation edits and note body autosaves must
- * not), the context-bundle route uses `content` because it embeds
- * bodies, and consumers that render no notes use `none`. Every edge and
- * note meta bump rides a write that also bumps `updated_at`, so the
- * `content` validator never sleeps through a change `graph` observes.
+ * validator, while note body autosaves must not), the context-bundle
+ * route uses `content` because it embeds bodies, and consumers that
+ * render no notes use `none`. Every edge and note meta bump rides a
+ * write that also bumps `updated_at`, so the `content` validator never
+ * sleeps through a change `graph` observes.
  *
  * Single round trip via `GREATEST` over correlated subqueries so the
  * conditional-GET path fans out one DB query per request, not several.

@@ -1245,6 +1245,23 @@ test("the home-grid list validator still moves on heavy-only task writes", async
   expect(after.getTime()).toBeGreaterThan(before.getTime());
 });
 
+test("assignee-only and criteria-only updateTask calls move the graph validator", async () => {
+  const f = await seedUserOrgProject("taskclock-children");
+  const ctx = makeAuthContext(f.userId);
+  const task = await createTask(ctx, { projectId: f.projectId, title: "T" });
+
+  await settleClock();
+  const before = (await readNoteClocks(ctx, f.projectId)).meta;
+  await updateTask(ctx, task.id, { assigneeIds: [f.userId] });
+  const afterAssign = (await readNoteClocks(ctx, f.projectId)).meta;
+  expect(afterAssign).toBeGreaterThan(before);
+
+  await settleClock();
+  await updateTask(ctx, task.id, { acceptanceCriteria: ["First criterion"] });
+  const afterCriteria = (await readNoteClocks(ctx, f.projectId)).meta;
+  expect(afterCriteria).toBeGreaterThan(afterAssign);
+});
+
 test("clearing the executionRecord flips hasExecutionRecord and moves the graph validator", async () => {
   const f = await seedUserOrgProject("taskmeta-clear");
   const ctx = makeAuthContext(f.userId);

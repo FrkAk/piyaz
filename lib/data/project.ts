@@ -404,7 +404,7 @@ export async function getProjectChrome(
  * 304 response. The context route passes `content` (it embeds task and
  * note bodies, so any edit must move it); the graph route passes `graph`
  * (the payload renders each task's content clock, so task writes must
- * move it, while edge note edits and note body edits must not).
+ * move it, while note body edits must not).
  *
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.

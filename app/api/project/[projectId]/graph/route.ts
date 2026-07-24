@@ -27,10 +27,13 @@ import { consentGateResponse } from "@/lib/auth/consent";
  * content clocks for the project row and tasks because the payload
  * renders their `updatedAt` (StructureView's lastActive chip and recency
  * sort), meta clocks for edges and notes because their projections ship
- * no timestamps or bodies, so edge note-only edits and note body
- * autosaves keep answering 304. Realtime `metaChanged:false` events keep
- * open viewers from refetching on heavy task writes; the fresh validator
- * only costs a full payload on revalidation (reload, refocus).
+ * no timestamps or bodies. Note body autosaves keep answering 304; edge
+ * note-only edits move the validator through the project term (the edge
+ * touch trigger bumps `projects.updated_at`), a spurious full response,
+ * never a stale 304. Realtime `metaChanged:false` and `patch` events
+ * keep open viewers from refetching on heavy and state-neutral slim
+ * task writes; the fresh validator only costs a full payload on
+ * revalidation (reload, reconnect).
  *
  * @param req - Incoming request.
  * @param projectId - Project UUID from the route params.

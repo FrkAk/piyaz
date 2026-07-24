@@ -78,19 +78,30 @@ export async function applyRealtimeEvent(
       // is the task's content clock (plan/record/decision/link writes,
       // edge note-only edits); a `patch` payload marks state-neutral slim
       // writes (title, tags, priority, assignees, ...). Both skip the
-      // graph and my-tasks refetches and patch the cached rows in place
-      // from the payload instead. This channel is the one every member
-      // holds, so the patch must ride here (task channels are
+      // graph refetch and patch the cached graph row in place from the
+      // payload instead. My-tasks membership is assignment-scoped, so an
+      // assignee-set change can add or remove the viewer's own row, which
+      // an in-place patch cannot express: assignee-carrying patches fall
+      // back to invalidating the list. This channel is the one every
+      // member holds, so the patch must ride here (task channels are
       // fetch-implicit). Anything else (status changes, presence flips,
       // create/delete, edges, and events without the flag) invalidates;
       // the graph refetch rides the conditional-GET path, so an unmoved
       // validator answers 304.
-      if (ev.metaChanged !== false && ev.patch === undefined) {
+      if (
+        ev.taskId !== undefined &&
+        ev.updatedAt !== undefined &&
+        (ev.metaChanged === false || ev.patch !== undefined)
+      ) {
+        patchGraphTaskRow(qc, ev.projectId, ev.taskId, ev.updatedAt, ev.patch);
+        if (ev.patch?.assigneeUserIds !== undefined) {
+          qc.invalidateQueries({ queryKey: myTasksKeys.list() });
+        } else {
+          patchMyTasksRow(qc, ev.taskId, ev.updatedAt, ev.patch);
+        }
+      } else if (ev.metaChanged !== false) {
         qc.invalidateQueries({ queryKey: projectKeys.graph(ev.projectId) });
         qc.invalidateQueries({ queryKey: myTasksKeys.list() });
-      } else if (ev.taskId !== undefined && ev.updatedAt !== undefined) {
-        patchMyTasksRow(qc, ev.taskId, ev.updatedAt, ev.patch);
-        patchGraphTaskRow(qc, ev.projectId, ev.taskId, ev.updatedAt, ev.patch);
       }
       break;
     case "task":
@@ -109,14 +120,19 @@ export async function applyRealtimeEvent(
         queryKey: noteKeys.backlinksTask(ev.projectId, ev.taskId),
       });
       // Mirror the project-event patch for viewers holding this task's
-      // fetch-implicit channel; both patches are idempotent, so the
-      // paired events applying them twice is harmless.
+      // fetch-implicit channel, including the assignee fallback; the
+      // patches and invalidations are idempotent, so the paired events
+      // applying them twice is harmless.
       if (
         (ev.metaChanged === false || ev.patch !== undefined) &&
         ev.updatedAt !== undefined
       ) {
-        patchMyTasksRow(qc, ev.taskId, ev.updatedAt, ev.patch);
         patchGraphTaskRow(qc, ev.projectId, ev.taskId, ev.updatedAt, ev.patch);
+        if (ev.patch?.assigneeUserIds !== undefined) {
+          qc.invalidateQueries({ queryKey: myTasksKeys.list() });
+        } else {
+          patchMyTasksRow(qc, ev.taskId, ev.updatedAt, ev.patch);
+        }
       }
       break;
     case "note":
@@ -160,6 +176,16 @@ const MY_TASK_PATCH_FIELDS = [
   "priority",
   "estimate",
   "order",
+] as const;
+
+/** Patch fields the slim-graph rows carry: every TaskSlimPatch key. The
+ *  allowlist keeps the wire payload from merging unexpected keys into
+ *  the cache, mirroring the my-tasks path. */
+const GRAPH_PATCH_FIELDS = [
+  ...MY_TASK_PATCH_FIELDS,
+  "hasExecutionRecord",
+  "assigneeUserIds",
+  "assigneeCount",
 ] as const;
 
 /**
@@ -237,13 +263,14 @@ function patchGraphTaskRow(
   const row = graph?.tasks.find((t) => t.id === taskId);
   if (row === undefined || updatedAtMs(row.updatedAt) >= evMs) return;
   const updatedAt = new Date(updatedAtIso);
+  const fields = patch ? pickPatchFields(patch, GRAPH_PATCH_FIELDS) : {};
   qc.setQueryData<ProjectGraphSlim>(projectKeys.graph(projectId), (data) =>
     data === undefined
       ? undefined
       : {
           ...data,
           tasks: data.tasks.map((t) =>
-            t.id === taskId ? { ...t, ...patch, updatedAt } : t,
+            t.id === taskId ? { ...t, ...fields, updatedAt } : t,
           ),
         },
   );

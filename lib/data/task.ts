@@ -3105,10 +3105,11 @@ export async function updateTask(
   const refetchNeeded = wroteChildren || statusChanged;
   const result = await withUserContext(ctx.userId, async (tx) => {
     await assertTaskAccessTx(tx, taskId);
-    // FOR UPDATE serializes concurrent writers on the row: the slim
-    // visibility gate compares `changes` against this baseline, and a
-    // stale read could revert a concurrent slim write without moving the
-    // meta clock, freezing the graph validator on a stale 304.
+    // FOR UPDATE serializes concurrent writers on the row: the event
+    // classification compares `changes` against this baseline, and a
+    // stale read could revert a concurrent slim write while emitting a
+    // patch (or a metaChanged:false flag) that hides the revert from
+    // open viewers until their next full fetch.
     const [current] = await tx
       .select()
       .from(tasks)

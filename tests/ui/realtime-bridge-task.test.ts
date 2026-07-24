@@ -211,8 +211,6 @@ test("a project event with a patch merges slim fields in place and skips the ref
         priority: "core",
         tags: ["feature"],
         hasExecutionRecord: true,
-        assigneeUserIds: ["u1"],
-        assigneeCount: 1,
       },
     }),
   );
@@ -226,7 +224,6 @@ test("a project event with a patch merges slim fields in place and skips the ref
   expect(listRow?.priority).toBe("core");
   expect(listRow?.tags).toEqual(["feature"]);
   expect(listRow?.updatedAt).toEqual(newer);
-  expect("assigneeUserIds" in (listRow as object)).toBe(false);
 
   const g = qc.getQueryData<{
     tasks: Array<Record<string, unknown>>;
@@ -234,6 +231,34 @@ test("a project event with a patch merges slim fields in place and skips the ref
   const graphRow = g?.tasks.find((t) => t.id === TASK);
   expect(graphRow?.title).toBe("T2");
   expect(graphRow?.hasExecutionRecord).toBe(true);
+  expect(graphRow?.updatedAt).toEqual(newer);
+});
+
+test("an assignee-carrying patch invalidates my-tasks (membership change) and patches the graph row", async () => {
+  const qc = seededClient(when);
+  const newer = new Date(when.getTime() + 60_000);
+
+  await applyRealtimeEvent(
+    qc,
+    projectEvent({
+      metaChanged: true,
+      taskId: TASK,
+      updatedAt: newer,
+      patch: {
+        title: "T",
+        assigneeUserIds: ["u1"],
+        assigneeCount: 1,
+      },
+    }),
+  );
+
+  expect(invalidated(qc, projectKeys.graph(PROJECT))).toBe(false);
+  expect(invalidated(qc, myTasksKeys.list())).toBe(true);
+
+  const g = qc.getQueryData<{
+    tasks: Array<Record<string, unknown>>;
+  }>(projectKeys.graph(PROJECT));
+  const graphRow = g?.tasks.find((t) => t.id === TASK);
   expect(graphRow?.assigneeUserIds).toEqual(["u1"]);
   expect(graphRow?.assigneeCount).toBe(1);
   expect(graphRow?.updatedAt).toEqual(newer);
