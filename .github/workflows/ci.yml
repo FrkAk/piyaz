@@ -47,16 +47,13 @@ jobs:
         run: bun install
         if: github.actor == 'dependabot[bot]'
       - name: Audit dependencies
-        # GHSA-gv7w-rqvm-qjhr: esbuild Deno-installer integrity flaw; not
-        # exploitable here (bun installs from the committed lockfile). Drop
-        # the ignore once wrangler / drizzle-kit / @opennextjs pull
-        # esbuild >= 0.28.1.
-        # GHSA-96hv-2xvq-fx4p: ws DoS via tiny fragments. Dev-only (wrangler
-        # > miniflare), never shipped to the deployed Worker. No upstream fix:
-        # miniflare pins ws@8.20.1 exactly, even in the latest wrangler. Drop
-        # the ignore once miniflare bumps ws >= 8.21.0. (form-data + hono are
-        # fixed via package.json overrides; see the //overrides note there.)
-        run: bun audit --audit-level=high --ignore=GHSA-gv7w-rqvm-qjhr --ignore=GHSA-96hv-2xvq-fx4p
+        # GHSA-f88m-g3jw-g9cj: four libvips CVEs inherited by sharp < 0.35.0.
+        # next declares sharp ^0.34.5 (optional) and miniflare pins sharp
+        # 0.34.5 exactly, so the fix is only reachable by forcing a major
+        # override against both parents. Drop the ignore once either admits
+        # sharp >= 0.35.0. Tracked in PYZ-345. (fast-uri + postcss are fixed
+        # via package.json overrides; see the //overrides note there.)
+        run: bun audit --audit-level=high --ignore=GHSA-f88m-g3jw-g9cj
       - name: Validate PR title
         if: github.event_name == 'pull_request'
         env:
