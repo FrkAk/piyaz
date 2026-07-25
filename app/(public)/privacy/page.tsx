@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { Markdown } from "@/components/shared/Markdown";
 import md from "@/content/legal/privacy.md";
 
-export const metadata: Metadata = { title: "Privacy Policy" };
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  alternates: { canonical: "/privacy" },
+};
 
 /**
  * Public privacy policy page. Renders the tracked Markdown bundled as

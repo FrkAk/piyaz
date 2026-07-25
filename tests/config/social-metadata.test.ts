@@ -2,15 +2,17 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { metadata } from "@/app/layout";
+import { metadata as publicMetadata } from "@/app/(public)/layout";
 import robots from "@/app/robots";
 
 /**
  * Pins the link-unfurl contract for the app host. Preview bots (Slackbot,
  * Twitterbot, Discordbot) honour robots.txt, so a blanket `disallow` stops
  * them fetching the page and reading `og:image` at all. Indexing is held off
- * by the `noindex` directive in root metadata, not by robots.txt. These tests
- * fail if either half of that pairing regresses, or if `og.png` stops being a
- * 1200x630 PNG.
+ * by the `noindex` directive in root metadata, not by robots.txt, with the
+ * legal route group as the single deliberate exception. These tests fail if
+ * either half of that pairing regresses, if the exception spreads to another
+ * layout, or if `og.png` stops being a 1200x630 PNG.
  */
 
 const OG_PATH = join(import.meta.dir, "../../public/og.png");
@@ -92,6 +94,19 @@ describe("root metadata", () => {
 
   test("openGraph and twitter point at the same asset", () => {
     expect(twitterCard().images?.[0]).toBe(ogImageDescriptor().url);
+  });
+});
+
+describe("indexing scope", () => {
+  test("the legal route group opts back into indexing", () => {
+    expect(publicMetadata.robots).toMatchObject({ index: true, follow: true });
+  });
+
+  test("no other layout overrides the sitewide noindex", () => {
+    const overriding = [...new Bun.Glob("app/**/layout.tsx").scanSync(".")]
+      .filter((path) => readFileSync(path, "utf8").includes("robots"))
+      .sort();
+    expect(overriding).toEqual(["app/(public)/layout.tsx", "app/layout.tsx"]);
   });
 });
 

@@ -39,13 +39,9 @@ export const metadata: Metadata = {
     index: false,
     follow: false,
   },
-  alternates: {
-    canonical: "/",
-  },
   openGraph: {
     type: "website",
     siteName: "Piyaz",
-    url: "/",
     title: "Piyaz",
     description,
     images: [
