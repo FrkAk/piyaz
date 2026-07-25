@@ -53,7 +53,17 @@ jobs:
         # override against both parents. Drop the ignore once either admits
         # sharp >= 0.35.0. Tracked in PYZ-345. (fast-uri + postcss are fixed
         # via package.json overrides; see the //overrides note there.)
-        run: bun audit --audit-level=high --ignore=GHSA-f88m-g3jw-g9cj
+        #
+        # GHSA-mh99-v99m-4gvg: brace-expansion DoS, vulnerable range <= 5.0.7,
+        # spanning every major. Reached only through dev dependencies, via
+        # minimatch under eslint, eslint-plugin-import, typescript-eslint, and
+        # @opennextjs/cloudflare > glob. No runtime path: `bun audit --prod`
+        # does not report it. An override was rejected because 5.0.8 is
+        # the only patched release, so a single range drags the consumers
+        # pinned to 1.1.16 and 2.1.2 across two majors. Drop the ignore once
+        # upstream publishes patched 1.x and 2.x lines, or once the tree
+        # consolidates on brace-expansion >= 5.0.8. Tracked in PYZ-345.
+        run: bun audit --audit-level=high --ignore=GHSA-f88m-g3jw-g9cj --ignore=GHSA-mh99-v99m-4gvg
       - name: Validate PR title
         if: github.event_name == 'pull_request'
         env:
