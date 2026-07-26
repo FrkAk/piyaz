@@ -179,6 +179,14 @@ describe("renderToolPage covers every tool", () => {
     test(`${tool.name} renders deterministically`, () => {
       expect(renderToolPage(tool)).toBe(renderToolPage(tool));
     });
+
+    test(`${tool.name} does not repeat its description in the body`, () => {
+      const page = renderToolPage(tool);
+      const description = page.match(/^description: "(.*)"$/m)?.[1];
+      expect(description).toBeTruthy();
+      const body = page.split("Do not edit by hand. */}\n\n")[1] ?? "";
+      expect(body).not.toStartWith(description!.slice(0, 24));
+    });
   }
 });
 
