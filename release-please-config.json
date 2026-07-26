@@ -42,6 +42,11 @@
           "path": "plugins/antigravity/plugin.json",
           "jsonpath": "$.version"
         },
+        {
+          "type": "json",
+          "path": "server.json",
+          "jsonpath": "$.version"
+        },
         "lib/mcp/create-server.ts"
       ]
     }

@@ -195,6 +195,36 @@ export function parseActions(
   });
 }
 
+/** Keep taking sentences until the summary is at least this long. */
+const SUMMARY_MIN = 90;
+
+/** Never add a sentence that would push the summary past this. */
+const SUMMARY_MAX = 190;
+
+/**
+ * Builds a page summary from the leading sentences of a tool description.
+ *
+ * Tool descriptions are written for agent tool-selection, so their first
+ * sentence is often only a few words ("Universal task finder."). Taking sentences
+ * until the text clears {@link SUMMARY_MIN} produces a usable meta description
+ * without editing the strings every MCP client displays.
+ * @param description - The tool's full description.
+ * @returns Leading sentences, always at least one, never past {@link SUMMARY_MAX}.
+ */
+export function summarize(description: string): string {
+  let summary = "";
+  for (const sentence of description.split(". ")) {
+    // Splitting on ". " removes the separator from every sentence except the
+    // last, which keeps its own terminator. Re-adding one blindly doubles it.
+    const piece = sentence.endsWith(".") ? sentence : `${sentence}.`;
+    const next = summary ? `${summary} ${piece}` : piece;
+    if (summary && next.length > SUMMARY_MAX) break;
+    summary = next;
+    if (summary.length >= SUMMARY_MIN) break;
+  }
+  return summary;
+}
+
 /**
  * Render one MCP tool reference page as MDX.
  * @param tool - Tool definition from lib/mcp/schemas.ts.
@@ -205,13 +235,13 @@ export function renderToolPage(tool: ToolDefinition): string {
   const props = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
   const discriminatorName = tool.discriminator;
-  const firstSentence = `${tool.description.split(". ")[0]}.`;
+  const summary = summarize(tool.description);
   // Fumadocs renders the frontmatter description above the body, so repeating
-  // the lead sentence there would print it twice. Slicing by the exact string
-  // already used for the frontmatter keeps the two in step by construction; a
-  // single-sentence description leaves no remainder and falls back whole.
-  const remainder = tool.description.startsWith(firstSentence)
-    ? tool.description.slice(firstSentence.length).trim()
+  // it there would print it twice. Slicing by the exact string already used for
+  // the frontmatter keeps the two in step by construction; a description with
+  // nothing after the summary leaves no remainder and falls back whole.
+  const remainder = tool.description.startsWith(summary)
+    ? tool.description.slice(summary.length).trim()
     : "";
   const intro = remainder.length > 0 ? remainder : tool.description;
 
@@ -252,7 +282,7 @@ ${actionRows.join("\n")}
 
   return `---
 title: ${yamlQuote(tool.name)}
-description: ${yamlQuote(firstSentence)}
+description: ${yamlQuote(summary)}
 ---
 
 ${GENERATED_NOTE}
