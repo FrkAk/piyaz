@@ -14,8 +14,19 @@ const exhaustedHeavyBackend: RateLimitBackend = {
   check: async () => ({ allowed: false, limit: 20, remaining: 0, resetIn: 42 }),
 };
 
+/** Deny-all stub for the standard slot — no 101-call warm-up. */
+const exhaustedStandardBackend: RateLimitBackend = {
+  check: async () => ({
+    allowed: false,
+    limit: 100,
+    remaining: 0,
+    resetIn: 17,
+  }),
+};
+
 afterEach(async () => {
   setBackend("mcpHeavy", new MemoryRateLimitBackend(60_000));
+  setBackend("mcp", new MemoryRateLimitBackend(60_000));
   await truncateAll();
 });
 
@@ -134,6 +145,27 @@ test("heavy shapes are rejected when the heavy budget is exhausted", async () =>
     const text = (result.content as { type: string; text: string }[])[0].text;
     expect(text).toContain("Heavy-tier budget exhausted");
     expect(text).toContain("Retry in 42s");
+  }
+  await client.close();
+});
+
+test("light shapes are metered per call, not per HTTP request", async () => {
+  const fx = await seedUserOrgProject("MCPSTD");
+  setBackend("mcp", exhaustedStandardBackend);
+  const client = await connectedClient(fx.userId);
+
+  // Neither shape is billed to the heavy tier, so before this the only budget
+  // they met was the middleware's, which charges one unit per POST however
+  // many calls the batch carried.
+  for (const call of [
+    { name: "piyaz_search", arguments: { query: "a" } },
+    { name: "piyaz_workspace", arguments: { action: "projects" } },
+  ]) {
+    const result = await client.callTool(call);
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0].text;
+    expect(text).toContain("MCP rate limit reached");
+    expect(text).toContain("Retry in 17s");
   }
   await client.close();
 });

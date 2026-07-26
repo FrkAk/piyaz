@@ -155,7 +155,7 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
   {
     // Machine traffic, not a credential-guessing surface: every MCP client
     // refreshes here once its access token expires, and `accessTokenExpiresIn`
-    // is 5m. The brute-force budget the rules above use would throttle a
+    // is 1h. The brute-force budget the rules above use would throttle a
     // normal fleet, and hardest where an address cannot be resolved and every
     // caller shares one bucket. What this rule is for is getting the endpoint
     // off the catch-all's forgeable session-cookie key, which the `ip`
@@ -178,8 +178,6 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     // unauthenticated flood actually runs into.
     addressCeiling: true,
   },
-  // Fairness bucket for authenticated traffic, not a security boundary: its
-  // key is derived from a cookie nothing has verified yet, so a caller willing
   // The session key gives a signed-in caller its own bucket, which is the
   // fairness property worth having, but nothing has verified that cookie yet,
   // so a caller willing to rotate one would otherwise mint buckets without
@@ -195,6 +193,19 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     addressCeiling: true,
   },
 ];
+
+/**
+ * Standard-tier MCP budget: the per-caller ceiling on tool calls, counted
+ * inside the MCP tool wrapper rather than at the HTTP edge.
+ *
+ * The middleware rule below charges one unit per POST, but the transport
+ * dispatches every message of a JSON-RPC batch to a handler, so a batched
+ * request buys more work than it is billed for. Metering here is what makes
+ * the advertised budget a call budget. Values MUST mirror the `/api/mcp` rule
+ * and the `RATE_LIMIT_MCP` binding, so a caller sending one call per request
+ * meets both limbs at the same point and neither shortens the other.
+ */
+export const MCP_STANDARD_LIMIT = { max: 100, window: 60 } as const;
 
 /**
  * Heavy-tier MCP budget: 20 calls per 60s per caller for the expensive tool

@@ -22,7 +22,12 @@ import {
   noteInputSchema,
   DEEP_LENSES,
 } from "@/lib/mcp/schemas";
-import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
+import {
+  getBackend,
+  mcpRateLimitMessage,
+  MCP_HEAVY_LIMIT,
+  MCP_STANDARD_LIMIT,
+} from "@/lib/api/rate-limit";
 import { isVerboseErrors } from "@/lib/api/error";
 import type { AuthContext } from "@/lib/auth/context";
 import { listOutstandingReconsent } from "@/lib/data/legal";
@@ -105,7 +110,9 @@ type McpResponse = ReturnType<typeof toMcp>;
  * the legal re-consent gate (mcp-source actors with an outstanding personal
  * document get a blocking error naming the acceptance URL; one indexed read
  * per call — the stateless transport runs one tool call per POST, so there
- * is nothing to memoize), the heavy-tier rate
+ * is nothing to memoize), the standard-tier rate check (one unit per tool
+ * call, so a JSON-RPC batch is billed per message rather than per POST) and
+ * the heavy-tier rate
  * check (middleware cannot see tool names, so the expensive shapes are
  * throttled here), the sanitised catch-all (mirrors `internalError` in
  * `lib/api/error.ts`: log server-side, return opaque `Internal error` unless
@@ -142,6 +149,21 @@ function wrapTool<P>(
           response = err(reconsentMessage(outstanding));
           return response;
         }
+      }
+      const standard = await getBackend("mcp").check(
+        `mcp-call:${ctx.userId}`,
+        MCP_STANDARD_LIMIT.max,
+        MCP_STANDARD_LIMIT.window,
+      );
+      if (!standard.allowed) {
+        response = err(
+          mcpRateLimitMessage(
+            MCP_STANDARD_LIMIT.max,
+            MCP_STANDARD_LIMIT.window,
+            standard.resetIn,
+          ),
+        );
+        return response;
       }
       if (opts.heavy?.(params)) {
         const check = await getBackend("mcpHeavy").check(
