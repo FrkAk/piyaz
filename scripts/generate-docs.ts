@@ -206,6 +206,14 @@ export function renderToolPage(tool: ToolDefinition): string {
   const required = new Set(schema.required ?? []);
   const discriminatorName = tool.discriminator;
   const firstSentence = `${tool.description.split(". ")[0]}.`;
+  // Fumadocs renders the frontmatter description above the body, so repeating
+  // the lead sentence there would print it twice. Slicing by the exact string
+  // already used for the frontmatter keeps the two in step by construction; a
+  // single-sentence description leaves no remainder and falls back whole.
+  const remainder = tool.description.startsWith(firstSentence)
+    ? tool.description.slice(firstSentence.length).trim()
+    : "";
+  const intro = remainder.length > 0 ? remainder : tool.description;
 
   const paramNames = Object.keys(props).sort((a, b) => {
     if (a === discriminatorName) return -1;
@@ -249,9 +257,7 @@ description: ${yamlQuote(firstSentence)}
 
 ${GENERATED_NOTE}
 
-# ${tool.name}
-
-${escapeProse(tool.description)}
+${escapeProse(intro)}
 
 ${actionsSection}## Parameters
 
@@ -323,8 +329,6 @@ description: "Every command and agent the Piyaz plugin installs, and when each o
 ---
 
 ${GENERATED_NOTE}
-
-# Skills and agents
 
 The Piyaz plugin ships the same skill set on Claude Code, Codex, Cursor, and Antigravity. Commands are skills you or the model invoke; agents are dispatched by skills for focused phases of work. The descriptions below are the live trigger text from the plugin source.
 
