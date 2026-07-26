@@ -45,8 +45,37 @@ import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
 import { getOutstandingConsent } from "@/lib/auth/consent";
 import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
+import { trustedProxies } from "@/lib/security/client-ip";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
+
+/**
+ * Which request headers Better Auth may read the client address from, and
+ * which proxies it may trust in a forwarded chain.
+ *
+ * The address keys the credential-path rate limiters and is persisted as
+ * `session.ipAddress` and legal-acceptance evidence, so a caller that can set
+ * it defeats brute-force throttling and authors its own audit record. Only the
+ * Cloudflare edge sets a header the client cannot choose; on every other target
+ * the forwarded headers are honoured solely when `TRUSTED_PROXIES` declares
+ * what sits in front. With no declaration Better Auth resolves no address and
+ * falls back to one shared per-path bucket, which throttles rather than
+ * exempts.
+ *
+ * @returns The `advanced.ipAddress` policy for this deployment.
+ */
+function ipAddressPolicy(): {
+  ipAddressHeaders: string[];
+  trustedProxies?: string[];
+} {
+  if (IS_CLOUDFLARE) return { ipAddressHeaders: ["cf-connecting-ip"] };
+  const proxies = trustedProxies();
+  if (proxies.length === 0) return { ipAddressHeaders: [] };
+  return {
+    ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for", "x-real-ip"],
+    trustedProxies: proxies,
+  };
+}
 
 /** Ceiling on how many organizations a single user may own. Enforced at
  *  organization-create time in the un-bypassable `/organization/*` hook. */
@@ -242,9 +271,7 @@ export function createAuth() {
       database: {
         generateId: false,
       },
-      ipAddress: {
-        ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for", "x-real-ip"],
-      },
+      ipAddress: ipAddressPolicy(),
     },
     // organization() must precede any future customSession() — see
     // better-auth issue #3233 (activeOrganizationId is type-erased otherwise).

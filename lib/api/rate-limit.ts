@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
+import { clientIpKey } from "@/lib/security/client-ip";
 import { MemoryRateLimitBackend } from "./rate-limit-memory";
 
 /**
@@ -192,17 +193,17 @@ async function hashKey(value: string): Promise<string> {
 }
 
 /**
- * Extract client IP from request headers.
+ * Extract the client IP to key a rate-limit bucket on.
+ *
+ * Delegates to the deployment's trust policy, so a caller cannot supply its
+ * own bucket identity by setting a proxy header. Callers that cannot be
+ * attributed share one bucket rather than getting a fresh one each.
+ *
  * @param request - Incoming request.
- * @returns Client IP address or "unknown".
+ * @returns Client IP address, or the shared untrusted-caller key.
  */
 function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown"
-  );
+  return clientIpKey(request.headers);
 }
 
 /**

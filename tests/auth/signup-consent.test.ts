@@ -105,7 +105,7 @@ test("signup with Terms acceptance creates the user and two acceptance rows", as
   expect(privacy!.documentVersion).toBe(LEGAL_VERSIONS.privacy);
 });
 
-test("client IP resolves from the first x-forwarded-for entry", async () => {
+test("attack: a caller-prepended x-forwarded-for entry cannot author the acceptance evidence", async () => {
   const email = "forwarded-consent@test.local";
   const userAgent = "PiyazConsentTest/1.0";
   const body = {
@@ -115,6 +115,8 @@ test("client IP resolves from the first x-forwarded-for entry", async () => {
     termsAccepted: true,
   };
 
+  // The leftmost entry is whatever the caller sent; only the rightmost hop
+  // was observed by the proxy, so that is the address worth recording.
   await auth.api.signUpEmail({
     body,
     headers: new Headers({
@@ -131,6 +133,7 @@ test("client IP resolves from the first x-forwarded-for entry", async () => {
   );
   expect(rows.length).toBe(2);
   for (const row of rows) {
-    expect(row.ipAddress).toBe("198.51.100.9");
+    expect(row.ipAddress).toBe("10.0.0.1");
+    expect(row.ipAddress).not.toBe("198.51.100.9");
   }
 });

@@ -2,6 +2,7 @@ import "server-only";
 
 import { headers } from "next/headers";
 import { getBackend, type RateLimitResult } from "@/lib/api/rate-limit";
+import { clientIpKey, resolveClientIp } from "@/lib/security/client-ip";
 import { assertLegalConsent } from "@/lib/auth/consent";
 import { getAuthContext, type AuthContext } from "@/lib/auth/context";
 
@@ -45,32 +46,27 @@ export type ActionRateLimitOutcome =
   | { ok: false; retryAfter: number };
 
 /**
- * Resolve the client IP from a `Headers` object, mirroring the order in
- * `lib/auth.ts:advanced.ipAddress.ipAddressHeaders` so a single proxy
- * chain controls every IP consumer (the action limiter and the better-auth
- * signup-acceptance hook). Pure and header-source agnostic, so it is safe
- * to call from a better-auth database hook where `next/headers` is not.
+ * Resolve the client IP from a `Headers` object under the deployment's trust
+ * policy, so a single policy controls every IP consumer (the action limiter
+ * and the better-auth signup-acceptance hook). Pure and header-source
+ * agnostic, so it is safe to call from a better-auth database hook where
+ * `next/headers` is not.
  *
  * @param headers - Request headers to read the proxy chain from.
- * @returns Client IP string, or `null` when no known header carries one.
+ * @returns Client IP string, or `null` when none can be trusted.
  */
 export function clientIpFromHeaders(headers: Headers): string | null {
-  return (
-    headers.get("cf-connecting-ip") ??
-    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    headers.get("x-real-ip") ??
-    null
-  );
+  return resolveClientIp(headers);
 }
 
 /**
- * Pull the client IP from request headers in a server action. Falls back
- * to `"unknown"` so two unattributable callers share one bucket.
+ * Pull the client IP from request headers in a server action. Unattributable
+ * callers share one bucket rather than each getting a fresh one.
  *
- * @returns Client IP string or `"unknown"`.
+ * @returns Client IP string, or the shared untrusted-caller key.
  */
 async function getActionClientIp(): Promise<string> {
-  return clientIpFromHeaders(await headers()) ?? "unknown";
+  return clientIpKey(await headers());
 }
 
 /**
