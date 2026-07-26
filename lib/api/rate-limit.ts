@@ -132,6 +132,27 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     bindingKey: "auth",
   },
   {
+    // Link-consumption paths, matched by prefix because the token rides in the
+    // path segment (better-auth's GET `/reset-password/:token`) and would
+    // otherwise miss the exact-match rule above and land on the catch-all.
+    // They consume a high-entropy token rather than guessing a credential, and
+    // a user follows them from their inbox, so the general budget is right:
+    // the brute-force one is shared instance-wide wherever no address
+    // resolves, which would block legitimate resets and verifications.
+    pattern: "/api/auth/reset-password/*",
+    max: 100,
+    window: 60,
+    keyStrategy: "ip",
+    bindingKey: "api",
+  },
+  {
+    pattern: "/api/auth/verify-email",
+    max: 100,
+    window: 60,
+    keyStrategy: "ip",
+    bindingKey: "api",
+  },
+  {
     // Machine traffic, not a credential-guessing surface: every MCP client
     // refreshes here once its access token expires, and `accessTokenExpiresIn`
     // is 5m. The brute-force budget the rules above use would throttle a

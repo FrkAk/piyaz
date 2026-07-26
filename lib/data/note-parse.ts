@@ -166,26 +166,6 @@ export function classifyRef(
 }
 
 /**
- * Extract task and note references from a markdown body.
- *
- * Fenced code blocks follow CommonMark: an opening fence is a run of 3+
- * backticks or tildes after at most 3 spaces of indentation (a backtick
- * fence's info string may not contain a backtick), the closing fence is
- * a run of the same character at least as long as the opener with only
- * whitespace after it, and an unterminated fence swallows the rest of
- * the body. Fence-delimiter lines and fenced content are skipped
- * entirely. Inline code spans are excluded by matching them in the same
- * alternation as the refs — leftmost-match-wins means a span consumes its
- * content before the ref pattern can see it. Bold runs are not excluded,
- * so a ref inside `**bold**` is linked, in lockstep with the renderer.
- * Task-ref identifier matching is case-insensitive.
- *
- * @param body - Markdown note body.
- * @param projectIdentifier - The owning project's identifier.
- * @returns Deduped task sequence numbers, note sequence numbers, and note
- *   titles, capped at 200 per kind.
- */
-/**
  * Yield the inner text of every `[[…]]` ref on a line, skipping refs consumed
  * by an inline code span.
  *
@@ -196,11 +176,11 @@ export function classifyRef(
  *
  * The regex form re-examines the remainder of the line at every offset, so a
  * body of unclosed `[[` costs O(n^2) inside the note write transaction. Here
- * the cursor only moves forward, and `nextBracketClose` is recomputed only
- * once it falls behind, so the whole line costs one pass. Both jumps are safe
- * because neither construct's content may contain its own terminator: a `[[`
- * not closed by the first following `]` cannot be closed at all, and neither
- * can any `[[` starting before that `]`.
+ * the cursor only moves forward and `nextBracketClose` is recomputed only once
+ * it falls behind, so the whole line costs one pass even though a failed `[[`
+ * advances a single character. That single step is load-bearing: jumping to
+ * the `]` instead would skip any backtick in between, and a span it should
+ * have opened would go missing, silently changing which refs are found.
  *
  * @param line - One body line, already known to be outside a fence.
  * @returns Inner texts in document order.
@@ -232,11 +212,31 @@ function scanLineRefs(line: string): string[] {
       i = nextBracketClose + 2;
       continue;
     }
-    i = nextBracketClose;
+    i++;
   }
   return inners;
 }
 
+/**
+ * Extract task and note references from a markdown body.
+ *
+ * Fenced code blocks follow CommonMark: an opening fence is a run of 3+
+ * backticks or tildes after at most 3 spaces of indentation (a backtick
+ * fence's info string may not contain a backtick), the closing fence is
+ * a run of the same character at least as long as the opener with only
+ * whitespace after it, and an unterminated fence swallows the rest of
+ * the body. Fence-delimiter lines and fenced content are skipped
+ * entirely. Inline code spans are excluded by {@link scanLineRefs}, which
+ * walks them interleaved with the refs so a span consumes its content
+ * before a ref can see it. Bold runs are not excluded, so a ref inside
+ * `**bold**` is linked, in lockstep with the renderer. Task-ref identifier
+ * matching is case-insensitive.
+ *
+ * @param body - Markdown note body.
+ * @param projectIdentifier - The owning project's identifier.
+ * @returns Deduped task sequence numbers, note sequence numbers, and note
+ *   titles, capped at 200 per kind.
+ */
 export function extractNoteRefs(
   body: string,
   projectIdentifier: string,

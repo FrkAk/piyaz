@@ -33,7 +33,11 @@ const SIDE_EFFECT_PATHS = [
   "/api/auth/send-verification-email",
   "/api/auth/reset-password",
   "/api/auth/oauth2/token",
+  "/api/auth/verify-email",
 ];
+
+/** Token-bearing paths that must not fall through to the catch-all. */
+const TOKEN_PATHS = ["/api/auth/reset-password/abc123token"];
 
 test("attack: unauthenticated side-effect endpoints are never keyed on a cookie", () => {
   for (const path of SIDE_EFFECT_PATHS) {
@@ -44,11 +48,26 @@ test("attack: unauthenticated side-effect endpoints are never keyed on a cookie"
 });
 
 test("credential-guessing endpoints keep the strict brute-force budget", () => {
-  const bruteForcePaths = SIDE_EFFECT_PATHS.filter(
-    (path) => path !== "/api/auth/oauth2/token",
-  );
+  const bruteForcePaths = [
+    "/api/auth/sign-in/email",
+    "/api/auth/sign-up/email",
+    "/api/auth/oauth2/register",
+    "/api/auth/request-password-reset",
+    "/api/auth/send-verification-email",
+    "/api/auth/reset-password",
+  ];
   for (const path of bruteForcePaths) {
     expect(matchRule(path)?.bindingKey).toBe("auth");
+  }
+});
+
+test("attack: a token in the path does not fall through to the catch-all", () => {
+  // better-auth serves GET /reset-password/:token, which an exact-match rule
+  // misses. On the catch-all its key would be a cookie the caller picks.
+  for (const path of TOKEN_PATHS) {
+    const rule = matchRule(path);
+    expect(rule?.keyStrategy).toBe("ip");
+    expect(rule?.pattern).not.toBe("/api/*");
   }
 });
 

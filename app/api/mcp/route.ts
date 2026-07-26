@@ -69,9 +69,16 @@ function payloadTooLarge() {
  *
  * `verifyJwsAccessToken` caches a function-sourced JWKS only when given a
  * `jwksCacheKey`; without one it calls `jwksFetch` on every verification, so
- * each request carrying any `kid`, including one an attacker made up, costs a
- * `jwks` model read. The object identity is the key, so this must be a
- * module-level constant rather than a fresh object per call.
+ * even a valid token costs a `jwks` model read per request. The object
+ * identity is the key, so this must be a module-level constant rather than a
+ * fresh object per call.
+ *
+ * This bounds the legitimate path, not a forged one. `getFreshJwksWithKid`
+ * (`@better-auth/core/dist/oauth2/verify.mjs:38`) treats a `kid` absent from
+ * the cached set as a miss and refetches, which is what lets key rotation take
+ * effect, so a caller inventing a fresh `kid` per request still costs one read
+ * each. That flood is bounded by the address ceiling on `/api/mcp` wherever a
+ * client address resolves, and unbounded where none does.
  */
 const JWKS_CACHE_KEY = {};
 
