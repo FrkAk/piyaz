@@ -14,6 +14,32 @@ const FORWARDED_HEADERS = [
 /** Bucket key used when no trustworthy client address can be resolved. */
 export const UNTRUSTED_IP_KEY = "no-trusted-ip";
 
+/** Whether the unresolvable-address warning has already been emitted. */
+let untrustedWarningLogged = false;
+
+/**
+ * Warn once per isolate that no client address could be resolved.
+ *
+ * Every per-address budget collapses into one shared bucket in this state, so
+ * a single busy caller can throttle everyone. That is the safe direction, but
+ * a deployment behind a reverse proxy almost certainly meant to declare it,
+ * and the symptom (unrelated users seeing 429s) points nowhere near the cause.
+ * Mirrors the warning Better Auth emits for the same condition.
+ */
+function warnUntrustedOnce(): void {
+  if (untrustedWarningLogged) return;
+  untrustedWarningLogged = true;
+  console.warn(
+    JSON.stringify({
+      event: "client_ip_unresolved",
+      hint:
+        "No trusted client address could be resolved, so every caller shares " +
+        "one rate-limit bucket and no IP is recorded on legal acceptance. Set " +
+        "TRUSTED_PROXIES to the reverse proxy in front of this deployment.",
+    }),
+  );
+}
+
 /**
  * Whether the running build targets Cloudflare Workers. Read per call rather
  * than captured at module load so tests can flip the target.
@@ -111,5 +137,8 @@ export function resolveClientIp(headers: Headers): string | null {
  * @returns Client address, or {@link UNTRUSTED_IP_KEY}.
  */
 export function clientIpKey(headers: Headers): string {
-  return resolveClientIp(headers) ?? UNTRUSTED_IP_KEY;
+  const address = resolveClientIp(headers);
+  if (address) return address;
+  warnUntrustedOnce();
+  return UNTRUSTED_IP_KEY;
 }

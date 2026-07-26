@@ -99,7 +99,14 @@ export async function middleware(request: NextRequest) {
         ),
         checkAddressCeiling(request, rule),
       ]);
-      const result = ceiling && !ceiling.allowed ? ceiling : primary;
+      // Report whichever limb is closest to rejecting, not just whichever
+      // rejected. Advertising the token bucket's headroom while the address
+      // bucket sits at zero tells a client it has budget it cannot spend, and
+      // the next call 429s anyway.
+      const result =
+        ceiling && (!ceiling.allowed || ceiling.remaining < primary.remaining)
+          ? ceiling
+          : primary;
       rlHeaders = rateLimitHeaders(result, rule);
       if (!result.allowed) {
         const message =
