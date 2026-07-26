@@ -153,6 +153,16 @@ export async function requireNoteId(
 // ---------------------------------------------------------------------------
 
 /**
+ * Most proposed tags compared against the existing vocabulary.
+ *
+ * The comparison is a cross product of two caller-supplied lists, so the pair
+ * count needs a ceiling of its own even with each pair bounded. Hints steer an
+ * agent's next call; the first few carry that signal, and a request proposing
+ * more tags than this has already stopped being a naming question.
+ */
+const MAX_HINTED_TAGS = 25;
+
+/**
  * Build variant-warning hints for proposed tags against existing project tags.
  * @param proposed - Proposed tag strings.
  * @param existing - Current project tag list.
@@ -163,7 +173,7 @@ export function tagVariantHints(
   existing: string[],
 ): string[] {
   const hints: string[] = [];
-  for (const tag of proposed) {
+  for (const tag of proposed.slice(0, MAX_HINTED_TAGS)) {
     const variant = findVariant(tag, existing);
     if (variant)
       hints.push(
