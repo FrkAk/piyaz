@@ -1,15 +1,10 @@
 import * as z from "zod";
 
-/**
- * Proxy headers consulted only when the deployment declares a trusted proxy.
- * `cf-connecting-ip` is included because self-hosting behind the Cloudflare
- * proxy is a supported topology, and it is the header that edge sets.
- */
-const FORWARDED_HEADERS = [
-  "cf-connecting-ip",
-  "x-forwarded-for",
-  "x-real-ip",
-] as const;
+/** Header the Cloudflare edge sets on the hosted target. */
+const EDGE_HEADER = "cf-connecting-ip";
+
+/** RFC 7230 field-name shape, guarding `Headers.get`, which throws otherwise. */
+const HEADER_NAME_RE = /^[a-z0-9!#$%&'*+.^_`|~-]+$/;
 
 /** Bucket key used when no trustworthy client address can be resolved. */
 export const UNTRUSTED_IP_KEY = "no-trusted-ip";
@@ -35,7 +30,8 @@ function warnUntrustedOnce(): void {
       hint:
         "No trusted client address could be resolved, so every caller shares " +
         "one rate-limit bucket and no IP is recorded on legal acceptance. Set " +
-        "TRUSTED_PROXIES to the reverse proxy in front of this deployment.",
+        "TRUSTED_PROXY_HEADER to the header the reverse proxy in front of " +
+        "this deployment overwrites on inbound requests.",
     }),
   );
 }
@@ -54,6 +50,11 @@ function isCloudflareTarget(): boolean {
  * Trusted reverse-proxy addresses declared by the deployment, parsed from the
  * comma-separated `TRUSTED_PROXIES` environment variable.
  *
+ * Refines attribution rather than granting trust: {@link trustedProxyHeader}
+ * decides whether any header is read at all. Better Auth consumes this list to
+ * walk a forwarded chain past its own proxies (CIDR ranges included), which
+ * matters where a proxy appends to the chain instead of replacing it.
+ *
  * @returns Trimmed entries, empty when the variable is unset or blank.
  */
 export function trustedProxies(): string[] {
@@ -63,6 +64,24 @@ export function trustedProxies(): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+/**
+ * The single request header a self-hosted deployment's reverse proxy is
+ * declared to control, from `TRUSTED_PROXY_HEADER`.
+ *
+ * One operator-named header rather than a list tried in order: trying several
+ * means the first one that parses wins, and a caller can always supply a
+ * header the proxy does not set. `x-forwarded-for` and `x-real-ip` are the
+ * usual answers; a deployment that does front itself with a CDN names that
+ * CDN's header instead. Fail closed, so an unset value trusts nothing.
+ *
+ * @returns Lower-cased header name, or `null` when unset or not a valid field name.
+ */
+export function trustedProxyHeader(): string | null {
+  const raw = process.env.TRUSTED_PROXY_HEADER?.trim().toLowerCase();
+  if (!raw || !HEADER_NAME_RE.test(raw)) return null;
+  return raw;
 }
 
 /**
@@ -104,29 +123,23 @@ function selectFromChain(value: string): string | null {
 /**
  * Resolve the client address under the deployment's trust policy.
  *
- * On the Cloudflare target only `cf-connecting-ip` is consulted, because the
- * edge sets it and a client cannot choose its value. On every other target the
- * forwarded headers are ignored unless `TRUSTED_PROXIES` declares a proxy in
- * front, since nothing else stops a caller from supplying them directly.
- * Declaring a proxy asserts that it overwrites or strips these headers on
- * inbound requests; a proxy that passes them through leaves the address
- * caller-controlled. The resolved value is always shape-validated.
+ * The hosted target reads `cf-connecting-ip` and nothing else: the edge sets
+ * it on every request and a client cannot choose its value. Self-host reads
+ * exactly the header {@link trustedProxyHeader} names and nothing else, so a
+ * caller cannot reach the resolver through a header the proxy leaves
+ * untouched — the reason `cf-connecting-ip` is absent from this path unless an
+ * operator names it, since a self-hosted deployment has no edge setting it and
+ * common reverse proxies forward it verbatim. With no header named, no address
+ * resolves. The selected value is always shape-validated.
  *
  * @param headers - Request headers to read the proxy chain from.
  * @returns Client address, or `null` when none can be trusted.
  */
 export function resolveClientIp(headers: Headers): string | null {
-  if (isCloudflareTarget()) {
-    const edgeIp = headers.get("cf-connecting-ip");
-    return edgeIp && isValidIp(edgeIp) ? edgeIp : null;
-  }
-  if (trustedProxies().length === 0) return null;
-  for (const header of FORWARDED_HEADERS) {
-    const value = headers.get(header);
-    const selected = value ? selectFromChain(value) : null;
-    if (selected) return selected;
-  }
-  return null;
+  const header = isCloudflareTarget() ? EDGE_HEADER : trustedProxyHeader();
+  if (!header) return null;
+  const value = headers.get(header);
+  return value ? selectFromChain(value) : null;
 }
 
 /**

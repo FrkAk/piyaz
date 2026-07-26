@@ -45,22 +45,27 @@ import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
 import { getOutstandingConsent } from "@/lib/auth/consent";
 import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
-import { trustedProxies } from "@/lib/security/client-ip";
+import { trustedProxies, trustedProxyHeader } from "@/lib/security/client-ip";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
 /**
- * Which request headers Better Auth may read the client address from, and
- * which proxies it may trust in a forwarded chain.
+ * Which request header Better Auth may read the client address from, and which
+ * proxies it may trust in a forwarded chain.
  *
  * The address keys the credential-path rate limiters and is persisted as
  * `session.ipAddress` and legal-acceptance evidence, so a caller that can set
- * it defeats brute-force throttling and authors its own audit record. Only the
- * Cloudflare edge sets a header the client cannot choose; on every other target
- * the forwarded headers are honoured solely when `TRUSTED_PROXIES` declares
- * what sits in front. With no declaration Better Auth resolves no address and
- * falls back to one shared per-path bucket, which throttles rather than
- * exempts.
+ * it defeats brute-force throttling and authors its own audit record. Better
+ * Auth walks `ipAddressHeaders` in order and takes the first that resolves, so
+ * the list carries exactly one entry: the header this deployment's edge or
+ * proxy is known to overwrite. Any second entry would be one a caller could
+ * supply directly, and being unreachable in a correct deployment is what makes
+ * it reachable in an attack.
+ *
+ * Mirrors `lib/security/client-ip.ts`, which governs the middleware and
+ * server-action limiters, so one policy decides every IP consumer. With no
+ * header named, Better Auth resolves no address and falls back to one shared
+ * per-path bucket, which throttles rather than exempts.
  *
  * @returns The `advanced.ipAddress` policy for this deployment.
  */
@@ -69,11 +74,12 @@ function ipAddressPolicy(): {
   trustedProxies?: string[];
 } {
   if (IS_CLOUDFLARE) return { ipAddressHeaders: ["cf-connecting-ip"] };
+  const header = trustedProxyHeader();
+  if (!header) return { ipAddressHeaders: [] };
   const proxies = trustedProxies();
-  if (proxies.length === 0) return { ipAddressHeaders: [] };
   return {
-    ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for", "x-real-ip"],
-    trustedProxies: proxies,
+    ipAddressHeaders: [header],
+    ...(proxies.length > 0 ? { trustedProxies: proxies } : {}),
   };
 }
 

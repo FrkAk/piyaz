@@ -4,6 +4,7 @@ import {
   isValidIp,
   resolveClientIp,
   trustedProxies,
+  trustedProxyHeader,
   UNTRUSTED_IP_KEY,
 } from "@/lib/security/client-ip";
 
@@ -24,6 +25,7 @@ const PROXY_IP = "192.0.2.1";
 
 const originalTarget = process.env.DEPLOY_TARGET;
 const originalProxies = process.env.TRUSTED_PROXIES;
+const originalHeader = process.env.TRUSTED_PROXY_HEADER;
 
 /**
  * Restore a process env key, deleting it when it was previously unset.
@@ -39,11 +41,12 @@ function restoreEnv(key: string, value: string | undefined): void {
 afterEach(() => {
   restoreEnv("DEPLOY_TARGET", originalTarget);
   restoreEnv("TRUSTED_PROXIES", originalProxies);
+  restoreEnv("TRUSTED_PROXY_HEADER", originalHeader);
 });
 
 test("attack: forwarded headers are ignored when no proxy is declared", () => {
   delete process.env.DEPLOY_TARGET;
-  delete process.env.TRUSTED_PROXIES;
+  delete process.env.TRUSTED_PROXY_HEADER;
 
   const headers = new Headers({
     "cf-connecting-ip": CLIENT_IP,
@@ -57,7 +60,7 @@ test("attack: forwarded headers are ignored when no proxy is declared", () => {
 
 test("attack: rotating a forged header cannot mint a fresh bucket", () => {
   delete process.env.DEPLOY_TARGET;
-  delete process.env.TRUSTED_PROXIES;
+  delete process.env.TRUSTED_PROXY_HEADER;
 
   const keys = new Set<string>();
   for (let i = 0; i < 50; i++) {
@@ -69,9 +72,56 @@ test("attack: rotating a forged header cannot mint a fresh bucket", () => {
   expect(keys).toEqual(new Set([UNTRUSTED_IP_KEY]));
 });
 
+test("attack: only the named header is read, never a second one", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = "x-real-ip";
+  process.env.TRUSTED_PROXIES = PROXY_IP;
+
+  // A proxy that sets only x-real-ip forwards everything else untouched, so
+  // both of these are the caller's own bytes.
+  const headers = new Headers({
+    "cf-connecting-ip": "198.51.100.1",
+    "x-forwarded-for": "198.51.100.2",
+    "x-real-ip": CLIENT_IP,
+  });
+
+  expect(resolveClientIp(headers)).toBe(CLIENT_IP);
+});
+
+test("attack: a declared proxy does not re-open cf-connecting-ip on self-host", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
+  process.env.TRUSTED_PROXIES = PROXY_IP;
+
+  const keys = new Set<string>();
+  for (let i = 0; i < 50; i++) {
+    keys.add(
+      clientIpKey(
+        new Headers({
+          "cf-connecting-ip": `198.51.100.${i}`,
+          "x-forwarded-for": `203.0.113.9, ${CLIENT_IP}`,
+        }),
+      ),
+    );
+  }
+
+  expect(keys).toEqual(new Set([CLIENT_IP]));
+});
+
+test("a malformed header name trusts nothing", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = "not a header";
+
+  expect(trustedProxyHeader()).toBeNull();
+  expect(
+    resolveClientIp(new Headers({ "x-forwarded-for": CLIENT_IP })),
+  ).toBeNull();
+});
+
 test("cloudflare target trusts the edge-set header only", () => {
   process.env.DEPLOY_TARGET = "cloudflare";
-  delete process.env.TRUSTED_PROXIES;
+  // The hosted target reads the edge header regardless of self-host tuning.
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
 
   expect(resolveClientIp(new Headers({ "cf-connecting-ip": CLIENT_IP }))).toBe(
     CLIENT_IP,
@@ -81,9 +131,9 @@ test("cloudflare target trusts the edge-set header only", () => {
   ).toBeNull();
 });
 
-test("declared proxy takes the rightmost hop, not the caller's prefix", () => {
+test("named header takes the rightmost hop, not the caller's prefix", () => {
   delete process.env.DEPLOY_TARGET;
-  process.env.TRUSTED_PROXIES = PROXY_IP;
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
 
   const headers = new Headers({
     "x-forwarded-for": `203.0.113.9, ${CLIENT_IP}`,
@@ -94,6 +144,7 @@ test("declared proxy takes the rightmost hop, not the caller's prefix", () => {
 
 test("malformed addresses never become a bucket key", () => {
   process.env.DEPLOY_TARGET = "cloudflare";
+  delete process.env.TRUSTED_PROXY_HEADER;
 
   const oversized = "a".repeat(10_000);
   expect(

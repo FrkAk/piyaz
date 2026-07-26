@@ -8,12 +8,13 @@ process.env.BETTER_AUTH_SECRET ??=
 // BA emits a base-URL warning otherwise; harmless but noisy in test logs.
 process.env.BETTER_AUTH_URL ??= "https://example.test";
 
-// Declare a trusted proxy so the suite resolves a per-request client address
+// Name a proxy header so the suite resolves a per-request client address
 // instead of collapsing every caller into the one shared untrusted bucket.
 // Auth test files each own a `127.0.x.x` range to keep their rate-limit
 // buckets isolated from one another, which only works while an address
-// resolves. The value is an RFC 5737 documentation address.
-process.env.TRUSTED_PROXIES ??= "192.0.2.1";
+// resolves. `tests/security/client-ip.test.ts` unsets this to exercise the
+// shipping self-host default, where no header is trusted.
+process.env.TRUSTED_PROXY_HEADER ??= "cf-connecting-ip";
 
 /**
  * Force `NODE_ENV=production` at the test process boundary.
