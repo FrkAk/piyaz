@@ -3,6 +3,7 @@ import type { JSONWebKeySet } from "jose";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
 import { auth } from "@/lib/auth";
 import { createMcpServer } from "@/lib/mcp/create-server";
+import { MAX_JSON_RPC_BATCH, isOversizedBatch } from "@/lib/mcp/batch";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
 import { authContextFromPayload } from "@/lib/auth/mcp-token";
 import { parseEnvInt } from "@/lib/config/env";
@@ -64,6 +65,17 @@ function payloadTooLarge() {
 }
 
 /**
+ * Stable identity the JWKS cache is keyed on.
+ *
+ * `verifyJwsAccessToken` caches a function-sourced JWKS only when given a
+ * `jwksCacheKey`; without one it calls `jwksFetch` on every verification, so
+ * each request carrying any `kid`, including one an attacker made up, costs a
+ * `jwks` model read. The object identity is the key, so this must be a
+ * module-level constant rather than a fresh object per call.
+ */
+const JWKS_CACHE_KEY = {};
+
+/**
  * Resolve the active JSON Web Key Set in-process via the JWT plugin's API
  * surface. Worker self-fetches against `/api/auth/jwks` traversed the
  * Cloudflare edge stack (under the `global_fetch_strictly_public`
@@ -77,17 +89,6 @@ function payloadTooLarge() {
  * @returns The active JWK set with the signing key.
  * @throws Error when `auth.api.getJwks()` returns an unexpected shape.
  */
-/**
- * Stable identity the JWKS cache is keyed on.
- *
- * `verifyJwsAccessToken` caches a function-sourced JWKS only when given a
- * `jwksCacheKey`; without one it calls `jwksFetch` on every verification, so
- * each request carrying any `kid`, including one an attacker made up, costs a
- * `jwks` model read. The object identity is the key, so this must be a
- * module-level constant rather than a fresh object per call.
- */
-const JWKS_CACHE_KEY = {};
-
 async function fetchJwksInProcess(): Promise<JSONWebKeySet> {
   const result = await auth.api.getJwks();
   if (
@@ -200,6 +201,13 @@ export async function POST(request: Request) {
   const body = await readBodyBounded(request, MAX_MCP_BODY_BYTES);
   if (body === null) {
     return payloadTooLarge();
+  }
+  if (isOversizedBatch(body)) {
+    return jsonRpcError(
+      -32600,
+      `Batch too large: at most ${MAX_JSON_RPC_BATCH} JSON-RPC messages per request.`,
+      413,
+    );
   }
   const boundedRequest = new Request(request.url, {
     method: request.method,
