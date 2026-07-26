@@ -132,11 +132,18 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     bindingKey: "auth",
   },
   {
+    // Machine traffic, not a credential-guessing surface: every MCP client
+    // refreshes here once its access token expires, and `accessTokenExpiresIn`
+    // is 5m. The brute-force budget the rules above use would throttle a
+    // normal fleet, and hardest where an address cannot be resolved and every
+    // caller shares one bucket. What this rule is for is getting the endpoint
+    // off the catch-all's forgeable session-cookie key, which the `ip`
+    // strategy does at the general API budget.
     pattern: "/api/auth/oauth2/token",
-    max: 5,
+    max: 100,
     window: 60,
     keyStrategy: "ip",
-    bindingKey: "auth",
+    bindingKey: "api",
   },
   {
     pattern: "/api/mcp",

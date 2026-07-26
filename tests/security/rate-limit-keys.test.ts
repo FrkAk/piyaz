@@ -40,8 +40,22 @@ test("attack: unauthenticated side-effect endpoints are never keyed on a cookie"
     const rule = matchRule(path);
     expect(rule).not.toBeNull();
     expect(rule!.keyStrategy).toBe("ip");
-    expect(rule!.bindingKey).toBe("auth");
   }
+});
+
+test("credential-guessing endpoints keep the strict brute-force budget", () => {
+  const bruteForcePaths = SIDE_EFFECT_PATHS.filter(
+    (path) => path !== "/api/auth/oauth2/token",
+  );
+  for (const path of bruteForcePaths) {
+    expect(matchRule(path)?.bindingKey).toBe("auth");
+  }
+});
+
+test("the token endpoint carries a budget a refreshing client fleet can meet", () => {
+  const rule = matchRule("/api/auth/oauth2/token");
+  expect(rule?.bindingKey).toBe("api");
+  expect(rule?.max).toBe(100);
 });
 
 test("attack: a forged cookie cannot pick the bucket on a side-effect endpoint", async () => {
