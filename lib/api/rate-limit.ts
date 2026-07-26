@@ -53,14 +53,19 @@ export interface RateLimitBackend {
  * match, so paths with concrete prefixes (e.g. `/api/auth/sign-in`) must
  * precede the catch-all `/api/*`.
  *
- * The three pre-auth `auth` rules (`sign-in`, `sign-up`, `oauth2/register`)
- * use the `"ip"` key strategy, NOT `"session"`. These endpoints are reached
- * by unauthenticated callers, so any session cookie on the request is either
- * absent or attacker-supplied: `getSessionCookie` returns the raw cookie value
- * with no signature/DB validation, so a `"session"` key would let a caller mint
- * a fresh rate-limit bucket per request by rotating a forged cookie and bypass
- * the limit entirely. Keying on the client IP (set by the CF edge via
- * `cf-connecting-ip`) is the only un-forgeable identifier here. CF docs
+ * The pre-auth `auth` rules use the `"ip"` key strategy, NOT `"session"`.
+ * These endpoints are reached by unauthenticated callers, so any session
+ * cookie on the request is either absent or attacker-supplied:
+ * `getSessionCookie` returns the raw cookie value with no signature/DB
+ * validation, so a `"session"` key would let a caller mint a fresh rate-limit
+ * bucket per request by rotating a forged cookie and bypass the limit
+ * entirely. Every unauthenticated endpoint whose cost lands somewhere else —
+ * an email to a victim's inbox, an `oauthClient` row, a token-grant attempt —
+ * belongs on this list rather than on the catch-all, which is why
+ * `request-password-reset`, `send-verification-email`, `reset-password` and
+ * `oauth2/token` are enumerated here. Keying on the client IP (resolved by
+ * `lib/security/client-ip.ts`, which trusts a header only where something
+ * upstream sets it) is the only un-forgeable identifier available. CF docs
  * discourage IP keys for general user throttling because shared NATs cause
  * collateral throttling, but brute-force / registration-flood defense by IP is
  * the field-standard exception. Layered on top of Better-Auth's in-memory
@@ -98,12 +103,46 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     bindingKey: "auth",
   },
   {
+    pattern: "/api/auth/request-password-reset",
+    max: 5,
+    window: 60,
+    keyStrategy: "ip",
+    bindingKey: "auth",
+  },
+  {
+    pattern: "/api/auth/send-verification-email",
+    max: 5,
+    window: 60,
+    keyStrategy: "ip",
+    bindingKey: "auth",
+  },
+  {
+    pattern: "/api/auth/reset-password",
+    max: 5,
+    window: 60,
+    keyStrategy: "ip",
+    bindingKey: "auth",
+  },
+  {
+    pattern: "/api/auth/oauth2/token",
+    max: 5,
+    window: 60,
+    keyStrategy: "ip",
+    bindingKey: "auth",
+  },
+  {
     pattern: "/api/mcp",
     max: 100,
     window: 60,
     keyStrategy: "apikey",
     bindingKey: "mcp",
   },
+  // Fairness bucket for authenticated traffic, not a security boundary: its
+  // key is derived from a cookie nothing has verified yet, so a caller willing
+  // to rotate one can still spread itself across buckets. That is tolerable
+  // only because every unauthenticated endpoint with a side effect is
+  // enumerated above on an `"ip"` rule, and middleware redirects sessionless
+  // callers away from the rest of `/api/*` before this rule is reached.
   { pattern: "/api/*", max: 100, window: 60, keyStrategy: "session" },
 ];
 
@@ -153,6 +192,10 @@ export function matchRule(pathname: string): RateLimitRule | null {
 
 /**
  * Extract the rate limit key from a request based on the rule's key strategy.
+ *
+ * The session strategy hashes the cookie rather than returning it: the raw
+ * value is a live credential, and the key reaches structured logs on the
+ * Workers backend when the rate-limit binding fails.
  * API keys are SHA-256 hashed to avoid storing secrets in the rate limit map.
  * @param request - Incoming request.
  * @param strategy - Key extraction strategy (session or apikey).
@@ -165,7 +208,7 @@ export async function extractKey(
   switch (strategy) {
     case "session": {
       const cookie = getSessionCookie(request);
-      return cookie ?? getClientIp(request);
+      return cookie ? await hashKey(cookie) : getClientIp(request);
     }
     case "apikey": {
       const auth = request.headers.get("authorization");
