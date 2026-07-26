@@ -4,18 +4,44 @@ import { describe, expect, test } from "bun:test";
 import { metadata } from "@/app/layout";
 import { metadata as publicMetadata } from "@/app/(public)/layout";
 import robots from "@/app/robots";
+import sitemap from "@/app/sitemap";
+import { APP_URL } from "@/lib/config/urls";
 
 /**
- * Pins the link-unfurl contract for the app host. Preview bots (Slackbot,
- * Twitterbot, Discordbot) honour robots.txt, so a blanket `disallow` stops
- * them fetching the page and reading `og:image` at all. Indexing is held off
- * by the `noindex` directive in root metadata, not by robots.txt, with the
+ * Pins the link-unfurl and indexing contract for the app host. Preview bots
+ * (Slackbot, Twitterbot, Discordbot) honour robots.txt, so a blanket `disallow`
+ * stops them fetching the page and reading `og:image` at all. Indexing is held
+ * off by the `noindex` directive in root metadata, not by robots.txt, with the
  * legal route group as the single deliberate exception. These tests fail if
  * either half of that pairing regresses, if the exception spreads to another
- * layout, or if `og.png` stops being a 1200x630 PNG.
+ * route file, if a legal page loses its self-canonical or its sitemap entry, or
+ * if `og.png` stops being a 1200x630 PNG.
  */
 
 const OG_PATH = join(import.meta.dir, "../../public/og.png");
+
+/** Route files that can declare their own metadata, relative to the repo root. */
+const ROUTE_FILES = "app/**/{layout,page}.tsx";
+
+/** Pages inside the route group that opts back into indexing. */
+const LEGAL_PAGES = "app/(public)/*/page.tsx";
+
+/**
+ * Lists the legal document routes by reading the filesystem, so the assertions
+ * track the pages that actually exist rather than a hardcoded copy of them.
+ *
+ * @returns Sorted route paths, e.g. `["/dpa", "/impressum", ...]`.
+ * @throws If the glob matches nothing, which would make callers pass vacuously.
+ */
+function legalRoutes(): string[] {
+  const paths = [...new Bun.Glob(LEGAL_PAGES).scanSync(".")];
+  if (paths.length === 0) {
+    throw new Error(
+      `expected ${LEGAL_PAGES} to match the legal document pages`,
+    );
+  }
+  return paths.map((path) => `/${path.split("/").at(-2)}`).sort();
+}
 
 type OgImageDescriptor = {
   url: string;
@@ -76,6 +102,10 @@ describe("robots.txt", () => {
     const single = robots().rules as { disallow?: string | string[] };
     expect(single.disallow).toBe("/api/");
   });
+
+  test("advertises the sitemap", () => {
+    expect(robots().sitemap).toBe(`${APP_URL}/sitemap.xml`);
+  });
 });
 
 describe("root metadata", () => {
@@ -95,6 +125,14 @@ describe("root metadata", () => {
   test("openGraph and twitter point at the same asset", () => {
     expect(twitterCard().images?.[0]).toBe(ogImageDescriptor().url);
   });
+
+  test("declares no sitewide canonical, which would point every route at /", () => {
+    expect(metadata.alternates).toBeUndefined();
+  });
+
+  test("declares no og:url, which would collapse distinct shared links", () => {
+    expect(metadata.openGraph?.url).toBeUndefined();
+  });
 });
 
 describe("indexing scope", () => {
@@ -102,11 +140,25 @@ describe("indexing scope", () => {
     expect(publicMetadata.robots).toMatchObject({ index: true, follow: true });
   });
 
-  test("no other layout overrides the sitewide noindex", () => {
-    const overriding = [...new Bun.Glob("app/**/layout.tsx").scanSync(".")]
-      .filter((path) => readFileSync(path, "utf8").includes("robots"))
+  test("no other route file overrides the sitewide noindex", () => {
+    const overriding = [...new Bun.Glob(ROUTE_FILES).scanSync(".")]
+      .filter((path) => /\brobots\s*:/.test(readFileSync(path, "utf8")))
       .sort();
     expect(overriding).toEqual(["app/(public)/layout.tsx", "app/layout.tsx"]);
+  });
+
+  test("each legal page self-canonicals to its own route", () => {
+    for (const route of legalRoutes()) {
+      const source = readFileSync(`app/(public)${route}/page.tsx`, "utf8");
+      expect(source).toContain(`canonical: "${route}"`);
+    }
+  });
+
+  test("the sitemap lists every indexable page and nothing else", () => {
+    const listed = sitemap()
+      .map((entry) => entry.url)
+      .sort();
+    expect(listed).toEqual(legalRoutes().map((route) => `${APP_URL}${route}`));
   });
 });
 

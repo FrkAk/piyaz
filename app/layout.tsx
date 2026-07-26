@@ -5,6 +5,7 @@ import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { RealtimeBridge } from "@/components/providers/RealtimeBridge";
 import { SessionProvider } from "@/components/providers/SessionProvider";
+import { APP_URL } from "@/lib/config/urls";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -12,13 +13,12 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-const siteUrl = "https://app.piyaz.ai";
 const description =
   "A structure that supports organic growth. Track projects created by your coding agent.";
 const ogImage = "/og.png?v=1";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  metadataBase: new URL(APP_URL),
   title: {
     default: "Piyaz",
     template: "%s · Piyaz",

@@ -4,3 +4,6 @@
  * home; signed-out surfaces link up to piyaz.ai).
  */
 export const MARKETING_URL = "https://piyaz.ai";
+
+/** App host origin, shared by `metadataBase`, the sitemap, and robots.txt. */
+export const APP_URL = "https://app.piyaz.ai";

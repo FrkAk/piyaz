@@ -1,13 +1,12 @@
 import type { MetadataRoute } from "next";
-
-const baseUrl = "https://app.piyaz.ai";
+import { APP_URL } from "@/lib/config/urls";
 
 /**
  * robots.txt for the Piyaz app. Page fetching is allowed so link preview bots
  * can read the Open Graph tags on shared app links. Indexing stays off via the
  * `noindex` directive in root metadata, which a crawler can only honour once it
  * is permitted to fetch the page at all. Public indexing lives on the apex
- * marketing site (piyaz.ai) instead.
+ * marketing site (piyaz.ai), except for the legal documents the sitemap lists.
  *
  * `/api/` stays disallowed: Open Graph tags live on pages, never on API routes,
  * and Better Auth's emailed links (`/api/auth/verify-email`,
@@ -22,6 +21,7 @@ export default function robots(): MetadataRoute.Robots {
       allow: "/",
       disallow: "/api/",
     },
-    host: baseUrl,
+    host: APP_URL,
+    sitemap: `${APP_URL}/sitemap.xml`,
   };
 }
