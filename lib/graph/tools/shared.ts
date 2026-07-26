@@ -153,27 +153,34 @@ export async function requireNoteId(
 // ---------------------------------------------------------------------------
 
 /**
- * Most proposed tags compared against the existing vocabulary.
+ * Most proposed tags compared against the existing vocabulary, per request.
  *
  * The comparison is a cross product of two caller-supplied lists, so the pair
  * count needs a ceiling of its own even with each pair bounded. Hints steer an
  * agent's next call; the first few carry that signal, and a request proposing
- * more tags than this has already stopped being a naming question.
+ * more tags than this has already stopped being a naming question. Batched
+ * creates spend one shared allowance rather than one per item, so the work is
+ * bounded by the request and not by how many tasks ride in it.
  */
-const MAX_HINTED_TAGS = 25;
+export const MAX_HINTED_TAGS = 25;
 
 /**
  * Build variant-warning hints for proposed tags against existing project tags.
+ *
  * @param proposed - Proposed tag strings.
  * @param existing - Current project tag list.
+ * @param limit - Most proposed tags to compare; defaults to {@link MAX_HINTED_TAGS}.
+ *   A batched caller passes what remains of one request-wide allowance, so the
+ *   cross product cannot be multiplied by the batch size.
  * @returns Hint strings for tags that look like variants of existing ones.
  */
 export function tagVariantHints(
   proposed: string[],
   existing: string[],
+  limit: number = MAX_HINTED_TAGS,
 ): string[] {
   const hints: string[] = [];
-  for (const tag of proposed.slice(0, MAX_HINTED_TAGS)) {
+  for (const tag of proposed.slice(0, Math.max(0, limit))) {
     const variant = findVariant(tag, existing);
     if (variant)
       hints.push(

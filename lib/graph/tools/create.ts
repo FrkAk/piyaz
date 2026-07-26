@@ -27,6 +27,7 @@ import {
   requireProjectId,
   tagTaxonomyHints,
   tagVariantHints,
+  MAX_HINTED_TAGS,
   translateError,
   type ToolResult,
 } from "@/lib/graph/tools/shared";
@@ -116,6 +117,10 @@ async function resolveEdgeRefs(
  * taxonomy and variants, draft-forbidden fields), each prefixed with the
  * item's key or title and capped at {@link MAX_ITEM_HINTS}.
  *
+ * Variant detection compares proposed tags against the project vocabulary,
+ * both caller-supplied, so the batch spends one {@link MAX_HINTED_TAGS}
+ * allowance across every item rather than one per item.
+ *
  * @param items - Schema-validated task items.
  * @param projectTags - Existing project tag vocabulary.
  * @returns Hint strings.
@@ -125,14 +130,17 @@ function itemQualityHints(
   projectTags: string[],
 ): string[] {
   const hints: string[] = [];
+  let tagBudget = MAX_HINTED_TAGS;
   for (const item of items) {
     const label = item.key ?? `"${item.title}"`;
+    const comparedTags = item.tags?.slice(0, tagBudget) ?? [];
+    tagBudget -= comparedTags.length;
     const itemHints = [
       ...descriptionSizeHints(item.description),
       ...acQualityHints(item.acceptanceCriteria),
       ...(item.tags && item.tags.length > 0
         ? [
-            ...tagVariantHints(item.tags, projectTags),
+            ...tagVariantHints(comparedTags, projectTags),
             ...tagTaxonomyHints(item.tags),
           ]
         : []),

@@ -84,8 +84,10 @@ const MAX_VARIANT_DISTANCE = 2;
  * `levenshtein` fills an `a.length * b.length` matrix, and both operands are
  * caller-supplied: the proposed tags come straight off the request and the
  * existing vocabulary is whatever the same caller stored earlier. Variant
- * detection on strings this long is meaningless anyway, so the cheap
- * comparisons above still run and only the quadratic one is skipped.
+ * detection on strings this long is meaningless anyway. An over-long existing
+ * tag skips only the quadratic comparison, keeping the cheap equality and
+ * prefix checks against it; an over-long proposed tag is abandoned outright,
+ * since every comparison it could win is one no agent would act on.
  */
 const MAX_VARIANT_COMPARE_LENGTH = 64;
 

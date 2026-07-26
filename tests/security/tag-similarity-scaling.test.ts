@@ -58,3 +58,15 @@ test("hints are still produced for a normal batch", () => {
   expect(hints.length).toBe(1);
   expect(hints[0]).toContain("back-end");
 });
+
+test("attack: a spent allowance stops further comparison", () => {
+  const existing = longTags(VOCABULARY);
+  const proposed = longTags(VOCABULARY).map((tag) => `z${tag.slice(1)}`);
+
+  // What a batched create passes once earlier items have spent the budget.
+  expect(tagVariantHints(proposed, existing, 0)).toEqual([]);
+
+  const start = performance.now();
+  tagVariantHints(proposed, existing, 0);
+  expect(performance.now() - start).toBeLessThan(BUDGET_MS);
+});
