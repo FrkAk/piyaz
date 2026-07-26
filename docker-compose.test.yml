@@ -12,10 +12,14 @@ services:
     image: postgres:18
     environment:
       POSTGRES_USER: piyaz
+      # Fixed on purpose: this container is tmpfs-backed, holds only generated
+      # fixtures, and is destroyed between runs, so CI and contributors get a
+      # zero-setup database. The persistent dev database in docker-compose.yml
+      # requires POSTGRES_PASSWORD from the environment instead.
       POSTGRES_PASSWORD: piyaz
       POSTGRES_DB: piyaz_test
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     tmpfs:
       - /var/lib/postgresql
     healthcheck:
