@@ -57,8 +57,16 @@ const DB_URL_REQUIRED = {
  * Query shape is caller-influenced (graph walks, search, tag aggregation) and
  * Neon does not override the Postgres default of no limit. Waiting on a query
  * is not CPU time, so a Worker will sit on a runaway statement indefinitely
- * while it pins compute on a database every tenant shares. Kept in lockstep
- * with the Node driver's identical setting.
+ * while it pins compute on a database every tenant shares.
+ *
+ * Covers the WebSocket path only. This ships as a Postgres startup parameter,
+ * and `poolQueryViaFetch` below re-routes non-transactional `pool.query` calls
+ * through a rebuilt bare connection string that carries no options
+ * (`@neondatabase/serverless` `index.mjs:1352`); the neon-http read client has
+ * no equivalent option. Interactive transactions — every `withUserContext`
+ * caller — are therefore bounded, and non-transactional reads are not. Binding
+ * the remaining paths needs `ALTER ROLE app_user SET statement_timeout` on the
+ * database itself.
  */
 const STATEMENT_TIMEOUT_MS = 15_000;
 
