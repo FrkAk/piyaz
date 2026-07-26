@@ -82,8 +82,8 @@ function payloadTooLarge() {
  *
  * `verifyJwsAccessToken` caches a function-sourced JWKS only when given a
  * `jwksCacheKey`; without one it calls `jwksFetch` on every verification, so
- * each request carrying any `kid` — including one an attacker made up — costs
- * a `jwks` model read. The object identity is the key, so this must be a
+ * each request carrying any `kid`, including one an attacker made up, costs a
+ * `jwks` model read. The object identity is the key, so this must be a
  * module-level constant rather than a fresh object per call.
  */
 const JWKS_CACHE_KEY = {};

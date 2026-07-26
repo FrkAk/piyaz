@@ -308,7 +308,7 @@ export type BodySection = {
  *
  * The optional closing `#` run is stripped by {@link stripClosingSequence}
  * rather than matched here. Expressed as one pattern it needs a lazy `.*?`
- * followed by `[ \t]*#*[ \t]*$` — three ambiguous quantifiers over
+ * followed by `[ \t]*#*[ \t]*$`, three ambiguous quantifiers over
  * overlapping alphabets, which backtracks polynomially on a line ending in a
  * long whitespace run, on every read of a stored body.
  */

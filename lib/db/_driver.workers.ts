@@ -63,8 +63,8 @@ const DB_URL_REQUIRED = {
  * and `poolQueryViaFetch` below re-routes non-transactional `pool.query` calls
  * through a rebuilt bare connection string that carries no options
  * (`@neondatabase/serverless` `index.mjs:1352`); the neon-http read client has
- * no equivalent option. Interactive transactions — every `withUserContext`
- * caller — are therefore bounded, and non-transactional reads are not. Binding
+ * no equivalent option. Interactive transactions (every `withUserContext`
+ * caller) are therefore bounded, and non-transactional reads are not. Binding
  * the remaining paths needs `ALTER ROLE app_user SET statement_timeout` on the
  * database itself.
  */

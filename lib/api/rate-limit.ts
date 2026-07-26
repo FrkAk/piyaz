@@ -67,8 +67,8 @@ export interface RateLimitBackend {
  * `getSessionCookie` returns the raw cookie value with no signature/DB
  * validation, so a `"session"` key would let a caller mint a fresh rate-limit
  * bucket per request by rotating a forged cookie and bypass the limit
- * entirely. Every unauthenticated endpoint whose cost lands somewhere else —
- * an email to a victim's inbox, an `oauthClient` row, a token-grant attempt —
+ * entirely. Every unauthenticated endpoint whose cost lands somewhere else
+ * (an email to a victim's inbox, an `oauthClient` row, a token-grant attempt)
  * belongs on this list rather than on the catch-all, which is why
  * `request-password-reset`, `send-verification-email`, `reset-password` and
  * `oauth2/token` are enumerated here. Keying on the client IP (resolved by
