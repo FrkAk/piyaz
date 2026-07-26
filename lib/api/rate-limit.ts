@@ -180,11 +180,20 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
   },
   // Fairness bucket for authenticated traffic, not a security boundary: its
   // key is derived from a cookie nothing has verified yet, so a caller willing
-  // to rotate one can still spread itself across buckets. That is tolerable
-  // only because every unauthenticated endpoint with a side effect is
-  // enumerated above on an `"ip"` rule, and middleware redirects sessionless
-  // callers away from the rest of `/api/*` before this rule is reached.
-  { pattern: "/api/*", max: 100, window: 60, keyStrategy: "session" },
+  // The session key gives a signed-in caller its own bucket, which is the
+  // fairness property worth having, but nothing has verified that cookie yet,
+  // so a caller willing to rotate one would otherwise mint buckets without
+  // limit. The address ceiling is what actually bounds that: a forged cookie
+  // buys a fresh counter, never a fresh address. Where no address resolves the
+  // ceiling is skipped and only the enumerated `"ip"` rules above still bind,
+  // which is why every unauthenticated endpoint with a side effect is on one.
+  {
+    pattern: "/api/*",
+    max: 100,
+    window: 60,
+    keyStrategy: "session",
+    addressCeiling: true,
+  },
 ];
 
 /**

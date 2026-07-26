@@ -130,6 +130,28 @@ test("attack: rotating the MCP bearer token still meets the address ceiling", as
   expect(blocked).toBeGreaterThan(0);
 });
 
+test("attack: rotating a forged cookie still meets the catch-all ceiling", async () => {
+  const rule = matchRule("/api/task/00000000-0000-4000-8000-000000000000");
+  expect(rule?.pattern).toBe("/api/*");
+  expect(rule?.addressCeiling).toBe(true);
+
+  const address = "198.51.100.77";
+  let blocked = 0;
+  for (let i = 0; i < 130; i++) {
+    const result = await checkAddressCeiling(
+      requestWith({
+        cookie: `better-auth.session_token=forged-${i}`,
+        "cf-connecting-ip": address,
+        "x-forwarded-for": `${address}, 192.0.2.1`,
+      }),
+      rule!,
+    );
+    if (result && !result.allowed) blocked++;
+  }
+
+  expect(blocked).toBeGreaterThan(0);
+});
+
 test("the address ceiling is skipped when no address can be trusted", async () => {
   const rule = matchRule("/api/mcp");
   const result = await checkAddressCeiling(
