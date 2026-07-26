@@ -7,6 +7,7 @@ import { ForbiddenError, assertNoteAccess } from "@/lib/auth/authorization";
 import { ConsentRequiredError } from "@/lib/auth/consent";
 import { requireSession } from "@/lib/auth/session";
 import { consentRequiredResponse, internalError } from "@/lib/api/error";
+import { readBodyBounded } from "@/lib/api/read-body-bounded";
 import { error } from "@/lib/api/response";
 import { broker } from "@/lib/realtime/broker";
 import { emitNotePresence } from "@/lib/realtime/events";
@@ -30,6 +31,16 @@ const PRESENCE_BUDGET: ActionRateLimitConfig = {
   perUserMax: 30,
   perIpMax: 60,
 };
+
+/**
+ * Byte ceiling for a heartbeat body.
+ *
+ * The only valid payload is `{"state":"editing"}`, so this is generous.
+ * `req.json()` would buffer the whole stream into a 128 MB isolate shared by
+ * every concurrent request before the shape check below could reject it, and
+ * the budget above counts requests rather than bytes.
+ */
+const MAX_PRESENCE_BODY_BYTES = 1024;
 
 /** Presence heartbeat body: exactly one `state` field. */
 type PresenceBody = { state: "editing" | "gone" };
@@ -89,9 +100,12 @@ export async function POST(
     return error("Unauthorized", 401);
   }
 
+  const raw = await readBodyBounded(req, MAX_PRESENCE_BODY_BYTES);
+  if (raw === null) return error("Request body too large", 413);
+
   let body: PresenceBody | null;
   try {
-    body = parsePresenceBody(await req.json());
+    body = parsePresenceBody(JSON.parse(new TextDecoder().decode(raw)));
   } catch {
     body = null;
   }
