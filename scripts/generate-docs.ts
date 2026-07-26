@@ -249,8 +249,6 @@ description: ${yamlQuote(firstSentence)}
 
 ${GENERATED_NOTE}
 
-# ${tool.name}
-
 ${escapeProse(tool.description)}
 
 ${actionsSection}## Parameters
@@ -323,8 +321,6 @@ description: "Every command and agent the Piyaz plugin installs, and when each o
 ---
 
 ${GENERATED_NOTE}
-
-# Skills and agents
 
 The Piyaz plugin ships the same skill set on Claude Code, Codex, Cursor, and Antigravity. Commands are skills you or the model invoke; agents are dispatched by skills for focused phases of work. The descriptions below are the live trigger text from the plugin source.
 
