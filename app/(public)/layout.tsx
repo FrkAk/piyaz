@@ -1,6 +1,20 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { MARKETING_URL } from "@/lib/config/urls";
+
+/**
+ * Reverses the sitewide `noindex, nofollow` for this route group only. Metadata
+ * merges shallowly per segment, so this replaces the root `robots` object for
+ * the legal documents and leaves every other route in the app unindexed. These
+ * documents are published nowhere else and have to be findable.
+ */
+export const metadata: Metadata = {
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
 
 /** Legal documents linked from the shell footer, in reading order. */
 const LEGAL_NAV = [

@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { Markdown } from "@/components/shared/Markdown";
 import md from "@/content/legal/terms.md";
 
-export const metadata: Metadata = { title: "Terms of Service" };
+export const metadata: Metadata = {
+  title: "Terms of Service",
+  alternates: { canonical: "/terms" },
+};
 
 /**
  * Public terms of service page. Renders the tracked Markdown bundled
