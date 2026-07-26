@@ -77,6 +77,17 @@ function payloadTooLarge() {
  * @returns The active JWK set with the signing key.
  * @throws Error when `auth.api.getJwks()` returns an unexpected shape.
  */
+/**
+ * Stable identity the JWKS cache is keyed on.
+ *
+ * `verifyJwsAccessToken` caches a function-sourced JWKS only when given a
+ * `jwksCacheKey`; without one it calls `jwksFetch` on every verification, so
+ * each request carrying any `kid` — including one an attacker made up — costs
+ * a `jwks` model read. The object identity is the key, so this must be a
+ * module-level constant rather than a fresh object per call.
+ */
+const JWKS_CACHE_KEY = {};
+
 async function fetchJwksInProcess(): Promise<JSONWebKeySet> {
   const result = await auth.api.getJwks();
   if (
@@ -128,6 +139,7 @@ async function verifyMcpAuth(request: Request) {
   try {
     return await verifyJwsAccessToken(token, {
       jwksFetch: fetchJwksInProcess,
+      jwksCacheKey: JWKS_CACHE_KEY,
       verifyOptions: { audience: audiences, issuer, algorithms: ["EdDSA"] },
     });
   } catch (err) {

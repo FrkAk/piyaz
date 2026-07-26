@@ -7,6 +7,7 @@ import {
   rateLimitHeaders,
   mcpRateLimitMessage,
   getBackend,
+  checkAddressCeiling,
 } from "@/lib/api/rate-limit";
 import { buildCsp } from "@/lib/security/headers";
 import { safeInviteNext } from "@/lib/auth/invite-next";
@@ -90,11 +91,15 @@ export async function middleware(request: NextRequest) {
   if (rule) {
     const key = await extractKey(request, rule.keyStrategy);
     if (key) {
-      const result = await getBackend(rule.bindingKey).check(
-        `${rule.pattern}:${key}`,
-        rule.max,
-        rule.window,
-      );
+      const [primary, ceiling] = await Promise.all([
+        getBackend(rule.bindingKey).check(
+          `${rule.pattern}:${key}`,
+          rule.max,
+          rule.window,
+        ),
+        checkAddressCeiling(request, rule),
+      ]);
+      const result = ceiling && !ceiling.allowed ? ceiling : primary;
       rlHeaders = rateLimitHeaders(result, rule);
       if (!result.allowed) {
         const message =

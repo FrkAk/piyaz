@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
-import { clientIpKey } from "@/lib/security/client-ip";
+import { clientIpKey, resolveClientIp } from "@/lib/security/client-ip";
 import { MemoryRateLimitBackend } from "./rate-limit-memory";
 
 /**
@@ -35,6 +35,14 @@ export type RateLimitRule = {
   window: number;
   keyStrategy: "session" | "apikey" | "ip";
   bindingKey?: "api" | "auth" | "mcp" | "mcpHeavy";
+  /**
+   * Also count the request against a second bucket keyed on the client
+   * address, when one can be trusted. Set on rules whose primary key is
+   * caller-supplied, so rotating that value cannot escape the budget. Skipped
+   * when no address resolves, which keeps a deployment with no declared proxy
+   * from collapsing every caller into one bucket.
+   */
+  addressCeiling?: boolean;
 };
 
 /**
@@ -136,6 +144,11 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     window: 60,
     keyStrategy: "apikey",
     bindingKey: "mcp",
+    // The bearer token is the caller's own bytes and is not verified until the
+    // route handler runs, so the token bucket alone bounds nothing: a fresh
+    // random token is a fresh counter. The address ceiling is what an
+    // unauthenticated flood actually runs into.
+    addressCeiling: true,
   },
   // Fairness bucket for authenticated traffic, not a security boundary: its
   // key is derived from a cookie nothing has verified yet, so a caller willing
@@ -188,6 +201,28 @@ export function matchRule(pathname: string): RateLimitRule | null {
     }
   }
   return null;
+}
+
+/**
+ * Count a request against a rule's address ceiling, when it declares one and
+ * a client address can be trusted.
+ *
+ * @param request - Incoming request.
+ * @param rule - The matched rule.
+ * @returns The ceiling's result, or `null` when no ceiling applies.
+ */
+export async function checkAddressCeiling(
+  request: NextRequest,
+  rule: RateLimitRule,
+): Promise<RateLimitResult | null> {
+  if (!rule.addressCeiling) return null;
+  const address = resolveClientIp(request.headers);
+  if (!address) return null;
+  return getBackend(rule.bindingKey).check(
+    `${rule.pattern}:addr:${address}`,
+    rule.max,
+    rule.window,
+  );
 }
 
 /**
