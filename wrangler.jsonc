@@ -85,10 +85,6 @@
         }
       ],
       "routes": [{ "pattern": "app.piyaz.ai", "custom_domain": true }],
-      // Defaults to true, and declaring `routes` does not turn it off, so the
-      // Worker would also answer on a workers.dev hostname outside anything
-      // configured for the custom domain at the zone level. `preview_urls`
-      // inherits this value.
       "workers_dev": false,
       "observability": {
         "enabled": true,
@@ -199,7 +195,6 @@
         }
       ],
       "routes": [{ "pattern": "dev.app.piyaz.ai", "custom_domain": true }],
-      // See the production environment: pins traffic to the custom domain.
       "workers_dev": false,
       "observability": {
         "enabled": true,
