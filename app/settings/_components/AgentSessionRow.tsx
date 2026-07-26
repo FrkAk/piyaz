@@ -103,7 +103,7 @@ export function AgentSessionRow({
           </button>
         }
         prompt="Revoke this session?"
-        body="The client will need to re-authorize. Access already granted can take up to 5 minutes to stop working."
+        body="The client will need to re-authorize. Access already granted can take up to an hour to stop working."
         confirmLabel="Revoke"
         destructive
         onConfirm={handleRevoke}

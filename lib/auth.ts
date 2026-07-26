@@ -346,14 +346,26 @@ export function createAuth() {
         consentPage: "/consent",
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
-        // `/api/mcp` verifies this token by signature alone and never reads
-        // the revocation state that `revokeOAuthSession` and
-        // `clearUserOAuthArtifacts` write, so the token stays usable until it
-        // expires. This TTL is therefore the real revocation lag for a
-        // compromised agent credential, and the Settings copy quotes it.
-        // Refresh tokens ARE checked against `revoked`, so shortening this
-        // costs a client one extra refresh round trip and nothing else.
-        accessTokenExpiresIn: 5 * 60, // 5m
+        // This is the revocation lag, because `/api/mcp` verifies by signature
+        // alone and never reads the state `revokeOAuthSession` and
+        // `clearUserOAuthArtifacts` write. Shortening it is still the wrong
+        // lever: a client is not guaranteed a refresh token, so for anything
+        // without one this value is the entire session length, and cutting it
+        // buys a shorter compromise window by making every such client
+        // re-authorize that often.
+        //
+        // Per the MCP authorization spec (Refresh Tokens) a client "MAY add
+        // `offline_access`" and "MUST NOT assume refresh tokens will be
+        // issued". Its scope-selection strategy sends clients to the PROTECTED
+        // RESOURCE metadata, which the same spec says SHOULD NOT advertise
+        // `offline_access` and which ours therefore omits, and the 401 carries
+        // no `scope` parameter to override that. A client following the spec
+        // asks for `openid profile email` and gets no refresh token.
+        //
+        // So this stays at the value a session can tolerate. Closing the
+        // revocation gap needs the resource server to consult revocation
+        // state; see the note on `verifyMcpAuth`.
+        accessTokenExpiresIn: 60 * 60, // 1h
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7 days
         clientRegistrationAllowedScopes: [...GRANTABLE_OAUTH_SCOPES],
         // Advertise the grantable scopes in the authorization-server metadata

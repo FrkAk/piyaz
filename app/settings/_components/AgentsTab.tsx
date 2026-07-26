@@ -152,7 +152,7 @@ export function AgentsTab({ initialSessions }: AgentsTabProps) {
                 </button>
               }
               prompt="Revoke all sessions?"
-              body="Every connected agent will need to re-authorize."
+              body="Every connected agent will need to re-authorize. Access already granted can take up to an hour to stop working."
               confirmLabel="Revoke all"
               destructive
               onConfirm={handleRevokeAll}
