@@ -52,6 +52,17 @@ const DB_URL_REQUIRED = {
 } as const;
 
 /**
+ * Ceiling on how long a single statement may run, in milliseconds.
+ *
+ * Query shape is caller-influenced (graph walks, search, tag aggregation) and
+ * Neon does not override the Postgres default of no limit. Waiting on a query
+ * is not CPU time, so a Worker will sit on a runaway statement indefinitely
+ * while it pins compute on a database every tenant shares. Kept in lockstep
+ * with the Node driver's identical setting.
+ */
+const STATEMENT_TIMEOUT_MS = 15_000;
+
+/**
  * Per-request Pool options. `connectionTimeoutMillis` bounds
  * `pool.connect()` waits so an unresponsive Neon endpoint fails the request
  * fast instead of riding the Workers 30s wall clock — and so a stuck
@@ -60,7 +71,10 @@ const DB_URL_REQUIRED = {
  * tight. `max` stays at the driver default: a per-request pool is already
  * lifetime-bounded by the request.
  */
-const POOL_OPTS = { connectionTimeoutMillis: 10_000 } as const;
+const POOL_OPTS = {
+  connectionTimeoutMillis: 10_000,
+  statement_timeout: STATEMENT_TIMEOUT_MS,
+} as const;
 
 /**
  * Attach a Pool-level error listener so unhandled idle-client errors from

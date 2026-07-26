@@ -29,7 +29,22 @@ export interface DbBundle<TDb> {
   db: TDb;
 }
 
-const POSTGRES_OPTS = { max: 3, idle_timeout: 10 } as const;
+/**
+ * Ceiling on how long a single statement may run, in milliseconds.
+ *
+ * Query shape is caller-influenced (graph walks, search, tag aggregation) and
+ * Postgres defaults to no limit, so one expensive statement can otherwise hold
+ * a backend indefinitely. Every legitimate query here is far below this; the
+ * bound exists to turn a runaway into a failed request instead of a pinned
+ * database. Kept in lockstep with the Workers driver's identical setting.
+ */
+const STATEMENT_TIMEOUT_MS = 15_000;
+
+const POSTGRES_OPTS = {
+  max: 3,
+  idle_timeout: 10,
+  connection: { statement_timeout: STATEMENT_TIMEOUT_MS },
+} as const;
 
 /**
  * Build the application Drizzle client backed by postgres-js.
