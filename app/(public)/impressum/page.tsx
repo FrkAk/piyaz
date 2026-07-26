@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { Markdown } from "@/components/shared/Markdown";
 import md from "@/content/legal/impressum.md";
 
-export const metadata: Metadata = { title: "Impressum" };
+export const metadata: Metadata = {
+  title: "Impressum",
+  alternates: { canonical: "/impressum" },
+};
 
 /**
  * Public Impressum page. Renders the tracked Markdown bundled as a

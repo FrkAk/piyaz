@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { Markdown } from "@/components/shared/Markdown";
 import md from "@/content/legal/dpa.md";
 
-export const metadata: Metadata = { title: "Data Processing Agreement" };
+export const metadata: Metadata = {
+  title: "Data Processing Agreement",
+  alternates: { canonical: "/dpa" },
+};
 
 /**
  * Public data processing agreement page. Renders the tracked Markdown

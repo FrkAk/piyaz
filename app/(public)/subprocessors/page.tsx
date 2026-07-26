@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { Markdown } from "@/components/shared/Markdown";
 import md from "@/content/legal/subprocessors.md";
 
-export const metadata: Metadata = { title: "Sub-processors" };
+export const metadata: Metadata = {
+  title: "Sub-processors",
+  alternates: { canonical: "/subprocessors" },
+};
 
 /**
  * Public sub-processor list. Renders the tracked Markdown bundled as a
