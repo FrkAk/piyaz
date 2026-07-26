@@ -186,67 +186,53 @@ export function classifyRef(
  *   titles, capped at 200 per kind.
  */
 /**
- * Half-open `[start, end)` span of an inline code run.
- */
-type CodeSpan = { start: number; end: number };
-
-/**
- * Locate every inline code span on a line in one forward pass.
+ * Yield the inner text of every `[[…]]` ref on a line, skipping refs consumed
+ * by an inline code span.
  *
- * A span's content cannot contain a backtick, so its terminator is the next
- * backtick after its opener. An opener with no terminator ends the scan: no
- * later backtick can close it either.
+ * Walks the line once, taking whichever construct starts earliest, which is
+ * what the equivalent alternation's leftmost-match-wins gives. The two must
+ * stay interleaved: a backtick the ref branch swallows can never open a span,
+ * so locating spans independently would invent one and drop later refs.
  *
- * @param line - One body line.
- * @returns Spans in document order.
- */
-function codeSpans(line: string): CodeSpan[] {
-  const spans: CodeSpan[] = [];
-  let open = line.indexOf("`");
-  while (open !== -1) {
-    const close = line.indexOf("`", open + 1);
-    if (close === -1) break;
-    if (close > open + 1) {
-      spans.push({ start: open, end: close + 1 });
-      open = line.indexOf("`", close + 1);
-      continue;
-    }
-    open = line.indexOf("`", close);
-  }
-  return spans;
-}
-
-/**
- * Yield the inner text of every `[[…]]` ref on a line, skipping refs that sit
- * inside an inline code span.
- *
- * Scans by index rather than by regex. The equivalent alternation re-examines
- * the remainder of the line at every offset, so a body of unclosed `[[` costs
- * O(n^2) inside the note write transaction. Here each step advances past a
- * `]`, so the whole line costs one forward pass: the inner text cannot contain
- * `]`, which means a candidate that is not closed by the first `]` after it
- * cannot be closed at all, and neither can any candidate starting before that
- * `]`.
+ * The regex form re-examines the remainder of the line at every offset, so a
+ * body of unclosed `[[` costs O(n^2) inside the note write transaction. Here
+ * the cursor only moves forward, and `nextBracketClose` is recomputed only
+ * once it falls behind, so the whole line costs one pass. Both jumps are safe
+ * because neither construct's content may contain its own terminator: a `[[`
+ * not closed by the first following `]` cannot be closed at all, and neither
+ * can any `[[` starting before that `]`.
  *
  * @param line - One body line, already known to be outside a fence.
  * @returns Inner texts in document order.
  */
 function scanLineRefs(line: string): string[] {
-  const spans = codeSpans(line);
   const inners: string[] = [];
-  let open = line.indexOf("[[");
-  while (open !== -1) {
-    const close = line.indexOf("]", open + 2);
-    if (close === -1) break;
-    if (close > open + 2 && line[close + 1] === "]") {
-      const inCode = spans.some(
-        (span) => open >= span.start && open < span.end,
-      );
-      if (!inCode) inners.push(line.slice(open + 2, close));
-      open = line.indexOf("[[", close + 2);
+  let nextBracketClose = -1;
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === "`") {
+      const close = line.indexOf("`", i + 1);
+      if (close === -1) {
+        i++;
+        continue;
+      }
+      i = close > i + 1 ? close + 1 : close;
       continue;
     }
-    open = line.indexOf("[[", close);
+    if (line[i] !== "[" || line[i + 1] !== "[") {
+      i++;
+      continue;
+    }
+    if (nextBracketClose < i + 2) {
+      nextBracketClose = line.indexOf("]", i + 2);
+    }
+    if (nextBracketClose === -1) break;
+    if (nextBracketClose > i + 2 && line[nextBracketClose + 1] === "]") {
+      inners.push(line.slice(i + 2, nextBracketClose));
+      i = nextBracketClose + 2;
+      continue;
+    }
+    i = nextBracketClose;
   }
   return inners;
 }

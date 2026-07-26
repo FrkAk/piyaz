@@ -44,6 +44,25 @@ test("attack: a heading with a long whitespace run does not stall the read path"
   expect(elapsed(() => listSections(body))).toBeLessThan(BUDGET_MS);
 });
 
+test("a backtick consumed inside a ref does not swallow later refs", () => {
+  // The alternation this replaced matched leftmost-first, so a backtick taken
+  // as ref content could never open an inline code span. Locating spans
+  // independently invents one here and drops every later ref on the line.
+  const refs = extractNoteRefs("[[a`b]] [[PYZ-2]] `x`", "PYZ");
+  expect(refs.taskSeqs).toEqual([2]);
+  expect(refs.titles).toEqual(["a`b"]);
+});
+
+test("an unclosed backtick does not end the scan", () => {
+  const refs = extractNoteRefs("[[PYZ-1]] ` [[PYZ-2]]", "PYZ");
+  expect(refs.taskSeqs).toEqual([1, 2]);
+});
+
+test("a code span still hides the refs inside it", () => {
+  expect(extractNoteRefs("`[[PYZ-1]]` [[PYZ-2]]", "PYZ").taskSeqs).toEqual([2]);
+  expect(extractNoteRefs("a `b [[PYZ-1]] c` d", "PYZ").taskSeqs).toEqual([]);
+});
+
 test("refs and headings still parse correctly after the rewrite", () => {
   const refs = extractNoteRefs(
     "see [[PYZ-12]] and [[PYZ-N3]] and [[Some Title]], not `[[PYZ-99]]`",
