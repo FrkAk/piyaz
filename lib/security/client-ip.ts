@@ -127,8 +127,8 @@ function selectFromChain(value: string): string | null {
  * it on every request and a client cannot choose its value. Self-host reads
  * exactly the header {@link trustedProxyHeader} names and nothing else, so a
  * caller cannot reach the resolver through a header the proxy leaves
- * untouched — the reason `cf-connecting-ip` is absent from this path unless an
- * operator names it, since a self-hosted deployment has no edge setting it and
+ * untouched. That is why `cf-connecting-ip` is absent from this path unless an
+ * operator names it: a self-hosted deployment has no edge setting it, and
  * common reverse proxies forward it verbatim. With no header named, no address
  * resolves. The selected value is always shape-validated.
  *

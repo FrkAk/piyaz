@@ -14,7 +14,7 @@ const exhaustedHeavyBackend: RateLimitBackend = {
   check: async () => ({ allowed: false, limit: 20, remaining: 0, resetIn: 42 }),
 };
 
-/** Deny-all stub for the standard slot — no 101-call warm-up. */
+/** Deny-all stub for the standard slot, avoiding a 101-call warm-up. */
 const exhaustedStandardBackend: RateLimitBackend = {
   check: async () => ({
     allowed: false,
