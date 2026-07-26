@@ -346,7 +346,14 @@ export function createAuth() {
         consentPage: "/consent",
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
-        accessTokenExpiresIn: 60 * 60, // 1h
+        // `/api/mcp` verifies this token by signature alone and never reads
+        // the revocation state that `revokeOAuthSession` and
+        // `clearUserOAuthArtifacts` write, so the token stays usable until it
+        // expires. This TTL is therefore the real revocation lag for a
+        // compromised agent credential, and the Settings copy quotes it.
+        // Refresh tokens ARE checked against `revoked`, so shortening this
+        // costs a client one extra refresh round trip and nothing else.
+        accessTokenExpiresIn: 5 * 60, // 5m
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7 days
         clientRegistrationAllowedScopes: [...GRANTABLE_OAUTH_SCOPES],
         // Advertise the grantable scopes in the authorization-server metadata
