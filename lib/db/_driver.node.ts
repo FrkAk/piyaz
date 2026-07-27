@@ -36,7 +36,9 @@ export interface DbBundle<TDb> {
  * Postgres defaults to no limit, so one expensive statement can otherwise hold
  * a backend indefinitely. Every legitimate query here is far below this; the
  * bound exists to turn a runaway into a failed request instead of a pinned
- * database. Kept in lockstep with the Workers driver's identical setting.
+ * database. Kept in lockstep with the Workers driver's identical setting and
+ * with the role default in `docker/role-settings.sql`. A connection option
+ * overrides a role default, so the three change together.
  */
 const STATEMENT_TIMEOUT_MS = 15_000;
 

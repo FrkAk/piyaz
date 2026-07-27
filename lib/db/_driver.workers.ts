@@ -63,10 +63,10 @@ const DB_URL_REQUIRED = {
  * and `poolQueryViaFetch` below re-routes non-transactional `pool.query` calls
  * through a rebuilt bare connection string that carries no options
  * (`@neondatabase/serverless` `index.mjs:1352`); the neon-http read client has
- * no equivalent option. Interactive transactions (every `withUserContext`
- * caller) are therefore bounded, and non-transactional reads are not. Binding
- * the remaining paths needs `ALTER ROLE app_user SET statement_timeout` on the
- * database itself.
+ * no equivalent option. The remaining paths are bounded by the role default in
+ * `docker/role-settings.sql`, which the session carries whatever the transport.
+ * This stays as defense in depth for an environment where that file has not
+ * been applied yet, so the two values must be changed together.
  */
 const STATEMENT_TIMEOUT_MS = 15_000;
 

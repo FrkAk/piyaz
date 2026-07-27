@@ -54,6 +54,24 @@ async function applyGrants(sql: ReturnType<typeof postgres>): Promise<void> {
 }
 
 /**
+ * Apply `docker/role-settings.sql` so the testcontainer carries the same
+ * per-role `statement_timeout` the deploy paths set. Needs only the roles to
+ * exist, and running it here keeps a typo in that file failing in CI rather
+ * than on a hosted database.
+ *
+ * @param sql - Active postgres client (must be the container superuser).
+ */
+async function applyRoleSettings(
+  sql: ReturnType<typeof postgres>,
+): Promise<void> {
+  const content = readFileSync(
+    join(process.cwd(), "docker", "role-settings.sql"),
+    "utf8",
+  );
+  await sql.unsafe(content);
+}
+
+/**
  * Apply `docker/storage.sql` (physical lz4 column compression) after
  * `drizzle-kit push`. The `SET COMPRESSION` DDL Drizzle's schema model cannot
  * express lives outside the generated schema, so the push-based test DB applies
@@ -175,6 +193,7 @@ export async function applyMigrations(url: string): Promise<void> {
   });
   try {
     await applyGrants(sqlPolicies);
+    await applyRoleSettings(sqlPolicies);
     await applyRlsFunctions(sqlPolicies);
     await applyRlsPolicies(sqlPolicies);
     await applyStorage(sqlPolicies);

@@ -1,18 +1,25 @@
 /**
  * Apply the owner-managed RLS SQL: the piyaz_auth grants
- * (docker/grants-auth.sql) and the SECURITY DEFINER helpers + triggers
- * (docker/rls-functions.sql). These read or own piyaz_auth, so they must run as
- * the database owner — never the least-privilege migration role. Idempotent
- * (CREATE OR REPLACE / GRANT).
+ * (docker/grants-auth.sql), the request-path role settings
+ * (docker/role-settings.sql) and the SECURITY DEFINER helpers + triggers
+ * (docker/rls-functions.sql). These read or own piyaz_auth, or need ADMIN
+ * OPTION on a role, so they must run as the database owner — never the
+ * least-privilege migration role. Idempotent (CREATE OR REPLACE / GRANT /
+ * ALTER ROLE ... SET).
  *
  * Reads DATABASE_OWNER_URL — set this only in a trusted local shell, never as a
- * CI secret.
+ * CI secret. Nothing here lands on a deploy: run it once per environment, and
+ * against hosted dev before hosted prod.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
 
-const OWNER_RLS_FILES = ["grants-auth.sql", "rls-functions.sql"] as const;
+const OWNER_RLS_FILES = [
+  "grants-auth.sql",
+  "role-settings.sql",
+  "rls-functions.sql",
+] as const;
 
 /**
  * Read the owner connection string from the environment.
