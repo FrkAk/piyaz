@@ -50,31 +50,38 @@ const HOSTED_CLI_INSTALLS: readonly CliInstall[] = [
   },
 ];
 
+/**
+ * Every plugin ships one MCP server pointing at the hosted app. Each self-host
+ * note therefore registers a second server against the reader's own instance
+ * rather than editing the plugin's bundled config, which lives in a
+ * version-scoped cache the next plugin update overwrites.
+ */
 const SELF_HOST_CLI_INSTALLS: readonly CliInstall[] = [
   {
     name: "Claude Code",
     install:
-      "claude plugin marketplace add ./plugins/claude-code\nclaude plugin install piyaz@piyaz-local",
+      "claude plugin marketplace add ./plugins/claude-code\nclaude plugin install piyaz@piyaz-local\nclaude mcp add -s user --transport http piyaz-self-hosted http://localhost:3000/api/mcp",
     setupNote:
-      "Authenticate with /mcp, select piyaz-local, and complete the browser sign-in against http://localhost:3000.",
+      "Run /mcp, select piyaz-self-hosted, and complete the browser sign-in against your own instance.",
   },
   {
     name: "Codex",
-    install: "codex plugin marketplace add ./plugins",
+    install:
+      "codex plugin marketplace add ./plugins\ncodex mcp add piyaz-self-hosted --url http://localhost:3000/api/mcp",
     setupNote:
-      "Run /plugin, search for piyaz, install, then restart Codex. Select piyaz-local for http://localhost:3000/api/mcp.",
+      "Run /plugin, install Piyaz, restart Codex, then authenticate against piyaz-self-hosted.",
   },
   {
     name: "Antigravity",
     install: "cp -r ./plugins/antigravity ~/.gemini/config/plugins/piyaz",
     setupNote:
-      "Run /mcp, select piyaz-local, Authenticate, and complete the browser sign-in against http://localhost:3000.",
+      'Add {"piyaz-self-hosted": {"serverUrl": "http://localhost:3000/api/mcp"}} to mcpServers in ~/.gemini/config/mcp_config.json, then run /mcp and Authenticate.',
   },
   {
     name: "Cursor",
     install: 'ln -s "$(pwd)/plugins/cursor" ~/.cursor/plugins/local/piyaz',
     setupNote:
-      "Restart Cursor. The MCP server and skills load automatically; piyaz-local points at http://localhost:3000/api/mcp.",
+      'Add {"piyaz-self-hosted": {"url": "http://localhost:3000/api/mcp"}} to mcpServers in ~/.cursor/mcp.json, then restart Cursor.',
   },
 ];
 

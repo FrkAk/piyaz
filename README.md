@@ -33,7 +33,7 @@ Then install the plugin for your agent (Claude Code, Codex, Cursor, or Antigravi
 
 ## Self-host
 
-Self-hosting is free under AGPL-3.0. You can run the Piyaz server yourself and point the plugin's `piyaz-local` server at it. You need [Bun](https://bun.sh) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Full setup and upgrade steps are in the [self-host guide](https://docs.piyaz.ai/docs/self-hosting/run-locally).
+Self-hosting is free under AGPL-3.0. You can run the Piyaz server yourself and register an MCP server in your editor that points at it. You need [Bun](https://bun.sh) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Full setup and upgrade steps are in the [self-host guide](https://docs.piyaz.ai/docs/self-hosting/run-locally).
 
 ---
 
