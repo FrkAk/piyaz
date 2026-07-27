@@ -102,7 +102,10 @@ export async function middleware(request: NextRequest) {
       // Report whichever limb is closest to rejecting, not just whichever
       // rejected. Advertising the token bucket's headroom while the address
       // bucket sits at zero tells a client it has budget it cannot spend, and
-      // the next call 429s anyway.
+      // the next call 429s anyway. The headroom comparison only does work on
+      // the memory backend: the Cloudflare binding reports no remaining count,
+      // so `rate-limit-cf.ts` returns a constant and the ceiling is selected
+      // there only once it has already rejected.
       const result =
         ceiling && (!ceiling.allowed || ceiling.remaining < primary.remaining)
           ? ceiling
