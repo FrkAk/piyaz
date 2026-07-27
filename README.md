@@ -15,11 +15,11 @@
   <img src="assets/piyaz-demo.gif" alt="Piyaz demo" width="900" />
 </p>
 
-Piyaz is project management for teams whose coding agents write the code. It runs as an MCP server with a web app on top, and it holds your project as a graph: every task wired to what blocks it, with the decisions and the execution history attached. People and AI agents work on the same project across various harnesses, and Piyaz holds that work consistent to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
+Piyaz is an agentic workspace for building software: project management where people and AI coding agents work on the same project. It runs as an MCP server with a web app on top, and it holds your project as a graph: every task wired to what blocks it, with the decisions and the execution history attached. Piyaz keeps that work consistent to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
 
 Using Piyaz, several agents can build at the same time; each in its own harness and with no API keys to wire up, while engineers are free to steer them as needed. One agent can implement a task while you refine another or add a new feature.
 
-Projects are represented as a shared graph of tasks and their dependencies. Drop in an idea or an existing codebase, and Piyaz will break it into small, concrete tasks. When an agent picks up a task, it already has the plan, the standards, and the decisions behind the work. No agents starts from a raw read of a task description.
+Projects are represented as a shared graph of tasks and their dependencies. Drop in an idea or an existing codebase, and Piyaz will break it into small, concrete tasks. When an agent picks up a task, it already has the plan, the standards, and the decisions behind the work. No agent starts from a raw read of a task description.
 
 Full setup, guides, and reference can be found at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
 
@@ -95,37 +95,13 @@ For more details, see the docs:
 
 ## The MCP server
 
-Piyaz is a remote MCP server. The plugin wires it up for you, so the endpoint below is only needed if you are connecting a client by hand or pointing at your own instance.
-
-```
-https://app.piyaz.ai/api/mcp
-```
-
-Transport is Streamable HTTP. Authentication is OAuth 2.1; no API key to manage, and Piyaz runs no models of its own.
-
-Nine tools, all ref-first: pass `MET-42` or `MET` anywhere a task or project is named.
-
-| Tool | Purpose |
-|---|---|
-| `piyaz_workspace` | Identify the caller and manage projects across every team they belong to |
-| `piyaz_search` | Universal task finder, cross-project by default |
-| `piyaz_get` | Read one task or one project, through a lens sized to the job |
-| `piyaz_create` | Create 1-25 tasks in one project, with edges, in one atomic call |
-| `piyaz_edit` | Edit one task with an ordered list of operations, applied atomically |
-| `piyaz_link` | Create, update, or remove dependency edges |
-| `piyaz_map` | Navigate the dependency graph: ready, blocked, critical path, downstream |
-| `piyaz_activity` | What changed, newest first, keyset-paginated |
-| `piyaz_note` | The team's shared knowledge base, with notes that feed into task context |
-
-Full reference: [docs.piyaz.ai/docs/reference/mcp-overview](https://docs.piyaz.ai/docs/reference/mcp-overview/).
-
-Registry metadata lives in [`server.json`](server.json).
+Piyaz is a remote MCP server at `https://app.piyaz.ai/api/mcp` (Streamable HTTP, OAuth 2.1, no API keys); the plugin wires it up for you, so the endpoint only matters when connecting a client by hand or pointing at your own instance. Nine ref-first tools cover the loop from planning to review: the full reference lives at [docs.piyaz.ai/docs/reference/mcp-overview](https://docs.piyaz.ai/docs/reference/mcp-overview/) and registry metadata in [`server.json`](server.json).
 
 ---
 
 ## Stack
 
-Next.js 16, TypeScript 6, React 19, PostgreSQL, Drizzle ORM, Better-Auth, Tailwind CSS v4, Motion. The MCP surface uses the official [TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
+Next.js 16, TypeScript 6, React 19, PostgreSQL, Drizzle ORM, Better-Auth, Tailwind CSS v4, Motion, and the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
 
 ---
 
