@@ -86,6 +86,7 @@
       ],
       "routes": [{ "pattern": "app.piyaz.ai", "custom_domain": true }],
       "workers_dev": false,
+      "preview_urls": false,
       "limits": { "cpu_ms": 10000 },
       "observability": {
         "enabled": true,
@@ -197,6 +198,7 @@
       ],
       "routes": [{ "pattern": "dev.app.piyaz.ai", "custom_domain": true }],
       "workers_dev": false,
+      "preview_urls": false,
       "limits": { "cpu_ms": 10000 },
       "observability": {
         "enabled": true,
