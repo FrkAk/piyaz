@@ -52,37 +52,25 @@ const DB_URL_REQUIRED = {
 } as const;
 
 /**
- * Ceiling on how long a single statement may run, in milliseconds.
- *
- * Query shape is caller-influenced (graph walks, search, tag aggregation) and
- * Neon does not override the Postgres default of no limit. Waiting on a query
- * is not CPU time, so a Worker will sit on a runaway statement indefinitely
- * while it pins compute on a database every tenant shares.
- *
- * Covers the WebSocket path only. This ships as a Postgres startup parameter,
- * and `poolQueryViaFetch` below re-routes non-transactional `pool.query` calls
- * through a rebuilt bare connection string that carries no options
- * (`@neondatabase/serverless` `index.mjs:1352`); the neon-http read client has
- * no equivalent option. The remaining paths are bounded by the role default in
- * `docker/role-settings.sql`, which the session carries whatever the transport.
- * This stays as defense in depth for an environment where that file has not
- * been applied yet, so the two values must be changed together.
- */
-const STATEMENT_TIMEOUT_MS = 15_000;
-
-/**
  * Per-request Pool options. `connectionTimeoutMillis` bounds
  * `pool.connect()` waits so an unresponsive Neon endpoint fails the request
- * fast instead of riding the Workers 30s wall clock — and so a stuck
+ * fast instead of riding the Workers 30s wall clock, and so a stuck
  * connect cannot wedge `pool.end()` during teardown (it only settles once
  * every client drains). 10s clears Neon cold starts where the old 5s was
  * tight. `max` stays at the driver default: a per-request pool is already
  * lifetime-bounded by the request.
+ *
+ * No `statement_timeout` here. The driver would ship it as a Postgres startup
+ * parameter (`@neondatabase/serverless` `getStartupConf`), and the runtime
+ * connects through Neon's PgBouncer pooler, which accepts only the startup
+ * parameters it can track (`client_encoding`, `datestyle`, `timezone`,
+ * `standard_conforming_strings`, `application_name`) and rejects the
+ * connection otherwise. That would fail every interactive transaction, which
+ * is every write. The bound lives in `docker/role-settings.sql` as a role
+ * default instead, which the backend applies at session start on every
+ * transport, including the HTTP paths a startup parameter never reached.
  */
-const POOL_OPTS = {
-  connectionTimeoutMillis: 10_000,
-  statement_timeout: STATEMENT_TIMEOUT_MS,
-} as const;
+const POOL_OPTS = { connectionTimeoutMillis: 10_000 } as const;
 
 /**
  * Attach a Pool-level error listener so unhandled idle-client errors from

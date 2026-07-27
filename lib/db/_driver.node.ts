@@ -30,23 +30,16 @@ export interface DbBundle<TDb> {
 }
 
 /**
- * Ceiling on how long a single statement may run, in milliseconds.
+ * Connection options for the application pools.
  *
- * Query shape is caller-influenced (graph walks, search, tag aggregation) and
- * Postgres defaults to no limit, so one expensive statement can otherwise hold
- * a backend indefinitely. Every legitimate query here is far below this; the
- * bound exists to turn a runaway into a failed request instead of a pinned
- * database. Kept in lockstep with the Workers driver's identical setting and
- * with the role default in `docker/role-settings.sql`. A connection option
- * overrides a role default, so the three change together.
+ * No `statement_timeout` here. postgres-js sends `connection` entries as
+ * Postgres startup parameters, which a PgBouncer-style pooler rejects unless
+ * it can track them, so setting it would break any deployment pointing
+ * `DATABASE_URL` at a pooled endpoint. The bound lives in
+ * `docker/role-settings.sql` as a role default, applied by `bun run db:rls`,
+ * which the backend picks up at session start whatever the connection path.
  */
-const STATEMENT_TIMEOUT_MS = 15_000;
-
-const POSTGRES_OPTS = {
-  max: 3,
-  idle_timeout: 10,
-  connection: { statement_timeout: STATEMENT_TIMEOUT_MS },
-} as const;
+const POSTGRES_OPTS = { max: 3, idle_timeout: 10 } as const;
 
 /**
  * Build the application Drizzle client backed by postgres-js.
