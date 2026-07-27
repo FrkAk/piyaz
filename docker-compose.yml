@@ -6,9 +6,11 @@ services:
     environment:
       POSTGRES_USER: piyaz
       # Superuser: exempt from FORCE ROW LEVEL SECURITY, so this credential
-      # bypasses the tenant boundary entirely. Required from the environment
-      # like the three role passwords below, never defaulted.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing POSTGRES_PASSWORD; generate via `openssl rand -base64 24` and add to .env.local}
+      # bypasses the tenant boundary. The port below is published to loopback
+      # only, so reaching it already means local access to the host. Set
+      # POSTGRES_PASSWORD in .env.local to override on a host where that is not
+      # a safe assumption. Read only on first init, never on an existing volume.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-piyaz}
       POSTGRES_DB: piyaz
       # Passed through to init-rls.sql so it can provision app_user and
       # service_role with caller-generated passwords (see .env.local.example).
