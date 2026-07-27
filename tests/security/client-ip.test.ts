@@ -157,6 +157,45 @@ test("malformed addresses never become a bucket key", () => {
   expect(isValidIp("999.1.1.1")).toBe(false);
 });
 
+test("attack: rotating within one IPv6 allocation cannot mint fresh buckets", () => {
+  process.env.DEPLOY_TARGET = "cloudflare";
+
+  // A single client is routinely handed a whole /64, so every address below
+  // belongs to one caller. Unmasked, each is its own bucket and every
+  // per-address budget stops bounding anything.
+  const keys = new Set<string>();
+  for (let i = 0; i < 50; i++) {
+    keys.add(
+      clientIpKey(new Headers({ "cf-connecting-ip": `2001:db8::${i}:1` })),
+    );
+  }
+
+  expect(keys.size).toBe(1);
+});
+
+test("distinct IPv6 allocations keep distinct buckets", () => {
+  process.env.DEPLOY_TARGET = "cloudflare";
+
+  const first = clientIpKey(new Headers({ "cf-connecting-ip": "2001:db8::1" }));
+  const second = clientIpKey(
+    new Headers({ "cf-connecting-ip": "2001:db8:0:1::1" }),
+  );
+
+  expect(first).not.toBe(second);
+});
+
+test("IPv4 is unmasked and an IPv4-mapped address shares its bucket", () => {
+  process.env.DEPLOY_TARGET = "cloudflare";
+
+  expect(resolveClientIp(new Headers({ "cf-connecting-ip": CLIENT_IP }))).toBe(
+    CLIENT_IP,
+  );
+  // A dual-stack client reaching the same address two ways gets one bucket.
+  expect(
+    resolveClientIp(new Headers({ "cf-connecting-ip": `::ffff:${CLIENT_IP}` })),
+  ).toBe(CLIENT_IP);
+});
+
 test("trusted proxy list parses and ignores blank entries", () => {
   process.env.TRUSTED_PROXIES = ` ${PROXY_IP} , , 10.0.0.1 `;
   expect(trustedProxies()).toEqual([PROXY_IP, "10.0.0.1"]);

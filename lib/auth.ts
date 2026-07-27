@@ -45,7 +45,11 @@ import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
 import { getOutstandingConsent } from "@/lib/auth/consent";
 import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
-import { trustedProxies, trustedProxyHeader } from "@/lib/security/client-ip";
+import {
+  IPV6_SUBNET_BITS,
+  trustedProxies,
+  trustedProxyHeader,
+} from "@/lib/security/client-ip";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
@@ -62,23 +66,39 @@ const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
  * supply directly, and being unreachable in a correct deployment is what makes
  * it reachable in an attack.
  *
- * Mirrors `lib/security/client-ip.ts`, which governs the middleware and
- * server-action limiters, so one policy decides every IP consumer. With no
- * header named, Better Auth resolves no address and falls back to one shared
- * per-path bucket, which throttles rather than exempts.
+ * Names the same header as `lib/security/client-ip.ts`, which governs the
+ * middleware and server-action limiters, and pins the same IPv6 mask, so the
+ * two resolvers agree on what a caller is called. On the hosted target they
+ * agree outright, because `cf-connecting-ip` carries a single address. On
+ * self-host behind a proxy that appends rather than replaces they can differ:
+ * this side refuses a multi-hop chain unless `TRUSTED_PROXIES` names the
+ * proxies, and walks past them to the client when it does, while
+ * `resolveClientIp` takes the rightmost valid hop either way. Both directions
+ * resolve an address the caller did not choose, which is the property that has
+ * to hold. With no header named, Better Auth resolves no address and falls
+ * back to one shared per-path bucket, which throttles rather than exempts.
  *
  * @returns The `advanced.ipAddress` policy for this deployment.
  */
 function ipAddressPolicy(): {
   ipAddressHeaders: string[];
+  ipv6Subnet: number;
   trustedProxies?: string[];
 } {
-  if (IS_CLOUDFLARE) return { ipAddressHeaders: ["cf-connecting-ip"] };
+  if (IS_CLOUDFLARE) {
+    return {
+      ipAddressHeaders: ["cf-connecting-ip"],
+      ipv6Subnet: IPV6_SUBNET_BITS,
+    };
+  }
   const header = trustedProxyHeader();
-  if (!header) return { ipAddressHeaders: [] };
+  if (!header) {
+    return { ipAddressHeaders: [], ipv6Subnet: IPV6_SUBNET_BITS };
+  }
   const proxies = trustedProxies();
   return {
     ipAddressHeaders: [header],
+    ipv6Subnet: IPV6_SUBNET_BITS,
     ...(proxies.length > 0 ? { trustedProxies: proxies } : {}),
   };
 }

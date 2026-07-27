@@ -1,7 +1,20 @@
+import { normalizeIP } from "@better-auth/core/utils/ip";
 import * as z from "zod";
 
 /** Header the Cloudflare edge sets on the hosted target. */
 const EDGE_HEADER = "cf-connecting-ip";
+
+/**
+ * Prefix length an IPv6 address is masked to before it becomes an identity.
+ *
+ * A single client is routinely allocated a whole /64, so the full address is
+ * caller-chosen: rotating within it mints a fresh bucket per request and
+ * defeats every per-address budget, the same way a rotated cookie or bearer
+ * token would. Masking to the allocation makes the identity the thing the
+ * caller cannot cheaply change. Better Auth masks to /64 by default, and
+ * `lib/auth.ts` pins this same value so the two resolvers cannot drift.
+ */
+export const IPV6_SUBNET_BITS = 64;
 
 /** RFC 7230 field-name shape, guarding `Headers.get`, which throws otherwise. */
 const HEADER_NAME_RE = /^[a-z0-9!#$%&'*+.^_`|~-]+$/;
@@ -105,6 +118,13 @@ export function isValidIp(value: string): boolean {
  * than the client, which under-attributes traffic to a shared bucket but never
  * lets a caller choose its own bucket.
  *
+ * The selected hop is masked to {@link IPV6_SUBNET_BITS}. `normalizeIP` does
+ * not validate, and hands back anything it cannot parse lowercased and
+ * otherwise untouched, so it runs only on a hop {@link isValidIp} has already
+ * accepted. IPv4 passes through unchanged and an IPv4-mapped IPv6 address
+ * collapses to its bare IPv4 form, so a dual-stack client gets one bucket
+ * rather than two.
+ *
  * @param value - Raw header value, possibly a comma-separated chain.
  * @returns The selected address, or `null` when no entry is a valid IP.
  */
@@ -115,7 +135,9 @@ function selectFromChain(value: string): string | null {
     .filter(Boolean);
   for (let i = hops.length - 1; i >= 0; i--) {
     const hop = hops[i];
-    if (hop && isValidIp(hop)) return hop;
+    if (hop && isValidIp(hop)) {
+      return normalizeIP(hop, { ipv6Subnet: IPV6_SUBNET_BITS });
+    }
   }
   return null;
 }
@@ -130,7 +152,12 @@ function selectFromChain(value: string): string | null {
  * untouched. That is why `cf-connecting-ip` is absent from this path unless an
  * operator names it: a self-hosted deployment has no edge setting it, and
  * common reverse proxies forward it verbatim. With no header named, no address
- * resolves. The selected value is always shape-validated.
+ * resolves. The selected value is always shape-validated and masked.
+ *
+ * Better Auth reads the same header under `lib/auth.ts:ipAddressPolicy` and
+ * masks to the same width. The two agree on the hosted target, where the
+ * header carries a single address; on self-host behind a chain-appending proxy
+ * they can pick different hops, which that function documents.
  *
  * @param headers - Request headers to read the proxy chain from.
  * @returns Client address, or `null` when none can be trusted.

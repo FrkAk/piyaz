@@ -32,7 +32,7 @@
     "db:setup": "docker compose --env-file .env.local up -d --wait && docker exec -i piyaz-db-1 psql -U piyaz -d piyaz < docker/init-auth.sql && docker exec piyaz-db-1 /docker-entrypoint-initdb.d/02-rls.sh && bun run db:migrate && bun run db:rls",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run scripts/assert-migration-journal.ts && drizzle-kit migrate",
-    "db:rls": "docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/grants.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/grants-auth.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/rls-functions.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/rls-policies.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/storage.sql",
+    "db:rls": "docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/grants.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/grants-auth.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/role-settings.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/rls-functions.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/rls-policies.sql && docker exec -i piyaz-db-1 psql -v ON_ERROR_STOP=1 -U piyaz -d piyaz < docker/storage.sql",
     "db:rls:ci": "bun scripts/apply-public-rls.ts",
     "db:rls:verify": "bun scripts/verify-rls.ts",
     "db:rls:owner": "bun scripts/apply-owner-rls.ts",
@@ -44,6 +44,7 @@
     "db:test:down": "docker compose -f docker-compose.test.yml down -v"
   },
   "dependencies": {
+    "@better-auth/core": "1.6.23",
     "@better-auth/oauth-provider": "1.6.23",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@fontsource-variable/inter": "^5.3.0",
