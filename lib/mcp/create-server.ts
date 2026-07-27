@@ -107,19 +107,21 @@ type McpResponse = ReturnType<typeof toMcp>;
 
 /**
  * Wrap a tool handler with the cross-cutting concerns every tool shares:
- * the legal re-consent gate (mcp-source actors with an outstanding personal
- * document get a blocking error naming the acceptance URL; one indexed read
- * per call — the stateless transport runs one tool call per POST, so there
- * is nothing to memoize), the standard-tier rate check (one unit per tool
- * call, so a JSON-RPC batch is billed per message rather than per POST) and
- * the heavy-tier rate
- * check (middleware cannot see tool names, so the expensive shapes are
- * throttled here), the sanitised catch-all (mirrors `internalError` in
+ * the standard-tier rate check (one unit per tool call, so a JSON-RPC batch
+ * is billed per message rather than per POST), the legal re-consent gate
+ * (mcp-source actors with an outstanding personal document get a blocking
+ * error naming the acceptance URL), the heavy-tier rate check (middleware
+ * cannot see tool names, so the expensive shapes are throttled here), the
+ * sanitised catch-all (mirrors `internalError` in
  * `lib/api/error.ts`: log server-side, return opaque `Internal error` unless
  * NODE_ENV is exactly `development`), and one structured `mcp_tool` log line
  * per call for observability. The consent gate applies only to
  * `actor.source === "mcp"` (the only actor the MCP route produces): web
  * actors are gated at the page/route layer and system actors are internal.
+ *
+ * The rate check runs first because the consent gate costs a database read.
+ * A batch dispatches every message here, so gating the read behind the budget
+ * is what keeps an over-budget batch from buying one round trip per message.
  *
  * @param name - Tool name (e.g. `"piyaz_get"`).
  * @param ctx - Resolved auth context.
@@ -143,13 +145,6 @@ function wrapTool<P>(
     let truncated: boolean | undefined;
     let errName: string | undefined;
     try {
-      if (ctx.actor.source === "mcp") {
-        const outstanding = await listOutstandingReconsent(ctx.userId);
-        if (outstanding.length > 0) {
-          response = err(reconsentMessage(outstanding));
-          return response;
-        }
-      }
       const standard = await getBackend("mcp").check(
         `mcp-call:${ctx.userId}`,
         MCP_STANDARD_LIMIT.max,
@@ -164,6 +159,13 @@ function wrapTool<P>(
           ),
         );
         return response;
+      }
+      if (ctx.actor.source === "mcp") {
+        const outstanding = await listOutstandingReconsent(ctx.userId);
+        if (outstanding.length > 0) {
+          response = err(reconsentMessage(outstanding));
+          return response;
+        }
       }
       if (opts.heavy?.(params)) {
         const check = await getBackend("mcpHeavy").check(

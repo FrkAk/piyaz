@@ -45,6 +45,18 @@ test("a single non-batch message is not treated as a batch", () => {
   expect(isOversizedBatch(body)).toBe(false);
 });
 
+test("attack: whitespace or a byte order mark cannot carry a batch past the cap", () => {
+  // The byte scan that skips parsing for non-batch bodies has to strip the
+  // same prefixes TextDecoder and the transport's Request.json strip, or a
+  // prefixed body is waved through here and still dispatched as a batch.
+  const batch = new TextDecoder().decode(batchBody(5_000));
+  const encoder = new TextEncoder();
+
+  expect(isOversizedBatch(encoder.encode(`\n\t  ${batch}`))).toBe(true);
+  expect(isOversizedBatch(encoder.encode(`﻿${batch}`))).toBe(true);
+  expect(isOversizedBatch(encoder.encode(`﻿  ${batch}`))).toBe(true);
+});
+
 test("malformed bodies are left to the transport to diagnose", () => {
   expect(isOversizedBatch(new TextEncoder().encode("{not json"))).toBe(false);
   expect(isOversizedBatch(new Uint8Array(0))).toBe(false);
