@@ -414,14 +414,29 @@ type BackendKind = "api" | "auth" | "actions" | "mcp" | "mcpHeavy";
  * tighter `max` values than any single CF binding can enforce, so they stay
  * on the per-isolate `MemoryRateLimitBackend` where rule limits are honored
  * exactly).
+ *
+ * Pinned to a `globalThis` slot keyed by `Symbol.for(...)`, for the same
+ * reason `lib/db/request-store.ts` pins its store: the Workers artifact holds
+ * more than one copy of this module, because `worker-cf.ts` reaches it through
+ * wrangler's esbuild while middleware and the server handler reach it through
+ * Next's webpack. Without the pin, `setBackend` writes the copy the entry
+ * point sees and `getBackend` reads a different one, so every reader silently
+ * falls back to the per-isolate memory backend and the Cloudflare bindings
+ * bound nothing.
  */
-const _backends: Record<BackendKind, RateLimitBackend | null> = {
+const BACKENDS_KEY = Symbol.for("@piyaz/api/rateLimitBackends");
+const symbolKeyedGlobal = globalThis as Record<symbol, unknown>;
+symbolKeyedGlobal[BACKENDS_KEY] ??= {
   api: null,
   auth: null,
   actions: null,
   mcp: null,
   mcpHeavy: null,
-};
+} satisfies Record<BackendKind, RateLimitBackend | null>;
+const _backends = symbolKeyedGlobal[BACKENDS_KEY] as Record<
+  BackendKind,
+  RateLimitBackend | null
+>;
 
 const MAX_WINDOW_MS = Math.max(...RATE_LIMIT_RULES.map((r) => r.window)) * 1000;
 
