@@ -19,7 +19,7 @@ Piyaz is an agentic workspace for building software: project management where pe
 
 Using Piyaz, several agents can build at the same time; each in its own harness and with no API keys to wire up, while engineers are free to steer them as needed. One agent can implement a task while you refine another or add a new feature.
 
-Projects are represented as a shared graph of tasks and their dependencies. Drop in an idea or an existing codebase, and Piyaz will break it into small, concrete tasks. When an agent picks up a task, it already has the plan, the standards, and the decisions behind the work. No agent starts from a raw read of a task description.
+Drop in an idea or an existing codebase, and Piyaz breaks it into small, concrete tasks on that graph. When an agent picks up a task, it already has the plan, the standards, and the decisions behind the work. No agent starts from a raw read of a task description.
 
 Full setup, guides, and reference can be found at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
 
@@ -88,7 +88,7 @@ For more details, see the docs:
 - [Plan a project](https://docs.piyaz.ai/docs/using-piyaz/plan-a-project) and [decompose into tasks](https://docs.piyaz.ai/docs/using-piyaz/decompose-into-tasks)
 - [Track execution](https://docs.piyaz.ai/docs/using-piyaz/track-execution)
 - [Review before merge](https://docs.piyaz.ai/docs/using-piyaz/review)
-- [The composer pipeline](https://docs.piyaz.ai/docs/using-piyaz/composer)
+- [The composer loop](https://docs.piyaz.ai/docs/using-piyaz/composer)
 - [End-to-end walkthrough](https://docs.piyaz.ai/docs/using-piyaz/walkthrough)
 
 ---
