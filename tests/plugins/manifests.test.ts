@@ -54,14 +54,12 @@ test("Antigravity plugin marker exists and is named piyaz", () => {
   expect(p.name).toBe("piyaz");
 });
 
-test("Antigravity mcp_config uses serverUrl (never url/httpUrl) for both servers", () => {
+test("Antigravity mcp_config uses serverUrl (never url/httpUrl)", () => {
   const cfg = readJson("plugins/antigravity/mcp_config.json");
   const hosted = cfg.mcpServers.piyaz;
-  const local = cfg.mcpServers["piyaz-local"];
   expect(hosted.serverUrl).toContain("app.piyaz.ai");
   expect(hosted.url).toBeUndefined();
   expect(hosted.httpUrl).toBeUndefined();
-  expect(local.serverUrl).toContain("localhost:3000");
 });
 
 test("Antigravity bundles every shared skill", () => {
@@ -81,16 +79,19 @@ test("Antigravity bundles every shared skill", () => {
   }
 });
 
+/**
+ * Every brand ships exactly one MCP server, the hosted one. A bundled
+ * localhost server is dead config for hosted users and surfaces as a
+ * connection error against a server they never run.
+ */
 test.each([
   "plugins/claude-code/.mcp.json",
   "plugins/codex/.mcp.json",
   "plugins/cursor/mcp.json",
-])("%s declares hosted piyaz + local piyaz-local", (path) => {
+  "plugins/antigravity/mcp_config.json",
+])("%s declares exactly one hosted piyaz server", (path) => {
   const cfg = readJson(path);
-  expect(cfg.mcpServers.piyaz).toBeDefined();
-  expect(cfg.mcpServers["piyaz-local"]).toBeDefined();
+  expect(Object.keys(cfg.mcpServers)).toEqual(["piyaz"]);
   expect(JSON.stringify(cfg.mcpServers.piyaz)).toContain("app.piyaz.ai");
-  expect(JSON.stringify(cfg.mcpServers["piyaz-local"])).toContain(
-    "localhost:3000",
-  );
+  expect(JSON.stringify(cfg)).not.toContain("localhost");
 });
