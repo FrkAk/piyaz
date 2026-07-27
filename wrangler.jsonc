@@ -86,7 +86,6 @@
       ],
       "routes": [{ "pattern": "app.piyaz.ai", "custom_domain": true }],
       "workers_dev": false,
-      "placement": { "region": "aws:eu-central-1" },
       "limits": { "cpu_ms": 10000 },
       "observability": {
         "enabled": true,
@@ -198,7 +197,6 @@
       ],
       "routes": [{ "pattern": "dev.app.piyaz.ai", "custom_domain": true }],
       "workers_dev": false,
-      "placement": { "region": "aws:eu-central-1" },
       "limits": { "cpu_ms": 10000 },
       "observability": {
         "enabled": true,
