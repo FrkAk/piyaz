@@ -68,10 +68,21 @@ export interface RateLimitBackend {
  * validation, so a `"session"` key would let a caller mint a fresh rate-limit
  * bucket per request by rotating a forged cookie and bypass the limit
  * entirely. Every unauthenticated endpoint whose cost lands somewhere else
- * (an email to a victim's inbox, an `oauthClient` row, a token-grant attempt)
- * belongs on this list rather than on the catch-all, which is why
- * `request-password-reset`, `send-verification-email`, `reset-password` and
- * `oauth2/token` are enumerated here. Keying on the client IP (resolved by
+ * (an email to a victim's inbox, an `oauthClient` row, a token-grant attempt,
+ * a deleted account) belongs on this list rather than on the catch-all, which
+ * is why `request-password-reset`, `send-verification-email`,
+ * `reset-password`, `delete-user/callback` and `oauth2/token` are enumerated
+ * here.
+ *
+ * The test an endpoint has to fail to earn a rule is whether an anonymous
+ * caller can reach it and make it cost something. The rest of the allowlist in
+ * `app/api/auth/[...all]/route.ts` passes that test: `/oauth2/authorize`,
+ * `/consent` and `/continue` need a session, `/oauth2/revoke` and
+ * `/introspect` need client credentials, `/oauth2/userinfo` needs a bearer
+ * token, and `/get-session` and `/jwks` read cached state without writing.
+ * Those stay on the catch-all with its address ceiling.
+ *
+ * Keying on the client IP (resolved by
  * `lib/security/client-ip.ts`, which trusts a header only where something
  * upstream sets it) is the only un-forgeable identifier available. CF docs
  * discourage IP keys for general user throttling because shared NATs cause
@@ -147,6 +158,17 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
   },
   {
     pattern: "/api/auth/verify-email",
+    max: 100,
+    window: 60,
+    keyStrategy: "ip",
+    bindingKey: "api",
+  },
+  {
+    // Same shape as the two above: a GET the user follows from their inbox,
+    // carrying a high-entropy token rather than a guessable credential. It
+    // deletes the account, so it does not belong on the catch-all's forgeable
+    // cookie key, and it does not belong on the brute-force budget either.
+    pattern: "/api/auth/delete-user/callback",
     max: 100,
     window: 60,
     keyStrategy: "ip",

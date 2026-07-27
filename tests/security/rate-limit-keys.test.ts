@@ -34,6 +34,7 @@ const SIDE_EFFECT_PATHS = [
   "/api/auth/reset-password",
   "/api/auth/oauth2/token",
   "/api/auth/verify-email",
+  "/api/auth/delete-user/callback",
 ];
 
 /** Token-bearing paths that must not fall through to the catch-all. */
