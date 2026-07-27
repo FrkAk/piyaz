@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "ai.piyaz/piyaz",
   "title": "Piyaz",
-  "description": "Agentic workspace for project management: people and AI coding agents work on the same task graph.",
+  "description": "Agentic workspace for project management, where people and AI coding agents work on the same graph.",
   "version": "0.4.10",
   "websiteUrl": "https://piyaz.ai",
   "repository": {
