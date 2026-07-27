@@ -103,8 +103,6 @@ test("the MCP compatibility document is uncacheable and varies on the gate heade
     }),
   );
 
-  // A shared cache must never store the relaxed document and replay it to a
-  // client that would otherwise be told to require `iss`.
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(response.headers.get("vary")?.toLowerCase()).toContain(
     "mcp-protocol-version",

@@ -9,14 +9,10 @@ const ISS_ADVERTISEMENT_FIELD =
 
 /**
  * Header every MCP client sends on discovery requests, and the signal this
- * module gates on. Client identity is not a usable alternative: at the
- * affected releases Codex sends no `User-Agent` on OAuth discovery, because
- * `build_default_headers` starts from an empty `HeaderMap`
- * (`codex-rs/rmcp-client/src/utils.rs` at `rust-v0.145.0`), and `main` has
- * since started setting one. Gating on the protocol header confines the
- * compatibility document to MCP clients without depending on a
- * version-specific `User-Agent`, and leaves every other OAuth consumer on the
- * fully compliant document.
+ * module gates on. Client identity is not usable: Codex sends no `User-Agent`
+ * on OAuth discovery at the affected releases, because `build_default_headers`
+ * starts from an empty `HeaderMap` (`codex-rs/rmcp-client/src/utils.rs` at
+ * `rust-v0.145.0`), and `main` has since started setting one.
  */
 const MCP_CLIENT_HEADER = "mcp-protocol-version";
 
