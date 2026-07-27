@@ -277,17 +277,24 @@ export function matchRule(pathname: string): RateLimitRule | null {
  * Count a request against a rule's address ceiling, when it declares one and
  * a client address can be trusted.
  *
+ * Skipped when the primary key already is that address, which happens on the
+ * catch-all whenever a caller sends no session cookie. The two counters would
+ * carry the same identity at the same budget, so the second changes no outcome
+ * and costs one more binding call on a path anonymous callers reach.
+ *
  * @param request - Incoming request.
  * @param rule - The matched rule.
+ * @param primaryKey - The key the rule's own counter is using.
  * @returns The ceiling's result, or `null` when no ceiling applies.
  */
 export async function checkAddressCeiling(
   request: NextRequest,
   rule: RateLimitRule,
+  primaryKey?: string,
 ): Promise<RateLimitResult | null> {
   if (!rule.addressCeiling) return null;
   const address = resolveClientIp(request.headers);
-  if (!address) return null;
+  if (!address || primaryKey === address) return null;
   return getBackend(rule.bindingKey).check(
     `${rule.pattern}:addr:${address}`,
     rule.max,

@@ -97,7 +97,7 @@ export async function middleware(request: NextRequest) {
           rule.max,
           rule.window,
         ),
-        checkAddressCeiling(request, rule),
+        checkAddressCeiling(request, rule, key),
       ]);
       // Report whichever limb is closest to rejecting, not just whichever
       // rejected. Advertising the token bucket's headroom while the address
