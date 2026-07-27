@@ -177,6 +177,25 @@ async function verifyMcpAuth(request: Request) {
 }
 
 /**
+ * Reject a cross-origin browser request to the MCP endpoint.
+ *
+ * The Streamable HTTP transport requires the server to validate `Origin` on
+ * every connection and answer 403 when one is present and invalid, because a
+ * page the user visits can otherwise reach this endpoint through DNS
+ * rebinding and spend the bearer token the browser would attach. Only a
+ * browser sends `Origin`, so an absent header is the normal agent client and
+ * passes through; the token check still gates those.
+ *
+ * @param request - Incoming request.
+ * @returns A 403 response when the header is present and not this deployment.
+ */
+function forbiddenOrigin(request: Request): Response | null {
+  const requestOrigin = request.headers.get("origin");
+  if (!requestOrigin || requestOrigin === origin) return null;
+  return jsonRpcError(-32600, "Forbidden origin.", 403);
+}
+
+/**
  * MCP-spec 401 response with WWW-Authenticate header pointing to
  * the protected resource metadata URL (RFC 9728).
  * @returns 401 JSON-RPC error response.
@@ -195,6 +214,9 @@ function unauthorized() {
  * @returns MCP JSON-RPC response or 401.
  */
 export async function POST(request: Request) {
+  const forbidden = forbiddenOrigin(request);
+  if (forbidden) return forbidden;
+
   const payload = await verifyMcpAuth(request);
   if (!payload) return unauthorized();
 

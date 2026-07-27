@@ -62,6 +62,42 @@ test("malformed bodies are left to the transport to diagnose", () => {
   expect(isOversizedBatch(new Uint8Array(0))).toBe(false);
 });
 
+test("attack: a cross-origin browser request is refused before the token check", async () => {
+  // DNS rebinding: a page the user visits resolves to this host and posts with
+  // the browser's credentials attached. The transport spec requires 403 when
+  // Origin is present and not ours.
+  const response = await POST(
+    new Request("https://example.test/api/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://attacker.example",
+        authorization: "Bearer not-a-real-token",
+      },
+      body: new TextDecoder().decode(batchBody(1)),
+    }),
+  );
+
+  expect(response.status).toBe(403);
+});
+
+test("a client sending no origin header is not refused", async () => {
+  // Agent clients are not browsers and send no Origin; they must still reach
+  // the token check rather than being turned away at the door.
+  const response = await POST(
+    new Request("https://example.test/api/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer not-a-real-token",
+      },
+      body: new TextDecoder().decode(batchBody(1)),
+    }),
+  );
+
+  expect(response.status).toBe(401);
+});
+
 test("an unauthenticated batch is refused before any body work", async () => {
   const response = await POST(
     new Request("https://example.test/api/mcp", {
