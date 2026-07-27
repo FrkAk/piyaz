@@ -7,12 +7,16 @@ const EDGE_HEADER = "cf-connecting-ip";
 /**
  * Prefix length an IPv6 address is masked to before it becomes an identity.
  *
- * A single client is routinely allocated a whole /64, so the full address is
- * caller-chosen: rotating within it mints a fresh bucket per request and
- * defeats every per-address budget, the same way a rotated cookie or bearer
- * token would. Masking to the allocation makes the identity the thing the
- * caller cannot cheaply change. Better Auth masks to /64 by default, and
- * `lib/auth.ts` pins this same value so the two resolvers cannot drift.
+ * The low 64 bits are the interface identifier (RFC 4291), which a host picks
+ * and rotates on its own, so the full address is caller-chosen: rotating it
+ * mints a fresh bucket per request and defeats every per-address budget, the
+ * same way a rotated cookie or bearer token would. /64 is the narrowest
+ * boundary that survives that rotation. End sites are assigned something
+ * shorter (RFC 6177 leaves the size to the operator, commonly /56 or /48), so
+ * a caller with a larger allocation still holds several buckets; masking
+ * further would start pooling unrelated subscribers behind one budget. Better
+ * Auth masks to /64 by default and `lib/auth.ts` pins this same value, so the
+ * two resolvers cannot drift.
  */
 export const IPV6_SUBNET_BITS = 64;
 

@@ -128,8 +128,10 @@ const GRANTABLE_OAUTH_SCOPES = [
 if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
   throw new Error(
     "BETTER_AUTH_URL is required on the Cloudflare deploy target. " +
-      "Without it, Better-auth's trustedOrigins falls back to [] and CSRF " +
-      "protection accepts any origin. Set it in wrangler.jsonc env.production.vars.",
+      "It is the issuer, the audience and the resource-metadata URL the MCP " +
+      "route derives at module load, so without it those pin to whatever " +
+      "origin the first request happened to carry. Set it in wrangler.jsonc " +
+      "env.production.vars.",
   );
 }
 
@@ -276,6 +278,13 @@ export function createAuth() {
       enabled: true,
       window: 10,
       max: 100,
+      // Deliberate override, not a default: Better Auth would otherwise pick
+      // "secondary-storage" because one is configured. The KV adapter has no
+      // atomic increment, so that path degrades to a non-atomic check-then-set
+      // that concurrent requests slip through, and KV's 60s expiry floor would
+      // stretch this 10s window six-fold. Memory is per-isolate and so bounds
+      // nothing distributed; the Cloudflare bindings in `lib/api/rate-limit.ts`
+      // are what enforce across isolates, and these rules sit on top per-process.
       storage: "memory",
       customRules: {
         "/sign-in/email": { window: 60, max: 5 },
