@@ -153,25 +153,68 @@ export async function requireNoteId(
 // ---------------------------------------------------------------------------
 
 /**
- * Most proposed tags compared against the existing vocabulary, per request.
+ * Most distinct proposed tags compared against the existing vocabulary, per
+ * request.
  *
  * The comparison is a cross product of two caller-supplied lists, so the pair
  * count needs a ceiling of its own even with each pair bounded. Hints steer an
  * agent's next call; the first few carry that signal, and a request proposing
- * more tags than this has already stopped being a naming question. Batched
- * creates spend one shared allowance rather than one per item, so the work is
- * bounded by the request and not by how many tasks ride in it.
+ * more distinct tags than this has already stopped being a naming question.
+ * Counting distinct tags rather than occurrences is what keeps a batched
+ * create from spending the allowance on its first few items: agents reuse a
+ * small vocabulary across a batch, so the distinct set stays far below the sum.
  */
 export const MAX_HINTED_TAGS = 25;
 
 /**
+ * Resolve each distinct proposed tag to the existing tag it looks like a
+ * variant of.
+ *
+ * Comparing once per distinct tag rather than once per occurrence is what lets
+ * a batch share one allowance without the later items losing their hints.
+ *
+ * @param proposed - Proposed tag strings, in any order, duplicates allowed.
+ * @param existing - Current project tag list.
+ * @param limit - Most distinct tags to compare; defaults to {@link MAX_HINTED_TAGS}.
+ * @returns Map from proposed tag to the existing tag it resembles.
+ */
+export function resolveTagVariants(
+  proposed: string[],
+  existing: string[],
+  limit: number = MAX_HINTED_TAGS,
+): Map<string, string> {
+  const variants = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const tag of proposed) {
+    if (seen.size >= Math.max(0, limit)) break;
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    const variant = findVariant(tag, existing);
+    if (variant) variants.set(tag, variant);
+  }
+  return variants;
+}
+
+/**
+ * Render the variant warning for one proposed tag.
+ *
+ * @param tag - The proposed tag.
+ * @param variant - The existing tag it resembles.
+ * @returns The hint string.
+ */
+export function tagVariantHint(tag: string, variant: string): string {
+  return `Tag "${tag}" looks like a variant of existing "${variant}". Reuse the existing tag, or confirm a deliberate split.`;
+}
+
+/**
  * Build variant-warning hints for proposed tags against existing project tags.
+ *
+ * One hint per distinct tag, in first-occurrence order: a repeated tag is one
+ * naming decision, so repeating its hint adds nothing an agent can act on.
  *
  * @param proposed - Proposed tag strings.
  * @param existing - Current project tag list.
- * @param limit - Most proposed tags to compare; defaults to {@link MAX_HINTED_TAGS}.
- *   A batched caller passes what remains of one request-wide allowance, so the
- *   cross product cannot be multiplied by the batch size.
+ * @param limit - Most distinct tags to compare; defaults to {@link MAX_HINTED_TAGS}.
  * @returns Hint strings for tags that look like variants of existing ones.
  */
 export function tagVariantHints(
@@ -179,13 +222,14 @@ export function tagVariantHints(
   existing: string[],
   limit: number = MAX_HINTED_TAGS,
 ): string[] {
+  const variants = resolveTagVariants(proposed, existing, limit);
   const hints: string[] = [];
-  for (const tag of proposed.slice(0, Math.max(0, limit))) {
-    const variant = findVariant(tag, existing);
-    if (variant)
-      hints.push(
-        `Tag "${tag}" looks like a variant of existing "${variant}". Reuse the existing tag, or confirm a deliberate split.`,
-      );
+  for (const tag of proposed) {
+    const variant = variants.get(tag);
+    if (variant) {
+      hints.push(tagVariantHint(tag, variant));
+      variants.delete(tag);
+    }
   }
   return hints;
 }

@@ -83,11 +83,10 @@ const MAX_VARIANT_DISTANCE = 2;
  *
  * `levenshtein` fills an `a.length * b.length` matrix, and both operands are
  * caller-supplied: the proposed tags come straight off the request and the
- * existing vocabulary is whatever the same caller stored earlier. Variant
- * detection on strings this long is meaningless anyway. An over-long existing
- * tag skips only the quadratic comparison, keeping the cheap equality and
- * prefix checks against it; an over-long proposed tag is abandoned outright,
- * since every comparison it could win is one no agent would act on.
+ * existing vocabulary is whatever the same caller stored earlier. Edit
+ * distance over strings this long is meaningless anyway, so an over-long tag
+ * on either side skips that comparison and keeps the cheap equality and
+ * prefix checks, which are linear and are the ones an agent acts on.
  */
 const MAX_VARIANT_COMPARE_LENGTH = 64;
 
@@ -97,10 +96,10 @@ const MAX_VARIANT_COMPARE_LENGTH = 64;
  * Levenshtein distance ≤ 2 (4+ chars). Returns null on exact raw
  * match or no variant found.
  *
- * Two guards keep the edit-distance pass bounded: strings longer than
- * {@link MAX_VARIANT_COMPARE_LENGTH} skip it, and so do pairs whose lengths
- * differ by more than {@link MAX_VARIANT_DISTANCE}, since that difference is
- * already a lower bound on the distance.
+ * Two guards keep the edit-distance pass bounded: a pair with either side
+ * longer than {@link MAX_VARIANT_COMPARE_LENGTH} skips it, and so does a pair
+ * whose lengths differ by more than {@link MAX_VARIANT_DISTANCE}, since that
+ * difference is already a lower bound on the distance.
  *
  * @param proposed - Proposed tag to check.
  * @param existing - Current project tag list.
@@ -112,7 +111,6 @@ export function findVariant(
 ): string | null {
   const nProposed = normalizeTag(proposed);
   if (nProposed.length === 0) return null;
-  if (nProposed.length > MAX_VARIANT_COMPARE_LENGTH) return null;
   const proposedDim = closedDimension(proposed);
   for (const e of existing) {
     if (e === proposed) return null;
@@ -132,7 +130,11 @@ export function findVariant(
       (nE.startsWith(nProposed) || nProposed.startsWith(nE))
     )
       return e;
-    if (nE.length > MAX_VARIANT_COMPARE_LENGTH) continue;
+    if (
+      nE.length > MAX_VARIANT_COMPARE_LENGTH ||
+      nProposed.length > MAX_VARIANT_COMPARE_LENGTH
+    )
+      continue;
     if (Math.abs(nE.length - nProposed.length) > MAX_VARIANT_DISTANCE) continue;
     if (
       nProposed.length >= 4 &&
