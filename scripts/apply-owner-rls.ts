@@ -3,11 +3,11 @@
  * (docker/grants-auth.sql), the request-path role settings
  * (docker/role-settings.sql) and the SECURITY DEFINER helpers + triggers
  * (docker/rls-functions.sql). These read or own piyaz_auth, or need ADMIN
- * OPTION on a role, so they must run as the database owner — never the
+ * OPTION on a role, so they must run as the database owner, never the
  * least-privilege migration role. Idempotent (CREATE OR REPLACE / GRANT /
  * ALTER ROLE ... SET).
  *
- * Reads DATABASE_OWNER_URL — set this only in a trusted local shell, never as a
+ * Reads DATABASE_OWNER_URL. Set this only in a trusted local shell, never as a
  * CI secret. Nothing here lands on a deploy: run it once per environment, and
  * against hosted dev before hosted prod.
  */
