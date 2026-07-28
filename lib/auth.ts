@@ -162,7 +162,17 @@ if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
   );
 }
 
-if (!IS_CLOUDFLARE && process.env.NODE_ENV === "production") {
+// Runtime only. `next build` forces NODE_ENV=production and evaluates this
+// module while collecting page data, but the value is read per request and
+// never inlined, so a build does not need it. Requiring it there would break
+// building an image or artifact separately from deploying it (see Dockerfile),
+// while catching nothing: `scripts/start.mjs` refuses to launch a self-host
+// instance without it, and this catches a malformed value on first use.
+if (
+  !IS_CLOUDFLARE &&
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
   const policyError = addressPolicyError();
   if (policyError) throw new Error(policyError);
 }
