@@ -2,9 +2,6 @@
   "mcpServers": {
     "piyaz": {
       "url": "https://app.piyaz.ai/api/mcp"
-    },
-    "piyaz-local": {
-      "url": "http://localhost:3000/api/mcp"
     }
   }
 }

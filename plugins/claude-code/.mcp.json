@@ -2,11 +2,7 @@
   "mcpServers": {
     "piyaz": {
       "type": "http",
-      "url": "${PIYAZ_URL:-https://app.piyaz.ai}/api/mcp"
-    },
-    "piyaz-local": {
-      "type": "http",
-      "url": "http://localhost:3000/api/mcp"
+      "url": "https://app.piyaz.ai/api/mcp"
     }
   }
 }

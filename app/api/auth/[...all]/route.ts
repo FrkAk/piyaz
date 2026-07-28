@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { applyIssAdvertisementCompat } from "@/lib/auth/oauth-metadata-compat";
 import { ensureCacheControl, ensureNoStore } from "@/lib/security/headers";
 import { stampClientIpHeader } from "@/lib/security/client-ip";
 
@@ -98,6 +99,18 @@ const JWKS_CACHE_CONTROL =
   "public, max-age=15, stale-while-revalidate=15, stale-if-error=86400";
 
 /**
+ * Discovery documents Better Auth serves under the basePath. Their bodies pass
+ * through `applyIssAdvertisementCompat` so MCP clients see the same document
+ * here as on the root-level `/.well-known/oauth-authorization-server` route,
+ * keeping every discovery surface consistent. See
+ * `lib/auth/oauth-metadata-compat.ts` for the rationale.
+ */
+const DISCOVERY_METADATA_PATHS: ReadonlySet<string> = new Set([
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/openid-configuration",
+]);
+
+/**
  * Normalize a request pathname to its post-basePath, trailing-slash-stripped
  * form, or `null` when the path is outside `/api/auth`.
  *
@@ -118,7 +131,8 @@ function normalizeAuthPath(pathname: string): string | null {
  * Route allowlisted Better Auth requests through `auth.handler` and harden
  * response caching: public discovery surfaces (`/jwks`, well-known metadata)
  * stay cacheable while every session-bearing surface is pinned to `no-store`.
- * Disallowed paths 404 before reaching `auth.handler`.
+ * Discovery metadata bodies drop the RFC 9207 `iss` advertisement for MCP
+ * clients only. Disallowed paths 404 before reaching `auth.handler`.
  *
  * The client-address header is stamped here, not only in middleware: the
  * middleware matcher's extension exclusion lets extension-suffixed paths
@@ -139,11 +153,14 @@ async function handler(request: Request): Promise<Response> {
   }
   const headers = new Headers(request.headers);
   stampClientIpHeader(headers);
-  const response = await auth.handler(new Request(request, { headers }));
-  if (PUBLIC_CACHEABLE_PATHS.has(path)) {
-    return ensureCacheControl(response, JWKS_CACHE_CONTROL);
+  const handled = await auth.handler(new Request(request, { headers }));
+  const response = PUBLIC_CACHEABLE_PATHS.has(path)
+    ? ensureCacheControl(handled, JWKS_CACHE_CONTROL)
+    : ensureNoStore(handled);
+  if (DISCOVERY_METADATA_PATHS.has(path)) {
+    return applyIssAdvertisementCompat(request, response);
   }
-  return ensureNoStore(response);
+  return response;
 }
 
 export const GET = handler;
