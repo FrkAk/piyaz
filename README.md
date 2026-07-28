@@ -1,5 +1,5 @@
 ![Piyaz](assets/piyaz-logo.png)
-> The agentic workspace where people and AI coding agents work on the same project.
+> The agentic workspace where people and coding agents work on the same project.
 
 <p align="center">
   <a href="https://docs.piyaz.ai/docs/get-started/connect-your-editor/claude-code"><img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-D97757?style=flat-square&logo=anthropic&logoColor=white" /></a>
@@ -15,11 +15,11 @@
   <img src="assets/piyaz-demo.gif" alt="Piyaz demo" width="900" />
 </p>
 
-Piyaz is an agentic workspace for building software. People and AI agents work on the same project across various harnesses, and Piyaz holds that work consistent to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
+Piyaz is an agentic workspace for project management, where people and coding agents work on the same project. It runs as an MCP server with a web app on top, and it holds your project as a graph, every task wired to what blocks it, with the decisions and the execution history attached. Piyaz keeps that work consistent to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
 
 Using Piyaz, several agents can build at the same time; each in its own harness and with no API keys to wire up, while engineers are free to steer them as needed. One agent can implement a task while you refine another or add a new feature.
 
-Projects are represented as a shared graph of tasks and their dependencies. Drop in an idea or an existing codebase, and Piyaz will break it into small, concrete tasks. When an agent picks up a task, it already has the plan, the standards, and the decisions behind the work. No agents starts from a raw read of a task description.
+Drop in an idea or an existing codebase, and Piyaz breaks it into small, concrete tasks on that graph. When an agent picks up a task, it already has the plan, the standards, and the decisions behind the work. No agent starts from a raw read of a task description.
 
 Full setup, guides, and reference can be found at **[docs.piyaz.ai](https://docs.piyaz.ai)**.
 
@@ -39,7 +39,7 @@ Self-hosting is free under AGPL-3.0. You can run the Piyaz server yourself and r
 
 ## What Piyaz changes for you
 
-**Stop re-briefing your agents.** Every task carries its own context: the plan, the decisions behind it, and how it connects to the rest of the project. Your next session picks up where the last one left off instead of asking you to explain the project again.
+**Stop explaining the project twice.** Every task carries its own context: the plan, the decisions behind it, and how it connects to the rest of the project. Your next session picks up where the last one left off instead of asking you to explain the project again.
 
 **Ship a big project without the quality falling off.** Piyaz breaks large work into small tasks with clear dependencies and hands each one exactly the context it needs, so the tenth task lands as cleanly as the first.
 
@@ -88,14 +88,20 @@ For more details, see the docs:
 - [Plan a project](https://docs.piyaz.ai/docs/using-piyaz/plan-a-project) and [decompose into tasks](https://docs.piyaz.ai/docs/using-piyaz/decompose-into-tasks)
 - [Track execution](https://docs.piyaz.ai/docs/using-piyaz/track-execution)
 - [Review before merge](https://docs.piyaz.ai/docs/using-piyaz/review)
-- [The composer pipeline](https://docs.piyaz.ai/docs/using-piyaz/composer)
+- [The composer loop](https://docs.piyaz.ai/docs/using-piyaz/composer)
 - [End-to-end walkthrough](https://docs.piyaz.ai/docs/using-piyaz/walkthrough)
+
+---
+
+## The MCP server
+
+Piyaz is a remote MCP server at `https://app.piyaz.ai/api/mcp` (Streamable HTTP, OAuth 2.1, no API keys); the plugin wires it up for you, so the endpoint only matters when connecting a client by hand or pointing at your own instance. Nine ref-first tools cover the loop from planning to review: the full reference lives at [docs.piyaz.ai/docs/reference/mcp-overview](https://docs.piyaz.ai/docs/reference/mcp-overview/) and registry metadata in [`server.json`](server.json).
 
 ---
 
 ## Stack
 
-Next.js 16, TypeScript 6, React 19, PostgreSQL, Drizzle ORM, Better-Auth, Tailwind CSS v4, Motion
+Next.js 16, TypeScript 6, React 19, PostgreSQL, Drizzle ORM, Better-Auth, Tailwind CSS v4, Motion, and the official [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
 
 ---
 

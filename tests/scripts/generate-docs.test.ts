@@ -7,6 +7,7 @@ import {
   renderCatalog,
   renderToolPage,
   stripProseEmoji,
+  summarize,
 } from "../../scripts/generate-docs";
 import { TOOLS } from "../../lib/mcp/schemas";
 
@@ -142,6 +143,42 @@ describe("stripProseEmoji", () => {
     expect(stripProseEmoji("draft → planned → done")).toBe(
       "draft → planned → done",
     );
+  });
+});
+
+describe("summarize", () => {
+  test("takes further sentences until the summary is substantial", () => {
+    const short = "Universal task finder.";
+    expect(
+      summarize(`${short} Cross-project across every team by default.`),
+    ).toBe(
+      "Universal task finder. Cross-project across every team by default.",
+    );
+  });
+
+  test("returns a single-sentence description unchanged", () => {
+    expect(summarize("Read one task or one project.")).toBe(
+      "Read one task or one project.",
+    );
+  });
+
+  test("stops before a sentence that would run too long", () => {
+    const long = `Short lead. ${"x".repeat(400)}.`;
+    expect(summarize(long)).toBe("Short lead.");
+  });
+
+  test("every tool summary is long enough to be useful", () => {
+    for (const tool of TOOLS) {
+      expect(summarize(tool.description).length).toBeGreaterThanOrEqual(60);
+    }
+  });
+
+  test("every tool summary is a prefix of its description", () => {
+    for (const tool of TOOLS) {
+      expect(tool.description.startsWith(summarize(tool.description))).toBe(
+        true,
+      );
+    }
   });
 });
 
