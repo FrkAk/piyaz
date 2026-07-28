@@ -94,3 +94,28 @@ runs:
         CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
         TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
       run: bun run ${{ inputs.deploy_script }}
+
+    # A deploy succeeds even when the Worker serves errors on every request, so
+    # the auth surface is probed before the job reports green. Retries cover
+    # propagation of a fresh version.
+    - name: Smoke the deployed Worker
+      shell: bash
+      env:
+        BASE_URL: ${{ inputs.better_auth_url }}
+      run: |
+        code=000
+        for attempt in 1 2 3 4 5 6; do
+          code=$(curl -sS -o /tmp/smoke.json -w '%{http_code}' --max-time 15 \
+            "$BASE_URL/api/auth/.well-known/oauth-authorization-server" || echo 000)
+          [ "$code" = "200" ] && break
+          sleep 5
+        done
+        if [ "$code" != "200" ]; then
+          echo "::error::Auth metadata returned $code after deploy; the Worker is serving errors."
+          head -c 500 /tmp/smoke.json
+          exit 1
+        fi
+        grep -q '"issuer"' /tmp/smoke.json || {
+          echo "::error::Auth metadata body is missing \"issuer\"."
+          exit 1
+        }

@@ -6,6 +6,16 @@ import { executeRaw, type Conn, type ReadConn } from "@/lib/db/raw";
 export type ProjectTagRow = { tag: string; count: number };
 
 /**
+ * Ceiling on the tag vocabulary a single read returns, most-used first.
+ *
+ * The set is caller-grown with no project-wide cap, and every consumer walks
+ * the whole result. Hitting the cap must stay visible:
+ * `lib/graph/format-responses.ts` marks the rendered line at this value so an
+ * agent is never silently shown a partial list.
+ */
+export const MAX_PROJECT_TAGS = 500;
+
+/**
  * Build the tag-aggregation SQL shared by the interactive and batch read
  * paths. Uses `LATERAL jsonb_array_elements_text` because the type-safe
  * builder cannot express jsonb-element unfolding.
@@ -20,6 +30,7 @@ function projectTagsSql(projectId: string): SQL {
       WHERE ${tasks.projectId} = ${projectId}
       GROUP BY tag
       ORDER BY count DESC, tag ASC
+      LIMIT ${MAX_PROJECT_TAGS}
     `;
 }
 

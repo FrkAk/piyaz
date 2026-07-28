@@ -92,6 +92,7 @@ async function authPost(
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         origin: "https://example.test",
         ...(options.cookie ? { cookie: options.cookie } : {}),
       },
@@ -121,6 +122,7 @@ async function authGet(
     new Request(url, {
       headers: {
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         ...(cookie ? { cookie } : {}),
       },
     }),

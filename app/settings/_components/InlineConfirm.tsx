@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useId, useState, useTransition, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 interface InlineConfirmProps {
@@ -23,7 +23,10 @@ interface InlineConfirmProps {
 /**
  * Inline two-step confirmation primitive. Renders the `trigger` while
  * idle; on click swaps to a Cancel/Confirm pair without a modal so the
- * action stays in flow. Used for revoke-session and leave-team.
+ * action stays in flow. The prompt and body render at every viewport,
+ * announce on entry (`role="alert"` — a mounted polite region is not
+ * reliably read), and describe the confirm button. Used for
+ * revoke-session and leave-team.
  *
  * @param props - Confirm primitive configuration.
  * @returns Animated swap between trigger and confirm controls.
@@ -39,6 +42,8 @@ export function InlineConfirm({
 }: InlineConfirmProps) {
   const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
+  const promptId = useId();
+  const bodyId = useId();
 
   const handleTrigger = () => setConfirming(true);
   const handleCancel = () => setConfirming(false);
@@ -66,12 +71,16 @@ export function InlineConfirm({
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.96 }}
           transition={{ duration: 0.15 }}
-          className="flex items-center justify-end gap-2"
+          className="flex flex-wrap items-center justify-end gap-2"
         >
-          <div className="hidden text-right sm:block">
-            <p className="text-xs font-medium text-text-primary">{prompt}</p>
+          <div role="alert" className="min-w-0 text-right">
+            <p id={promptId} className="text-xs font-medium text-text-primary">
+              {prompt}
+            </p>
             {body ? (
-              <p className="text-[11px] text-text-muted">{body}</p>
+              <p id={bodyId} className="text-[11px] text-text-muted">
+                {body}
+              </p>
             ) : null}
           </div>
           <button
@@ -87,6 +96,7 @@ export function InlineConfirm({
             onClick={handleConfirm}
             disabled={pending}
             aria-busy={pending || undefined}
+            aria-describedby={body ? `${promptId} ${bodyId}` : promptId}
             className={`inline-flex min-h-9 cursor-pointer items-center justify-center gap-1 rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40 ${confirmClasses}`}
           >
             {pending ? (

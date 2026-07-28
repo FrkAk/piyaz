@@ -47,6 +47,7 @@ function authPost(
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         origin: "https://example.test",
         ...(cookie ? { cookie } : {}),
         ...(userAgent ? { "user-agent": userAgent } : {}),
@@ -237,6 +238,7 @@ test("organization endpoints are blocked while personal re-consent is outstandin
     new Request("https://example.test/api/auth/organization/list", {
       headers: {
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         origin: "https://example.test",
         cookie,
       },

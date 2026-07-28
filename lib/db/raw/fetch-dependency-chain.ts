@@ -10,6 +10,14 @@ export type DependencyChainRow = { id: string; depth: number };
  * `tasks` at every step and filters on `projectId` so a stale or
  * hand-crafted cross-project edge cannot leak into the result.
  *
+ * Recurses with `UNION` rather than `UNION ALL`. The graph shape is
+ * caller-controlled, and `UNION ALL` enumerates distinct *paths*, so a dense
+ * subgraph makes each cycle check on an edge write cost branching-factor^depth
+ * rows against a database every tenant shares. `UNION` discards rows already
+ * produced, bounding the walk by reachable `(id, depth)` pairs instead. The
+ * result is unchanged: every distinct pair still appears, so `MIN(depth)`
+ * below picks the same value.
+ *
  * @param conn - Drizzle client or transaction handle.
  * @param taskId - UUID of the starting task.
  * @param projectId - UUID of the project the starting task belongs to.
@@ -35,7 +43,7 @@ export async function fetchDependencyChain(
           AND e.edge_type = 'depends_on'
           AND t.project_id = ${projectId}
 
-        UNION ALL
+        UNION
 
         SELECT
           e.target_task_id AS id,

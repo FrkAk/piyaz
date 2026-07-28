@@ -22,7 +22,12 @@ import {
   noteInputSchema,
   DEEP_LENSES,
 } from "@/lib/mcp/schemas";
-import { getBackend, MCP_HEAVY_LIMIT } from "@/lib/api/rate-limit";
+import {
+  getBackend,
+  mcpRateLimitMessage,
+  MCP_HEAVY_LIMIT,
+  MCP_STANDARD_LIMIT,
+} from "@/lib/api/rate-limit";
 import { isVerboseErrors } from "@/lib/api/error";
 import type { AuthContext } from "@/lib/auth/context";
 import { listOutstandingReconsent } from "@/lib/data/legal";
@@ -101,18 +106,44 @@ function toMcp(result: ToolResult) {
 type McpResponse = ReturnType<typeof toMcp>;
 
 /**
+ * Budget identity for the standard-tier MCP meter.
+ *
+ * Keyed on the registered OAuth client as well as the user, so a person
+ * running several agents at once gets a standard budget per agent rather than
+ * one shared across all of them; keyed on the user alone it would be tighter
+ * than the per-token HTTP budget the middleware already applies. The heavy
+ * tier deliberately keys on the user alone instead: it guards expensive
+ * database work, and a per-client key would scale that budget with the number
+ * of clients a user registers. Falls back to the user alone for actors
+ * carrying no client id, which is every non-MCP actor. Also used by the MCP
+ * route to charge a batch's extra messages before dispatch.
+ *
+ * @param ctx - Resolved auth context.
+ * @returns Key identifying the caller for standard-tier budget purposes.
+ */
+export function mcpCallerKey(ctx: AuthContext): string {
+  const clientId =
+    ctx.actor.source === "mcp" ? (ctx.actor.clientId ?? null) : null;
+  return clientId ? `${ctx.userId}:${clientId}` : ctx.userId;
+}
+
+/**
  * Wrap a tool handler with the cross-cutting concerns every tool shares:
- * the legal re-consent gate (mcp-source actors with an outstanding personal
- * document get a blocking error naming the acceptance URL; one indexed read
- * per call — the stateless transport runs one tool call per POST, so there
- * is nothing to memoize), the heavy-tier rate
- * check (middleware cannot see tool names, so the expensive shapes are
- * throttled here), the sanitised catch-all (mirrors `internalError` in
+ * the standard-tier rate check (one unit per tool call, so a JSON-RPC batch
+ * is billed per message rather than per POST), the legal re-consent gate
+ * (mcp-source actors with an outstanding personal document get a blocking
+ * error naming the acceptance URL), the heavy-tier rate check (middleware
+ * cannot see tool names, so the expensive shapes are throttled here), the
+ * sanitised catch-all (mirrors `internalError` in
  * `lib/api/error.ts`: log server-side, return opaque `Internal error` unless
  * NODE_ENV is exactly `development`), and one structured `mcp_tool` log line
  * per call for observability. The consent gate applies only to
  * `actor.source === "mcp"` (the only actor the MCP route produces): web
  * actors are gated at the page/route layer and system actors are internal.
+ *
+ * The rate check runs first because the consent gate costs a database read.
+ * A batch dispatches every message here, so gating the read behind the budget
+ * is what keeps an over-budget batch from buying one round trip per message.
  *
  * @param name - Tool name (e.g. `"piyaz_get"`).
  * @param ctx - Resolved auth context.
@@ -130,15 +161,34 @@ function wrapTool<P>(
   },
   handler: (params: P, ctx: AuthContext) => Promise<ToolResult>,
 ): (params: P) => Promise<McpResponse> {
+  const callerKey = mcpCallerKey(ctx);
   return async (params: P) => {
     const started = Date.now();
     let response: McpResponse;
     let truncated: boolean | undefined;
     let errName: string | undefined;
+    let blocked: "rate" | "heavy" | "consent" | undefined;
     try {
+      const standard = await getBackend("mcp").check(
+        `mcp-call:${callerKey}`,
+        MCP_STANDARD_LIMIT.max,
+        MCP_STANDARD_LIMIT.window,
+      );
+      if (!standard.allowed) {
+        blocked = "rate";
+        response = err(
+          mcpRateLimitMessage(
+            MCP_STANDARD_LIMIT.max,
+            MCP_STANDARD_LIMIT.window,
+            standard.resetIn,
+          ),
+        );
+        return response;
+      }
       if (ctx.actor.source === "mcp") {
         const outstanding = await listOutstandingReconsent(ctx.userId);
         if (outstanding.length > 0) {
+          blocked = "consent";
           response = err(reconsentMessage(outstanding));
           return response;
         }
@@ -150,6 +200,7 @@ function wrapTool<P>(
           MCP_HEAVY_LIMIT.window,
         );
         if (!check.allowed) {
+          blocked = "heavy";
           response = err(
             `Heavy-tier budget exhausted (${MCP_HEAVY_LIMIT.max}/${MCP_HEAVY_LIMIT.window}s for deep lenses, overviews, wide walks, large batches, category cascades). Retry in ${check.resetIn}s, or use a lighter shape now: piyaz_get fields=[...], lens='summary', or piyaz_search with filters.`,
           );
@@ -183,6 +234,7 @@ function wrapTool<P>(
           ms: Date.now() - started,
           bytesOut,
           ...(truncated !== undefined && { truncated }),
+          ...(blocked !== undefined && { blocked }),
           ...(errName !== undefined && { err: errName }),
         }),
       );

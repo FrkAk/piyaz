@@ -13,6 +13,17 @@ process.env.BETTER_AUTH_URL ??= "https://example.test";
 // captcha-off; tests that exercise the plugin set the secret themselves.
 delete process.env.TURNSTILE_SECRET_KEY;
 
+// Name a proxy header so the suite resolves a per-request client address
+// instead of collapsing every caller into the one shared untrusted bucket.
+// Auth test files each own a `127.0.x.x` range to keep their rate-limit
+// buckets isolated from one another, which only works while an address
+// resolves. `tests/security/client-ip.test.ts` unsets this to exercise the
+// shipping self-host default, where no header is trusted. Requests built for
+// direct `auth.handler` calls also set `x-piyaz-client-ip` to the same value:
+// Better Auth reads only that internal header, and only the HTTP routes and
+// middleware stamp it.
+process.env.TRUSTED_PROXY_HEADER ??= "cf-connecting-ip";
+
 /**
  * Force `NODE_ENV=production` at the test process boundary.
  *

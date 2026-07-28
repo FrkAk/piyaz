@@ -25,8 +25,9 @@ import {
   edgeNoteViolation,
   projectPhaseHints,
   requireProjectId,
+  resolveTagVariants,
   tagTaxonomyHints,
-  tagVariantHints,
+  tagVariantHint,
   translateError,
   type ToolResult,
 } from "@/lib/graph/tools/shared";
@@ -116,6 +117,11 @@ async function resolveEdgeRefs(
  * taxonomy and variants, draft-forbidden fields), each prefixed with the
  * item's key or title and capped at {@link MAX_ITEM_HINTS}.
  *
+ * Variant detection compares proposed tags against the project vocabulary:
+ * the batch resolves each distinct tag once against one
+ * {@link MAX_HINTED_TAGS} allowance, every item reads its hints from that
+ * shared result, and duplicate tags within an item earn one hint.
+ *
  * @param items - Schema-validated task items.
  * @param projectTags - Existing project tag vocabulary.
  * @returns Hint strings.
@@ -125,6 +131,10 @@ function itemQualityHints(
   projectTags: string[],
 ): string[] {
   const hints: string[] = [];
+  const variants = resolveTagVariants(
+    items.flatMap((item) => item.tags ?? []),
+    projectTags,
+  );
   for (const item of items) {
     const label = item.key ?? `"${item.title}"`;
     const itemHints = [
@@ -132,7 +142,10 @@ function itemQualityHints(
       ...acQualityHints(item.acceptanceCriteria),
       ...(item.tags && item.tags.length > 0
         ? [
-            ...tagVariantHints(item.tags, projectTags),
+            ...[...new Set(item.tags)].flatMap((tag) => {
+              const variant = variants.get(tag);
+              return variant ? [tagVariantHint(tag, variant)] : [];
+            }),
             ...tagTaxonomyHints(item.tags),
           ]
         : []),
