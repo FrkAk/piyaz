@@ -43,6 +43,3 @@ jobs:
           better_auth_url: https://dev.app.piyaz.ai
           deploy_script: deploy:cf:dev
           cache_prefix: deploy-dev
-          access_gated: 'true'
-          access_client_id: ${{ secrets.CF_ACCESS_SMOKE_CLIENT_ID }}
-          access_client_secret: ${{ secrets.CF_ACCESS_SMOKE_CLIENT_SECRET }}
