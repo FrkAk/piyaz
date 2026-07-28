@@ -31,24 +31,6 @@ inputs:
       and dev use different widgets. Empty disables the widget, which also
       requires TURNSTILE_SECRET_KEY to be absent from the Worker.
     required: true
-  access_gated:
-    description: >-
-      Set to 'true' when the host sits behind Cloudflare Access. Only then may
-      the smoke downgrade an unreachable host to a warning; a public host always
-      fails hard.
-    required: false
-    default: 'false'
-  access_client_id:
-    description: >-
-      Cloudflare Access service token client id, for smoking a host that sits
-      behind Access. The token's Access policy must use the Service Auth
-      decision. Leave empty for a public host.
-    required: false
-    default: ''
-  access_client_secret:
-    description: Cloudflare Access service token client secret.
-    required: false
-    default: ''
 
 runs:
   using: composite
@@ -107,6 +89,11 @@ runs:
         DATABASE_MIGRATION_URL: ${{ inputs.migration_url }}
       run: bun run db:rls:verify
 
+    # No post-deploy probe follows: Bot Fight Mode (kept deliberately)
+    # challenges any datacenter-origin request before the Worker or even
+    # Access sees it, so a runner-side curl can never verify the live
+    # deployment. The pre-merge workerd smoke covers the bundle; live
+    # verification moves inside Cloudflare (scheduled self-check, PYZ-373).
     - name: Build and deploy Worker
       shell: bash
       env:
@@ -116,93 +103,3 @@ runs:
         CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
         TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
       run: bun run ${{ inputs.deploy_script }}
-
-    # A deploy succeeds even when the Worker serves errors on every request, so
-    # the live deployment is probed before the job reports green. This covers
-    # what the pre-merge workerd smoke cannot: the real hostname, the real
-    # bindings, and the real secrets. A host behind Cloudflare Access needs the
-    # service-token headers to reach the Worker at all; without them the edge
-    # answers for every unauthenticated probe, so an Access-gated caller
-    # downgrades to a warning rather than failing on a response the Worker
-    # never saw. A public caller never takes that path.
-    - name: Smoke the deployed Worker
-      shell: bash
-      env:
-        BASE_URL: ${{ inputs.better_auth_url }}
-        ACCESS_GATED: ${{ inputs.access_gated }}
-        ACCESS_CLIENT_ID: ${{ inputs.access_client_id }}
-        ACCESS_CLIENT_SECRET: ${{ inputs.access_client_secret }}
-      run: |
-        # A successful Access handshake returns a live CF_Authorization JWT in
-        # the header dump, which is not registered with the log masker.
-        trap 'rm -f /tmp/smoke.json /tmp/smoke-headers /tmp/smoke-mcp.json' EXIT
-
-        if { [ -n "$ACCESS_CLIENT_ID" ] && [ -z "$ACCESS_CLIENT_SECRET" ]; } ||
-           { [ -z "$ACCESS_CLIENT_ID" ] && [ -n "$ACCESS_CLIENT_SECRET" ]; }; then
-          echo "::error::Set both access_client_id and access_client_secret, or neither."
-          exit 1
-        fi
-
-        # --max-redirs 0 pins the no-replay invariant: curl strips credentials
-        # across a cross-host redirect but replays arbitrary -H headers, so a
-        # later -L would hand the service token to the redirect target.
-        curl_args=(-sS --max-time 15 --max-redirs 0)
-        if [ -n "$ACCESS_CLIENT_ID" ]; then
-          curl_args+=(-H "CF-Access-Client-Id: $ACCESS_CLIENT_ID"
-                      -H "CF-Access-Client-Secret: $ACCESS_CLIENT_SECRET")
-        fi
-
-        # Access answers ahead of the Worker, so these markers mean the probe
-        # never reached the deployment. `cf-mitigated` is deliberately absent:
-        # it marks a WAF or bot challenge, which must stay a hard failure.
-        access_gate() {
-          grep -qiE 'cloudflare-access|cloudflareaccess\.com' /tmp/smoke-headers 2>/dev/null
-        }
-
-        code=000
-        for attempt in 1 2 3 4 5 6; do
-          code=$(curl "${curl_args[@]}" -o /tmp/smoke.json -D /tmp/smoke-headers \
-            -w '%{http_code}' \
-            "$BASE_URL/api/auth/.well-known/oauth-authorization-server" || echo 000)
-          # Retries cover propagation of a fresh version. A 5xx is the Worker
-          # executing and failing, and an Access gate never clears on retry;
-          # neither gets better with another attempt.
-          if [ "$code" = 200 ] || [ "$code" -ge 500 ] || access_gate; then break; fi
-          [ "$attempt" = 6 ] || sleep 5
-        done
-
-        if [ "$code" != "200" ]; then
-          if [ "$ACCESS_GATED" = "true" ] && access_gate; then
-            if [ -z "$ACCESS_CLIENT_ID" ]; then
-              echo "::warning::$BASE_URL is gated by Cloudflare Access and no smoke service token is configured, so the Worker could not be probed. Set CF_ACCESS_SMOKE_CLIENT_ID/_SECRET to restore this check."
-              exit 0
-            fi
-            echo "::error::Cloudflare Access rejected the smoke service token ($code). Check the token has not expired and its Access policy uses the Service Auth decision."
-            exit 1
-          fi
-          echo "::error::Auth metadata returned $code after deploy; the Worker is serving errors."
-          head -c 500 /tmp/smoke.json
-          exit 1
-        fi
-
-        # The value, not just the key: a wrong BETTER_AUTH_URL binding still
-        # serves well-formed metadata and breaks OAuth for every MCP client.
-        issuer=$(jq -r '.issuer // empty' /tmp/smoke.json)
-        if [ "$issuer" != "$BASE_URL/api/auth" ]; then
-          echo "::error::Auth metadata issuer is \"$issuer\", expected \"$BASE_URL/api/auth\"; BETTER_AUTH_URL is bound wrong."
-          exit 1
-        fi
-
-        # The product surface. A 401 proves the MCP module loaded and the
-        # bearer path ran; a 5xx here is a bundle that deployed and cannot
-        # serve the one endpoint agents call.
-        mcp_code=$(curl "${curl_args[@]}" -o /tmp/smoke-mcp.json -X POST \
-          -H 'content-type: application/json' \
-          -H 'accept: application/json, text/event-stream' \
-          --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
-          -w '%{http_code}' "$BASE_URL/api/mcp" || echo 000)
-        if [ "$mcp_code" != "401" ]; then
-          echo "::error::Unauthenticated POST /api/mcp returned $mcp_code, expected 401."
-          head -c 500 /tmp/smoke-mcp.json
-          exit 1
-        fi
