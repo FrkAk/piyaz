@@ -64,9 +64,13 @@ export function emailVerificationRequired(): boolean {
  * secret gets no captcha plugin and behaves exactly as before, which keeps
  * self-host bootable without a Cloudflare account.
  *
- * This is also the incident lever: unsetting `TURNSTILE_SECRET_KEY` and
- * redeploying drops the plugin, restoring every auth flow if Turnstile itself
- * is unavailable (the plugin fails closed on a siteverify outage).
+ * This is also the server half of the incident lever. A Turnstile outage
+ * fails closed twice: the plugin rejects on siteverify errors, and the client
+ * widget cannot mint tokens so the forms gate themselves shut. Rollback
+ * therefore drops BOTH halves: delete the `TURNSTILE_SECRET_KEY` Worker
+ * secret and clear the environment's `TURNSTILE_SITE_KEY_*` variable, then
+ * redeploy. `scripts/assert-deploy-ready.ts` accepts the both-absent state
+ * and rejects either half alone.
  *
  * @returns `true` when a Turnstile secret is configured.
  */

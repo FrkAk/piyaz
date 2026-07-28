@@ -18,6 +18,10 @@
  *     DATABASE_AUTH_URL (Neon connection strings for the three DB roles).
  *     Cannot be checked from `wrangler.jsonc` alone, so the script shells out
  *     to `wrangler secret list --env production`.
+ *   - Turnstile is all-or-nothing: TURNSTILE_SECRET_KEY (Worker secret) and
+ *     TURNSTILE_SITE_KEY (build env) must be present together or absent
+ *     together. Either half alone ships a broken deploy; both absent is the
+ *     documented rollback state and passes.
  *
  * Run from the `deploy:cf` script chain. Exits with code 1 on any failure
  * and prints a remediation hint.
@@ -135,7 +139,6 @@ const REQUIRED_SECRETS = [
   "DATABASE_URL",
   "DATABASE_SERVICE_ROLE_URL",
   "DATABASE_AUTH_URL",
-  "TURNSTILE_SECRET_KEY",
 ] as const;
 
 interface WranglerSecretEntry {
@@ -196,17 +199,34 @@ if (presentSecrets) {
 
 // The two Turnstile keys arrive by different routes: the secret at runtime
 // via `wrangler secret`, the site key at build time via `next.config.ts`'s
-// `env` block, so they can drift apart. Half-configured is worse than off:
-// the server plugin arms on the secret alone and then rejects every sign-up
-// with `MISSING_RESPONSE`, because no widget was ever built to mint a token.
-if ((process.env.TURNSTILE_SITE_KEY ?? "").length === 0) {
-  failures.push(
-    `TURNSTILE_SITE_KEY is not set in the build environment, but ` +
-      `TURNSTILE_SECRET_KEY is a required production secret. The captcha ` +
-      `plugin would arm server-side with no widget to produce a token, ` +
-      `rejecting every sign-up and sign-in. Export TURNSTILE_SITE_KEY for ` +
-      `the build, or drop TURNSTILE_SECRET_KEY to disable Turnstile.`,
-  );
+// `env` block, so they can drift apart. Either half alone is worse than off,
+// so the check is symmetric rather than making the secret required: the
+// documented rollback for a Turnstile outage is to drop BOTH halves and
+// redeploy, and that state must pass this gate.
+if (presentSecrets) {
+  const secretPresent = presentSecrets.has("TURNSTILE_SECRET_KEY");
+  const siteKeyPresent = (process.env.TURNSTILE_SITE_KEY ?? "").length > 0;
+  if (secretPresent && !siteKeyPresent) {
+    failures.push(
+      `TURNSTILE_SECRET_KEY is registered in the 'production' Wrangler env ` +
+        `but TURNSTILE_SITE_KEY is not set in the build environment. The ` +
+        `captcha plugin would arm server-side with no widget to mint a ` +
+        `token, rejecting every sign-up and sign-in. Export ` +
+        `TURNSTILE_SITE_KEY for the build, or delete the secret to deploy ` +
+        `with Turnstile off.`,
+    );
+  }
+  if (siteKeyPresent && !secretPresent) {
+    failures.push(
+      `TURNSTILE_SITE_KEY is set in the build environment but ` +
+        `TURNSTILE_SECRET_KEY is not registered in the 'production' ` +
+        `Wrangler env. The widget would mint tokens the server never ` +
+        `verifies, leaving bot protection silently off while appearing on. ` +
+        `Set it via 'wrangler secret put TURNSTILE_SECRET_KEY --env ` +
+        `production', or unset TURNSTILE_SITE_KEY to deploy with Turnstile ` +
+        `off.`,
+    );
+  }
 }
 
 if (failures.length > 0) {

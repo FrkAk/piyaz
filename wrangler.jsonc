@@ -106,8 +106,7 @@
           "BROKER_DO_SECRET",
           "DATABASE_URL",
           "DATABASE_SERVICE_ROLE_URL",
-          "DATABASE_AUTH_URL",
-          "TURNSTILE_SECRET_KEY"
+          "DATABASE_AUTH_URL"
         ]
       },
       "vars": {
@@ -216,8 +215,7 @@
           "BROKER_DO_SECRET",
           "DATABASE_URL",
           "DATABASE_SERVICE_ROLE_URL",
-          "DATABASE_AUTH_URL",
-          "TURNSTILE_SECRET_KEY"
+          "DATABASE_AUTH_URL"
         ]
       },
       "vars": {
