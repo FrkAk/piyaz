@@ -32,6 +32,14 @@ const eslintConfig = [
       ".open-next/**",
       ".wrangler/**",
       ".claude/**",
+      // Local tool output, absent from a clean checkout. Unignored, `lint`
+      // fails on a contributor machine while passing in CI, which teaches
+      // people to distrust the gate. Matches the .gitignore entries.
+      "ds-bundle/**",
+      ".ds-sync/**",
+      ".design-sync/**",
+      ".playwright-mcp/**",
+      ".agents/**",
     ],
   },
   {
