@@ -185,3 +185,22 @@ test("nextConfig.headers() applies the always-on rule to /:path*", async () => {
   const keys = rules[0]!.headers.map((h) => h.key);
   for (const key of REQUIRED_KEYS) expect(keys).toContain(key);
 });
+
+test("dev CSP without Turnstile keeps frame-src 'none'", () => {
+  // The fourth corner of the on/off x prod/dev matrix; the other three are
+  // covered in tests/auth/turnstile-config.test.ts.
+  const csp = buildCsp({ isProd: false });
+  expect(csp).toContain("frame-src 'none'");
+  expect(csp).not.toContain("challenges.cloudflare.com");
+});
+
+test("Turnstile and the realtime websocket origin coexist (the CF prod shape)", () => {
+  const csp = buildCsp({
+    isProd: true,
+    nonce: "n",
+    wsOrigin: "wss://app.example",
+    turnstile: true,
+  });
+  expect(csp).toContain("connect-src 'self' wss://app.example");
+  expect(csp).toContain("frame-src https://challenges.cloudflare.com");
+});
