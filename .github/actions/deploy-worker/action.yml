@@ -24,6 +24,13 @@ inputs:
   cache_prefix:
     description: Prefix for the build-artefact cache key.
     required: true
+  turnstile_site_key:
+    description: >-
+      Public Turnstile site key for this environment. Inlined into the client
+      bundle at build time, so it must be present for BOTH build stages. Prod
+      and dev use different widgets. Empty disables the widget, which also
+      requires TURNSTILE_SECRET_KEY to be absent from the Worker.
+    required: true
 
 runs:
   using: composite
@@ -85,4 +92,5 @@ runs:
         BETTER_AUTH_URL: ${{ inputs.better_auth_url }}
         CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare_api_token }}
         CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
+        TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
       run: bun run ${{ inputs.deploy_script }}

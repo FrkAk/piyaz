@@ -135,6 +135,7 @@ const REQUIRED_SECRETS = [
   "DATABASE_URL",
   "DATABASE_SERVICE_ROLE_URL",
   "DATABASE_AUTH_URL",
+  "TURNSTILE_SECRET_KEY",
 ] as const;
 
 interface WranglerSecretEntry {
@@ -191,6 +192,21 @@ if (presentSecrets) {
       );
     }
   }
+}
+
+// The two Turnstile keys arrive by different routes: the secret at runtime
+// via `wrangler secret`, the site key at build time via `next.config.ts`'s
+// `env` block, so they can drift apart. Half-configured is worse than off:
+// the server plugin arms on the secret alone and then rejects every sign-up
+// with `MISSING_RESPONSE`, because no widget was ever built to mint a token.
+if ((process.env.TURNSTILE_SITE_KEY ?? "").length === 0) {
+  failures.push(
+    `TURNSTILE_SITE_KEY is not set in the build environment, but ` +
+      `TURNSTILE_SECRET_KEY is a required production secret. The captcha ` +
+      `plugin would arm server-side with no widget to produce a token, ` +
+      `rejecting every sign-up and sign-in. Export TURNSTILE_SITE_KEY for ` +
+      `the build, or drop TURNSTILE_SECRET_KEY to disable Turnstile.`,
+  );
 }
 
 if (failures.length > 0) {

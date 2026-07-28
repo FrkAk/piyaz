@@ -6,12 +6,21 @@ import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { IconMail } from "@/components/shared/icons";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
+import {
+  TurnstileGate,
+  TURNSTILE_PENDING_MESSAGE,
+  useTurnstile,
+} from "./TurnstileGate";
 
 interface SignUpFormProps {
   /** True when sign-up sends a verification email (email enabled AND the verification gate is on). */
   verificationPending: boolean;
   /** Validated invite return destination; falls back to `/` after sign-up. */
   next?: string | null;
+  /** Public Turnstile site key; `null` disables bot protection (self-host). */
+  turnstileSiteKey?: string | null;
+  /** Per-request CSP nonce for Turnstile's injected script. */
+  nonce?: string;
 }
 
 /**
@@ -35,7 +44,10 @@ interface SignUpFormProps {
 export function SignUpForm({
   verificationPending,
   next = null,
+  turnstileSiteKey = null,
+  nonce,
 }: SignUpFormProps) {
+  const turnstile = useTurnstile(turnstileSiteKey);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -70,13 +82,26 @@ export function SignUpForm({
       return;
     }
 
+    if (!turnstile.ready) {
+      setError(TURNSTILE_PENDING_MESSAGE);
+      return;
+    }
+
     setLoading(true);
-    const payload = { name, email, password, termsAccepted, callbackURL };
+    const payload = {
+      name,
+      email,
+      password,
+      termsAccepted,
+      callbackURL,
+      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
+    };
     const { error: authError } = await signUp.email(payload);
 
     if (authError) {
       setError(authError.message ?? "Sign up failed");
       setLoading(false);
+      turnstile.reset();
       return;
     }
 
@@ -97,16 +122,23 @@ export function SignUpForm({
   async function handleResend() {
     if (sentTo === null || resendStatus !== "idle") return;
     setError(null);
+    if (!turnstile.ready) {
+      setError(TURNSTILE_PENDING_MESSAGE);
+      return;
+    }
     setResendStatus("sending");
     const { error: resendError } = await sendVerificationEmail({
       email: sentTo,
       callbackURL,
+      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
     });
     if (resendError) {
       setError(resendError.message ?? "Could not resend the email");
       setResendStatus("idle");
+      turnstile.reset();
       return;
     }
+    turnstile.reset();
     setResendStatus("sent");
     window.setTimeout(() => setResendStatus("idle"), 60_000);
   }
@@ -147,6 +179,12 @@ export function SignUpForm({
             {error}
           </p>
         ) : null}
+        <TurnstileGate
+          siteKey={turnstileSiteKey}
+          nonce={nonce}
+          onToken={turnstile.setToken}
+          handleRef={turnstile.handleRef}
+        />
         <button
           type="button"
           onClick={handleResend}
@@ -254,6 +292,13 @@ export function SignUpForm({
           </a>
         </p>
       </div>
+
+      <TurnstileGate
+        siteKey={turnstileSiteKey}
+        nonce={nonce}
+        onToken={turnstile.setToken}
+        handleRef={turnstile.handleRef}
+      />
 
       {error ? (
         <p

@@ -4,6 +4,18 @@ import { useState, type FormEvent } from "react";
 import { requestPasswordReset } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
+import {
+  TurnstileGate,
+  TURNSTILE_PENDING_MESSAGE,
+  useTurnstile,
+} from "./TurnstileGate";
+
+interface ForgotPasswordFormProps {
+  /** Public Turnstile site key; `null` disables bot protection (self-host). */
+  turnstileSiteKey?: string | null;
+  /** Per-request CSP nonce for Turnstile's injected script. */
+  nonce?: string;
+}
 
 /**
  * Password-reset request form for `/forgot-password`.
@@ -16,7 +28,11 @@ import { AuthSubmit } from "./AuthSubmit";
  *
  * @returns Email form that resolves into a neutral confirmation strip.
  */
-export function ForgotPasswordForm() {
+export function ForgotPasswordForm({
+  turnstileSiteKey = null,
+  nonce,
+}: ForgotPasswordFormProps = {}) {
+  const turnstile = useTurnstile(turnstileSiteKey);
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,14 +47,24 @@ export function ForgotPasswordForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    if (!turnstile.ready) {
+      setError(TURNSTILE_PENDING_MESSAGE);
+      return;
+    }
     setLoading(true);
     const { error: authError } = await requestPasswordReset({
       email,
       redirectTo: "/reset-password",
+      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
     });
-    if (authError && authError.status === 429) {
-      setError("Too many requests. Try again in a minute.");
+    if (authError) {
+      setError(
+        authError.status === 429
+          ? "Too many requests. Try again in a minute."
+          : (authError.message ?? "Could not send the email"),
+      );
       setLoading(false);
+      turnstile.reset();
       return;
     }
     setSubmitted(true);
@@ -71,6 +97,13 @@ export function ForgotPasswordForm() {
         value={email}
         onChange={(event) => setEmail(event.target.value)}
         placeholder="you@company.com"
+      />
+
+      <TurnstileGate
+        siteKey={turnstileSiteKey}
+        nonce={nonce}
+        onToken={turnstile.setToken}
+        handleRef={turnstile.handleRef}
       />
 
       {error ? (

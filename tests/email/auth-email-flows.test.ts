@@ -1,5 +1,5 @@
 import { test, expect, afterAll, afterEach, beforeEach, mock } from "bun:test";
-import { FakeEmailSender } from "@/tests/setup/fake-email";
+import { FakeEmailSender, settle } from "@/tests/setup/fake-email";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 import type { EmailSender } from "@/lib/email/types";
@@ -71,14 +71,14 @@ type AuthInstance = typeof authEmail;
  * @param options - Optional cookie and user-agent headers.
  * @returns BA handler response.
  */
-function authPost(
+async function authPost(
   instance: AuthInstance,
   path: string,
   body: unknown,
   ip: string,
   options: { cookie?: string; userAgent?: string } = {},
 ): Promise<Response> {
-  return instance.handler(
+  const response = await instance.handler(
     new Request(`https://example.test/api/auth${path}`, {
       body: JSON.stringify(body),
       headers: {
@@ -91,6 +91,8 @@ function authPost(
       method: "POST",
     }),
   );
+  await settle();
+  return response;
 }
 
 /**
@@ -102,13 +104,13 @@ function authPost(
  * @param cookie - Optional session cookie.
  * @returns BA handler response (redirects are not followed).
  */
-function authGet(
+async function authGet(
   instance: AuthInstance,
   url: string,
   ip: string,
   cookie?: string,
 ): Promise<Response> {
-  return instance.handler(
+  const response = await instance.handler(
     new Request(url, {
       headers: {
         "cf-connecting-ip": ip,
@@ -116,6 +118,8 @@ function authGet(
       },
     }),
   );
+  await settle();
+  return response;
 }
 
 /**

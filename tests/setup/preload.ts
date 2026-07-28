@@ -93,6 +93,19 @@ mock.module("@/lib/auth/session", () => ({
 import { setup } from "./global";
 import { beforeAll, afterEach } from "bun:test";
 
+// Keep the sign-up deliverability gate off the network. Sign-up runs on nearly
+// every auth test, and the live DoH probe would make each one slow, network
+// dependent, and wrong: the suite's `@test.local` addresses are NXDOMAIN, so a
+// real lookup rejects them. Tests that exercise the gate install their own
+// resolver and restore this default afterwards.
+//
+// Dynamic import so it lands after the `server-only` neutralization above;
+// a static import would hoist above it and throw.
+const { setRecipientDomainResolver } = await import(
+  "@/lib/auth/recipient-domain"
+);
+setRecipientDomainResolver(async () => "deliverable");
+
 beforeAll(async () => {
   await setup();
 }, 120000);

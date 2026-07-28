@@ -6,12 +6,19 @@ const COMMON_DIRECTIVES = [
   "img-src 'self' data: blob:",
   "font-src 'self'",
   "manifest-src 'self'",
-  "frame-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
   "base-uri 'self'",
   "object-src 'none'",
 ];
+
+/**
+ * Turnstile's script and iframe origin. Cloudflare requires this host in both
+ * `script-src` and `frame-src`; the widget renders in a cross-origin iframe,
+ * so `frame-src 'none'` blocks it outright.
+ * Source: developers.cloudflare.com/turnstile/reference/content-security-policy/
+ */
+const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
 const PERMISSIONS_POLICY =
   "camera=(), microphone=(), geolocation=(), interest-cohort=()";
@@ -53,6 +60,10 @@ export type HeaderRule = {
  *   `wss:` schemes across browsers (w3c/webappsec-csp#7). Passing the exact
  *   origin keeps the allowance same-origin only, rather than the blanket
  *   `wss:` scheme that would let injected script reach any host.
+ * @param opts.turnstile - True when Turnstile is configured. Widens `frame-src`
+ *   from `'none'` to Turnstile's origin (its widget is a cross-origin iframe)
+ *   and adds that origin to `script-src`. Deployments without Turnstile keep
+ *   the tighter policy, so self-host gives up nothing.
  * @returns Serialized CSP directive string.
  * @throws Error if `isProd` is true and no `nonce` is supplied.
  */
@@ -60,29 +71,45 @@ export function buildCsp(opts: {
   isProd: boolean;
   nonce?: string;
   wsOrigin?: string;
+  turnstile?: boolean;
 }): string {
-  const { isProd, nonce, wsOrigin } = opts;
+  const { isProd, nonce, wsOrigin, turnstile = false } = opts;
 
   let scriptSrc: string;
   let connectSrc: string;
   let workerSrc: string;
 
+  // `'strict-dynamic'` makes supporting browsers ignore host allowlists in
+  // `script-src`, so the nonce on Turnstile's loader is what actually admits
+  // it there; the explicit origin covers browsers without strict-dynamic.
+  const turnstileScriptSrc = turnstile ? ` ${TURNSTILE_ORIGIN}` : "";
+
   if (isProd) {
     if (!nonce) {
       throw new Error("buildCsp: nonce is required in production");
     }
-    scriptSrc = `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`;
+    scriptSrc = `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${turnstileScriptSrc}`;
     connectSrc = wsOrigin
       ? `connect-src 'self' ${wsOrigin}`
       : "connect-src 'self'";
     workerSrc = "worker-src 'self'";
   } else {
-    scriptSrc = "script-src 'self' 'unsafe-eval' 'unsafe-inline'";
+    scriptSrc = `script-src 'self' 'unsafe-eval' 'unsafe-inline'${turnstileScriptSrc}`;
     connectSrc = "connect-src 'self' ws: wss:";
     workerSrc = "worker-src 'self' blob:";
   }
 
-  const directives = [...COMMON_DIRECTIVES, scriptSrc, connectSrc, workerSrc];
+  const frameSrc = turnstile
+    ? `frame-src ${TURNSTILE_ORIGIN}`
+    : "frame-src 'none'";
+
+  const directives = [
+    ...COMMON_DIRECTIVES,
+    frameSrc,
+    scriptSrc,
+    connectSrc,
+    workerSrc,
+  ];
   if (isProd) directives.push("upgrade-insecure-requests");
   return directives.join("; ");
 }

@@ -1,5 +1,5 @@
 import { test, expect, afterAll, afterEach, beforeEach, mock } from "bun:test";
-import { FakeEmailSender } from "@/tests/setup/fake-email";
+import { FakeEmailSender, settle } from "@/tests/setup/fake-email";
 import { truncateAll } from "@/tests/setup/schema";
 import type { EmailSender } from "@/lib/email/types";
 
@@ -70,13 +70,13 @@ type AuthInstance = typeof authGated;
  * @param ip - Loopback IP for the BA rate-limit bucket.
  * @returns BA handler response.
  */
-function authPost(
+async function authPost(
   instance: AuthInstance,
   path: string,
   body: unknown,
   ip: string,
 ): Promise<Response> {
-  return instance.handler(
+  const response = await instance.handler(
     new Request(`https://example.test/api/auth${path}`, {
       body: JSON.stringify(body),
       headers: {
@@ -87,6 +87,8 @@ function authPost(
       method: "POST",
     }),
   );
+  await settle();
+  return response;
 }
 
 /**

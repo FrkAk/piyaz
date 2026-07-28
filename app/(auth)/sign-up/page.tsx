@@ -10,6 +10,7 @@ import { emailVerificationRequired, signupsDisabled } from "@/lib/config/env";
 import { safeInviteNext } from "@/lib/auth/invite-next";
 import { MARKETING_URL } from "@/lib/config/urls";
 import { isEmailEnabled } from "@/lib/email";
+import { turnstileProps } from "@/lib/auth/turnstile-props";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,7 @@ interface SignUpPageProps {
 export default async function SignUpPage({ searchParams }: SignUpPageProps) {
   const next = safeInviteNext((await searchParams).next);
   const verificationPending = isEmailEnabled() && emailVerificationRequired();
+  const turnstile = await turnstileProps();
   return (
     <AuthShell
       form={
@@ -69,6 +71,7 @@ export default async function SignUpPage({ searchParams }: SignUpPageProps) {
               <SignUpForm
                 verificationPending={verificationPending}
                 next={next}
+                {...turnstile}
               />
             </>
           )}
