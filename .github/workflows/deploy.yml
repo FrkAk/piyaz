@@ -53,3 +53,4 @@ jobs:
           better_auth_url: https://app.piyaz.ai
           deploy_script: deploy:cf
           cache_prefix: deploy
+          turnstile_site_key: ${{ vars.TURNSTILE_SITE_KEY_PROD }}

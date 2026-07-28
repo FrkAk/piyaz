@@ -5,7 +5,7 @@ import {
   getSessionFromCtx,
 } from "better-auth/api";
 import { and, eq, gt, ne, sql } from "drizzle-orm";
-import { organization, jwt } from "better-auth/plugins";
+import { captcha, organization, jwt } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -30,7 +30,15 @@ import {
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
-import { emailVerificationRequired, signupsDisabled } from "@/lib/config/env";
+import {
+  emailVerificationRequired,
+  signupsDisabled,
+  turnstileConfigured,
+} from "@/lib/config/env";
+import {
+  checkRecipientDomain,
+  recipientDomain,
+} from "@/lib/auth/recipient-domain";
 import { isEmailConfiguredAtBoot } from "@/lib/email";
 import {
   sendChangeEmailApprovalEmail,
@@ -141,6 +149,76 @@ export const GRANTABLE_OAUTH_SCOPES = [
   "email",
   "offline_access",
 ] as const;
+
+/**
+ * Endpoints the Turnstile captcha plugin guards.
+ *
+ * Every path here either mails an attacker-chosen address or re-mails a
+ * victim's, which is the abuse surface a bot signup exercises. Named
+ * explicitly rather than relying on the plugin's defaults, because those omit
+ * `/send-verification-email` (a direct mail trigger) and because Better Auth
+ * 1.6.23 matches these by substring, not exact path, so an implicit list is a
+ * silent over-match waiting to happen.
+ *
+ * Substring matching is why `/sign-in` alone is unsafe to list. Of the four
+ * below, three collide with a longer path: `/sign-in/email` with
+ * `/sign-in/email-otp`, and `/request-password-reset` with both
+ * `/email-otp/request-password-reset` and
+ * `/phone-number/request-password-reset`. Better Auth exempts only the first
+ * of those internally, and this deployment enables neither the `emailOTP` nor
+ * the `phoneNumber` plugin, so none of the three is reachable. Adding
+ * either plugin would gate its paths as a side effect.
+ *
+ * Better Auth 1.7 switches to exact-and-wildcard matching and drops the
+ * built-in email-otp exemption. Because this list is four exact paths with no
+ * wildcard, that upgrade is a no-op here: every entry keeps matching exactly
+ * what it matches today, and nothing new becomes gated.
+ *
+ * Exported so the test iterates the real list instead of a copy, which is what
+ * makes a newly added endpoint fail loudly rather than silently go uncovered.
+ */
+export const CAPTCHA_PROTECTED_ENDPOINTS = [
+  "/sign-up/email",
+  "/sign-in/email",
+  "/send-verification-email",
+  "/request-password-reset",
+] as const;
+
+/**
+ * Hostname pin for captcha tokens.
+ *
+ * Turnstile reports the hostname a token was solved on, so pinning it stops a
+ * token minted against the dev widget from being replayed at prod. The pin is
+ * silently inert if the option is omitted, so an unusable `BETTER_AUTH_URL`
+ * says so rather than leaving bot protection looking armed while cross-origin
+ * replay works. Unreachable on the Cloudflare target, which refuses to boot
+ * without `BETTER_AUTH_URL`.
+ *
+ * @returns The single allowed hostname, or `undefined` when none can be
+ *   derived, which leaves the plugin's hostname check disabled.
+ */
+function captchaAllowedHostnames(): string[] | undefined {
+  const url = process.env.BETTER_AUTH_URL;
+  try {
+    if (url) return [new URL(url).hostname];
+  } catch {
+    // Fall through to the warning below.
+  }
+  console.warn(
+    JSON.stringify({
+      event: "turnstile_hostname_pin_absent",
+      hint: "BETTER_AUTH_URL is unset or unparseable, so captcha tokens are not pinned to this deployment's hostname and a token minted elsewhere would verify here.",
+    }),
+  );
+  return undefined;
+}
+
+/**
+ * Recipient domains rejected at sign-up because they provably cannot receive
+ * mail. Message is deliberately about the address, not about bot protection.
+ */
+const UNDELIVERABLE_DOMAIN_MESSAGE =
+  "That email domain cannot receive mail. Check the address and try again.";
 
 if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
   throw new Error(
@@ -337,6 +415,28 @@ export function createAuth() {
     // better-auth issue #3233 (activeOrganizationId is type-erased otherwise).
     plugins: [
       jwt(),
+      // Bot protection on the mail-triggering auth endpoints. Registered only
+      // when a secret is configured so self-host stays bootable without a
+      // Cloudflare account; see `turnstileConfigured`. Placed before
+      // `nextCookies()`, which must stay last.
+      //
+      // The plugin forwards the caller's address to siteverify as `remoteip`,
+      // taken from `advanced.ipAddress`. That resolver masks IPv6 to a /64, so
+      // an IPv6 visitor's `remoteip` is their network, not their address.
+      // Cloudflare documents `remoteip` as optional with no mismatch handling,
+      // so this costs signal quality rather than correctness, and 1.6.23
+      // offers no per-call opt-out short of disabling IP tracking globally,
+      // which would also widen every rate-limit bucket.
+      ...(turnstileConfigured()
+        ? [
+            captcha({
+              provider: "cloudflare-turnstile",
+              secretKey: process.env.TURNSTILE_SECRET_KEY!,
+              endpoints: [...CAPTCHA_PROTECTED_ENDPOINTS],
+              allowedHostnames: captchaAllowedHostnames(),
+            }),
+          ]
+        : []),
       organization({
         ac,
         membershipLimit: ORGANIZATION_MEMBERSHIP_LIMIT,
@@ -634,6 +734,34 @@ export function createAuth() {
       //    off the request body; the durable evidence is the
       //    `legal_acceptances` row written in `after`.
       before: createAuthMiddleware(async (ctx) => {
+        // Reject sign-ups whose domain provably cannot receive mail before the
+        // account exists and before a send is attempted. A single such address
+        // costs five delivery failures (Cloudflare retries the send) and lands
+        // on the account suppression list, which is scored against the <2%
+        // hard-bounce target for every other recipient. Endpoint-scoped rather
+        // than hung off `databaseHooks.user.create`, because that also fires
+        // for provider-verified addresses on non-credential paths.
+        if (ctx.path === "/sign-up/email") {
+          // Skip the network probe when the endpoint will reject anyway.
+          if (signupsDisabled()) return;
+          const email = (ctx.body as { email?: unknown } | undefined)?.email;
+          // `recipientDomain` returns null for anything unprobeable, including
+          // a domain past the RFC 1035 length limit; it owns that bound so a
+          // second caller cannot lose it.
+          const domain =
+            typeof email === "string" ? recipientDomain(email) : null;
+          if (domain !== null) {
+            // `unknown` (resolver error, timeout) falls through: a DNS blip
+            // must never become a sign-up outage.
+            if ((await checkRecipientDomain(domain)) === "undeliverable") {
+              throw new APIError("BAD_REQUEST", {
+                message: UNDELIVERABLE_DOMAIN_MESSAGE,
+                code: "EMAIL_DOMAIN_UNDELIVERABLE",
+              });
+            }
+          }
+          return;
+        }
         if (!ctx.path.startsWith("/organization/")) return;
         const session = await getSessionFromCtx(ctx);
         if (session) {

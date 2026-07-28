@@ -5,12 +5,17 @@ import Link from "next/link";
 import { signIn } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
+import { TurnstileGate, useTurnstile } from "./TurnstileGate";
 
 interface SignInFormProps {
   /** Whether the deploy can deliver reset emails; gates the Forgot-password link. */
   passwordResetEnabled: boolean;
   /** Validated invite return destination; falls back to `/` after sign-in. */
   next?: string | null;
+  /** Public Turnstile site key; `null` disables bot protection (self-host). */
+  turnstileSiteKey?: string | null;
+  /** Per-request CSP nonce for Turnstile's injected script. */
+  nonce?: string;
 }
 
 /**
@@ -28,7 +33,10 @@ interface SignInFormProps {
 export function SignInForm({
   passwordResetEnabled,
   next = null,
+  turnstileSiteKey = null,
+  nonce,
 }: SignInFormProps) {
+  const turnstile = useTurnstile(turnstileSiteKey);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -47,9 +55,19 @@ export function SignInForm({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    if (!turnstile.ready) {
+      setError(turnstile.blockedMessage);
+      return;
+    }
+
     setLoading(true);
 
-    const { error: authError } = await signIn.email({ email, password });
+    const { error: authError } = await signIn.email({
+      email,
+      password,
+      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
+    });
 
     if (authError) {
       setError(
@@ -58,6 +76,7 @@ export function SignInForm({
           : (authError.message ?? "Sign in failed"),
       );
       setLoading(false);
+      turnstile.reset();
       return;
     }
 
@@ -122,6 +141,11 @@ export function SignInForm({
       ) : null}
 
       <AuthSubmit isLoading={loading}>Sign in</AuthSubmit>
+      <TurnstileGate
+        siteKey={turnstileSiteKey}
+        nonce={nonce}
+        {...turnstile.gateProps}
+      />
     </form>
   );
 }

@@ -14,10 +14,22 @@ import {
 import { buildCsp } from "@/lib/security/headers";
 import { stampClientIpHeader } from "@/lib/security/client-ip";
 import { safeInviteNext } from "@/lib/auth/invite-next";
+import { turnstileSiteKey } from "@/lib/config/env";
 import { isPublicCacheableAuthPath } from "@/lib/auth/public-cache-paths";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Pages that render a Turnstile widget, and so need its origin in `frame-src`
+ * and `script-src`. Kept in step with the call sites of `turnstileProps()`.
+ */
+const TURNSTILE_WIDGET_PATHS: ReadonlySet<string> = new Set([
+  "/sign-in",
+  "/sign-up",
+  "/forgot-password",
+  "/verify-email",
+]);
 
 /**
  * Generate a per-request CSP nonce. Edge-runtime compatible: avoids
@@ -50,7 +62,18 @@ export async function middleware(request: NextRequest) {
     isProd && process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare"
       ? `${wsScheme}://${request.nextUrl.host}`
       : undefined;
-  const csp = buildCsp({ isProd, nonce, wsOrigin });
+  // Keyed on the public site key, not the secret: middleware runs on the edge
+  // where only `NEXT_PUBLIC_*` is inlined, and the site key is exactly the
+  // signal for whether a Turnstile widget will render on this deploy. Scoped
+  // to the four pages that actually render one, so the rest of the app keeps
+  // `frame-src 'none'` rather than carrying a framing allowance it never uses.
+  const csp = buildCsp({
+    isProd,
+    nonce,
+    wsOrigin,
+    turnstile:
+      turnstileSiteKey() !== null && TURNSTILE_WIDGET_PATHS.has(pathname),
+  });
   const withCsp = <T extends NextResponse>(response: T): T => {
     response.headers.set("Content-Security-Policy", csp);
     return response;

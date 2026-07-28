@@ -1,5 +1,5 @@
 import { test, expect, afterEach, beforeEach, mock, spyOn } from "bun:test";
-import { FakeEmailSender } from "@/tests/setup/fake-email";
+import { FakeEmailSender, settle } from "@/tests/setup/fake-email";
 import type { EmailSender } from "@/lib/email/types";
 
 /**
@@ -20,6 +20,7 @@ mock.module("@/lib/email/_sender", () => ({
 }));
 
 const { sendPasswordChangedEmail } = await import("@/lib/auth/emails");
+const { EMAIL_BUDGET } = await import("@/lib/email/budget");
 
 const RECIPIENT = "delivery-fail@test.local";
 const ORIGINAL_EMAIL_TRANSPORT = process.env.EMAIL_TRANSPORT;
@@ -59,7 +60,7 @@ test("an error delivery result logs the structured event without the recipient a
   _platformSender = fake;
 
   sendPasswordChangedEmail({ email: RECIPIENT, name: "Fail Case" }, {});
-  await Bun.sleep(0);
+  await settle();
 
   expect(fake.sent.length).toBe(1);
   const { event, raw } = capturedFailureEvent();
@@ -78,11 +79,69 @@ test("a rejected send logs the structured event without the recipient and does n
   };
 
   sendPasswordChangedEmail({ email: RECIPIENT, name: "Fail Case" }, {});
-  await Bun.sleep(0);
+  await settle();
 
   const { event, raw } = capturedFailureEvent();
   expect(event.event).toBe("auth_email_send_failed");
   expect(event.template).toBe("passwordChanged");
   expect(event.message).toBe("network down");
   expect(raw).not.toContain(RECIPIENT);
+});
+
+test("an over-budget recipient stops reaching the transport", async () => {
+  // The per-recipient cap is the mail-bomb defence: past the budget the send
+  // must be dropped before the transport, not merely retried or logged after
+  // delivery. Uses its own address so the shared counter starts clean.
+  const fake = new FakeEmailSender();
+  _platformSender = fake;
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    for (let i = 0; i < EMAIL_BUDGET.defaultMax + 2; i++) {
+      sendPasswordChangedEmail(
+        { email: "flooded@test.local", name: "Flooded" },
+        {},
+      );
+      await settle();
+    }
+    expect(fake.sent.length).toBe(EMAIL_BUDGET.defaultMax);
+    const events = warnSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((line) => line.includes("auth_email_budget_exceeded"));
+    expect(events.length).toBe(2);
+    // The structured event must not carry the recipient address.
+    expect(events.join("\n")).not.toContain("flooded@test.local");
+  } finally {
+    warnSpy.mockRestore();
+  }
+});
+
+test("a provider failure does not spend the recipient's allowance", async () => {
+  // The budget counts delivered mail, not attempts. Counting at the check
+  // instead would let a transient Cloudflare Email Sending outage burn a real
+  // user's hourly cap and leave them unable to receive the mail at all once
+  // the provider recovered.
+  const fake = new FakeEmailSender();
+  fake.nextResult = { kind: "error", code: "boom", message: "provider down" };
+  _platformSender = fake;
+
+  for (let i = 0; i < EMAIL_BUDGET.defaultMax + 3; i++) {
+    sendPasswordChangedEmail(
+      { email: "outage@test.local", name: "Outage" },
+      {},
+    );
+    await settle();
+  }
+  expect(fake.sent.length).toBe(EMAIL_BUDGET.defaultMax + 3);
+
+  // The provider recovers; the recipient still has their full allowance.
+  fake.nextResult = { kind: "ok", messageId: "recovered" };
+  const before = fake.sent.length;
+  for (let i = 0; i < EMAIL_BUDGET.defaultMax; i++) {
+    sendPasswordChangedEmail(
+      { email: "outage@test.local", name: "Outage" },
+      {},
+    );
+    await settle();
+  }
+  expect(fake.sent.length).toBe(before + EMAIL_BUDGET.defaultMax);
 });

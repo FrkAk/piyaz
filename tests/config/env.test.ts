@@ -1,5 +1,10 @@
 import { test, expect, afterEach } from "bun:test";
-import { parseEnvInt, signupsDisabled } from "@/lib/config/env";
+import {
+  parseEnvInt,
+  signupsDisabled,
+  turnstileConfigured,
+  turnstileSiteKey,
+} from "@/lib/config/env";
 import pkg from "@/package.json";
 
 test("parses a plain non-negative integer", () => {
@@ -89,3 +94,38 @@ for (const name of OPEN_SIGNUP_SCRIPTS) {
     );
   });
 }
+
+test("turnstileSiteKey treats an unset or empty key as not configured", () => {
+  // `next.config.ts` inlines the empty string when the build variable is
+  // absent, so "" is the real shape of "off", not undefined.
+  const original = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  try {
+    delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    expect(turnstileSiteKey()).toBeNull();
+    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = "";
+    expect(turnstileSiteKey()).toBeNull();
+    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = "0x4AAAAAAA";
+    expect(turnstileSiteKey()).toBe("0x4AAAAAAA");
+  } finally {
+    if (original === undefined)
+      delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    else process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = original;
+  }
+});
+
+test("turnstileConfigured reads the secret, not the public key", () => {
+  // The two halves arrive by different routes and are checked separately, so
+  // the server gate must never be satisfied by the client-side value alone.
+  const original = process.env.TURNSTILE_SECRET_KEY;
+  try {
+    delete process.env.TURNSTILE_SECRET_KEY;
+    expect(turnstileConfigured()).toBe(false);
+    process.env.TURNSTILE_SECRET_KEY = "";
+    expect(turnstileConfigured()).toBe(false);
+    process.env.TURNSTILE_SECRET_KEY = "1x000";
+    expect(turnstileConfigured()).toBe(true);
+  } finally {
+    if (original === undefined) delete process.env.TURNSTILE_SECRET_KEY;
+    else process.env.TURNSTILE_SECRET_KEY = original;
+  }
+});

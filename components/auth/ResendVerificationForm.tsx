@@ -5,12 +5,17 @@ import Link from "next/link";
 import { sendVerificationEmail } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
+import { TurnstileGate, useTurnstile } from "./TurnstileGate";
 
 interface ResendVerificationFormProps {
   /** Session email when signed in; renders a free email input when null. */
   email: string | null;
   /** Validated invite return destination threaded through the emailed link. */
   next: string | null;
+  /** Public Turnstile site key; `null` disables bot protection (self-host). */
+  turnstileSiteKey?: string | null;
+  /** Per-request CSP nonce for Turnstile's injected script. */
+  nonce?: string;
 }
 
 /**
@@ -29,7 +34,10 @@ interface ResendVerificationFormProps {
 export function ResendVerificationForm({
   email,
   next,
+  turnstileSiteKey = null,
+  nonce,
 }: ResendVerificationFormProps) {
+  const turnstile = useTurnstile(turnstileSiteKey);
   const [address, setAddress] = useState(email ?? "");
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const [alreadyVerified, setAlreadyVerified] = useState(false);
@@ -49,12 +57,18 @@ export function ResendVerificationForm({
     event.preventDefault();
     if (status !== "idle") return;
     setError(null);
+    if (!turnstile.ready) {
+      setError(turnstile.blockedMessage);
+      return;
+    }
     setStatus("sending");
     const { error: authError } = await sendVerificationEmail({
       email: address,
       callbackURL,
+      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
     });
     if (authError) {
+      turnstile.reset();
       if (authError.code === "EMAIL_ALREADY_VERIFIED") {
         setAlreadyVerified(true);
         return;
@@ -67,6 +81,9 @@ export function ResendVerificationForm({
       setStatus("idle");
       return;
     }
+    // The token was spent by the send; without a reset the retry after the
+    // cooldown would replay it and fail verification.
+    turnstile.reset();
     setStatus("sent");
     window.setTimeout(() => setStatus("idle"), 60_000);
   }
@@ -146,6 +163,11 @@ export function ResendVerificationForm({
       <AuthSubmit isLoading={status === "sending"} disabled={status === "sent"}>
         Send verification link
       </AuthSubmit>
+      <TurnstileGate
+        siteKey={turnstileSiteKey}
+        nonce={nonce}
+        {...turnstile.gateProps}
+      />
     </form>
   );
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AuthLinkButton } from "@/components/auth/AuthLinkButton";
 import { AuthStatusFrame } from "@/components/auth/AuthStatusFrame";
 import { ResendVerificationForm } from "@/components/auth/ResendVerificationForm";
+import { turnstileProps } from "@/lib/auth/turnstile-props";
 import { safeInviteNext } from "@/lib/auth/invite-next";
 import { getSession } from "@/lib/auth/session";
 import { isEmailEnabled } from "@/lib/email";
@@ -131,6 +132,7 @@ export default async function VerifyEmailPage({
         <ResendVerificationForm
           email={session?.user.email ?? null}
           next={next}
+          {...(await turnstileProps())}
         />
       ) : (
         <p

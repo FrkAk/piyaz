@@ -17,6 +17,7 @@ import {
   checkActionUserRateLimit,
 } from "@/lib/actions/rate-limit-action";
 import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
+import { settle } from "@/tests/setup/fake-email";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
 import { wranglerRatelimits } from "@/tests/setup/wrangler";
@@ -206,6 +207,10 @@ describe("changePasswordAction notification", () => {
         newPassword: "valid-new-pass-12",
       });
       expect(result.ok).toBe(true);
+      // The notification is a floated send gated on the per-recipient email
+      // budget (`lib/email/budget.ts`), so it reaches the transport a few
+      // microtasks after the action resolves. Drain them before asserting.
+      await settle();
       const logged = info.mock.calls.map((c) => String(c[0])).join("\n");
       expect(logged).toContain("[email:log]");
       expect(logged).toContain("password was changed");

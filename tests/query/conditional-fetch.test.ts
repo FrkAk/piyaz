@@ -17,6 +17,10 @@ const fetchMock = (response: Response) => {
     void args;
     return Promise.resolve(response);
   });
+  // Never restored. bun test runs every file in one process, so a later
+  // file that captures `globalThis.fetch` at module scope as its "real"
+  // fetch (tests/auth/recipient-domain.test.ts does) will capture this stub
+  // when it loads after this file.
   globalThis.fetch = fn as unknown as typeof globalThis.fetch;
   return fn;
 };

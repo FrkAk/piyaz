@@ -173,3 +173,39 @@ test("RateLimit headers are withheld on the shared-cacheable auth documents", as
   );
   expect(other.headers.get("RateLimit")).not.toBeNull();
 });
+
+test("the CSP admits Turnstile only on the pages that render the widget", async () => {
+  // buildCsp is unit-tested with an explicit flag; nothing else pins that
+  // middleware actually passes it. Drop the wiring and production ships
+  // `frame-src 'none'`, which blocks the widget for every visitor and makes
+  // every protected form unsubmittable, with a green suite.
+  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = "0x4AAAAAAA-test";
+  try {
+    const onAuthPage = await middleware(
+      new NextRequest("https://example.test/sign-in"),
+    );
+    expect(onAuthPage.headers.get("Content-Security-Policy")).toContain(
+      "frame-src https://challenges.cloudflare.com",
+    );
+
+    // Everywhere else keeps the tighter policy: four pages render a widget,
+    // so the whole app does not need the framing allowance.
+    const elsewhere = await middleware(
+      new NextRequest("https://example.test/api/mcp"),
+    );
+    expect(elsewhere.headers.get("Content-Security-Policy")).toContain(
+      "frame-src 'none'",
+    );
+  } finally {
+    delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  }
+});
+
+test("an unconfigured deployment keeps frame-src 'none' on the auth pages too", async () => {
+  const response = await middleware(
+    new NextRequest("https://example.test/sign-in"),
+  );
+  const csp = response.headers.get("Content-Security-Policy") ?? "";
+  expect(csp).toContain("frame-src 'none'");
+  expect(csp).not.toContain("challenges.cloudflare.com");
+});

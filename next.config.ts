@@ -14,6 +14,7 @@ const TARGET_FILES = [
   ["lib/realtime/_broker", `lib/realtime/_broker.${DRIVER_TARGET}`],
   ["lib/email/_sender", `lib/email/_sender.${DRIVER_TARGET}`],
   ["lib/email/_defer", `lib/email/_defer.${DRIVER_TARGET}`],
+  ["lib/email/_budget", `lib/email/_budget.${DRIVER_TARGET}`],
 ] as const;
 
 /**
@@ -74,10 +75,14 @@ async function buildNextConfig(): Promise<NextConfig> {
      * `NEXT_PUBLIC_SIGNUPS_ENABLED`: `"true"` opts a hosted deploy into open
      * signup (set by `deploy:cf` and `deploy:cf:dev`); hosted deploys are
      * invite-only without it.
+     * `NEXT_PUBLIC_TURNSTILE_SITE_KEY`: the widget's public site key. Empty
+     * disables the widget and keeps `frame-src 'none'`; the paired
+     * `TURNSTILE_SECRET_KEY` runtime secret arms the server-side plugin.
      */
     env: {
       NEXT_PUBLIC_DEPLOY_TARGET: process.env.DEPLOY_TARGET ?? "",
       NEXT_PUBLIC_SIGNUPS_ENABLED: process.env.SIGNUPS_ENABLED ?? "",
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.TURNSTILE_SITE_KEY ?? "",
     },
     experimental: {
       serverActions: {
