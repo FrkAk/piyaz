@@ -102,14 +102,15 @@ export function authRateLimitRules(): Record<
 > {
   const perAddress =
     (max: number) =>
-    (request: Request): { window: number; max: number } => ({
-      window: 60,
-      max:
-        request.headers.get(INTERNAL_CLIENT_IP_HEADER) ||
-        hasTrustedAddressSource()
-          ? max
-          : max * UNTRUSTED_BUDGET_FACTOR,
-    });
+    (request: Request): { window: number; max: number } => {
+      const widen =
+        !request.headers.get(INTERNAL_CLIENT_IP_HEADER) &&
+        !hasTrustedAddressSource();
+      return {
+        window: 60,
+        max: widen ? max * UNTRUSTED_BUDGET_FACTOR : max,
+      };
+    };
   return {
     "/sign-in/email": perAddress(5),
     "/sign-up/email": perAddress(3),
