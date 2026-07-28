@@ -1,6 +1,6 @@
 import { test, expect, mock, afterEach } from "bun:test";
 import * as realOauth2 from "better-auth/oauth2";
-import { MAX_JSON_RPC_BATCH } from "@/lib/mcp/batch";
+import { MAX_JSON_RPC_BATCH, batchSurcharge } from "@/lib/mcp/batch";
 import { MCP_STANDARD_LIMIT } from "@/lib/api/rate-limit";
 import { makeAuthContext } from "@/lib/auth/context";
 
@@ -75,6 +75,33 @@ function listBatch(count: number): unknown[] {
     method: "tools/list",
   }));
 }
+
+/**
+ * Build a `tools/call` batch of the given size.
+ *
+ * @param count - Number of messages.
+ * @returns The batch array.
+ */
+function callBatch(count: number): unknown[] {
+  return Array.from({ length: count }, (_, i) => ({
+    jsonrpc: "2.0",
+    id: i,
+    method: "tools/call",
+    params: { name: "piyaz_workspace", arguments: {} },
+  }));
+}
+
+test("batchSurcharge bills only non-tool messages beyond the POST", () => {
+  const surcharge = (parsed: unknown[]) =>
+    batchSurcharge({ oversized: false, count: parsed.length, parsed });
+
+  // Every `tools/call` is billed once inside `wrapTool`; charging it here
+  // again would double the cost of a batched tool.
+  expect(surcharge(callBatch(MAX_JSON_RPC_BATCH))).toBe(0);
+  expect(surcharge(listBatch(MAX_JSON_RPC_BATCH))).toBe(MAX_JSON_RPC_BATCH - 1);
+  expect(surcharge([...callBatch(3), ...listBatch(2)])).toBe(1);
+  expect(batchSurcharge({ oversized: false, count: 1 })).toBe(0);
+});
 
 test("attack: an oversized batch with a valid token is refused with 413", async () => {
   stubPayload = { sub: crypto.randomUUID(), azp: "batch-cap-client" };

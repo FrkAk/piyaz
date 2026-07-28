@@ -2,10 +2,14 @@ import { test, expect } from "bun:test";
 import type { NextRequest } from "next/server";
 import {
   ADDRESS_CEILING,
+  MCP_HEAVY_LIMIT,
+  MCP_STANDARD_LIMIT,
+  RATE_LIMIT_RULES,
   checkAddressCeiling,
   extractKey,
   matchRule,
 } from "@/lib/api/rate-limit";
+import { wranglerRatelimits } from "@/tests/setup/wrangler";
 
 /**
  * Attack-path coverage for rate-limit key derivation.
@@ -244,5 +248,44 @@ test("key hashing falls back to plain SHA-256 without a secret", async () => {
   } finally {
     if (original === undefined) delete process.env.BETTER_AUTH_SECRET;
     else process.env.BETTER_AUTH_SECRET = original;
+  }
+});
+
+test("declared budgets equal the Cloudflare binding limits that enforce them", async () => {
+  const BINDING_BY_KEY = {
+    api: "RATE_LIMIT_API",
+    auth: "RATE_LIMIT_AUTH",
+    mcp: "RATE_LIMIT_MCP",
+    mcpHeavy: "RATE_LIMIT_MCP_HEAVY",
+  } as const;
+
+  for (const env of ["production", "dev"] as const) {
+    const simpleByName = new Map(
+      (await wranglerRatelimits(env)).map((b) => [b.name, b.simple]),
+    );
+    for (const rule of RATE_LIMIT_RULES) {
+      const simple = simpleByName.get(BINDING_BY_KEY[rule.bindingKey ?? "api"]);
+      expect({
+        env,
+        pattern: rule.pattern,
+        max: rule.max,
+        window: rule.window,
+      }).toEqual({
+        env,
+        pattern: rule.pattern,
+        max: simple!.limit,
+        window: simple!.period,
+      });
+    }
+    const constantsByBinding: [string, { max: number; window: number }][] = [
+      ["RATE_LIMIT_MCP", MCP_STANDARD_LIMIT],
+      ["RATE_LIMIT_MCP_HEAVY", MCP_HEAVY_LIMIT],
+      ["RATE_LIMIT_ADDRESS", ADDRESS_CEILING],
+    ];
+    for (const [binding, constant] of constantsByBinding) {
+      const simple = simpleByName.get(binding);
+      expect(constant.max).toBe(simple!.limit);
+      expect(constant.window).toBe(simple!.period);
+    }
   }
 });
