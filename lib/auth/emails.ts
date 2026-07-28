@@ -3,7 +3,7 @@ import "server-only";
 import { jwtVerify } from "jose";
 import { getEmailSender } from "@/lib/email";
 import { enrollEmailSend } from "@/lib/email/_defer";
-import { consumeEmailBudget } from "@/lib/email/budget";
+import { consumeEmailBudget, recipientDigestForLog } from "@/lib/email/budget";
 import {
   resolveBrandConfig,
   senderFor,
@@ -83,6 +83,7 @@ function deliverAuthEmail(
           JSON.stringify({
             event: "auth_email_budget_exceeded",
             template,
+            recipient: await recipientDigestForLog(to),
           }),
         );
         return null;

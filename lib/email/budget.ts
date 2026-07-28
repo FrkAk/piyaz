@@ -27,14 +27,34 @@ export const EMAIL_BUDGET = { max: 3, windowSeconds: 3600 } as const;
  * @returns The opaque budget key.
  */
 async function budgetKey(to: string, template: string): Promise<string> {
+  return `emailbudget:${template}:${await recipientHex(to)}`;
+}
+
+/**
+ * Hex SHA-256 of the normalized recipient address.
+ *
+ * @param to - Recipient address.
+ * @returns The full lowercase hex digest.
+ */
+async function recipientHex(to: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(to.trim().toLowerCase()),
   );
-  const hex = Array.from(new Uint8Array(digest))
+  return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
-  return `emailbudget:${template}:${hex}`;
+}
+
+/**
+ * Attribution handle for budget log events: a stable digest prefix that
+ * identifies one recipient across events without carrying the address.
+ *
+ * @param to - Recipient address.
+ * @returns The first 12 hex characters of the recipient digest.
+ */
+export async function recipientDigestForLog(to: string): Promise<string> {
+  return (await recipientHex(to)).slice(0, 12);
 }
 
 /**
