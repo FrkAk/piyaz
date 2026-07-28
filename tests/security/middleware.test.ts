@@ -13,8 +13,8 @@ import { INTERNAL_CLIENT_IP_HEADER } from "@/lib/security/client-ip";
 /**
  * Attack-path coverage for the real `middleware()` pipeline, which no other
  * file imports: the identity stamp, per-address budget isolation, the
- * address-ceiling 429 body, and RateLimit-header suppression on the
- * shared-cacheable auth documents.
+ * address-ceiling 429 body and tighter-headroom advertisement, and
+ * RateLimit-header suppression on the shared-cacheable auth documents.
  *
  * The stamp assertion reads the `x-middleware-request-*` encoding
  * `NextResponse.next({ request: { headers } })` emits — the only observable
@@ -28,6 +28,7 @@ const CLIENT_A = "203.0.113.61";
 const CLIENT_B = "203.0.113.62";
 const CLIENT_C = "203.0.113.63";
 const CLIENT_D = "203.0.113.64";
+const CLIENT_E = "203.0.113.65";
 
 const ORIGINAL_ENV = {
   DEPLOY_TARGET: process.env.DEPLOY_TARGET,
@@ -122,6 +123,37 @@ test("a ceiling rejection names the shared address limit, not the caller's own b
   expect(body.error).toContain("Shared address limit");
   expect(body.error).toContain(String(ADDRESS_CEILING.max));
   expect(body.error).not.toContain("piyaz_create");
+});
+
+test("an admitted request advertises the ceiling's headroom when it is tighter than the rule's", async () => {
+  const rule = matchRule("/api/mcp")!;
+  const ceilingKey = `addr:${CLIENT_E}`;
+  for (let i = 0; i < ADDRESS_CEILING.max - 5; i++) {
+    await getBackend("address").check(
+      ceilingKey,
+      ADDRESS_CEILING.max,
+      ADDRESS_CEILING.window,
+    );
+  }
+
+  const response = await middleware(
+    new NextRequest("https://example.test/api/mcp", {
+      method: "POST",
+      headers: {
+        "x-forwarded-for": CLIENT_E,
+        authorization: "Bearer fresh-token",
+      },
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(response.headers.get("RateLimit")).toContain(
+    `limit=${rule.max}, remaining=4`,
+  );
+  expect(response.headers.get("RateLimit-Policy")).toBe(
+    `${rule.max};w=${rule.window}`,
+  );
+  expect(response.headers.get("Retry-After")).toBeNull();
 });
 
 test("RateLimit headers are withheld on the shared-cacheable auth documents", async () => {
