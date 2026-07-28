@@ -85,14 +85,11 @@ export function fenceCloses(line: string, fence: FenceState): boolean {
 /**
  * Core `[[…]]` ref pattern; group 1 is the inner text (no newline).
  *
- * The inner run is captured through a lookahead and then consumed by its own
- * backreference, which makes it atomic: the engine cannot re-try shorter
- * inners when the closing `]]` fails to appear. The naive
- * `\[\[([^\]\n]+)\]\]` backtracks the full remaining line at every offset of a
- * body like `[[[[[[…`, which is quadratic and runs inside the note write
- * transaction. Atomicity costs nothing in matches: the run excludes `]`, so a
- * shorter inner is always followed by a non-`]` character and could never have
- * satisfied `\]\]` anyway.
+ * The inner run is captured through a lookahead and consumed by its own
+ * backreference, making it atomic: the engine cannot re-try shorter inners
+ * when the closing `]]` is missing, so a `[[[[[[…` body stays linear.
+ * Match-equivalent to the plain capture: the run excludes `]`, so a shorter
+ * inner is always followed by a non-`]` and could never satisfy `\]\]`.
  */
 const REF_PATTERN = String.raw`\[\[(?=([^\]\n]+))\1\]\]`;
 
@@ -169,23 +166,18 @@ export function classifyRef(
  * Yield the inner text of every `[[…]]` ref on a line, skipping refs consumed
  * by an inline code span.
  *
- * Walks the line once, taking whichever construct starts earliest, which is
- * what the equivalent alternation's leftmost-match-wins gives. The two must
- * stay interleaved: a backtick the ref branch swallows can never open a span,
- * so locating spans independently would invent one and drop later refs.
- *
- * The regex form re-examines the remainder of the line at every offset, so a
- * body of unclosed `[[` costs O(n^2) inside the note write transaction. Here
- * the cursor only moves forward and `nextBracketClose` is recomputed only once
- * it falls behind, so the whole line costs one pass even though a failed `[[`
- * advances a single character. That single step is load-bearing: jumping to
- * the `]` instead would skip any backtick in between, and a span it should
- * have opened would go missing, silently changing which refs are found.
+ * Walks the line once, taking whichever construct starts earliest
+ * (leftmost-match-wins, matching the alternation it replaced; pinned by the
+ * differential test). The constructs must stay interleaved: a backtick the
+ * ref branch swallows can never open a span. A failed `[[` advances one
+ * character, never jumps to the `]`: jumping would skip a backtick in
+ * between and change which refs are found. `nextBracketClose` is recomputed
+ * only once the cursor passes it, keeping the walk linear.
  *
  * @param line - One body line, already known to be outside a fence.
  * @returns Inner texts in document order.
  */
-function scanLineRefs(line: string): string[] {
+export function scanLineRefs(line: string): string[] {
   const inners: string[] = [];
   let nextBracketClose = -1;
   let i = 0;
@@ -322,7 +314,7 @@ function stripClosingSequence(text: string): string {
  * @param line - One body line.
  * @returns The heading, or null when the line is not one.
  */
-function matchHeading(line: string): BodySection | null {
+export function matchHeading(line: string): BodySection | null {
   const match = line.match(ATX_HEADING_RE);
   if (!match) return null;
   const text = stripClosingSequence(match[2] ?? "");

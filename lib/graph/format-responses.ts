@@ -248,17 +248,15 @@ export function formatProjectMeta(meta: ProjectMeta): string {
 /**
  * Suffix marking a tag vocabulary that hit the read cap.
  *
- * The aggregation is ordered most-used first and cut at
- * {@link MAX_PROJECT_TAGS}, so a project past that point is shown a partial
- * list. Saying so is what stops an agent coining a tag that already exists
- * further down the tail. A project holding exactly the cap is marked too, which
- * is the safe direction: over-warning costs a clause, under-warning costs a
- * duplicate tag.
+ * The aggregation is cut at {@link MAX_PROJECT_TAGS} most-used, so a project
+ * past that point is shown a partial list; unmarked, an agent coins a tag
+ * that already exists further down the tail. A count exactly at the cap is
+ * marked too; the complete-at-exactly-cap case over-warns harmlessly.
  *
  * @param count - Number of tags being rendered.
  * @returns The marker, or an empty string when the list is complete.
  */
-function tagVocabularyCutoff(count: number): string {
+export function tagVocabularyCutoff(count: number): string {
   return count >= MAX_PROJECT_TAGS
     ? ` (showing the ${MAX_PROJECT_TAGS} most-used; more exist)`
     : "";

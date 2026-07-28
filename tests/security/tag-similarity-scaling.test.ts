@@ -17,13 +17,14 @@ import {
 
 const BUDGET_MS = 1_000;
 const OVERSIZED_LENGTH = 200;
-/** Just under the 64-character compare ceiling, so the loop reaches
- *  `levenshtein` and the length-delta guard is the thing doing the bounding. */
+/** Just under the 64-character compare ceiling, so every admitted pair runs
+ *  the full `levenshtein` matrix. */
 const COMPARABLE_LENGTH = 60;
 const VOCABULARY = 500;
 
 /**
- * Build a vocabulary of mutually dissimilar tags of a given length.
+ * Build distinct tags of a given length that differ from each other only in
+ * a short index prefix, so a pair can sit within variant distance.
  *
  * @param count - How many tags to build.
  * @param length - Character length of each tag.
@@ -34,6 +35,23 @@ function tags(count: number, length: number): string[] {
     { length: count },
     (_, i) => `${String(i).padStart(6, "0")}${"a".repeat(length - 6)}`,
   );
+}
+
+/**
+ * Build mutually dissimilar tags: each tag repeats its own index block, so
+ * any two differ across every block and no pair is within variant distance.
+ * No early exit fires, which is what makes a timing test discriminate.
+ *
+ * @param count - How many tags to build.
+ * @param length - Character length of each tag.
+ * @param offset - Index offset, for a pool disjoint from another call's.
+ * @returns Distinct alphanumeric tags.
+ */
+function dissimilarTags(count: number, length: number, offset = 0): string[] {
+  return Array.from({ length: count }, (_, i) => {
+    const block = String(i + offset).padStart(5, "0");
+    return block.repeat(Math.ceil(length / block.length)).slice(0, length);
+  });
 }
 
 test("attack: many long proposed tags against a large vocabulary stay bounded", () => {
@@ -48,12 +66,12 @@ test("attack: many long proposed tags against a large vocabulary stay bounded", 
 });
 
 test("attack: comparable-length tags reach the distance check and stay bounded", () => {
-  // These survive the compare ceiling, so this is the case the length-delta
-  // guard has to bound rather than the length guard.
-  const existing = tags(VOCABULARY, COMPARABLE_LENGTH);
-  const proposed = tags(VOCABULARY, COMPARABLE_LENGTH).map(
-    (tag) => `z${tag.slice(1)}`,
-  );
+  // Nothing matches and nothing early-exits, so every comparison the
+  // distinct-tag allowance admits runs a full 60x60 matrix against the whole
+  // vocabulary. The allowance is the bound; without it this shape spends
+  // seconds of CPU inside one MCP call.
+  const existing = dissimilarTags(VOCABULARY, COMPARABLE_LENGTH);
+  const proposed = dissimilarTags(VOCABULARY, COMPARABLE_LENGTH, VOCABULARY);
 
   const start = performance.now();
   tagVariantHints(proposed, existing);
