@@ -71,7 +71,11 @@ test("sign-up is rejected for an undeliverable domain, and no user row is writte
   resolveAs("undeliverable");
   const body = signUpBody("someone@parked.example", "Someone");
 
-  await expect(auth.api.signUpEmail({ body })).rejects.toThrow();
+  // Message match pins the rejection to the deliverability gate with its
+  // address-focused copy, not just any failure on the path.
+  await expect(auth.api.signUpEmail({ body })).rejects.toThrow(
+    "That email domain cannot receive mail",
+  );
 
   expect(await userCount("someone@parked.example")).toBe(0);
 });

@@ -158,6 +158,87 @@ test("NXDOMAIN is undeliverable", async () => {
   expect(await checkRecipientDomain("nope.invalid")).toBe("undeliverable");
 });
 
+test("SERVFAIL fails open as unknown, not as no-such-name", async () => {
+  // A DNSSEC signing error or unreachable authoritative servers answer
+  // Status 2 with HTTP 200. Treating that as an empty record set would
+  // hard-reject every user on the domain for the duration of the outage.
+  stubResolver({ "dnssec-broken.example:15": { Status: 2 } });
+  expect(await checkRecipientDomain("dnssec-broken.example")).toBe("unknown");
+});
+
+test("a non-200 DoH response fails open as unknown", async () => {
+  globalThis.fetch = (async () =>
+    new Response("rate limited", { status: 429 })) as unknown as typeof fetch;
+  expect(await checkRecipientDomain("throttled.example")).toBe("unknown");
+});
+
+test("exchanges are probed in preference order, not answer order", async () => {
+  // The live exchange has the lowest preference but arrives last in the
+  // answer. Probing answer order would spend both probe slots on the dead
+  // exchanges and reject the domain.
+  stubResolver({
+    "pref.example:15": {
+      Status: 0,
+      Answer: [
+        answer(15, "20 dead-a.pref.example."),
+        answer(15, "30 dead-b.pref.example."),
+        answer(15, "10 live.pref.example."),
+      ],
+    },
+    "dead-a.pref.example:1": { Status: 0, Answer: [] },
+    "dead-a.pref.example:28": { Status: 0, Answer: [] },
+    "dead-b.pref.example:1": { Status: 0, Answer: [] },
+    "dead-b.pref.example:28": { Status: 0, Answer: [] },
+    "live.pref.example:1": { Status: 0, Answer: [answer(1, "203.0.113.50")] },
+  });
+  expect(await checkRecipientDomain("pref.example")).toBe("deliverable");
+});
+
+test("a truncated exchange list without a routable hit fails open", async () => {
+  // Three exchanges, cutoff probes two, both dead; the third was never
+  // examined, so the domain cannot be asserted dead.
+  stubResolver({
+    "long.example:15": {
+      Status: 0,
+      Answer: [
+        answer(15, "10 dead-a.long.example."),
+        answer(15, "20 dead-b.long.example."),
+        answer(15, "30 unprobed.long.example."),
+      ],
+    },
+    "dead-a.long.example:1": { Status: 0, Answer: [] },
+    "dead-a.long.example:28": { Status: 0, Answer: [] },
+    "dead-b.long.example:1": { Status: 0, Answer: [] },
+    "dead-b.long.example:28": { Status: 0, Answer: [] },
+  });
+  expect(await checkRecipientDomain("long.example")).toBe("unknown");
+});
+
+test("IPv4-mapped and uncompressed IPv6 loopback are non-routable", async () => {
+  stubResolver({
+    "mapped.example:15": {
+      Status: 0,
+      Answer: [answer(15, "10 mx.mapped.example.")],
+    },
+    "mx.mapped.example:1": { Status: 0, Answer: [] },
+    "mx.mapped.example:28": {
+      Status: 0,
+      Answer: [answer(28, "::ffff:127.0.0.1")],
+    },
+    "longform.example:15": {
+      Status: 0,
+      Answer: [answer(15, "10 mx.longform.example.")],
+    },
+    "mx.longform.example:1": { Status: 0, Answer: [] },
+    "mx.longform.example:28": {
+      Status: 0,
+      Answer: [answer(28, "0:0:0:0:0:0:0:1")],
+    },
+  });
+  expect(await checkRecipientDomain("mapped.example")).toBe("undeliverable");
+  expect(await checkRecipientDomain("longform.example")).toBe("undeliverable");
+});
+
 test("second exchange rescues a first that does not resolve", async () => {
   stubResolver({
     "two.example:15": {

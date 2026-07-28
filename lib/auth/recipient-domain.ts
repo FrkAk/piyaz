@@ -17,16 +17,26 @@ const RECORD_TYPE = { A: 1, MX: 15, AAAA: 28 } as const;
 /** DNS RCODE for a successful response. */
 const RCODE_NOERROR = 0;
 
+/** DNS RCODE for an authoritative "no such name" answer. */
+const RCODE_NXDOMAIN = 3;
+
 /**
- * How many MX exchanges to resolve before giving up. Mail is delivered to the
- * lowest-preference reachable host, so a domain whose top two exchanges both
- * fail to resolve is treated as undeliverable rather than paying a lookup per
- * record on a domain that publishes a long list.
+ * How many MX exchanges to resolve before giving up, taken in preference
+ * order. A domain is asserted undeliverable only when every exchange was
+ * probed; a longer list that exhausts this cutoff without a routable hit
+ * fails open instead, because the unprobed exchanges could still accept mail.
  */
 const MAX_EXCHANGES_PROBED = 2;
 
 /** Abort budget for a single DoH lookup, in milliseconds. */
 const LOOKUP_TIMEOUT_MS = 2000;
+
+/**
+ * Abort budget for the whole probe, in milliseconds. Caps the tail added to
+ * the sign-up POST when a domain's nameservers blackhole queries; expiry
+ * fails the in-flight lookups, which surface as `unknown`.
+ */
+const PROBE_DEADLINE_MS = 4000;
 
 /** Minimal shape of the DoH JSON response this module reads. */
 interface DohResponse {
@@ -62,24 +72,32 @@ export function setRecipientDomainResolver(
  *
  * @param name - Fully-qualified name to query.
  * @param type - Numeric record type.
+ * @param deadline - Whole-probe abort signal shared across lookups.
  * @returns Parsed answer data strings, or `null` when the lookup itself failed
- *   (network error, timeout, non-200, SERVFAIL) as opposed to returning no
- *   records.
+ *   (network error, timeout, non-200, SERVFAIL, REFUSED) as opposed to
+ *   returning no records.
  */
-async function resolve(name: string, type: number): Promise<string[] | null> {
+async function resolve(
+  name: string,
+  type: number,
+  deadline: AbortSignal,
+): Promise<string[] | null> {
   const url = `${DOH_ENDPOINT}?name=${encodeURIComponent(name)}&type=${type}`;
   try {
     const response = await fetch(url, {
       headers: { accept: "application/dns-json" },
-      signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
+      signal: AbortSignal.any([
+        deadline,
+        AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
+      ]),
     });
     if (!response.ok) return null;
     const body = (await response.json()) as DohResponse;
-    if (body.Status !== RCODE_NOERROR) {
-      // NXDOMAIN and friends are authoritative "no such name" answers, not
-      // resolver failures, so they resolve to an empty record set.
-      return [];
-    }
+    // Only NXDOMAIN is an authoritative "no such name" answer. SERVFAIL,
+    // REFUSED, and the rest are resolver-side failures delivered with HTTP
+    // 200, and must fail open rather than read as an empty record set.
+    if (body.Status === RCODE_NXDOMAIN) return [];
+    if (body.Status !== RCODE_NOERROR) return null;
     return (body.Answer ?? [])
       .filter((answer) => answer.type === type)
       .map((answer) => answer.data ?? "")
@@ -118,8 +136,23 @@ const NON_ROUTABLE_V4 = [
 function isRoutable(address: string): boolean {
   const value = address.trim().toLowerCase();
   if (value.includes(":")) {
-    // IPv6: unspecified, loopback, link-local (fe80::/10), unique-local (fc00::/7).
+    // IPv4-mapped (::ffff:a.b.c.d) delegates to the IPv4 ranges.
+    if (value.startsWith("::ffff:") && value.includes(".")) {
+      const mapped = value.slice("::ffff:".length);
+      return !NON_ROUTABLE_V4.some((range) => range.test(mapped));
+    }
+    // IPv6: unspecified, loopback (compressed or fully written out),
+    // link-local (fe80::/10), unique-local (fc00::/7).
     if (value === "::" || value === "::1") return false;
+    const hextets = value.split(":");
+    if (hextets.length === 8) {
+      const canonical = hextets
+        .map((hextet) => hextet.replace(/^0+(?=.)/, ""))
+        .join(":");
+      if (canonical === "0:0:0:0:0:0:0:0" || canonical === "0:0:0:0:0:0:0:1") {
+        return false;
+      }
+    }
     return !/^(fe[89ab]|f[cd])/.test(value);
   }
   return !NON_ROUTABLE_V4.some((range) => range.test(value));
@@ -129,17 +162,33 @@ function isRoutable(address: string): boolean {
  * Whether a name resolves to at least one publicly routable address.
  *
  * @param name - Host name to resolve.
+ * @param deadline - Whole-probe abort signal shared across lookups.
  * @returns `true` when a routable A or AAAA record exists, `false` when the
  *   name has no address records or only non-routable ones, `null` when the
  *   lookups failed.
  */
-async function hasRoutableAddress(name: string): Promise<boolean | null> {
-  const a = await resolve(name, RECORD_TYPE.A);
+async function hasRoutableAddress(
+  name: string,
+  deadline: AbortSignal,
+): Promise<boolean | null> {
+  const a = await resolve(name, RECORD_TYPE.A, deadline);
   if (a === null) return null;
   if (a.some(isRoutable)) return true;
-  const aaaa = await resolve(name, RECORD_TYPE.AAAA);
+  const aaaa = await resolve(name, RECORD_TYPE.AAAA, deadline);
   if (aaaa === null) return null;
   return aaaa.some(isRoutable);
+}
+
+/**
+ * Parse the preference number off a DoH MX answer for delivery-order sorting.
+ *
+ * @param data - Raw MX answer data (`"10 mx1.example.com."`).
+ * @returns The numeric preference, or `MAX_SAFE_INTEGER` for unparseable data
+ *   so garbage sorts last.
+ */
+function mxPreference(data: string): number {
+  const preference = Number.parseInt(data.trim(), 10);
+  return Number.isFinite(preference) ? preference : Number.MAX_SAFE_INTEGER;
 }
 
 /**
@@ -177,16 +226,18 @@ export async function checkRecipientDomain(
 ): Promise<DeliverabilityVerdict> {
   if (_resolverOverride !== null) return _resolverOverride(domain);
 
-  const mx = await resolve(domain, RECORD_TYPE.MX);
+  const deadline = AbortSignal.timeout(PROBE_DEADLINE_MS);
+  const mx = await resolve(domain, RECORD_TYPE.MX, deadline);
   if (mx === null) return "unknown";
 
-  const exchanges = mx
+  const exchanges = [...mx]
+    .sort((a, b) => mxPreference(a) - mxPreference(b))
     .map(parseExchange)
     .filter((host): host is string => host !== null);
 
   if (mx.length === 0) {
     // No MX at all: RFC 5321 falls back to the domain's own address records.
-    const implicit = await hasRoutableAddress(domain);
+    const implicit = await hasRoutableAddress(domain, deadline);
     if (implicit === null) return "unknown";
     return implicit ? "deliverable" : "undeliverable";
   }
@@ -200,14 +251,17 @@ export async function checkRecipientDomain(
 
   let sawResolverFailure = false;
   for (const exchange of exchanges.slice(0, MAX_EXCHANGES_PROBED)) {
-    const reachable = await hasRoutableAddress(exchange);
+    const reachable = await hasRoutableAddress(exchange, deadline);
     if (reachable === null) {
       sawResolverFailure = true;
       continue;
     }
     if (reachable) return "deliverable";
   }
-  return sawResolverFailure ? "unknown" : "undeliverable";
+  if (sawResolverFailure) return "unknown";
+  // Exchanges beyond the cutoff were never probed, so their domain cannot be
+  // asserted dead; only a fully probed list earns "undeliverable".
+  return exchanges.length > MAX_EXCHANGES_PROBED ? "unknown" : "undeliverable";
 }
 
 /**

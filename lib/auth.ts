@@ -604,9 +604,15 @@ export function createAuth() {
         // than hung off `databaseHooks.user.create`, because that also fires
         // for provider-verified addresses on non-credential paths.
         if (ctx.path === "/sign-up/email") {
+          // Skip the network probe when the endpoint will reject anyway
+          // (signups disabled) or the body has not passed validation yet and
+          // the address exceeds RFC 5321's 254-octet path limit.
+          if (signupsDisabled()) return;
           const email = (ctx.body as { email?: unknown } | undefined)?.email;
           const domain =
-            typeof email === "string" ? recipientDomain(email) : null;
+            typeof email === "string" && email.length <= 254
+              ? recipientDomain(email)
+              : null;
           if (domain !== null) {
             // `unknown` (resolver error, timeout) falls through: a DNS blip
             // must never become a sign-up outage.
