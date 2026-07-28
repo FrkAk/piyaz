@@ -1,0 +1,34 @@
+name: Workers Smoke
+
+# Required-check twin of workers-smoke.yml. Branch protection requires the
+# "Serve the built Worker on workerd" context, and a path-filtered workflow
+# that never starts leaves that context Expected forever, blocking any PR
+# that touches none of the smoke's paths (e.g. a .github-only change). This
+# job reports the context green for exactly the PRs the real workflow skips.
+# The paths-ignore list MUST mirror workers-smoke.yml's paths list; on a PR
+# touching both kinds of files both workflows run, this one passes instantly
+# and the real smoke still gates.
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'app/**'
+      - 'lib/**'
+      - 'components/**'
+      - 'middleware.ts'
+      - 'worker-cf.ts'
+      - 'next.config.ts'
+      - 'open-next.config.ts'
+      - 'wrangler.jsonc'
+      - 'scripts/smoke-workers.ts'
+      - 'package.json'
+      - 'bun.lock'
+
+jobs:
+  smoke:
+    name: Serve the built Worker on workerd
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - run: echo "No Worker-affecting path changed; the workerd smoke does not apply to this PR."
