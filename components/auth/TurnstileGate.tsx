@@ -80,6 +80,10 @@ interface TurnstileGateProps {
  * nonce, and Turnstile propagates the nonce it is given to the resources it
  * injects. Without it the widget's own scripts are blocked.
  *
+ * `action` is Cloudflare's Spin attribution marker, analytics-only: the
+ * server does not configure `expectedAction`, so verification never keys on
+ * it.
+ *
  * @param props - Site key, CSP nonce, token callback, and reset handle.
  * @returns The widget, or null when Turnstile is not configured.
  */
@@ -106,7 +110,11 @@ export function TurnstileGate({
     <Turnstile
       ref={widget}
       siteKey={siteKey}
-      options={{ appearance: "interaction-only", size: "flexible" }}
+      options={{
+        appearance: "interaction-only",
+        size: "flexible",
+        action: "turnstile-spin-v2",
+      }}
       scriptOptions={nonce !== undefined ? { nonce } : undefined}
       onSuccess={(token) => onToken(token)}
       onExpire={() => onToken(null)}
