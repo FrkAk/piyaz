@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { ensureCacheControl, ensureNoStore } from "@/lib/security/headers";
+import { stampClientIpHeader } from "@/lib/security/client-ip";
 
 /**
  * Allowlist of Better Auth HTTP paths (post-`/api/auth` basePath form,
@@ -119,6 +120,10 @@ function normalizeAuthPath(pathname: string): string | null {
  * stay cacheable while every session-bearing surface is pinned to `no-store`.
  * Disallowed paths 404 before reaching `auth.handler`.
  *
+ * The client-address header is stamped here, not only in middleware: the
+ * middleware matcher's extension exclusion lets extension-suffixed paths
+ * (e.g. `/reset-password/<token>.json`) reach this handler unstamped.
+ *
  * @param request - Incoming GET or POST to `/api/auth/*`.
  * @returns Better Auth's response with a project-owned Cache-Control, or 404.
  */
@@ -132,7 +137,9 @@ async function handler(request: Request): Promise<Response> {
   ) {
     return new Response("Not Found", { status: 404 });
   }
-  const response = await auth.handler(request);
+  const headers = new Headers(request.headers);
+  stampClientIpHeader(headers);
+  const response = await auth.handler(new Request(request, { headers }));
   if (PUBLIC_CACHEABLE_PATHS.has(path)) {
     return ensureCacheControl(response, JWKS_CACHE_CONTROL);
   }

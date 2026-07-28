@@ -1,8 +1,27 @@
-import { getIPFromHeader, normalizeIP } from "@better-auth/core/utils/ip";
+import {
+  findInvalidTrustedProxies,
+  getIPFromHeader,
+  normalizeIP,
+} from "@better-auth/core/utils/ip";
 import * as z from "zod";
 
 /** Header the Cloudflare edge sets on the hosted target. */
 const EDGE_HEADER = "cf-connecting-ip";
+
+/**
+ * Internal header carrying the address {@link resolveClientIp} resolved for
+ * this request. Better Auth reads only this header, so both limbs share one
+ * identity by construction.
+ *
+ * Trust contract: the value is only meaningful after {@link
+ * stampClientIpHeader} ran. Middleware stamps every matched request, and every
+ * route that hands a request-controlled `Request` to `auth.handler` must stamp
+ * again before the call, because the middleware matcher's extension exclusion
+ * lets some paths reach a handler without it. The name is reserved:
+ * {@link trustedProxyHeader} refuses it and {@link addressPolicyError} fails
+ * boot on it, so the resolver can never read the header the app itself writes.
+ */
+export const INTERNAL_CLIENT_IP_HEADER = "x-piyaz-client-ip";
 
 /**
  * Prefix length an IPv6 address is masked to before it becomes an identity.
@@ -38,20 +57,9 @@ export const UNTRUSTED_IP_KEY = "no-trusted-ip";
 
 /**
  * Multiplier applied to a per-address budget once every caller shares one
- * bucket, i.e. only where {@link hasTrustedAddressSource} is false.
- *
- * A budget sized for one caller becomes an instance-wide ceiling the moment
- * identity collapses, and 5 sign-ins per minute for a whole deployment denies
- * service to ordinary traffic: a handful of colleagues signing in at the same
- * time lock each other out, and one caller can hold every login closed. So the
- * shared bucket is scaled to an aggregate ceiling instead.
- *
- * This is looser than a declared deployment and much tighter than no policy at
- * all. Before this policy a caller who sent a proxy header picked its own
- * bucket, so the brute-force budget bounded nothing; here it is bounded, just
- * across the instance rather than per caller. Declaring
- * `TRUSTED_PROXY_HEADER` restores the tight per-address budgets, which is why
- * the unresolved-address warning names it.
+ * bucket. A budget sized for one caller becomes an instance-wide ceiling the
+ * moment identity collapses, so the shared bucket is scaled to an aggregate
+ * ceiling: bounded, but across the instance rather than per caller.
  */
 export const UNTRUSTED_BUDGET_FACTOR = 20;
 
@@ -98,9 +106,10 @@ function isCloudflareTarget(): boolean {
  * comma-separated `TRUSTED_PROXIES` environment variable.
  *
  * Refines attribution rather than granting trust: {@link trustedProxyHeader}
- * decides whether any header is read at all. Better Auth consumes this list to
- * walk a forwarded chain past its own proxies (CIDR ranges included), which
- * matters where a proxy appends to the chain instead of replacing it.
+ * decides whether any header is read at all. {@link resolveClientIp} walks a
+ * forwarded chain past these proxies (CIDR ranges included), which matters
+ * where a proxy appends to the chain instead of replacing it. Entries that do
+ * not parse fail boot via {@link addressPolicyError}.
  *
  * @returns Trimmed entries, empty when the variable is unset or blank.
  */
@@ -122,13 +131,19 @@ export function trustedProxies(): string[] {
  * header the proxy does not set. `x-forwarded-for` and `x-real-ip` are the
  * usual answers; a deployment that does front itself with a CDN names that
  * CDN's header instead. Fail closed, so an unset value, {@link
- * NO_TRUSTED_HEADER}, or a malformed name all trust nothing.
+ * NO_TRUSTED_HEADER}, a malformed name, or the reserved
+ * {@link INTERNAL_CLIENT_IP_HEADER} all trust nothing.
  *
  * @returns Lower-cased header name, or `null` when no header may be read.
  */
 export function trustedProxyHeader(): string | null {
   const raw = process.env.TRUSTED_PROXY_HEADER?.trim().toLowerCase();
-  if (!raw || raw === NO_TRUSTED_HEADER || !HEADER_NAME_RE.test(raw)) {
+  if (
+    !raw ||
+    raw === NO_TRUSTED_HEADER ||
+    raw === INTERNAL_CLIENT_IP_HEADER ||
+    !HEADER_NAME_RE.test(raw)
+  ) {
     return null;
   }
   return raw;
@@ -166,6 +181,22 @@ export function addressPolicyError(): string | null {
       `request header, or "${NO_TRUSTED_HEADER}" to trust none.`
     );
   }
+  if (raw === INTERNAL_CLIENT_IP_HEADER) {
+    return (
+      `TRUSTED_PROXY_HEADER cannot be "${INTERNAL_CLIENT_IP_HEADER}": that ` +
+      "header is written by the app itself after resolution. Name the header " +
+      `your reverse proxy sets, or "${NO_TRUSTED_HEADER}".`
+    );
+  }
+  const invalidProxies = findInvalidTrustedProxies(trustedProxies());
+  if (invalidProxies.length > 0) {
+    return (
+      "TRUSTED_PROXIES contains entries that are not an IP address or CIDR " +
+      `range: ${invalidProxies.map((entry) => `"${entry}"`).join(", ")}. ` +
+      "Invalid entries silently disable forwarded-chain attribution, so they " +
+      "refuse boot instead."
+    );
+  }
   return null;
 }
 
@@ -198,53 +229,70 @@ export function isValidIp(value: string): boolean {
   return z.ipv4().safeParse(value).success || z.ipv6().safeParse(value).success;
 }
 
+/** Bracket-form IPv6 hop with an optional port: `[2001:db8::5]:443`. */
+const BRACKETED_V6_RE = /^\[([^\]]+)\](?::\d{1,5})?$/;
+
+/** Dotted-quad IPv4 hop with a port: `203.0.113.5:41234`. */
+const V4_PORT_RE = /^(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5}$/;
+
+/**
+ * Strip a well-formed port suffix from a forwarded hop.
+ *
+ * A hop that already validates as an address is returned untouched, so a bare
+ * IPv6 is never split on its colons: RFC 3986 requires brackets for an IPv6
+ * with a port, so an unbracketed colon form is inherently an address. Only the
+ * bracket form and a full dotted-quad with digits after the colon are
+ * stripped, the shapes Azure Application Gateway, Azure App Service and IIS
+ * ARR append.
+ *
+ * @param hop - One trimmed entry of a forwarded chain.
+ * @returns The hop without its port, or `null` when no address shape matches.
+ */
+function stripPortSuffix(hop: string): string | null {
+  if (isValidIp(hop)) return hop;
+  const bracketed = BRACKETED_V6_RE.exec(hop);
+  if (bracketed?.[1]) return bracketed[1];
+  const v4Port = V4_PORT_RE.exec(hop);
+  if (v4Port?.[1]) return v4Port[1];
+  return null;
+}
+
 /**
  * Select the client address from a forwarded chain.
  *
- * Delegates to the resolver Better Auth uses on the same request, passing
- * {@link trustedProxies}, so both sides walk the chain identically: from the
- * right, past each declared proxy, to the first hop the deployment did not
- * declare. That is the MDN and Express `trust proxy` algorithm, and sharing the
- * implementation is what keeps the rate-limit identity, `session.ipAddress` and
- * the legal-acceptance evidence naming the same caller. It also accepts CIDR
- * ranges in the list, which a hand-rolled hop walk cannot.
+ * Port suffixes are stripped from every hop before the walk: `getIPFromHeader`
+ * aborts on the first unparseable hop, so a proxy that appends `ip:port` would
+ * otherwise disable chain attribution entirely. The walk itself is Better
+ * Auth's, passing {@link trustedProxies}: from the right, past each declared
+ * proxy (CIDR ranges included), to the first undeclared hop.
  *
- * It returns null when the chain carries more than one hop and no proxy is
- * declared, because it cannot then tell a proxy from a caller-prepended entry.
- * The rightmost valid hop is the fallback for that case: with a single reverse
- * proxy that is the address the proxy observed, and behind several it is the
- * innermost proxy, which under-attributes traffic to a shared bucket but never
- * lets a caller choose its own bucket. The leftmost entry, the only one a
- * caller controls, is never selected either way.
- *
- * The fallback hop is masked to {@link IPV6_SUBNET_BITS}. `normalizeIP` does
- * not validate, and hands back anything it cannot parse lowercased and
- * otherwise untouched, so it runs only on a hop {@link isValidIp} has already
- * accepted. IPv4 passes through unchanged and an IPv4-mapped IPv6 address
- * collapses to its bare IPv4 form, so a dual-stack client gets one bucket
- * rather than two.
+ * When the walk resolves nothing, the fallback is the rightmost hop only:
+ * valid, it is the address the innermost proxy observed; invalid, the request
+ * is unattributable and resolves `null`. Everything left of the rightmost hop
+ * is caller-supplied bytes and is never selected. The selected hop is masked
+ * to {@link IPV6_SUBNET_BITS}; `normalizeIP` does not validate, so it runs
+ * only on a hop {@link isValidIp} has accepted.
  *
  * @param value - Raw header value, possibly a comma-separated chain.
- * @returns The selected address, or `null` when no entry is a valid IP.
+ * @returns The selected address, or `null` when none can be attributed.
  */
 function selectFromChain(value: string): string | null {
-  const attributed = getIPFromHeader(value, {
+  const hops = value
+    .split(",")
+    .map((hop) => hop.trim())
+    .filter(Boolean)
+    .map((hop) => stripPortSuffix(hop) ?? hop);
+  if (hops.length === 0) return null;
+
+  const attributed = getIPFromHeader(hops.join(", "), {
     ipv6Subnet: IPV6_SUBNET_BITS,
     trustedProxies: trustedProxies(),
   });
   if (attributed) return attributed;
 
-  const hops = value
-    .split(",")
-    .map((hop) => hop.trim())
-    .filter(Boolean);
-  for (let i = hops.length - 1; i >= 0; i--) {
-    const hop = hops[i];
-    if (hop && isValidIp(hop)) {
-      return normalizeIP(hop, { ipv6Subnet: IPV6_SUBNET_BITS });
-    }
-  }
-  return null;
+  const rightmost = hops[hops.length - 1];
+  if (!rightmost || !isValidIp(rightmost)) return null;
+  return normalizeIP(rightmost, { ipv6Subnet: IPV6_SUBNET_BITS });
 }
 
 /**
@@ -259,10 +307,9 @@ function selectFromChain(value: string): string | null {
  * common reverse proxies forward it verbatim. With no header named, no address
  * resolves. The selected value is always shape-validated and masked.
  *
- * Better Auth reads the same header under `lib/auth.ts:ipAddressPolicy` and
- * masks to the same width. The two agree on the hosted target, where the
- * header carries a single address; on self-host behind a chain-appending proxy
- * they can pick different hops, which that function documents.
+ * This is the only resolver. Better Auth reads {@link
+ * INTERNAL_CLIENT_IP_HEADER}, which {@link stampClientIpHeader} fills from
+ * this function, so both limbs name the same caller by construction.
  *
  * @param headers - Request headers to read the proxy chain from.
  * @returns Client address, or `null` when none can be trusted.
@@ -272,6 +319,20 @@ export function resolveClientIp(headers: Headers): string | null {
   if (!header) return null;
   const value = headers.get(header);
   return value ? selectFromChain(value) : null;
+}
+
+/**
+ * Stamp {@link INTERNAL_CLIENT_IP_HEADER} with the resolved client address.
+ *
+ * Always sets, never deletes: on the Cloudflare target OpenNext merges
+ * middleware header overrides additively, so a deletion is a no-op there while
+ * a set always wins over a caller-supplied value. An empty value marks an
+ * unattributable request; both consumers treat it as no address.
+ *
+ * @param headers - Mutable request headers to stamp.
+ */
+export function stampClientIpHeader(headers: Headers): void {
+  headers.set(INTERNAL_CLIENT_IP_HEADER, resolveClientIp(headers) ?? "");
 }
 
 /**

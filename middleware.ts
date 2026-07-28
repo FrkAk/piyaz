@@ -11,6 +11,7 @@ import {
   effectiveMax,
 } from "@/lib/api/rate-limit";
 import { buildCsp } from "@/lib/security/headers";
+import { stampClientIpHeader } from "@/lib/security/client-ip";
 import { safeInviteNext } from "@/lib/auth/invite-next";
 
 const UUID_RE =
@@ -92,30 +93,29 @@ export async function middleware(request: NextRequest) {
   if (rule) {
     const key = await extractKey(request, rule.keyStrategy);
     if (key) {
-      const [primary, ceiling] = await Promise.all([
-        getBackend(rule.bindingKey).check(
-          `${rule.pattern}:${key}`,
-          effectiveMax(rule.max, key),
-          rule.window,
-        ),
-        checkAddressCeiling(request, rule, key),
-      ]);
-      // Report whichever limb is closest to rejecting, not just whichever
-      // rejected. Advertising the token bucket's headroom while the address
-      // bucket sits at zero tells a client it has budget it cannot spend, and
-      // the next call 429s anyway. The headroom comparison only does work on
-      // the memory backend: the Cloudflare binding reports no remaining count,
-      // so `rate-limit-cf.ts` returns a constant and the ceiling is selected
+      const limit = effectiveMax(rule.max, key);
+      const primary = await getBackend(rule.bindingKey).check(
+        `${rule.pattern}:${key}`,
+        limit,
+        rule.window,
+      );
+      // The ceiling is charged only for admitted requests, so a rejected
+      // primary cannot burn the shared per-address budget. The headroom
+      // comparison only does work on the memory backend: the Cloudflare
+      // binding reports a constant remaining, so the ceiling is selected
       // there only once it has already rejected.
+      const ceiling = primary.allowed
+        ? await checkAddressCeiling(request, rule, key)
+        : null;
       const result =
         ceiling && (!ceiling.allowed || ceiling.remaining < primary.remaining)
           ? ceiling
           : primary;
-      rlHeaders = rateLimitHeaders(result, rule);
+      rlHeaders = rateLimitHeaders(result, rule, limit);
       if (!result.allowed) {
         const message =
           rule.bindingKey === "mcp"
-            ? mcpRateLimitMessage(result.limit, rule.window, result.resetIn)
+            ? mcpRateLimitMessage(limit, rule.window, result.resetIn)
             : "Too many requests. Please try again later.";
         return withCsp(
           NextResponse.json(
@@ -135,8 +135,11 @@ export async function middleware(request: NextRequest) {
     );
   }
 
-  // Forward `x-nonce` so the renderer auto-tags inline <script> elements.
+  // Forward `x-nonce` so the renderer auto-tags inline <script> elements,
+  // and stamp the resolved client address: `auth.api.*` dispatches read raw
+  // inbound headers, so Better Auth's resolver depends on this stamp.
   const requestHeaders = new Headers(request.headers);
+  stampClientIpHeader(requestHeaders);
   if (nonce) {
     requestHeaders.set("x-nonce", nonce);
     requestHeaders.set("Content-Security-Policy", csp);

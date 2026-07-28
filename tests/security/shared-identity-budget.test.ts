@@ -5,7 +5,9 @@ import type { NextRequest } from "next/server";
 import {
   addressPolicyError,
   hasTrustedAddressSource,
+  INTERNAL_CLIENT_IP_HEADER,
   resolveClientIp,
+  trustedProxyHeader,
   UNTRUSTED_BUDGET_FACTOR,
   UNTRUSTED_IP_KEY,
 } from "@/lib/security/client-ip";
@@ -168,4 +170,25 @@ test("an undeclared address policy is rejected, an explicit one accepted", () =>
   process.env.TRUSTED_PROXY_HEADER = "x-real-ip";
   expect(addressPolicyError()).toBeNull();
   expect(hasTrustedAddressSource()).toBe(true);
+});
+
+test("boot: invalid TRUSTED_PROXIES entries are named and refuse the policy", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
+
+  // A silently dropped entry disables chain attribution without a trace, so
+  // a typo has to refuse boot instead.
+  process.env.TRUSTED_PROXIES = "10.0.0.1,not-a-proxy";
+  expect(addressPolicyError()).toContain('"not-a-proxy"');
+
+  process.env.TRUSTED_PROXIES = "10.0.0.0/8, 192.0.2.1";
+  expect(addressPolicyError()).toBeNull();
+});
+
+test("boot: the internal client-ip header name is reserved", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = INTERNAL_CLIENT_IP_HEADER;
+
+  expect(trustedProxyHeader()).toBeNull();
+  expect(addressPolicyError()).toContain("written by the app itself");
 });

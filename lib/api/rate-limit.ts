@@ -70,43 +70,18 @@ export interface RateLimitBackend {
  * match, so paths with concrete prefixes (e.g. `/api/auth/sign-in`) must
  * precede the catch-all `/api/*`.
  *
- * The pre-auth `auth` rules use the `"ip"` key strategy, NOT `"session"`.
- * These endpoints are reached by unauthenticated callers, so any session
- * cookie on the request is either absent or attacker-supplied:
- * `getSessionCookie` returns the raw cookie value with no signature/DB
- * validation, so a `"session"` key would let a caller mint a fresh rate-limit
- * bucket per request by rotating a forged cookie and bypass the limit
- * entirely. Every unauthenticated endpoint whose cost lands somewhere else
- * (an email to a victim's inbox, an `oauthClient` row, a token-grant attempt,
- * a deleted account) belongs on this list rather than on the catch-all, which
- * is why `request-password-reset`, `send-verification-email`,
- * `reset-password`, `delete-user/callback` and `oauth2/token` are enumerated
- * here.
+ * Pre-auth rules use the `"ip"` key strategy, never `"session"`: these
+ * endpoints are reached by unauthenticated callers, and `getSessionCookie`
+ * returns the raw cookie value unvalidated, so a `"session"` key could be
+ * rotated to mint a fresh bucket per request. An endpoint earns a rule here
+ * when an anonymous caller can reach it and make it cost something (an email,
+ * an `oauthClient` row, a token-grant attempt, a deleted account); the rest of
+ * the allowlist in `app/api/auth/[...all]/route.ts` fails that test and stays
+ * on the catch-all with its address ceiling.
  *
- * The test an endpoint has to fail to earn a rule is whether an anonymous
- * caller can reach it and make it cost something. The rest of the allowlist in
- * `app/api/auth/[...all]/route.ts` passes that test: `/oauth2/authorize`,
- * `/consent` and `/continue` need a session, `/oauth2/revoke` and
- * `/introspect` need client credentials, `/oauth2/userinfo` needs a bearer
- * token, and `/get-session` and `/jwks` read cached state without writing.
- * Those stay on the catch-all with its address ceiling.
- *
- * Keying on the client IP (resolved by
- * `lib/security/client-ip.ts`, which trusts a header only where something
- * upstream sets it) is the only un-forgeable identifier available. CF docs
- * discourage IP keys for general user throttling because shared NATs cause
- * collateral throttling, but brute-force / registration-flood defense by IP is
- * the field-standard exception. Layered on top of Better-Auth's in-memory
- * `customRules` (`lib/auth.ts`) for defense-in-depth — BA tightens sign-up
- * to 3/60 in-process per isolate even though the CF binding only enforces
- * 5/60 here. Follow-up: declare a dedicated 3/60 binding to tighten the
- * middleware layer to match.
- *
- * The `/oauth2/register` rule throttles open unauthenticated dynamic client
- * registration (`lib/auth.ts`) on the strict `auth` binding so anonymous
- * callers cannot loop `oauthClient` inserts. The key is pattern-namespaced,
- * keeping its counter independent of sign-in/sign-up; `max`/`window` mirror
- * the auth binding per the invariant above.
+ * IP keys collide behind shared NATs, which Cloudflare's guidance warns about
+ * for general throttling; brute-force defense by IP is the exception. Better
+ * Auth's in-process `customRules` (`lib/auth.ts`) layer on top.
  */
 export const RATE_LIMIT_RULES: RateLimitRule[] = [
   {
@@ -152,13 +127,9 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     bindingKey: "auth",
   },
   {
-    // Link-consumption paths, matched by prefix because the token rides in the
-    // path segment (better-auth's GET `/reset-password/:token`) and would
-    // otherwise miss the exact-match rule above and land on the catch-all.
-    // They consume a high-entropy token rather than guessing a credential, and
-    // a user follows them from their inbox, so the general budget is right:
-    // the brute-force one is shared instance-wide wherever no address
-    // resolves, which would block legitimate resets and verifications.
+    // Prefix match: the token rides in the path segment (GET
+    // `/reset-password/:token`). Consumes a high-entropy token rather than
+    // guessing a credential, so it carries the general budget.
     pattern: "/api/auth/reset-password/*",
     max: 100,
     window: 60,
@@ -173,10 +144,8 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     bindingKey: "api",
   },
   {
-    // Same shape as the two above: a GET the user follows from their inbox,
-    // carrying a high-entropy token rather than a guessable credential. It
-    // deletes the account, so it does not belong on the catch-all's forgeable
-    // cookie key, and it does not belong on the brute-force budget either.
+    // Emailed high-entropy-token GET that deletes the account: off the
+    // catch-all's forgeable cookie key, on the general budget.
     pattern: "/api/auth/delete-user/callback",
     max: 100,
     window: 60,
@@ -184,13 +153,9 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     bindingKey: "api",
   },
   {
-    // Machine traffic, not a credential-guessing surface: every MCP client
-    // refreshes here once its access token expires, and `accessTokenExpiresIn`
-    // is 1h. The brute-force budget the rules above use would throttle a
-    // normal fleet, and hardest where an address cannot be resolved and every
-    // caller shares one bucket. What this rule is for is getting the endpoint
-    // off the catch-all's forgeable session-cookie key, which the `ip`
-    // strategy does at the general API budget.
+    // MCP refresh traffic, not credential guessing: the brute-force budget
+    // would throttle a normal client fleet. The `ip` strategy takes it off
+    // the catch-all's forgeable cookie key at the general budget.
     pattern: "/api/auth/oauth2/token",
     max: 100,
     window: 60,
@@ -203,23 +168,15 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     window: 60,
     keyStrategy: "apikey",
     bindingKey: "mcp",
-    // The bearer token is the caller's own bytes and is not verified until the
-    // route handler runs, so the token bucket alone bounds nothing: a fresh
-    // random token is a fresh counter. The address ceiling is what an
-    // unauthenticated flood actually runs into, at its own looser budget so a
-    // shared egress address is not throttled by one caller's rotation.
+    // The bearer token is unverified caller bytes, so the token bucket alone
+    // bounds nothing; the address ceiling is what an unauthenticated flood
+    // runs into.
     addressCeiling: true,
   },
-  // The session key gives a signed-in caller its own bucket, which is the
-  // fairness property worth having, but nothing has verified that cookie yet,
-  // so a caller willing to rotate one would otherwise mint buckets without
-  // limit. The address ceiling is what actually bounds that: a forged cookie
-  // buys a fresh counter, never a fresh address. It runs at ADDRESS_CEILING,
-  // well above this budget, so it bounds rotation without making one office's
-  // shared address the limit every colleague behind it hits. Where no address
-  // resolves the ceiling is skipped and only the enumerated `"ip"` rules above
-  // still bind, which is why every unauthenticated endpoint with a side effect
-  // is on one.
+  // The session cookie is unverified here, so rotation could mint buckets
+  // without limit; the address ceiling bounds that. A forged cookie buys a
+  // fresh counter, never a fresh address. Where no address resolves the
+  // ceiling is skipped and only the enumerated `"ip"` rules above bind.
   {
     pattern: "/api/*",
     max: 100,
@@ -326,14 +283,15 @@ export function effectiveMax(max: number, key: string): number {
 }
 
 /**
- * Count a request against a rule's address ceiling, when it declares one and
- * a client address can be trusted.
+ * Count a request against the shared per-address ceiling, when the rule
+ * declares one and a client address can be trusted.
  *
- * Skipped when the primary key already is that address, which happens on the
- * catch-all whenever a caller sends no session cookie. Both counters then carry
- * the same identity, and since {@link ADDRESS_CEILING} is the looser of the
- * two the primary always rejects first, so the extra binding call cannot change
- * an outcome on a path anonymous callers reach.
+ * The key is the address alone, so one address holds one
+ * {@link ADDRESS_CEILING} budget across every ceiling-bearing rule. Skipped
+ * when the primary key already is that address: both counters would carry the
+ * same identity, and the looser ceiling can never reject first. The middleware
+ * charges it only after the primary admits, so rejected requests do not burn
+ * the shared budget.
  *
  * @param request - Incoming request.
  * @param rule - The matched rule.
@@ -349,7 +307,7 @@ export async function checkAddressCeiling(
   const address = resolveClientIp(request.headers);
   if (!address || primaryKey === address) return null;
   return getBackend("address").check(
-    `${rule.pattern}:addr:${address}`,
+    `addr:${address}`,
     ADDRESS_CEILING.max,
     ADDRESS_CEILING.window,
   );
@@ -385,16 +343,48 @@ export async function extractKey(
   }
 }
 
+/** Cached HMAC key, re-derived when the secret changes (tests flip env). */
+let hmacCache: { secret: string; key: Promise<CryptoKey> } | null = null;
+
 /**
- * SHA-256 hash a string to a hex digest.
- * @param value - The string to hash.
- * @returns Hex-encoded hash.
+ * Import the HMAC key for {@link hashKey}, cached per secret value.
+ *
+ * @param secret - The signing secret.
+ * @returns The imported HMAC-SHA256 key.
+ */
+function hmacKey(secret: string): Promise<CryptoKey> {
+  if (hmacCache?.secret !== secret) {
+    hmacCache = {
+      secret,
+      key: crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(secret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      ),
+    };
+  }
+  return hmacCache.key;
+}
+
+/**
+ * Digest a credential into a rate-limit key.
+ *
+ * HMAC-SHA256 keyed on `BETTER_AUTH_SECRET`: keys reach persisted logs when a
+ * binding fails, and an unkeyed digest of a credential is an offline oracle
+ * for it. Falls back to plain SHA-256 when the secret is absent rather than
+ * failing the limiter; boot requires the secret everywhere that matters.
+ *
+ * @param value - The credential to digest.
+ * @returns Hex-encoded digest.
  */
 async function hashKey(value: string): Promise<string> {
-  const buf = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
+  const secret = process.env.BETTER_AUTH_SECRET;
+  const data = new TextEncoder().encode(value);
+  const buf = secret
+    ? await crypto.subtle.sign("HMAC", await hmacKey(secret), data)
+    : await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -416,17 +406,26 @@ function getClientIp(request: NextRequest): string {
 
 /**
  * Build IETF RateLimit response headers (draft v10).
- * @param result - Rate limit check result.
+ *
+ * The advertised policy is always the primary rule's effective limit, never
+ * the address ceiling's: the ceiling is a shared backstop, and advertising its
+ * budget as the caller's own overstates what the rule grants. `remaining` is
+ * clamped to the policy for the same reason; `Retry-After` reports whichever
+ * limb rejected.
+ *
+ * @param result - Rate limit check result (primary or ceiling).
  * @param rule - The matched rate limit rule.
+ * @param policyLimit - The primary rule's effective budget for this key.
  * @returns Header name-value map including RateLimit-Policy, RateLimit, and Retry-After (when blocked).
  */
 export function rateLimitHeaders(
   result: RateLimitResult,
   rule: RateLimitRule,
+  policyLimit: number,
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    "RateLimit-Policy": `${result.limit};w=${rule.window}`,
-    RateLimit: `limit=${result.limit}, remaining=${result.remaining}, reset=${result.resetIn}`,
+    "RateLimit-Policy": `${policyLimit};w=${rule.window}`,
+    RateLimit: `limit=${policyLimit}, remaining=${Math.min(result.remaining, policyLimit)}, reset=${result.resetIn}`,
   };
   if (!result.allowed) {
     headers["Retry-After"] = String(result.resetIn);

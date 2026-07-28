@@ -47,86 +47,69 @@ import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 import {
   addressPolicyError,
-  hasTrustedAddressSource,
+  INTERNAL_CLIENT_IP_HEADER,
   IPV6_SUBNET_BITS,
-  trustedProxies,
-  trustedProxyHeader,
   UNTRUSTED_BUDGET_FACTOR,
 } from "@/lib/security/client-ip";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
 
 /**
- * Which request header Better Auth may read the client address from, and which
- * proxies it may trust in a forwarded chain.
+ * Which request header Better Auth may read the client address from.
  *
  * The address keys the credential-path rate limiters and is persisted as
  * `session.ipAddress` and legal-acceptance evidence, so a caller that can set
- * it defeats brute-force throttling and authors its own audit record. Better
- * Auth walks `ipAddressHeaders` in order and takes the first that resolves, so
- * the list carries exactly one entry: the header this deployment's edge or
- * proxy is known to overwrite. Any second entry would be one a caller could
- * supply directly, and being unreachable in a correct deployment is what makes
- * it reachable in an attack.
- *
- * Names the same header as `lib/security/client-ip.ts`, which governs the
- * middleware and server-action limiters, and pins the same IPv6 mask, so the
- * two resolvers agree on what a caller is called. On the hosted target they
- * agree outright, because `cf-connecting-ip` carries a single address. On
- * self-host behind a proxy that appends rather than replaces they can differ:
- * this side refuses a multi-hop chain unless `TRUSTED_PROXIES` names the
- * proxies, and walks past them to the client when it does, while
- * `resolveClientIp` takes the rightmost valid hop either way. Both directions
- * resolve an address the caller did not choose, which is the property that has
- * to hold. With no header named, Better Auth resolves no address and falls
- * back to one shared per-path bucket, which throttles rather than exempts.
+ * it defeats brute-force throttling and authors its own audit record. The list
+ * carries exactly {@link INTERNAL_CLIENT_IP_HEADER}, which `stampClientIpHeader`
+ * fills from `resolveClientIp` in middleware and in every route that calls
+ * `auth.handler`, so Better Auth and the middleware limiter name the same
+ * caller by construction. The stamped value is already masked; `normalizeIP`
+ * is idempotent at the same width. An empty stamp resolves no address and
+ * falls back to one shared per-path bucket (in NODE_ENV=development Better
+ * Auth substitutes `127.0.0.1`).
  *
  * @returns The `advanced.ipAddress` policy for this deployment.
  */
 function ipAddressPolicy(): {
   ipAddressHeaders: string[];
   ipv6Subnet: number;
-  trustedProxies?: string[];
 } {
-  if (IS_CLOUDFLARE) {
-    return {
-      ipAddressHeaders: ["cf-connecting-ip"],
-      ipv6Subnet: IPV6_SUBNET_BITS,
-    };
-  }
-  const header = trustedProxyHeader();
-  if (!header) {
-    return { ipAddressHeaders: [], ipv6Subnet: IPV6_SUBNET_BITS };
-  }
-  const proxies = trustedProxies();
   return {
-    ipAddressHeaders: [header],
+    ipAddressHeaders: [INTERNAL_CLIENT_IP_HEADER],
     ipv6Subnet: IPV6_SUBNET_BITS,
-    ...(proxies.length > 0 ? { trustedProxies: proxies } : {}),
   };
 }
 
 /**
  * Per-path credential budgets for Better Auth's own limiter.
  *
- * Better Auth keys these on the client address and falls back to a single
- * shared per-path bucket when it cannot resolve one, the same collapse
- * `lib/api/rate-limit.ts` handles, so the same widening applies. Without it a
- * budget sized for one caller becomes an instance-wide ceiling: 5 sign-ins per
- * minute for a whole deployment, which locks out ordinary traffic rather than
- * throttling abuse. Kept in step with `effectiveMax` so neither limb rejects
- * while the other still has headroom.
+ * Function-form rules, evaluated per request after the bucket key is computed:
+ * when {@link INTERNAL_CLIENT_IP_HEADER} carries no address, the request lands
+ * on the shared per-path bucket and the budget widens by
+ * {@link UNTRUSTED_BUDGET_FACTOR}, so an unattributable request can never pin
+ * a caller-sized budget on an instance-wide bucket. Kept in step with
+ * `effectiveMax` so neither limb rejects while the other still has headroom.
  *
  * @returns The `rateLimit.customRules` map for this deployment.
  */
-function authRateLimitRules(): Record<string, { window: number; max: number }> {
-  const factor = hasTrustedAddressSource() ? 1 : UNTRUSTED_BUDGET_FACTOR;
+export function authRateLimitRules(): Record<
+  string,
+  (request: Request) => { window: number; max: number }
+> {
+  const perAddress =
+    (max: number) =>
+    (request: Request): { window: number; max: number } => ({
+      window: 60,
+      max: request.headers.get(INTERNAL_CLIENT_IP_HEADER)
+        ? max
+        : max * UNTRUSTED_BUDGET_FACTOR,
+    });
   return {
-    "/sign-in/email": { window: 60, max: 5 * factor },
-    "/sign-up/email": { window: 60, max: 3 * factor },
-    "/request-password-reset": { window: 60, max: 3 * factor },
-    "/send-verification-email": { window: 60, max: 3 * factor },
-    "/reset-password": { window: 60, max: 5 * factor },
+    "/sign-in/email": perAddress(5),
+    "/sign-up/email": perAddress(3),
+    "/request-password-reset": perAddress(3),
+    "/send-verification-email": perAddress(3),
+    "/reset-password": perAddress(5),
   };
 }
 
@@ -166,8 +149,9 @@ if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
 // module while collecting page data, but the value is read per request and
 // never inlined, so a build does not need it. Requiring it there would break
 // building an image or artifact separately from deploying it (see Dockerfile),
-// while catching nothing: `scripts/start.mjs` refuses to launch a self-host
-// instance without it, and this catches a malformed value on first use.
+// while catching nothing: `instrumentation.ts` refuses a self-host boot
+// without it on every launch path (`scripts/start.mjs` additionally refuses
+// before the socket binds), and this catches a malformed value on first use.
 if (
   !IS_CLOUDFLARE &&
   process.env.NODE_ENV === "production" &&
@@ -320,15 +304,11 @@ export function createAuth() {
       enabled: true,
       window: 10,
       max: 100,
-      // Deliberate override, not a default: Better Auth would otherwise pick
-      // "secondary-storage" because one is configured. The KV adapter has no
-      // atomic increment, so that path degrades to a non-atomic check-then-set
-      // that concurrent requests slip through, and KV allows only one write per
-      // second per key, which is exactly the shape a per-caller counter has.
-      // Memory is per-isolate and so bounds nothing distributed; the Cloudflare
-      // bindings in `lib/api/rate-limit.ts` are what enforce across isolates
-      // within a colo (they are per-location, not global), and these rules sit
-      // on top per-process.
+      // Deliberate override: Better Auth would pick "secondary-storage"
+      // because one is configured, but the KV adapter has no atomic increment
+      // and KV allows one write per second per key. Memory bounds per
+      // process; the Cloudflare bindings in `lib/api/rate-limit.ts` enforce
+      // across isolates.
       storage: "memory",
       customRules: authRateLimitRules(),
     },
@@ -419,26 +399,13 @@ export function createAuth() {
         consentPage: "/consent",
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
-        // This is the revocation lag, because `/api/mcp` verifies by signature
-        // alone and never reads the state `revokeOAuthSession` and
-        // `clearUserOAuthArtifacts` write. Shortening it is still the wrong
-        // lever: a client is not guaranteed a refresh token, so for anything
-        // without one this value is the entire session length, and cutting it
-        // buys a shorter compromise window by making every such client
-        // re-authorize that often.
-        //
-        // A client following the spec DOES get a refresh token here: the 401
-        // from `/api/mcp` carries a `scope` challenge naming
-        // GRANTABLE_OAUTH_SCOPES, and the spec makes that challenge
-        // authoritative for the client's next authorization request. So the
-        // access token is not the whole session, and this value is the
-        // revocation lag rather than the re-authorization interval.
-        //
-        // It stays at 1h because revocation does bound it: revoking a session
-        // marks the refresh token revoked (`lib/data/oauth-session.ts`), so no
-        // further access token can be minted and the outstanding one expires
-        // within the hour. Closing the remaining gap needs the resource server
-        // to consult revocation state; see the note on `verifyMcpAuth`.
+        // The revocation lag, not the session length: `/api/mcp` verifies by
+        // signature alone and never reads revocation state, and revoking a
+        // session marks the refresh token revoked
+        // (`lib/data/oauth-session.ts`), so the outstanding access token is
+        // the entire exposure. Shortening it forces refresh-token-less
+        // clients to re-authorize that often; closing the gap needs the
+        // resource server to consult revocation state (see `verifyMcpAuth`).
         accessTokenExpiresIn: 60 * 60, // 1h
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7 days
         clientRegistrationAllowedScopes: [...GRANTABLE_OAUTH_SCOPES],

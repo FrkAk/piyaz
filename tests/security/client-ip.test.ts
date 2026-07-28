@@ -1,8 +1,12 @@
 import { test, expect, afterEach } from "bun:test";
+import { normalizeIP } from "@better-auth/core/utils/ip";
 import {
   clientIpKey,
+  INTERNAL_CLIENT_IP_HEADER,
+  IPV6_SUBNET_BITS,
   isValidIp,
   resolveClientIp,
+  stampClientIpHeader,
   trustedProxies,
   trustedProxyHeader,
   UNTRUSTED_IP_KEY,
@@ -202,4 +206,93 @@ test("trusted proxy list parses and ignores blank entries", () => {
 
   delete process.env.TRUSTED_PROXIES;
   expect(trustedProxies()).toEqual([]);
+});
+
+test("attack: an appended ip:port hop cannot hand the key to the caller's prefix", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
+  delete process.env.TRUSTED_PROXIES;
+
+  // Azure App Gateway / App Service and IIS ARR append `ip:port`. The caller
+  // controls every hop left of the rightmost; only the rightmost may win.
+  expect(
+    resolveClientIp(
+      new Headers({ "x-forwarded-for": "9.9.9.9, 203.0.113.5:41234" }),
+    ),
+  ).toBe("203.0.113.5");
+  expect(
+    resolveClientIp(
+      new Headers({ "x-forwarded-for": "9.9.9.9, [2001:db8::5]:443" }),
+    ),
+  ).toBe(normalizeIP("2001:db8::5", { ipv6Subnet: IPV6_SUBNET_BITS }));
+});
+
+test("attack: an invalid rightmost hop resolves nothing, never a left hop", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
+  delete process.env.TRUSTED_PROXIES;
+
+  expect(
+    resolveClientIp(new Headers({ "x-forwarded-for": "9.9.9.9, unknown" })),
+  ).toBeNull();
+  expect(
+    resolveClientIp(
+      new Headers({ "x-forwarded-for": "9.9.9.9, unknown, 192.0.2.9" }),
+    ),
+  ).toBe("192.0.2.9");
+});
+
+test("port suffixes are stripped from single values, bare IPv6 is never split", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
+  delete process.env.TRUSTED_PROXIES;
+
+  expect(
+    resolveClientIp(new Headers({ "x-forwarded-for": "1.2.3.4:56789" })),
+  ).toBe("1.2.3.4");
+  expect(
+    resolveClientIp(new Headers({ "x-forwarded-for": "[2001:db8::5]" })),
+  ).toBe(normalizeIP("2001:db8::5", { ipv6Subnet: IPV6_SUBNET_BITS }));
+  // RFC 3986 requires brackets for IPv6-with-port, so an unbracketed colon
+  // form is inherently an address, not an address:port.
+  expect(
+    resolveClientIp(new Headers({ "x-forwarded-for": "2001:db8::5:443" })),
+  ).toBe(normalizeIP("2001:db8::5:443", { ipv6Subnet: IPV6_SUBNET_BITS }));
+});
+
+test("declared-proxy chain walk survives appended ports", () => {
+  delete process.env.DEPLOY_TARGET;
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
+  process.env.TRUSTED_PROXIES = PROXY_IP;
+
+  expect(
+    resolveClientIp(
+      new Headers({
+        "x-forwarded-for": `${CLIENT_IP}:51000, ${PROXY_IP}:443`,
+      }),
+    ),
+  ).toBe(CLIENT_IP);
+});
+
+test("stamp: a caller-supplied internal header is always overwritten", () => {
+  process.env.DEPLOY_TARGET = "cloudflare";
+
+  const headers = new Headers({
+    [INTERNAL_CLIENT_IP_HEADER]: "6.6.6.6",
+    "cf-connecting-ip": CLIENT_IP,
+  });
+  stampClientIpHeader(headers);
+  expect(headers.get(INTERNAL_CLIENT_IP_HEADER)).toBe(CLIENT_IP);
+});
+
+test("stamp: an unattributable request stamps empty, not the caller's value", () => {
+  delete process.env.DEPLOY_TARGET;
+  delete process.env.TRUSTED_PROXY_HEADER;
+
+  const headers = new Headers({
+    [INTERNAL_CLIENT_IP_HEADER]: "6.6.6.6",
+    "x-forwarded-for": CLIENT_IP,
+  });
+  stampClientIpHeader(headers);
+  expect(headers.get(INTERNAL_CLIENT_IP_HEADER)).toBe("");
 });

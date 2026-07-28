@@ -77,6 +77,7 @@ test("signup with Terms acceptance creates the user and two acceptance rows", as
     body,
     headers: new Headers({
       "cf-connecting-ip": ip,
+      "x-piyaz-client-ip": ip,
       "user-agent": userAgent,
     }),
   });

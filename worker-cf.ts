@@ -90,11 +90,14 @@ let _rateLimitInitialized = false;
  * module exactly once per isolate. CF reuses isolates across requests, so the
  * cost is amortized to a single binding-pointer assignment per isolate spawn.
  *
- * The AUTH binding is wired `failOpen: false` so a binding outage cannot
- * silently disable brute-force throttling on `/api/auth/sign-in/*` and
- * `/api/auth/sign-up/*`. The API, MCP, and MCP-heavy bindings stay
- * `failOpen: true` (default) — a rate-limit subsystem hiccup must not take the
- * whole app or every agent session offline.
+ * The AUTH and ADDRESS bindings are wired `failOpen: false`: AUTH so a binding
+ * outage cannot silently disable brute-force throttling, ADDRESS because the
+ * ceiling is the only bound on rotated-identity floods (`/api/mcp` bearer
+ * tokens and catch-all cookies are unverified caller bytes). Accepted
+ * trade-off: an ADDRESS binding outage 429s ceiling-bearing requests until it
+ * recovers. The API, MCP, and MCP-heavy bindings stay `failOpen: true`
+ * (default): a rate-limit subsystem hiccup must not take the whole app or
+ * every agent session offline, and each of those rules keys per caller.
  *
  * Missing bindings are tolerated (the slot stays on `MemoryRateLimitBackend`),
  * which keeps `wrangler dev --no-bundle` and one-off scripts that don't bind
@@ -119,7 +122,9 @@ function initRateLimitBindings(env: WorkerEnv): void {
   if (env.RATE_LIMIT_ADDRESS) {
     setBackend(
       "address",
-      new CloudflareRateLimitBackend(env.RATE_LIMIT_ADDRESS),
+      new CloudflareRateLimitBackend(env.RATE_LIMIT_ADDRESS, {
+        failOpen: false,
+      }),
     );
   }
   if (env.RATE_LIMIT_MCP_HEAVY) {

@@ -163,3 +163,86 @@ test("the address ceiling is skipped when no address can be trusted", async () =
 
   expect(result).toBeNull();
 });
+
+test("the ceiling is skipped when the primary key already is the address", async () => {
+  const rule = matchRule("/api/task/00000000-0000-4000-8000-000000000000");
+  const address = "198.51.100.99";
+  const request = requestWith({ "cf-connecting-ip": address });
+
+  // No cookie, so the session strategy falls back to the address itself; a
+  // second counter with the same identity could never reject first.
+  const key = await extractKey(request, rule!.keyStrategy);
+  expect(key).toBe(address);
+  expect(await checkAddressCeiling(request, rule!, key!)).toBeNull();
+});
+
+test("one address holds one ceiling budget across rule patterns", async () => {
+  const mcpRule = matchRule("/api/mcp");
+  const catchAll = matchRule("/api/task/00000000-0000-4000-8000-000000000000");
+  const address = "198.51.100.88";
+
+  for (let i = 0; i < ADDRESS_CEILING.max; i++) {
+    await checkAddressCeiling(
+      requestWith({
+        authorization: `Bearer rotated-${i}`,
+        "cf-connecting-ip": address,
+      }),
+      mcpRule!,
+    );
+  }
+
+  const viaOtherPattern = await checkAddressCeiling(
+    requestWith({
+      cookie: "better-auth.session_token=forged",
+      "cf-connecting-ip": address,
+    }),
+    catchAll!,
+  );
+  expect(viaOtherPattern).not.toBeNull();
+  expect(viaOtherPattern!.allowed).toBe(false);
+});
+
+/**
+ * Plain SHA-256 hex digest, the shape `hashKey` must NOT produce for a
+ * credential while a secret is configured.
+ *
+ * @param value - The string to digest.
+ * @returns Hex-encoded SHA-256.
+ */
+async function plainSha256(value: string): Promise<string> {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+test("the cookie key is keyed on the secret, not a bare hash of the credential", async () => {
+  const secret = "session-token-value-that-must-not-leak";
+  const key = await extractKey(
+    requestWith({ cookie: `better-auth.session_token=${secret}` }),
+    "session",
+  );
+
+  // An unkeyed digest in a persisted log is an offline oracle for the cookie.
+  expect(key).toMatch(/^[0-9a-f]{64}$/);
+  expect(key).not.toBe(await plainSha256(secret));
+});
+
+test("key hashing falls back to plain SHA-256 without a secret", async () => {
+  const original = process.env.BETTER_AUTH_SECRET;
+  delete process.env.BETTER_AUTH_SECRET;
+  try {
+    const cookie = "cookie-value-without-secret";
+    const key = await extractKey(
+      requestWith({ cookie: `better-auth.session_token=${cookie}` }),
+      "session",
+    );
+    expect(key).toBe(await plainSha256(cookie));
+  } finally {
+    if (original === undefined) delete process.env.BETTER_AUTH_SECRET;
+    else process.env.BETTER_AUTH_SECRET = original;
+  }
+});

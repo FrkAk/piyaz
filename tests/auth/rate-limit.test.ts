@@ -1,28 +1,23 @@
 import { test, expect, afterEach } from "bun:test";
-import { auth } from "@/lib/auth";
+import { auth, authRateLimitRules } from "@/lib/auth";
+import { UNTRUSTED_BUDGET_FACTOR } from "@/lib/security/client-ip";
 import { truncateAll } from "@/tests/setup/schema";
 
 /**
- * Attack-path coverage for the Better Auth rate-limit customRule.
+ * Attack-path coverage for the Better Auth rate-limit customRules.
  *
- * `lib/auth.ts:36-39` declares
- *
- * ```
- * customRules: {
- *   "/sign-in/email": { window: 60, max: 5 },
- *   "/sign-up/email": { window: 60, max: 3 },
- * }
- * ```
- *
- * which is the primary brute-force defense for the credential path.
- * The cookie-hardening changes in MYMR-94 touch the same `betterAuth`
- * call site, so this file pins that the limiter is still reachable
- * and that exhausted requests do NOT issue session cookies.
+ * `lib/auth.ts:authRateLimitRules` declares function-form per-path budgets
+ * (5/60 sign-in, 3/60 sign-up, widened per request when no client address
+ * resolved), the primary brute-force defense for the credential path. This
+ * file pins that the limiter is still reachable, that exhausted requests do
+ * NOT issue session cookies, and the per-request widening branch.
  *
  * Uses the `127.0.1.x` loopback range. `tests/auth/cookie-attributes.test.ts`
  * owns `127.0.0.x`. BA's `customRules` bucket is in-memory and keyed
  * by IP — running every assertion below from a single IP keeps the
- * bucket isolated from every other test file.
+ * bucket isolated from every other test file. Direct `auth.handler` calls
+ * bypass the route sanitizer, so requests stamp `x-piyaz-client-ip`
+ * themselves, mirroring what the route would have written.
  */
 
 const ATTACK_IP = "127.0.1.5";
@@ -52,6 +47,7 @@ test("attack: 10 sign-in attempts from one IP hit the 5/60s rate limit", async (
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ATTACK_IP,
+        "x-piyaz-client-ip": ATTACK_IP,
       },
       method: "POST",
     });
@@ -77,4 +73,26 @@ test("attack: 10 sign-in attempts from one IP hit the 5/60s rate limit", async (
       .find((c) => c.toLowerCase().includes("session_token"));
     expect(sessionCookie).toBeUndefined();
   }
+});
+
+test("customRules widen per request only when no address resolved", () => {
+  const rules = authRateLimitRules();
+  const attributed = new Request("https://example.test", {
+    headers: { "x-piyaz-client-ip": "203.0.113.7" },
+  });
+  const unattributed = new Request("https://example.test", {
+    headers: { "x-piyaz-client-ip": "" },
+  });
+  const unstamped = new Request("https://example.test");
+
+  expect(rules["/sign-in/email"]!(attributed)).toEqual({ window: 60, max: 5 });
+  expect(rules["/sign-up/email"]!(attributed)).toEqual({ window: 60, max: 3 });
+  expect(rules["/sign-in/email"]!(unattributed)).toEqual({
+    window: 60,
+    max: 5 * UNTRUSTED_BUDGET_FACTOR,
+  });
+  expect(rules["/sign-in/email"]!(unstamped)).toEqual({
+    window: 60,
+    max: 5 * UNTRUSTED_BUDGET_FACTOR,
+  });
 });

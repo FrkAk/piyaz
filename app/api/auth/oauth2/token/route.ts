@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { logTokenGrant } from "@/lib/auth/log-token-grant";
 import { readBodyBounded } from "@/lib/api/read-body-bounded";
 import { ensureNoStore } from "@/lib/security/headers";
+import { stampClientIpHeader } from "@/lib/security/client-ip";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const origin = new URL(baseUrl).origin;
@@ -43,7 +44,9 @@ function payloadTooLarge(): Response {
  * forwarded untouched so Better Auth handles them natively.
  *
  * Original request headers are forwarded so confidential clients using
- * HTTP Basic auth for `client_id:client_secret` continue to authenticate.
+ * HTTP Basic auth for `client_id:client_secret` continue to authenticate,
+ * with `content-length` dropped (both branches re-derive it) and the
+ * client-address header stamped for Better Auth's limiter.
  *
  * The grant outcome (grant type, whether a refresh token was issued, and
  * the error reason on failure) is logged for diagnosability; token values
@@ -73,9 +76,12 @@ export async function POST(request: Request): Promise<Response> {
 
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/x-www-form-urlencoded")) {
+    const boundedHeaders = new Headers(request.headers);
+    boundedHeaders.delete("content-length");
+    stampClientIpHeader(boundedHeaders);
     const boundedRequest = new Request(request.url, {
       method: "POST",
-      headers: request.headers,
+      headers: boundedHeaders,
       body: raw,
       signal: request.signal,
     });
@@ -91,6 +97,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const forwardedHeaders = new Headers(request.headers);
   forwardedHeaders.delete("content-length");
+  stampClientIpHeader(forwardedHeaders);
 
   const forwarded = new Request(request.url, {
     method: "POST",
