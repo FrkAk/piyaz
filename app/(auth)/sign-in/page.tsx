@@ -35,6 +35,7 @@ interface SignInPageProps {
 export default async function SignInPage({ searchParams }: SignInPageProps) {
   const next = safeInviteNext((await searchParams).next);
   const passwordResetEnabled = isEmailEnabled();
+  const turnstile = await turnstileProps();
   return (
     <AuthShell
       form={
@@ -59,7 +60,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
           <SignInForm
             passwordResetEnabled={passwordResetEnabled}
             next={next}
-            {...(await turnstileProps())}
+            {...turnstile}
           />
 
           <p className="mt-3.5 text-center text-[12px] text-text-muted">
