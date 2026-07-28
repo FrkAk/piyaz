@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 import {
   matchRule,
+  addressCeilingMessage,
   extractKey,
   rateLimitHeaders,
   mcpRateLimitMessage,
@@ -13,6 +14,7 @@ import {
 import { buildCsp } from "@/lib/security/headers";
 import { stampClientIpHeader } from "@/lib/security/client-ip";
 import { safeInviteNext } from "@/lib/auth/invite-next";
+import { isPublicCacheableAuthPath } from "@/lib/auth/public-cache-paths";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -113,10 +115,14 @@ export async function middleware(request: NextRequest) {
           : primary;
       rlHeaders = rateLimitHeaders(result, rule, limit);
       if (!result.allowed) {
+        // A ceiling rejection is the shared per-address budget, not the
+        // caller's own rule budget — the body must name the right constraint.
         const message =
-          rule.bindingKey === "mcp"
-            ? mcpRateLimitMessage(limit, rule.window, result.resetIn)
-            : "Too many requests. Please try again later.";
+          ceiling && !ceiling.allowed
+            ? addressCeilingMessage(result.resetIn)
+            : rule.bindingKey === "mcp"
+              ? mcpRateLimitMessage(limit, rule.window, result.resetIn)
+              : "Too many requests. Please try again later.";
         return withCsp(
           NextResponse.json(
             { error: message },
@@ -146,7 +152,9 @@ export async function middleware(request: NextRequest) {
   }
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
-  if (rlHeaders) {
+  // Withheld on the shared-cacheable auth documents: RateLimit counters are
+  // per-caller state a shared cache would replay to other callers.
+  if (rlHeaders && !isPublicCacheableAuthPath(pathname)) {
     for (const [k, v] of Object.entries(rlHeaders)) {
       response.headers.set(k, v);
     }

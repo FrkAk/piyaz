@@ -12,6 +12,7 @@ import {
   type OAuthBrandFamily,
 } from "@/lib/ui/oauth-client-name";
 import { AgentSection } from "./AgentSection";
+import { REVOCATION_LAG_HINT } from "@/lib/auth/token-policy";
 import { InlineConfirm } from "./InlineConfirm";
 
 interface AgentsTabProps {
@@ -152,7 +153,7 @@ export function AgentsTab({ initialSessions }: AgentsTabProps) {
                 </button>
               }
               prompt="Revoke all sessions?"
-              body="Every connected agent will need to re-authorize. Access already granted can take up to an hour to stop working."
+              body={`Every connected agent will need to re-authorize. ${REVOCATION_LAG_HINT}`}
               confirmLabel="Revoke all"
               destructive
               onConfirm={handleRevokeAll}

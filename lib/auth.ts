@@ -22,6 +22,7 @@ import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { PASSWORD_MAX, PASSWORD_MIN } from "@/lib/auth/password-policy";
+import { ACCESS_TOKEN_TTL_SECONDS } from "@/lib/auth/token-policy";
 import {
   countOwnedOrganizations,
   findOrgMemberUserIdsAsAdmin,
@@ -47,6 +48,7 @@ import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 import {
   addressPolicyError,
+  hasTrustedAddressSource,
   INTERNAL_CLIENT_IP_HEADER,
   IPV6_SUBNET_BITS,
   UNTRUSTED_BUDGET_FACTOR,
@@ -85,10 +87,12 @@ function ipAddressPolicy(): {
  *
  * Function-form rules, evaluated per request after the bucket key is computed:
  * when {@link INTERNAL_CLIENT_IP_HEADER} carries no address, the request lands
- * on the shared per-path bucket and the budget widens by
- * {@link UNTRUSTED_BUDGET_FACTOR}, so an unattributable request can never pin
- * a caller-sized budget on an instance-wide bucket. Kept in step with
- * `effectiveMax` so neither limb rejects while the other still has headroom.
+ * on the shared per-path bucket, and the budget widens by
+ * {@link UNTRUSTED_BUDGET_FACTOR} only where the deployment declares no
+ * address source at all — an instance that cannot attribute anyone must not
+ * let one caller pin a caller-sized budget on an instance-wide bucket. Where
+ * a source is declared, an unattributable request keeps the tight budget.
+ * Kept in step with `effectiveMax`, which widens on the same two conditions.
  *
  * @returns The `rateLimit.customRules` map for this deployment.
  */
@@ -100,9 +104,11 @@ export function authRateLimitRules(): Record<
     (max: number) =>
     (request: Request): { window: number; max: number } => ({
       window: 60,
-      max: request.headers.get(INTERNAL_CLIENT_IP_HEADER)
-        ? max
-        : max * UNTRUSTED_BUDGET_FACTOR,
+      max:
+        request.headers.get(INTERNAL_CLIENT_IP_HEADER) ||
+        hasTrustedAddressSource()
+          ? max
+          : max * UNTRUSTED_BUDGET_FACTOR,
     });
   return {
     "/sign-in/email": perAddress(5),
@@ -406,7 +412,8 @@ export function createAuth() {
         // the entire exposure. Shortening it forces refresh-token-less
         // clients to re-authorize that often; closing the gap needs the
         // resource server to consult revocation state (see `verifyMcpAuth`).
-        accessTokenExpiresIn: 60 * 60, // 1h
+        // The Settings revocation copy derives from the shared constant.
+        accessTokenExpiresIn: ACCESS_TOKEN_TTL_SECONDS,
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7 days
         clientRegistrationAllowedScopes: [...GRANTABLE_OAUTH_SCOPES],
         // Advertise the grantable scopes in the authorization-server metadata

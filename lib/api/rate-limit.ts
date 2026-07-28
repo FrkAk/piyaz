@@ -457,6 +457,25 @@ export function mcpRateLimitMessage(
   );
 }
 
+/**
+ * Corrective 429 body for a rejection by the shared per-address ceiling.
+ *
+ * Names the actual constraint — the {@link ADDRESS_CEILING} budget shared by
+ * every caller at one network address — so a caller under its own budget is
+ * not told to reduce a call volume it does not have. On the Cloudflare
+ * backend `resetIn` is the full window (an upper bound).
+ *
+ * @param resetIn - Seconds until the shared budget resets.
+ * @returns The corrective error message.
+ */
+export function addressCeilingMessage(resetIn: number): string {
+  return (
+    `Shared address limit reached (${ADDRESS_CEILING.max} requests/${ADDRESS_CEILING.window}s ` +
+    `across every caller at this network address). Your own budget may have headroom; ` +
+    `retry in ${resetIn}s.`
+  );
+}
+
 type BackendKind = "api" | "auth" | "actions" | "mcp" | "mcpHeavy" | "address";
 
 /**

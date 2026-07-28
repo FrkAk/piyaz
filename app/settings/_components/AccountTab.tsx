@@ -15,6 +15,7 @@ import {
 } from "@/lib/actions/profile";
 import { changePasswordAction } from "@/lib/actions/password";
 import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
+import { REVOCATION_LAG_HINT } from "@/lib/auth/token-policy";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
 
 const NAME_MAX = 80;
@@ -655,7 +656,7 @@ function PasswordSection({ lastChanged }: { lastChanged: Date | string }) {
               <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
                 <p className="min-w-0 text-[11.5px] leading-relaxed text-text-muted">
                   Changing your password signs out all your other devices and
-                  revokes connected agents.
+                  revokes connected agents. {REVOCATION_LAG_HINT}
                 </p>
                 <div className="flex shrink-0 items-center gap-2">
                   <Button

@@ -3,7 +3,11 @@ import type { JSONWebKeySet } from "jose";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
 import { auth, GRANTABLE_OAUTH_SCOPES } from "@/lib/auth";
 import { createMcpServer, mcpCallerKey } from "@/lib/mcp/create-server";
-import { MAX_JSON_RPC_BATCH, inspectBatch } from "@/lib/mcp/batch";
+import {
+  MAX_JSON_RPC_BATCH,
+  batchSurcharge,
+  inspectBatch,
+} from "@/lib/mcp/batch";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
 import { authContextFromPayload } from "@/lib/auth/mcp-token";
 import type { AuthContext } from "@/lib/auth/context";
@@ -206,6 +210,13 @@ async function verifyMcpAuth(request: Request) {
 function forbiddenOrigin(request: Request): Response | null {
   const requestOrigin = request.headers.get("origin");
   if (!requestOrigin || requestOrigin === origin) return null;
+  console.warn(
+    JSON.stringify({
+      event: "mcp_request_blocked",
+      reason: "origin",
+      origin: requestOrigin,
+    }),
+  );
   return jsonRpcError(-32600, "Forbidden origin.", 403);
 }
 
@@ -251,21 +262,24 @@ export async function POST(request: Request) {
 
   const contentLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_MCP_BODY_BYTES) {
+    logBlocked("body_too_large", ctx.userId);
     return payloadTooLarge();
   }
   const body = await readBodyBounded(request, MAX_MCP_BODY_BYTES);
   if (body === null) {
+    logBlocked("body_too_large", ctx.userId);
     return payloadTooLarge();
   }
   const inspection = inspectBatch(body);
   if (inspection.oversized) {
+    logBlocked("batch_cap", ctx.userId);
     return jsonRpcError(
       -32600,
       `Batch too large: at most ${MAX_JSON_RPC_BATCH} JSON-RPC messages per request.`,
       413,
     );
   }
-  const overage = await chargeBatchOverage(ctx, inspection.count - 1);
+  const overage = await chargeBatchOverage(ctx, batchSurcharge(inspection));
   if (overage) return overage;
 
   const boundedRequest = new Request(request.url, {
@@ -289,15 +303,33 @@ export async function POST(request: Request) {
 }
 
 /**
- * Charge the standard tool meter for a batch's messages beyond the first.
+ * Structured log for a request the route refused before dispatch, so probes
+ * are separable from tool errors in the log stream.
  *
- * The middleware bills one HTTP unit per POST and `wrapTool` bills one tool
- * unit per `tools/call`, so a batch's extra elements would otherwise buy
- * dispatch work for free, including non-tool methods such as `tools/list`,
- * which are never wrapped and serialize the full tool table per element.
+ * @param reason - Which guard refused the request.
+ * @param userId - The verified caller, absent on pre-auth refusals.
+ */
+function logBlocked(
+  reason: "body_too_large" | "batch_cap" | "batch_budget",
+  userId?: string,
+): void {
+  console.warn(
+    JSON.stringify({ event: "mcp_request_blocked", reason, userId }),
+  );
+}
+
+/**
+ * Charge the standard tool meter for a batch's non-tool messages.
+ *
+ * The middleware bills one HTTP unit per POST, `wrapTool` bills one tool
+ * unit per `tools/call`, and `batchSurcharge` counts what remains: extra
+ * non-tool elements, which would otherwise buy dispatch work for free —
+ * `tools/list` is never wrapped and serializes the full tool table per
+ * element. A batched `tools/call` is charged exactly once, in `wrapTool`.
  *
  * @param ctx - Resolved auth context.
- * @param extra - Messages beyond the first; non-positive charges nothing.
+ * @param extra - Non-tool messages beyond the first; non-positive charges
+ *   nothing and calls no backend.
  * @returns A 429 JSON-RPC response when the budget rejects, else `null`.
  */
 async function chargeBatchOverage(
@@ -312,6 +344,7 @@ async function chargeBatchOverage(
       MCP_STANDARD_LIMIT.window,
     );
     if (!result.allowed) {
+      logBlocked("batch_budget", ctx.userId);
       return jsonRpcError(
         -32000,
         mcpRateLimitMessage(

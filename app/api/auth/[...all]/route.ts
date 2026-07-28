@@ -1,5 +1,9 @@
 import { auth } from "@/lib/auth";
 import { applyIssAdvertisementCompat } from "@/lib/auth/oauth-metadata-compat";
+import {
+  AUTH_BASE_PATH,
+  PUBLIC_CACHEABLE_AUTH_PATHS,
+} from "@/lib/auth/public-cache-paths";
 import { ensureCacheControl, ensureNoStore } from "@/lib/security/headers";
 import { stampClientIpHeader } from "@/lib/security/client-ip";
 
@@ -70,21 +74,18 @@ const ALLOWED_PATHS: ReadonlySet<string> = new Set([
  */
 const ALLOWED_PREFIXES: readonly string[] = ["/reset-password/"];
 
-const BASE_PATH = "/api/auth";
+const BASE_PATH = AUTH_BASE_PATH;
 
 /**
  * Allowlisted paths whose responses are public and carry no session or user
- * data — the signing keys and the OAuth discovery metadata. These stay
- * cacheable; every other allowlisted path is session-bearing and pinned to
- * `no-store`. Better Auth already tags the discovery docs with its own public
- * hint, so `JWKS_CACHE_CONTROL` only ever applies to `/jwks`, which Better
- * Auth leaves header-less.
+ * data, from the shared `lib/auth/public-cache-paths.ts` set the middleware
+ * also reads to withhold RateLimit headers. These stay cacheable; every other
+ * allowlisted path is session-bearing and pinned to `no-store`. Better Auth
+ * already tags the discovery docs with its own public hint, so
+ * `JWKS_CACHE_CONTROL` only ever applies to `/jwks`, which Better Auth
+ * leaves header-less.
  */
-const PUBLIC_CACHEABLE_PATHS: ReadonlySet<string> = new Set([
-  "/jwks",
-  "/.well-known/oauth-authorization-server",
-  "/.well-known/openid-configuration",
-]);
+const PUBLIC_CACHEABLE_PATHS = PUBLIC_CACHEABLE_AUTH_PATHS;
 
 /**
  * Public Cache-Control for the JWKS keyset. The keys are public and gain

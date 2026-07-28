@@ -51,6 +51,28 @@ export type BatchInspection = {
  * @param body - Raw request body bytes.
  * @returns The inspection result.
  */
+/**
+ * Standard-tier units a batch owes beyond the POST itself.
+ *
+ * `wrapTool` bills every `tools/call` individually, so only non-tool
+ * messages count here, minus the one message the middleware's POST unit
+ * already covers. A single message or an all-`tools/call` batch owes
+ * nothing.
+ *
+ * @param inspection - The batch inspection result.
+ * @returns Units to charge against the standard meter.
+ */
+export function batchSurcharge(inspection: BatchInspection): number {
+  if (!Array.isArray(inspection.parsed)) return 0;
+  const nonTool = inspection.parsed.filter(
+    (message) =>
+      typeof message !== "object" ||
+      message === null ||
+      (message as { method?: unknown }).method !== "tools/call",
+  ).length;
+  return Math.max(0, nonTool - 1);
+}
+
 export function inspectBatch(body: Uint8Array): BatchInspection {
   let i = UTF8_BOM.every((byte, offset) => body[offset] === byte)
     ? UTF8_BOM.length
