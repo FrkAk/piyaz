@@ -265,6 +265,7 @@ test("declared budgets equal the Cloudflare binding limits that enforce them", a
     );
     for (const rule of RATE_LIMIT_RULES) {
       const simple = simpleByName.get(BINDING_BY_KEY[rule.bindingKey ?? "api"]);
+      expect(simple).toBeDefined();
       expect({
         env,
         pattern: rule.pattern,
@@ -284,6 +285,7 @@ test("declared budgets equal the Cloudflare binding limits that enforce them", a
     ];
     for (const [binding, constant] of constantsByBinding) {
       const simple = simpleByName.get(binding);
+      expect(simple).toBeDefined();
       expect(constant.max).toBe(simple!.limit);
       expect(constant.window).toBe(simple!.period);
     }

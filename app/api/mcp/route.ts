@@ -210,13 +210,7 @@ async function verifyMcpAuth(request: Request) {
 function forbiddenOrigin(request: Request): Response | null {
   const requestOrigin = request.headers.get("origin");
   if (!requestOrigin || requestOrigin === origin) return null;
-  console.warn(
-    JSON.stringify({
-      event: "mcp_request_blocked",
-      reason: "origin",
-      origin: requestOrigin,
-    }),
-  );
+  logBlocked("origin", { origin: requestOrigin.slice(0, 128) });
   return jsonRpcError(-32600, "Forbidden origin.", 403);
 }
 
@@ -262,17 +256,17 @@ export async function POST(request: Request) {
 
   const contentLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_MCP_BODY_BYTES) {
-    logBlocked("body_too_large", ctx.userId);
+    logBlocked("body_too_large", { userId: ctx.userId });
     return payloadTooLarge();
   }
   const body = await readBodyBounded(request, MAX_MCP_BODY_BYTES);
   if (body === null) {
-    logBlocked("body_too_large", ctx.userId);
+    logBlocked("body_too_large", { userId: ctx.userId });
     return payloadTooLarge();
   }
   const inspection = inspectBatch(body);
   if (inspection.oversized) {
-    logBlocked("batch_cap", ctx.userId);
+    logBlocked("batch_cap", { userId: ctx.userId });
     return jsonRpcError(
       -32600,
       `Batch too large: at most ${MAX_JSON_RPC_BATCH} JSON-RPC messages per request.`,
@@ -307,14 +301,15 @@ export async function POST(request: Request) {
  * are separable from tool errors in the log stream.
  *
  * @param reason - Which guard refused the request.
- * @param userId - The verified caller, absent on pre-auth refusals.
+ * @param context - Verified caller and probe details; `userId` is absent on
+ *   the pre-auth origin refusal, `origin` is length-capped caller bytes.
  */
 function logBlocked(
-  reason: "body_too_large" | "batch_cap" | "batch_budget",
-  userId?: string,
+  reason: "origin" | "body_too_large" | "batch_cap" | "batch_budget",
+  context: { userId?: string; origin?: string } = {},
 ): void {
   console.warn(
-    JSON.stringify({ event: "mcp_request_blocked", reason, userId }),
+    JSON.stringify({ event: "mcp_request_blocked", reason, ...context }),
   );
 }
 
@@ -344,7 +339,7 @@ async function chargeBatchOverage(
       MCP_STANDARD_LIMIT.window,
     );
     if (!result.allowed) {
-      logBlocked("batch_budget", ctx.userId);
+      logBlocked("batch_budget", { userId: ctx.userId });
       return jsonRpcError(
         -32000,
         mcpRateLimitMessage(

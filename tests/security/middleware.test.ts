@@ -50,6 +50,12 @@ afterEach(() => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+  // The backend slots are process-global; leave later files fresh counters
+  // instead of this file's exhausted buckets.
+  setBackend("api", new MemoryRateLimitBackend(60_000));
+  setBackend("auth", new MemoryRateLimitBackend(60_000));
+  setBackend("mcp", new MemoryRateLimitBackend(60_000));
+  setBackend("address", new MemoryRateLimitBackend(60_000));
 });
 
 test("attack: a forged x-piyaz-client-ip is overwritten with the resolved address", async () => {

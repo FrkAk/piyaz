@@ -153,7 +153,8 @@ export async function middleware(request: NextRequest) {
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   // Withheld on the shared-cacheable auth documents: RateLimit counters are
-  // per-caller state a shared cache would replay to other callers.
+  // per-caller state a shared cache would replay to other callers. The 429
+  // branch above keeps its headers; an error response is not stored.
   if (rlHeaders && !isPublicCacheableAuthPath(pathname)) {
     for (const [k, v] of Object.entries(rlHeaders)) {
       response.headers.set(k, v);

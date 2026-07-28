@@ -4,9 +4,9 @@
  * The transport dispatches every element of a batch array to a handler,
  * each `tools/call` opening its own RLS transaction, while the middleware
  * budget counts the POST once; the route charges the per-call meter for the
- * extra elements. MCP 2025-06-18 removed JSON-RPC batching, so the array path
- * exists only for 2025-03-26 back-compat and a small ceiling penalizes no
- * current client.
+ * extra non-tool elements. MCP 2025-06-18 removed JSON-RPC batching, so the
+ * array path exists only for 2025-03-26 back-compat and a small ceiling
+ * penalizes no current client.
  */
 export const MAX_JSON_RPC_BATCH = 5;
 
@@ -37,21 +37,6 @@ export type BatchInspection = {
 };
 
 /**
- * Inspect a request body for the JSON-RPC batch path.
- *
- * Only an array can be a batch, so the first non-whitespace byte decides
- * whether parsing is worth it; the common single-message body is never
- * decoded here. A parsed array is returned for reuse as the transport's
- * `parsedBody`, so batch bytes are parsed once.
- *
- * Malformed JSON is not judged here: the transport owns that error, and
- * `parsed` stays absent on a parse failure so the transport re-reads the
- * bytes and produces its own diagnostic.
- *
- * @param body - Raw request body bytes.
- * @returns The inspection result.
- */
-/**
  * Standard-tier units a batch owes beyond the POST itself.
  *
  * `wrapTool` bills every `tools/call` individually, so only non-tool
@@ -73,6 +58,21 @@ export function batchSurcharge(inspection: BatchInspection): number {
   return Math.max(0, nonTool - 1);
 }
 
+/**
+ * Inspect a request body for the JSON-RPC batch path.
+ *
+ * Only an array can be a batch, so the first non-whitespace byte decides
+ * whether parsing is worth it; the common single-message body is never
+ * decoded here. A parsed array is returned for reuse as the transport's
+ * `parsedBody`, so batch bytes are parsed once.
+ *
+ * Malformed JSON is not judged here: the transport owns that error, and
+ * `parsed` stays absent on a parse failure so the transport re-reads the
+ * bytes and produces its own diagnostic.
+ *
+ * @param body - Raw request body bytes.
+ * @returns The inspection result.
+ */
 export function inspectBatch(body: Uint8Array): BatchInspection {
   let i = UTF8_BOM.every((byte, offset) => body[offset] === byte)
     ? UTF8_BOM.length

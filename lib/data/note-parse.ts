@@ -90,7 +90,7 @@ export function fenceCloses(line: string, fence: FenceState): boolean {
  * The inner run is captured through a lookahead and consumed by its own
  * backreference, making it atomic: the engine cannot re-try shorter inners
  * when the closing `]]` is missing. A `[[[[[[…` body is still quadratic,
- * at a measured constant factor below the plain capture.
+ * at a constant factor below the plain capture.
  * Match-equivalent to the plain capture: the run excludes `]`, so a shorter
  * inner is always followed by a non-`]` and could never satisfy `\]\]`.
  */
