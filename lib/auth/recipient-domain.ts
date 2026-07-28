@@ -1,5 +1,7 @@
 import "server-only";
 
+import { isPubliclyRoutable } from "@/lib/auth/ip-routability";
+
 /**
  * Outcome of a recipient-domain deliverability probe.
  *
@@ -108,101 +110,141 @@ async function resolve(
 }
 
 /**
- * IPv4 ranges no public mail server can deliver to: loopback, "this host",
- * RFC 1918 private space, link-local, and CGNAT.
- * Sources: RFC 5735, RFC 6598, RFC 6890.
- */
-const NON_ROUTABLE_V4 = [
-  /^0\./,
-  /^10\./,
-  /^127\./,
-  /^169\.254\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
-];
-
-/**
- * Whether an address is reachable for mail delivery from the public internet.
- *
- * A domain that points its MX at a non-routable address publishes a syntactically
- * valid record that no sender can ever connect to. This is the shape behind
- * Cloudflare's `transport_none` failure, and it is deliberate: parked and
- * anti-spam domains point their MX at loopback precisely so mail dies.
- *
- * @param address - An A or AAAA record's data.
- * @returns `true` when the address is publicly routable.
- */
-function isRoutable(address: string): boolean {
-  const value = address.trim().toLowerCase();
-  if (value.includes(":")) {
-    // IPv4-mapped (::ffff:a.b.c.d) delegates to the IPv4 ranges.
-    if (value.startsWith("::ffff:") && value.includes(".")) {
-      const mapped = value.slice("::ffff:".length);
-      return !NON_ROUTABLE_V4.some((range) => range.test(mapped));
-    }
-    // IPv6: unspecified, loopback (compressed or fully written out),
-    // link-local (fe80::/10), unique-local (fc00::/7).
-    if (value === "::" || value === "::1") return false;
-    const hextets = value.split(":");
-    if (hextets.length === 8) {
-      const canonical = hextets
-        .map((hextet) => hextet.replace(/^0+(?=.)/, ""))
-        .join(":");
-      if (canonical === "0:0:0:0:0:0:0:0" || canonical === "0:0:0:0:0:0:0:1") {
-        return false;
-      }
-    }
-    return !/^(fe[89ab]|f[cd])/.test(value);
-  }
-  return !NON_ROUTABLE_V4.some((range) => range.test(value));
-}
-
-/**
  * Whether a name resolves to at least one publicly routable address.
+ *
+ * Both families are resolved together. Serialised, one exchange costs two round
+ * trips and a domain whose first exchange is dead costs five, which overruns
+ * {@link PROBE_DEADLINE_MS} and hands back `unknown` for a domain that is
+ * merely slow rather than undeliverable. The cost is one extra lookup when the
+ * A record alone would have answered; the verdict cache absorbs that on every
+ * repeat probe of the same domain.
  *
  * @param name - Host name to resolve.
  * @param deadline - Whole-probe abort signal shared across lookups.
  * @returns `true` when a routable A or AAAA record exists, `false` when the
- *   name has no address records or only non-routable ones, `null` when the
- *   lookups failed.
+ *   name has no address records or only non-routable ones, `null` when a lookup
+ *   failed and neither family produced a routable answer.
  */
 async function hasRoutableAddress(
   name: string,
   deadline: AbortSignal,
 ): Promise<boolean | null> {
-  const a = await resolve(name, RECORD_TYPE.A, deadline);
-  if (a === null) return null;
-  if (a.some(isRoutable)) return true;
-  const aaaa = await resolve(name, RECORD_TYPE.AAAA, deadline);
-  if (aaaa === null) return null;
-  return aaaa.some(isRoutable);
+  const [a, aaaa] = await Promise.all([
+    resolve(name, RECORD_TYPE.A, deadline),
+    resolve(name, RECORD_TYPE.AAAA, deadline),
+  ]);
+  if (a?.some(isPubliclyRoutable) === true) return true;
+  if (aaaa?.some(isPubliclyRoutable) === true) return true;
+  // A routable answer from either family is decisive, so a fault is only
+  // reported once neither has one: serialised, an A-lookup fault short-circuits
+  // and a v6-reachable exchange reads as unprobeable.
+  if (a === null || aaaa === null) return null;
+  return false;
+}
+
+/** One usable MX record: its delivery preference and its exchange host. */
+interface MxRecord {
+  preference: number;
+  host: string;
 }
 
 /**
- * Parse the preference number off a DoH MX answer for delivery-order sorting.
+ * Parse one DoH MX answer (`"10 mx1.example.com."`).
  *
- * @param data - Raw MX answer data (`"10 mx1.example.com."`).
- * @returns The numeric preference, or `MAX_SAFE_INTEGER` for unparseable data
- *   so garbage sorts last.
- */
-function mxPreference(data: string): number {
-  const preference = Number.parseInt(data.trim(), 10);
-  return Number.isFinite(preference) ? preference : Number.MAX_SAFE_INTEGER;
-}
-
-/**
- * Parse the exchange host out of a DoH MX answer (`"10 mx1.example.com."`).
+ * The three outcomes are kept distinct because they demand opposite verdicts.
+ * RFC 7505 null MX is a domain declaring it refuses mail, which is a hard
+ * rejection; an answer this cannot parse is a resolver returning something
+ * unexpected, which must fail open like every other resolver fault. Collapsing
+ * both into "no exchange" would turn a parser regression into a sign-up outage.
  *
  * @param data - Raw MX answer data.
- * @returns The exchange host without its trailing dot, or `null` for RFC 7505
- *   null MX (`"0 ."`) and unparseable records.
+ * @returns The record, `"null-mx"` for RFC 7505 `"0 ."`, or `null` when the
+ *   answer does not parse as an MX at all.
  */
-function parseExchange(data: string): string | null {
-  const exchange = data.trim().split(/\s+/)[1];
-  if (exchange === undefined) return null;
-  const host = exchange.replace(/\.$/, "");
-  return host.length > 0 ? host : null;
+function parseMx(data: string): MxRecord | "null-mx" | null {
+  const parts = data.trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  const preference = Number.parseInt(parts[0], 10);
+  if (!Number.isFinite(preference)) return null;
+  const host = parts[1].replace(/\.$/, "");
+  return host.length > 0 ? { preference, host } : "null-mx";
+}
+
+/**
+ * How long a settled verdict is reused, by verdict.
+ *
+ * `deliverable` is effectively static, so it is held long. `undeliverable` is
+ * held briefly on purpose: a domain that fixes its MX must not stay rejected,
+ * and the cost of re-probing it is three lookups. `unknown` is never stored,
+ * because memoizing a resolver fault would stretch a transient outage across
+ * the whole window.
+ */
+export const VERDICT_CACHE_TTL_SECONDS = {
+  deliverable: 21_600,
+  undeliverable: 900,
+} as const;
+
+/** One memoized verdict and the epoch millisecond it stops being reused. */
+interface CachedVerdict {
+  verdict: DeliverabilityVerdict;
+  expiresAt: number;
+}
+
+/**
+ * Per-process verdict memo.
+ *
+ * Deliberately in-process rather than KV-backed. Sign-ups concentrate on a
+ * short list of recipient domains, so an isolate-local map removes almost all
+ * repeat probing for the cost of a `Map`; a shared store would add a binding, a
+ * dual-runtime pair, and a network read on every sign-up to raise the hit rate
+ * on an endpoint that is already capped at three requests per minute per
+ * address. Entries are per-isolate and simply re-probe after a cold start.
+ */
+const _verdicts = new Map<string, CachedVerdict>();
+
+/**
+ * Test-only: drop every memoized verdict so one test's canned zone cannot
+ * answer another's probe. Never call from production code.
+ */
+export function __resetDeliverabilityCacheForTest(): void {
+  _verdicts.clear();
+}
+
+/**
+ * Read a live memoized verdict, dropping it if it has expired.
+ *
+ * @param domain - Recipient domain.
+ * @returns The cached verdict, or `null` when absent or stale.
+ */
+function readCachedVerdict(domain: string): DeliverabilityVerdict | null {
+  const entry = _verdicts.get(domain);
+  if (entry === undefined) return null;
+  if (entry.expiresAt <= Date.now()) {
+    _verdicts.delete(domain);
+    return null;
+  }
+  return entry.verdict;
+}
+
+/**
+ * Memoize a settled verdict, pruning expired entries so a long-lived process
+ * holds only domains probed inside the current window.
+ *
+ * @param domain - Recipient domain.
+ * @param verdict - Settled verdict; `unknown` is never passed here.
+ */
+function cacheVerdict(
+  domain: string,
+  verdict: "deliverable" | "undeliverable",
+): void {
+  const now = Date.now();
+  for (const [key, entry] of _verdicts) {
+    if (entry.expiresAt <= now) _verdicts.delete(key);
+  }
+  _verdicts.set(domain, {
+    verdict,
+    expiresAt: now + VERDICT_CACHE_TTL_SECONDS[verdict] * 1000,
+  });
 }
 
 /**
@@ -225,29 +267,51 @@ export async function checkRecipientDomain(
   domain: string,
 ): Promise<DeliverabilityVerdict> {
   if (_resolverOverride !== null) return _resolverOverride(domain);
+  const cached = readCachedVerdict(domain);
+  if (cached !== null) return cached;
+  const verdict = await probeRecipientDomain(domain);
+  if (verdict !== "unknown") cacheVerdict(domain, verdict);
+  return verdict;
+}
 
+/**
+ * Resolve a domain's deliverability from DNS, with no memoization.
+ *
+ * @param domain - The recipient domain, already lowercased and A-label mapped.
+ * @returns The deliverability verdict for the domain.
+ */
+async function probeRecipientDomain(
+  domain: string,
+): Promise<DeliverabilityVerdict> {
   const deadline = AbortSignal.timeout(PROBE_DEADLINE_MS);
   const mx = await resolve(domain, RECORD_TYPE.MX, deadline);
   if (mx === null) return "unknown";
 
-  const exchanges = [...mx]
-    .sort((a, b) => mxPreference(a) - mxPreference(b))
-    .map(parseExchange)
-    .filter((host): host is string => host !== null);
-
   if (mx.length === 0) {
-    // No MX at all: RFC 5321 falls back to the domain's own address records.
+    // No MX at all: RFC 5321 §5.1 falls back to the domain's own address
+    // records, treating them as an implicit MX of preference 0.
     const implicit = await hasRoutableAddress(domain, deadline);
     if (implicit === null) return "unknown";
     return implicit ? "deliverable" : "undeliverable";
   }
 
-  if (exchanges.length === 0) {
-    // MX records exist but none is a usable exchange: RFC 7505 null MX
-    // (`0 .`) declares the domain refuses mail, and RFC 7505 §3 forbids the
-    // A/AAAA fallback in that case, even when the domain hosts a website.
-    return "undeliverable";
-  }
+  const parsed = mx.map(parseMx);
+
+  // RFC 7505 §3 defines `0 .` as the domain declaring it accepts no mail, and
+  // forbids advertising any other MX alongside it. The A/AAAA fallback is then
+  // barred by RFC 5321 §5.1 ("If MX records are present, but none of them are
+  // usable, this situation MUST be reported as an error"), so a domain that
+  // hosts a website still refuses mail.
+  if (parsed.includes("null-mx")) return "undeliverable";
+
+  const exchanges = parsed
+    .filter((record): record is MxRecord => record !== null)
+    .sort((a, b) => a.preference - b.preference)
+    .map((record) => record.host);
+
+  // MX records exist but not one of them parsed. That is a resolver returning
+  // something unexpected, not a domain refusing mail, so it fails open.
+  if (exchanges.length === 0) return "unknown";
 
   let sawResolverFailure = false;
   for (const exchange of exchanges.slice(0, MAX_EXCHANGES_PROBED)) {
@@ -264,28 +328,51 @@ export async function checkRecipientDomain(
   return exchanges.length > MAX_EXCHANGES_PROBED ? "unknown" : "undeliverable";
 }
 
+/** RFC 1035 §2.3.4 caps a domain name at 253 octets; nothing longer resolves. */
+const MAX_DOMAIN_OCTETS = 253;
+
 /**
- * Extract the probe-ready domain from an email address.
+ * Map a domain to its A-label (ASCII) form.
  *
- * Internationalized domains are IDNA-mapped to their A-label form: the DoH
- * endpoint rejects raw U-labels with HTTP 400, so probing them verbatim
- * would silently skip the gate. WHATWG `URL` performs the ToASCII mapping on
- * every supported runtime; a domain it cannot parse yields `null`, which
- * skips the probe and leaves the verdict to Better Auth's own validation.
+ * The DoH endpoint rejects raw U-labels with HTTP 400, so probing an
+ * internationalized domain verbatim would silently skip the gate. WHATWG `URL`
+ * performs the IDNA ToASCII mapping on every supported runtime.
  *
- * @param email - Address to split.
- * @returns The lowercased A-label domain, or `null` when the address has no
- *   single `@` separator, an empty domain part, or an unmappable domain.
+ * @param domain - Lowercased domain part of an address.
+ * @returns The A-label form, or `null` when the domain cannot be mapped.
  */
-export function recipientDomain(email: string): string | null {
-  const parts = email.trim().toLowerCase().split("@");
-  if (parts.length !== 2) return null;
-  const domain = parts[1];
-  if (domain.length === 0) return null;
+function toAsciiDomain(domain: string): string | null {
   if (/^[\x00-\x7f]+$/.test(domain)) return domain;
   try {
     return new URL(`http://${domain}`).hostname;
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract the probe-ready domain from an email address.
+ *
+ * Bounds the domain and nothing else. The local part can be padded to any
+ * length and Better Auth's validator accepts it, so an address-length guard in
+ * front of the probe would be a gate bypass; the limit belongs on the domain,
+ * which is the only part that has to resolve. Applied to the A-label form,
+ * because that is what goes on the wire.
+ *
+ * A `null` result skips the probe and leaves the verdict to Better Auth's own
+ * validation.
+ *
+ * @param email - Address to split.
+ * @returns The lowercased A-label domain, or `null` when the address has no
+ *   single `@` separator, an empty domain part, an unmappable domain, or a
+ *   domain past {@link MAX_DOMAIN_OCTETS}.
+ */
+export function recipientDomain(email: string): string | null {
+  const parts = email.trim().toLowerCase().split("@");
+  if (parts.length !== 2) return null;
+  const domain = parts[1];
+  if (domain.length === 0) return null;
+  const ascii = toAsciiDomain(domain);
+  if (ascii === null) return null;
+  return ascii.length <= MAX_DOMAIN_OCTETS ? ascii : null;
 }

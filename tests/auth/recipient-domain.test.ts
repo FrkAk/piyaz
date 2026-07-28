@@ -3,6 +3,8 @@ import {
   checkRecipientDomain,
   recipientDomain,
   setRecipientDomainResolver,
+  VERDICT_CACHE_TTL_SECONDS,
+  __resetDeliverabilityCacheForTest,
 } from "@/lib/auth/recipient-domain";
 
 /** One canned DoH answer set, keyed by `"<name>:<type>"`. */
@@ -45,6 +47,7 @@ function answer(type: number, data: string) {
 // default goes back on afterwards so later files stay off the network.
 beforeEach(() => {
   setRecipientDomainResolver(null);
+  __resetDeliverabilityCacheForTest();
   stubResolver({});
 });
 afterEach(() => {
@@ -55,7 +58,7 @@ afterEach(() => {
 test("domain with a resolvable MX exchange is deliverable", async () => {
   stubResolver({
     "example.com:15": { Status: 0, Answer: [answer(15, "10 mx.example.com.")] },
-    "mx.example.com:1": { Status: 0, Answer: [answer(1, "203.0.113.10")] },
+    "mx.example.com:1": { Status: 0, Answer: [answer(1, "93.184.215.14")] },
   });
   expect(await checkRecipientDomain("example.com")).toBe("deliverable");
 });
@@ -131,20 +134,36 @@ test("IPv6 loopback and unique-local exchanges are undeliverable", async () => {
 test("RFC 7505 null MX is undeliverable even when the domain itself resolves", async () => {
   // The common real-world shape: a corporate domain hosts a website (routable
   // A record) and publishes `0 .` to declare it receives no mail. RFC 7505 §3
-  // forbids the implicit A/AAAA fallback, so the site's address must not
-  // rescue the domain.
+  // defines that encoding; RFC 5321 §5.1 is what forbids falling back to the
+  // address records ("If MX records are present, but none of them are usable,
+  // this situation MUST be reported as an error"), so the site's own address
+  // must not rescue the domain.
   stubResolver({
     "no-mail.example:15": { Status: 0, Answer: [answer(15, "0 .")] },
-    "no-mail.example:1": { Status: 0, Answer: [answer(1, "203.0.113.40")] },
+    "no-mail.example:1": { Status: 0, Answer: [answer(1, "93.184.215.44")] },
     "no-mail.example:28": { Status: 0, Answer: [] },
   });
   expect(await checkRecipientDomain("no-mail.example")).toBe("undeliverable");
 });
 
+test("MX answers that do not parse fail open, unlike a null MX", async () => {
+  // The discriminator the null-MX case above cannot provide on its own: both
+  // land on an empty exchange list, so without this a parser regression that
+  // dropped every real MX would read as "this domain refuses mail" and reject
+  // every sign-up on it, while the null-MX test stayed green.
+  stubResolver({
+    "garbled.example:15": {
+      Status: 0,
+      Answer: [answer(15, "no-preference-no-exchange")],
+    },
+  });
+  expect(await checkRecipientDomain("garbled.example")).toBe("unknown");
+});
+
 test("no MX falls back to the domain's own address record", async () => {
   stubResolver({
     "implicit.example:15": { Status: 0, Answer: [] },
-    "implicit.example:1": { Status: 0, Answer: [answer(1, "203.0.113.20")] },
+    "implicit.example:1": { Status: 0, Answer: [answer(1, "93.184.215.24")] },
   });
   expect(await checkRecipientDomain("implicit.example")).toBe("deliverable");
 });
@@ -189,7 +208,7 @@ test("exchanges are probed in preference order, not answer order", async () => {
     "dead-a.pref.example:28": { Status: 0, Answer: [] },
     "dead-b.pref.example:1": { Status: 0, Answer: [] },
     "dead-b.pref.example:28": { Status: 0, Answer: [] },
-    "live.pref.example:1": { Status: 0, Answer: [answer(1, "203.0.113.50")] },
+    "live.pref.example:1": { Status: 0, Answer: [answer(1, "93.184.215.54")] },
   });
   expect(await checkRecipientDomain("pref.example")).toBe("deliverable");
 });
@@ -250,7 +269,7 @@ test("second exchange rescues a first that does not resolve", async () => {
     },
     "dead.two.example:1": { Status: 0, Answer: [] },
     "dead.two.example:28": { Status: 0, Answer: [] },
-    "ok.two.example:1": { Status: 0, Answer: [answer(1, "203.0.113.30")] },
+    "ok.two.example:1": { Status: 0, Answer: [answer(1, "93.184.215.34")] },
   });
   expect(await checkRecipientDomain("two.example")).toBe("deliverable");
 });
@@ -259,7 +278,10 @@ test("AAAA-only exchange is deliverable", async () => {
   stubResolver({
     "v6.example:15": { Status: 0, Answer: [answer(15, "10 mx.v6.example.")] },
     "mx.v6.example:1": { Status: 0, Answer: [] },
-    "mx.v6.example:28": { Status: 0, Answer: [answer(28, "2001:db8::1")] },
+    "mx.v6.example:28": {
+      Status: 0,
+      Answer: [answer(28, "2606:4700:4700::1111")],
+    },
   });
   expect(await checkRecipientDomain("v6.example")).toBe("deliverable");
 });
@@ -298,4 +320,110 @@ test("recipientDomain maps internationalized domains to their A-label", () => {
 
 test("recipientDomain fails open on an unmappable non-ASCII domain", () => {
   expect(recipientDomain("user@bad domain.рф")).toBeNull();
+});
+
+test("recipientDomain rejects a domain past the RFC 1035 length limit", () => {
+  // The guard belongs here, not at the call site: nothing longer than 253
+  // octets can resolve, and a second caller must not be able to lose the
+  // bound. Bounds the domain only: the local part can be padded to any
+  // length, so an address-length guard would be a gate bypass.
+  const tooLong = `${"a".repeat(250)}.example.com`;
+  expect(tooLong.length).toBeGreaterThan(253);
+  expect(recipientDomain(`user@${tooLong}`)).toBeNull();
+  expect(recipientDomain(`user@${"a".repeat(240)}.com`)).not.toBeNull();
+});
+
+test("the two address families for one exchange are resolved concurrently", async () => {
+  // The chain is MX, then A, then AAAA, per exchange. Serialised, a domain
+  // whose first exchange is dead costs five round trips and overruns the
+  // whole-probe deadline, so a slow but perfectly good domain returns
+  // `unknown` and the gate silently stops applying. Overlapping the two
+  // families halves the worst case.
+  let inFlight = 0;
+  let peak = 0;
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = new URL(String(input));
+    const key = `${url.searchParams.get("name")}:${url.searchParams.get("type")}`;
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inFlight -= 1;
+    const body =
+      key === "slow.example:15"
+        ? { Status: 0, Answer: [answer(15, "10 mx.slow.example.")] }
+        : key === "mx.slow.example:28"
+          ? { Status: 0, Answer: [answer(28, "2606:4700:4700::1111")] }
+          : { Status: 0, Answer: [] };
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as typeof fetch;
+
+  expect(await checkRecipientDomain("slow.example")).toBe("deliverable");
+  expect(peak).toBeGreaterThan(1);
+});
+
+test("a routable AAAA still wins when the A lookup itself fails", async () => {
+  // Serialised, an A-lookup fault short-circuits to `unknown` and the AAAA
+  // record is never consulted, so a v6-reachable exchange reads as unprobeable.
+  stubResolver({
+    "v6only.example:15": {
+      Status: 0,
+      Answer: [answer(15, "10 mx.v6only.example.")],
+    },
+    "mx.v6only.example:1": "fail",
+    "mx.v6only.example:28": {
+      Status: 0,
+      Answer: [answer(28, "2606:4700:4700::1111")],
+    },
+  });
+  expect(await checkRecipientDomain("v6only.example")).toBe("deliverable");
+});
+
+test("a repeated probe for the same domain issues no further lookups", async () => {
+  // Every probe costs three DoH round trips now that both address families are
+  // resolved together, and sign-ups concentrate on a short list of domains.
+  let lookups = 0;
+  const zone = {
+    "memo.example:15": {
+      Status: 0,
+      Answer: [answer(15, "10 mx.memo.example.")],
+    },
+    "mx.memo.example:1": { Status: 0, Answer: [answer(1, "93.184.215.14")] },
+  };
+  globalThis.fetch = (async (input: string | URL) => {
+    lookups += 1;
+    const url = new URL(String(input));
+    const key = `${url.searchParams.get("name")}:${url.searchParams.get("type")}`;
+    const entry = (zone as Record<string, unknown>)[key];
+    return new Response(JSON.stringify(entry ?? { Status: 0, Answer: [] }), {
+      status: 200,
+    });
+  }) as typeof fetch;
+
+  expect(await checkRecipientDomain("memo.example")).toBe("deliverable");
+  const afterFirst = lookups;
+  expect(afterFirst).toBeGreaterThan(0);
+
+  expect(await checkRecipientDomain("memo.example")).toBe("deliverable");
+  expect(lookups).toBe(afterFirst);
+});
+
+test("an unknown verdict is never memoized", async () => {
+  // Caching a resolver fault would extend a transient outage for the whole TTL.
+  let lookups = 0;
+  globalThis.fetch = (async () => {
+    lookups += 1;
+    return new Response("nope", { status: 500 });
+  }) as unknown as typeof fetch;
+
+  expect(await checkRecipientDomain("flap.example")).toBe("unknown");
+  const afterFirst = lookups;
+  expect(await checkRecipientDomain("flap.example")).toBe("unknown");
+  expect(lookups).toBeGreaterThan(afterFirst);
+});
+
+test("an undeliverable verdict is held for less time than a deliverable one", () => {
+  // A domain that fixes its MX must not stay rejected for the long TTL.
+  expect(VERDICT_CACHE_TTL_SECONDS.undeliverable).toBeLessThan(
+    VERDICT_CACHE_TTL_SECONDS.deliverable,
+  );
 });

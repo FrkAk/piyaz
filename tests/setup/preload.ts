@@ -117,9 +117,8 @@ import { beforeAll, afterEach } from "bun:test";
 //
 // Dynamic import so it lands after the `server-only` neutralization above;
 // a static import would hoist above it and throw.
-const { setRecipientDomainResolver } = await import(
-  "@/lib/auth/recipient-domain"
-);
+const { setRecipientDomainResolver, __resetDeliverabilityCacheForTest } =
+  await import("@/lib/auth/recipient-domain");
 setRecipientDomainResolver(async () => "deliverable");
 
 // The node email-budget counter is process-global; without a reset between
@@ -136,4 +135,8 @@ beforeAll(async () => {
 afterEach(() => {
   currentTestSession = null;
   __resetBudgetForTest();
+  // The verdict memo is process-global. The permissive resolver above
+  // short-circuits ahead of it, so only a file that lifts the override can
+  // populate it, but a stale entry would answer a later file's canned zone.
+  __resetDeliverabilityCacheForTest();
 });
