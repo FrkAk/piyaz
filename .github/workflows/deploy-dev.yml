@@ -44,3 +44,6 @@ jobs:
           deploy_script: deploy:cf:dev
           cache_prefix: deploy-dev
           turnstile_site_key: ${{ vars.TURNSTILE_SITE_KEY_DEV }}
+          access_gated: 'true'
+          access_client_id: ${{ secrets.CF_ACCESS_SMOKE_CLIENT_ID }}
+          access_client_secret: ${{ secrets.CF_ACCESS_SMOKE_CLIENT_SECRET }}
