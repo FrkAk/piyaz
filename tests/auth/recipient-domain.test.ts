@@ -128,10 +128,14 @@ test("IPv6 loopback and unique-local exchanges are undeliverable", async () => {
   expect(await checkRecipientDomain("v6bad.example")).toBe("undeliverable");
 });
 
-test("RFC 7505 null MX is undeliverable", async () => {
+test("RFC 7505 null MX is undeliverable even when the domain itself resolves", async () => {
+  // The common real-world shape: a corporate domain hosts a website (routable
+  // A record) and publishes `0 .` to declare it receives no mail. RFC 7505 §3
+  // forbids the implicit A/AAAA fallback, so the site's address must not
+  // rescue the domain.
   stubResolver({
     "no-mail.example:15": { Status: 0, Answer: [answer(15, "0 .")] },
-    "no-mail.example:1": { Status: 0, Answer: [] },
+    "no-mail.example:1": { Status: 0, Answer: [answer(1, "203.0.113.40")] },
     "no-mail.example:28": { Status: 0, Answer: [] },
   });
   expect(await checkRecipientDomain("no-mail.example")).toBe("undeliverable");

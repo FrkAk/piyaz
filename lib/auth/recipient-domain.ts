@@ -184,12 +184,18 @@ export async function checkRecipientDomain(
     .map(parseExchange)
     .filter((host): host is string => host !== null);
 
-  if (exchanges.length === 0) {
-    // No MX (or null MX only). RFC 5321 falls back to the domain's own
-    // address records; RFC 7505 null MX means the domain refuses mail.
+  if (mx.length === 0) {
+    // No MX at all: RFC 5321 falls back to the domain's own address records.
     const implicit = await hasRoutableAddress(domain);
     if (implicit === null) return "unknown";
     return implicit ? "deliverable" : "undeliverable";
+  }
+
+  if (exchanges.length === 0) {
+    // MX records exist but none is a usable exchange: RFC 7505 null MX
+    // (`0 .`) declares the domain refuses mail, and RFC 7505 §3 forbids the
+    // A/AAAA fallback in that case, even when the domain hosts a website.
+    return "undeliverable";
   }
 
   let sawResolverFailure = false;
