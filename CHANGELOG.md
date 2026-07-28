@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.11](https://github.com/FrkAk/piyaz/compare/v0.4.10...v0.4.11) (2026-07-28)
+
+
+### Bug Fixes
+
+* harden signup against bots and undeliverable recipients ([#267](https://github.com/FrkAk/piyaz/issues/267)) ([80b4ffe](https://github.com/FrkAk/piyaz/commit/80b4ffecbe0cc0bb20ab65e7c4b4a0f517f0eb20))
+* harden the api, auth and mcp request surface ([#261](https://github.com/FrkAk/piyaz/issues/261)) ([64050ea](https://github.com/FrkAk/piyaz/commit/64050ea8991046d10e82e3c3e9a653e66a71b7aa))
+* make the legal pages indexable ([#257](https://github.com/FrkAk/piyaz/issues/257)) ([cecbcc6](https://github.com/FrkAk/piyaz/commit/cecbcc6744b7c132f151d7d236ce7af1098d8bd3))
+* make the mcp server discoverable to registries ([#263](https://github.com/FrkAk/piyaz/issues/263)) ([85b66ab](https://github.com/FrkAk/piyaz/commit/85b66ab18a6482032c395d9fd47b826b85dcb4e7))
+* ship one hosted mcp server in every plugin ([#264](https://github.com/FrkAk/piyaz/issues/264)) ([b4d9aa0](https://github.com/FrkAk/piyaz/commit/b4d9aa0d861ad29776fb263e6a264e65f828fbb9))
+* stop repeating the description in generated tool pages ([#260](https://github.com/FrkAk/piyaz/issues/260)) ([b39b49e](https://github.com/FrkAk/piyaz/commit/b39b49e70c84b35de02ea32a738508dcc7e4e5f3))
+* unblock codex mcp oauth login ([#265](https://github.com/FrkAk/piyaz/issues/265)) ([8f6c94b](https://github.com/FrkAk/piyaz/commit/8f6c94b73bdca8c3e03d2112e8486452246a13f1))
+
+
+### Documentation
+
+* drop turnstile keys from the self-host env example ([#272](https://github.com/FrkAk/piyaz/issues/272)) ([4caaec1](https://github.com/FrkAk/piyaz/commit/4caaec10f5eb7b1f0a5f3424b8a39d4cf4eea809))
+
+
+### Code Refactoring
+
+* drop the duplicated h1 from generated docs pages ([#256](https://github.com/FrkAk/piyaz/issues/256)) ([d0d8bd5](https://github.com/FrkAk/piyaz/commit/d0d8bd518a5b87c5a47298e9838bf9945fdbde2b))
+
 ## [0.4.10](https://github.com/FrkAk/piyaz/compare/v0.4.9...v0.4.10) (2026-07-24)
 
 
