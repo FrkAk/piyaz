@@ -289,3 +289,13 @@ test("recipientDomain rejects malformed addresses", () => {
   expect(recipientDomain("two@at@signs")).toBeNull();
   expect(recipientDomain("empty@")).toBeNull();
 });
+
+test("recipientDomain maps internationalized domains to their A-label", () => {
+  // The DoH endpoint rejects raw U-labels with HTTP 400; only the punycoded
+  // form is probeable.
+  expect(recipientDomain("user@ПрИмЕр.рф")).toBe("xn--e1afmkfd.xn--p1ai");
+});
+
+test("recipientDomain fails open on an unmappable non-ASCII domain", () => {
+  expect(recipientDomain("user@bad domain.рф")).toBeNull();
+});

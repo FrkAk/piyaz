@@ -265,15 +265,27 @@ export async function checkRecipientDomain(
 }
 
 /**
- * Extract the domain from an email address.
+ * Extract the probe-ready domain from an email address.
+ *
+ * Internationalized domains are IDNA-mapped to their A-label form: the DoH
+ * endpoint rejects raw U-labels with HTTP 400, so probing them verbatim
+ * would silently skip the gate. WHATWG `URL` performs the ToASCII mapping on
+ * every supported runtime; a domain it cannot parse yields `null`, which
+ * skips the probe and leaves the verdict to Better Auth's own validation.
  *
  * @param email - Address to split.
- * @returns The lowercased domain, or `null` when the address has no single `@`
- *   separator or an empty domain part.
+ * @returns The lowercased A-label domain, or `null` when the address has no
+ *   single `@` separator, an empty domain part, or an unmappable domain.
  */
 export function recipientDomain(email: string): string | null {
   const parts = email.trim().toLowerCase().split("@");
   if (parts.length !== 2) return null;
   const domain = parts[1];
-  return domain.length > 0 ? domain : null;
+  if (domain.length === 0) return null;
+  if (/^[\x00-\x7f]+$/.test(domain)) return domain;
+  try {
+    return new URL(`http://${domain}`).hostname;
+  } catch {
+    return null;
+  }
 }
