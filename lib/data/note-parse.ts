@@ -7,8 +7,10 @@
  * (both case-insensitive), else a note title.
  * Refs never match inside fenced code blocks (CommonMark fence rules) or
  * inline code spans; refs inside bold runs are matched, so a reference
- * always reads and backlinks as one. The Notes renderer shares this
- * module's matcher and classifier to stay in lockstep (PYZ-258). No DB
+ * always reads and backlinks as one. The Notes renderer consumes this
+ * module's ref pattern (`buildRefRe`) and classifier; extraction scans with
+ * `scanLineRefs`, and the two matchers agree on single-line input
+ * (differential-tested, PYZ-258). No DB
  * access — unit-testable in isolation; `lib/data/note.ts` resolves the
  * extracted refs in-tx.
  */
@@ -87,7 +89,8 @@ export function fenceCloses(line: string, fence: FenceState): boolean {
  *
  * The inner run is captured through a lookahead and consumed by its own
  * backreference, making it atomic: the engine cannot re-try shorter inners
- * when the closing `]]` is missing, so a `[[[[[[…` body stays linear.
+ * when the closing `]]` is missing. A `[[[[[[…` body is still quadratic,
+ * at a measured constant factor below the plain capture.
  * Match-equivalent to the plain capture: the run excludes `]`, so a shorter
  * inner is always followed by a non-`]` and could never satisfy `\]\]`.
  */
@@ -167,8 +170,11 @@ export function classifyRef(
  * by an inline code span.
  *
  * Walks the line once, taking whichever construct starts earliest
- * (leftmost-match-wins, matching the alternation it replaced; pinned by the
- * differential test). The constructs must stay interleaved: a backtick the
+ * (leftmost-match-wins). Matches the alternation it replaced on single-line
+ * input, the whole domain — callers split on `\n` first; unlike the
+ * alternation, the scanner does not itself refuse `\n` inside `]]`. Pinned
+ * by the differential test over newline-free lines.
+ * The constructs must stay interleaved: a backtick the
  * ref branch swallows can never open a span. A failed `[[` advances one
  * character, never jumps to the `]`: jumping would skip a backtick in
  * between and change which refs are found. `nextBracketClose` is recomputed
