@@ -5,11 +5,7 @@ import Link from "next/link";
 import { signIn } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
-import {
-  TurnstileGate,
-  TURNSTILE_PENDING_MESSAGE,
-  useTurnstile,
-} from "./TurnstileGate";
+import { TurnstileGate, useTurnstile } from "./TurnstileGate";
 
 interface SignInFormProps {
   /** Whether the deploy can deliver reset emails; gates the Forgot-password link. */
@@ -61,7 +57,7 @@ export function SignInForm({
     setError(null);
 
     if (!turnstile.ready) {
-      setError(TURNSTILE_PENDING_MESSAGE);
+      setError(turnstile.blockedMessage);
       return;
     }
 
@@ -132,8 +128,7 @@ export function SignInForm({
       <TurnstileGate
         siteKey={turnstileSiteKey}
         nonce={nonce}
-        onToken={turnstile.setToken}
-        handleRef={turnstile.handleRef}
+        {...turnstile.gateProps}
       />
 
       {error ? (

@@ -5,11 +5,7 @@ import Link from "next/link";
 import { sendVerificationEmail } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
-import {
-  TurnstileGate,
-  TURNSTILE_PENDING_MESSAGE,
-  useTurnstile,
-} from "./TurnstileGate";
+import { TurnstileGate, useTurnstile } from "./TurnstileGate";
 
 interface ResendVerificationFormProps {
   /** Session email when signed in; renders a free email input when null. */
@@ -62,7 +58,7 @@ export function ResendVerificationForm({
     if (status !== "idle") return;
     setError(null);
     if (!turnstile.ready) {
-      setError(TURNSTILE_PENDING_MESSAGE);
+      setError(turnstile.blockedMessage);
       return;
     }
     setStatus("sending");
@@ -152,8 +148,7 @@ export function ResendVerificationForm({
       <TurnstileGate
         siteKey={turnstileSiteKey}
         nonce={nonce}
-        onToken={turnstile.setToken}
-        handleRef={turnstile.handleRef}
+        {...turnstile.gateProps}
       />
 
       {error ? (

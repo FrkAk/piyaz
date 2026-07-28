@@ -6,11 +6,7 @@ import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { IconMail } from "@/components/shared/icons";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
-import {
-  TurnstileGate,
-  TURNSTILE_PENDING_MESSAGE,
-  useTurnstile,
-} from "./TurnstileGate";
+import { TurnstileGate, useTurnstile } from "./TurnstileGate";
 
 interface SignUpFormProps {
   /** True when sign-up sends a verification email (email enabled AND the verification gate is on). */
@@ -83,7 +79,7 @@ export function SignUpForm({
     }
 
     if (!turnstile.ready) {
-      setError(TURNSTILE_PENDING_MESSAGE);
+      setError(turnstile.blockedMessage);
       return;
     }
 
@@ -127,7 +123,7 @@ export function SignUpForm({
     if (sentTo === null || resendStatus !== "idle") return;
     setError(null);
     if (!turnstile.ready) {
-      setError(TURNSTILE_PENDING_MESSAGE);
+      setError(turnstile.blockedMessage);
       return;
     }
     setResendStatus("sending");
@@ -186,8 +182,7 @@ export function SignUpForm({
         <TurnstileGate
           siteKey={turnstileSiteKey}
           nonce={nonce}
-          onToken={turnstile.setToken}
-          handleRef={turnstile.handleRef}
+          {...turnstile.gateProps}
         />
         <button
           type="button"
@@ -300,8 +295,7 @@ export function SignUpForm({
       <TurnstileGate
         siteKey={turnstileSiteKey}
         nonce={nonce}
-        onToken={turnstile.setToken}
-        handleRef={turnstile.handleRef}
+        {...turnstile.gateProps}
       />
 
       {error ? (

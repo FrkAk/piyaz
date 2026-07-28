@@ -4,11 +4,7 @@ import { useState, type FormEvent } from "react";
 import { requestPasswordReset } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
-import {
-  TurnstileGate,
-  TURNSTILE_PENDING_MESSAGE,
-  useTurnstile,
-} from "./TurnstileGate";
+import { TurnstileGate, useTurnstile } from "./TurnstileGate";
 
 interface ForgotPasswordFormProps {
   /** Public Turnstile site key; `null` disables bot protection (self-host). */
@@ -48,7 +44,7 @@ export function ForgotPasswordForm({
     event.preventDefault();
     setError(null);
     if (!turnstile.ready) {
-      setError(TURNSTILE_PENDING_MESSAGE);
+      setError(turnstile.blockedMessage);
       return;
     }
     setLoading(true);
@@ -102,8 +98,7 @@ export function ForgotPasswordForm({
       <TurnstileGate
         siteKey={turnstileSiteKey}
         nonce={nonce}
-        onToken={turnstile.setToken}
-        handleRef={turnstile.handleRef}
+        {...turnstile.gateProps}
       />
 
       {error ? (
