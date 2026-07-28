@@ -2,8 +2,9 @@
  * Comment-tolerant reader for the `ratelimits` bindings in `wrangler.jsonc`,
  * for tests that pin declared budgets to what the Cloudflare bindings
  * enforce. `Bun.file(...).json()` rejects JSONC the day a real comment lands
- * in the file, so the stripper mirrors `scripts/assert-deploy-ready.ts`.
+ * in the file, so the config passes through the shared `stripJsonc` first.
  */
+import { stripJsonc } from "@/lib/config/jsonc";
 
 /** One `ratelimits[]` binding as declared in `wrangler.jsonc`. */
 export type RatelimitBinding = {
@@ -12,20 +13,6 @@ export type RatelimitBinding = {
   /** The limit the Workers runtime enforces. */
   simple: { limit: number; period: number };
 };
-
-/**
- * Strip `// line` and `/* block *\/` comments so the JSONC config parses
- * with the standard `JSON.parse`. The `(^|[^:])` guard keeps `https://`
- * string values intact.
- *
- * @param source - JSONC text.
- * @returns Plain JSON text.
- */
-function stripJsonc(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
-}
 
 /**
  * Read one Worker environment's `ratelimits` bindings from `wrangler.jsonc`.
