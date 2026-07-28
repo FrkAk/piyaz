@@ -106,6 +106,26 @@ function toMcp(result: ToolResult) {
 type McpResponse = ReturnType<typeof toMcp>;
 
 /**
+ * Budget identity for the per-call MCP meters.
+ *
+ * Keyed on the registered OAuth client as well as the user, so a person running
+ * several agents at once gets a budget per agent rather than one shared across
+ * all of them. Keying on the user alone would make the tool budgets tighter
+ * than the per-token HTTP budget the middleware already applies, so a parallel
+ * fan-out would exhaust itself while every individual token still had headroom.
+ * Falls back to the user alone for actors carrying no client id, which is every
+ * non-MCP actor.
+ *
+ * @param ctx - Resolved auth context.
+ * @returns Key identifying the caller for budget purposes.
+ */
+function mcpCallerKey(ctx: AuthContext): string {
+  const clientId =
+    ctx.actor.source === "mcp" ? (ctx.actor.clientId ?? null) : null;
+  return clientId ? `${ctx.userId}:${clientId}` : ctx.userId;
+}
+
+/**
  * Wrap a tool handler with the cross-cutting concerns every tool shares:
  * the standard-tier rate check (one unit per tool call, so a JSON-RPC batch
  * is billed per message rather than per POST), the legal re-consent gate
@@ -139,18 +159,21 @@ function wrapTool<P>(
   },
   handler: (params: P, ctx: AuthContext) => Promise<ToolResult>,
 ): (params: P) => Promise<McpResponse> {
+  const callerKey = mcpCallerKey(ctx);
   return async (params: P) => {
     const started = Date.now();
     let response: McpResponse;
     let truncated: boolean | undefined;
     let errName: string | undefined;
+    let blocked: "rate" | "heavy" | "consent" | undefined;
     try {
       const standard = await getBackend("mcp").check(
-        `mcp-call:${ctx.userId}`,
+        `mcp-call:${callerKey}`,
         MCP_STANDARD_LIMIT.max,
         MCP_STANDARD_LIMIT.window,
       );
       if (!standard.allowed) {
+        blocked = "rate";
         response = err(
           mcpRateLimitMessage(
             MCP_STANDARD_LIMIT.max,
@@ -163,17 +186,19 @@ function wrapTool<P>(
       if (ctx.actor.source === "mcp") {
         const outstanding = await listOutstandingReconsent(ctx.userId);
         if (outstanding.length > 0) {
+          blocked = "consent";
           response = err(reconsentMessage(outstanding));
           return response;
         }
       }
       if (opts.heavy?.(params)) {
         const check = await getBackend("mcpHeavy").check(
-          `mcp-heavy:${ctx.userId}`,
+          `mcp-heavy:${callerKey}`,
           MCP_HEAVY_LIMIT.max,
           MCP_HEAVY_LIMIT.window,
         );
         if (!check.allowed) {
+          blocked = "heavy";
           response = err(
             `Heavy-tier budget exhausted (${MCP_HEAVY_LIMIT.max}/${MCP_HEAVY_LIMIT.window}s for deep lenses, overviews, wide walks, large batches, category cascades). Retry in ${check.resetIn}s, or use a lighter shape now: piyaz_get fields=[...], lens='summary', or piyaz_search with filters.`,
           );
@@ -207,6 +232,7 @@ function wrapTool<P>(
           ms: Date.now() - started,
           bytesOut,
           ...(truncated !== undefined && { truncated }),
+          ...(blocked !== undefined && { blocked }),
           ...(errName !== undefined && { err: errName }),
         }),
       );

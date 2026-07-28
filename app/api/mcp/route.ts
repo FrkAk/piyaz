@@ -1,7 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { JSONWebKeySet } from "jose";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
-import { auth } from "@/lib/auth";
+import { auth, GRANTABLE_OAUTH_SCOPES } from "@/lib/auth";
 import { createMcpServer } from "@/lib/mcp/create-server";
 import { MAX_JSON_RPC_BATCH, isOversizedBatch } from "@/lib/mcp/batch";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
@@ -74,7 +74,7 @@ function payloadTooLarge() {
  * fresh object per call.
  *
  * This bounds the legitimate path, not a forged one. `getFreshJwksWithKid`
- * (`@better-auth/core/dist/oauth2/verify.mjs:38`) treats a `kid` absent from
+ * (`@better-auth/core/dist/oauth2/verify.mjs`) treats a `kid` absent from
  * the cached set as a miss and refetches, which is what lets key rotation take
  * effect, so a caller inventing a fresh `kid` per request still costs one read
  * each. That flood is bounded by the address ceiling on `/api/mcp` wherever a
@@ -89,7 +89,7 @@ const JWKS_CACHE_KEY = {};
  * compatibility flag, since removed from `wrangler.jsonc` once this
  * in-process path eliminated the bundle's last outbound self-fetch) and
  * could be rejected by upstream filtering, which left Better-Auth's
- * per-isolate JWKS cache (`@better-auth/core/dist/oauth2/verify.mjs:7`)
+ * per-isolate JWKS cache (`@better-auth/core/dist/oauth2/verify.mjs`)
  * populated with `undefined` for the lifetime of the isolate. `auth.api.*`
  * is target-agnostic so self-host shares the same path.
  *
@@ -179,12 +179,16 @@ async function verifyMcpAuth(request: Request) {
 /**
  * Reject a cross-origin browser request to the MCP endpoint.
  *
- * The Streamable HTTP transport requires the server to validate `Origin` on
- * every connection and answer 403 when one is present and invalid, because a
- * page the user visits can otherwise reach this endpoint through DNS
- * rebinding and spend the bearer token the browser would attach. Only a
- * browser sends `Origin`, so an absent header is the normal agent client and
- * passes through; the token check still gates those.
+ * The Streamable HTTP transport requires this: servers MUST validate `Origin`
+ * and MUST answer 403 when one is present and invalid. The "present and" is
+ * load-bearing, because only a browser sends `Origin`, so an absent header is
+ * the normal agent client and passes through to the token check.
+ *
+ * This is spec compliance and defense in depth rather than the DNS-rebinding
+ * mechanism the requirement is named for: a rebound request is same-origin, so
+ * it carries a matching `Origin` or none and passes either way, and this route
+ * reads no cookies while browsers never attach an `Authorization` header, so
+ * there is no ambient credential for a page to spend.
  *
  * @param request - Incoming request.
  * @returns A 403 response when the header is present and not this deployment.
@@ -197,12 +201,24 @@ function forbiddenOrigin(request: Request): Response | null {
 
 /**
  * MCP-spec 401 response with WWW-Authenticate header pointing to
- * the protected resource metadata URL (RFC 9728).
+ * the protected resource metadata URL (RFC 9728), plus the scopes a client
+ * needs to reach this resource (RFC 6750 section 3).
+ *
+ * The spec makes the challenge scope authoritative for the client's next
+ * authorization request, and explicitly allows it to be a superset of
+ * `scopes_supported`. That is what resolves the `offline_access` tension: the
+ * protected-resource metadata still omits it, as the spec says a resource
+ * SHOULD, while the challenge asks for it outright so a client deterministically
+ * receives a refresh token instead of depending on which metadata document it
+ * happened to read (#108). Without the parameter a client falls back to the
+ * resource metadata's `scopes_supported`, which this deployment does not
+ * publish, so it would request no scopes at all.
+ *
  * @returns 401 JSON-RPC error response.
  */
 function unauthorized() {
   return jsonRpcError(-32000, "Unauthorized", 401, {
-    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}", scope="${GRANTABLE_OAUTH_SCOPES.join(" ")}"`,
     "Access-Control-Expose-Headers": "WWW-Authenticate",
   });
 }
