@@ -38,6 +38,7 @@ async function signUpAndSignIn(
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         origin: "https://example.test",
       },
       method: "POST",

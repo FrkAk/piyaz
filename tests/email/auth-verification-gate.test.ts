@@ -82,6 +82,7 @@ function authPost(
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         origin: "https://example.test",
       },
       method: "POST",
@@ -134,7 +135,10 @@ test("gated: sign-up sends verification, 403s unverified sign-in with a re-send,
 
   const link = await authGated.handler(
     new Request(firstUrl(fake.sent[1]!.text), {
-      headers: { "cf-connecting-ip": "127.0.5.10" },
+      headers: {
+        "cf-connecting-ip": "127.0.5.10",
+        "x-piyaz-client-ip": "127.0.5.10",
+      },
     }),
   );
   expect(link.status).toBeLessThan(400);

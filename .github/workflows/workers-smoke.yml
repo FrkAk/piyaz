@@ -1,0 +1,59 @@
+name: Workers Smoke
+
+# `bun test` runs on Bun and CI never loads the Cloudflare bundle, so a fully
+# green gate can still ship a Worker that 500s on every request. This job
+# builds the bundle and serves it on local `workerd`. It needs no Cloudflare
+# credentials (`wrangler dev` is local by default) and runs in parallel with
+# the blocking check job, so the PR gate's wall-clock does not regress.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'lib/**'
+      - 'components/**'
+      - 'middleware.ts'
+      - 'worker-cf.ts'
+      - 'next.config.ts'
+      - 'open-next.config.ts'
+      - 'wrangler.jsonc'
+      - 'scripts/smoke-workers.ts'
+      - 'package.json'
+      - 'bun.lock'
+
+concurrency:
+  group: workers-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Serve the built Worker on workerd
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.bun/install/cache
+            .next/cache
+          key: smoke-cf-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            smoke-cf-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the Cloudflare bundle
+        env:
+          DEPLOY_TARGET: cloudflare
+          BETTER_AUTH_URL: http://127.0.0.1:8788
+        run: bun run build:cf
+
+      - name: Smoke the bundle on workerd
+        env:
+          BETTER_AUTH_SECRET: smoke-not-a-real-secret-000000000000
+        run: bun run smoke:cf

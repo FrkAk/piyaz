@@ -223,6 +223,7 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
         headers: {
           "content-type": "application/json",
           "cf-connecting-ip": "127.0.0.155",
+          "x-piyaz-client-ip": "127.0.0.155",
         },
         body: JSON.stringify({
           email: attackerEmail,
@@ -248,6 +249,7 @@ describe("catch-all HTTP allowlist (MYMR-155)", () => {
           headers: {
             Cookie: sessionCookie!,
             "cf-connecting-ip": "127.0.0.156",
+            "x-piyaz-client-ip": "127.0.0.156",
           },
         }),
       );

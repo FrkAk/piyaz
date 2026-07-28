@@ -19,6 +19,7 @@ import {
 import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
+import { wranglerRatelimits } from "@/tests/setup/wrangler";
 
 /**
  * Action-level coverage for `changePasswordAction`. The brute-force defense
@@ -177,19 +178,7 @@ describe("changePasswordAction rate limiting", () => {
     // the declared number. The drain tests above pin RATE_CONFIG to the
     // action's real values, so asserting RATE_CONFIG against
     // wrangler.jsonc transitively pins the action to the binding.
-    const wrangler = (await Bun.file(
-      `${import.meta.dir}/../../wrangler.jsonc`,
-    ).json()) as {
-      env: {
-        production: {
-          ratelimits: {
-            name: string;
-            simple: { limit: number; period: number };
-          }[];
-        };
-      };
-    };
-    const binding = wrangler.env.production.ratelimits.find(
+    const binding = (await wranglerRatelimits("production")).find(
       (b) => b.name === "RATE_LIMIT_AUTH",
     );
     expect(binding).toBeDefined();

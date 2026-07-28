@@ -1,12 +1,23 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { JSONWebKeySet } from "jose";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
-import { auth } from "@/lib/auth";
-import { createMcpServer } from "@/lib/mcp/create-server";
+import { auth, GRANTABLE_OAUTH_SCOPES } from "@/lib/auth";
+import { createMcpServer, mcpCallerKey } from "@/lib/mcp/create-server";
+import {
+  MAX_JSON_RPC_BATCH,
+  batchSurcharge,
+  inspectBatch,
+} from "@/lib/mcp/batch";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
 import { authContextFromPayload } from "@/lib/auth/mcp-token";
+import type { AuthContext } from "@/lib/auth/context";
 import { parseEnvInt } from "@/lib/config/env";
 import { readBodyBounded } from "@/lib/api/read-body-bounded";
+import {
+  getBackend,
+  MCP_STANDARD_LIMIT,
+  mcpRateLimitMessage,
+} from "@/lib/api/rate-limit";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const origin = new URL(baseUrl).origin;
@@ -64,13 +75,31 @@ function payloadTooLarge() {
 }
 
 /**
+ * Stable identity the JWKS cache is keyed on.
+ *
+ * `verifyJwsAccessToken` caches a function-sourced JWKS only when given a
+ * `jwksCacheKey`; without one it calls `jwksFetch` on every verification, so
+ * even a valid token costs a `jwks` model read per request. The object
+ * identity is the key, so this must be a module-level constant rather than a
+ * fresh object per call.
+ *
+ * This bounds the legitimate path, not a forged one. `getFreshJwksWithKid`
+ * (`@better-auth/core/dist/oauth2/verify.mjs`) treats a `kid` absent from
+ * the cached set as a miss and refetches, which is what lets key rotation take
+ * effect, so a caller inventing a fresh `kid` per request still costs one read
+ * each. That flood is bounded by the address ceiling on `/api/mcp` wherever a
+ * client address resolves, and unbounded where none does.
+ */
+const JWKS_CACHE_KEY = {};
+
+/**
  * Resolve the active JSON Web Key Set in-process via the JWT plugin's API
  * surface. Worker self-fetches against `/api/auth/jwks` traversed the
  * Cloudflare edge stack (under the `global_fetch_strictly_public`
  * compatibility flag, since removed from `wrangler.jsonc` once this
  * in-process path eliminated the bundle's last outbound self-fetch) and
  * could be rejected by upstream filtering, which left Better-Auth's
- * per-isolate JWKS cache (`@better-auth/core/dist/oauth2/verify.mjs:7`)
+ * per-isolate JWKS cache (`@better-auth/core/dist/oauth2/verify.mjs`)
  * populated with `undefined` for the lifetime of the isolate. `auth.api.*`
  * is target-agnostic so self-host shares the same path.
  *
@@ -128,6 +157,7 @@ async function verifyMcpAuth(request: Request) {
   try {
     return await verifyJwsAccessToken(token, {
       jwksFetch: fetchJwksInProcess,
+      jwksCacheKey: JWKS_CACHE_KEY,
       verifyOptions: { audience: audiences, issuer, algorithms: ["EdDSA"] },
     });
   } catch (err) {
@@ -157,13 +187,53 @@ async function verifyMcpAuth(request: Request) {
 }
 
 /**
+ * Reject a cross-origin browser request to the MCP endpoint.
+ *
+ * The Streamable HTTP transport requires this: servers MUST validate `Origin`
+ * and MUST answer 403 when one is present and invalid. The "present and" is
+ * load-bearing, because only a browser sends `Origin`, so an absent header is
+ * the normal agent client and passes through to the token check.
+ *
+ * This is spec compliance and defense in depth rather than the DNS-rebinding
+ * mechanism the requirement is named for: a rebound request is same-origin, so
+ * it carries a matching `Origin` or none and passes either way, and this route
+ * reads no cookies while browsers never attach an `Authorization` header, so
+ * there is no ambient credential for a page to spend.
+ *
+ * Hand-rolled rather than the transport's `enableDnsRebindingProtection` /
+ * `allowedOrigins` option so the rejection precedes the JWT verify and its
+ * JWKS resolve.
+ *
+ * @param request - Incoming request.
+ * @returns A 403 response when the header is present and not this deployment.
+ */
+function forbiddenOrigin(request: Request): Response | null {
+  const requestOrigin = request.headers.get("origin");
+  if (!requestOrigin || requestOrigin === origin) return null;
+  logBlocked("origin", { origin: requestOrigin.slice(0, 128) });
+  return jsonRpcError(-32600, "Forbidden origin.", 403);
+}
+
+/**
  * MCP-spec 401 response with WWW-Authenticate header pointing to
- * the protected resource metadata URL (RFC 9728).
+ * the protected resource metadata URL (RFC 9728), plus the scopes a client
+ * needs to reach this resource (RFC 6750 section 3).
+ *
+ * The spec makes the challenge scope authoritative for the client's next
+ * authorization request, and explicitly allows it to be a superset of
+ * `scopes_supported`. That is what resolves the `offline_access` tension: the
+ * protected-resource metadata still omits it, as the spec says a resource
+ * SHOULD, while the challenge asks for it outright so a client deterministically
+ * receives a refresh token instead of depending on which metadata document it
+ * happened to read (#108). Without the parameter a client falls back to the
+ * resource metadata's `scopes_supported`, which this deployment does not
+ * publish, so it would request no scopes at all.
+ *
  * @returns 401 JSON-RPC error response.
  */
 function unauthorized() {
   return jsonRpcError(-32000, "Unauthorized", 401, {
-    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+    "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}", scope="${GRANTABLE_OAUTH_SCOPES.join(" ")}"`,
     "Access-Control-Expose-Headers": "WWW-Authenticate",
   });
 }
@@ -175,6 +245,9 @@ function unauthorized() {
  * @returns MCP JSON-RPC response or 401.
  */
 export async function POST(request: Request) {
+  const forbidden = forbiddenOrigin(request);
+  if (forbidden) return forbidden;
+
   const payload = await verifyMcpAuth(request);
   if (!payload) return unauthorized();
 
@@ -183,12 +256,26 @@ export async function POST(request: Request) {
 
   const contentLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_MCP_BODY_BYTES) {
+    logBlocked("body_too_large", { userId: ctx.userId });
     return payloadTooLarge();
   }
   const body = await readBodyBounded(request, MAX_MCP_BODY_BYTES);
   if (body === null) {
+    logBlocked("body_too_large", { userId: ctx.userId });
     return payloadTooLarge();
   }
+  const inspection = inspectBatch(body);
+  if (inspection.oversized) {
+    logBlocked("batch_cap", { userId: ctx.userId });
+    return jsonRpcError(
+      -32600,
+      `Batch too large: at most ${MAX_JSON_RPC_BATCH} JSON-RPC messages per request.`,
+      413,
+    );
+  }
+  const overage = await chargeBatchOverage(ctx, batchSurcharge(inspection));
+  if (overage) return overage;
+
   const boundedRequest = new Request(request.url, {
     method: request.method,
     headers: request.headers,
@@ -201,7 +288,70 @@ export async function POST(request: Request) {
     sessionIdGenerator: undefined,
   });
   await server.connect(transport);
-  return transport.handleRequest(boundedRequest);
+  return transport.handleRequest(
+    boundedRequest,
+    inspection.parsed === undefined
+      ? undefined
+      : { parsedBody: inspection.parsed },
+  );
+}
+
+/**
+ * Structured log for a request the route refused before dispatch, so probes
+ * are separable from tool errors in the log stream.
+ *
+ * @param reason - Which guard refused the request.
+ * @param context - Verified caller and probe details; `userId` is absent on
+ *   the pre-auth origin refusal, `origin` is length-capped caller bytes.
+ */
+function logBlocked(
+  reason: "origin" | "body_too_large" | "batch_cap" | "batch_budget",
+  context: { userId?: string; origin?: string } = {},
+): void {
+  console.warn(
+    JSON.stringify({ event: "mcp_request_blocked", reason, ...context }),
+  );
+}
+
+/**
+ * Charge the standard tool meter for a batch's non-tool messages.
+ *
+ * The middleware bills one HTTP unit per POST, `wrapTool` bills one tool
+ * unit per `tools/call`, and `batchSurcharge` counts what remains: extra
+ * non-tool elements, which would otherwise buy dispatch work for free —
+ * `tools/list` is never wrapped and serializes the full tool table per
+ * element. A batched `tools/call` is charged exactly once, in `wrapTool`.
+ *
+ * @param ctx - Resolved auth context.
+ * @param extra - Non-tool messages beyond the first; non-positive charges
+ *   nothing and calls no backend.
+ * @returns A 429 JSON-RPC response when the budget rejects, else `null`.
+ */
+async function chargeBatchOverage(
+  ctx: AuthContext,
+  extra: number,
+): Promise<Response | null> {
+  const key = `mcp-call:${mcpCallerKey(ctx)}`;
+  for (let i = 0; i < extra; i++) {
+    const result = await getBackend("mcp").check(
+      key,
+      MCP_STANDARD_LIMIT.max,
+      MCP_STANDARD_LIMIT.window,
+    );
+    if (!result.allowed) {
+      logBlocked("batch_budget", { userId: ctx.userId });
+      return jsonRpcError(
+        -32000,
+        mcpRateLimitMessage(
+          MCP_STANDARD_LIMIT.max,
+          MCP_STANDARD_LIMIT.window,
+          result.resetIn,
+        ),
+        429,
+      );
+    }
+  }
+  return null;
 }
 
 /**

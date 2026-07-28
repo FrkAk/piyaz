@@ -62,7 +62,7 @@ import {
   ForbiddenError,
   InsufficientRoleError,
 } from "@/lib/auth/authorization";
-import { unwrapDriverError } from "@/lib/db/errors";
+import { isStatementTimeout, unwrapDriverError } from "@/lib/db/errors";
 import { isVerboseErrors } from "@/lib/api/error";
 
 // ---------------------------------------------------------------------------
@@ -153,22 +153,78 @@ export async function requireNoteId(
 // ---------------------------------------------------------------------------
 
 /**
+ * Most distinct proposed tags compared against the existing vocabulary, per
+ * request. The comparison is a cross product of two caller-supplied lists,
+ * so the pair count needs its own ceiling. Counted per distinct tag rather
+ * than per occurrence: agents reuse a small vocabulary across a batch, so
+ * the distinct set stays small while occurrences do not.
+ */
+export const MAX_HINTED_TAGS = 25;
+
+/**
+ * Resolve each distinct proposed tag to the existing tag it looks like a
+ * variant of.
+ *
+ * Comparing once per distinct tag rather than once per occurrence is what lets
+ * a batch share one allowance without the later items losing their hints.
+ *
+ * @param proposed - Proposed tag strings, in any order, duplicates allowed.
+ * @param existing - Current project tag list.
+ * @param limit - Most distinct tags to compare; defaults to {@link MAX_HINTED_TAGS}.
+ * @returns Map from proposed tag to the existing tag it resembles.
+ */
+export function resolveTagVariants(
+  proposed: string[],
+  existing: string[],
+  limit: number = MAX_HINTED_TAGS,
+): Map<string, string> {
+  const variants = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const tag of proposed) {
+    if (seen.size >= Math.max(0, limit)) break;
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    const variant = findVariant(tag, existing);
+    if (variant) variants.set(tag, variant);
+  }
+  return variants;
+}
+
+/**
+ * Render the variant warning for one proposed tag.
+ *
+ * @param tag - The proposed tag.
+ * @param variant - The existing tag it resembles.
+ * @returns The hint string.
+ */
+export function tagVariantHint(tag: string, variant: string): string {
+  return `Tag "${tag}" looks like a variant of existing "${variant}". Reuse the existing tag, or confirm a deliberate split.`;
+}
+
+/**
  * Build variant-warning hints for proposed tags against existing project tags.
+ *
+ * One hint per distinct tag, in first-occurrence order: a repeated tag is one
+ * naming decision, so repeating its hint adds nothing an agent can act on.
+ *
  * @param proposed - Proposed tag strings.
  * @param existing - Current project tag list.
+ * @param limit - Most distinct tags to compare; defaults to {@link MAX_HINTED_TAGS}.
  * @returns Hint strings for tags that look like variants of existing ones.
  */
 export function tagVariantHints(
   proposed: string[],
   existing: string[],
+  limit: number = MAX_HINTED_TAGS,
 ): string[] {
+  const variants = resolveTagVariants(proposed, existing, limit);
   const hints: string[] = [];
   for (const tag of proposed) {
-    const variant = findVariant(tag, existing);
-    if (variant)
-      hints.push(
-        `Tag "${tag}" looks like a variant of existing "${variant}". Reuse the existing tag, or confirm a deliberate split.`,
-      );
+    const variant = variants.get(tag);
+    if (variant) {
+      hints.push(tagVariantHint(tag, variant));
+      variants.delete(tag);
+    }
   }
   return hints;
 }
@@ -694,6 +750,11 @@ export function stateHint(state: TaskState): string {
  *   fallback for unrecognized errors.
  */
 export function translateError(e: unknown): ToolResult {
+  if (isStatementTimeout(e)) {
+    return fail(
+      "Query exceeded the database time ceiling. Nothing was written. Narrow the request and retry: lower depth on a graph walk, add filters to a search, or request fewer items in a batch.",
+    );
+  }
   if (e instanceof InsufficientRoleError) {
     return fail(
       `Forbidden: only team admins can ${e.primaryAction} projects. Tell the user; they need a team admin to do this.`,

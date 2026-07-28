@@ -54,11 +54,23 @@ const DB_URL_REQUIRED = {
 /**
  * Per-request Pool options. `connectionTimeoutMillis` bounds
  * `pool.connect()` waits so an unresponsive Neon endpoint fails the request
- * fast instead of riding the Workers 30s wall clock — and so a stuck
+ * fast instead of hanging for as long as the client stays connected (a Worker
+ * HTTP request has no wall-clock ceiling; the documented 30s applies to the
+ * `waitUntil` extension after the response), and so a stuck
  * connect cannot wedge `pool.end()` during teardown (it only settles once
  * every client drains). 10s clears Neon cold starts where the old 5s was
  * tight. `max` stays at the driver default: a per-request pool is already
  * lifetime-bounded by the request.
+ *
+ * No `statement_timeout` here. The driver would ship it as a Postgres startup
+ * parameter (`@neondatabase/serverless` `getStartupConf`), and the runtime
+ * connects through Neon's PgBouncer pooler, which accepts only the startup
+ * parameters it can track (`client_encoding`, `datestyle`, `timezone`,
+ * `standard_conforming_strings`, `application_name`) and rejects the
+ * connection otherwise. That would fail every interactive transaction, which
+ * is every write. The bound lives in `docker/role-settings.sql` as a role
+ * default instead, which the backend applies at session start on every
+ * transport, including the HTTP paths a startup parameter never reached.
  */
 const POOL_OPTS = { connectionTimeoutMillis: 10_000 } as const;
 

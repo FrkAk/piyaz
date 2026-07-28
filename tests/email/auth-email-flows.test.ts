@@ -84,6 +84,7 @@ function authPost(
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         origin: "https://example.test",
         ...(options.cookie ? { cookie: options.cookie } : {}),
         ...(options.userAgent ? { "user-agent": options.userAgent } : {}),
@@ -112,6 +113,7 @@ function authGet(
     new Request(url, {
       headers: {
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         ...(cookie ? { cookie } : {}),
       },
     }),
@@ -467,11 +469,23 @@ test("email-disabled instance behaves exactly as today: immediate delete, zero s
 test("config pin: customRules cover the new email endpoints", () => {
   const rules = authEmail.options.rateLimit?.customRules as Record<
     string,
-    { window: number; max: number }
+    (request: Request) => { window: number; max: number }
   >;
-  expect(rules["/request-password-reset"]).toEqual({ window: 60, max: 3 });
-  expect(rules["/send-verification-email"]).toEqual({ window: 60, max: 3 });
-  expect(rules["/reset-password"]).toEqual({ window: 60, max: 5 });
+  const attributed = new Request("https://example.test", {
+    headers: { "x-piyaz-client-ip": "203.0.113.9" },
+  });
+  expect(rules["/request-password-reset"]?.(attributed)).toEqual({
+    window: 60,
+    max: 3,
+  });
+  expect(rules["/send-verification-email"]?.(attributed)).toEqual({
+    window: 60,
+    max: 3,
+  });
+  expect(rules["/reset-password"]?.(attributed)).toEqual({
+    window: 60,
+    max: 5,
+  });
   expect(rules["/change-email"]).toBeUndefined();
 });
 
@@ -484,6 +498,7 @@ test("route allowlist: emailed-link endpoints pass, change-email and delete-user
         headers: {
           "content-type": "application/json",
           "cf-connecting-ip": "127.0.4.60",
+          "x-piyaz-client-ip": "127.0.4.60",
           origin: "https://example.test",
         },
         body: JSON.stringify({}),
@@ -492,7 +507,10 @@ test("route allowlist: emailed-link endpoints pass, change-email and delete-user
   const get = (pathAndQuery: string) =>
     routeModule.GET(
       new Request(`${base}${pathAndQuery}`, {
-        headers: { "cf-connecting-ip": "127.0.4.60" },
+        headers: {
+          "cf-connecting-ip": "127.0.4.60",
+          "x-piyaz-client-ip": "127.0.4.60",
+        },
       }),
     );
 

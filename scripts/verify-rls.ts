@@ -200,6 +200,29 @@ async function findMissing(
     }
   }
 
+  // statement_timeout lives in docker/role-settings.sql as a role default,
+  // applied by db:rls (self-host) or db:rls:owner (hosted) and never by a
+  // deploy. Without this assertion a forgotten owner apply leaves the request
+  // path with no statement ceiling at all, silently and permanently, while the
+  // code comments claim the bound exists. The exact value is asserted: a
+  // presence match would accept `statement_timeout=0`, the no-ceiling state
+  // this check exists to catch.
+  for (const role of ["app_user", "auth_role"]) {
+    const [setting] = await sql<{ present: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_db_role_setting s
+        JOIN pg_roles r ON r.oid = s.setrole
+        WHERE r.rolname = ${role}
+          AND s.setdatabase = 0
+          AND 'statement_timeout=15s' = ANY (s.setconfig)
+      ) AS present
+    `;
+    if (!setting?.present) {
+      missing.push(`statement_timeout=15s role default on ${role}`);
+    }
+  }
+
   return missing;
 }
 

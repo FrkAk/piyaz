@@ -77,6 +77,7 @@ test("signup with Terms acceptance creates the user and two acceptance rows", as
     body,
     headers: new Headers({
       "cf-connecting-ip": ip,
+      "x-piyaz-client-ip": ip,
       "user-agent": userAgent,
     }),
   });
@@ -105,7 +106,7 @@ test("signup with Terms acceptance creates the user and two acceptance rows", as
   expect(privacy!.documentVersion).toBe(LEGAL_VERSIONS.privacy);
 });
 
-test("client IP resolves from the first x-forwarded-for entry", async () => {
+test("attack: a caller-prepended chain entry cannot author the acceptance evidence", async () => {
   const email = "forwarded-consent@test.local";
   const userAgent = "PiyazConsentTest/1.0";
   const body = {
@@ -115,13 +116,24 @@ test("client IP resolves from the first x-forwarded-for entry", async () => {
     termsAccepted: true,
   };
 
-  await auth.api.signUpEmail({
-    body,
-    headers: new Headers({
-      "x-forwarded-for": "198.51.100.9, 10.0.0.1",
-      "user-agent": userAgent,
-    }),
-  });
+  // A deployment whose proxy appends to x-forwarded-for names that header.
+  // The rest of the suite names cf-connecting-ip, so scope the override here.
+  const originalHeader = process.env.TRUSTED_PROXY_HEADER;
+  process.env.TRUSTED_PROXY_HEADER = "x-forwarded-for";
+  try {
+    // The leftmost entry is whatever the caller sent; only the rightmost hop
+    // was observed by the proxy, so that is the address worth recording.
+    await auth.api.signUpEmail({
+      body,
+      headers: new Headers({
+        "x-forwarded-for": "198.51.100.9, 10.0.0.1",
+        "user-agent": userAgent,
+      }),
+    });
+  } finally {
+    if (originalHeader === undefined) delete process.env.TRUSTED_PROXY_HEADER;
+    else process.env.TRUSTED_PROXY_HEADER = originalHeader;
+  }
 
   const userId = await findUserId(email);
   if (!userId) throw new Error(`expected an account for ${email}`);
@@ -131,6 +143,7 @@ test("client IP resolves from the first x-forwarded-for entry", async () => {
   );
   expect(rows.length).toBe(2);
   for (const row of rows) {
-    expect(row.ipAddress).toBe("198.51.100.9");
+    expect(row.ipAddress).toBe("10.0.0.1");
+    expect(row.ipAddress).not.toBe("198.51.100.9");
   }
 });

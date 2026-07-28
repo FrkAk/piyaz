@@ -24,6 +24,7 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
+import { stripJsonc } from "../lib/config/jsonc";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const WRANGLER_JSONC = path.join(ROOT, "wrangler.jsonc");
@@ -52,20 +53,6 @@ interface WranglerEnvBindings {
 }
 interface WranglerConfig extends WranglerEnvBindings {
   env?: { production?: WranglerEnvBindings };
-}
-
-/**
- * Strip `// line` and `/* block *\/` comments so the JSONC config parses
- * with the standard `JSON.parse`. Keeps the file diffable without
- * pulling in a dedicated JSONC parser as a dev dependency.
- *
- * @param source - JSONC text.
- * @returns Plain JSON text.
- */
-function stripJsonc(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
 /**
