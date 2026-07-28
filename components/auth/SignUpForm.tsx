@@ -106,6 +106,10 @@ export function SignUpForm({
     }
 
     if (verificationPending) {
+      // The sign-up spent the token. Clearing it keeps the pending panel's
+      // resend button gated until the remounted widget mints a fresh one,
+      // instead of replaying the spent token.
+      turnstile.reset();
       setSentTo(email);
       setLoading(false);
       return;

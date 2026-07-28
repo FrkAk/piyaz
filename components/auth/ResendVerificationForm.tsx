@@ -85,6 +85,9 @@ export function ResendVerificationForm({
       setStatus("idle");
       return;
     }
+    // The token was spent by the send; without a reset the retry after the
+    // cooldown would replay it and fail verification.
+    turnstile.reset();
     setStatus("sent");
     window.setTimeout(() => setStatus("idle"), 60_000);
   }
