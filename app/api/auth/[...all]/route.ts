@@ -137,7 +137,13 @@ function normalizeAuthPath(pathname: string): string | null {
  *
  * The client-address header is stamped here, not only in middleware: the
  * middleware matcher's extension exclusion lets extension-suffixed paths
- * (e.g. `/reset-password/<token>.json`) reach this handler unstamped.
+ * (e.g. `/reset-password/<token>.json`) reach this handler unstamped. The
+ * stamped request is rebuilt from `request.url`, never from the request
+ * object: `@opennextjs/cloudflare` replaces `globalThis.Request` with a shim
+ * that rejects a Request as input. Its body is buffered rather than
+ * forwarded as a stream, because a stream body needs `duplex`, which undici
+ * requires and workerd does not implement. `content-length` is dropped
+ * because the rebuilt request re-derives it.
  *
  * @param request - Incoming GET or POST to `/api/auth/*`.
  * @returns Better Auth's response with a project-owned Cache-Control, or 404.
@@ -153,8 +159,16 @@ async function handler(request: Request): Promise<Response> {
     return new Response("Not Found", { status: 404 });
   }
   const headers = new Headers(request.headers);
+  headers.delete("content-length");
   stampClientIpHeader(headers);
-  const handled = await auth.handler(new Request(request, { headers }));
+  const handled = await auth.handler(
+    new Request(request.url, {
+      method: request.method,
+      headers,
+      body: request.body === null ? null : await request.arrayBuffer(),
+      signal: request.signal,
+    }),
+  );
   const response = PUBLIC_CACHEABLE_PATHS.has(path)
     ? ensureCacheControl(handled, JWKS_CACHE_CONTROL)
     : ensureNoStore(handled);

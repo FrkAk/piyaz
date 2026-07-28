@@ -212,7 +212,7 @@ async function handleRealtimeUpgrade(
     headers.delete(stripped);
 
   const { result, teardown } = await withRequestDb(
-    () => openNext.fetch(new Request(authorizeUrl, { headers }), env, ctx),
+    () => openNext.fetch(new Request(authorizeUrl.href, { headers }), env, ctx),
     dbBindings(env),
   );
   let authorized: { userId: string; projectIds: string[] } | null = null;
