@@ -1,6 +1,12 @@
 import type { NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
-import { clientIpKey, resolveClientIp } from "@/lib/security/client-ip";
+import {
+  clientIpKey,
+  hasTrustedAddressSource,
+  resolveClientIp,
+  UNTRUSTED_BUDGET_FACTOR,
+  UNTRUSTED_IP_KEY,
+} from "@/lib/security/client-ip";
 import { MemoryRateLimitBackend } from "./rate-limit-memory";
 
 /**
@@ -18,7 +24,8 @@ export type RateLimitResult = {
  *
  * `bindingKey` selects which Cloudflare rate-limit binding backs the rule on
  * the Workers deploy (`'api'` → `RATE_LIMIT_API`, `'auth'` → `RATE_LIMIT_AUTH`,
- * `'mcp'` → `RATE_LIMIT_MCP`, `'mcpHeavy'` → `RATE_LIMIT_MCP_HEAVY`).
+ * `'mcp'` → `RATE_LIMIT_MCP`, `'mcpHeavy'` → `RATE_LIMIT_MCP_HEAVY`; the
+ * address ceiling has its own `RATE_LIMIT_ADDRESS`).
  * Omitted defaults to `'api'`. Self-host ignores this field — every kind
  * resolves to an in-memory backend by absence of bindings.
  *
@@ -38,9 +45,11 @@ export type RateLimitRule = {
   /**
    * Also count the request against a second bucket keyed on the client
    * address, when one can be trusted. Set on rules whose primary key is
-   * caller-supplied, so rotating that value cannot escape the budget. Skipped
-   * when no address resolves, which keeps a deployment with no declared proxy
-   * from collapsing every caller into one bucket.
+   * caller-supplied, so rotating that value cannot escape the budget. Charged
+   * against {@link ADDRESS_CEILING} rather than the rule's own `max`, because a
+   * per-caller budget applied to a shared egress address throttles everyone
+   * behind it. Skipped when no address resolves, which keeps a deployment with
+   * no declared proxy from collapsing every caller into one bucket.
    */
   addressCeiling?: boolean;
 };
@@ -197,16 +206,20 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     // The bearer token is the caller's own bytes and is not verified until the
     // route handler runs, so the token bucket alone bounds nothing: a fresh
     // random token is a fresh counter. The address ceiling is what an
-    // unauthenticated flood actually runs into.
+    // unauthenticated flood actually runs into, at its own looser budget so a
+    // shared egress address is not throttled by one caller's rotation.
     addressCeiling: true,
   },
   // The session key gives a signed-in caller its own bucket, which is the
   // fairness property worth having, but nothing has verified that cookie yet,
   // so a caller willing to rotate one would otherwise mint buckets without
   // limit. The address ceiling is what actually bounds that: a forged cookie
-  // buys a fresh counter, never a fresh address. Where no address resolves the
-  // ceiling is skipped and only the enumerated `"ip"` rules above still bind,
-  // which is why every unauthenticated endpoint with a side effect is on one.
+  // buys a fresh counter, never a fresh address. It runs at ADDRESS_CEILING,
+  // well above this budget, so it bounds rotation without making one office's
+  // shared address the limit every colleague behind it hits. Where no address
+  // resolves the ceiling is skipped and only the enumerated `"ip"` rules above
+  // still bind, which is why every unauthenticated endpoint with a side effect
+  // is on one.
   {
     pattern: "/api/*",
     max: 100,
@@ -274,13 +287,53 @@ export function matchRule(pathname: string): RateLimitRule | null {
 }
 
 /**
+ * Budget for the address ceiling, on its own `RATE_LIMIT_ADDRESS` binding.
+ *
+ * Deliberately far looser than the rules it backstops. The ceiling exists so
+ * that rotating a forged cookie or a random bearer token cannot mint unlimited
+ * counters; it is not the per-caller budget. Sized to the primary's value it
+ * would instead become the binding constraint for every caller sharing one
+ * egress address, which is what Cloudflare's own guidance warns about for
+ * IP-keyed limits: an office behind one NAT would throttle itself on ordinary
+ * traffic long before any individual met their session budget.
+ *
+ * MUST equal `simple.limit` and `simple.period` on the `RATE_LIMIT_ADDRESS`
+ * binding in `wrangler.jsonc`, which is what actually enforces on the hosted
+ * target: the binding accepts no per-call override, so these values only
+ * partition counters and fill the advertised header there.
+ */
+export const ADDRESS_CEILING = { max: 1000, window: 60 } as const;
+
+/**
+ * Resolve the budget a key actually gets, widening it where the key is the
+ * shared bucket every unattributable caller falls into.
+ *
+ * A per-address `max` becomes an instance-wide ceiling once identity collapses,
+ * which denies service rather than throttling abuse. Both conditions are
+ * required: the key has to be the shared one, and the deployment has to declare
+ * no address source, so a hosted request that happens to carry no address keeps
+ * the budget its Cloudflare binding enforces instead of advertising a limit the
+ * binding will not honor.
+ *
+ * @param max - The rule's per-caller budget.
+ * @param key - The key the counter is using.
+ * @returns The budget to charge against, widened only for the shared bucket.
+ */
+export function effectiveMax(max: number, key: string): number {
+  return key === UNTRUSTED_IP_KEY && !hasTrustedAddressSource()
+    ? max * UNTRUSTED_BUDGET_FACTOR
+    : max;
+}
+
+/**
  * Count a request against a rule's address ceiling, when it declares one and
  * a client address can be trusted.
  *
  * Skipped when the primary key already is that address, which happens on the
- * catch-all whenever a caller sends no session cookie. The two counters would
- * carry the same identity at the same budget, so the second changes no outcome
- * and costs one more binding call on a path anonymous callers reach.
+ * catch-all whenever a caller sends no session cookie. Both counters then carry
+ * the same identity, and since {@link ADDRESS_CEILING} is the looser of the
+ * two the primary always rejects first, so the extra binding call cannot change
+ * an outcome on a path anonymous callers reach.
  *
  * @param request - Incoming request.
  * @param rule - The matched rule.
@@ -295,10 +348,10 @@ export async function checkAddressCeiling(
   if (!rule.addressCeiling) return null;
   const address = resolveClientIp(request.headers);
   if (!address || primaryKey === address) return null;
-  return getBackend(rule.bindingKey).check(
+  return getBackend("address").check(
     `${rule.pattern}:addr:${address}`,
-    rule.max,
-    rule.window,
+    ADDRESS_CEILING.max,
+    ADDRESS_CEILING.window,
   );
 }
 
@@ -372,7 +425,7 @@ export function rateLimitHeaders(
   rule: RateLimitRule,
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    "RateLimit-Policy": `${rule.max};w=${rule.window}`,
+    "RateLimit-Policy": `${result.limit};w=${rule.window}`,
     RateLimit: `limit=${result.limit}, remaining=${result.remaining}, reset=${result.resetIn}`,
   };
   if (!result.allowed) {
@@ -405,12 +458,12 @@ export function mcpRateLimitMessage(
   );
 }
 
-type BackendKind = "api" | "auth" | "actions" | "mcp" | "mcpHeavy";
+type BackendKind = "api" | "auth" | "actions" | "mcp" | "mcpHeavy" | "address";
 
 /**
  * Backend slot table keyed by kind. `worker-cf.ts` wires `api`, `auth`,
- * `mcp`, and `mcpHeavy` to the matching Cloudflare bindings on first
- * request; `actions` is intentionally never bound (server actions declare
+ * `mcp`, `mcpHeavy`, and `address` to the matching Cloudflare bindings on
+ * first request; `actions` is intentionally never bound (server actions declare
  * tighter `max` values than any single CF binding can enforce, so they stay
  * on the per-isolate `MemoryRateLimitBackend` where rule limits are honored
  * exactly).
@@ -432,6 +485,7 @@ symbolKeyedGlobal[BACKENDS_KEY] ??= {
   actions: null,
   mcp: null,
   mcpHeavy: null,
+  address: null,
 } satisfies Record<BackendKind, RateLimitBackend | null>;
 const _backends = symbolKeyedGlobal[BACKENDS_KEY] as Record<
   BackendKind,

@@ -46,9 +46,12 @@ import { getOutstandingConsent } from "@/lib/auth/consent";
 import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
 import {
+  addressPolicyError,
+  hasTrustedAddressSource,
   IPV6_SUBNET_BITS,
   trustedProxies,
   trustedProxyHeader,
+  UNTRUSTED_BUDGET_FACTOR,
 } from "@/lib/security/client-ip";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
@@ -103,6 +106,30 @@ function ipAddressPolicy(): {
   };
 }
 
+/**
+ * Per-path credential budgets for Better Auth's own limiter.
+ *
+ * Better Auth keys these on the client address and falls back to a single
+ * shared per-path bucket when it cannot resolve one, the same collapse
+ * `lib/api/rate-limit.ts` handles, so the same widening applies. Without it a
+ * budget sized for one caller becomes an instance-wide ceiling: 5 sign-ins per
+ * minute for a whole deployment, which locks out ordinary traffic rather than
+ * throttling abuse. Kept in step with `effectiveMax` so neither limb rejects
+ * while the other still has headroom.
+ *
+ * @returns The `rateLimit.customRules` map for this deployment.
+ */
+function authRateLimitRules(): Record<string, { window: number; max: number }> {
+  const factor = hasTrustedAddressSource() ? 1 : UNTRUSTED_BUDGET_FACTOR;
+  return {
+    "/sign-in/email": { window: 60, max: 5 * factor },
+    "/sign-up/email": { window: 60, max: 3 * factor },
+    "/request-password-reset": { window: 60, max: 3 * factor },
+    "/send-verification-email": { window: 60, max: 3 * factor },
+    "/reset-password": { window: 60, max: 5 * factor },
+  };
+}
+
 /** Ceiling on how many organizations a single user may own. Enforced at
  *  organization-create time in the un-bypassable `/organization/*` hook. */
 const MAX_OWNED_ORGANIZATIONS = 10;
@@ -118,7 +145,7 @@ const ORGANIZATION_MEMBERSHIP_LIMIT = 50;
  * metadata advertises (`advertisedMetadata.scopes_supported`), so the two
  * cannot drift. `offline_access` gates refresh-token issuance (#108).
  */
-const GRANTABLE_OAUTH_SCOPES = [
+export const GRANTABLE_OAUTH_SCOPES = [
   "openid",
   "profile",
   "email",
@@ -129,10 +156,15 @@ if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
   throw new Error(
     "BETTER_AUTH_URL is required on the Cloudflare deploy target. " +
       "It is the issuer, the audience and the resource-metadata URL the MCP " +
-      "route derives at module load, so without it those pin to whatever " +
-      "origin the first request happened to carry. Set it in wrangler.jsonc " +
-      "env.production.vars.",
+      "route derives at module load, so without it all three pin to the " +
+      "http://localhost:3000 fallback and every MCP token fails audience and " +
+      "issuer validation. Set it in wrangler.jsonc env.production.vars.",
   );
+}
+
+if (!IS_CLOUDFLARE && process.env.NODE_ENV === "production") {
+  const policyError = addressPolicyError();
+  if (policyError) throw new Error(policyError);
 }
 
 /**
@@ -281,18 +313,14 @@ export function createAuth() {
       // Deliberate override, not a default: Better Auth would otherwise pick
       // "secondary-storage" because one is configured. The KV adapter has no
       // atomic increment, so that path degrades to a non-atomic check-then-set
-      // that concurrent requests slip through, and KV's 60s expiry floor would
-      // stretch this 10s window six-fold. Memory is per-isolate and so bounds
-      // nothing distributed; the Cloudflare bindings in `lib/api/rate-limit.ts`
-      // are what enforce across isolates, and these rules sit on top per-process.
+      // that concurrent requests slip through, and KV allows only one write per
+      // second per key, which is exactly the shape a per-caller counter has.
+      // Memory is per-isolate and so bounds nothing distributed; the Cloudflare
+      // bindings in `lib/api/rate-limit.ts` are what enforce across isolates
+      // within a colo (they are per-location, not global), and these rules sit
+      // on top per-process.
       storage: "memory",
-      customRules: {
-        "/sign-in/email": { window: 60, max: 5 },
-        "/sign-up/email": { window: 60, max: 3 },
-        "/request-password-reset": { window: 60, max: 3 },
-        "/send-verification-email": { window: 60, max: 3 },
-        "/reset-password": { window: 60, max: 5 },
-      },
+      customRules: authRateLimitRules(),
     },
     trustedOrigins: process.env.BETTER_AUTH_URL
       ? [process.env.BETTER_AUTH_URL]
@@ -389,28 +417,29 @@ export function createAuth() {
         // buys a shorter compromise window by making every such client
         // re-authorize that often.
         //
-        // Per the MCP authorization spec (Refresh Tokens) a client "MAY add
-        // `offline_access`" and "MUST NOT assume refresh tokens will be
-        // issued". Its scope-selection strategy sends clients to the PROTECTED
-        // RESOURCE metadata, which the same spec says SHOULD NOT advertise
-        // `offline_access` and which ours therefore omits, and the 401 carries
-        // no `scope` parameter to override that. A client following the spec
-        // asks for `openid profile email` and gets no refresh token.
+        // A client following the spec DOES get a refresh token here: the 401
+        // from `/api/mcp` carries a `scope` challenge naming
+        // GRANTABLE_OAUTH_SCOPES, and the spec makes that challenge
+        // authoritative for the client's next authorization request. So the
+        // access token is not the whole session, and this value is the
+        // revocation lag rather than the re-authorization interval.
         //
-        // So this stays at the value a session can tolerate. Closing the
-        // revocation gap needs the resource server to consult revocation
-        // state; see the note on `verifyMcpAuth`.
+        // It stays at 1h because revocation does bound it: revoking a session
+        // marks the refresh token revoked (`lib/data/oauth-session.ts`), so no
+        // further access token can be minted and the outstanding one expires
+        // within the hour. Closing the remaining gap needs the resource server
+        // to consult revocation state; see the note on `verifyMcpAuth`.
         accessTokenExpiresIn: 60 * 60, // 1h
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7 days
         clientRegistrationAllowedScopes: [...GRANTABLE_OAUTH_SCOPES],
         // Advertise the grantable scopes in the authorization-server metadata
-        // (`/.well-known/oauth-authorization-server`). Per the MCP authorization
-        // spec (Refresh Tokens) and SEP-2207, a compliant client only adds
-        // `offline_access` to its authorize request when the AS lists it in
-        // `scopes_supported`. Without this the client never asks, no refresh
-        // token is issued, and MCP sessions die at `accessTokenExpiresIn` (#108).
-        // Protected-resource metadata deliberately omits it — the spec says
-        // resources SHOULD NOT advertise `offline_access`.
+        // (`/.well-known/oauth-authorization-server`), which is what a generic
+        // OAuth client and the consent screen read. An MCP client's scope
+        // selection reads the 401 `scope` challenge first and the
+        // PROTECTED RESOURCE metadata second, so refresh-token issuance (#108)
+        // is driven by the challenge in `app/api/mcp/route.ts`, not by this
+        // list. Protected-resource metadata deliberately omits
+        // `offline_access`, which the spec says resources SHOULD NOT advertise.
         advertisedMetadata: {
           scopes_supported: [...GRANTABLE_OAUTH_SCOPES],
         },

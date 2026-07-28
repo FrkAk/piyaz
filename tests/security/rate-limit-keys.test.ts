@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import type { NextRequest } from "next/server";
 import {
+  ADDRESS_CEILING,
   checkAddressCeiling,
   extractKey,
   matchRule,
@@ -116,7 +117,7 @@ test("attack: rotating the MCP bearer token still meets the address ceiling", as
 
   const address = "198.51.100.44";
   let blocked = 0;
-  for (let i = 0; i < 130; i++) {
+  for (let i = 0; i < ADDRESS_CEILING.max + 30; i++) {
     const result = await checkAddressCeiling(
       requestWith({
         authorization: `Bearer rotated-token-${i}`,
@@ -138,7 +139,7 @@ test("attack: rotating a forged cookie still meets the catch-all ceiling", async
 
   const address = "198.51.100.77";
   let blocked = 0;
-  for (let i = 0; i < 130; i++) {
+  for (let i = 0; i < ADDRESS_CEILING.max + 30; i++) {
     const result = await checkAddressCeiling(
       requestWith({
         cookie: `better-auth.session_token=forged-${i}`,

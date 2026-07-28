@@ -76,6 +76,11 @@
           "name": "RATE_LIMIT_MCP_HEAVY",
           "namespace_id": "1004",
           "simple": { "limit": 20, "period": 60 }
+        },
+        {
+          "name": "RATE_LIMIT_ADDRESS",
+          "namespace_id": "1005",
+          "simple": { "limit": 1000, "period": 60 }
         }
       ],
       "send_email": [
@@ -188,6 +193,11 @@
           "name": "RATE_LIMIT_MCP_HEAVY",
           "namespace_id": "2004",
           "simple": { "limit": 20, "period": 60 }
+        },
+        {
+          "name": "RATE_LIMIT_ADDRESS",
+          "namespace_id": "2005",
+          "simple": { "limit": 1000, "period": 60 }
         }
       ],
       "send_email": [

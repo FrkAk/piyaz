@@ -1,7 +1,11 @@
 import "server-only";
 
 import { headers } from "next/headers";
-import { getBackend, type RateLimitResult } from "@/lib/api/rate-limit";
+import {
+  effectiveMax,
+  getBackend,
+  type RateLimitResult,
+} from "@/lib/api/rate-limit";
 import { clientIpKey, resolveClientIp } from "@/lib/security/client-ip";
 import { assertLegalConsent } from "@/lib/auth/consent";
 import { getAuthContext, type AuthContext } from "@/lib/auth/context";
@@ -95,7 +99,7 @@ export async function checkActionIpRateLimit(
   const ip = await getActionClientIp();
   const result = await getBackend(config.backendKind ?? "actions").check(
     `action:${config.action}:ip:${ip}`,
-    config.perIpMax,
+    effectiveMax(config.perIpMax, ip),
     config.windowSeconds,
   );
   return toOutcome(result);

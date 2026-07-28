@@ -8,6 +8,7 @@ import {
   mcpRateLimitMessage,
   getBackend,
   checkAddressCeiling,
+  effectiveMax,
 } from "@/lib/api/rate-limit";
 import { buildCsp } from "@/lib/security/headers";
 import { safeInviteNext } from "@/lib/auth/invite-next";
@@ -94,7 +95,7 @@ export async function middleware(request: NextRequest) {
       const [primary, ceiling] = await Promise.all([
         getBackend(rule.bindingKey).check(
           `${rule.pattern}:${key}`,
-          rule.max,
+          effectiveMax(rule.max, key),
           rule.window,
         ),
         checkAddressCeiling(request, rule, key),
@@ -114,7 +115,7 @@ export async function middleware(request: NextRequest) {
       if (!result.allowed) {
         const message =
           rule.bindingKey === "mcp"
-            ? mcpRateLimitMessage(rule.max, rule.window, result.resetIn)
+            ? mcpRateLimitMessage(result.limit, rule.window, result.resetIn)
             : "Too many requests. Please try again later.";
         return withCsp(
           NextResponse.json(

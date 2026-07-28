@@ -11,6 +11,7 @@ interface __BaseEnv_CloudflareEnv {
 	RATE_LIMIT_AUTH: RateLimit;
 	RATE_LIMIT_MCP: RateLimit;
 	RATE_LIMIT_MCP_HEAVY: RateLimit;
+	RATE_LIMIT_ADDRESS: RateLimit;
 	ASSETS: Fetcher;
 	DEPLOY_TARGET: "cloudflare";
 	BETTER_AUTH_URL: "https://app.piyaz.ai";

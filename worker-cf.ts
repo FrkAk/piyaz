@@ -55,6 +55,7 @@ interface WorkerEnv {
   RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
   RATE_LIMIT_MCP?: CloudflareRateLimitBinding;
   RATE_LIMIT_MCP_HEAVY?: CloudflareRateLimitBinding;
+  RATE_LIMIT_ADDRESS?: CloudflareRateLimitBinding;
   PIYAZ_BROKER?: DurableObjectNamespace;
 }
 
@@ -115,6 +116,12 @@ function initRateLimitBindings(env: WorkerEnv): void {
   if (env.RATE_LIMIT_MCP) {
     setBackend("mcp", new CloudflareRateLimitBackend(env.RATE_LIMIT_MCP));
   }
+  if (env.RATE_LIMIT_ADDRESS) {
+    setBackend(
+      "address",
+      new CloudflareRateLimitBackend(env.RATE_LIMIT_ADDRESS),
+    );
+  }
   if (env.RATE_LIMIT_MCP_HEAVY) {
     setBackend(
       "mcpHeavy",
@@ -129,6 +136,7 @@ function initRateLimitBindings(env: WorkerEnv): void {
       auth: Boolean(env.RATE_LIMIT_AUTH),
       mcp: Boolean(env.RATE_LIMIT_MCP),
       mcpHeavy: Boolean(env.RATE_LIMIT_MCP_HEAVY),
+      address: Boolean(env.RATE_LIMIT_ADDRESS),
     }),
   );
 }
