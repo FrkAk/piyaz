@@ -12,8 +12,13 @@ export type ProjectTagRow = { tag: string; count: number };
  * cap, and every consumer walks the whole result. Ordering puts the
  * most-used tags first, so the rows past this point are the long tail a
  * caller can inflate at will rather than the vocabulary anyone works with.
+ *
+ * Consumers render this as the project's tag vocabulary, so hitting the cap has
+ * to be visible: an agent silently shown a partial list will coin a tag that
+ * already exists. `lib/graph/format-responses.ts` marks the rendered line when
+ * the row count reaches this value.
  */
-const MAX_PROJECT_TAGS = 500;
+export const MAX_PROJECT_TAGS = 500;
 
 /**
  * Build the tag-aggregation SQL shared by the interactive and batch read

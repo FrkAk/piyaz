@@ -62,7 +62,7 @@ import {
   ForbiddenError,
   InsufficientRoleError,
 } from "@/lib/auth/authorization";
-import { unwrapDriverError } from "@/lib/db/errors";
+import { isStatementTimeout, unwrapDriverError } from "@/lib/db/errors";
 import { isVerboseErrors } from "@/lib/api/error";
 
 // ---------------------------------------------------------------------------
@@ -755,6 +755,11 @@ export function stateHint(state: TaskState): string {
  *   fallback for unrecognized errors.
  */
 export function translateError(e: unknown): ToolResult {
+  if (isStatementTimeout(e)) {
+    return fail(
+      "Query exceeded the database time ceiling. Nothing was written. Narrow the request and retry: lower depth on a graph walk, add filters to a search, or request fewer items in a batch.",
+    );
+  }
   if (e instanceof InsufficientRoleError) {
     return fail(
       `Forbidden: only team admins can ${e.primaryAction} projects. Tell the user; they need a team admin to do this.`,

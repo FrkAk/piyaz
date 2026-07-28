@@ -51,3 +51,18 @@ export function unwrapDriverError(e: unknown): DriverError | undefined {
 export function isUniqueViolation(e: unknown): boolean {
   return unwrapDriverError(e)?.code === "23505";
 }
+
+/**
+ * True when the caught error is a statement aborted by `statement_timeout`.
+ *
+ * The ceiling is a role default (`docker/role-settings.sql`), so any read can
+ * hit it on a graph the caller grew large enough. Distinguishing it lets the
+ * caller say the work was too big rather than returning an opaque internal
+ * error the caller retries unchanged.
+ *
+ * @param e - Caught error value.
+ * @returns True iff a driver error with SQLSTATE 57014 is reachable.
+ */
+export function isStatementTimeout(e: unknown): boolean {
+  return unwrapDriverError(e)?.code === "57014";
+}

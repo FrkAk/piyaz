@@ -12,17 +12,29 @@
 -- which fails on Neon where toggling it needs a real superuser.
 -- =============================================================================
 
--- Ceiling on how long one statement may run, matching STATEMENT_TIMEOUT_MS in
--- lib/db/_driver.node.ts and lib/db/_driver.workers.ts. Those set it as a
--- connection option, which the Neon HTTP transports drop: pool.query under
--- poolQueryViaFetch rebuilds a bare connection string, and the neon-http read
--- client behind withUserContextRead has no equivalent option at all. A role
--- default is carried by the session whatever the transport, so it is what
--- actually bounds the read path on the hosted head. Change the three together.
+-- Ceiling on how long one statement may run. This file is the ONLY place it is
+-- set. Do NOT reintroduce it as a driver connection option: both drivers send
+-- `connection` entries as Postgres startup parameters, and Neon's PgBouncer
+-- pooler accepts only the parameters it can track (client_encoding, datestyle,
+-- timezone, standard_conforming_strings, application_name) and disconnects the
+-- client on any other, which would fail every interactive transaction and so
+-- every write on the hosted heads. See the rationale in both
+-- lib/db/_driver.node.ts and lib/db/_driver.workers.ts, which deliberately set
+-- no timeout. A role default needs no cooperation from the transport: the
+-- backend applies it at session start, including on the neon-http read path a
+-- startup parameter never reached.
 --
 -- Only the two roles that serve requests. service_role is excluded because
--- drizzle.config.ts falls back to DATABASE_SERVICE_ROLE_URL for migrations, and
--- the hosted migration role is excluded for the same reason: a 15s ceiling
--- would abort an index build mid-deploy.
+-- drizzle.config.ts falls back to DATABASE_SERVICE_ROLE_URL and then to
+-- DATABASE_URL for migrations, and the hosted migration role is excluded for
+-- the same reason: a 15s ceiling would abort an index build mid-deploy.
+--
+-- Known abort candidates, unbounded in tenant size and reachable from
+-- piyaz_map view='downstream': the path-enumerating walks in
+-- lib/db/raw/fetch-effective-dep-chain.ts and fetch-effective-downstream.ts.
+-- They cannot use the UNION dedup fetch-dependency-chain.ts does, because
+-- their CYCLE clause makes every row unique by its path array and the
+-- NOT is_cycle filter changes which tasks a cyclic graph returns. An abort
+-- surfaces to the caller through the 57014 branch in translateError.
 ALTER ROLE app_user SET statement_timeout = '15s';
 ALTER ROLE auth_role SET statement_timeout = '15s';

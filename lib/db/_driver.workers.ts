@@ -54,7 +54,9 @@ const DB_URL_REQUIRED = {
 /**
  * Per-request Pool options. `connectionTimeoutMillis` bounds
  * `pool.connect()` waits so an unresponsive Neon endpoint fails the request
- * fast instead of riding the Workers 30s wall clock, and so a stuck
+ * fast instead of hanging for as long as the client stays connected (a Worker
+ * HTTP request has no wall-clock ceiling; the documented 30s applies to the
+ * `waitUntil` extension after the response), and so a stuck
  * connect cannot wedge `pool.end()` during teardown (it only settles once
  * every client drains). 10s clears Neon cold starts where the old 5s was
  * tight. `max` stays at the driver default: a per-request pool is already

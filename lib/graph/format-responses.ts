@@ -18,6 +18,7 @@ import type { Whoami } from "@/lib/data/account";
 import type { TeamMemberEntry } from "@/lib/data/membership";
 import type { UserTeamEntry } from "@/lib/data/project";
 import type { ProjectOverview } from "@/lib/context/_core/overview";
+import { MAX_PROJECT_TAGS } from "@/lib/db/raw/aggregate-project-tags";
 import type { SummaryContext } from "@/lib/context/_core/summary";
 import {
   capLines,
@@ -234,12 +235,33 @@ export function formatProjectMeta(meta: ProjectMeta): string {
     const tagLine = meta.tagVocabulary
       .map((t) => `${t.tag} (${t.count})`)
       .join(", ");
-    parts.push(`Tags: ${tagLine}`);
+    parts.push(
+      `Tags: ${tagLine}${tagVocabularyCutoff(meta.tagVocabulary.length)}`,
+    );
   } else {
     parts.push("Tags: (none in use yet)");
   }
   if (meta.description) parts.push(`\n${meta.description}`);
   return parts.join("\n");
+}
+
+/**
+ * Suffix marking a tag vocabulary that hit the read cap.
+ *
+ * The aggregation is ordered most-used first and cut at
+ * {@link MAX_PROJECT_TAGS}, so a project past that point is shown a partial
+ * list. Saying so is what stops an agent coining a tag that already exists
+ * further down the tail. A project holding exactly the cap is marked too, which
+ * is the safe direction: over-warning costs a clause, under-warning costs a
+ * duplicate tag.
+ *
+ * @param count - Number of tags being rendered.
+ * @returns The marker, or an empty string when the list is complete.
+ */
+function tagVocabularyCutoff(count: number): string {
+  return count >= MAX_PROJECT_TAGS
+    ? ` (showing the ${MAX_PROJECT_TAGS} most-used; more exist)`
+    : "";
 }
 
 /** Options for {@link formatOverview}: per-status task cap and detail knob. */
@@ -281,7 +303,9 @@ export function formatOverview(
   if (overview.categories.length > 0)
     parts.push(`Categories: ${overview.categories.join(", ")}`);
   if (detail === "detailed" && overview.tagVocabulary.length > 0)
-    parts.push(`Tags: ${overview.tagVocabulary.join(", ")}`);
+    parts.push(
+      `Tags: ${overview.tagVocabulary.join(", ")}${tagVocabularyCutoff(overview.tagVocabulary.length)}`,
+    );
   if (overview.description) parts.push(`\n${overview.description}`);
 
   const groups = new Map<string, typeof overview.tasks>();
