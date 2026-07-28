@@ -277,16 +277,20 @@ export async function handleEdit(
     );
     if (payload.tags && payload.tags.length > 0) {
       const written = new Set(payload.tags);
-      // The vocabulary is read after the write, so it contains this call's
-      // tags; without excluding them every proposed tag exact-matches itself
-      // and findVariant never fires.
-      const projectTags = (await getProjectTags(ctx, result.projectId))
-        .map((t) => t.tag)
-        .filter((t) => !written.has(t));
-      hints.push(
-        ...tagVariantHints(payload.tags, projectTags),
-        ...tagTaxonomyHints(payload.tags),
-      );
+      try {
+        // The vocabulary is read after the write, so it contains this call's
+        // tags; without excluding them every proposed tag exact-matches itself
+        // and findVariant never fires.
+        const projectTags = (await getProjectTags(ctx, result.projectId))
+          .map((t) => t.tag)
+          .filter((t) => !written.has(t));
+        hints.push(...tagVariantHints(payload.tags, projectTags));
+      } catch (e) {
+        // The edit is already committed; a failed hint read must not become
+        // an error reply that invites a retry of the applied write.
+        console.error("[mcp:piyaz_edit] tag hint read failed:", e);
+      }
+      hints.push(...tagTaxonomyHints(payload.tags));
     }
     hints.push(
       ...statusHints(payload, result.previousStatus, {
