@@ -1,5 +1,5 @@
 import { test, expect, afterEach, beforeEach, mock, spyOn } from "bun:test";
-import { FakeEmailSender } from "@/tests/setup/fake-email";
+import { FakeEmailSender, settle } from "@/tests/setup/fake-email";
 import type { EmailSender } from "@/lib/email/types";
 
 /**
@@ -20,6 +20,7 @@ mock.module("@/lib/email/_sender", () => ({
 }));
 
 const { sendPasswordChangedEmail } = await import("@/lib/auth/emails");
+const { EMAIL_BUDGET } = await import("@/lib/email/budget");
 
 const RECIPIENT = "delivery-fail@test.local";
 const ORIGINAL_EMAIL_TRANSPORT = process.env.EMAIL_TRANSPORT;
@@ -85,4 +86,31 @@ test("a rejected send logs the structured event without the recipient and does n
   expect(event.template).toBe("passwordChanged");
   expect(event.message).toBe("network down");
   expect(raw).not.toContain(RECIPIENT);
+});
+
+test("an over-budget recipient stops reaching the transport", async () => {
+  // The per-recipient cap is the mail-bomb defence: past the budget the send
+  // must be dropped before the transport, not merely retried or logged after
+  // delivery. Uses its own address so the shared counter starts clean.
+  const fake = new FakeEmailSender();
+  _platformSender = fake;
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    for (let i = 0; i < EMAIL_BUDGET.max + 2; i++) {
+      sendPasswordChangedEmail(
+        { email: "flooded@test.local", name: "Flooded" },
+        {},
+      );
+      await settle();
+    }
+    expect(fake.sent.length).toBe(EMAIL_BUDGET.max);
+    const events = warnSpy.mock.calls
+      .map((c) => String(c[0]))
+      .filter((line) => line.includes("auth_email_budget_exceeded"));
+    expect(events.length).toBe(2);
+    // The structured event must not carry the recipient address.
+    expect(events.join("\n")).not.toContain("flooded@test.local");
+  } finally {
+    warnSpy.mockRestore();
+  }
 });

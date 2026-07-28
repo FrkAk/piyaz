@@ -3,6 +3,7 @@ import {
   __resetBudgetForTest,
   getPlatformBudgetStore,
 } from "@/lib/email/_budget.node";
+import { mock } from "bun:test";
 import { EMAIL_BUDGET, consumeEmailBudget } from "@/lib/email/budget";
 
 beforeEach(() => __resetBudgetForTest());
@@ -85,4 +86,21 @@ test("the budget key never contains the raw address", async () => {
     expect(await store.consume(key, EMAIL_BUDGET.max, 3600)).toBe(true);
   }
   expect(await store.consume(key, EMAIL_BUDGET.max, 3600)).toBe(false);
+});
+
+test("no resolvable store fails open, so a counter outage never blocks verification", async () => {
+  // Mirrors an unbound AUTH_KV or a call outside a request context. Losing the
+  // counter must degrade to "the email still sends", never to "nobody can
+  // verify their address".
+  mock.module("@/lib/email/_budget", () => ({
+    getPlatformBudgetStore: () => null,
+  }));
+  const { consumeEmailBudget: withoutStore } = await import(
+    "@/lib/email/budget"
+  );
+  for (let i = 0; i < EMAIL_BUDGET.max + 2; i++) {
+    expect(await withoutStore("nobudget@example.com", "verification")).toBe(
+      true,
+    );
+  }
 });

@@ -103,6 +103,19 @@ test("MX resolving to RFC 1918 private space is undeliverable", async () => {
   expect(await checkRecipientDomain("priv.example")).toBe("undeliverable");
 });
 
+test("link-local and CGNAT exchanges are undeliverable", async () => {
+  stubResolver({
+    "ll.example:15": { Status: 0, Answer: [answer(15, "10 mx.ll.example.")] },
+    "mx.ll.example:1": { Status: 0, Answer: [answer(1, "169.254.10.1")] },
+    "mx.ll.example:28": { Status: 0, Answer: [] },
+    "cgn.example:15": { Status: 0, Answer: [answer(15, "10 mx.cgn.example.")] },
+    "mx.cgn.example:1": { Status: 0, Answer: [answer(1, "100.64.0.1")] },
+    "mx.cgn.example:28": { Status: 0, Answer: [] },
+  });
+  expect(await checkRecipientDomain("ll.example")).toBe("undeliverable");
+  expect(await checkRecipientDomain("cgn.example")).toBe("undeliverable");
+});
+
 test("IPv6 loopback and unique-local exchanges are undeliverable", async () => {
   stubResolver({
     "v6bad.example:15": {
