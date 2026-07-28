@@ -125,12 +125,6 @@ export function SignInForm({
         )}
       </div>
 
-      <TurnstileGate
-        siteKey={turnstileSiteKey}
-        nonce={nonce}
-        {...turnstile.gateProps}
-      />
-
       {error ? (
         <p
           role="alert"
@@ -147,6 +141,11 @@ export function SignInForm({
       ) : null}
 
       <AuthSubmit isLoading={loading}>Sign in</AuthSubmit>
+      <TurnstileGate
+        siteKey={turnstileSiteKey}
+        nonce={nonce}
+        {...turnstile.gateProps}
+      />
     </form>
   );
 }

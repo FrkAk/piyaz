@@ -179,11 +179,6 @@ export function SignUpForm({
             {error}
           </p>
         ) : null}
-        <TurnstileGate
-          siteKey={turnstileSiteKey}
-          nonce={nonce}
-          {...turnstile.gateProps}
-        />
         <button
           type="button"
           onClick={handleResend}
@@ -196,6 +191,11 @@ export function SignUpForm({
         >
           {resendStatus === "sending" ? "Sending…" : "Resend email"}
         </button>
+        <TurnstileGate
+          siteKey={turnstileSiteKey}
+          nonce={nonce}
+          {...turnstile.gateProps}
+        />
       </div>
     );
   }
@@ -292,12 +292,6 @@ export function SignUpForm({
         </p>
       </div>
 
-      <TurnstileGate
-        siteKey={turnstileSiteKey}
-        nonce={nonce}
-        {...turnstile.gateProps}
-      />
-
       {error ? (
         <p
           role="alert"
@@ -314,6 +308,11 @@ export function SignUpForm({
       ) : null}
 
       <AuthSubmit isLoading={loading}>Create account</AuthSubmit>
+      <TurnstileGate
+        siteKey={turnstileSiteKey}
+        nonce={nonce}
+        {...turnstile.gateProps}
+      />
     </form>
   );
 }

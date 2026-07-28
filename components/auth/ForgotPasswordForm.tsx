@@ -95,12 +95,6 @@ export function ForgotPasswordForm({
         placeholder="you@company.com"
       />
 
-      <TurnstileGate
-        siteKey={turnstileSiteKey}
-        nonce={nonce}
-        {...turnstile.gateProps}
-      />
-
       {error ? (
         <p
           role="alert"
@@ -117,6 +111,11 @@ export function ForgotPasswordForm({
       ) : null}
 
       <AuthSubmit isLoading={loading}>Send reset link</AuthSubmit>
+      <TurnstileGate
+        siteKey={turnstileSiteKey}
+        nonce={nonce}
+        {...turnstile.gateProps}
+      />
     </form>
   );
 }

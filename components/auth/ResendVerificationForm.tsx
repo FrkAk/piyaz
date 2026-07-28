@@ -145,12 +145,6 @@ export function ResendVerificationForm({
         </p>
       ) : null}
 
-      <TurnstileGate
-        siteKey={turnstileSiteKey}
-        nonce={nonce}
-        {...turnstile.gateProps}
-      />
-
       {error ? (
         <p
           role="alert"
@@ -169,6 +163,11 @@ export function ResendVerificationForm({
       <AuthSubmit isLoading={status === "sending"} disabled={status === "sent"}>
         Send verification link
       </AuthSubmit>
+      <TurnstileGate
+        siteKey={turnstileSiteKey}
+        nonce={nonce}
+        {...turnstile.gateProps}
+      />
     </form>
   );
 }

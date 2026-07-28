@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AuthNotice, NoticeHost } from "@/components/auth/AuthNotice";
 import { Avatar } from "@/components/shared/Avatar";
 import { Badge } from "@/components/shared/Badge";
 import { Button } from "@/components/shared/Button";
@@ -743,6 +744,23 @@ export function PrimitivesShowcase() {
 
         <Section title="Markdown">
           <Markdown>{`### Spec\n\n- bullet\n- another bullet with \`code\`\n\n> Block quote with **bold** and *italic*.`}</Markdown>
+        </Section>
+
+        <Section
+          title="AuthNotice"
+          caption="Auth-form explanation strip. Danger is an obstruction the visitor can clear; muted is a dead end with no action, so it does not spend the danger colour on a state nothing can fix."
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <AuthNotice action={{ label: "Try again", onClick: () => {} }}>
+              Verification could not load. A browser extension or network filter
+              may be blocking <NoticeHost>challenges.cloudflare.com</NoticeHost>
+              .
+            </AuthNotice>
+            <AuthNotice tone="muted">
+              Verification does not run in this browser. Open the page in a
+              current Chrome, Firefox, Safari, or Edge to continue.
+            </AuthNotice>
+          </div>
         </Section>
 
         <Section
