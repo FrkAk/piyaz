@@ -1,4 +1,5 @@
 import { test, expect, afterAll } from "bun:test";
+import { createAuth } from "@/lib/auth";
 import { buildCsp } from "@/lib/security/headers";
 
 /**
@@ -9,25 +10,53 @@ import { buildCsp } from "@/lib/security/headers";
  * working rollback lever when Turnstile itself is unavailable: the plugin
  * fails closed on a siteverify outage, which would otherwise take sign-in
  * down with it. Both directions of that gate are pinned here.
+ *
+ * `@/lib/auth` is imported statically, BEFORE any env mutation: the module
+ * builds the process-wide `auth` singleton at evaluation time, so a dynamic
+ * import after setting the secret would arm captcha on the instance every
+ * other test file shares.
  */
 
 const ORIGINAL_SECRET = process.env.TURNSTILE_SECRET_KEY;
 const ORIGINAL_URL = process.env.BETTER_AUTH_URL;
 
+/** Cloudflare's published always-passes testing secret. */
+const TEST_SECRET = "1x0000000000000000000000000000000AA";
+
 /**
  * Build a fresh Better Auth instance under a given Turnstile secret.
  *
- * `createAuth()` reads boot-time env once at construction, so each case needs
- * its own instance rather than a mutated singleton.
+ * `createAuth()` reads env at call time, so each case gets its own instance
+ * rather than a mutated singleton.
  *
  * @param secret - Value for `TURNSTILE_SECRET_KEY`, or undefined to unset it.
- * @returns The constructed instance's plugin list.
+ * @returns The constructed instance.
  */
-async function pluginsWithSecret(secret: string | undefined) {
+function authWithSecret(secret: string | undefined) {
   if (secret === undefined) delete process.env.TURNSTILE_SECRET_KEY;
   else process.env.TURNSTILE_SECRET_KEY = secret;
-  const { createAuth } = await import("@/lib/auth");
-  return createAuth().options.plugins ?? [];
+  return createAuth();
+}
+
+/**
+ * Drive one request through a captcha-armed instance's HTTP handler with no
+ * `x-captcha-response` header.
+ *
+ * The plugin rejects the missing header before any siteverify call, so this
+ * stays off the network and pins the endpoint wiring itself.
+ *
+ * @param path - Auth route path under `/api/auth`.
+ * @returns The handler response.
+ */
+async function requestWithoutToken(path: string): Promise<Response> {
+  const armed = authWithSecret(TEST_SECRET);
+  return armed.handler(
+    new Request(`${process.env.BETTER_AUTH_URL}/api/auth${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "captcha-pin@test.local" }),
+    }),
+  );
 }
 
 afterAll(() => {
@@ -37,23 +66,47 @@ afterAll(() => {
   else process.env.BETTER_AUTH_URL = ORIGINAL_URL;
 });
 
-test("config pin: captcha plugin is registered when a secret is configured", async () => {
-  const plugins = await pluginsWithSecret(
-    "1x0000000000000000000000000000000AA",
-  );
+test("config pin: captcha plugin is registered when a secret is configured", () => {
+  const plugins = authWithSecret(TEST_SECRET).options.plugins ?? [];
   expect(plugins.some((p) => p.id === "captcha")).toBe(true);
 });
 
-test("config pin: no captcha plugin without a secret, so self-host still boots", async () => {
-  const plugins = await pluginsWithSecret(undefined);
+test("config pin: no captcha plugin without a secret, so self-host still boots", () => {
+  const plugins = authWithSecret(undefined).options.plugins ?? [];
   expect(plugins.some((p) => p.id === "captcha")).toBe(false);
 });
 
-test("config pin: nextCookies stays last even with captcha registered", async () => {
-  const plugins = await pluginsWithSecret(
-    "1x0000000000000000000000000000000AA",
-  );
+test("config pin: nextCookies stays last even with captcha registered", () => {
+  const plugins = authWithSecret(TEST_SECRET).options.plugins ?? [];
   expect(plugins[plugins.length - 1]?.id).toBe("next-cookies");
+});
+
+test("every protected endpoint rejects a tokenless request before siteverify", async () => {
+  // Pins the explicit endpoint list, most importantly /send-verification-email,
+  // which better-auth's default list omits. A regression to the defaults would
+  // leave that direct mail trigger captcha-free and every case below green
+  // except the third.
+  for (const path of [
+    "/sign-up/email",
+    "/sign-in/email",
+    "/send-verification-email",
+    "/request-password-reset",
+  ]) {
+    const response = await requestWithoutToken(path);
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { code?: string };
+    expect(body.code).toBe("MISSING_RESPONSE");
+  }
+});
+
+test("unprotected endpoints stay captcha-free", async () => {
+  const armed = authWithSecret(TEST_SECRET);
+  const response = await armed.handler(
+    new Request(`${process.env.BETTER_AUTH_URL}/api/auth/get-session`, {
+      method: "GET",
+    }),
+  );
+  expect(response.status).toBe(200);
 });
 
 test("production CSP allows the Turnstile iframe origin when configured", () => {

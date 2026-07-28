@@ -27,9 +27,14 @@ const nodeStore = getPlatformBudgetStore()!;
 
 let _storeOverride: EmailBudgetStore | null | undefined;
 
+// The mock must carry the real module's full export surface: `_budget.ts`
+// star-re-exports `_budget.node`, so dropping `__resetBudgetForTest` here
+// would hand `undefined` to any later file importing it through the bare
+// module.
 mock.module("@/lib/email/_budget", () => ({
   getPlatformBudgetStore: () =>
     _storeOverride === undefined ? nodeStore : _storeOverride,
+  __resetBudgetForTest,
 }));
 
 const { EMAIL_BUDGET, consumeEmailBudget } = await import("@/lib/email/budget");

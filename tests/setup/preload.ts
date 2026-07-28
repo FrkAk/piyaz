@@ -7,6 +7,11 @@ process.env.BETTER_AUTH_SECRET ??=
   "test-only-secret-not-used-outside-this-suite-0000";
 // BA emits a base-URL warning otherwise; harmless but noisy in test logs.
 process.env.BETTER_AUTH_URL ??= "https://example.test";
+// A Turnstile secret inherited from the shell (deploy rehearsal, future CI)
+// would arm the captcha plugin in every auth instance built by the suite and
+// fail unrelated handler tests with MISSING_RESPONSE. The suite always runs
+// captcha-off; tests that exercise the plugin set the secret themselves.
+delete process.env.TURNSTILE_SECRET_KEY;
 
 /**
  * Force `NODE_ENV=production` at the test process boundary.
@@ -106,6 +111,11 @@ const { setRecipientDomainResolver } = await import(
 );
 setRecipientDomainResolver(async () => "deliverable");
 
+// The node email-budget counter is process-global; without a reset between
+// tests, files that mail the same address would consume each other's budget
+// in file-order-dependent ways.
+const { __resetBudgetForTest } = await import("@/lib/email/_budget.node");
+
 beforeAll(async () => {
   await setup();
 }, 120000);
@@ -114,4 +124,5 @@ beforeAll(async () => {
 // 401-path test.
 afterEach(() => {
   currentTestSession = null;
+  __resetBudgetForTest();
 });
