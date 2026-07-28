@@ -1,6 +1,6 @@
 # Sub-processors
 
-Last updated: July 15, 2026
+Last updated: July 28, 2026
 
 ---
 
@@ -15,7 +15,7 @@ deployment: you are the data controller for your own instance.
 | --- | --- | --- | --- | --- |
 | **Neon, LLC** (a Databricks company, US) | Managed PostgreSQL database. | All service data at rest: account, workspace content, technical and session data, acceptance records. | AWS `eu-central-1` (Frankfurt, Germany) | EU SCCs; EU-US Data Privacy Framework |
 | **Amazon Web Services (AWS)** (US) | Underlying cloud infrastructure for the Neon database. | The same data at rest, as Neon's hosting provider. | Frankfurt region (EU) | EU SCCs; EU-US Data Privacy Framework |
-| **Cloudflare, Inc.** (US) | Application hosting (Workers), CDN, DNS, DDoS/WAF security, edge caching (KV/R2/D1), rate-limiting, operational logging, and transactional email delivery (Email Sending). | Technical and session data; all service data transiently in processing; recipient email addresses and transactional message content. | Global edge network | EU SCCs; EU-US Data Privacy Framework |
+| **Cloudflare, Inc.** (US) | Application hosting (Workers), CDN, DNS, DDoS/WAF security, bot protection on sign-up and sign-in (Turnstile), edge caching (KV/R2/D1), rate-limiting, operational logging, and transactional email delivery (Email Sending). | Technical and session data; all service data transiently in processing; recipient email addresses and transactional message content. | Global edge network | EU SCCs; EU-US Data Privacy Framework |
 
 Transactional email (such as account and team notifications) is delivered through
 Cloudflare's Email Sending service, covered by the Cloudflare entry above. Any
