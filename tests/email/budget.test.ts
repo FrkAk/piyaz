@@ -1,36 +1,65 @@
-import { test, expect, beforeEach } from "bun:test";
+import { test, expect, beforeEach, afterEach, mock } from "bun:test";
 import {
   __resetBudgetForTest,
   getPlatformBudgetStore,
 } from "@/lib/email/_budget.node";
-import { mock } from "bun:test";
-import { EMAIL_BUDGET, consumeEmailBudget } from "@/lib/email/budget";
+import type { EmailBudgetStore } from "@/lib/email/budget-types";
+
+/**
+ * Per-recipient send budget: the node store's counting behavior and the
+ * policy layer's keying (`lib/email/budget.ts`).
+ *
+ * `_storeOverride` stays undefined by default so the module mock below
+ * delegates to the real node store. `mock.module` is process-global and
+ * unrestoreable (see `tests/email/resolver.test.ts`), so a mock returning a
+ * fixed value would silently disable the budget for every test file running
+ * after this one. That is exactly how the fail-open case below first broke
+ * `tests/email/auth-email-failure.test.ts` in CI but not locally, where the
+ * file order differed.
+ *
+ * The real store is captured BEFORE `mock.module` runs. When another test
+ * file has already loaded the real `_budget` re-export chain, the mock
+ * patches the shared export binding, so a factory that called
+ * `getPlatformBudgetStore()` at consume time would invoke itself and spin
+ * the process (tail call, so no stack overflow to fail on).
+ */
+const nodeStore = getPlatformBudgetStore()!;
+
+let _storeOverride: EmailBudgetStore | null | undefined;
+
+mock.module("@/lib/email/_budget", () => ({
+  getPlatformBudgetStore: () =>
+    _storeOverride === undefined ? nodeStore : _storeOverride,
+}));
+
+const { EMAIL_BUDGET, consumeEmailBudget } = await import("@/lib/email/budget");
 
 beforeEach(() => __resetBudgetForTest());
 
+afterEach(() => {
+  _storeOverride = undefined;
+});
+
 test("allows sends up to the budget, then drops", async () => {
-  const store = getPlatformBudgetStore()!;
   for (let i = 0; i < EMAIL_BUDGET.max; i++) {
-    expect(await store.consume("k", EMAIL_BUDGET.max, 3600)).toBe(true);
+    expect(await nodeStore.consume("k", EMAIL_BUDGET.max, 3600)).toBe(true);
   }
-  expect(await store.consume("k", EMAIL_BUDGET.max, 3600)).toBe(false);
+  expect(await nodeStore.consume("k", EMAIL_BUDGET.max, 3600)).toBe(false);
 });
 
 test("separate keys hold independent budgets", async () => {
-  const store = getPlatformBudgetStore()!;
   for (let i = 0; i < EMAIL_BUDGET.max; i++) {
-    await store.consume("a", EMAIL_BUDGET.max, 3600);
+    await nodeStore.consume("a", EMAIL_BUDGET.max, 3600);
   }
-  expect(await store.consume("a", EMAIL_BUDGET.max, 3600)).toBe(false);
-  expect(await store.consume("b", EMAIL_BUDGET.max, 3600)).toBe(true);
+  expect(await nodeStore.consume("a", EMAIL_BUDGET.max, 3600)).toBe(false);
+  expect(await nodeStore.consume("b", EMAIL_BUDGET.max, 3600)).toBe(true);
 });
 
 test("window rollover restores the budget", async () => {
-  const store = getPlatformBudgetStore()!;
   // A zero-second window expires immediately, so the next consume opens a
   // fresh window rather than waiting out a real hour.
-  expect(await store.consume("roll", 1, 0)).toBe(true);
-  expect(await store.consume("roll", 1, 0)).toBe(true);
+  expect(await nodeStore.consume("roll", 1, 0)).toBe(true);
+  expect(await nodeStore.consume("roll", 1, 0)).toBe(true);
 });
 
 test("budget is scoped per template, so one template cannot starve another", async () => {
@@ -70,9 +99,6 @@ test("distinct recipients hold independent budgets", async () => {
 
 test("the budget key never contains the raw address", async () => {
   await consumeEmailBudget("secret@example.com", "verification");
-  // The node store is the only place keys land; assert via a fresh consume on
-  // a key built the same way, which must collide with the hashed entry.
-  const store = getPlatformBudgetStore()!;
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode("secret@example.com"),
@@ -82,25 +108,22 @@ test("the budget key never contains the raw address", async () => {
     .join("");
   const key = `emailbudget:verification:${hex}`;
   expect(key).not.toContain("secret@example.com");
+  // Colliding with the entry the call above created proves the policy layer
+  // keys on this digest and never on the address itself.
   for (let i = 1; i < EMAIL_BUDGET.max; i++) {
-    expect(await store.consume(key, EMAIL_BUDGET.max, 3600)).toBe(true);
+    expect(await nodeStore.consume(key, EMAIL_BUDGET.max, 3600)).toBe(true);
   }
-  expect(await store.consume(key, EMAIL_BUDGET.max, 3600)).toBe(false);
+  expect(await nodeStore.consume(key, EMAIL_BUDGET.max, 3600)).toBe(false);
 });
 
 test("no resolvable store fails open, so a counter outage never blocks verification", async () => {
   // Mirrors an unbound AUTH_KV or a call outside a request context. Losing the
   // counter must degrade to "the email still sends", never to "nobody can
   // verify their address".
-  mock.module("@/lib/email/_budget", () => ({
-    getPlatformBudgetStore: () => null,
-  }));
-  const { consumeEmailBudget: withoutStore } = await import(
-    "@/lib/email/budget"
-  );
+  _storeOverride = null;
   for (let i = 0; i < EMAIL_BUDGET.max + 2; i++) {
-    expect(await withoutStore("nobudget@example.com", "verification")).toBe(
-      true,
-    );
+    expect(
+      await consumeEmailBudget("nobudget@example.com", "verification"),
+    ).toBe(true);
   }
 });
