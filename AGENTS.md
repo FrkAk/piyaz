@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Piyaz is an agentic workspace for project management, where people and AI coding
+Piyaz is an agentic workspace for project management, where people and coding
 agents work on the same project. It runs as an MCP server
 (`app/api/mcp/route.ts`, nine ref-first tools) with a Next.js web app on top, storing
 a project as a graph of tasks, dependency edges, decisions, and execution records.

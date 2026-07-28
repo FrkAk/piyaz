@@ -1,5 +1,5 @@
 ![Piyaz](assets/piyaz-logo.png)
-> The agentic workspace where people and AI coding agents work on the same project.
+> The agentic workspace where people and coding agents work on the same project.
 
 <p align="center">
   <a href="https://docs.piyaz.ai/docs/get-started/connect-your-editor/claude-code"><img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-D97757?style=flat-square&logo=anthropic&logoColor=white" /></a>
@@ -15,7 +15,7 @@
   <img src="assets/piyaz-demo.gif" alt="Piyaz demo" width="900" />
 </p>
 
-Piyaz is an agentic workspace for project management, where people and AI coding agents work on the same project. It runs as an MCP server with a web app on top, and it holds your project as a graph, every task wired to what blocks it, with the decisions and the execution history attached. Piyaz keeps that work consistent to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
+Piyaz is an agentic workspace for project management, where people and coding agents work on the same project. It runs as an MCP server with a web app on top, and it holds your project as a graph, every task wired to what blocks it, with the decisions and the execution history attached. Piyaz keeps that work consistent to the engineering process a real codebase needs, from decomposing an idea to reviewing the code before it merges.
 
 Using Piyaz, several agents can build at the same time; each in its own harness and with no API keys to wire up, while engineers are free to steer them as needed. One agent can implement a task while you refine another or add a new feature.
 
