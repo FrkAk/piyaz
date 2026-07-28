@@ -80,6 +80,21 @@ test("sign-up is rejected for an undeliverable domain, and no user row is writte
   expect(await userCount("someone@parked.example")).toBe(0);
 });
 
+test("a padded local part cannot smuggle an undeliverable domain past the gate", async () => {
+  // Better Auth's validator accepts an arbitrarily long address and the email
+  // column is unbounded, so any address-length guard in front of the probe is
+  // a bypass: pad the local part and the domain is never checked.
+  resolveAs("undeliverable");
+  const padded = `${"a".repeat(300)}@parked.example`;
+  const body = signUpBody(padded, "Padded");
+
+  await expect(auth.api.signUpEmail({ body })).rejects.toThrow(
+    "That email domain cannot receive mail",
+  );
+
+  expect(await userCount(padded)).toBe(0);
+});
+
 test("sign-up succeeds for a deliverable domain", async () => {
   resolveAs("deliverable");
   const body = signUpBody("real@good.test", "Real Person");

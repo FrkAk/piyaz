@@ -604,16 +604,16 @@ export function createAuth() {
         // than hung off `databaseHooks.user.create`, because that also fires
         // for provider-verified addresses on non-credential paths.
         if (ctx.path === "/sign-up/email") {
-          // Skip the network probe when the endpoint will reject anyway
-          // (signups disabled) or the body has not passed validation yet and
-          // the address exceeds RFC 5321's 254-octet path limit.
+          // Skip the network probe when the endpoint will reject anyway.
           if (signupsDisabled()) return;
           const email = (ctx.body as { email?: unknown } | undefined)?.email;
           const domain =
-            typeof email === "string" && email.length <= 254
-              ? recipientDomain(email)
-              : null;
-          if (domain !== null) {
+            typeof email === "string" ? recipientDomain(email) : null;
+          // Bound the domain, never the whole address: the local part can be
+          // padded to any length, and Better Auth's validator accepts it, so
+          // an address-length guard here is a gate bypass. RFC 1035 caps a
+          // domain at 253 octets and nothing longer can resolve.
+          if (domain !== null && domain.length <= 253) {
             // `unknown` (resolver error, timeout) falls through: a DNS blip
             // must never become a sign-up outage.
             if ((await checkRecipientDomain(domain)) === "undeliverable") {
