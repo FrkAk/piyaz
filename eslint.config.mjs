@@ -32,6 +32,16 @@ const eslintConfig = [
       ".open-next/**",
       ".wrangler/**",
       ".claude/**",
+      // Local tool output, absent from a clean checkout. Unignored, `lint`
+      // fails on a contributor machine while passing in CI, which teaches
+      // people to distrust the gate.
+      "ds-bundle/**",
+      ".ds-sync/**",
+      ".design-sync/**",
+      ".playwright-mcp/**",
+      ".agents/**",
+      ".piyaz/**",
+      "animations_videos/**",
     ],
   },
   {
@@ -107,6 +117,12 @@ const eslintConfig = [
           selector: "CallExpression[callee.property.name='batch']",
           message:
             "Bare .batch() is reserved for the neon-http read driver: outside withUserContextRead(userId, (read) => [...statements]) from @/lib/db/rls it opens a batch transaction without the app.user_id GUC and RLS silently returns empty (or wrong-tenant) data. If this is not a database batch, add the file to the ignores list in eslint.config.mjs.",
+        },
+        {
+          selector:
+            "NewExpression[callee.name='Request']:not([arguments.0.type='Literal']):not([arguments.0.type='TemplateLiteral']):not([arguments.0.type='MemberExpression']):not([arguments.0.type='NewExpression'])",
+          message:
+            "new Request(<Request>, init) is legal under undici (bun, Node self-host) but throws `TypeError: Invalid URL: [object Request]` on the Cloudflare target: @opennextjs/cloudflare replaces globalThis.Request with a shim that does not accept a Request as input. Pass a URL instead: new Request(request.url, { method, headers, body, signal }) — see app/api/auth/oauth2/token/route.ts.",
         },
       ],
       "no-restricted-imports": [

@@ -5,6 +5,7 @@ import { AuthEyebrow } from "@/components/auth/AuthEyebrow";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { SocialButtons } from "@/components/auth/SocialButtons";
 import { SignInForm } from "@/components/auth/SignInForm";
+import { turnstileProps } from "@/lib/auth/turnstile-props";
 import { safeInviteNext } from "@/lib/auth/invite-next";
 import { MARKETING_URL } from "@/lib/config/urls";
 import { isEmailEnabled } from "@/lib/email";
@@ -34,6 +35,7 @@ interface SignInPageProps {
 export default async function SignInPage({ searchParams }: SignInPageProps) {
   const next = safeInviteNext((await searchParams).next);
   const passwordResetEnabled = isEmailEnabled();
+  const turnstile = await turnstileProps();
   return (
     <AuthShell
       form={
@@ -55,7 +57,11 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
           </p>
 
           <SocialButtons />
-          <SignInForm passwordResetEnabled={passwordResetEnabled} next={next} />
+          <SignInForm
+            passwordResetEnabled={passwordResetEnabled}
+            next={next}
+            {...turnstile}
+          />
 
           <p className="mt-3.5 text-center text-[12px] text-text-muted">
             New to Piyaz?{" "}

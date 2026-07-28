@@ -16,6 +16,7 @@
 - [ ] Tested locally with `bun run dev`
 - [ ] Linting passes (`bun run lint`)
 - [ ] Typecheck passes (`bun run typecheck`)
+- [ ] Workers smoke passes (`bun run build:cf && bun run smoke:cf`) — required when this PR touches `app/api/**`, `middleware.ts`, `worker-cf.ts`, or a `.node.ts` / `.workers.ts` pair
 
 ## Notes for reviewer
 

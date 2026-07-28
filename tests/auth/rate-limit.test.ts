@@ -1,28 +1,28 @@
 import { test, expect, afterEach } from "bun:test";
-import { auth } from "@/lib/auth";
+import { auth, authRateLimitRules } from "@/lib/auth";
+import { effectiveMax } from "@/lib/api/rate-limit";
+import {
+  UNTRUSTED_BUDGET_FACTOR,
+  UNTRUSTED_IP_KEY,
+} from "@/lib/security/client-ip";
 import { truncateAll } from "@/tests/setup/schema";
 
 /**
- * Attack-path coverage for the Better Auth rate-limit customRule.
+ * Attack-path coverage for the Better Auth rate-limit customRules.
  *
- * `lib/auth.ts:36-39` declares
- *
- * ```
- * customRules: {
- *   "/sign-in/email": { window: 60, max: 5 },
- *   "/sign-up/email": { window: 60, max: 3 },
- * }
- * ```
- *
- * which is the primary brute-force defense for the credential path.
- * The cookie-hardening changes in MYMR-94 touch the same `betterAuth`
- * call site, so this file pins that the limiter is still reachable
- * and that exhausted requests do NOT issue session cookies.
+ * `lib/auth.ts:authRateLimitRules` declares function-form per-path budgets
+ * (5/60 sign-in, 3/60 sign-up, widened only where the deployment declares no
+ * address source), the primary brute-force defense for the credential path.
+ * This file pins that the limiter is still reachable, that exhausted requests
+ * do NOT issue session cookies, and both widening conditions, in step with
+ * `effectiveMax` on the middleware limb.
  *
  * Uses the `127.0.1.x` loopback range. `tests/auth/cookie-attributes.test.ts`
  * owns `127.0.0.x`. BA's `customRules` bucket is in-memory and keyed
  * by IP — running every assertion below from a single IP keeps the
- * bucket isolated from every other test file.
+ * bucket isolated from every other test file. Direct `auth.handler` calls
+ * bypass the route sanitizer, so requests stamp `x-piyaz-client-ip`
+ * themselves, mirroring what the route would have written.
  */
 
 const ATTACK_IP = "127.0.1.5";
@@ -52,6 +52,7 @@ test("attack: 10 sign-in attempts from one IP hit the 5/60s rate limit", async (
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ATTACK_IP,
+        "x-piyaz-client-ip": ATTACK_IP,
       },
       method: "POST",
     });
@@ -76,5 +77,64 @@ test("attack: 10 sign-in attempts from one IP hit the 5/60s rate limit", async (
       .getSetCookie()
       .find((c) => c.toLowerCase().includes("session_token"));
     expect(sessionCookie).toBeUndefined();
+  }
+});
+
+test("customRules widen only when unattributable and no address source is declared", () => {
+  const rules = authRateLimitRules();
+  const baseMax: Record<string, number> = {
+    "/sign-in/email": 5,
+    "/sign-up/email": 3,
+    "/request-password-reset": 3,
+    "/send-verification-email": 3,
+    "/reset-password": 5,
+  };
+  const attributed = new Request("https://example.test", {
+    headers: { "x-piyaz-client-ip": "203.0.113.7" },
+  });
+  const unattributed = new Request("https://example.test", {
+    headers: { "x-piyaz-client-ip": "" },
+  });
+  const unstamped = new Request("https://example.test");
+
+  expect(Object.keys(rules).sort()).toEqual(Object.keys(baseMax).sort());
+
+  // Phase 1: preload declares TRUSTED_PROXY_HEADER, so even an
+  // unattributable request keeps the tight budget on the shared bucket.
+  for (const [path, max] of Object.entries(baseMax)) {
+    expect(rules[path]!(attributed)).toEqual({ window: 60, max });
+    expect(rules[path]!(unattributed)).toEqual({ window: 60, max });
+    expect(rules[path]!(unstamped)).toEqual({ window: 60, max });
+  }
+  expect(rules["/sign-in/email"]!(unattributed).max).toBe(
+    effectiveMax(5, UNTRUSTED_IP_KEY),
+  );
+
+  // Phase 2: no declared source at all — the instance-wide bucket widens,
+  // attributed requests stay tight.
+  const savedHeader = process.env.TRUSTED_PROXY_HEADER;
+  const savedTarget = process.env.DEPLOY_TARGET;
+  delete process.env.TRUSTED_PROXY_HEADER;
+  delete process.env.DEPLOY_TARGET;
+  try {
+    for (const [path, max] of Object.entries(baseMax)) {
+      expect(rules[path]!(attributed)).toEqual({ window: 60, max });
+      expect(rules[path]!(unattributed)).toEqual({
+        window: 60,
+        max: max * UNTRUSTED_BUDGET_FACTOR,
+      });
+      expect(rules[path]!(unstamped)).toEqual({
+        window: 60,
+        max: max * UNTRUSTED_BUDGET_FACTOR,
+      });
+    }
+    expect(rules["/sign-in/email"]!(unattributed).max).toBe(
+      effectiveMax(5, UNTRUSTED_IP_KEY),
+    );
+  } finally {
+    if (savedHeader === undefined) delete process.env.TRUSTED_PROXY_HEADER;
+    else process.env.TRUSTED_PROXY_HEADER = savedHeader;
+    if (savedTarget === undefined) delete process.env.DEPLOY_TARGET;
+    else process.env.DEPLOY_TARGET = savedTarget;
   }
 });

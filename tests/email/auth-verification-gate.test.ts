@@ -1,5 +1,5 @@
 import { test, expect, afterAll, afterEach, beforeEach, mock } from "bun:test";
-import { FakeEmailSender } from "@/tests/setup/fake-email";
+import { FakeEmailSender, settle } from "@/tests/setup/fake-email";
 import { truncateAll } from "@/tests/setup/schema";
 import type { EmailSender } from "@/lib/email/types";
 
@@ -70,23 +70,26 @@ type AuthInstance = typeof authGated;
  * @param ip - Loopback IP for the BA rate-limit bucket.
  * @returns BA handler response.
  */
-function authPost(
+async function authPost(
   instance: AuthInstance,
   path: string,
   body: unknown,
   ip: string,
 ): Promise<Response> {
-  return instance.handler(
+  const response = await instance.handler(
     new Request(`https://example.test/api/auth${path}`, {
       body: JSON.stringify(body),
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         origin: "https://example.test",
       },
       method: "POST",
     }),
   );
+  await settle();
+  return response;
 }
 
 /**
@@ -134,7 +137,10 @@ test("gated: sign-up sends verification, 403s unverified sign-in with a re-send,
 
   const link = await authGated.handler(
     new Request(firstUrl(fake.sent[1]!.text), {
-      headers: { "cf-connecting-ip": "127.0.5.10" },
+      headers: {
+        "cf-connecting-ip": "127.0.5.10",
+        "x-piyaz-client-ip": "127.0.5.10",
+      },
     }),
   );
   expect(link.status).toBeLessThan(400);

@@ -5,7 +5,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: piyaz
-      POSTGRES_PASSWORD: piyaz
+      # Superuser: exempt from FORCE ROW LEVEL SECURITY, so this credential
+      # bypasses the tenant boundary. The port below is published to loopback
+      # only, so reaching it already means local access to the host. Set
+      # POSTGRES_PASSWORD in .env.local to override on a host where that is not
+      # a safe assumption. Read only on first init, never on an existing volume.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-piyaz}
       POSTGRES_DB: piyaz
       # Passed through to init-rls.sql so it can provision app_user and
       # service_role with caller-generated passwords (see .env.local.example).
@@ -13,7 +18,10 @@ services:
       SERVICE_ROLE_PASSWORD: ${SERVICE_ROLE_PASSWORD:?missing SERVICE_ROLE_PASSWORD; generate via `openssl rand -base64 24` and add to .env.local}
       AUTH_ROLE_PASSWORD: ${AUTH_ROLE_PASSWORD:?missing AUTH_ROLE_PASSWORD; generate via `openssl rand -base64 24` and add to .env.local}
     ports:
-      - "5432:5432"
+      # Loopback only. A bare "5432:5432" binds every interface, and Docker
+      # writes iptables rules that a host firewall such as ufw does not filter,
+      # which publishes the database to the network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
       - ./docker/init-auth.sql:/docker-entrypoint-initdb.d/01-auth.sql:ro

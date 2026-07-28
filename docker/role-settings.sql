@@ -1,0 +1,33 @@
+-- =============================================================================
+-- Per-role runtime settings for the request-path roles. Requires ADMIN OPTION
+-- on the target role, so it is applied by the superuser (self-host, the
+-- db:rls chain), by the database owner on the hosted heads
+-- (scripts/apply-owner-rls.ts), and by the testcontainer bootstrap
+-- (tests/setup/migrate.ts). The least-privilege CI migration role cannot run
+-- it, so it is deliberately absent from scripts/apply-public-rls.ts and does
+-- NOT land on a deploy. Idempotent: ALTER ROLE ... SET is last-write-wins.
+--
+-- Out of scope here: role creation, grants, policies. No SUPERUSER clause,
+-- which fails on Neon where toggling it needs a real superuser.
+-- =============================================================================
+
+-- Ceiling on how long one statement may run. This file is the ONLY place it is
+-- set. Do NOT reintroduce it as a driver connection option: both drivers send
+-- `connection` entries as Postgres startup parameters, and Neon's PgBouncer
+-- pooler accepts only the parameters it can track (client_encoding, datestyle,
+-- timezone, standard_conforming_strings, application_name) and disconnects the
+-- client on any other, which would fail every interactive transaction and so
+-- every write on the hosted heads. See the rationale in both
+-- lib/db/_driver.node.ts and lib/db/_driver.workers.ts, which deliberately set
+-- no timeout. A role default needs no cooperation from the transport: the
+-- backend applies it at session start, including on the neon-http read path a
+-- startup parameter never reached.
+--
+-- Only the two roles that serve requests. service_role is excluded because
+-- drizzle.config.ts falls back to DATABASE_SERVICE_ROLE_URL and then to
+-- DATABASE_URL for migrations, and the hosted migration role is excluded for
+-- the same reason: a 15s ceiling would abort an index build mid-deploy.
+-- An abort surfaces through the 57014 branch in translateError.
+-- scripts/verify-rls.ts asserts this exact value; change both together.
+ALTER ROLE app_user SET statement_timeout = '15s';
+ALTER ROLE auth_role SET statement_timeout = '15s';

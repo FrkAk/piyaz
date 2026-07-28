@@ -18,12 +18,18 @@
  *     DATABASE_AUTH_URL (Neon connection strings for the three DB roles).
  *     Cannot be checked from `wrangler.jsonc` alone, so the script shells out
  *     to `wrangler secret list --env production`.
+ *   - Turnstile is all-or-nothing: TURNSTILE_SECRET_KEY (Worker secret) and
+ *     TURNSTILE_SITE_KEY (build env) must be present together or absent
+ *     together. Either half alone ships a broken deploy; both absent is the
+ *     documented rollback state and passes.
  *
  * Run from the `deploy:cf` script chain. Exits with code 1 on any failure
  * and prints a remediation hint.
  */
 import path from "node:path";
 import fs from "node:fs/promises";
+import { stripJsonc } from "../lib/config/jsonc";
+import { turnstileSymmetryFailures } from "./turnstile-symmetry";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const WRANGLER_JSONC = path.join(ROOT, "wrangler.jsonc");
@@ -52,20 +58,6 @@ interface WranglerEnvBindings {
 }
 interface WranglerConfig extends WranglerEnvBindings {
   env?: { production?: WranglerEnvBindings };
-}
-
-/**
- * Strip `// line` and `/* block *\/` comments so the JSONC config parses
- * with the standard `JSON.parse`. Keeps the file diffable without
- * pulling in a dedicated JSONC parser as a dev dependency.
- *
- * @param source - JSONC text.
- * @returns Plain JSON text.
- */
-function stripJsonc(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
 /**
@@ -191,6 +183,20 @@ if (presentSecrets) {
       );
     }
   }
+}
+
+// Turnstile is all-or-nothing. The rule itself lives in
+// `scripts/turnstile-symmetry.ts` so it is a pure, tested function and so the
+// dev deploy can apply it to its own environment; this script only ever sees
+// production.
+if (presentSecrets) {
+  failures.push(
+    ...turnstileSymmetryFailures({
+      env: "production",
+      secretPresent: presentSecrets.has("TURNSTILE_SECRET_KEY"),
+      siteKeyPresent: (process.env.TURNSTILE_SITE_KEY ?? "").length > 0,
+    }),
+  );
 }
 
 if (failures.length > 0) {

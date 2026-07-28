@@ -5,7 +5,7 @@ import {
   getSessionFromCtx,
 } from "better-auth/api";
 import { and, eq, gt, ne, sql } from "drizzle-orm";
-import { organization, jwt } from "better-auth/plugins";
+import { captcha, organization, jwt } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -22,6 +22,7 @@ import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
 import { PASSWORD_MAX, PASSWORD_MIN } from "@/lib/auth/password-policy";
+import { ACCESS_TOKEN_TTL_SECONDS } from "@/lib/auth/token-policy";
 import {
   countOwnedOrganizations,
   findOrgMemberUserIdsAsAdmin,
@@ -29,7 +30,15 @@ import {
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
-import { emailVerificationRequired, signupsDisabled } from "@/lib/config/env";
+import {
+  emailVerificationRequired,
+  signupsDisabled,
+  turnstileConfigured,
+} from "@/lib/config/env";
+import {
+  checkRecipientDomain,
+  recipientDomain,
+} from "@/lib/auth/recipient-domain";
 import { isEmailConfiguredAtBoot } from "@/lib/email";
 import {
   sendChangeEmailApprovalEmail,
@@ -45,8 +54,79 @@ import { recordAcceptance, removeAcceptances } from "@/lib/data/legal";
 import { getOutstandingConsent } from "@/lib/auth/consent";
 import { describeReconsentDocuments } from "@/lib/legal/versions";
 import { clientIpFromHeaders } from "@/lib/actions/rate-limit-action";
+import {
+  addressPolicyError,
+  hasTrustedAddressSource,
+  INTERNAL_CLIENT_IP_HEADER,
+  IPV6_SUBNET_BITS,
+  UNTRUSTED_BUDGET_FACTOR,
+} from "@/lib/security/client-ip";
 
 const IS_CLOUDFLARE = process.env.DEPLOY_TARGET === "cloudflare";
+
+/**
+ * Which request header Better Auth may read the client address from.
+ *
+ * The address keys the credential-path rate limiters and is persisted as
+ * `session.ipAddress` and legal-acceptance evidence, so a caller that can set
+ * it defeats brute-force throttling and authors its own audit record. The list
+ * carries exactly {@link INTERNAL_CLIENT_IP_HEADER}, which `stampClientIpHeader`
+ * fills from `resolveClientIp` in middleware and in every route that calls
+ * `auth.handler`, so Better Auth and the middleware limiter name the same
+ * caller by construction. The stamped value is already masked; `normalizeIP`
+ * is idempotent at the same width. An empty stamp resolves no address and
+ * falls back to one shared per-path bucket (in NODE_ENV=development Better
+ * Auth substitutes `127.0.0.1`).
+ *
+ * @returns The `advanced.ipAddress` policy for this deployment.
+ */
+function ipAddressPolicy(): {
+  ipAddressHeaders: string[];
+  ipv6Subnet: number;
+} {
+  return {
+    ipAddressHeaders: [INTERNAL_CLIENT_IP_HEADER],
+    ipv6Subnet: IPV6_SUBNET_BITS,
+  };
+}
+
+/**
+ * Per-path credential budgets for Better Auth's own limiter.
+ *
+ * Function-form rules, evaluated per request after the bucket key is computed:
+ * when {@link INTERNAL_CLIENT_IP_HEADER} carries no address, the request lands
+ * on the shared per-path bucket, and the budget widens by
+ * {@link UNTRUSTED_BUDGET_FACTOR} only where the deployment declares no
+ * address source at all — an instance that cannot attribute anyone must not
+ * let one caller pin a caller-sized budget on an instance-wide bucket. Where
+ * a source is declared, an unattributable request keeps the tight budget.
+ * Kept in step with `effectiveMax`, which widens on the same two conditions.
+ *
+ * @returns The `rateLimit.customRules` map for this deployment.
+ */
+export function authRateLimitRules(): Record<
+  string,
+  (request: Request) => { window: number; max: number }
+> {
+  const perAddress =
+    (max: number) =>
+    (request: Request): { window: number; max: number } => {
+      const widen =
+        !request.headers.get(INTERNAL_CLIENT_IP_HEADER) &&
+        !hasTrustedAddressSource();
+      return {
+        window: 60,
+        max: widen ? max * UNTRUSTED_BUDGET_FACTOR : max,
+      };
+    };
+  return {
+    "/sign-in/email": perAddress(5),
+    "/sign-up/email": perAddress(3),
+    "/request-password-reset": perAddress(3),
+    "/send-verification-email": perAddress(3),
+    "/reset-password": perAddress(5),
+  };
+}
 
 /** Ceiling on how many organizations a single user may own. Enforced at
  *  organization-create time in the un-bypassable `/organization/*` hook. */
@@ -63,19 +143,107 @@ const ORGANIZATION_MEMBERSHIP_LIMIT = 50;
  * metadata advertises (`advertisedMetadata.scopes_supported`), so the two
  * cannot drift. `offline_access` gates refresh-token issuance (#108).
  */
-const GRANTABLE_OAUTH_SCOPES = [
+export const GRANTABLE_OAUTH_SCOPES = [
   "openid",
   "profile",
   "email",
   "offline_access",
 ] as const;
 
+/**
+ * Endpoints the Turnstile captcha plugin guards.
+ *
+ * Every path here either mails an attacker-chosen address or re-mails a
+ * victim's, which is the abuse surface a bot signup exercises. Named
+ * explicitly rather than relying on the plugin's defaults, because those omit
+ * `/send-verification-email` (a direct mail trigger) and because Better Auth
+ * 1.6.23 matches these by substring, not exact path, so an implicit list is a
+ * silent over-match waiting to happen.
+ *
+ * Substring matching is why `/sign-in` alone is unsafe to list. Of the four
+ * below, three collide with a longer path: `/sign-in/email` with
+ * `/sign-in/email-otp`, and `/request-password-reset` with both
+ * `/email-otp/request-password-reset` and
+ * `/phone-number/request-password-reset`. Better Auth exempts only the first
+ * of those internally, and this deployment enables neither the `emailOTP` nor
+ * the `phoneNumber` plugin, so none of the three is reachable. Adding
+ * either plugin would gate its paths as a side effect.
+ *
+ * Better Auth 1.7 switches to exact-and-wildcard matching and drops the
+ * built-in email-otp exemption. Because this list is four exact paths with no
+ * wildcard, that upgrade is a no-op here: every entry keeps matching exactly
+ * what it matches today, and nothing new becomes gated.
+ *
+ * Exported so the test iterates the real list instead of a copy, which is what
+ * makes a newly added endpoint fail loudly rather than silently go uncovered.
+ */
+export const CAPTCHA_PROTECTED_ENDPOINTS = [
+  "/sign-up/email",
+  "/sign-in/email",
+  "/send-verification-email",
+  "/request-password-reset",
+] as const;
+
+/**
+ * Hostname pin for captcha tokens.
+ *
+ * Turnstile reports the hostname a token was solved on, so pinning it stops a
+ * token minted against the dev widget from being replayed at prod. The pin is
+ * silently inert if the option is omitted, so an unusable `BETTER_AUTH_URL`
+ * says so rather than leaving bot protection looking armed while cross-origin
+ * replay works. Unreachable on the Cloudflare target, which refuses to boot
+ * without `BETTER_AUTH_URL`.
+ *
+ * @returns The single allowed hostname, or `undefined` when none can be
+ *   derived, which leaves the plugin's hostname check disabled.
+ */
+function captchaAllowedHostnames(): string[] | undefined {
+  const url = process.env.BETTER_AUTH_URL;
+  try {
+    if (url) return [new URL(url).hostname];
+  } catch {
+    // Fall through to the warning below.
+  }
+  console.warn(
+    JSON.stringify({
+      event: "turnstile_hostname_pin_absent",
+      hint: "BETTER_AUTH_URL is unset or unparseable, so captcha tokens are not pinned to this deployment's hostname and a token minted elsewhere would verify here.",
+    }),
+  );
+  return undefined;
+}
+
+/**
+ * Recipient domains rejected at sign-up because they provably cannot receive
+ * mail. Message is deliberately about the address, not about bot protection.
+ */
+const UNDELIVERABLE_DOMAIN_MESSAGE =
+  "That email domain cannot receive mail. Check the address and try again.";
+
 if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
   throw new Error(
     "BETTER_AUTH_URL is required on the Cloudflare deploy target. " +
-      "Without it, Better-auth's trustedOrigins falls back to [] and CSRF " +
-      "protection accepts any origin. Set it in wrangler.jsonc env.production.vars.",
+      "It is the issuer, the audience and the resource-metadata URL the MCP " +
+      "route derives at module load, so without it all three pin to the " +
+      "http://localhost:3000 fallback and every MCP token fails audience and " +
+      "issuer validation. Set it in wrangler.jsonc env.production.vars.",
   );
+}
+
+// Runtime only. `next build` forces NODE_ENV=production and evaluates this
+// module while collecting page data, but the value is read per request and
+// never inlined, so a build does not need it. Requiring it there would break
+// building an image or artifact separately from deploying it (see Dockerfile),
+// while catching nothing: `instrumentation.ts` refuses a self-host boot
+// without it on every launch path (`scripts/start.mjs` additionally refuses
+// before the socket binds), and this catches a malformed value on first use.
+if (
+  !IS_CLOUDFLARE &&
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
+  const policyError = addressPolicyError();
+  if (policyError) throw new Error(policyError);
 }
 
 /**
@@ -221,14 +389,13 @@ export function createAuth() {
       enabled: true,
       window: 10,
       max: 100,
+      // Deliberate override: Better Auth would pick "secondary-storage"
+      // because one is configured, but the KV adapter has no atomic increment
+      // and KV allows one write per second per key. Memory bounds per
+      // process; the Cloudflare bindings in `lib/api/rate-limit.ts` enforce
+      // across isolates.
       storage: "memory",
-      customRules: {
-        "/sign-in/email": { window: 60, max: 5 },
-        "/sign-up/email": { window: 60, max: 3 },
-        "/request-password-reset": { window: 60, max: 3 },
-        "/send-verification-email": { window: 60, max: 3 },
-        "/reset-password": { window: 60, max: 5 },
-      },
+      customRules: authRateLimitRules(),
     },
     trustedOrigins: process.env.BETTER_AUTH_URL
       ? [process.env.BETTER_AUTH_URL]
@@ -242,14 +409,34 @@ export function createAuth() {
       database: {
         generateId: false,
       },
-      ipAddress: {
-        ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for", "x-real-ip"],
-      },
+      ipAddress: ipAddressPolicy(),
     },
     // organization() must precede any future customSession() — see
     // better-auth issue #3233 (activeOrganizationId is type-erased otherwise).
     plugins: [
       jwt(),
+      // Bot protection on the mail-triggering auth endpoints. Registered only
+      // when a secret is configured so self-host stays bootable without a
+      // Cloudflare account; see `turnstileConfigured`. Placed before
+      // `nextCookies()`, which must stay last.
+      //
+      // The plugin forwards the caller's address to siteverify as `remoteip`,
+      // taken from `advanced.ipAddress`. That resolver masks IPv6 to a /64, so
+      // an IPv6 visitor's `remoteip` is their network, not their address.
+      // Cloudflare documents `remoteip` as optional with no mismatch handling,
+      // so this costs signal quality rather than correctness, and 1.6.23
+      // offers no per-call opt-out short of disabling IP tracking globally,
+      // which would also widen every rate-limit bucket.
+      ...(turnstileConfigured()
+        ? [
+            captcha({
+              provider: "cloudflare-turnstile",
+              secretKey: process.env.TURNSTILE_SECRET_KEY!,
+              endpoints: [...CAPTCHA_PROTECTED_ENDPOINTS],
+              allowedHostnames: captchaAllowedHostnames(),
+            }),
+          ]
+        : []),
       organization({
         ac,
         membershipLimit: ORGANIZATION_MEMBERSHIP_LIMIT,
@@ -319,17 +506,25 @@ export function createAuth() {
         consentPage: "/consent",
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
-        accessTokenExpiresIn: 60 * 60, // 1h
+        // The revocation lag, not the session length: `/api/mcp` verifies by
+        // signature alone and never reads revocation state, and revoking a
+        // session marks the refresh token revoked
+        // (`lib/data/oauth-session.ts`), so the outstanding access token is
+        // the entire exposure. Shortening it forces refresh-token-less
+        // clients to re-authorize that often; closing the gap needs the
+        // resource server to consult revocation state (see `verifyMcpAuth`).
+        // The Settings revocation copy derives from the shared constant.
+        accessTokenExpiresIn: ACCESS_TOKEN_TTL_SECONDS,
         refreshTokenExpiresIn: 60 * 60 * 24 * 7, // 7 days
         clientRegistrationAllowedScopes: [...GRANTABLE_OAUTH_SCOPES],
         // Advertise the grantable scopes in the authorization-server metadata
-        // (`/.well-known/oauth-authorization-server`). Per the MCP authorization
-        // spec (Refresh Tokens) and SEP-2207, a compliant client only adds
-        // `offline_access` to its authorize request when the AS lists it in
-        // `scopes_supported`. Without this the client never asks, no refresh
-        // token is issued, and MCP sessions die at `accessTokenExpiresIn` (#108).
-        // Protected-resource metadata deliberately omits it — the spec says
-        // resources SHOULD NOT advertise `offline_access`.
+        // (`/.well-known/oauth-authorization-server`), which is what a generic
+        // OAuth client and the consent screen read. An MCP client's scope
+        // selection reads the 401 `scope` challenge first and the
+        // PROTECTED RESOURCE metadata second, so refresh-token issuance (#108)
+        // is driven by the challenge in `app/api/mcp/route.ts`, not by this
+        // list. Protected-resource metadata deliberately omits
+        // `offline_access`, which the spec says resources SHOULD NOT advertise.
         advertisedMetadata: {
           scopes_supported: [...GRANTABLE_OAUTH_SCOPES],
         },
@@ -539,6 +734,34 @@ export function createAuth() {
       //    off the request body; the durable evidence is the
       //    `legal_acceptances` row written in `after`.
       before: createAuthMiddleware(async (ctx) => {
+        // Reject sign-ups whose domain provably cannot receive mail before the
+        // account exists and before a send is attempted. A single such address
+        // costs five delivery failures (Cloudflare retries the send) and lands
+        // on the account suppression list, which is scored against the <2%
+        // hard-bounce target for every other recipient. Endpoint-scoped rather
+        // than hung off `databaseHooks.user.create`, because that also fires
+        // for provider-verified addresses on non-credential paths.
+        if (ctx.path === "/sign-up/email") {
+          // Skip the network probe when the endpoint will reject anyway.
+          if (signupsDisabled()) return;
+          const email = (ctx.body as { email?: unknown } | undefined)?.email;
+          // `recipientDomain` returns null for anything unprobeable, including
+          // a domain past the RFC 1035 length limit; it owns that bound so a
+          // second caller cannot lose it.
+          const domain =
+            typeof email === "string" ? recipientDomain(email) : null;
+          if (domain !== null) {
+            // `unknown` (resolver error, timeout) falls through: a DNS blip
+            // must never become a sign-up outage.
+            if ((await checkRecipientDomain(domain)) === "undeliverable") {
+              throw new APIError("BAD_REQUEST", {
+                message: UNDELIVERABLE_DOMAIN_MESSAGE,
+                code: "EMAIL_DOMAIN_UNDELIVERABLE",
+              });
+            }
+          }
+          return;
+        }
         if (!ctx.path.startsWith("/organization/")) return;
         const session = await getSessionFromCtx(ctx);
         if (session) {

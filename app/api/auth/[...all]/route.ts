@@ -1,6 +1,11 @@
 import { auth } from "@/lib/auth";
 import { applyIssAdvertisementCompat } from "@/lib/auth/oauth-metadata-compat";
+import {
+  AUTH_BASE_PATH,
+  PUBLIC_CACHEABLE_AUTH_PATHS,
+} from "@/lib/auth/public-cache-paths";
 import { ensureCacheControl, ensureNoStore } from "@/lib/security/headers";
+import { stampClientIpHeader } from "@/lib/security/client-ip";
 
 /**
  * Allowlist of Better Auth HTTP paths (post-`/api/auth` basePath form,
@@ -69,21 +74,18 @@ const ALLOWED_PATHS: ReadonlySet<string> = new Set([
  */
 const ALLOWED_PREFIXES: readonly string[] = ["/reset-password/"];
 
-const BASE_PATH = "/api/auth";
+const BASE_PATH = AUTH_BASE_PATH;
 
 /**
  * Allowlisted paths whose responses are public and carry no session or user
- * data — the signing keys and the OAuth discovery metadata. These stay
- * cacheable; every other allowlisted path is session-bearing and pinned to
- * `no-store`. Better Auth already tags the discovery docs with its own public
- * hint, so `JWKS_CACHE_CONTROL` only ever applies to `/jwks`, which Better
- * Auth leaves header-less.
+ * data, from the shared `lib/auth/public-cache-paths.ts` set the middleware
+ * also reads to withhold RateLimit headers. These stay cacheable; every other
+ * allowlisted path is session-bearing and pinned to `no-store`. Better Auth
+ * already tags the discovery docs with its own public hint, so
+ * `JWKS_CACHE_CONTROL` only ever applies to `/jwks`, which Better Auth
+ * leaves header-less.
  */
-const PUBLIC_CACHEABLE_PATHS: ReadonlySet<string> = new Set([
-  "/jwks",
-  "/.well-known/oauth-authorization-server",
-  "/.well-known/openid-configuration",
-]);
+const PUBLIC_CACHEABLE_PATHS = PUBLIC_CACHEABLE_AUTH_PATHS;
 
 /**
  * Public Cache-Control for the JWKS keyset. The keys are public and gain
@@ -133,6 +135,16 @@ function normalizeAuthPath(pathname: string): string | null {
  * Discovery metadata bodies drop the RFC 9207 `iss` advertisement for MCP
  * clients only. Disallowed paths 404 before reaching `auth.handler`.
  *
+ * The client-address header is stamped here, not only in middleware: the
+ * middleware matcher's extension exclusion lets extension-suffixed paths
+ * (e.g. `/reset-password/<token>.json`) reach this handler unstamped. The
+ * stamped request is rebuilt from `request.url`, never from the request
+ * object: `@opennextjs/cloudflare` replaces `globalThis.Request` with a shim
+ * that rejects a Request as input. Its body is buffered rather than
+ * forwarded as a stream, because a stream body needs `duplex`, which undici
+ * requires and workerd does not implement. `content-length` is dropped
+ * because the rebuilt request re-derives it.
+ *
  * @param request - Incoming GET or POST to `/api/auth/*`.
  * @returns Better Auth's response with a project-owned Cache-Control, or 404.
  */
@@ -146,7 +158,17 @@ async function handler(request: Request): Promise<Response> {
   ) {
     return new Response("Not Found", { status: 404 });
   }
-  const handled = await auth.handler(request);
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  stampClientIpHeader(headers);
+  const handled = await auth.handler(
+    new Request(request.url, {
+      method: request.method,
+      headers,
+      body: request.body === null ? null : await request.arrayBuffer(),
+      signal: request.signal,
+    }),
+  );
   const response = PUBLIC_CACHEABLE_PATHS.has(path)
     ? ensureCacheControl(handled, JWKS_CACHE_CONTROL)
     : ensureNoStore(handled);

@@ -624,7 +624,8 @@ export type ProjectTag = { tag: string; count: number };
  * Aggregate distinct tags for a project with usage counts.
  * @param ctx - Resolved auth context.
  * @param projectId - UUID of the project.
- * @returns Tags sorted by count desc, tie-broken alphabetically.
+ * @returns Tags sorted by count desc, tie-broken alphabetically, capped at
+ *   the ceiling in `lib/db/raw/aggregate-project-tags.ts`.
  */
 export async function getProjectTags(
   ctx: AuthContext,
@@ -671,7 +672,8 @@ export async function getProjectCategories(
  *
  * @param tx - Active RLS transaction handle.
  * @param projectId - UUID of the project.
- * @returns Sorted tag vocabulary with usage counts.
+ * @returns Sorted tag vocabulary with usage counts, capped at the ceiling in
+ *   `lib/db/raw/aggregate-project-tags.ts`.
  */
 export async function getProjectTagsTx(
   tx: Tx,
@@ -691,7 +693,8 @@ export async function getProjectTagsTx(
  *
  * @param userId - Authenticated user id (RLS scope).
  * @param projectId - UUID of the project.
- * @returns Tags sorted by count desc, tie-broken alphabetically.
+ * @returns Tags sorted by count desc, tie-broken alphabetically, capped at
+ *   the ceiling in `lib/db/raw/aggregate-project-tags.ts`.
  */
 export async function fetchProjectTagsRead(
   userId: string,

@@ -6,6 +6,7 @@ import {
   revokeOAuthSessionAction,
   type OAuthSessionView,
 } from "@/lib/actions/oauth-session";
+import { REVOCATION_LAG_HINT } from "@/lib/auth/token-policy";
 import { formatOAuthClientName } from "@/lib/ui/oauth-client-name";
 import { formatAbsolute, formatRelative } from "@/lib/ui/relative-time";
 import { InlineConfirm } from "./InlineConfirm";
@@ -103,7 +104,7 @@ export function AgentSessionRow({
           </button>
         }
         prompt="Revoke this session?"
-        body="The client will need to re-authorize."
+        body={`The client will need to re-authorize. ${REVOCATION_LAG_HINT}`}
         confirmLabel="Revoke"
         destructive
         onConfirm={handleRevoke}

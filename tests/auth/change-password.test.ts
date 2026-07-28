@@ -49,6 +49,7 @@ function authPost(
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         // BA's CSRF check rejects cookie-bearing state changes whose
         // Origin is absent or not in trustedOrigins
         // (MISSING_OR_NULL_ORIGIN). Browsers always send Origin on
@@ -189,7 +190,11 @@ test("revokeOtherSessions rotates the caller's session and kills the others", as
   // above while shipping the silent-signout regression this test guards.
   const getSessionA = await auth.handler(
     new Request("https://example.test/api/auth/get-session", {
-      headers: { cookie: rotated!, "cf-connecting-ip": "127.0.2.20" },
+      headers: {
+        cookie: rotated!,
+        "cf-connecting-ip": "127.0.2.20",
+        "x-piyaz-client-ip": "127.0.2.20",
+      },
     }),
   );
   expect((await getSessionA.json()) as unknown).not.toBeNull();
@@ -197,7 +202,11 @@ test("revokeOtherSessions rotates the caller's session and kills the others", as
   // The second device's session must be dead.
   const getSessionB = await auth.handler(
     new Request("https://example.test/api/auth/get-session", {
-      headers: { cookie: cookieB, "cf-connecting-ip": "127.0.2.21" },
+      headers: {
+        cookie: cookieB,
+        "cf-connecting-ip": "127.0.2.21",
+        "x-piyaz-client-ip": "127.0.2.21",
+      },
     }),
   );
   const sessionB = (await getSessionB.json()) as unknown;

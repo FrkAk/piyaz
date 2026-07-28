@@ -1,5 +1,5 @@
 import { test, expect, afterAll, afterEach, beforeEach, mock } from "bun:test";
-import { FakeEmailSender } from "@/tests/setup/fake-email";
+import { FakeEmailSender, settle } from "@/tests/setup/fake-email";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 import type { EmailSender } from "@/lib/email/types";
@@ -79,25 +79,28 @@ type AuthInstance = typeof authEmail;
  * @param options - Optional cookie header.
  * @returns BA handler response.
  */
-function authPost(
+async function authPost(
   instance: AuthInstance,
   path: string,
   body: unknown,
   ip: string,
   options: { cookie?: string } = {},
 ): Promise<Response> {
-  return instance.handler(
+  const response = await instance.handler(
     new Request(`https://example.test/api/auth${path}`, {
       body: JSON.stringify(body),
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         origin: "https://example.test",
         ...(options.cookie ? { cookie: options.cookie } : {}),
       },
       method: "POST",
     }),
   );
+  await settle();
+  return response;
 }
 
 /**
@@ -109,20 +112,23 @@ function authPost(
  * @param cookie - Optional session cookie.
  * @returns BA handler response (redirects are not followed).
  */
-function authGet(
+async function authGet(
   instance: AuthInstance,
   url: string,
   ip: string,
   cookie?: string,
 ): Promise<Response> {
-  return instance.handler(
+  const response = await instance.handler(
     new Request(url, {
       headers: {
         "cf-connecting-ip": ip,
+        "x-piyaz-client-ip": ip,
         ...(cookie ? { cookie } : {}),
       },
     }),
   );
+  await settle();
+  return response;
 }
 
 /**
@@ -513,7 +519,7 @@ test("resend refreshes the same invitation's expiry and refires its email", asyn
   expect(before.length).toBe(1);
   const expiresBefore = new Date(before[0]!.expiresAt).getTime();
 
-  await Bun.sleep(10);
+  await settle();
   const resend = await authPost(
     authEmail,
     "/organization/invite-member",

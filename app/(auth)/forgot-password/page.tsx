@@ -4,6 +4,7 @@ import { AuthBrand } from "@/components/auth/AuthBrand";
 import { AuthEyebrow } from "@/components/auth/AuthEyebrow";
 import { AuthHero } from "@/components/auth/AuthHero";
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
+import { turnstileProps } from "@/lib/auth/turnstile-props";
 import { MARKETING_URL } from "@/lib/config/urls";
 import { isEmailEnabled } from "@/lib/email";
 
@@ -17,8 +18,9 @@ export const dynamic = "force-dynamic";
  *
  * @returns Server-rendered auth shell composing the request form.
  */
-export default function ForgotPasswordPage() {
+export default async function ForgotPasswordPage() {
   const emailEnabled = isEmailEnabled();
+  const turnstile = await turnstileProps();
   return (
     <AuthShell
       form={
@@ -40,7 +42,7 @@ export default function ForgotPasswordPage() {
           </p>
 
           {emailEnabled ? (
-            <ForgotPasswordForm />
+            <ForgotPasswordForm {...turnstile} />
           ) : (
             <p
               role="status"

@@ -42,10 +42,12 @@ export function classifyVerifyError(err: unknown): VerifyErrorClass {
 /**
  * Pre-flight: does the token have a `kid` in its protected header? Returning
  * false lets the caller short-circuit to 401 without invoking
- * `verifyJwsAccessToken`, whose underlying better-auth helper distinguishes
- * "missing kid" only by string-matching `err.message === "Missing jwt kid"`
- * (`@better-auth/core/src/oauth2/verify.ts:85`) — coupling the route to an
- * unstable error message.
+ * `verifyJwsAccessToken`, which is the cheaper path by more than one
+ * verification: for a token carrying no `kid`, better-auth's
+ * `shouldRefetchCachedJwksWithoutKid` treats a signature or no-matching-key
+ * failure as a possibly stale cache and forces a fresh JWKS resolve
+ * (`@better-auth/core/src/oauth2/verify.ts`). An unauthenticated caller sending
+ * kid-less garbage would otherwise drive a JWKS refetch per request.
  *
  * Any `decodeProtectedHeader` throw counts as `false`: a token whose
  * protected header cannot be parsed is malformed and equally fails 401.

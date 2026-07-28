@@ -7,8 +7,10 @@
  * (both case-insensitive), else a note title.
  * Refs never match inside fenced code blocks (CommonMark fence rules) or
  * inline code spans; refs inside bold runs are matched, so a reference
- * always reads and backlinks as one. The Notes renderer shares this
- * module's matcher and classifier to stay in lockstep (PYZ-258). No DB
+ * always reads and backlinks as one. The Notes renderer consumes this
+ * module's ref pattern (`buildRefRe`) and classifier; extraction scans with
+ * `scanLineRefs`, and the two matchers agree on single-line input
+ * (differential-tested, PYZ-258). No DB
  * access — unit-testable in isolation; `lib/data/note.ts` resolves the
  * extracted refs in-tx.
  */
@@ -82,8 +84,17 @@ export function fenceCloses(line: string, fence: FenceState): boolean {
   );
 }
 
-/** Core `[[…]]` ref pattern; group 1 is the inner text (no newline). */
-const REF_PATTERN = String.raw`\[\[([^\]\n]+)\]\]`;
+/**
+ * Core `[[…]]` ref pattern; group 1 is the inner text (no newline).
+ *
+ * The inner run is captured through a lookahead and consumed by its own
+ * backreference, making it atomic: the engine cannot re-try shorter inners
+ * when the closing `]]` is missing. A `[[[[[[…` body is still quadratic,
+ * at a constant factor below the plain capture.
+ * Match-equivalent to the plain capture: the run excludes `]`, so a shorter
+ * inner is always followed by a non-`]` and could never satisfy `\]\]`.
+ */
+const REF_PATTERN = String.raw`\[\[(?=([^\]\n]+))\1\]\]`;
 
 /**
  * Build the `[[…]]` ref matcher the renderer scans text nodes with.
@@ -93,17 +104,6 @@ const REF_PATTERN = String.raw`\[\[([^\]\n]+)\]\]`;
  */
 export function buildRefRe(): RegExp {
   return new RegExp(REF_PATTERN, "g");
-}
-
-/**
- * Build the extractor alternation: a `[[…]]` ref (group 1) or an inline
- * code span (group 2). Inline code is captured so leftmost-match-wins
- * lets it consume refs inside it; the extractor reads only group 1.
- *
- * @returns A fresh `g` RegExp; reset `lastIndex` before reuse.
- */
-export function buildInlineRe(): RegExp {
-  return new RegExp(REF_PATTERN + "|(`[^`]+`)", "g");
 }
 
 /**
@@ -166,6 +166,56 @@ export function classifyRef(
 }
 
 /**
+ * Yield the inner text of every `[[…]]` ref on a line, skipping refs consumed
+ * by an inline code span.
+ *
+ * Walks the line once, taking whichever construct starts earliest
+ * (leftmost-match-wins). Matches the alternation it replaced on single-line
+ * input, the whole domain — callers split on `\n` first; unlike the
+ * alternation, the scanner does not itself refuse `\n` inside `]]`. Pinned
+ * by the differential test over newline-free lines.
+ * The constructs must stay interleaved: a backtick the
+ * ref branch swallows can never open a span. A failed `[[` advances one
+ * character, never jumps to the `]`: jumping would skip a backtick in
+ * between and change which refs are found. `nextBracketClose` is recomputed
+ * only once the cursor passes it, keeping the walk linear.
+ *
+ * @param line - One body line, already known to be outside a fence.
+ * @returns Inner texts in document order.
+ */
+export function scanLineRefs(line: string): string[] {
+  const inners: string[] = [];
+  let nextBracketClose = -1;
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === "`") {
+      const close = line.indexOf("`", i + 1);
+      if (close === -1) {
+        i++;
+        continue;
+      }
+      i = close > i + 1 ? close + 1 : close;
+      continue;
+    }
+    if (line[i] !== "[" || line[i + 1] !== "[") {
+      i++;
+      continue;
+    }
+    if (nextBracketClose < i + 2) {
+      nextBracketClose = line.indexOf("]", i + 2);
+    }
+    if (nextBracketClose === -1) break;
+    if (nextBracketClose > i + 2 && line[nextBracketClose + 1] === "]") {
+      inners.push(line.slice(i + 2, nextBracketClose));
+      i = nextBracketClose + 2;
+      continue;
+    }
+    i++;
+  }
+  return inners;
+}
+
+/**
  * Extract task and note references from a markdown body.
  *
  * Fenced code blocks follow CommonMark: an opening fence is a run of 3+
@@ -174,11 +224,11 @@ export function classifyRef(
  * a run of the same character at least as long as the opener with only
  * whitespace after it, and an unterminated fence swallows the rest of
  * the body. Fence-delimiter lines and fenced content are skipped
- * entirely. Inline code spans are excluded by matching them in the same
- * alternation as the refs — leftmost-match-wins means a span consumes its
- * content before the ref pattern can see it. Bold runs are not excluded,
- * so a ref inside `**bold**` is linked, in lockstep with the renderer.
- * Task-ref identifier matching is case-insensitive.
+ * entirely. Inline code spans are excluded by {@link scanLineRefs}, which
+ * walks them interleaved with the refs so a span consumes its content
+ * before a ref can see it. Bold runs are not excluded, so a ref inside
+ * `**bold**` is linked, in lockstep with the renderer. Task-ref identifier
+ * matching is case-insensitive.
  *
  * @param body - Markdown note body.
  * @param projectIdentifier - The owning project's identifier.
@@ -193,7 +243,6 @@ export function extractNoteRefs(
   const noteSeqs = new Set<number>();
   const titles = new Set<string>();
   const seenTitleKeys = new Set<string>();
-  const inlineRe = buildInlineRe();
   const taskRe = buildTaskRefRe(projectIdentifier);
   const noteRe = buildNoteRefRe(projectIdentifier);
 
@@ -205,14 +254,7 @@ export function extractNoteRefs(
     }
     fence = fenceOpen(line);
     if (fence !== null) continue;
-    inlineRe.lastIndex = 0;
-    for (
-      let match = inlineRe.exec(line);
-      match !== null;
-      match = inlineRe.exec(line)
-    ) {
-      const inner = match[1];
-      if (inner === undefined) continue;
+    for (const inner of scanLineRefs(line)) {
       const ref = classifyRef(inner, taskRe, noteRe);
       if (ref === null) continue;
       if (ref.kind === "task") {
@@ -245,8 +287,32 @@ export type BodySection = {
   text: string;
 };
 
-/** ATX heading shape: 1-6 `#`s after at most 3 spaces, then a space and text. */
-const ATX_HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
+/**
+ * ATX heading shape: 1-6 `#`s after at most 3 spaces, then a space and text.
+ *
+ * The optional closing `#` run is stripped by {@link stripClosingSequence}
+ * rather than matched here. Expressed as one pattern it needs a lazy `.*?`
+ * followed by `[ \t]*#*[ \t]*$`, three ambiguous quantifiers over
+ * overlapping alphabets, which backtracks polynomially on a line ending in a
+ * long whitespace run, on every read of a stored body.
+ */
+const ATX_HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.*)$/;
+
+/**
+ * Strip an ATX closing sequence: trailing whitespace, then a `#` run, then
+ * the whitespace before it. Each pass walks backwards once, so the cost is
+ * linear in the line length.
+ *
+ * @param text - Heading text after the opening `#` run.
+ * @returns The text without its closing sequence.
+ */
+function stripClosingSequence(text: string): string {
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === " " || text[end - 1] === "\t")) end--;
+  while (end > 0 && text[end - 1] === "#") end--;
+  while (end > 0 && (text[end - 1] === " " || text[end - 1] === "\t")) end--;
+  return text.slice(0, end);
+}
 
 /**
  * Match a line as an ATX heading, honoring the running fence state.
@@ -254,10 +320,12 @@ const ATX_HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
  * @param line - One body line.
  * @returns The heading, or null when the line is not one.
  */
-function matchHeading(line: string): BodySection | null {
+export function matchHeading(line: string): BodySection | null {
   const match = line.match(ATX_HEADING_RE);
-  if (!match || match[2] === "") return null;
-  return { level: match[1].length, text: match[2] };
+  if (!match) return null;
+  const text = stripClosingSequence(match[2] ?? "");
+  if (text === "") return null;
+  return { level: match[1].length, text };
 }
 
 /**

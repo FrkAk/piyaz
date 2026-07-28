@@ -24,6 +24,13 @@ inputs:
   cache_prefix:
     description: Prefix for the build-artefact cache key.
     required: true
+  turnstile_site_key:
+    description: >-
+      Public Turnstile site key for this environment. Inlined into the client
+      bundle at build time, so it must be present for BOTH build stages. Prod
+      and dev use different widgets. Empty disables the widget, which also
+      requires TURNSTILE_SECRET_KEY to be absent from the Worker.
+    required: true
 
 runs:
   using: composite
@@ -43,8 +50,12 @@ runs:
           ~/.bun/install/cache
           node_modules/.cache
           .next/cache
-        key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        # The site key is inlined into the client bundle at build time, so it
+        # is part of the artefact's identity: without it in the key, rotating
+        # the widget could restore a bundle carrying the previous value.
+        key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ hashFiles('bun.lock') }}-${{ inputs.turnstile_site_key }}
         restore-keys: |
+          ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ hashFiles('bun.lock') }}-
           ${{ inputs.cache_prefix }}-${{ runner.os }}-
 
     - name: Install dependencies
@@ -78,6 +89,11 @@ runs:
         DATABASE_MIGRATION_URL: ${{ inputs.migration_url }}
       run: bun run db:rls:verify
 
+    # No post-deploy probe follows: Bot Fight Mode (kept deliberately)
+    # challenges any datacenter-origin request before the Worker or even
+    # Access sees it, so a runner-side curl can never verify the live
+    # deployment. The pre-merge workerd smoke covers the bundle; live
+    # verification moves inside Cloudflare (scheduled self-check, PYZ-373).
     - name: Build and deploy Worker
       shell: bash
       env:
@@ -85,4 +101,5 @@ runs:
         BETTER_AUTH_URL: ${{ inputs.better_auth_url }}
         CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare_api_token }}
         CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
+        TURNSTILE_SITE_KEY: ${{ inputs.turnstile_site_key }}
       run: bun run ${{ inputs.deploy_script }}

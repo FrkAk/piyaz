@@ -55,3 +55,40 @@ export function signupsDisabled(): boolean {
 export function emailVerificationRequired(): boolean {
   return process.env.REQUIRE_EMAIL_VERIFICATION === "true";
 }
+
+/**
+ * Whether Turnstile bot protection is armed for this deployment.
+ *
+ * Boot-safe: reads only static env, so it is safe where Better Auth decides
+ * plugin presence at construction. Fail open by absence: a deployment with no
+ * secret gets no captcha plugin and behaves exactly as before, which keeps
+ * self-host bootable without a Cloudflare account.
+ *
+ * This is also the server half of the incident lever. A Turnstile outage
+ * fails closed twice: the plugin rejects on siteverify errors, and the client
+ * widget cannot mint tokens so the forms gate themselves shut. Rollback
+ * therefore drops BOTH halves: delete the `TURNSTILE_SECRET_KEY` Worker
+ * secret and clear the environment's `TURNSTILE_SITE_KEY_*` variable, then
+ * redeploy. `scripts/assert-deploy-ready.ts` accepts the both-absent state
+ * and rejects either half alone.
+ *
+ * @returns `true` when a Turnstile secret is configured.
+ */
+export function turnstileConfigured(): boolean {
+  return (process.env.TURNSTILE_SECRET_KEY ?? "").length > 0;
+}
+
+/**
+ * The public Turnstile site key, or `null` when Turnstile is not configured.
+ *
+ * `NEXT_PUBLIC_*`, so it is inlined at build time and readable from client
+ * components. The server gate (`turnstileConfigured`) reads the secret
+ * instead; a deployment that sets one without the other is misconfigured, and
+ * `scripts/assert-deploy-ready.ts` catches the missing-secret direction.
+ *
+ * @returns The site key, or `null` when unset.
+ */
+export function turnstileSiteKey(): string | null {
+  const key = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
+  return key.length > 0 ? key : null;
+}

@@ -70,7 +70,7 @@ const changePasswordSchema = z
  * Refresh tokens die immediately (no new agent tokens can be minted). MCP
  * access tokens are stateless JWS verified without DB introspection
  * (`app/api/mcp/route.ts`), so any already-issued one keeps working until
- * its TTL expires (`accessTokenExpiresIn`, 1h) — full agent lockout is
+ * its TTL expires (`accessTokenExpiresIn`, 1h). Full agent lockout is
  * within the hour, not instant.
  *
  * Reached only through this server action: the HTTP `/change-password`

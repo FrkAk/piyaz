@@ -4,6 +4,8 @@ import { superuserPool } from "@/tests/setup/global";
 import { seedUserOrgProject, serviceRoleConnect } from "@/tests/setup/seed";
 import { makeAuthContext } from "@/lib/auth/context";
 import { createEdge, getTaskEdges } from "@/lib/data/edge";
+import { withUserContext } from "@/lib/db/rls";
+import { fetchDependencyChain } from "@/lib/db/raw/fetch-dependency-chain";
 
 /**
  * Regression test for the cycle-detection bypass: under app_user, the
@@ -118,5 +120,50 @@ describe("createEdge cycle detection under app_user", () => {
       endpoints.add(e.targetTaskId);
     }
     expect(endpoints.has(bId)).toBe(false);
+  });
+
+  /**
+   * Pins `MIN(depth)` semantics under the `UNION` recursion: a diamond with
+   * a shortcut edge reaches the same task at several depths, and each task
+   * must appear once at its minimum.
+   */
+  test("a diamond graph reports each task once at its minimum depth", async () => {
+    const fx = await seedUserOrgProject("cycle-diamond");
+    const sr = serviceRoleConnect();
+    const ids: Record<string, string> = {};
+    try {
+      const titles = ["A", "B", "C", "D", "E"] as const;
+      for (let i = 0; i < titles.length; i++) {
+        const [row] = await sr<{ id: string }[]>`
+          INSERT INTO tasks (project_id, title, sequence_number)
+          VALUES (${fx.projectId}, ${titles[i]!}, ${i + 1}) RETURNING id`;
+        ids[titles[i]!] = row!.id;
+      }
+      const edges: [string, string][] = [
+        ["A", "B"],
+        ["A", "C"],
+        ["A", "D"],
+        ["B", "D"],
+        ["C", "D"],
+        ["D", "E"],
+      ];
+      for (const [source, target] of edges) {
+        await sr`INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+                 VALUES (${ids[source]!}, ${ids[target]!}, 'depends_on')`;
+      }
+    } finally {
+      await sr.end({ timeout: 5 });
+    }
+
+    const chain = await withUserContext(fx.userId, (tx) =>
+      fetchDependencyChain(tx, ids.A!, fx.projectId, 10),
+    );
+
+    const depthById = new Map(chain.map((row) => [row.id, row.depth]));
+    expect(chain.length).toBe(4);
+    expect(depthById.get(ids.B!)).toBe(1);
+    expect(depthById.get(ids.C!)).toBe(1);
+    expect(depthById.get(ids.D!)).toBe(1);
+    expect(depthById.get(ids.E!)).toBe(2);
   });
 });

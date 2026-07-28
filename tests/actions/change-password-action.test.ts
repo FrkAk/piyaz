@@ -17,8 +17,10 @@ import {
   checkActionUserRateLimit,
 } from "@/lib/actions/rate-limit-action";
 import { nextHeadersMockModule } from "@/tests/setup/next-headers-mock";
+import { settle } from "@/tests/setup/fake-email";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
+import { wranglerRatelimits } from "@/tests/setup/wrangler";
 
 /**
  * Action-level coverage for `changePasswordAction`. The brute-force defense
@@ -177,19 +179,7 @@ describe("changePasswordAction rate limiting", () => {
     // the declared number. The drain tests above pin RATE_CONFIG to the
     // action's real values, so asserting RATE_CONFIG against
     // wrangler.jsonc transitively pins the action to the binding.
-    const wrangler = (await Bun.file(
-      `${import.meta.dir}/../../wrangler.jsonc`,
-    ).json()) as {
-      env: {
-        production: {
-          ratelimits: {
-            name: string;
-            simple: { limit: number; period: number };
-          }[];
-        };
-      };
-    };
-    const binding = wrangler.env.production.ratelimits.find(
+    const binding = (await wranglerRatelimits("production")).find(
       (b) => b.name === "RATE_LIMIT_AUTH",
     );
     expect(binding).toBeDefined();
@@ -217,6 +207,10 @@ describe("changePasswordAction notification", () => {
         newPassword: "valid-new-pass-12",
       });
       expect(result.ok).toBe(true);
+      // The notification is a floated send gated on the per-recipient email
+      // budget (`lib/email/budget.ts`), so it reaches the transport a few
+      // microtasks after the action resolves. Drain them before asserting.
+      await settle();
       const logged = info.mock.calls.map((c) => String(c[0])).join("\n");
       expect(logged).toContain("[email:log]");
       expect(logged).toContain("password was changed");

@@ -75,11 +75,29 @@ export function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 
+/** Edit distance at which two tags still count as variants of each other. */
+const MAX_VARIANT_DISTANCE = 2;
+
+/**
+ * Longest normalized tag the edit-distance check will look at.
+ *
+ * `levenshtein` fills an `a.length * b.length` matrix over two
+ * caller-supplied operands. An over-long tag on either side skips only that
+ * comparison; the linear equality and prefix checks still run.
+ */
+const MAX_VARIANT_COMPARE_LENGTH = 64;
+
 /**
  * Find an existing tag that `proposed` looks like a variant of.
  * Matches on normalized equality, prefix containment (4+ chars), or
  * Levenshtein distance ≤ 2 (4+ chars). Returns null on exact raw
  * match or no variant found.
+ *
+ * Two guards keep the edit-distance pass bounded: a pair with either side
+ * longer than {@link MAX_VARIANT_COMPARE_LENGTH} skips it, and so does a pair
+ * whose lengths differ by more than {@link MAX_VARIANT_DISTANCE}, since that
+ * difference is already a lower bound on the distance.
+ *
  * @param proposed - Proposed tag to check.
  * @param existing - Current project tag list.
  * @returns The first matching existing tag, or null.
@@ -109,7 +127,17 @@ export function findVariant(
       (nE.startsWith(nProposed) || nProposed.startsWith(nE))
     )
       return e;
-    if (nProposed.length >= 4 && levenshtein(nProposed, nE) <= 2) return e;
+    if (
+      nE.length > MAX_VARIANT_COMPARE_LENGTH ||
+      nProposed.length > MAX_VARIANT_COMPARE_LENGTH
+    )
+      continue;
+    if (Math.abs(nE.length - nProposed.length) > MAX_VARIANT_DISTANCE) continue;
+    if (
+      nProposed.length >= 4 &&
+      levenshtein(nProposed, nE) <= MAX_VARIANT_DISTANCE
+    )
+      return e;
   }
   return null;
 }

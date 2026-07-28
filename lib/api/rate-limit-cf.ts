@@ -67,7 +67,11 @@ export class CloudflareRateLimitBackend implements RateLimitBackend {
    *
    * On binding RPC error the behavior follows the `failOpen` ctor option
    * (see {@link CloudflareRateLimitBackendOptions}). The structured warning
-   * lets `wrangler tail` surface degraded bindings in either mode.
+   * lets `wrangler tail` surface degraded bindings in either mode, and
+   * `observability.logs.persist` retains it. That makes `key` load-bearing:
+   * every strategy in `extractKey` must hash or otherwise neutralize a
+   * credential before it becomes a key, because whatever a key contains is
+   * written here verbatim and kept.
    *
    * @param key - Unique key identifying the client.
    * @param max - Maximum requests allowed in the window (per the rule).

@@ -61,6 +61,7 @@ test("BA core /sign-in/email response carries Cache-Control: no-store via the ca
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": "127.0.3.40",
+        "x-piyaz-client-ip": "127.0.3.40",
       },
       body: JSON.stringify({
         email: "no-such-user@test.local",
@@ -78,6 +79,7 @@ test("BA core /sign-up/email response carries Cache-Control: no-store", async ()
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": "127.0.3.41",
+        "x-piyaz-client-ip": "127.0.3.41",
       },
       body: JSON.stringify({
         email: "cache-signup@test.local",
@@ -96,6 +98,7 @@ test("BA core /sign-out response carries Cache-Control: no-store", async () => {
       headers: {
         "content-type": "application/json",
         "cf-connecting-ip": "127.0.3.42",
+        "x-piyaz-client-ip": "127.0.3.42",
       },
     }),
   );
@@ -106,7 +109,10 @@ test("BA core /get-session response carries Cache-Control: no-store", async () =
   const response = await authCatchAllGET(
     new Request(`${BASE}/get-session`, {
       method: "GET",
-      headers: { "cf-connecting-ip": "127.0.3.43" },
+      headers: {
+        "cf-connecting-ip": "127.0.3.43",
+        "x-piyaz-client-ip": "127.0.3.43",
+      },
     }),
   );
   expect(response.headers.get("cache-control")).toBe("no-store");
@@ -120,6 +126,7 @@ test("/oauth2/token error response carries Cache-Control: no-store (wrapper-supp
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         "cf-connecting-ip": "127.0.3.44",
+        "x-piyaz-client-ip": "127.0.3.44",
       },
       body: body.toString(),
     }),
@@ -134,6 +141,7 @@ test("/oauth2/userinfo response carries Cache-Control: no-store (wrapper-supplie
       headers: {
         authorization: "Bearer invalid-token",
         "cf-connecting-ip": "127.0.3.45",
+        "x-piyaz-client-ip": "127.0.3.45",
       },
     }),
   );
@@ -147,6 +155,7 @@ test("/oauth2/introspect response carries Cache-Control: no-store (wrapper-suppl
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         "cf-connecting-ip": "127.0.3.46",
+        "x-piyaz-client-ip": "127.0.3.46",
       },
       body: new URLSearchParams({
         client_id: "no-such-client",
@@ -164,6 +173,7 @@ test("/oauth2/revoke response carries Cache-Control: no-store (wrapper-supplied)
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         "cf-connecting-ip": "127.0.3.47",
+        "x-piyaz-client-ip": "127.0.3.47",
       },
       body: new URLSearchParams({
         client_id: "no-such-client",
@@ -178,7 +188,10 @@ test("well-known oauth-authorization-server keeps BA's public cache hint (wrappe
   const response = await authCatchAllGET(
     new Request(`${BASE}/.well-known/oauth-authorization-server`, {
       method: "GET",
-      headers: { "cf-connecting-ip": "127.0.3.48" },
+      headers: {
+        "cf-connecting-ip": "127.0.3.48",
+        "x-piyaz-client-ip": "127.0.3.48",
+      },
     }),
   );
   const cacheControl = response.headers.get("cache-control");
@@ -190,7 +203,10 @@ test("/jwks keyset stays cacheable (wrapper sets a public hint, not no-store)", 
   const response = await authCatchAllGET(
     new Request(`${BASE}/jwks`, {
       method: "GET",
-      headers: { "cf-connecting-ip": "127.0.3.49" },
+      headers: {
+        "cf-connecting-ip": "127.0.3.49",
+        "x-piyaz-client-ip": "127.0.3.49",
+      },
     }),
   );
   const cacheControl = response.headers.get("cache-control");
@@ -202,7 +218,10 @@ test("well-known openid-configuration keeps BA's public cache hint (wrapper does
   const response = await authCatchAllGET(
     new Request(`${BASE}/.well-known/openid-configuration`, {
       method: "GET",
-      headers: { "cf-connecting-ip": "127.0.3.50" },
+      headers: {
+        "cf-connecting-ip": "127.0.3.50",
+        "x-piyaz-client-ip": "127.0.3.50",
+      },
     }),
   );
   const cacheControl = response.headers.get("cache-control");

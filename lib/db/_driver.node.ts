@@ -29,6 +29,16 @@ export interface DbBundle<TDb> {
   db: TDb;
 }
 
+/**
+ * Connection options for the application pools.
+ *
+ * No `statement_timeout` here. postgres-js sends `connection` entries as
+ * Postgres startup parameters, which a PgBouncer-style pooler rejects unless
+ * it can track them, so setting it would break any deployment pointing
+ * `DATABASE_URL` at a pooled endpoint. The bound lives in
+ * `docker/role-settings.sql` as a role default, applied by `bun run db:rls`,
+ * which the backend picks up at session start whatever the connection path.
+ */
 const POSTGRES_OPTS = { max: 3, idle_timeout: 10 } as const;
 
 /**

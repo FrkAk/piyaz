@@ -7,6 +7,22 @@ process.env.BETTER_AUTH_SECRET ??=
   "test-only-secret-not-used-outside-this-suite-0000";
 // BA emits a base-URL warning otherwise; harmless but noisy in test logs.
 process.env.BETTER_AUTH_URL ??= "https://example.test";
+// A Turnstile secret inherited from the shell (deploy rehearsal, future CI)
+// would arm the captcha plugin in every auth instance built by the suite and
+// fail unrelated handler tests with MISSING_RESPONSE. The suite always runs
+// captcha-off; tests that exercise the plugin set the secret themselves.
+delete process.env.TURNSTILE_SECRET_KEY;
+
+// Name a proxy header so the suite resolves a per-request client address
+// instead of collapsing every caller into the one shared untrusted bucket.
+// Auth test files each own a `127.0.x.x` range to keep their rate-limit
+// buckets isolated from one another, which only works while an address
+// resolves. `tests/security/client-ip.test.ts` unsets this to exercise the
+// shipping self-host default, where no header is trusted. Requests built for
+// direct `auth.handler` calls also set `x-piyaz-client-ip` to the same value:
+// Better Auth reads only that internal header, and only the HTTP routes and
+// middleware stamp it.
+process.env.TRUSTED_PROXY_HEADER ??= "cf-connecting-ip";
 
 /**
  * Force `NODE_ENV=production` at the test process boundary.
@@ -93,6 +109,23 @@ mock.module("@/lib/auth/session", () => ({
 import { setup } from "./global";
 import { beforeAll, afterEach } from "bun:test";
 
+// Keep the sign-up deliverability gate off the network. Sign-up runs on nearly
+// every auth test, and the live DoH probe would make each one slow, network
+// dependent, and wrong: the suite's `@test.local` addresses are NXDOMAIN, so a
+// real lookup rejects them. Tests that exercise the gate install their own
+// resolver and restore this default afterwards.
+//
+// Dynamic import so it lands after the `server-only` neutralization above;
+// a static import would hoist above it and throw.
+const { setRecipientDomainResolver, __resetDeliverabilityCacheForTest } =
+  await import("@/lib/auth/recipient-domain");
+setRecipientDomainResolver(async () => "deliverable");
+
+// The node email-budget counter is process-global; without a reset between
+// tests, files that mail the same address would consume each other's budget
+// in file-order-dependent ways.
+const { __resetBudgetForTest } = await import("@/lib/email/_budget.node");
+
 beforeAll(async () => {
   await setup();
 }, 120000);
@@ -101,4 +134,9 @@ beforeAll(async () => {
 // 401-path test.
 afterEach(() => {
   currentTestSession = null;
+  __resetBudgetForTest();
+  // The verdict memo is process-global. The permissive resolver above
+  // short-circuits ahead of it, so only a file that lifts the override can
+  // populate it, but a stale entry would answer a later file's canned zone.
+  __resetDeliverabilityCacheForTest();
 });
