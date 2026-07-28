@@ -117,11 +117,10 @@ async function resolveEdgeRefs(
  * taxonomy and variants, draft-forbidden fields), each prefixed with the
  * item's key or title and capped at {@link MAX_ITEM_HINTS}.
  *
- * Variant detection compares proposed tags against the project vocabulary,
- * both caller-supplied, so the batch resolves each distinct tag once against
- * one {@link MAX_HINTED_TAGS} allowance and every item reads its hints from
- * that result. Spending the allowance per occurrence instead would give the
- * first few items their hints and leave the rest of the batch without any.
+ * Variant detection compares proposed tags against the project vocabulary:
+ * the batch resolves each distinct tag once against one
+ * {@link MAX_HINTED_TAGS} allowance, every item reads its hints from that
+ * shared result, and duplicate tags within an item earn one hint.
  *
  * @param items - Schema-validated task items.
  * @param projectTags - Existing project tag vocabulary.
@@ -143,7 +142,7 @@ function itemQualityHints(
       ...acQualityHints(item.acceptanceCriteria),
       ...(item.tags && item.tags.length > 0
         ? [
-            ...item.tags.flatMap((tag) => {
+            ...[...new Set(item.tags)].flatMap((tag) => {
               const variant = variants.get(tag);
               return variant ? [tagVariantHint(tag, variant)] : [];
             }),

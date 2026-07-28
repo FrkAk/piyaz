@@ -34,12 +34,14 @@ const eslintConfig = [
       ".claude/**",
       // Local tool output, absent from a clean checkout. Unignored, `lint`
       // fails on a contributor machine while passing in CI, which teaches
-      // people to distrust the gate. Matches the .gitignore entries.
+      // people to distrust the gate.
       "ds-bundle/**",
       ".ds-sync/**",
       ".design-sync/**",
       ".playwright-mcp/**",
       ".agents/**",
+      ".piyaz/**",
+      "animations_videos/**",
     ],
   },
   {

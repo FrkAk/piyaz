@@ -56,7 +56,7 @@ DESIGN_2.md
 docs/*
 .piyaz/
 
-# design-sync (machine state; .design-sync/ config+previews ARE committed)
+# design-sync machine state and local tool output
 .ds-sync/*
 ds-bundle/*
 .design-sync/*
@@ -67,5 +67,7 @@ ds-bundle/*
 /signin-hero-t0.png
 /vfy-graph-initial.png
 
-# installed agent skills (local tooling, not shipped)
-/.agents/
+# installed agent skills (local tooling; .agents/plugins/marketplace.json IS
+# committed)
+/.agents/skills/
+/skills-lock.json

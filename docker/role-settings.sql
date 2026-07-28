@@ -1,12 +1,11 @@
 -- =============================================================================
 -- Per-role runtime settings for the request-path roles. Requires ADMIN OPTION
--- on the target role, so it is applied by the superuser (self-host,
--- docker/init-rls.sh and the db:rls chain), by the database owner on the
--- hosted heads (scripts/apply-owner-rls.ts), and by the testcontainer
--- bootstrap (tests/setup/migrate.ts). The least-privilege CI migration role
--- cannot run it, so it is deliberately absent from scripts/apply-public-rls.ts
--- and does NOT land on a deploy. Idempotent: ALTER ROLE ... SET is
--- last-write-wins.
+-- on the target role, so it is applied by the superuser (self-host, the
+-- db:rls chain), by the database owner on the hosted heads
+-- (scripts/apply-owner-rls.ts), and by the testcontainer bootstrap
+-- (tests/setup/migrate.ts). The least-privilege CI migration role cannot run
+-- it, so it is deliberately absent from scripts/apply-public-rls.ts and does
+-- NOT land on a deploy. Idempotent: ALTER ROLE ... SET is last-write-wins.
 --
 -- Out of scope here: role creation, grants, policies. No SUPERUSER clause,
 -- which fails on Neon where toggling it needs a real superuser.
@@ -28,13 +27,7 @@
 -- drizzle.config.ts falls back to DATABASE_SERVICE_ROLE_URL and then to
 -- DATABASE_URL for migrations, and the hosted migration role is excluded for
 -- the same reason: a 15s ceiling would abort an index build mid-deploy.
---
--- Known abort candidates, unbounded in tenant size and reachable from
--- piyaz_map view='downstream': the path-enumerating walks in
--- lib/db/raw/fetch-effective-dep-chain.ts and fetch-effective-downstream.ts.
--- They cannot use the UNION dedup fetch-dependency-chain.ts does, because
--- their CYCLE clause makes every row unique by its path array and the
--- NOT is_cycle filter changes which tasks a cyclic graph returns. An abort
--- surfaces to the caller through the 57014 branch in translateError.
+-- An abort surfaces through the 57014 branch in translateError.
+-- scripts/verify-rls.ts asserts this exact value; change both together.
 ALTER ROLE app_user SET statement_timeout = '15s';
 ALTER ROLE auth_role SET statement_timeout = '15s';
