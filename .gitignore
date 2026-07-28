@@ -55,3 +55,17 @@ DESIGN.md
 DESIGN_2.md
 docs/*
 .piyaz/
+
+# design-sync (machine state; .design-sync/ config+previews ARE committed)
+.ds-sync/*
+ds-bundle/*
+.design-sync/*
+.playwright-mcp/*
+
+# launch film (local video production, not shipped)
+/animations_videos/
+/signin-hero-t0.png
+/vfy-graph-initial.png
+
+# installed agent skills (local tooling, not shipped)
+/.agents/
