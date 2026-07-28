@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { POST } from "@/app/api/mcp/route";
-import { MAX_JSON_RPC_BATCH, isOversizedBatch } from "@/lib/mcp/batch";
+import { MAX_JSON_RPC_BATCH, inspectBatch } from "@/lib/mcp/batch";
 
 /**
  * Attack-path coverage for JSON-RPC batching on the MCP endpoint.
@@ -29,20 +29,20 @@ function batchBody(count: number): Uint8Array {
 }
 
 test("attack: a batch beyond the ceiling is rejected", () => {
-  expect(isOversizedBatch(batchBody(5_000))).toBe(true);
-  expect(isOversizedBatch(batchBody(MAX_JSON_RPC_BATCH + 1))).toBe(true);
+  expect(inspectBatch(batchBody(5_000)).oversized).toBe(true);
+  expect(inspectBatch(batchBody(MAX_JSON_RPC_BATCH + 1)).oversized).toBe(true);
 });
 
 test("batches a client actually sends are accepted", () => {
-  expect(isOversizedBatch(batchBody(1))).toBe(false);
-  expect(isOversizedBatch(batchBody(MAX_JSON_RPC_BATCH))).toBe(false);
+  expect(inspectBatch(batchBody(1)).oversized).toBe(false);
+  expect(inspectBatch(batchBody(MAX_JSON_RPC_BATCH)).oversized).toBe(false);
 });
 
 test("a single non-batch message is not treated as a batch", () => {
   const body = new TextEncoder().encode(
     JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
   );
-  expect(isOversizedBatch(body)).toBe(false);
+  expect(inspectBatch(body).oversized).toBe(false);
 });
 
 test("attack: whitespace or a byte order mark cannot carry a batch past the cap", () => {
@@ -52,14 +52,30 @@ test("attack: whitespace or a byte order mark cannot carry a batch past the cap"
   const batch = new TextDecoder().decode(batchBody(5_000));
   const encoder = new TextEncoder();
 
-  expect(isOversizedBatch(encoder.encode(`\n\t  ${batch}`))).toBe(true);
-  expect(isOversizedBatch(encoder.encode(`﻿${batch}`))).toBe(true);
-  expect(isOversizedBatch(encoder.encode(`﻿  ${batch}`))).toBe(true);
+  expect(inspectBatch(encoder.encode(`\n\t  ${batch}`)).oversized).toBe(true);
+  expect(inspectBatch(encoder.encode(`﻿${batch}`)).oversized).toBe(true);
+  expect(inspectBatch(encoder.encode(`﻿  ${batch}`)).oversized).toBe(true);
+});
+
+test("inspection reports the batch size and returns the parse for reuse", () => {
+  const single = inspectBatch(
+    new TextEncoder().encode(
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    ),
+  );
+  expect(single.count).toBe(1);
+  expect(single.parsed).toBeUndefined();
+
+  const batch = inspectBatch(batchBody(3));
+  expect(batch.count).toBe(3);
+  expect(Array.isArray(batch.parsed)).toBe(true);
 });
 
 test("malformed bodies are left to the transport to diagnose", () => {
-  expect(isOversizedBatch(new TextEncoder().encode("{not json"))).toBe(false);
-  expect(isOversizedBatch(new Uint8Array(0))).toBe(false);
+  expect(inspectBatch(new TextEncoder().encode("{not json")).oversized).toBe(
+    false,
+  );
+  expect(inspectBatch(new Uint8Array(0)).oversized).toBe(false);
 });
 
 test("attack: a cross-origin browser request is refused before the token check", async () => {

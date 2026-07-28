@@ -106,20 +106,22 @@ function toMcp(result: ToolResult) {
 type McpResponse = ReturnType<typeof toMcp>;
 
 /**
- * Budget identity for the per-call MCP meters.
+ * Budget identity for the standard-tier MCP meter.
  *
- * Keyed on the registered OAuth client as well as the user, so a person running
- * several agents at once gets a budget per agent rather than one shared across
- * all of them. Keying on the user alone would make the tool budgets tighter
- * than the per-token HTTP budget the middleware already applies, so a parallel
- * fan-out would exhaust itself while every individual token still had headroom.
- * Falls back to the user alone for actors carrying no client id, which is every
- * non-MCP actor.
+ * Keyed on the registered OAuth client as well as the user, so a person
+ * running several agents at once gets a standard budget per agent rather than
+ * one shared across all of them; keyed on the user alone it would be tighter
+ * than the per-token HTTP budget the middleware already applies. The heavy
+ * tier deliberately keys on the user alone instead: it guards expensive
+ * database work, and a per-client key would scale that budget with the number
+ * of clients a user registers. Falls back to the user alone for actors
+ * carrying no client id, which is every non-MCP actor. Also used by the MCP
+ * route to charge a batch's extra messages before dispatch.
  *
  * @param ctx - Resolved auth context.
- * @returns Key identifying the caller for budget purposes.
+ * @returns Key identifying the caller for standard-tier budget purposes.
  */
-function mcpCallerKey(ctx: AuthContext): string {
+export function mcpCallerKey(ctx: AuthContext): string {
   const clientId =
     ctx.actor.source === "mcp" ? (ctx.actor.clientId ?? null) : null;
   return clientId ? `${ctx.userId}:${clientId}` : ctx.userId;
@@ -193,7 +195,7 @@ function wrapTool<P>(
       }
       if (opts.heavy?.(params)) {
         const check = await getBackend("mcpHeavy").check(
-          `mcp-heavy:${callerKey}`,
+          `mcp-heavy:${ctx.userId}`,
           MCP_HEAVY_LIMIT.max,
           MCP_HEAVY_LIMIT.window,
         );

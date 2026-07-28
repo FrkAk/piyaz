@@ -100,6 +100,13 @@ export async function POST(
     return error("Unauthorized", 401);
   }
 
+  const contentLength = Number(req.headers.get("content-length"));
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > MAX_PRESENCE_BODY_BYTES
+  ) {
+    return error("Request body too large", 413);
+  }
   const raw = await readBodyBounded(req, MAX_PRESENCE_BODY_BYTES);
   if (raw === null) return error("Request body too large", 413);
 

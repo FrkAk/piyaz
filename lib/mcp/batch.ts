@@ -1,14 +1,14 @@
 /**
  * Most JSON-RPC messages accepted in one batched POST to `/api/mcp`.
  *
- * The transport dispatches every element of a batch array to a tool handler,
- * each opening its own RLS transaction, while the middleware budget counts the
- * POST once. Without a ceiling the advertised per-call quota bounds HTTP
- * requests rather than work, and a body inside the route's byte cap holds
- * several thousand minimal `tools/call` messages. Clients batch a handful of
- * messages at a time, so this is well clear of legitimate use.
+ * The transport dispatches every element of a batch array to a handler,
+ * each `tools/call` opening its own RLS transaction, while the middleware
+ * budget counts the POST once; the route charges the per-call meter for the
+ * extra elements. MCP 2025-06-18 removed JSON-RPC batching, so the array path
+ * exists only for 2025-03-26 back-compat and a small ceiling penalizes no
+ * current client.
  */
-export const MAX_JSON_RPC_BATCH = 25;
+export const MAX_JSON_RPC_BATCH = 5;
 
 /** Bytes JSON permits before a value: space, tab, line feed, carriage return. */
 const JSON_WHITESPACE = new Set([0x20, 0x09, 0x0a, 0x0d]);
@@ -26,32 +26,46 @@ const OPEN_BRACKET = 0x5b;
  */
 const UTF8_BOM = [0xef, 0xbb, 0xbf] as const;
 
+/** What {@link inspectBatch} learned about a request body. */
+export type BatchInspection = {
+  /** Whether the body is a batch larger than {@link MAX_JSON_RPC_BATCH}. */
+  oversized: boolean;
+  /** JSON-RPC messages the body carries; 1 for a single message. */
+  count: number;
+  /** The parsed body, present only when it parsed as an array. */
+  parsed?: unknown;
+};
+
 /**
- * Whether a decoded request body is a JSON-RPC batch larger than the ceiling.
+ * Inspect a request body for the JSON-RPC batch path.
  *
- * Only an array can be over-sized, so the first non-whitespace byte decides
- * whether parsing is worth it. The transport parses the same bytes again
- * immediately after, and the common body is a single message, so skipping the
- * decode-and-parse for every non-batch request avoids doing that work twice
- * per call against the Worker's CPU ceiling.
+ * Only an array can be a batch, so the first non-whitespace byte decides
+ * whether parsing is worth it; the common single-message body is never
+ * decoded here. A parsed array is returned for reuse as the transport's
+ * `parsedBody`, so batch bytes are parsed once.
  *
  * Malformed JSON is not judged here: the transport owns that error, and
- * returning its own JSON-RPC diagnostic beats a shape complaint from the edge
- * of the route.
+ * `parsed` stays absent on a parse failure so the transport re-reads the
+ * bytes and produces its own diagnostic.
  *
  * @param body - Raw request body bytes.
- * @returns `true` when the body is an over-sized batch array.
+ * @returns The inspection result.
  */
-export function isOversizedBatch(body: Uint8Array): boolean {
+export function inspectBatch(body: Uint8Array): BatchInspection {
   let i = UTF8_BOM.every((byte, offset) => body[offset] === byte)
     ? UTF8_BOM.length
     : 0;
   while (i < body.length && JSON_WHITESPACE.has(body[i])) i++;
-  if (body[i] !== OPEN_BRACKET) return false;
+  if (body[i] !== OPEN_BRACKET) return { oversized: false, count: 1 };
   try {
     const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
-    return Array.isArray(parsed) && parsed.length > MAX_JSON_RPC_BATCH;
+    if (!Array.isArray(parsed)) return { oversized: false, count: 1 };
+    return {
+      oversized: parsed.length > MAX_JSON_RPC_BATCH,
+      count: parsed.length,
+      parsed,
+    };
   } catch {
-    return false;
+    return { oversized: false, count: 1 };
   }
 }

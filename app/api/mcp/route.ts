@@ -2,12 +2,18 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { JSONWebKeySet } from "jose";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
 import { auth, GRANTABLE_OAUTH_SCOPES } from "@/lib/auth";
-import { createMcpServer } from "@/lib/mcp/create-server";
-import { MAX_JSON_RPC_BATCH, isOversizedBatch } from "@/lib/mcp/batch";
+import { createMcpServer, mcpCallerKey } from "@/lib/mcp/create-server";
+import { MAX_JSON_RPC_BATCH, inspectBatch } from "@/lib/mcp/batch";
 import { classifyVerifyError, hasKid } from "@/lib/mcp/verify";
 import { authContextFromPayload } from "@/lib/auth/mcp-token";
+import type { AuthContext } from "@/lib/auth/context";
 import { parseEnvInt } from "@/lib/config/env";
 import { readBodyBounded } from "@/lib/api/read-body-bounded";
+import {
+  getBackend,
+  MCP_STANDARD_LIMIT,
+  mcpRateLimitMessage,
+} from "@/lib/api/rate-limit";
 
 const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 const origin = new URL(baseUrl).origin;
@@ -190,6 +196,10 @@ async function verifyMcpAuth(request: Request) {
  * reads no cookies while browsers never attach an `Authorization` header, so
  * there is no ambient credential for a page to spend.
  *
+ * Hand-rolled rather than the transport's `enableDnsRebindingProtection` /
+ * `allowedOrigins` option so the rejection precedes the JWT verify and its
+ * JWKS resolve.
+ *
  * @param request - Incoming request.
  * @returns A 403 response when the header is present and not this deployment.
  */
@@ -247,13 +257,17 @@ export async function POST(request: Request) {
   if (body === null) {
     return payloadTooLarge();
   }
-  if (isOversizedBatch(body)) {
+  const inspection = inspectBatch(body);
+  if (inspection.oversized) {
     return jsonRpcError(
       -32600,
       `Batch too large: at most ${MAX_JSON_RPC_BATCH} JSON-RPC messages per request.`,
       413,
     );
   }
+  const overage = await chargeBatchOverage(ctx, inspection.count - 1);
+  if (overage) return overage;
+
   const boundedRequest = new Request(request.url, {
     method: request.method,
     headers: request.headers,
@@ -266,7 +280,50 @@ export async function POST(request: Request) {
     sessionIdGenerator: undefined,
   });
   await server.connect(transport);
-  return transport.handleRequest(boundedRequest);
+  return transport.handleRequest(
+    boundedRequest,
+    inspection.parsed === undefined
+      ? undefined
+      : { parsedBody: inspection.parsed },
+  );
+}
+
+/**
+ * Charge the standard tool meter for a batch's messages beyond the first.
+ *
+ * The middleware bills one HTTP unit per POST and `wrapTool` bills one tool
+ * unit per `tools/call`, so a batch's extra elements would otherwise buy
+ * dispatch work for free, including non-tool methods such as `tools/list`,
+ * which are never wrapped and serialize the full tool table per element.
+ *
+ * @param ctx - Resolved auth context.
+ * @param extra - Messages beyond the first; non-positive charges nothing.
+ * @returns A 429 JSON-RPC response when the budget rejects, else `null`.
+ */
+async function chargeBatchOverage(
+  ctx: AuthContext,
+  extra: number,
+): Promise<Response | null> {
+  const key = `mcp-call:${mcpCallerKey(ctx)}`;
+  for (let i = 0; i < extra; i++) {
+    const result = await getBackend("mcp").check(
+      key,
+      MCP_STANDARD_LIMIT.max,
+      MCP_STANDARD_LIMIT.window,
+    );
+    if (!result.allowed) {
+      return jsonRpcError(
+        -32000,
+        mcpRateLimitMessage(
+          MCP_STANDARD_LIMIT.max,
+          MCP_STANDARD_LIMIT.window,
+          result.resetIn,
+        ),
+        429,
+      );
+    }
+  }
+  return null;
 }
 
 /**
