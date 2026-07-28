@@ -29,6 +29,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { stripJsonc } from "../lib/config/jsonc";
+import { turnstileSymmetryFailures } from "./turnstile-symmetry";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const WRANGLER_JSONC = path.join(ROOT, "wrangler.jsonc");
@@ -184,36 +185,18 @@ if (presentSecrets) {
   }
 }
 
-// The two Turnstile keys arrive by different routes: the secret at runtime
-// via `wrangler secret`, the site key at build time via `next.config.ts`'s
-// `env` block, so they can drift apart. Either half alone is worse than off,
-// so the check is symmetric rather than making the secret required: the
-// documented rollback for a Turnstile outage is to drop BOTH halves and
-// redeploy, and that state must pass this gate.
+// Turnstile is all-or-nothing. The rule itself lives in
+// `scripts/turnstile-symmetry.ts` so it is a pure, tested function and so the
+// dev deploy can apply it to its own environment; this script only ever sees
+// production.
 if (presentSecrets) {
-  const secretPresent = presentSecrets.has("TURNSTILE_SECRET_KEY");
-  const siteKeyPresent = (process.env.TURNSTILE_SITE_KEY ?? "").length > 0;
-  if (secretPresent && !siteKeyPresent) {
-    failures.push(
-      `TURNSTILE_SECRET_KEY is registered in the 'production' Wrangler env ` +
-        `but TURNSTILE_SITE_KEY is not set in the build environment. The ` +
-        `captcha plugin would arm server-side with no widget to mint a ` +
-        `token, rejecting every sign-up and sign-in. Export ` +
-        `TURNSTILE_SITE_KEY for the build, or delete the secret to deploy ` +
-        `with Turnstile off.`,
-    );
-  }
-  if (siteKeyPresent && !secretPresent) {
-    failures.push(
-      `TURNSTILE_SITE_KEY is set in the build environment but ` +
-        `TURNSTILE_SECRET_KEY is not registered in the 'production' ` +
-        `Wrangler env. The widget would mint tokens the server never ` +
-        `verifies, leaving bot protection silently off while appearing on. ` +
-        `Set it via 'wrangler secret put TURNSTILE_SECRET_KEY --env ` +
-        `production', or unset TURNSTILE_SITE_KEY to deploy with Turnstile ` +
-        `off.`,
-    );
-  }
+  failures.push(
+    ...turnstileSymmetryFailures({
+      env: "production",
+      secretPresent: presentSecrets.has("TURNSTILE_SECRET_KEY"),
+      siteKeyPresent: (process.env.TURNSTILE_SITE_KEY ?? "").length > 0,
+    }),
+  );
 }
 
 if (failures.length > 0) {

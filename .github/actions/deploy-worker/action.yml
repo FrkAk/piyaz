@@ -50,8 +50,12 @@ runs:
           ~/.bun/install/cache
           node_modules/.cache
           .next/cache
-        key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        # The site key is inlined into the client bundle at build time, so it
+        # is part of the artefact's identity: without it in the key, rotating
+        # the widget could restore a bundle carrying the previous value.
+        key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ hashFiles('bun.lock') }}-${{ inputs.turnstile_site_key }}
         restore-keys: |
+          ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ hashFiles('bun.lock') }}-
           ${{ inputs.cache_prefix }}-${{ runner.os }}-
 
     - name: Install dependencies
