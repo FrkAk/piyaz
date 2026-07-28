@@ -60,7 +60,7 @@ test("an error delivery result logs the structured event without the recipient a
   _platformSender = fake;
 
   sendPasswordChangedEmail({ email: RECIPIENT, name: "Fail Case" }, {});
-  await Bun.sleep(0);
+  await settle();
 
   expect(fake.sent.length).toBe(1);
   const { event, raw } = capturedFailureEvent();
@@ -79,7 +79,7 @@ test("a rejected send logs the structured event without the recipient and does n
   };
 
   sendPasswordChangedEmail({ email: RECIPIENT, name: "Fail Case" }, {});
-  await Bun.sleep(0);
+  await settle();
 
   const { event, raw } = capturedFailureEvent();
   expect(event.event).toBe("auth_email_send_failed");
@@ -96,14 +96,14 @@ test("an over-budget recipient stops reaching the transport", async () => {
   _platformSender = fake;
   const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    for (let i = 0; i < EMAIL_BUDGET.max + 2; i++) {
+    for (let i = 0; i < EMAIL_BUDGET.defaultMax + 2; i++) {
       sendPasswordChangedEmail(
         { email: "flooded@test.local", name: "Flooded" },
         {},
       );
       await settle();
     }
-    expect(fake.sent.length).toBe(EMAIL_BUDGET.max);
+    expect(fake.sent.length).toBe(EMAIL_BUDGET.defaultMax);
     const events = warnSpy.mock.calls
       .map((c) => String(c[0]))
       .filter((line) => line.includes("auth_email_budget_exceeded"));
@@ -113,4 +113,35 @@ test("an over-budget recipient stops reaching the transport", async () => {
   } finally {
     warnSpy.mockRestore();
   }
+});
+
+test("a provider failure does not spend the recipient's allowance", async () => {
+  // The budget counts delivered mail, not attempts. Counting at the check
+  // instead would let a transient Cloudflare Email Sending outage burn a real
+  // user's hourly cap and leave them unable to receive the mail at all once
+  // the provider recovered.
+  const fake = new FakeEmailSender();
+  fake.nextResult = { kind: "error", code: "boom", message: "provider down" };
+  _platformSender = fake;
+
+  for (let i = 0; i < EMAIL_BUDGET.defaultMax + 3; i++) {
+    sendPasswordChangedEmail(
+      { email: "outage@test.local", name: "Outage" },
+      {},
+    );
+    await settle();
+  }
+  expect(fake.sent.length).toBe(EMAIL_BUDGET.defaultMax + 3);
+
+  // The provider recovers; the recipient still has their full allowance.
+  fake.nextResult = { kind: "ok", messageId: "recovered" };
+  const before = fake.sent.length;
+  for (let i = 0; i < EMAIL_BUDGET.defaultMax; i++) {
+    sendPasswordChangedEmail(
+      { email: "outage@test.local", name: "Outage" },
+      {},
+    );
+    await settle();
+  }
+  expect(fake.sent.length).toBe(before + EMAIL_BUDGET.defaultMax);
 });

@@ -10,8 +10,27 @@ import { getPlatformBudgetStore } from "@/lib/email/_budget";
  * after a typo or a slow inbox. Anything past that to the same address for the
  * same template inside an hour is a flood, not a user. Supabase ships a
  * comparable default of 2 per hour per recipient.
+ *
+ * `teamInvite` is the one template a flat cap gets wrong. It still mails an
+ * address the sender chose, so it stays bounded, but the legitimate case is a
+ * new colleague being added to several teams at once, which a cap of three
+ * would silently truncate while showing the inviter a success.
  */
-export const EMAIL_BUDGET = { max: 3, windowSeconds: 3600 } as const;
+export const EMAIL_BUDGET = {
+  windowSeconds: 3600,
+  defaultMax: 3,
+  perTemplate: { teamInvite: 10 } as Readonly<Record<string, number>>,
+} as const;
+
+/**
+ * Sends allowed for one template per recipient per window.
+ *
+ * @param template - Template name, as passed to the delivery helper.
+ * @returns The cap for that template.
+ */
+export function emailBudgetMax(template: string): number {
+  return EMAIL_BUDGET.perTemplate[template] ?? EMAIL_BUDGET.defaultMax;
+}
 
 /**
  * Build the budget key for one recipient and template.
@@ -57,8 +76,14 @@ export async function recipientDigestForLog(to: string): Promise<string> {
   return (await recipientHex(to)).slice(0, 12);
 }
 
+/** A granted send slot. Call {@link EmailBudgetSlot.commit} once mail is away. */
+export interface EmailBudgetSlot {
+  /** Record the delivered send against the recipient's budget. */
+  commit(): Promise<void>;
+}
+
 /**
- * Count one auth email against its recipient's budget.
+ * Claim a send slot for one auth email.
  *
  * Enforced at the delivery helper rather than in a Better Auth hook, because
  * several send paths never touch the HTTP router: `auth.api.changeEmail` and
@@ -66,23 +91,30 @@ export async function recipientDigestForLog(to: string): Promise<string> {
  * Better Auth's rate limiting entirely. The delivery helper is the one
  * chokepoint every auth email crosses.
  *
+ * The slot is committed by the caller only after the provider accepts the
+ * message, so a failed send costs nothing. Counting at the check instead would
+ * let three provider errors exhaust a recipient's hourly allowance and leave a
+ * real user unable to verify their address during an outage.
+ *
  * Fails open when no store is available (self-host outside a request context,
  * unbound `AUTH_KV`): a missing counter must never stop a user verifying their
  * address.
  *
  * @param to - Recipient address.
  * @param template - Template name, used to scope the budget.
- * @returns `true` when the send may proceed, `false` when it is over budget.
+ * @returns A slot to commit after a successful send, or `null` when the
+ *   recipient is already at their cap for this template.
  */
-export async function consumeEmailBudget(
+export async function reserveEmailBudget(
   to: string,
   template: string,
-): Promise<boolean> {
+): Promise<EmailBudgetSlot | null> {
   const store = getPlatformBudgetStore();
-  if (store === null) return true;
-  return store.consume(
-    await budgetKey(to, template),
-    EMAIL_BUDGET.max,
-    EMAIL_BUDGET.windowSeconds,
-  );
+  if (store === null) return { async commit() {} };
+  const key = await budgetKey(to, template);
+  const used = await store.read(key);
+  if (used >= emailBudgetMax(template)) return null;
+  return {
+    commit: () => store.commit(key, used, EMAIL_BUDGET.windowSeconds),
+  };
 }

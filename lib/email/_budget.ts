@@ -7,4 +7,7 @@
  * and self-host builds working when the alias is not active. Mirrors
  * `lib/email/_sender.ts`.
  */
+// Star re-export: `tests/email/budget.test.ts` replaces this module with a
+// process-global `mock.module` that must list every export by hand, so a new
+// export here hands `undefined` to any file loaded after that one.
 export * from "./_budget.node";

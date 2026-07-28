@@ -12,7 +12,7 @@ const _windows = new Map<string, Window>();
 
 /**
  * Drop expired windows so a long-lived process does not accumulate one entry
- * per address seen. Runs on each consume; the map only ever holds addresses
+ * per address seen. Runs on each read; the map only ever holds addresses
  * mailed inside the current window, which is bounded by the send rate.
  *
  * @param now - Current epoch milliseconds.
@@ -43,17 +43,22 @@ export function __resetBudgetForTest(): void {
  */
 export function getPlatformBudgetStore(): EmailBudgetStore | null {
   return {
-    async consume(key, max, windowSeconds) {
+    async read(key) {
       const now = Date.now();
       prune(now);
-      const existing = _windows.get(key);
-      if (existing === undefined || existing.resetAt <= now) {
-        _windows.set(key, { count: 1, resetAt: now + windowSeconds * 1000 });
-        return true;
-      }
-      if (existing.count >= max) return false;
-      existing.count += 1;
-      return true;
+      const window = _windows.get(key);
+      return window === undefined || window.resetAt <= now ? 0 : window.count;
+    },
+    async commit(key, used, windowSeconds) {
+      const now = Date.now();
+      const window = _windows.get(key);
+      // A window that lapsed between the read and the commit starts fresh
+      // rather than inheriting the stale deadline.
+      const resetAt =
+        window !== undefined && window.resetAt > now
+          ? window.resetAt
+          : now + windowSeconds * 1000;
+      _windows.set(key, { count: used + 1, resetAt });
     },
   };
 }

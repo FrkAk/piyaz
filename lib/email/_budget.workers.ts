@@ -9,7 +9,7 @@ import type { EmailBudgetStore } from "./budget-types";
  * rule; mirrors `lib/db/_auth-kv-storage.workers.ts`.
  */
 interface KvNamespace {
-  get(key: string, type: "text"): Promise<string | null>;
+  get(key: string, options: { type: "text" }): Promise<string | null>;
   put(
     key: string,
     value: string,
@@ -84,25 +84,42 @@ export function getPlatformBudgetStore(): EmailBudgetStore | null {
   const kv = getAuthKv();
   if (kv === null) return null;
   return {
-    async consume(key, max, windowSeconds) {
+    async read(key) {
       try {
-        const raw = await kv.get(key, "text");
+        const raw = await kv.get(key, { type: "text" });
         const count = raw === null ? 0 : Number.parseInt(raw, 10);
-        const used = Number.isFinite(count) && count > 0 ? count : 0;
-        if (used >= max) return false;
+        return Number.isFinite(count) && count > 0 ? count : 0;
+      } catch (err) {
+        logKvFailure(err);
+        // Fail open: an unreadable counter reports no usage, so the send goes.
+        return 0;
+      }
+    },
+    async commit(key, used, windowSeconds) {
+      try {
         await kv.put(key, String(used + 1), {
           expirationTtl: Math.max(windowSeconds, KV_TTL_FLOOR_SECONDS),
         });
-        return true;
       } catch (err) {
-        console.warn(
-          JSON.stringify({
-            event: "email_budget_kv_op_failed",
-            err: err instanceof Error ? err.message : String(err),
-          }),
-        );
-        return true;
+        // A lost increment undercounts, which errs toward delivering mail.
+        // Concurrent sends to one address across POPs also land here: KV
+        // allows one write per second per key and rejects the rest with 429.
+        logKvFailure(err);
       }
     },
   };
+}
+
+/**
+ * Record a KV fault without the recipient key, which is a digest of an address.
+ *
+ * @param err - The thrown value.
+ */
+function logKvFailure(err: unknown): void {
+  console.warn(
+    JSON.stringify({
+      event: "email_budget_kv_op_failed",
+      err: err instanceof Error ? err.message : String(err),
+    }),
+  );
 }

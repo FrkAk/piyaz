@@ -3,7 +3,7 @@ import "server-only";
 import { jwtVerify } from "jose";
 import { getEmailSender } from "@/lib/email";
 import { enrollEmailSend } from "@/lib/email/_defer";
-import { consumeEmailBudget, recipientDigestForLog } from "@/lib/email/budget";
+import { reserveEmailBudget, recipientDigestForLog } from "@/lib/email/budget";
 import {
   resolveBrandConfig,
   senderFor,
@@ -52,10 +52,12 @@ export interface SignInContext {
  * enrolled via `enrollEmailSend` so Workers cannot cancel it at response
  * return.
  *
- * Every send is first counted against the recipient's per-template budget
- * (`consumeEmailBudget`). Over-budget sends are dropped and logged rather than
- * surfaced as an error: the caller has already returned, and an attacker
- * flooding a victim must not learn from the response that the cap exists.
+ * Every send claims a slot in the recipient's per-template budget
+ * (`reserveEmailBudget`) and commits it only once the provider accepts the
+ * message, so a delivery failure never spends the recipient's allowance.
+ * Over-budget sends are dropped and logged rather than surfaced as an error:
+ * the caller has already returned, and an attacker flooding a victim must not
+ * learn from the response that the cap exists.
  *
  * @param to - Recipient address.
  * @param template - Template name for the structured failure log and category.
@@ -76,9 +78,9 @@ function deliverAuthEmail(
   if (sender === null) return;
   const { from, replyTo } = senderFor(senderKind, brand);
   const rendered = render(brand);
-  const send = consumeEmailBudget(to, template)
-    .then(async (withinBudget) => {
-      if (!withinBudget) {
+  const send = reserveEmailBudget(to, template)
+    .then(async (slot) => {
+      if (slot === null) {
         console.warn(
           JSON.stringify({
             event: "auth_email_budget_exceeded",
@@ -88,7 +90,7 @@ function deliverAuthEmail(
         );
         return null;
       }
-      return sender.send({
+      const result = await sender.send({
         to,
         from,
         fromName: brand.appName,
@@ -98,6 +100,9 @@ function deliverAuthEmail(
         text: rendered.text,
         category: template,
       });
+      // Only a delivered message spends the recipient's allowance.
+      if (result.kind === "ok") await slot.commit();
+      return result;
     })
     .then((result) => {
       if (result !== null && result.kind === "error") {

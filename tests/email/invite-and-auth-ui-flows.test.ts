@@ -519,7 +519,7 @@ test("resend refreshes the same invitation's expiry and refires its email", asyn
   expect(before.length).toBe(1);
   const expiresBefore = new Date(before[0]!.expiresAt).getTime();
 
-  await Bun.sleep(10);
+  await settle();
   const resend = await authPost(
     authEmail,
     "/organization/invite-member",

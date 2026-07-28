@@ -37,8 +37,18 @@ export class FakeEmailSender implements EmailSender {
  * Yield long enough for any floated auth-email send to reach the transport.
  *
  * `deliverAuthEmail` never awaits its send, and the budget gate in front of it
- * adds a short async prefix, so a send dispatched during an awaited request is
- * still in flight when that request resolves. A macrotask boundary drains both.
+ * adds an async prefix, so a send dispatched during an awaited request is still
+ * in flight when that request resolves.
+ *
+ * One macrotask is sufficient only because that whole chain is microtask-only:
+ * Bun resolves `crypto.subtle.digest` synchronously into the microtask queue,
+ * the node budget store is an in-memory map, and this fake pushes
+ * synchronously, so the microtask queue drains completely before a
+ * `setTimeout(0)` callback runs. That precondition is load-bearing and not
+ * portable: under Node the same digest goes to the libuv threadpool and lands
+ * *after* the timer. Introduce real I/O anywhere in the chain (a KV-backed
+ * budget store under a Workers-target run, a network call) and this stops
+ * being enough; the symptom is an intermittent empty `sent`.
  *
  * @returns Resolves once pending floated sends have hit the fake.
  */

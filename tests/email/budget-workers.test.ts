@@ -1,9 +1,10 @@
 import { test, expect, beforeEach, afterAll, mock, spyOn } from "bun:test";
 
 /**
- * Cloudflare KV email budget store (`lib/email/_budget.workers.ts`): counting
- * against KV, the TTL floor, fail-open on KV errors, and the warn-once
- * missing-binding path. Mirrors `tests/email/sender-workers.test.ts`.
+ * Cloudflare KV email budget store (`lib/email/_budget.workers.ts`): the
+ * read/commit split, the TTL floor, fail-open on KV errors in both directions,
+ * and the warn-once missing-binding path. Mirrors
+ * `tests/email/sender-workers.test.ts`.
  */
 
 /** Recorded `put` call shape for assertions. */
@@ -18,7 +19,7 @@ const _putCalls: PutCall[] = [];
 let _kvThrows = false;
 
 const fakeKv = {
-  async get(key: string, _type: "text"): Promise<string | null> {
+  async get(key: string, _options: { type: "text" }): Promise<string | null> {
     if (_kvThrows) throw new Error("kv unavailable");
     return _kvData.get(key) ?? null;
   },
@@ -69,36 +70,60 @@ afterAll(() => {
   _ctxThrows = true;
 });
 
-test("consume counts up in KV and denies past max", async () => {
+test("committing writes the successor of the count that was read", async () => {
   const store = getPlatformBudgetStore()!;
-  expect(await store.consume("k", 3, 3600)).toBe(true);
-  expect(await store.consume("k", 3, 3600)).toBe(true);
-  expect(await store.consume("k", 3, 3600)).toBe(true);
-  expect(await store.consume("k", 3, 3600)).toBe(false);
+  for (let i = 0; i < 3; i++) {
+    const used = await store.read("k");
+    await store.commit("k", used, 3600);
+  }
+  expect(await store.read("k")).toBe(3);
   expect(_putCalls.map((c) => c.value)).toEqual(["1", "2", "3"]);
+});
+
+test("a read without a commit leaves the stored count alone", async () => {
+  // The property that stops a failed provider send from spending a
+  // recipient's allowance.
+  const store = getPlatformBudgetStore()!;
+  expect(await store.read("untouched")).toBe(0);
+  expect(await store.read("untouched")).toBe(0);
+  expect(_putCalls).toHaveLength(0);
 });
 
 test("windowSeconds below KV's minimum is clamped to the 60s TTL floor", async () => {
   const store = getPlatformBudgetStore()!;
-  await store.consume("short", 3, 30);
-  await store.consume("long", 3, 3600);
+  await store.commit("short", 0, 30);
+  await store.commit("long", 0, 3600);
   expect(_putCalls[0]?.options?.expirationTtl).toBe(60);
   expect(_putCalls[1]?.options?.expirationTtl).toBe(3600);
 });
 
-test("a garbage stored counter resets to zero instead of blocking sends", async () => {
+test("a garbage stored counter reads as zero instead of blocking sends", async () => {
   _kvData.set("junk", "not-a-number");
   const store = getPlatformBudgetStore()!;
-  expect(await store.consume("junk", 3, 3600)).toBe(true);
-  expect(_putCalls[0]?.value).toBe("1");
+  expect(await store.read("junk")).toBe(0);
 });
 
-test("a KV outage fails open and logs the structured event", async () => {
+test("a KV read outage reports no usage and logs the structured event", async () => {
   const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
   try {
     _kvThrows = true;
     const store = getPlatformBudgetStore()!;
-    expect(await store.consume("k", 3, 3600)).toBe(true);
+    expect(await store.read("k")).toBe(0);
+    const logged = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("email_budget_kv_op_failed");
+  } finally {
+    warnSpy.mockRestore();
+  }
+});
+
+test("a KV write outage is swallowed, so the mail still counts as sent", async () => {
+  // Concurrent sends to one address across POPs also land here: KV allows one
+  // write per second per key and rejects the rest.
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    _kvThrows = true;
+    const store = getPlatformBudgetStore()!;
+    await store.commit("k", 0, 3600);
     const logged = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(logged).toContain("email_budget_kv_op_failed");
   } finally {
