@@ -154,15 +154,10 @@ export async function requireNoteId(
 
 /**
  * Most distinct proposed tags compared against the existing vocabulary, per
- * request.
- *
- * The comparison is a cross product of two caller-supplied lists, so the pair
- * count needs a ceiling of its own even with each pair bounded. Hints steer an
- * agent's next call; the first few carry that signal, and a request proposing
- * more distinct tags than this has already stopped being a naming question.
- * Counting distinct tags rather than occurrences is what keeps a batched
- * create from spending the allowance on its first few items: agents reuse a
- * small vocabulary across a batch, so the distinct set stays far below the sum.
+ * request. The comparison is a cross product of two caller-supplied lists,
+ * so the pair count needs its own ceiling. Counted per distinct tag rather
+ * than per occurrence: agents reuse a small vocabulary across a batch, so
+ * the distinct set stays small while occurrences do not.
  */
 export const MAX_HINTED_TAGS = 25;
 

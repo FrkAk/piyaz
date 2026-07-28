@@ -81,12 +81,9 @@ const MAX_VARIANT_DISTANCE = 2;
 /**
  * Longest normalized tag the edit-distance check will look at.
  *
- * `levenshtein` fills an `a.length * b.length` matrix, and both operands are
- * caller-supplied: the proposed tags come straight off the request and the
- * existing vocabulary is whatever the same caller stored earlier. Edit
- * distance over strings this long is meaningless anyway, so an over-long tag
- * on either side skips that comparison and keeps the cheap equality and
- * prefix checks, which are linear and are the ones an agent acts on.
+ * `levenshtein` fills an `a.length * b.length` matrix over two
+ * caller-supplied operands. An over-long tag on either side skips only that
+ * comparison; the linear equality and prefix checks still run.
  */
 const MAX_VARIANT_COMPARE_LENGTH = 64;
 
