@@ -6,6 +6,7 @@ import { sendVerificationEmail } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
 import { TurnstileGate, useTurnstile } from "./TurnstileGate";
+import { turnstileFetchOptions } from "./turnstile-state";
 
 interface ResendVerificationFormProps {
   /** Session email when signed in; renders a free email input when null. */
@@ -48,8 +49,9 @@ export function ResendVerificationForm({
     : "/verify-email";
 
   /**
-   * Request a fresh verification link. Success and unknown-address both
-   * land in the neutral sent state; only rate limiting surfaces an error.
+   * Request a fresh verification link, acquiring the captcha token at
+   * submit time. Success and unknown-address both land in the neutral sent
+   * state; only rate limiting surfaces an error.
    *
    * @param event - The form submit event.
    */
@@ -57,15 +59,23 @@ export function ResendVerificationForm({
     event.preventDefault();
     if (status !== "idle") return;
     setError(null);
-    if (!turnstile.ready) {
-      setError(turnstile.blockedMessage);
-      return;
-    }
     setStatus("sending");
+
+    let fetchOptions: ReturnType<typeof turnstileFetchOptions>;
+    if (turnstile.enabled) {
+      const token = await turnstile.getToken();
+      if (token === null) {
+        setError(turnstile.blockedMessage());
+        setStatus("idle");
+        return;
+      }
+      fetchOptions = turnstileFetchOptions(token);
+    }
+
     const { error: authError } = await sendVerificationEmail({
       email: address,
       callbackURL,
-      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
+      ...(fetchOptions && { fetchOptions }),
     });
     if (authError) {
       turnstile.reset();
@@ -160,7 +170,11 @@ export function ResendVerificationForm({
         </p>
       ) : null}
 
-      <AuthSubmit isLoading={status === "sending"} disabled={status === "sent"}>
+      <AuthSubmit
+        isLoading={status === "sending"}
+        disabled={status === "sent"}
+        loadingLabel={turnstile.verifyingLabel}
+      >
         Send verification link
       </AuthSubmit>
       <TurnstileGate

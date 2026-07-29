@@ -6,6 +6,7 @@ import { signIn } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
 import { TurnstileGate, useTurnstile } from "./TurnstileGate";
+import { turnstileFetchOptions } from "./turnstile-state";
 
 interface SignInFormProps {
   /** Whether the deploy can deliver reset emails; gates the Forgot-password link. */
@@ -43,30 +44,37 @@ export function SignInForm({
   const [loading, setLoading] = useState(false);
 
   /**
-   * Submit credentials to Better Auth. A gated unverified account gets
-   * the check-your-inbox explanation (BA's `sendOnSignIn` fires a fresh
-   * verification link on the same blocked attempt); other errors surface
-   * the server-provided message inline. On success we hard-navigate to the
-   * destination so the app root loads as a fresh document: a soft push plus
-   * `router.refresh` raced the app-root RSC fetch and left the page blank.
+   * Submit credentials to Better Auth, acquiring the captcha token at
+   * submit time (the button shows the verifying label while the challenge
+   * resolves). A gated unverified account gets the check-your-inbox
+   * explanation (BA's `sendOnSignIn` fires a fresh verification link on the
+   * same blocked attempt); other errors surface the server-provided message
+   * inline. On success we hard-navigate to the destination so the app root
+   * loads as a fresh document: a soft push plus `router.refresh` raced the
+   * app-root RSC fetch and left the page blank.
    *
    * @param event - The form submit event.
    */
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-
-    if (!turnstile.ready) {
-      setError(turnstile.blockedMessage);
-      return;
-    }
-
     setLoading(true);
+
+    let fetchOptions: ReturnType<typeof turnstileFetchOptions>;
+    if (turnstile.enabled) {
+      const token = await turnstile.getToken();
+      if (token === null) {
+        setError(turnstile.blockedMessage());
+        setLoading(false);
+        return;
+      }
+      fetchOptions = turnstileFetchOptions(token);
+    }
 
     const { error: authError } = await signIn.email({
       email,
       password,
-      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
+      ...(fetchOptions && { fetchOptions }),
     });
 
     if (authError) {
@@ -140,7 +148,9 @@ export function SignInForm({
         </p>
       ) : null}
 
-      <AuthSubmit isLoading={loading}>Sign in</AuthSubmit>
+      <AuthSubmit isLoading={loading} loadingLabel={turnstile.verifyingLabel}>
+        Sign in
+      </AuthSubmit>
       <TurnstileGate
         siteKey={turnstileSiteKey}
         nonce={nonce}
