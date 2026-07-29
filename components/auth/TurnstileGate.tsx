@@ -239,14 +239,18 @@ export function TurnstileGate({
 
   useImperativeHandle(handleRef, () => ({
     reset: () => {
-      // Without a widget there is nothing to re-run, and flipping a terminal
-      // `unavailable` notice back to `pending` would hide the recovery UI.
-      if (widget.current === null) return;
-      widget.current.reset();
+      // Before any widget callback has fired there is nothing to re-run, and
+      // flipping a terminal `unavailable` notice back to `pending` would hide
+      // the recovery UI. Ref-nullness cannot gate this; see retry().
+      if (!settled.current) return;
+      widget.current?.reset();
       onReason("pending");
       armStallGuard();
     },
     getToken: async () => {
+      // Null only when Turnstile never rendered (`siteKey` null). A submit
+      // before the script loads keeps its wait; the watchdog's terminal race
+      // covers a script that never arrives.
       if (widget.current === null) return null;
       let release: (() => void) | undefined;
       const terminal = new Promise<null>((resolve) => {
@@ -284,16 +288,21 @@ export function TurnstileGate({
   }, [siteKey, onReason, settleWaits]);
 
   /**
-   * Re-run the challenge, falling back to a page reload when the script never
-   * loaded and there is no widget instance to reset.
+   * Re-run the challenge, falling back to a page reload when the widget
+   * never reported and there is nothing to re-run.
    */
   const retry = useCallback(() => {
-    if (widget.current === null) {
+    // `widget.current` is non-null from first commit even when the script
+    // never loads (the library returns the handle unconditionally), so ref
+    // nullness cannot detect a dead script. `settled` flips only in real
+    // widget callbacks; before that the library reset() only console.warns
+    // and a reload is the sole genuine re-attempt.
+    if (!settled.current) {
       window.location.reload();
       return;
     }
     onReason("pending");
-    widget.current.reset();
+    widget.current?.reset();
     armStallGuard();
   }, [onReason, armStallGuard]);
 
