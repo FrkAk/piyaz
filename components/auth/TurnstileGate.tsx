@@ -207,7 +207,9 @@ export function TurnstileGate({
    * `null`. Called on each transition to a terminal reason so a submit that
    * is already waiting reports the failure immediately instead of spending
    * the rest of its wait budget on a challenge the gate knows is dead
-   * (`getResponsePromise` has no cancellation API, so the race is ours).
+   * (`getResponsePromise` has no cancellation API, so the race is ours; the
+   * losing leg keeps polling at 100ms until the widget next reports solved,
+   * for the page's lifetime on a dead script, as harmless no-op work).
    */
   const settleWaits = useCallback(() => {
     for (const resolve of pendingWaits.current) resolve(null);
@@ -346,13 +348,22 @@ export function TurnstileGate({
             onReason("interactive");
           }}
           onExpire={() => {
-            // `refresh-expired` defaults to `auto`: the widget re-runs on its
-            // own, and a re-run that stalls must be caught like the first run.
+            // `refresh-expired` defaults to `auto`, so the widget re-runs on
+            // its own. The reset() is for the library, not the widget: success
+            // set react-turnstile's internal solved flag and expiry does not
+            // clear it, so until the refresh lands getResponsePromise rejects
+            // instantly ("No response received") instead of waiting. reset()
+            // clears the flag; worst case it duplicates one challenge run per
+            // expiry, converging on a single fresh token. A submit during the
+            // gap then waits normally, like any other pending run.
+            widget.current?.reset();
             onReason("pending");
             armStallGuard();
           }}
-          // The widget refreshes itself on timeout (`refresh-timeout` defaults
-          // to `auto`), so calling reset() here would race it.
+          // The widget refreshes itself on timeout too (`refresh-timeout`
+          // defaults to `auto`), and unlike expiry a timed-out run never
+          // minted a token, so there is no stale solved flag to clear: a
+          // reset() here would race the refresh and buy nothing.
           onTimeout={() => {
             onReason("pending");
             armStallGuard();
