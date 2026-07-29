@@ -200,6 +200,19 @@ export function TurnstileGate({
   const widget = useRef<TurnstileInstance | null>(null);
   const settled = useRef(false);
   const stallTimer = useRef<number | null>(null);
+  const pendingWaits = useRef<Set<(token: null) => void>>(new Set());
+
+  /**
+   * Resolve every in-flight {@link TurnstileHandle.getToken} wait with
+   * `null`. Called on each transition to a terminal reason so a submit that
+   * is already waiting reports the failure immediately instead of spending
+   * the rest of its wait budget on a challenge the gate knows is dead
+   * (`getResponsePromise` has no cancellation API, so the race is ours).
+   */
+  const settleWaits = useCallback(() => {
+    for (const resolve of pendingWaits.current) resolve(null);
+    pendingWaits.current.clear();
+  }, []);
 
   /** Stop the stalled-challenge timer, if armed. */
   const clearStallGuard = useCallback(() => {
@@ -216,11 +229,11 @@ export function TurnstileGate({
    */
   const armStallGuard = useCallback(() => {
     clearStallGuard();
-    stallTimer.current = window.setTimeout(
-      () => onReason("unavailable"),
-      CHALLENGE_WAIT_MS,
-    );
-  }, [clearStallGuard, onReason]);
+    stallTimer.current = window.setTimeout(() => {
+      onReason("unavailable");
+      settleWaits();
+    }, CHALLENGE_WAIT_MS);
+  }, [clearStallGuard, onReason, settleWaits]);
 
   useEffect(() => clearStallGuard, [clearStallGuard]);
 
@@ -235,13 +248,23 @@ export function TurnstileGate({
     },
     getToken: async () => {
       if (widget.current === null) return null;
+      let release: (() => void) | undefined;
+      const terminal = new Promise<null>((resolve) => {
+        pendingWaits.current.add(resolve);
+        release = () => pendingWaits.current.delete(resolve);
+      });
       try {
         // Rejections (`Timeout`, `No response received`, `Failed to get
         // response`) are message strings, not a stable API; every one means
         // the same thing to the form: no token.
-        return await widget.current.getResponsePromise(CHALLENGE_WAIT_MS);
-      } catch {
-        return null;
+        return await Promise.race([
+          widget.current
+            .getResponsePromise(CHALLENGE_WAIT_MS)
+            .catch(() => null),
+          terminal,
+        ]);
+      } finally {
+        release?.();
       }
     },
   }));
@@ -252,10 +275,13 @@ export function TurnstileGate({
   useEffect(() => {
     if (siteKey === null) return;
     const timer = window.setTimeout(() => {
-      if (!settled.current) onReason("unavailable");
+      if (!settled.current) {
+        onReason("unavailable");
+        settleWaits();
+      }
     }, SCRIPT_WATCHDOG_MS);
     return () => window.clearTimeout(timer);
-  }, [siteKey, onReason]);
+  }, [siteKey, onReason, settleWaits]);
 
   /**
    * Re-run the challenge, falling back to a page reload when the script never
@@ -326,11 +352,13 @@ export function TurnstileGate({
             settled.current = true;
             clearStallGuard();
             onReason("unsupported");
+            settleWaits();
           }}
           onError={() => {
             settled.current = true;
             clearStallGuard();
             onReason("unavailable");
+            settleWaits();
           }}
         />
       </div>
