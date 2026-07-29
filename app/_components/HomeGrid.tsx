@@ -6,6 +6,7 @@ import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { ProjectCard } from "@/components/home/ProjectCard";
 import { NewProjectButton } from "@/components/home/NewProjectButton";
 import { ContinueBanner } from "@/components/home/ContinueBanner";
+import { FirstRunPanel } from "@/components/home/FirstRunPanel";
 import { TeamFilterBar } from "@/components/home/TeamFilterBar";
 import { TeamChip } from "@/components/shared/TeamChip";
 import { roleHasProjectPermission } from "@/lib/auth/permissions";
@@ -107,10 +108,7 @@ export function HomeGrid({ teams }: HomeGridProps) {
       ) : null}
 
       {filteredProjects.length === 0 && projects.length === 0 ? (
-        <EmptyHint
-          title="No projects yet"
-          body="Projects start in your coding agent. Use New project above for setup commands."
-        />
+        <FirstRunPanel />
       ) : null}
 
       {filteredProjects.length === 0 && projects.length > 0 ? (
