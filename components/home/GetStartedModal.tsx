@@ -227,14 +227,16 @@ interface PathCardsProps {
 
 /**
  * The two ways into a project, start new or onboard an existing repo, as
- * side-by-side accent cards with the multi-team hint below.
+ * accent cards with the multi-team hint below. Columns follow the container
+ * width, so the cards sit side by side on the wide panel and stack inside
+ * the narrower modal.
  * @param props - Invocation prefix from the active harness tab.
- * @returns Path cards grid shared by both modal bodies.
+ * @returns Path cards grid shared by the panel guide and the modal.
  */
 function PathCards({ invocation = "/piyaz" }: PathCardsProps) {
   return (
-    <div className="space-y-2">
-      <div className="grid gap-2 sm:grid-cols-2">
+    <div className="@container space-y-2">
+      <div className="grid gap-2 @xl:grid-cols-2">
         {PATH_CARDS.map((card) => (
           <div
             key={card.label}
