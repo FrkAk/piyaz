@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPlatformBudgetStore } from "@/lib/email/_budget";
+import type { EmailBudgetStore } from "@/lib/email/budget-types";
 
 /**
  * Sends allowed per recipient address per template, per window.
@@ -23,6 +24,29 @@ export const EMAIL_BUDGET = {
 } as const;
 
 /**
+ * Minimum seconds between two sends of the same template to one address.
+ *
+ * An allowlist, not a default: only the templates an unauthenticated caller
+ * triggers on demand carry one. `/send-verification-email` and
+ * `/request-password-reset` both re-send to a caller-named address on every
+ * call, and the hourly cap alone still lets all three of an address's sends
+ * land within seconds, which empties the allowance a real user needs for a
+ * typo retry. The security notifications are deliberately absent: each follows
+ * a state change the account owner should always hear about, so suppressing a
+ * second one is worse than mailing twice. `teamInvite` is absent for the same
+ * reason its cap is raised, a colleague added to several teams at once being
+ * one legitimate burst.
+ *
+ * Values must stay at or above KV's 60s `expirationTtl` floor, which the
+ * Workers store clamps to; a shorter cooldown would silently become 60s there
+ * while behaving as written on self-host.
+ */
+const COOLDOWN_SECONDS: Readonly<Record<string, number>> = {
+  verification: 60,
+  passwordReset: 60,
+};
+
+/**
  * Sends allowed for one template per recipient per window.
  *
  * @param template - Template name, as passed to the delivery helper.
@@ -33,20 +57,46 @@ export function emailBudgetMax(template: string): number {
 }
 
 /**
- * Build the budget key for one recipient and template.
+ * Minimum gap enforced between two sends of one template to one address.
  *
- * The address is SHA-256 hashed so no recipient address is ever written to KV,
- * matching how `lib/api/rate-limit.ts` hashes bearer tokens before they reach
- * the rate-limit store. Keyed per template rather than per address alone, so a
- * sign-in notification cannot consume the verification-email budget and lock a
- * user out of a resend.
- *
- * @param to - Recipient address.
  * @param template - Template name, as passed to the delivery helper.
+ * @returns The cooldown in seconds, or `0` when the template has none.
+ */
+export function emailCooldownSeconds(template: string): number {
+  return COOLDOWN_SECONDS[template] ?? 0;
+}
+
+/**
+ * Build the hourly-budget key for one recipient digest and template.
+ *
+ * The address is SHA-256 hashed by the caller so no recipient address is ever
+ * written to KV, matching how `lib/api/rate-limit.ts` hashes bearer tokens
+ * before they reach the rate-limit store. Keyed per template rather than per
+ * address alone, so a sign-in notification cannot consume the verification-email
+ * budget and lock a user out of a resend.
+ *
+ * @param template - Template name, as passed to the delivery helper.
+ * @param digest - Hex digest of the recipient address.
  * @returns The opaque budget key.
  */
-async function budgetKey(to: string, template: string): Promise<string> {
-  return `emailbudget:${template}:${await recipientHex(to)}`;
+function budgetKey(template: string, digest: string): string {
+  return `emailbudget:${template}:${digest}`;
+}
+
+/**
+ * Build the cooldown key for one recipient digest and template.
+ *
+ * A separate key rather than a field on the budget counter: the marker's whole
+ * behavior is "exists until it expires", which the store already gives for free
+ * through the window TTL, so the counter's storage shape stays untouched on both
+ * runtimes.
+ *
+ * @param template - Template name, as passed to the delivery helper.
+ * @param digest - Hex digest of the recipient address.
+ * @returns The opaque cooldown key.
+ */
+function cooldownKey(template: string, digest: string): string {
+  return `emailcooldown:${template}:${digest}`;
 }
 
 /**
@@ -83,6 +133,45 @@ export interface EmailBudgetSlot {
 }
 
 /**
+ * Why a send was withheld. `cooldown` clears on its own within seconds;
+ * `budget` holds until the recipient's hourly window rolls over.
+ */
+export type EmailSendSuppression = "cooldown" | "budget";
+
+/** Outcome of a budget check: a granted slot, or why the send is withheld. */
+export type EmailSendDecision =
+  | { allowed: true; slot: EmailBudgetSlot }
+  | { allowed: false; reason: EmailSendSuppression };
+
+/**
+ * Apply both caps to one recipient and template.
+ *
+ * The single expression of the rule, so the reserving path and the read-only
+ * probe cannot drift. Checks the cooldown before the counter because it is the
+ * cheaper miss and the one that clears on its own.
+ *
+ * @param store - Resolved counter store.
+ * @param template - Template name, used to scope both caps.
+ * @param digest - Hex digest of the recipient address.
+ * @returns The suppression reason, or the observed send count when a send may
+ *   proceed.
+ */
+async function applyCaps(
+  store: EmailBudgetStore,
+  template: string,
+  digest: string,
+): Promise<{ reason: EmailSendSuppression } | { reason: null; used: number }> {
+  if (emailCooldownSeconds(template) > 0) {
+    if ((await store.read(cooldownKey(template, digest))) > 0) {
+      return { reason: "cooldown" };
+    }
+  }
+  const used = await store.read(budgetKey(template, digest));
+  if (used >= emailBudgetMax(template)) return { reason: "budget" };
+  return { reason: null, used };
+}
+
+/**
  * Claim a send slot for one auth email.
  *
  * Enforced at the delivery helper rather than in a Better Auth hook, because
@@ -101,20 +190,58 @@ export interface EmailBudgetSlot {
  * address.
  *
  * @param to - Recipient address.
- * @param template - Template name, used to scope the budget.
- * @returns A slot to commit after a successful send, or `null` when the
- *   recipient is already at their cap for this template.
+ * @param template - Template name, used to scope both caps.
+ * @returns A slot to commit after a successful send, or the reason the send is
+ *   withheld.
  */
 export async function reserveEmailBudget(
   to: string,
   template: string,
-): Promise<EmailBudgetSlot | null> {
+): Promise<EmailSendDecision> {
   const store = getPlatformBudgetStore();
-  if (store === null) return { async commit() {} };
-  const key = await budgetKey(to, template);
-  const used = await store.read(key);
-  if (used >= emailBudgetMax(template)) return null;
+  if (store === null) return { allowed: true, slot: { async commit() {} } };
+  const digest = await recipientHex(to);
+  const capped = await applyCaps(store, template, digest);
+  if (capped.reason !== null) return { allowed: false, reason: capped.reason };
+  const cooldown = emailCooldownSeconds(template);
   return {
-    commit: () => store.commit(key, used, EMAIL_BUDGET.windowSeconds),
+    allowed: true,
+    slot: {
+      commit: async () => {
+        await store.commit(
+          budgetKey(template, digest),
+          capped.used,
+          EMAIL_BUDGET.windowSeconds,
+        );
+        // Count is irrelevant for the marker; only its presence is read, and
+        // the window TTL is what expires the cooldown.
+        if (cooldown > 0) {
+          await store.commit(cooldownKey(template, digest), 0, cooldown);
+        }
+      },
+    },
   };
+}
+
+/**
+ * Read whether a send to this recipient would currently be withheld, without
+ * reserving anything.
+ *
+ * Exists so a caller who provably owns the address can be told the truth
+ * instead of receiving the neutral success the anti-enumeration path requires.
+ * Enforcement stays at the delivery helper; this only reports, and the two
+ * reads it costs land on that one honest-response path.
+ *
+ * @param to - Recipient address.
+ * @param template - Template name, used to scope both caps.
+ * @returns The suppression reason, or `null` when a send would go out now.
+ */
+export async function probeEmailSend(
+  to: string,
+  template: string,
+): Promise<EmailSendSuppression | null> {
+  const store = getPlatformBudgetStore();
+  if (store === null) return null;
+  const capped = await applyCaps(store, template, await recipientHex(to));
+  return capped.reason;
 }

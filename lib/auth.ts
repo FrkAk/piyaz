@@ -21,6 +21,7 @@ import {
 import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
+import { displayNameSchema } from "@/lib/auth/name-policy";
 import { PASSWORD_MAX, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { ACCESS_TOKEN_TTL_SECONDS } from "@/lib/auth/token-policy";
 import {
@@ -40,6 +41,7 @@ import {
   recipientDomain,
 } from "@/lib/auth/recipient-domain";
 import { isEmailConfiguredAtBoot } from "@/lib/email";
+import { probeEmailSend, type EmailSendSuppression } from "@/lib/email/budget";
 import {
   sendChangeEmailApprovalEmail,
   sendDeleteAccountEmail,
@@ -219,6 +221,19 @@ function captchaAllowedHostnames(): string[] | undefined {
  */
 const UNDELIVERABLE_DOMAIN_MESSAGE =
   "That email domain cannot receive mail. Check the address and try again.";
+
+/**
+ * What a signed-in caller is told when their own verification resend is
+ * withheld. Reached only by the owner of the address, so both messages may
+ * describe real state; the wording stays about their inbox rather than about
+ * the limits themselves.
+ */
+const RESEND_WITHHELD_MESSAGE: Record<EmailSendSuppression, string> = {
+  cooldown:
+    "A verification link is already on its way. Wait a minute before requesting another.",
+  budget:
+    "You have requested several verification links in the last hour. Use the most recent one, or try again later.",
+};
 
 if (IS_CLOUDFLARE && !process.env.BETTER_AUTH_URL) {
   throw new Error(
@@ -645,7 +660,7 @@ export function createAuth() {
           // skipping the client checkbox. `termsAccepted` is a transient consent
           // signal read off the request body; the durable evidence is the
           // `legal_acceptances` rows written in `after`.
-          before: async (_user, ctx) => {
+          before: async (user, ctx) => {
             const body = ctx?.body as { termsAccepted?: unknown } | undefined;
             if (body?.termsAccepted !== true) {
               throw new APIError("BAD_REQUEST", {
@@ -654,6 +669,19 @@ export function createAuth() {
                 code: "TERMS_NOT_ACCEPTED",
               });
             }
+            // Better Auth's sign-up body types `name` as a bare string, so
+            // "" and an unbounded value both reach here; `updateProfileAction`
+            // has always refused both, which left sign-up as the one way to
+            // land a name the profile form could no longer save. Returning the
+            // parsed value stores it trimmed, same as the profile path.
+            const name = displayNameSchema.safeParse(user.name);
+            if (!name.success) {
+              throw new APIError("BAD_REQUEST", {
+                message: name.error.issues[0]?.message ?? "Name is required",
+                code: "INVALID_NAME",
+              });
+            }
+            return { data: { name: name.data } };
           },
           // Persist compliance evidence: one `terms` and one `privacy` row, each
           // carrying the current LEGAL_VERSIONS version, timestamp, resolved IP,
@@ -759,6 +787,32 @@ export function createAuth() {
                 code: "EMAIL_DOMAIN_UNDELIVERABLE",
               });
             }
+          }
+          return;
+        }
+        // Tell a caller who provably owns the address that no mail went out.
+        // The delivery helper withholds a send that is inside the cooldown or
+        // past the hourly cap, but it runs after the endpoint has already
+        // answered 200, so the resend UI would otherwise promise a link that
+        // was never sent. Scoped to a session whose own unverified address is
+        // the one named: for anyone else the answer stays the neutral success
+        // that keeps this endpoint from confirming an address exists.
+        if (ctx.path === "/send-verification-email") {
+          const session = await getSessionFromCtx(ctx);
+          if (!session || session.user.emailVerified) return;
+          const target = (ctx.body as { email?: unknown } | undefined)?.email;
+          if (typeof target !== "string") return;
+          if (
+            session.user.email.toLowerCase() !== target.trim().toLowerCase()
+          ) {
+            return;
+          }
+          const withheld = await probeEmailSend(target, "verification");
+          if (withheld !== null) {
+            throw new APIError("TOO_MANY_REQUESTS", {
+              message: RESEND_WITHHELD_MESSAGE[withheld],
+              code: "VERIFICATION_EMAIL_WITHHELD",
+            });
           }
           return;
         }

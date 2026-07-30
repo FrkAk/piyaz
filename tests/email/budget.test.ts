@@ -37,9 +37,13 @@ mock.module("@/lib/email/_budget", () => ({
   __resetBudgetForTest,
 }));
 
-const { EMAIL_BUDGET, emailBudgetMax, reserveEmailBudget } = await import(
-  "@/lib/email/budget"
-);
+const {
+  EMAIL_BUDGET,
+  emailBudgetMax,
+  emailCooldownSeconds,
+  probeEmailSend,
+  reserveEmailBudget,
+} = await import("@/lib/email/budget");
 
 /**
  * Reserve a slot and immediately record the send, the shape a successful
@@ -47,14 +51,20 @@ const { EMAIL_BUDGET, emailBudgetMax, reserveEmailBudget } = await import(
  *
  * @param to - Recipient address.
  * @param template - Template name.
- * @returns `true` when the send was within budget.
+ * @returns `true` when the send went out.
  */
 async function sendOnce(to: string, template: string): Promise<boolean> {
-  const slot = await reserveEmailBudget(to, template);
-  if (slot === null) return false;
-  await slot.commit();
+  const decision = await reserveEmailBudget(to, template);
+  if (!decision.allowed) return false;
+  await decision.slot.commit();
   return true;
 }
+
+/**
+ * A template with no cooldown, so a test about the hourly cap can spend the
+ * whole allowance in one loop without the minimum gap deciding the outcome.
+ */
+const UNCOOLED = "newSignIn";
 
 beforeEach(() => __resetBudgetForTest());
 
@@ -67,6 +77,9 @@ test("the shipped caps are the ones the threat model was sized against", () => {
   // symbolically, so without this a cap of 1000 would pass the whole suite.
   expect(EMAIL_BUDGET.defaultMax).toBe(3);
   expect(EMAIL_BUDGET.windowSeconds).toBe(3600);
+  // At or above KV's expirationTtl floor, which the Workers store clamps to.
+  expect(emailCooldownSeconds("verification")).toBeGreaterThanOrEqual(60);
+  expect(emailCooldownSeconds("passwordReset")).toBeGreaterThanOrEqual(60);
 });
 
 test("team invitations carry a larger cap than the default", () => {
@@ -77,11 +90,66 @@ test("team invitations carry a larger cap than the default", () => {
   expect(emailBudgetMax("verification")).toBe(EMAIL_BUDGET.defaultMax);
 });
 
+test("templates whose sends follow a real state change carry no cooldown", async () => {
+  // A cooldown on these would suppress a second genuine alert, and on invites
+  // it would truncate the same legitimate burst the raised cap exists for.
+  expect(emailCooldownSeconds("teamInvite")).toBe(0);
+  expect(emailCooldownSeconds("newSignIn")).toBe(0);
+  expect(emailCooldownSeconds("passwordChanged")).toBe(0);
+  expect(await sendOnce("colleague@example.com", "teamInvite")).toBe(true);
+  expect(await sendOnce("colleague@example.com", "teamInvite")).toBe(true);
+});
+
 test("allows sends up to the budget, then drops", async () => {
   for (let i = 0; i < EMAIL_BUDGET.defaultMax; i++) {
-    expect(await sendOnce("user@example.com", "verification")).toBe(true);
+    expect(await sendOnce("user@example.com", UNCOOLED)).toBe(true);
   }
-  expect(await sendOnce("user@example.com", "verification")).toBe(false);
+  expect(await sendOnce("user@example.com", UNCOOLED)).toBe(false);
+});
+
+test("a second send inside the cooldown is withheld, and says why", async () => {
+  // The defect this closes: three sign-in attempts used to mail three links in
+  // seconds and empty the hour's allowance before the user read the first.
+  expect(await sendOnce("typo@example.com", "verification")).toBe(true);
+  const second = await reserveEmailBudget("typo@example.com", "verification");
+  expect(second.allowed).toBe(false);
+  if (second.allowed) throw new Error("expected the send to be withheld");
+  expect(second.reason).toBe("cooldown");
+});
+
+test("an exhausted budget is reported as budget, not as cooldown", async () => {
+  // Distinct reasons because the honest response words them differently: one
+  // clears in a minute, the other holds until the window rolls over. Driven
+  // through a store rather than by sending, because reaching a spent budget
+  // with a clear cooldown means waiting out the gap in real time.
+  _storeOverride = {
+    async read(key) {
+      return key.startsWith("emailcooldown:")
+        ? 0
+        : emailBudgetMax("verification");
+    },
+    async commit() {},
+  };
+  const decision = await reserveEmailBudget(
+    "spent@example.com",
+    "verification",
+  );
+  expect(decision.allowed).toBe(false);
+  if (decision.allowed) throw new Error("expected the send to be withheld");
+  expect(decision.reason).toBe("budget");
+});
+
+test("the probe reports the same verdict without spending the allowance", async () => {
+  // The honest-response path reads through this, so a probe that consumed a
+  // send would cost the user the very link the message tells them to wait for.
+  expect(await probeEmailSend("probe@example.com", "verification")).toBeNull();
+  expect(await sendOnce("probe@example.com", "verification")).toBe(true);
+  expect(await probeEmailSend("probe@example.com", "verification")).toBe(
+    "cooldown",
+  );
+  expect(await probeEmailSend("probe@example.com", "verification")).toBe(
+    "cooldown",
+  );
 });
 
 test("a reserved slot that is never committed leaves the budget untouched", async () => {
@@ -89,9 +157,11 @@ test("a reserved slot that is never committed leaves the budget untouched", asyn
   // provider must not burn the recipient's allowance. Three provider outages
   // would otherwise lock a real user out of verification for an hour.
   for (let i = 0; i < EMAIL_BUDGET.defaultMax + 5; i++) {
-    expect(
-      await reserveEmailBudget("flaky@example.com", "verification"),
-    ).not.toBeNull();
+    const decision = await reserveEmailBudget(
+      "flaky@example.com",
+      "verification",
+    );
+    expect(decision.allowed).toBe(true);
   }
   expect(await sendOnce("flaky@example.com", "verification")).toBe(true);
 });
@@ -113,43 +183,54 @@ test("window rollover restores the budget", async () => {
 
 test("budget is scoped per template, so one template cannot starve another", async () => {
   for (let i = 0; i < EMAIL_BUDGET.defaultMax; i++) {
-    expect(await sendOnce("user@example.com", "verification")).toBe(true);
+    expect(await sendOnce("user@example.com", UNCOOLED)).toBe(true);
   }
-  expect(await sendOnce("user@example.com", "verification")).toBe(false);
-  expect(await sendOnce("user@example.com", "new-sign-in")).toBe(true);
+  expect(await sendOnce("user@example.com", UNCOOLED)).toBe(false);
+  expect(await sendOnce("user@example.com", "verification")).toBe(true);
 });
 
 test("recipient address is normalized, so case and padding cannot mint a fresh budget", async () => {
   for (let i = 0; i < EMAIL_BUDGET.defaultMax; i++) {
-    await sendOnce("victim@example.com", "verification");
+    await sendOnce("victim@example.com", UNCOOLED);
   }
+  expect(await sendOnce("  Victim@Example.COM  ", UNCOOLED)).toBe(false);
+});
+
+test("the cooldown is keyed on the same normalized address as the budget", async () => {
+  // Otherwise a re-send with different padding would sail past the gap.
+  expect(await sendOnce("victim@example.com", "verification")).toBe(true);
   expect(await sendOnce("  Victim@Example.COM  ", "verification")).toBe(false);
 });
 
 test("distinct recipients hold independent budgets", async () => {
   for (let i = 0; i < EMAIL_BUDGET.defaultMax; i++) {
-    await sendOnce("one@example.com", "verification");
+    await sendOnce("one@example.com", UNCOOLED);
   }
-  expect(await sendOnce("one@example.com", "verification")).toBe(false);
-  expect(await sendOnce("two@example.com", "verification")).toBe(true);
+  expect(await sendOnce("one@example.com", UNCOOLED)).toBe(false);
+  expect(await sendOnce("two@example.com", UNCOOLED)).toBe(true);
 });
 
-test("the key handed to the store carries a digest, never the address", async () => {
+test("every key handed to the store carries a digest, never the address", async () => {
   const seen: string[] = [];
   _storeOverride = {
     async read(key) {
       seen.push(key);
       return 0;
     },
-    async commit() {},
+    async commit(key) {
+      seen.push(key);
+    },
   };
 
   await sendOnce("secret@example.com", "verification");
 
-  expect(seen).toHaveLength(1);
-  expect(seen[0]).not.toContain("secret@example.com");
-  expect(seen[0]).not.toContain("secret");
-  expect(seen[0]).toMatch(/^emailbudget:verification:[0-9a-f]{64}$/);
+  // Cooldown and budget, each read then committed.
+  expect(seen).toHaveLength(4);
+  for (const key of seen) {
+    expect(key).not.toContain("secret@example.com");
+    expect(key).not.toContain("secret");
+    expect(key).toMatch(/^email(budget|cooldown):verification:[0-9a-f]{64}$/);
+  }
 });
 
 test("no resolvable store fails open, so a counter outage never blocks verification", async () => {

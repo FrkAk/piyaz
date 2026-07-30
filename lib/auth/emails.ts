@@ -52,12 +52,14 @@ export interface SignInContext {
  * enrolled via `enrollEmailSend` so Workers cannot cancel it at response
  * return.
  *
- * Every send claims a slot in the recipient's per-template budget
+ * Every send claims a slot in the recipient's per-template budget and cooldown
  * (`reserveEmailBudget`) and commits it only once the provider accepts the
  * message, so a delivery failure never spends the recipient's allowance.
- * Over-budget sends are dropped and logged rather than surfaced as an error:
- * the caller has already returned, and an attacker flooding a victim must not
- * learn from the response that the cap exists.
+ * Withheld sends are dropped and logged rather than surfaced as an error: the
+ * caller has already returned, and an attacker flooding a victim must not learn
+ * from the response that the caps exist. The one caller who provably owns the
+ * address is told the truth instead, at the endpoint (see the
+ * `/send-verification-email` gate in `lib/auth.ts`).
  *
  * @param to - Recipient address.
  * @param template - Template name for the structured failure log and category.
@@ -79,12 +81,13 @@ function deliverAuthEmail(
   const { from, replyTo } = senderFor(senderKind, brand);
   const rendered = render(brand);
   const send = reserveEmailBudget(to, template)
-    .then(async (slot) => {
-      if (slot === null) {
+    .then(async (decision) => {
+      if (!decision.allowed) {
         console.warn(
           JSON.stringify({
-            event: "auth_email_budget_exceeded",
+            event: "auth_email_withheld",
             template,
+            reason: decision.reason,
             recipient: await recipientDigestForLog(to),
           }),
         );
@@ -101,7 +104,7 @@ function deliverAuthEmail(
         category: template,
       });
       // Only a delivered message spends the recipient's allowance.
-      if (result.kind === "ok") await slot.commit();
+      if (result.kind === "ok") await decision.slot.commit();
       return result;
     })
     .then((result) => {

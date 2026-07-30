@@ -25,13 +25,10 @@ import {
   planOwnedOrgDeletion,
   type AccountExport,
 } from "@/lib/data/account";
+import { displayNameSchema } from "@/lib/auth/name-policy";
 import { PASSWORD_MAX } from "@/lib/auth/password-policy";
 
-const NAME_MAX = 80;
-
-const updateProfileSchema = z.object({
-  name: z.string().trim().min(1, "Name is required").max(NAME_MAX),
-});
+const updateProfileSchema = z.object({ name: displayNameSchema });
 
 /**
  * Update the signed-in user's display name. Email changes go through

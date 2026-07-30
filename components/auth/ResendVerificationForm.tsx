@@ -27,7 +27,9 @@ interface ResendVerificationFormProps {
  * addresses (anti-enumeration), so the UI never branches on existence. A
  * signed-in already-verified caller's 400 `EMAIL_ALREADY_VERIFIED` maps
  * to a continue link instead. A 60s cooldown keeps the button quiet
- * under the server's 3/60 rate rule.
+ * under the server's 3/60 rate rule. A signed-in caller asking again for
+ * their own address gets a 429 carrying the reason no mail went out,
+ * which is why a server message wins over the generic 429 copy.
  *
  * @param props - Prefilled session email (or null) and return destination.
  * @returns Email form (or fixed-address form) with inline status strips.
@@ -84,9 +86,10 @@ export function ResendVerificationForm({
         return;
       }
       setError(
-        authError.status === 429
-          ? "Too many requests. Try again in a minute."
-          : (authError.message ?? "Could not send the email"),
+        authError.message ??
+          (authError.status === 429
+            ? "Too many requests. Try again in a minute."
+            : "Could not send the email"),
       );
       setStatus("idle");
       return;
