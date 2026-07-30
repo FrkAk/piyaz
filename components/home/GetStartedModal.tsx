@@ -262,8 +262,17 @@ function PathCards({ invocation = "/piyaz" }: PathCardsProps) {
             <p className="mt-1 text-xs leading-relaxed text-text-secondary">
               {card.body}
             </p>
-            <p className="mt-2 font-mono text-xs leading-relaxed text-text-primary">
-              {`❯ ${invocation} ${card.prompt}`}
+            <p className="mt-2 font-mono text-xs leading-relaxed">
+              <span className="text-text-faint">❯</span>{" "}
+              <span
+                className="font-semibold"
+                style={{ color: card.labelColor }}
+              >
+                {invocation}
+              </span>{" "}
+              <span className="italic tracking-[0.002em] text-text-secondary">
+                {card.prompt}
+              </span>
             </p>
           </div>
         ))}
@@ -277,9 +286,8 @@ function PathCards({ invocation = "/piyaz" }: PathCardsProps) {
 
 /**
  * First-run setup body: a tabbed install block for the four supported coding
- * agents, then the two project paths. Every harness's snippet and notes render
- * stacked in one grid cell with inactive tabs visibility-hidden, so the block
- * holds the tallest tab's height and switching never shifts the layout.
+ * agents, then the two project paths. The block takes each tab's natural
+ * height with a small floor so short snippets still read as a code block.
  * @param props - Target-specific install copy.
  * @returns First-time install instructions.
  */
@@ -290,11 +298,6 @@ function FirstTimeBody({ cliInstalls, docsSetupUrl }: FirstTimeBodyProps) {
 
   return (
     <>
-      <p className="text-sm leading-relaxed text-text-secondary">
-        Piyaz runs inside your coding agent, next to your code. Set it up once
-        below, then create every project by talking to your agent.
-      </p>
-
       <section className="space-y-1.5">
         <h3 className={SECTION_LABEL_CLASS}>01 · Install for your tool</h3>
         <div className="overflow-hidden rounded-lg border border-border bg-surface-raised">
@@ -315,41 +318,36 @@ function FirstTimeBody({ cliInstalls, docsSetupUrl }: FirstTimeBodyProps) {
               className="shrink-0"
             />
           </div>
-          <div className="grid">
-            {cliInstalls.map((cli) => (
-              <div
-                key={cli.name}
-                className={`col-start-1 row-start-1 flex flex-col ${
-                  cli.name === activeCli.name ? "" : "invisible"
-                }`}
-              >
-                <pre className="flex-1 overflow-x-auto p-3 font-mono text-xs leading-relaxed text-text-primary">
-                  <code>{cli.install}</code>
-                </pre>
-                <div className="space-y-1 border-t border-border px-3 py-2">
-                  <p className="text-xs leading-relaxed text-text-muted">
-                    {cli.setupNote}
-                  </p>
-                  {cli.followUp ? (
-                    <p className="text-xs leading-relaxed text-text-muted">
-                      <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-                        {cli.followUp.label} ·{" "}
-                      </span>
-                      {cli.followUp.text}
-                    </p>
-                  ) : null}
-                  <p className="text-xs leading-relaxed text-text-muted">
-                    <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-                      Verify ·{" "}
-                    </span>
-                    <span className="font-mono text-text-primary">
-                      {`❯ ${cli.invocation} List my projects`}
-                    </span>{" "}
-                    An empty list on a fresh account means the connection works.
-                  </p>
-                </div>
-              </div>
-            ))}
+          <pre className="min-h-20 overflow-x-auto p-3 font-mono text-xs leading-relaxed text-text-primary">
+            <code>{activeCli.install}</code>
+          </pre>
+          <div className="space-y-1 border-t border-border px-3 py-2">
+            <p className="text-xs leading-relaxed text-text-muted">
+              {activeCli.setupNote}
+            </p>
+            {activeCli.followUp ? (
+              <p className="text-xs leading-relaxed text-text-muted">
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+                  {activeCli.followUp.label} ·{" "}
+                </span>
+                {activeCli.followUp.text}
+              </p>
+            ) : null}
+            <p className="text-xs leading-relaxed text-text-muted">
+              <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+                Verify ·{" "}
+              </span>
+              <span className="font-mono">
+                <span className="text-text-faint">❯</span>{" "}
+                <span className="font-semibold text-accent-light">
+                  {activeCli.invocation}
+                </span>{" "}
+                <span className="italic tracking-[0.002em] text-text-secondary">
+                  List my projects
+                </span>
+              </span>{" "}
+              An empty list on a fresh account means the connection works.
+            </p>
           </div>
         </div>
       </section>

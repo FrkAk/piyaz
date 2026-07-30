@@ -1,27 +1,37 @@
 "use client";
 
 import { GetStartedGuide } from "@/components/home/GetStartedModal";
+import { IconSpark } from "@/components/shared/icons";
 
 /**
  * Guided first-run surface rendered in place of the project grid when the
- * signed-in user has zero projects. Inlines {@link GetStartedGuide} so the
- * setup path is the page itself instead of hiding behind the New project
- * button, adds a phones-only pointer to desktop, and closes the loop by
- * naming where the first project will appear.
+ * signed-in user has zero projects. Mirrors the MyTasksEmpty composition:
+ * layered dashed-ring badge, statement heading, and muted explainer above the
+ * inlined {@link GetStartedGuide}, with a phones-only callout pointing mobile
+ * signups to their computer.
  * @returns First-run panel for the empty home state.
  */
 export function FirstRunPanel() {
   return (
-    <div className="mx-auto mb-6 max-w-2xl rounded-xl border border-border bg-surface p-6 shadow-[var(--shadow-card)]">
-      <p className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-accent-light">
-        First project
-      </p>
-      <h2 className="mb-4 text-lg font-semibold tracking-tight text-text-primary">
-        Two steps to your first project
+    <section className="flex flex-col items-center gap-3.5 px-2 pt-8 pb-16 text-center sm:px-6">
+      <div aria-hidden="true" className="relative h-24 w-24 [&_*]:absolute">
+        <span className="inset-0 m-auto inline-flex h-[54px] w-[54px] items-center justify-center rounded-[14px] border border-border-strong bg-surface-raised text-accent-light shadow-[var(--shadow-card)]">
+          <IconSpark size={28} />
+        </span>
+        <span className="inset-0 m-auto h-[78px] w-[78px] rounded-full border border-dashed border-accent/25" />
+        <span className="inset-0 m-auto h-24 w-24 rounded-full border border-dashed border-border" />
+      </div>
+
+      <h2 className="text-[22px] font-semibold tracking-[-0.01em] text-text-primary">
+        No projects yet.
       </h2>
+      <p className="max-w-[460px] text-[13.5px] leading-[1.55] text-text-muted">
+        Projects start in your coding agent, next to your code. Set Piyaz up
+        once, then create every project by talking to your agent.
+      </p>
 
       <div
-        className="mb-4 rounded-lg border p-3 sm:hidden"
+        className="w-full max-w-md rounded-lg border p-3 text-left sm:hidden"
         style={{
           borderColor:
             "color-mix(in srgb, var(--color-accent-2) 18%, var(--color-border))",
@@ -38,14 +48,14 @@ export function FirstRunPanel() {
         </p>
       </div>
 
-      <div className="space-y-5">
+      <div className="mt-2 w-full max-w-3xl space-y-5 text-left">
         <GetStartedGuide />
-        <p className="text-xs leading-relaxed text-text-muted">
-          Your first project appears right here the moment your agent creates
-          it.
-        </p>
       </div>
-    </div>
+
+      <p className="mt-2 text-[12px] text-text-muted">
+        Your first project appears right here the moment your agent creates it.
+      </p>
+    </section>
   );
 }
 
