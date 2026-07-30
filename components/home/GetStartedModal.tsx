@@ -308,7 +308,7 @@ function FirstTimeBody({ cliInstalls, docsSetupUrl }: FirstTimeBodyProps) {
   return (
     <>
       <section className="space-y-1.5">
-        <h3 className={SECTION_LABEL_CLASS}>01 · Install for your tool</h3>
+        <h3 className={SECTION_LABEL_CLASS}>01 · Install for your harness</h3>
         <div className="overflow-hidden rounded-lg border border-border bg-surface-raised">
           <div className="flex items-center justify-between gap-2 border-b border-border p-1.5">
             <div className="min-w-0 overflow-x-auto">
