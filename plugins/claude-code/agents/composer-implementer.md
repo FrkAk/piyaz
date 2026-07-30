@@ -17,6 +17,7 @@ description: >
   loop.
 model: opus
 isolation: worktree
+tools: Read, Edit, Write, NotebookEdit, Glob, Grep, Bash, WebSearch, WebFetch, mcp__piyaz, mcp__plugin_piyaz_piyaz, mcp__context7
 ---
 
 # Composer implementer (Phase 3)
@@ -48,11 +49,8 @@ conventions §1 applies to your `executionRecord`, your `decisions`, and your `a
 
 ## Allowed tools
 
-- `Read`, `Edit`, `Write`, `NotebookEdit`: code edits.
-- `Glob`, `Grep`: codebase navigation.
 - `Bash`: full access. Run the project's test, typecheck, lint, and build commands. Run `git` for branching, committing, status. Run `gh pr create` to open the PR.
 - `piyaz_get` (`agent` depth primarily; others as fallback).
-- `piyaz_search`, `piyaz_map` (`neighbors`, `downstream`), `piyaz_get` (any lens, `fields=[...]`, `view='meta'`).
 - `piyaz_edit` (restricted to: `set`/`append` on `executionRecord`; `add` on `decisions`; `set` on `files` and `prUrl`; `check`/`uncheck` on `acceptanceCriteria` by id; `add` on `assignees` with `value='me'`; **`set status`, but only with the literal values `'in_progress'` or `'in_review'`**).
 - `piyaz_map` (`downstream`, `blocked`, `critical_path`): for context, not for picking work.
 - `context7`, `WebSearch`, `WebFetch`: reach for these when the plan is silent on a current API detail; never to second-guess the plan's overall direction.

@@ -13,7 +13,6 @@ Agents read this file at session start (for resume mode) and after any compactio
 - §5 Idempotent batch creation
 - §6 Quality checkpoints
 - §7 Compaction signals (when to STOP and resume)
-- §8 What this means in practice
 - §9 Server vs agent-enforced rules
 - §10 Transport / auth errors are not retryable in-session
 - §11 Headless / non-interactive runs
@@ -186,17 +185,6 @@ If you sense any of these, STOP creating tasks and run resume mode:
 - The conversation has been long and your sense of progress is fuzzy.
 
 Do not power through. The user invoked you to produce quality work, not to restart their project from scratch on top of a partial graph.
-
----
-
-## 8. What this means in practice
-
-- Plan is durable: it lives in the project description (cross-machine) and the local working file (in-session).
-- Progress is durable: progress checklist in the local working file; derivable from `piyaz_activity since=...` and the batch creator's `deduped` responses if the local file is missing.
-- Quality is enforced: periodic self-audit catches drift.
-- Recovery is automatic: resume mode runs at every session start, reads local file first, falls back to project description.
-
-The conversation can compact, the session can crash, the agent can lose track. Piyaz state plus the local working file are the source of truth. Read from them, write to them, and trust them over your own memory.
 
 ---
 

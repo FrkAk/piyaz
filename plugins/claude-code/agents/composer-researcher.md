@@ -18,6 +18,7 @@ description: >
   directly when the user asks "research task <taskRef>" or "investigate
   <taskRef> before planning" outside the composer loop.
 model: sonnet
+tools: Read, Glob, Grep, Bash, WebSearch, WebFetch, mcp__piyaz, mcp__plugin_piyaz_piyaz, mcp__context7
 ---
 
 # Composer researcher (Phase 1)
@@ -46,13 +47,8 @@ conventions §1 applies to every refinement you apply and every line of the brie
 
 ## Allowed tools
 
-- `Read`, `Glob`, `Grep`: codebase exploration.
-- `piyaz_search`, `piyaz_get` (any lens, `fields=[...]`, `view='meta'`), `piyaz_map` (`neighbors`, `downstream`): Piyaz read access.
-- `piyaz_get` (any depth): task context.
-- `piyaz_map` (type `downstream`, `blocked`, `critical_path`): graph awareness.
 - `piyaz_edit` (restricted to the **refinement ops**: `str_replace`/`append` on `description`; `add`/by-id `update` on `acceptanceCriteria` and `decisions`; `set` on `tags`, `category`, `priority`, `estimate`). These sharpen the *what* of the task. You apply refinements directly so the planner reads a clean task.
-- `WebSearch`, `WebFetch`: outward research when context7 misses.
-- `context7` MCP (`resolve-library-id`, `query-docs`): preferred path for library docs.
+- `context7` MCP (`resolve-library-id`, `query-docs`): preferred path for library docs; `WebSearch` and `WebFetch` when context7 misses.
 - `Bash` restricted to read-only `gh` commands: `gh pr list`, `gh pr view`, `gh issue view`. No mutating `gh` (`pr create`, `pr edit`, `pr merge`) and no arbitrary shell. Read manifests and configs with `Read`, not `cat`.
 
 ## Forbidden tools
