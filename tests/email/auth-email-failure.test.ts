@@ -106,8 +106,13 @@ test("an over-budget recipient stops reaching the transport", async () => {
     expect(fake.sent.length).toBe(EMAIL_BUDGET.defaultMax);
     const events = warnSpy.mock.calls
       .map((c) => String(c[0]))
-      .filter((line) => line.includes("auth_email_budget_exceeded"));
+      .filter((line) => line.includes("auth_email_withheld"));
     expect(events.length).toBe(2);
+    // This template carries no cooldown, so the cap is the only thing that
+    // can have stopped these two.
+    expect(events.every((line) => line.includes('"reason":"budget"'))).toBe(
+      true,
+    );
     // The structured event must not carry the recipient address.
     expect(events.join("\n")).not.toContain("flooded@test.local");
   } finally {

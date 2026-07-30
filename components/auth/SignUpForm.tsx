@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { sendVerificationEmail, signUp } from "@/lib/auth-client";
+import { NAME_MAX } from "@/lib/auth/name-policy";
 import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { IconMail } from "@/components/shared/icons";
 import { AuthInput } from "./AuthInput";
@@ -35,6 +36,13 @@ interface SignUpFormProps {
  * rides in the sign-up body so the server-side `user.create.before` gate
  * (`lib/auth.ts`) enforces the same rule against direct API calls.
  *
+ * The name is guarded twice for the same reason, and by neither the field's
+ * `required`: the form is `noValidate`, so browser constraint validation never
+ * runs. `maxLength` still caps typing (an input constraint rather than a
+ * validation one) and the submit path rejects a blank name, so neither an
+ * over-long nor an empty name spends a round trip or a captcha token. The
+ * `user.create.before` gate in `lib/auth.ts` owns the rule itself.
+ *
  * @param props - Verification-flow flag and optional return destination.
  * @returns Vertical form: name + email + password + consent + submit.
  */
@@ -52,9 +60,14 @@ export function SignUpForm({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
-  const [resendStatus, setResendStatus] = useState<"idle" | "sending" | "sent">(
-    "idle",
-  );
+  // `cooling` is the just-signed-up state: the sign-up already sent a link, so
+  // the server would withhold a resend for the same minute a click-through
+  // would report as sent. `sent` acknowledges a resend request; its strip
+  // asserts only that mail has been emailed, because the hourly cap can still
+  // withhold the send behind this path's neutral 200.
+  const [resendStatus, setResendStatus] = useState<
+    "idle" | "cooling" | "sending" | "sent"
+  >("idle");
 
   const callbackURL = next
     ? `/verify-email?next=${encodeURIComponent(next)}`
@@ -74,6 +87,11 @@ export function SignUpForm({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    if (name.trim().length === 0) {
+      setError("Enter your name.");
+      return;
+    }
 
     if (!termsAccepted) {
       setError("Accept the Terms of Service to continue.");
@@ -116,6 +134,8 @@ export function SignUpForm({
       // instead of replaying the spent token.
       turnstile.reset();
       setSentTo(email);
+      setResendStatus("cooling");
+      window.setTimeout(() => setResendStatus("idle"), 60_000);
       setLoading(false);
       return;
     }
@@ -126,8 +146,11 @@ export function SignUpForm({
   /**
    * Re-send the verification email to the address that just signed up,
    * preserving the `/verify-email` callback. The captcha token is acquired
-   * at click time. A 60s cooldown keeps the button quiet under the server's
-   * 3/60 rate rule.
+   * at click time. The 60s button cooldown mirrors the server's per-address
+   * minimum gap (`lib/email/budget.ts`), which withholds a closer send
+   * without saying so on this path: the endpoint answers unknown and
+   * already-verified addresses identically, so it cannot report a withheld
+   * send to a caller it has not authenticated.
    */
   async function handleResend() {
     if (sentTo === null || resendStatus !== "idle") return;
@@ -180,7 +203,8 @@ export function SignUpForm({
             role="status"
             className="rounded-md border border-border bg-base px-3 py-2 text-[12px] leading-relaxed text-text-secondary"
           >
-            A new link is on its way. You can request another in a minute.
+            A verification link has been emailed. Check your inbox, and wait a
+            minute before requesting another.
           </p>
         ) : null}
         {error ? (
@@ -207,7 +231,11 @@ export function SignUpForm({
               : "cursor-not-allowed text-text-faint"
           }`}
         >
-          {resendStatus === "sending" ? "Sending…" : "Resend email"}
+          {resendStatus === "sending"
+            ? "Sending…"
+            : resendStatus === "cooling"
+              ? "Resend available in a minute"
+              : "Resend email"}
         </button>
         <TurnstileGate
           siteKey={turnstileSiteKey}
@@ -225,6 +253,7 @@ export function SignUpForm({
         type="text"
         autoComplete="name"
         required
+        maxLength={NAME_MAX}
         value={name}
         onChange={(event) => setName(event.target.value)}
         placeholder="Your name"

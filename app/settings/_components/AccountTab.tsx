@@ -14,11 +14,10 @@ import {
   updateProfileAction,
 } from "@/lib/actions/profile";
 import { changePasswordAction } from "@/lib/actions/password";
+import { NAME_MAX } from "@/lib/auth/name-policy";
 import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { REVOCATION_LAG_HINT } from "@/lib/auth/token-policy";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
-
-const NAME_MAX = 80;
 
 /** Legal documents linked from the account tab, opened in a new tab. */
 const LEGAL_DOC_LINKS = [

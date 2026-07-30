@@ -47,8 +47,10 @@ export function SignInForm({
    * Submit credentials to Better Auth, acquiring the captcha token at
    * submit time (the button shows the verifying label while the challenge
    * resolves). A gated unverified account gets the check-your-inbox
-   * explanation (BA's `sendOnSignIn` fires a fresh verification link on the
-   * same blocked attempt); other errors surface the server-provided message
+   * explanation (BA's `sendOnSignIn` re-sends on the blocked attempt unless
+   * the per-recipient cooldown in `lib/email/budget.ts` withholds the
+   * duplicate, so the copy points at the existing link before promising a
+   * fresh one); other errors surface the server-provided message
    * inline. On success we hard-navigate to the destination so the app root
    * loads as a fresh document: a soft push plus `router.refresh` raced the
    * app-root RSC fetch and left the page blank.
@@ -80,7 +82,7 @@ export function SignInForm({
     if (authError) {
       setError(
         authError.code === "EMAIL_NOT_VERIFIED"
-          ? "Your email address isn’t verified yet. We’ve emailed you a new verification link. Check your inbox."
+          ? "Your email address isn’t verified yet. Check your inbox for the link we emailed you; if it’s been more than a minute, we’ve sent a fresh one."
           : (authError.message ?? "Sign in failed"),
       );
       setLoading(false);
