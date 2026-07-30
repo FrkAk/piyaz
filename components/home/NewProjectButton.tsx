@@ -5,22 +5,16 @@ import { Button } from "@/components/shared/Button";
 import { GetStartedModal } from "@/components/home/GetStartedModal";
 import { IconPlus } from "@/components/shared/icons";
 
-interface NewProjectButtonProps {
-  /** Switches the modal between first-time and returning copy. */
-  hasProjects: boolean;
-}
-
 /**
- * Primary CTA in the home-page header. Opens {@link GetStartedModal} where
- * the install / "talk to your agent" copy lives. Project creation itself
- * happens in the user's coding agent via MCP — the button is a pointer,
- * not a form. Sits in the header per DESIGN.md §5.2 rather than as a grid
- * placeholder so the project cards aren't interrupted by an empty slot.
+ * Primary CTA in the home-page header, rendered once the user has projects.
+ * Opens {@link GetStartedModal} with the "talk to your agent" copy. Project
+ * creation itself happens in the user's coding agent via MCP — the button is
+ * a pointer, not a form. The zero-project home hides it; FirstRunPanel
+ * carries the setup guide there.
  *
- * @param props - Button configuration.
  * @returns Secondary-variant button paired with the modal it triggers.
  */
-export function NewProjectButton({ hasProjects }: NewProjectButtonProps) {
+export function NewProjectButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -32,11 +26,7 @@ export function NewProjectButton({ hasProjects }: NewProjectButtonProps) {
       >
         New project
       </Button>
-      <GetStartedModal
-        open={open}
-        onClose={() => setOpen(false)}
-        hasProjects={hasProjects}
-      />
+      <GetStartedModal open={open} onClose={() => setOpen(false)} />
     </>
   );
 }
