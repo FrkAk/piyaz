@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.12](https://github.com/FrkAk/piyaz/compare/v0.4.11...v0.4.12) (2026-07-30)
+
+
+### Bug Fixes
+
+* guide first-run setup with harness tabs and inline panel ([#274](https://github.com/FrkAk/piyaz/issues/274)) ([423b58b](https://github.com/FrkAk/piyaz/commit/423b58b311208095d33eeb024b02612b3b05cc91))
+* recover auth submits from stalled turnstile challenges ([#273](https://github.com/FrkAk/piyaz/issues/273)) ([fad54ff](https://github.com/FrkAk/piyaz/commit/fad54ff64dcbc1430a489bfbdcff715146cb883b))
+* validate signup names and cool down verification mail ([#276](https://github.com/FrkAk/piyaz/issues/276)) ([5bb0d1b](https://github.com/FrkAk/piyaz/commit/5bb0d1bcd522bb6f46293c3358b7d13b33f895bd))
+
 ## [0.4.11](https://github.com/FrkAk/piyaz/compare/v0.4.10...v0.4.11) (2026-07-28)
 
 
