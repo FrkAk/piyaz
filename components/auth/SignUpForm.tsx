@@ -7,6 +7,7 @@ import { IconMail } from "@/components/shared/icons";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
 import { TurnstileGate, useTurnstile } from "./TurnstileGate";
+import { turnstileFetchOptions } from "./turnstile-state";
 
 interface SignUpFormProps {
   /** True when sign-up sends a verification email (email enabled AND the verification gate is on). */
@@ -60,12 +61,13 @@ export function SignUpForm({
     : "/verify-email";
 
   /**
-   * Create the account via Better Auth. Blocks until Terms are accepted,
-   * then sends `termsAccepted` in the body for the server gate. Errors
-   * render inline in the danger-tinted strip; on success either the
-   * check-your-email panel takes over (verification flow) or we hard-navigate
-   * to the destination so the app root loads as a fresh document and the
-   * membership gate takes over.
+   * Create the account via Better Auth, acquiring the captcha token at
+   * submit time (the button shows the verifying label while the challenge
+   * resolves). Blocks until Terms are accepted, then sends `termsAccepted`
+   * in the body for the server gate. Errors render inline in the
+   * danger-tinted strip; on success either the check-your-email panel takes
+   * over (verification flow) or we hard-navigate to the destination so the
+   * app root loads as a fresh document and the membership gate takes over.
    *
    * @param event - The form submit event.
    */
@@ -78,19 +80,26 @@ export function SignUpForm({
       return;
     }
 
-    if (!turnstile.ready) {
-      setError(turnstile.blockedMessage);
-      return;
+    setLoading(true);
+
+    let fetchOptions: ReturnType<typeof turnstileFetchOptions>;
+    if (turnstile.enabled) {
+      const token = await turnstile.getToken();
+      if (token === null) {
+        setError(turnstile.blockedMessage());
+        setLoading(false);
+        return;
+      }
+      fetchOptions = turnstileFetchOptions(token);
     }
 
-    setLoading(true);
     const payload = {
       name,
       email,
       password,
       termsAccepted,
       callbackURL,
-      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
+      ...(fetchOptions && { fetchOptions }),
     };
     const { error: authError } = await signUp.email(payload);
 
@@ -116,21 +125,30 @@ export function SignUpForm({
 
   /**
    * Re-send the verification email to the address that just signed up,
-   * preserving the `/verify-email` callback. A 60s cooldown keeps the
-   * button quiet under the server's 3/60 rate rule.
+   * preserving the `/verify-email` callback. The captcha token is acquired
+   * at click time. A 60s cooldown keeps the button quiet under the server's
+   * 3/60 rate rule.
    */
   async function handleResend() {
     if (sentTo === null || resendStatus !== "idle") return;
     setError(null);
-    if (!turnstile.ready) {
-      setError(turnstile.blockedMessage);
-      return;
-    }
     setResendStatus("sending");
+
+    let fetchOptions: ReturnType<typeof turnstileFetchOptions>;
+    if (turnstile.enabled) {
+      const token = await turnstile.getToken();
+      if (token === null) {
+        setError(turnstile.blockedMessage());
+        setResendStatus("idle");
+        return;
+      }
+      fetchOptions = turnstileFetchOptions(token);
+    }
+
     const { error: resendError } = await sendVerificationEmail({
       email: sentTo,
       callbackURL,
-      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
+      ...(fetchOptions && { fetchOptions }),
     });
     if (resendError) {
       setError(resendError.message ?? "Could not resend the email");
@@ -307,7 +325,9 @@ export function SignUpForm({
         </p>
       ) : null}
 
-      <AuthSubmit isLoading={loading}>Create account</AuthSubmit>
+      <AuthSubmit isLoading={loading} loadingLabel={turnstile.verifyingLabel}>
+        Create account
+      </AuthSubmit>
       <TurnstileGate
         siteKey={turnstileSiteKey}
         nonce={nonce}

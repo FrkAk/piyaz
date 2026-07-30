@@ -3,31 +3,29 @@ import {
   CAPTCHA_RESPONSE_HEADER,
   TURNSTILE_UNAVAILABLE_NOTICE,
   TURNSTILE_UNSUPPORTED_NOTICE,
+  TURNSTILE_VERIFYING_LABEL,
   turnstileBlockedMessage,
   turnstileFetchOptions,
-  turnstileReady,
+  turnstileTerminal,
 } from "@/components/auth/turnstile-state";
 
 /**
  * Decision surface shared by every captcha-protected auth form.
  *
  * Extracted from the `useTurnstile` hook so it can be tested without a DOM,
- * matching how the rest of `tests/ui` covers client behavior. These three
- * functions carry the whole security-relevant contract: whether a form may
- * submit, and what reaches the wire when it does.
+ * matching how the rest of `tests/ui` covers client behavior. These
+ * functions carry the whole security-relevant contract: when submit-time
+ * acquisition may wait, and what reaches the wire when it resolves.
  */
 
-test("a form with Turnstile configured cannot submit without a token", () => {
-  // Fail closed. Failing open here would let anyone bypass the captcha by
-  // blocking the script, which is the one thing this gate exists to prevent.
-  expect(turnstileReady("0x4AAA", null)).toBe(false);
-  expect(turnstileReady("0x4AAA", "tok")).toBe(true);
-});
-
-test("a deployment without Turnstile submits exactly as before", () => {
-  // Self-host runs with no site key and must keep its original behavior.
-  expect(turnstileReady(null, null)).toBe(true);
-  expect(turnstileReady(null, "tok")).toBe(true);
+test("terminal reasons refuse immediately instead of waiting", () => {
+  // Fail closed without spending the wait budget: unavailable and unsupported
+  // cannot resolve by waiting, so submit-time acquisition returns null at
+  // once. Pending and interactive can resolve, so the widget gets its wait.
+  expect(turnstileTerminal("unavailable")).toBe(true);
+  expect(turnstileTerminal("unsupported")).toBe(true);
+  expect(turnstileTerminal("pending")).toBe(false);
+  expect(turnstileTerminal("interactive")).toBe(false);
 });
 
 test("the token travels in the header Better Auth reads it from", () => {
@@ -45,12 +43,42 @@ test("no token means no fetch options, so nothing empty reaches the wire", () =>
 
 test("each blocked reason gets its own message", () => {
   const pending = turnstileBlockedMessage("pending");
+  const interactive = turnstileBlockedMessage("interactive");
   const unavailable = turnstileBlockedMessage("unavailable");
   const unsupported = turnstileBlockedMessage("unsupported");
-  expect(new Set([pending, unavailable, unsupported]).size).toBe(3);
+  expect(new Set([pending, interactive, unavailable, unsupported]).size).toBe(
+    4,
+  );
   // An unsupported browser is terminal: retrying re-runs the same detection,
   // so the copy must not promise that waiting or retrying helps.
   expect(unsupported.toLowerCase()).toContain("browser");
+});
+
+test("pending copy never instructs completing an invisible widget", () => {
+  // The original dead end: "Complete the verification" while nothing was on
+  // screen. Pending means the background run is still working; only the
+  // escalated state may point the visitor at the widget.
+  expect(turnstileBlockedMessage("pending").toLowerCase()).not.toContain(
+    "complete",
+  );
+  expect(turnstileBlockedMessage("interactive").toLowerCase()).toContain(
+    "complete",
+  );
+  expect(turnstileBlockedMessage("interactive").toLowerCase()).toContain(
+    "below",
+  );
+});
+
+test("the verifying label is progress copy, not refusal copy", () => {
+  const reasons = [
+    "pending",
+    "interactive",
+    "unavailable",
+    "unsupported",
+  ] as const;
+  for (const reason of reasons) {
+    expect(TURNSTILE_VERIFYING_LABEL).not.toBe(turnstileBlockedMessage(reason));
+  }
 });
 
 test("the strip above the button and the notice below it do not repeat each other", () => {
