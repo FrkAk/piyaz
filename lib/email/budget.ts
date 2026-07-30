@@ -147,8 +147,14 @@ export type EmailSendDecision =
  * Apply both caps to one recipient and template.
  *
  * The single expression of the rule, so the reserving path and the read-only
- * probe cannot drift. Checks the cooldown before the counter because it is the
- * cheaper miss and the one that clears on its own.
+ * probe cannot drift.
+ *
+ * The counter is checked first so the reported reason is always the
+ * longer-lived one. Both caps hold at once for the minute after a recipient's
+ * third send, and a caller told to wait a minute there would come back to a
+ * budget that stays spent for the rest of the hour. Ordering costs nothing on
+ * the path that matters: the counter read supplies `used`, which a granted send
+ * needs anyway, so only a cooling-down caller pays the second read.
  *
  * @param store - Resolved counter store.
  * @param template - Template name, used to scope both caps.
@@ -161,13 +167,13 @@ async function applyCaps(
   template: string,
   digest: string,
 ): Promise<{ reason: EmailSendSuppression } | { reason: null; used: number }> {
+  const used = await store.read(budgetKey(template, digest));
+  if (used >= emailBudgetMax(template)) return { reason: "budget" };
   if (emailCooldownSeconds(template) > 0) {
     if ((await store.read(cooldownKey(template, digest))) > 0) {
       return { reason: "cooldown" };
     }
   }
-  const used = await store.read(budgetKey(template, digest));
-  if (used >= emailBudgetMax(template)) return { reason: "budget" };
   return { reason: null, used };
 }
 

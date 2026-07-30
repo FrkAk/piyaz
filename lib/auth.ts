@@ -21,7 +21,7 @@ import {
 import { TEAM_ACTION_MESSAGES } from "@/lib/actions/team-errors";
 import { clearUserOAuthArtifacts } from "@/lib/data/oauth-session";
 import { ac, owner, admin, member as memberRole } from "@/lib/auth/permissions";
-import { displayNameSchema } from "@/lib/auth/name-policy";
+import { NAME_ERROR, normalizeDisplayName } from "@/lib/auth/name-policy";
 import { PASSWORD_MAX, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { ACCESS_TOKEN_TTL_SECONDS } from "@/lib/auth/token-policy";
 import {
@@ -673,15 +673,15 @@ export function createAuth() {
             // "" and an unbounded value both reach here; `updateProfileAction`
             // has always refused both, which left sign-up as the one way to
             // land a name the profile form could no longer save. Returning the
-            // parsed value stores it trimmed, same as the profile path.
-            const name = displayNameSchema.safeParse(user.name);
-            if (!name.success) {
+            // normalized value stores it trimmed, same as the profile path.
+            const name = normalizeDisplayName(user.name);
+            if (name === null) {
               throw new APIError("BAD_REQUEST", {
-                message: name.error.issues[0]?.message ?? "Name is required",
+                message: NAME_ERROR,
                 code: "INVALID_NAME",
               });
             }
-            return { data: { name: name.data } };
+            return { data: { name } };
           },
           // Persist compliance evidence: one `terms` and one `privacy` row, each
           // carrying the current LEGAL_VERSIONS version, timestamp, resolved IP,

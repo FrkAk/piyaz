@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { sendVerificationEmail, signUp } from "@/lib/auth-client";
+import { NAME_MAX } from "@/lib/auth/name-policy";
 import { PASSWORD_HINT, PASSWORD_MIN } from "@/lib/auth/password-policy";
 import { IconMail } from "@/components/shared/icons";
 import { AuthInput } from "./AuthInput";
@@ -35,10 +36,12 @@ interface SignUpFormProps {
  * rides in the sign-up body so the server-side `user.create.before` gate
  * (`lib/auth.ts`) enforces the same rule against direct API calls.
  *
- * The name is checked in the submit path for the same reason, not by the
- * field's `required`: the form is `noValidate`, so browser constraint
- * validation never runs. The same `user.create.before` gate owns the rule,
- * and checking here spends neither a round trip nor a captcha token.
+ * The name is guarded twice for the same reason, and by neither the field's
+ * `required`: the form is `noValidate`, so browser constraint validation never
+ * runs. `maxLength` still caps typing (an input constraint rather than a
+ * validation one) and the submit path rejects a blank name, so neither an
+ * over-long nor an empty name spends a round trip or a captcha token. The
+ * `user.create.before` gate in `lib/auth.ts` owns the rule itself.
  *
  * @param props - Verification-flow flag and optional return destination.
  * @returns Vertical form: name + email + password + consent + submit.
@@ -248,6 +251,7 @@ export function SignUpForm({
         type="text"
         autoComplete="name"
         required
+        maxLength={NAME_MAX}
         value={name}
         onChange={(event) => setName(event.target.value)}
         placeholder="Your name"

@@ -117,16 +117,14 @@ test("a second send inside the cooldown is withheld, and says why", async () => 
   expect(second.reason).toBe("cooldown");
 });
 
-test("an exhausted budget is reported as budget, not as cooldown", async () => {
-  // Distinct reasons because the honest response words them differently: one
-  // clears in a minute, the other holds until the window rolls over. Driven
-  // through a store rather than by sending, because reaching a spent budget
-  // with a clear cooldown means waiting out the gap in real time.
+test("a caller under both caps hears the longer-lived one", async () => {
+  // The state every recipient lands in for the minute after their third send.
+  // Reporting the cooldown there would tell them to wait a minute when the
+  // budget stays spent for the rest of the hour. Driven through a store rather
+  // than by sending, because reproducing it live means waiting out the gap.
   _storeOverride = {
-    async read(key) {
-      return key.startsWith("emailcooldown:")
-        ? 0
-        : emailBudgetMax("verification");
+    async read() {
+      return emailBudgetMax("verification");
     },
     async commit() {},
   };
@@ -137,6 +135,14 @@ test("an exhausted budget is reported as budget, not as cooldown", async () => {
   expect(decision.allowed).toBe(false);
   if (decision.allowed) throw new Error("expected the send to be withheld");
   expect(decision.reason).toBe("budget");
+});
+
+test("password reset carries the cooldown too, not just verification", async () => {
+  // Same shape of endpoint: unauthenticated, re-sends to a caller-named address
+  // on every call. A cooldown on only one of the two leaves the other floodable
+  // up to its hourly cap in a single burst.
+  expect(await sendOnce("forgot@example.com", "passwordReset")).toBe(true);
+  expect(await sendOnce("forgot@example.com", "passwordReset")).toBe(false);
 });
 
 test("the probe reports the same verdict without spending the allowance", async () => {

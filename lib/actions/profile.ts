@@ -25,10 +25,19 @@ import {
   planOwnedOrgDeletion,
   type AccountExport,
 } from "@/lib/data/account";
-import { displayNameSchema } from "@/lib/auth/name-policy";
+import { NAME_ERROR, normalizeDisplayName } from "@/lib/auth/name-policy";
 import { PASSWORD_MAX } from "@/lib/auth/password-policy";
 
-const updateProfileSchema = z.object({ name: displayNameSchema });
+const updateProfileSchema = z.object({
+  name: z.string().transform((value, ctx) => {
+    const normalized = normalizeDisplayName(value);
+    if (normalized === null) {
+      ctx.addIssue({ code: "custom", message: NAME_ERROR });
+      return z.NEVER;
+    }
+    return normalized;
+  }),
+});
 
 /**
  * Update the signed-in user's display name. Email changes go through
