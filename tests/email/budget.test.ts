@@ -158,6 +158,27 @@ test("the probe reports the same verdict without spending the allowance", async 
   );
 });
 
+test("the probe never writes the store", async () => {
+  // The behavioral test above cannot see a probe that spends the counter: a
+  // used count of 1 of 3 still lets the send through and later probes still
+  // report the cooldown. Pinned structurally instead.
+  const ops: string[] = [];
+  _storeOverride = {
+    async read(key) {
+      ops.push(`read:${key}`);
+      return 0;
+    },
+    async commit(key) {
+      ops.push(`commit:${key}`);
+    },
+  };
+
+  expect(await probeEmailSend("probe@example.com", "verification")).toBeNull();
+
+  expect(ops).toHaveLength(2);
+  expect(ops.every((op) => op.startsWith("read:"))).toBe(true);
+});
+
 test("a reserved slot that is never committed leaves the budget untouched", async () => {
   // The whole point of splitting reserve from commit: a send that fails at the
   // provider must not burn the recipient's allowance. Three provider outages

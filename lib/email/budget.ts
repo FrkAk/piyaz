@@ -39,7 +39,11 @@ export const EMAIL_BUDGET = {
  *
  * Values must stay at or above KV's 60s `expirationTtl` floor, which the
  * Workers store clamps to; a shorter cooldown would silently become 60s there
- * while behaving as written on self-host.
+ * while behaving as written on self-host. On Workers the marker also rides
+ * KV's edge caches, so a retry through another POP can miss it for up to its
+ * own lifetime; same-POP retries observe their write, and the hourly cap
+ * bounds the total. Same abuse-damper semantics as the counter
+ * (`_budget.workers.ts`); self-host's in-memory store is exact.
  */
 const COOLDOWN_SECONDS: Readonly<Record<string, number>> = {
   verification: 60,

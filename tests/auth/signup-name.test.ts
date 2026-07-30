@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { auth } from "@/lib/auth";
-import { NAME_MAX } from "@/lib/auth/name-policy";
+import { NAME_ERROR, NAME_MAX } from "@/lib/auth/name-policy";
 import { truncateAll } from "@/tests/setup/schema";
 import { superuserPool } from "@/tests/setup/global";
 
@@ -52,7 +52,7 @@ test("signup with an empty name is rejected and writes no user", async () => {
 
   await expect(
     auth.api.signUpEmail({ body: signUpBody(email, "") }),
-  ).rejects.toThrow();
+  ).rejects.toThrow(NAME_ERROR);
 
   expect(await findUserName(email)).toBeUndefined();
 });
@@ -62,7 +62,18 @@ test("signup with a whitespace-only name is rejected", async () => {
 
   await expect(
     auth.api.signUpEmail({ body: signUpBody(email, "   \t  ") }),
-  ).rejects.toThrow();
+  ).rejects.toThrow(NAME_ERROR);
+
+  expect(await findUserName(email)).toBeUndefined();
+});
+
+test("signup with a visually-empty name is rejected", async () => {
+  const email = "invisible-name@test.local";
+  const zeroWidthOnly = "\u200B\u200B\u200D";
+
+  await expect(
+    auth.api.signUpEmail({ body: signUpBody(email, zeroWidthOnly) }),
+  ).rejects.toThrow(NAME_ERROR);
 
   expect(await findUserName(email)).toBeUndefined();
 });
@@ -72,7 +83,7 @@ test("signup with a name past the maximum is rejected", async () => {
 
   await expect(
     auth.api.signUpEmail({ body: signUpBody(email, "a".repeat(NAME_MAX + 1)) }),
-  ).rejects.toThrow();
+  ).rejects.toThrow(NAME_ERROR);
 
   expect(await findUserName(email)).toBeUndefined();
 });
