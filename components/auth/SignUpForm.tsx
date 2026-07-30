@@ -62,8 +62,9 @@ export function SignUpForm({
   const [sentTo, setSentTo] = useState<string | null>(null);
   // `cooling` is the just-signed-up state: the sign-up already sent a link, so
   // the server would withhold a resend for the same minute a click-through
-  // would report as sent. `sent` additionally confirms a resend the user asked
-  // for.
+  // would report as sent. `sent` acknowledges a resend request; its strip
+  // asserts only that mail has been emailed, because the hourly cap can still
+  // withhold the send behind this path's neutral 200.
   const [resendStatus, setResendStatus] = useState<
     "idle" | "cooling" | "sending" | "sent"
   >("idle");
@@ -202,7 +203,8 @@ export function SignUpForm({
             role="status"
             className="rounded-md border border-border bg-base px-3 py-2 text-[12px] leading-relaxed text-text-secondary"
           >
-            A new link is on its way. You can request another in a minute.
+            A verification link has been emailed. Check your inbox, and wait a
+            minute before requesting another.
           </p>
         ) : null}
         {error ? (

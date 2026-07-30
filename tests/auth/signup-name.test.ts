@@ -88,6 +88,15 @@ test("signup with a name past the maximum is rejected", async () => {
   expect(await findUserName(email)).toBeUndefined();
 });
 
+test("signup accepts a name of exactly the maximum length", async () => {
+  const email = "max-name@test.local";
+  const name = "a".repeat(NAME_MAX);
+
+  await auth.api.signUpEmail({ body: signUpBody(email, name) });
+
+  expect(await findUserName(email)).toBe(name);
+});
+
 test("signup stores the name trimmed, matching the profile path", async () => {
   const email = "padded-name@test.local";
 

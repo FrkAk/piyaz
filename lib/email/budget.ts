@@ -218,16 +218,21 @@ export async function reserveEmailBudget(
     allowed: true,
     slot: {
       commit: async () => {
-        await store.commit(
-          budgetKey(template, digest),
-          capped.used,
-          EMAIL_BUDGET.windowSeconds,
-        );
+        const writes = [
+          store.commit(
+            budgetKey(template, digest),
+            capped.used,
+            EMAIL_BUDGET.windowSeconds,
+          ),
+        ];
         // Count is irrelevant for the marker; only its presence is read, and
-        // the window TTL is what expires the cooldown.
+        // the window TTL is what expires the cooldown. Written alongside the
+        // counter rather than after it: the keys are independent, neither
+        // store throws, and no reader depends on one landing first.
         if (cooldown > 0) {
-          await store.commit(cooldownKey(template, digest), 0, cooldown);
+          writes.push(store.commit(cooldownKey(template, digest), 0, cooldown));
         }
+        await Promise.all(writes);
       },
     },
   };
