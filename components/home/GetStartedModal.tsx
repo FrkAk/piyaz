@@ -146,11 +146,15 @@ interface PathCard {
   prompt: string;
   hue: string;
   labelColor: string;
+  /** Renders the single pulsing terminal cursor after the prompt. */
+  showCursor?: boolean;
 }
 
 /**
  * The two ways into a project, split across the brand gradient's ends:
- * clay for starting from nothing, sage for growing an existing repo.
+ * clay for starting from nothing, sage for growing an existing repo. Only
+ * the primary card carries the cursor so the surface has one live element,
+ * matching the MyTasksEmpty prompt line.
  */
 const PATH_CARDS: readonly PathCard[] = [
   {
@@ -160,6 +164,7 @@ const PATH_CARDS: readonly PathCard[] = [
       "I want to build Poof, a to-do list where tasks vanish when they get no attention. Let's brainstorm together and create Poof",
     hue: "var(--color-accent)",
     labelColor: "var(--color-accent-light)",
+    showCursor: true,
   },
   {
     label: "Bring a repo",
@@ -273,6 +278,15 @@ function PathCards({ invocation = "/piyaz" }: PathCardsProps) {
               <span className="italic tracking-[0.002em] text-text-secondary">
                 {card.prompt}
               </span>
+              {card.showCursor ? (
+                <span
+                  aria-hidden="true"
+                  className="ml-1 animate-pulse"
+                  style={{ color: card.labelColor }}
+                >
+                  ▌
+                </span>
+              ) : null}
             </p>
           </div>
         ))}
