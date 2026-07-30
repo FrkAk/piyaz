@@ -108,6 +108,9 @@ test("self-host snippets substitute the instance origin into every endpoint", as
   expect(getCliInstalls("", "http://localhost:3000")).toEqual(
     getCliInstalls(""),
   );
+  expect(getCliInstalls("cloudflare", "https://piyaz.example.com")).toEqual(
+    getCliInstalls("cloudflare"),
+  );
 });
 
 test("follow-up notes cover auto-update and the skills installs", async () => {

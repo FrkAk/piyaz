@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "motion/react";
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useId } from "react";
 
 interface Tab {
   id: string;
@@ -32,7 +32,9 @@ interface TabSwitcherProps {
  *
  * Designed to match the prototype's segmented buttons; pairs `surface-raised` with the
  * accent gradient on the active tab indicator. Use {@link import('./ViewTabs').ViewTabs}
- * when a sub-page navigation with an underline is desired instead.
+ * when a sub-page navigation with an underline is desired instead. The
+ * indicator's motion layout id is scoped per instance so switchers mounted on
+ * the same page never share indicator animations.
  *
  * @param props - Tab switcher configuration.
  * @returns A styled tab switcher element.
@@ -45,6 +47,7 @@ export function TabSwitcher({
   stretch,
   className = "",
 }: TabSwitcherProps) {
+  const instanceId = useId();
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
   const handleKeyDown = useCallback(
@@ -105,7 +108,7 @@ export function TabSwitcher({
           >
             {active ? (
               <motion.span
-                layoutId="tab-indicator"
+                layoutId={`tab-indicator-${instanceId}`}
                 aria-hidden="true"
                 className="absolute inset-0 rounded-md"
                 style={{

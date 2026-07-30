@@ -10,8 +10,6 @@ interface GetStartedModalProps {
   open: boolean;
   /** @param onClose - Called when the modal requests dismissal. */
   onClose: () => void;
-  /** @param hasProjects - True when the user already owns ≥1 project. Switches to the returning-user view. */
-  hasProjects?: boolean;
 }
 
 interface CliInstallFollowUp {
@@ -278,8 +276,10 @@ function PathCards({ invocation = "/piyaz" }: PathCardsProps) {
 }
 
 /**
- * Body for users who haven't created a project yet: a tabbed install block
- * for the four supported coding agents, then the two project paths.
+ * First-run setup body: a tabbed install block for the four supported coding
+ * agents, then the two project paths. Every harness's snippet and notes render
+ * stacked in one grid cell with inactive tabs visibility-hidden, so the block
+ * holds the tallest tab's height and switching never shifts the layout.
  * @param props - Target-specific install copy.
  * @returns First-time install instructions.
  */
@@ -315,30 +315,41 @@ function FirstTimeBody({ cliInstalls, docsSetupUrl }: FirstTimeBodyProps) {
               className="shrink-0"
             />
           </div>
-          <pre className="min-h-20 overflow-x-auto p-3 font-mono text-xs leading-relaxed text-text-primary">
-            <code>{activeCli.install}</code>
-          </pre>
-          <div className="space-y-1 border-t border-border px-3 py-2">
-            <p className="text-xs leading-relaxed text-text-muted">
-              {activeCli.setupNote}
-            </p>
-            {activeCli.followUp ? (
-              <p className="text-xs leading-relaxed text-text-muted">
-                <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-                  {activeCli.followUp.label} ·{" "}
-                </span>
-                {activeCli.followUp.text}
-              </p>
-            ) : null}
-            <p className="text-xs leading-relaxed text-text-muted">
-              <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
-                Verify ·{" "}
-              </span>
-              <span className="font-mono text-text-primary">
-                {`❯ ${activeCli.invocation} List my projects`}
-              </span>{" "}
-              An empty list on a fresh account means the connection works.
-            </p>
+          <div className="grid">
+            {cliInstalls.map((cli) => (
+              <div
+                key={cli.name}
+                className={`col-start-1 row-start-1 flex flex-col ${
+                  cli.name === activeCli.name ? "" : "invisible"
+                }`}
+              >
+                <pre className="flex-1 overflow-x-auto p-3 font-mono text-xs leading-relaxed text-text-primary">
+                  <code>{cli.install}</code>
+                </pre>
+                <div className="space-y-1 border-t border-border px-3 py-2">
+                  <p className="text-xs leading-relaxed text-text-muted">
+                    {cli.setupNote}
+                  </p>
+                  {cli.followUp ? (
+                    <p className="text-xs leading-relaxed text-text-muted">
+                      <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+                        {cli.followUp.label} ·{" "}
+                      </span>
+                      {cli.followUp.text}
+                    </p>
+                  ) : null}
+                  <p className="text-xs leading-relaxed text-text-muted">
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+                      Verify ·{" "}
+                    </span>
+                    <span className="font-mono text-text-primary">
+                      {`❯ ${cli.invocation} List my projects`}
+                    </span>{" "}
+                    An empty list on a fresh account means the connection works.
+                  </p>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -385,7 +396,7 @@ const readServerOrigin = () => undefined;
 
 /**
  * First-run setup guide: tabbed install block plus the two project paths.
- * Shared by the modal's first-time view and the empty home state. The
+ * Rendered inline on the zero-project home through FirstRunPanel. The
  * instance origin arrives via {@link useSyncExternalStore} so the SSR and
  * hydration passes render the same default-endpoint snippets.
  * @returns Guide sections for the active deploy target.
@@ -443,32 +454,24 @@ function ReturningBody({ docsSetupUrl }: ReturningBodyProps) {
 }
 
 /**
- * Get-started dialog — projects are created from a coding agent, not the web app.
- * Adapts to user state: first-time users see plugin install commands, returning
- * users see a tight pointer back to their agent.
+ * Start-a-new-project dialog for users who already have projects — creation
+ * happens in a coding agent, so the body points there with the path prompts.
+ * First-run setup renders inline on the empty home through FirstRunPanel.
  * @param props - Modal configuration.
  * @returns Get-started modal rendered via {@link Modal}.
  */
-export function GetStartedModal({
-  open,
-  onClose,
-  hasProjects = false,
-}: GetStartedModalProps) {
+export function GetStartedModal({ open, onClose }: GetStartedModalProps) {
   const docsSetupUrl = getDocsSetupUrl();
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={hasProjects ? "Start a new project" : "Get started"}
+      title="Start a new project"
       maxWidth="lg"
     >
       <div className="max-h-[80vh] space-y-5 overflow-y-auto pr-1">
-        {hasProjects ? (
-          <ReturningBody docsSetupUrl={docsSetupUrl} />
-        ) : (
-          <GetStartedGuide />
-        )}
+        <ReturningBody docsSetupUrl={docsSetupUrl} />
       </div>
     </Modal>
   );

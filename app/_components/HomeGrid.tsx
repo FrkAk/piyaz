@@ -95,7 +95,7 @@ export function HomeGrid({ teams }: HomeGridProps) {
             Track projects across every team you&apos;re a member of.
           </p>
         </div>
-        <NewProjectButton hasProjects={projects.length > 0} />
+        {projects.length > 0 ? <NewProjectButton /> : null}
       </header>
 
       {teams.length > 1 ? (
