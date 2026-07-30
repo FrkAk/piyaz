@@ -5,6 +5,7 @@ import { requestPasswordReset } from "@/lib/auth-client";
 import { AuthInput } from "./AuthInput";
 import { AuthSubmit } from "./AuthSubmit";
 import { TurnstileGate, useTurnstile } from "./TurnstileGate";
+import { turnstileFetchOptions } from "./turnstile-state";
 
 interface ForgotPasswordFormProps {
   /** Public Turnstile site key; `null` disables bot protection (self-host). */
@@ -35,23 +36,32 @@ export function ForgotPasswordForm({
   const [submitted, setSubmitted] = useState(false);
 
   /**
-   * Request the reset link. Only a 429 surfaces as an error; everything
-   * else resolves to the neutral confirmation.
+   * Request the reset link, acquiring the captcha token at submit time.
+   * Only a 429 surfaces as an error; everything else resolves to the
+   * neutral confirmation.
    *
    * @param event - The form submit event.
    */
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    if (!turnstile.ready) {
-      setError(turnstile.blockedMessage);
-      return;
-    }
     setLoading(true);
+
+    let fetchOptions: ReturnType<typeof turnstileFetchOptions>;
+    if (turnstile.enabled) {
+      const token = await turnstile.getToken();
+      if (token === null) {
+        setError(turnstile.blockedMessage());
+        setLoading(false);
+        return;
+      }
+      fetchOptions = turnstileFetchOptions(token);
+    }
+
     const { error: authError } = await requestPasswordReset({
       email,
       redirectTo: "/reset-password",
-      ...(turnstile.fetchOptions && { fetchOptions: turnstile.fetchOptions }),
+      ...(fetchOptions && { fetchOptions }),
     });
     if (authError) {
       setError(
@@ -110,7 +120,9 @@ export function ForgotPasswordForm({
         </p>
       ) : null}
 
-      <AuthSubmit isLoading={loading}>Send reset link</AuthSubmit>
+      <AuthSubmit isLoading={loading} loadingLabel={turnstile.verifyingLabel}>
+        Send reset link
+      </AuthSubmit>
       <TurnstileGate
         siteKey={turnstileSiteKey}
         nonce={nonce}

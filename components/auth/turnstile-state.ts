@@ -17,7 +17,11 @@
 export const CAPTCHA_RESPONSE_HEADER = "x-captcha-response";
 
 /** Why a captcha-protected form is currently refusing to submit. */
-export type TurnstileBlockReason = "pending" | "unavailable" | "unsupported";
+export type TurnstileBlockReason =
+  | "pending"
+  | "interactive"
+  | "unavailable"
+  | "unsupported";
 
 /**
  * What the form says when a submit is refused.
@@ -27,12 +31,28 @@ export type TurnstileBlockReason = "pending" | "unavailable" | "unsupported";
  * explanation and the recovery. Authored here beside that notice copy so the
  * two are written as a pair and cannot drift into saying the same thing twice
  * on one screen.
+ *
+ * `pending` and `interactive` split on visibility: under
+ * `appearance: "interaction-only"` the widget is invisible while the
+ * background run is working, so `pending` must never instruct the visitor to
+ * complete something they cannot see. Only `interactive` (the challenge
+ * escalated and is on screen) may point at the widget.
  */
 const BLOCKED_MESSAGES: Readonly<Record<TurnstileBlockReason, string>> = {
-  pending: "Complete the verification to continue.",
+  pending: "Verification is still running. Try again in a few seconds.",
+  interactive: "Complete the verification below to continue.",
   unavailable: "Verification has not loaded yet.",
   unsupported: "Verification does not run in this browser.",
 };
+
+/**
+ * Submit-button label while a submit waits on token acquisition.
+ *
+ * Progress copy, not refusal copy: it renders inside the disabled button
+ * during `getToken`'s wait, beside the loading dots. Authored with the
+ * blocked messages so the set stays coherent.
+ */
+export const TURNSTILE_VERIFYING_LABEL = "Verifying your browser…";
 
 /**
  * What the notice below the button says: what went wrong, and what to do.
@@ -54,21 +74,16 @@ export const TURNSTILE_UNSUPPORTED_NOTICE =
   "Verification does not run in this browser. Open the page in a current Chrome, Firefox, Safari, or Edge to continue.";
 
 /**
- * Whether a submit may proceed.
+ * Whether a reason is terminal for the current page load.
  *
- * Always true when Turnstile is off, so a deployment without a site key keeps
- * its original behavior. With Turnstile on, a missing token blocks: failing
- * open would let anyone bypass the captcha by blocking the script.
+ * Terminal reasons cannot resolve by waiting, so submit-time token
+ * acquisition refuses immediately instead of spending its wait budget.
  *
- * @param siteKey - Public site key, or `null` when Turnstile is unconfigured.
- * @param token - Current challenge token, or `null`.
- * @returns `true` when the form may submit.
+ * @param reason - Current blocked reason.
+ * @returns `true` for `unavailable` and `unsupported`.
  */
-export function turnstileReady(
-  siteKey: string | null,
-  token: string | null,
-): boolean {
-  return siteKey === null || token !== null;
+export function turnstileTerminal(reason: TurnstileBlockReason): boolean {
+  return reason === "unavailable" || reason === "unsupported";
 }
 
 /**
