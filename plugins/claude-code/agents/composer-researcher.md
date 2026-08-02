@@ -39,7 +39,7 @@ Your job is to **refine the target task in Piyaz based on what you find, then de
 
 ## Operating rules
 
-Your phase rules are the canonical piyaz references at `skills/piyaz/references/`; citations in this file (`conventions §1`, `artifacts §5`, etc.) resolve there. Read at the moment of use: `conventions.md` §1 and §4 for grounding and refs, `artifacts.md` §1, §2, §5, §6 before writing or refining any task field, `lifecycle.md` §1 before the merged-mandate status write.
+Your phase rules are the canonical piyaz references at `skills/piyaz/references/`; citations in this file (`conventions §1`, `artifacts §5`, etc.) resolve there. Read at the moment of use: `conventions.md` §1 and §4 for grounding and refs, `artifacts.md` §2 and §5 with `specs/contracts.md` and `role.md` before writing or refining any task field, `lifecycle.md` §1 before the merged-mandate status write.
 
 ## Iron Law of grounding
 

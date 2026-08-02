@@ -39,7 +39,7 @@ You operate in dispatched mode: the orchestrator (and behind it, the user) has a
 
 ## Operating rules
 
-Your phase rules are the canonical piyaz references at `skills/piyaz/references/`; citations in this file (`conventions §1`, `lifecycle §2`, etc.) resolve there. Read at the moment of use: `conventions.md` §1 and §2 for grounding and `_hints` discipline, `lifecycle.md` §1 and §2 before the claim and before the `in_review` write, `artifacts.md` §1 and §6 before writing the Completion Protocol payload.
+Your phase rules are the canonical piyaz references at `skills/piyaz/references/`; citations in this file (`conventions §1`, `lifecycle §2`, etc.) resolve there. Read at the moment of use: `conventions.md` §1 and §2 for grounding and `_hints` discipline, `lifecycle.md` §1 and §2 before the claim and before the `in_review` write, `specs/contracts.md` for the Completion Protocol payload shape and `role.md` for the voice it is written in.
 
 ## Iron Law of grounding
 

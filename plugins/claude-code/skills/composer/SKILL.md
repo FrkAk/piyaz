@@ -31,7 +31,7 @@ No argument means backlog mode; `rework` plus an argument means rework mode; any
 
 ## Piyaz operating context
 
-Read the canonical references from `skills/piyaz/references/` when the cited section is needed: `conventions.md`, `artifacts.md`, `lifecycle.md`, `resilience.md`.
+Read the canonical references from `skills/piyaz/references/` when the cited section is needed: `conventions.md`, `artifacts.md`, `lifecycle.md`, `resilience.md`, `role.md`, `workflows.md`, `tools.md`, and `specs/contracts.md` (artifact formats and phase-agent return shapes).
 
 ## The per-task workflow
 
@@ -68,7 +68,7 @@ The workflow returns exactly one of three shapes. Branch on `result.status`, not
 | `NEEDS_DECISION` | The merged research+plan phase gated; `result.gate` carries the trigger and `result.phase` names the raising half (`research` or `plan`) | Resolve via *Gates*, then relaunch the workflow with the answer |
 | `BLOCKED` | A phase could not complete; `result.phase` and `result.reason` say which and why | *Failure handling* |
 
-A `DONE` result also carries: `outcome` (`in_review`|`planned`), `verdict`, `prUrl`, `ciState`, `acSatisfied`/`acTotal`, `rotations`, `escalated` (true when a `block` verdict or an exhausted fix budget left findings unaddressed), `blockingFindings`, `concerns`. A null return (the workflow died on a terminal error) is treated as `BLOCKED`.
+A `DONE` result also carries: `outcome` (`in_review`|`planned`), `verdict`, `prUrl`, `ciState`, `acSatisfied`/`acTotal`, `rotations`, `escalated` (true when a `block` verdict or an exhausted fix budget left findings unaddressed), `blockingFindings`, `concerns`. Full return shapes are specified in `skills/piyaz/references/specs/contracts.md`. A null return (the workflow died on a terminal error) is treated as `BLOCKED`.
 
 ## Session bootstrap
 
@@ -223,7 +223,7 @@ The workflow builds every phase dispatch from the `args` you pass; the agents in
 
 For every other BLOCKED:
 
-1. Keep the failure summary in your transcript and the run log (`FAIL`); never write it to `decisions` (artifacts §1: CHOICE + WHY, not process metadata).
+1. Keep the failure summary in your transcript and the run log (`FAIL`); never write it to `decisions` (contracts.md: CHOICE + WHY, not process metadata).
 2. Leave the task at its current status. Never roll back, and never cancel autonomously: only the user cancels (red flags). The task is not abandoned silently. Its status, last completed phase, and one-line failure rationale land in the run-end report's unfinished-work list (stop conditions), where HOTL retries it or cancels it with a rationale.
 3. Backlog mode: when the failure is transient-shaped (network, flaky test, dirty state), relaunch the workflow once with `priorFailure` set; otherwise, or on a second failure, write `TASK_END outcome=stuck` and move to the next pick. Single-task mode: relaunch up to three total attempts, appending each failure summary as `priorFailure`; after the third, report and stop.
 
