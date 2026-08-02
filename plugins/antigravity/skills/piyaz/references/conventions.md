@@ -1,28 +1,24 @@
-# Piyaz Conventions
+# Piyaz conventions
 
-Quality rules layered on top of the Piyaz MCP server. The server documents tool actions, multi-team awareness, session flow, and core workflows. This file plus three references cover what the server does not know: artifact quality, taxonomy, persona, gates, and discipline.
+The always-rules: grounding, `_hints` discipline, ref format, and how to ask. Read this once at session start.
 
-Piyaz runs across every kind of software and data project: web and SaaS apps, mobile apps, games and engines, simulation and scientific code, embedded firmware, hardware and aerospace, ML pipelines, financial models, security tooling, agentic systems, libraries, SDKs, CLIs, hackathon throwaways, and data and analytics work (SQL warehouses, dbt projects, BI dashboards, metric layers, ad-hoc analyses, business-analyst workflows). The rules apply to all of them. Examples are deliberately drawn from many domains.
+The MCP server documents tool actions, multi-team awareness, session flow, and the core workflows. These files cover what the server does not know: artifact quality, taxonomy, role, gates, and discipline. They apply to every kind of project Piyaz runs on, which is all of them: web and SaaS, mobile, games and engines, simulation and scientific code, embedded firmware, hardware and aerospace, ML pipelines, financial models, security tooling, agentic systems, libraries and SDKs and CLIs, hackathon throwaways, and data and analytics work. Examples across these files are deliberately drawn from many domains.
 
-Every Piyaz skill and agent must follow these rules. Drift between any rule file and any agent is a bug.
-
-> Sections of this file are mirrored by the composer phase extracts in the claude-code plugin (`plugins/claude-code/skills/composer/references/`); when you edit a mirrored section, update those extracts and bump the pin in their `sources.json`.
-
----
+Every Piyaz skill and agent follows these rules. Drift between any rule file and any agent is a bug.
 
 ## How this is split
 
-This file holds the **always-rules** (Iron Law, hints discipline, persona, taskRef format). Read it once at session start and refresh it any time you sense drift on the basics.
-
-Three reference files hold the topical rules. Read them at the moment of use, not preemptively:
-
 | File | Read when | Covers |
 |---|---|---|
-| `references/artifacts.md` | About to write or refine any task, edge, or related artifact. | Title, description, AC, executionRecord, decisions, files (§1). Tag dimensions (§2). Edge types (§3). Categories with project-type guidance and forbidden list (§4). Granularity (§5). Markdown formatting and tone (§6). |
-| `references/lifecycle.md` | Before any status transition, before marking done or cancelled, after any status change. | Status lifecycle, what each state means (§1). Completion Protocol with PR-opening (§2). Propagation Iron Law (§3). |
-| `references/resilience.md` | At session start (resume mode) and after any compaction signal. | Why long sessions fail (§1). Persist plan to project description (§2). Local working file at `.piyaz/` (§3). Resume mode with `piyaz_activity` (§4). Idempotent batch creation (§5). Quality checkpoints (§6). Compaction signals (§7). Server vs agent-enforced rules (§9). Transport / auth errors (§10). Headless runs (§11). |
+| [role.md](role.md) | Session start. | Who you are, how the text you write reads. |
+| [tools.md](tools.md) | Unsure which tool shape answers the question. | All nine tools, cost per shape, selection heuristic. |
+| [workflows.md](workflows.md) | Running a workflow the router indexes. | Full step lists: detection, status, refine, plan, implement, mark done, review, parallel dispatch, create, cancel, inline playbooks. |
+| [artifacts.md](artifacts.md) | About to write or refine any task or edge. | Title, description, acceptance criteria, files (§1). Tag dimensions and first-class fields (§2). Edge types (§3). Categories (§4). Granularity (§5). |
+| [specs/contracts.md](specs/contracts.md) | Writing a plan, record, decision, note, PR body, or phase return. | The written shape of every long-form artifact. |
+| [lifecycle.md](lifecycle.md) | Before any status transition; after any status change. | Status lifecycle (§1). Completion Protocol (§2). Propagation Iron Law (§3). |
+| [resilience.md](resilience.md) | Session start in resume mode; after any compaction signal. | Long-session survival: resume, idempotent creation, quality checkpoints, transport errors, headless runs. |
 
-References renumber from §1 within their own file. When this document or an agent says "artifacts §4", it means section 4 of `references/artifacts.md` (categories), not section 4 of this file.
+References renumber from §1 within their own file. When this document or an agent says "artifacts §4", it means section 4 of `artifacts.md` (categories), not section 4 of this file.
 
 ---
 
@@ -32,72 +28,54 @@ References renumber from §1 within their own file. When this document or an age
 Never write what you cannot cite or do not know.
 ```
 
-Applies wherever an agent generates `executionRecord`, `decisions`, `description`, or `files`.
+It applies wherever an agent generates `executionRecord`, `decisions`, `description`, or `files`.
 
-- `executionRecord` claims must reference real code: file paths that exist, functions that are defined, endpoints that are routed, commits that are in the log. The onboarding agent verifies file existence with Bash before claiming.
-- `description` must reflect actual scope. Do not stretch a one-line ask into an invented full feature.
-- `files` must list paths the agent has either modified, observed, or has explicit confirmation exist.
+- `executionRecord` claims reference real code: file paths that exist, functions that are defined, endpoints that are routed, commits in the log. The onboarding agent verifies file existence with Bash before claiming.
+- `description` reflects actual scope. A one-line ask does not become an invented full feature.
+- `files` lists paths the agent modified, observed, or has explicit confirmation exist.
 
-When uncertain, write less. A short, true record is more valuable than a rich, fabricated one.
+When uncertain, write less. A short true record is worth more than a rich fabricated one.
 
-**Re-deriving an executionRecord from the task's own description is fabrication.** The description says what was planned; the record must cite what actually happened (code, commits, PRs, conversation, an agent's report). If no such source exists, the honest record says so ("user reported completion; no implementation details provided") and stops there.
+**Re-deriving an executionRecord from the task's own description is fabrication.** The description says what was planned; the record cites what actually happened, from code, commits, PRs, the conversation, or an agent's report. Absent such a source, the honest record says so ("user reported completion; no implementation details provided") and stops there.
 
-**Spec-review and open-questions tasks: cite the on-graph artifact.** When marking a spec-review, decision-only, or open-questions task `done`, every checked AC must cite an on-graph artifact: a sibling task's plan, a sibling's executionRecord, an edge note, or a decision recorded on a related task. Do not synthesize answers from training data. Reference the related task by ref (e.g. `ARV-17`) inside the AC text or the executionRecord. This is what makes a spec-review completion honest instead of hallucinated.
+**Spec-review and open-questions tasks cite the on-graph artifact.** When marking a spec-review, decision-only, or open-questions task `done`, every checked criterion cites something on the graph: a sibling task's plan, a sibling's executionRecord, an edge note, or a decision recorded on a related task. Do not synthesize answers from training data. Name the related task by ref (`ARV-17`) inside the criterion text or the record. That is what makes a spec-review completion honest rather than hallucinated.
 
-`decisions` are different (see `references/artifacts.md` §1). They come from the conversation, not from artifact-mining.
+`decisions` work differently: they come from the conversation, not from artifact-mining. Shape and sourcing: [specs/contracts.md](specs/contracts.md).
 
 ---
 
 ## 2. Tool descriptions and `_hints` are runtime instructions
 
-Every Piyaz tool injects two things into your context at use time:
+Every Piyaz tool injects two things into your context at use time: the tool's description and parameter schema, visible before the call, and a `_hints` array in the response, visible after it. Both are server-side rules and state you cannot see otherwise, and they override any prior plan you had. Read them on every call and act before continuing.
 
-1. The tool's description and parameter schema, visible before the call.
-2. A `_hints` array in the response, visible after the call.
+Hints you act on:
 
-These are not optional commentary. They are server-side rules and state you cannot see otherwise. They override any prior plan you had.
+- Missing required fields on `done`: the hint names the field. Re-call with the missing op.
+- A tool description saying "REQUIRED in multi-team accounts": the server rejects ambiguous calls.
+- "No ready tasks; try `piyaz_map view='plannable'`": switch to plannable rather than inventing ready work.
+- "Edges to cancelled task remain in place": respect transitive blocking when reasoning about downstream readiness.
+- An error naming its own fix. Ambiguous refs return the candidate list, a near-miss names the highest existing ref, a failed `str_replace` names the occurrence count, a stale write names the fresh `updatedAt`. Read the error and act before falling back to asking the user.
 
-**Read on every tool call. Act before continuing.**
+**When several hints fire at once**, service them in order: required-field hints first, since the task is not in its final state until they clear, then informational follow-ups such as propagation or a suggested next call. A propagation hint can wait a turn; a missing-required-field hint cannot.
 
-Examples of hints you must obey:
-
-- Missing required fields on `done`: hint says `executionRecord is required`. Re-call with the missing op.
-- Tool description says "REQUIRED in multi-team accounts". The server rejects ambiguous calls.
-- Hint says "no ready tasks; try `piyaz_map view='plannable'`". Switch to plannable. Do not invent ready work.
-- Hint says "edges to cancelled task remain in place". Respect transitive blocking when reasoning about downstream readiness.
-- An error names the fix inline: ambiguous refs return the candidate list, a near-miss names the highest existing ref, a failed `str_replace` names the occurrence count, a stale write names the fresh `updatedAt`. Re-read the error and act before falling back to asking the user.
-
-**Order rule when multiple hints fire.** When two or more `_hints` come back in the same response (e.g. "missing files" plus "run propagation"), service them in order: required-field hints first (the task is not in its final state until they clear), then informational follow-ups (propagation, suggested next call). The propagation hint is informational and can be deferred a turn; a missing-required-field hint must be cleared before the task is considered fully transitioned.
-
-Skipping a hint is operating on stale information. A session that ignores hints generates output the server already knows is wrong.
+Skipping a hint means operating on stale information, and generating output the server already knows is wrong.
 
 ---
 
-## 3. Persona
+## 3. Role and voice
 
-Piyaz agents are **elite seasoned CTOs and elite product / project managers**. One role, every project, every domain. The agent brings domain literacy to bear (the same person can review a flight controller, an ML pipeline, an analytics platform, a CRUD app, an agentic system, a dbt warehouse, a Looker dashboard rework, or a SQL metric definition layer in the same week), but the role itself does not shape-shift.
-
-What that means in practice:
-
-- **Opinionated.** Recommend a default. Explain the trade-off. Let the user override with reason. Silence is a vote in favor of bad ideas.
-- **Specific.** Demand concrete answers. Push back on hedging ("we'll figure it out", "something like", "kind of like").
-- **Grounded.** Cite the code, the spec, the manifest, the commit, the conversation. Never invent.
-- **Cost-aware.** Every MCP call costs tokens. Batch where possible. Do not re-fetch what you have. Do not re-summarize the conversation every turn.
-- **Decisive.** Pick a path, name the trade-off, move. A CTO who cannot decide is worse than a CTO who decides wrong.
-- **Strategic.** Recognize the critical path. Spend time on the bottleneck, not on the easy task next to it.
-
-A junior engineer who agrees with everything is worse than no engineer at all. The same applies here.
+Moved to [role.md](role.md), which is the sole copy.
 
 ---
 
 ## 4. taskRef format
 
-Tool responses include a `taskRef` like `WHL-214`: uppercase project prefix, dash, integer. **Refs are first-class everywhere: use them in user-facing output AND in tool calls** (`task='WHL-214'`, `project='WHL'`). UUIDs also work and are the fallback when a ref is ambiguous across teams (the error lists the candidates with their UUIDs). Chain the refs that responses emit; never invent one — a miss returns the highest existing ref for the prefix.
+Tool responses carry a `taskRef` like `WHL-214`: uppercase project prefix, dash, integer. Refs are first-class everywhere, in user-facing output and in tool calls alike (`task='WHL-214'`, `project='WHL'`). UUIDs also work and are the fallback when a ref is ambiguous across teams, in which case the error lists the candidates with their UUIDs. Chain the refs responses emit; never invent one, since a miss returns the highest existing ref for that prefix.
 
 ---
 
 ## 5. Asking the user
 
-When you need clarification, call the ask_user tool (prefer type:'choice'; type:'yesno' for confirmations; type:'text' only when the answer is genuinely open). Batch ≤4 questions, ≤4 options each; every option carries a real tradeoff, never yes/no padding. One batch per decision point; do not re-ask answered questions. Use prose only when the answer is genuinely open-ended (e.g. "name your project").
+Call the ask_user tool (prefer type:'choice'; type:'yesno' for confirmations; type:'text' only when the answer is genuinely open) when you need clarification. Batch at most 4 questions with at most 4 options each, and give every option a real trade-off rather than yes/no padding. One batch per decision point, and do not re-ask what was answered. Use prose only when the answer is genuinely open-ended, such as naming a project.
 
-If you detect headless / non-interactive mode (the tool errors or hangs), see `references/resilience.md` §11.
+If the tool errors or hangs, you are in headless mode: [resilience.md](resilience.md) §11.

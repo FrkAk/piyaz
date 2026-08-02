@@ -28,7 +28,7 @@ The verdict is advisory in every mode. The HOTL operator owns the `in_review →
 
 ### Output format
 
-Keep it tight: one to two sentences per lens unless a finding warrants more, real file paths and line numbers, no marketing words, no throat-clearing.
+Keep it tight: a clean lens states what was checked and that it held; a finding gets the space its failure mode needs. Real file paths and line numbers, no marketing words, no throat-clearing.
 
 ```markdown
 # Review verdict: <approve | request-changes | block>
@@ -38,19 +38,19 @@ Keep it tight: one to two sentences per lens unless a finding warrants more, rea
 **ACs:** <N>/<M> satisfied per diff and executionRecord
 
 ## Security
-<one paragraph; cite paths; "no findings" is a valid answer>
+<what you checked and what you found, paths cited; "no findings" is a valid answer>
 
 ## Performance
-<one paragraph; cite paths; "no findings" is a valid answer>
+<what you checked and what you found, paths cited; "no findings" is a valid answer>
 
 ## Reliability
-<one paragraph; cite paths; "no findings" is a valid answer>
+<what you checked and what you found, paths cited; "no findings" is a valid answer>
 
 ## Observability
-<one paragraph; cite paths; "no findings" is a valid answer>
+<what you checked and what you found, paths cited; "no findings" is a valid answer>
 
 ## Codebase standards
-<one paragraph; cite paths; "no findings" is a valid answer>
+<what you checked and what you found, paths cited; "no findings" is a valid answer>
 
 ## AC evaluation
 - [x] "<AC text>" — satisfied by `<file>:<line>` (`<function or block>`).
@@ -148,7 +148,7 @@ The anchors carry three signals:
 
 Run each against the diff and the bundle. Reasoning quality matters more than finding count, and a lens that reports no findings shows the work backing the claim.
 
-Per lens: name the specific failure modes you tested for (the falsification hypotheses plus lens-specific ones), and for each cite the file and line that either falsifies it (no finding) or confirms it (finding). "No findings" is acceptable when the work genuinely does not touch the dimension, or when you can show the attack you tried and why it did not land; "no findings" with no reasoning trail is review-theater. Findings are real-risk items to fix before merge: style preferences, more-descriptive-name suggestions, alternative-design opinions, and hypothetical scaling concerns outside the task's scope are nits, and a finding whose concrete failure mode you cannot articulate is a nit. One lens, one paragraph.
+Per lens: name the specific failure modes you tested for (the falsification hypotheses plus lens-specific ones), and for each cite the file and line that either falsifies it (no finding) or confirms it (finding). "No findings" is acceptable when the work genuinely does not touch the dimension, or when you can show the attack you tried and why it did not land; "no findings" with no reasoning trail is review-theater. Findings are real-risk items to fix before merge: style preferences, more-descriptive-name suggestions, alternative-design opinions, and hypothetical scaling concerns outside the task's scope are nits, and a finding whose concrete failure mode you cannot articulate is a nit.
 
 **a. Security.** Trust-boundary input validation, authn and authz on new endpoints or RPC handlers, secret handling, SQL or command injection surfaces, deserialization of untrusted data, CSRF and SSRF on new HTTP paths, regex DoS on user-supplied patterns. Cite the project's existing security pattern (from upstream execution records or the codebase) when the new code crosses a boundary the project already protects, and flag the gap when it crosses one with no established pattern. Out of scope: speculative threat models for traffic the task does not promise to serve.
 

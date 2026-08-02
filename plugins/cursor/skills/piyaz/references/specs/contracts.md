@@ -11,11 +11,11 @@ Every Piyaz artifact has two readers: an engineer opening the task cold six week
 The shape that serves both:
 
 - **Headed sections in a fixed order**, so a reader scanning for one thing knows where it is and an agent can find it by heading. Each recipe below gives its order.
-- **Short technical paragraphs**, two to four sentences per section, each carrying a fact rather than a transition.
+- **Short technical paragraphs**, each sentence carrying a fact rather than a transition. A section says what its reader needs and stops; length follows content.
 - **File, symbol, endpoint, and command references as code spans:** `lib/auth/middleware.ts`, `Queue::front`, `POST /api/habits/:id/complete`, `bun run db:push`. PRs and issues as `#412` or the full URL. This is what lets a reader jump straight to the thing.
 - **Bullet lists for three or more parallel items.** Two read better as a sentence.
 - **Tables only for enumerable facts:** statuses, endpoints, a mapping. Anything with reasoning in it belongs in prose.
-- **Headings (`##`, `###`) only in long fields:** `implementationPlan`, note bodies, PR bodies, and the record's optional Deliverables section. A 4-sentence description with headings is scaffolding around nothing.
+- **Headings (`##`, `###`) where the content warrants them:** `implementationPlan`, note bodies, PR bodies, and the record's optional Deliverables section call for them; shorter fields take structure only when it earns its place. A heading over one thin paragraph is scaffolding around nothing.
 
 None of this licenses padding. A section with nothing to say gets left out, not filled.
 
@@ -25,7 +25,7 @@ The unabridged plan a coding agent executes without re-deriving your reasoning. 
 
 Sections, in order:
 
-1. **Approach.** Two to four sentences: what you are building and the shape of the solution. Name the pattern being followed and the existing code it mirrors.
+1. **Approach.** What you are building and the shape of the solution. Name the pattern being followed and the existing code it mirrors; the detail lives in Changes and Edge cases, not here.
 2. **Changes.** One bullet per file, as `path` plus what changes there. Include line numbers or symbol names where you have them.
 3. **Edge cases.** The conditions the naive implementation gets wrong, each with the intended behavior.
 4. **Verification.** The exact commands that prove it works, and what green looks like.
@@ -37,13 +37,13 @@ Ground every claim: a file you have read, a doc you fetched, a command you ran. 
 
 Carried by `in_review`, `done`, and `cancelled` tasks. It answers how the work was built, or why it was abandoned. The `description` says what was planned; the record says what happened. A `draft` task must not carry one, since the field implies the task shipped.
 
-The core is 3 to 5 sentences of prose, not headed, covering:
+The core is plain prose, structured when the content warrants it, covering:
 
 - What was built, by function name, file path, endpoint, and data format.
 - The mechanism a reader would not guess from the description.
 - What was verified and how.
 
-Leave out debugging stories, false starts, and filler. For a `cancelled` task, the same 3 to 5 sentences carry the rationale for abandoning it, the approaches tried, and what was learned.
+Length follows content: leave out debugging stories, false starts, and filler, never the mechanism. For a `cancelled` task, the record carries the rationale for abandoning it, the approaches tried, and what was learned.
 
 ```
 GOOD (web): "Added the completion endpoint at `POST /api/habits/:id/complete`
@@ -92,7 +92,7 @@ A note is written for a teammate who was not here, so lead with the state and ke
 - **Body**: two to five short headed sections, or one compact list for a single idea. Name tasks by ref (`EVL-4`), never by UUID. State facts grounded in actual project state; a note that invents status is worse than no note.
 - **Length** tracks type. `guidance` injects its full body into matching task bundles, so it stays a tight constraints block. `reference` is read by heading, so it can run long. `knowledge` entries stay short and dated.
 
-A status note for someone joining next week is three sections: where the project stands, what is in flight and behind what, what to watch out for. Refs throughout, no generic advice.
+A status note for someone joining next week is three sections: where the project stands, what is in flight and behind what, what to watch out for. Refs throughout, no generic advice. The reader sets the length: they will skim it in two minutes and click the refs for detail, so write what they need in order to act and stop there. Walking through every task restates the tracker; the note earns its place by saying what the tracker cannot, the synthesis and the watch-outs.
 
 ## PR bodies
 
@@ -103,7 +103,7 @@ Open a PR when `files` is non-empty and the work was a real code change.
 **If a template exists**, fill it, mapping task fields onto its sections only where they fit:
 
 - Linked issue or task: the `taskRef` in brackets, `[LSQ-38]`. The bracket form triggers Piyaz PR-status tracking, so use it for the one primary task this PR builds and reference related tasks elsewhere as plain links. Add `Closes #N` on its own line when a GitHub issue is resolved.
-- Summary: 2 to 3 sentences from the `executionRecord`.
+- Summary: what shipped and why, condensed from the `executionRecord`.
 - Test plan or verification: the acceptance criteria that are checked.
 - Decisions or notes-for-reviewer, when present: the relevant `decisions` entries.
 
