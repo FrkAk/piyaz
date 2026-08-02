@@ -41,42 +41,14 @@ Tools you will use: `Bash`, `Read`, `Glob`, `Grep` (for repo discovery and verif
 
 ## Phase shape
 
-```dot
-digraph onboarding {
-    "Phase 0: Detection + early exits" [shape=box];
-    "Match found?" [shape=diamond];
-    "Empty repo?" [shape=diamond];
-    "Monorepo?" [shape=diamond];
-    "Phase 1: Discover the repo" [shape=box];
-    "Phase 2: Create Piyaz project\n(status='brainstorming')" [shape=box];
-    "Phase 3: Decomposition proposal\n(NO WRITES)" [shape=box];
-    "HARD-GATE: user approves\nfeature inventory?" [shape=diamond];
-    "Phase 4: Create tasks + edges\n(status='decomposing')" [shape=box];
-    "Phase 5: Programmatic verification + summary\n(status='active')" [shape=box];
-    "Phase 6: Housekeeping (offer cleanup)" [shape=box];
-    "Project active + clean" [shape=doublecircle];
-    "STOP: route to manage" [shape=box];
-    "STOP: route to brainstorm" [shape=box];
-    "ASK user (1/2/3)" [shape=box];
-
-    "Phase 0: Detection + early exits" -> "Match found?";
-    "Match found?" -> "STOP: route to manage" [label="yes"];
-    "Match found?" -> "Empty repo?" [label="no"];
-    "Empty repo?" -> "STOP: route to brainstorm" [label="yes"];
-    "Empty repo?" -> "Monorepo?" [label="no"];
-    "Monorepo?" -> "ASK user (1/2/3)" [label="yes"];
-    "ASK user (1/2/3)" -> "Phase 1: Discover the repo";
-    "Monorepo?" -> "Phase 1: Discover the repo" [label="no"];
-    "Phase 1: Discover the repo" -> "Phase 2: Create Piyaz project\n(status='brainstorming')";
-    "Phase 2: Create Piyaz project\n(status='brainstorming')" -> "Phase 3: Decomposition proposal\n(NO WRITES)";
-    "Phase 3: Decomposition proposal\n(NO WRITES)" -> "HARD-GATE: user approves\nfeature inventory?";
-    "HARD-GATE: user approves\nfeature inventory?" -> "Phase 3: Decomposition proposal\n(NO WRITES)" [label="changes requested"];
-    "HARD-GATE: user approves\nfeature inventory?" -> "Phase 4: Create tasks + edges\n(status='decomposing')" [label="explicit yes"];
-    "Phase 4: Create tasks + edges\n(status='decomposing')" -> "Phase 5: Programmatic verification + summary\n(status='active')";
-    "Phase 5: Programmatic verification + summary\n(status='active')" -> "Phase 6: Housekeeping (offer cleanup)";
-    "Phase 6: Housekeeping (offer cleanup)" -> "Project active + clean";
-}
-```
+1. Phase 0: detection and early exits. If a matching project is found: STOP, route to manage. If the repo is empty: STOP, route to brainstorm. If a monorepo is detected: ASK the user (1/2/3), then continue; otherwise continue.
+2. Phase 1: discover the repo.
+3. Phase 2: create the Piyaz project (`status='brainstorming'`).
+4. Phase 3: decomposition proposal (NO WRITES).
+5. HARD-GATE: does the user approve the feature inventory? If changes are requested, return to 4; on explicit yes, continue.
+6. Phase 4: create tasks and edges (`status='decomposing'`).
+7. Phase 5: programmatic verification and summary (`status='active'`).
+8. Phase 6: housekeeping (offer cleanup). Project active and clean.
 
 ---
 

@@ -166,16 +166,6 @@ const shared: SharedGroup[] = [
       "plugins/antigravity/skills/review/SKILL.md",
     ],
   },
-  {
-    name: "skills/composer/references/reviewer-rules.md",
-    canonical:
-      "plugins/claude-code/skills/composer/references/reviewer-rules.md",
-    copies: [
-      "plugins/codex/skills/composer/references/reviewer-rules.md",
-      "plugins/cursor/skills/composer/references/reviewer-rules.md",
-      "plugins/antigravity/skills/composer/references/reviewer-rules.md",
-    ],
-  },
 ];
 
 const pluginRoots = [
@@ -184,14 +174,6 @@ const pluginRoots = [
   "plugins/cursor",
   "plugins/antigravity",
 ];
-
-const extractPinsPath =
-  "plugins/claude-code/skills/composer/references/sources.json";
-
-interface ExtractPins {
-  _comment: string;
-  pins: Record<string, string>;
-}
 
 const fieldSyncs: FieldSync[] = [
   {
@@ -341,53 +323,6 @@ function checkIncludeTargets(root: string): number {
   return dangling;
 }
 
-/**
- * Verifies the composer extracts' canonical-source hash pins. The extracts
- * hand-mirror sections of the canonical piyaz references; the pin file
- * records the canonical files' hashes the extracts were last reviewed
- * against. Any canonical edit fails the check until the extracts are
- * reviewed and the pins refreshed (`--fix` refreshes them, loudly).
- * @param fixMode - When true, refresh stale pins after warning.
- * @returns Object with failure and change counts.
- */
-function checkExtractPins(fixMode: boolean): {
-  failures: number;
-  changes: number;
-} {
-  let pinFile: ExtractPins;
-  try {
-    pinFile = JSON.parse(readFileSync(extractPinsPath, "utf8")) as ExtractPins;
-  } catch {
-    console.error(`[missing pins] ${extractPinsPath} (absent or unreadable)`);
-    return { failures: 1, changes: 0 };
-  }
-  let failures = 0;
-  let changes = 0;
-  for (const [path, pinned] of Object.entries(pinFile.pins)) {
-    const actual = hashFile(path);
-    if (actual === pinned) {
-      console.log(`[ok]      extract pin ${path}`);
-      continue;
-    }
-    if (fixMode) {
-      pinFile.pins[path] = actual;
-      console.log(
-        `[extracts] ${path} changed — pin refreshed. REVIEW the mirrored sections in plugins/claude-code/skills/composer/references/ before committing.`,
-      );
-      changes++;
-    } else {
-      console.error(
-        `[extract drift] ${path} changed since the composer extracts were last reviewed (pin ${pinned.slice(0, 8)} vs ${actual.slice(0, 8)}). Review the mirrored sections in plugins/claude-code/skills/composer/references/, update them if needed, then run \`bun run sync:plugins\` to refresh the pin.`,
-      );
-      failures++;
-    }
-  }
-  if (changes > 0) {
-    writeFileSync(extractPinsPath, JSON.stringify(pinFile, null, 2) + "\n");
-  }
-  return { failures, changes };
-}
-
 const fix = process.argv.includes("--fix");
 
 let failures = 0;
@@ -478,10 +413,6 @@ for (const sync of fieldSyncs) {
 for (const root of pluginRoots) {
   failures += checkIncludeTargets(root);
 }
-
-const pinResult = checkExtractPins(fix);
-failures += pinResult.failures;
-changes += pinResult.changes;
 
 if (fix) {
   console.log(

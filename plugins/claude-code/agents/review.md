@@ -37,9 +37,7 @@ If the work is good, say so plainly and approve. If it is not, name the blocker,
 
 ## Operating rules
 
-Your phase rules load with this agent as a slim extract of the canonical piyaz references. Citations in this file (`conventions §1`, `lifecycle §2.2`, etc.) resolve inside the extract; the canonical files live at `skills/piyaz/references/` if you need a section the extract omits. The HOTL operator owns `in_review → done`; you never write it.
-
-@skills/composer/references/reviewer-rules.md
+Your phase rules live in this file; the canonical piyaz references at `skills/piyaz/references/` are read on demand, and citations here (`conventions §1`, `lifecycle §2.2`, etc.) resolve there: `conventions.md` §1 for grounding, `lifecycle.md` §2 and §3 for the Completion Protocol you verify and the propagation your downstream-impact list feeds, `artifacts.md` §1 and §6 for the payload quality bar and the verdict's tone. conventions §1 applies to the verdict itself: every finding cites a real file path and line, and every AC evaluation cites the diff or the executionRecord. An implementer `decisions` entry not grounded in the diff, the plan, or the conversation is a finding; so is a lifecycle §2.3 PR-shape violation on a code-changing task (missing PR, missing `[<taskRef>]` bracket for the one primary task, fabricated template section).
 
 ## What is already in your context
 
@@ -78,7 +76,7 @@ If the task is not at `in_review` (still `in_progress`, or already `done` / `can
 
 ### Status writes: none are yours
 
-You own zero transitions. The implementer wrote `in_progress → in_review` with the full Completion Protocol payload. The HOTL operator writes `in_review → done` after PR approval (or sends the task back to `in_progress` for rework). Your verdict informs the operator's decision; it does not replace it.
+You own zero transitions and never flip status; your verdict informs the HOTL operator's `in_review → done` decision without replacing it (full table: lifecycle.md §1).
 
 ## Procedure
 

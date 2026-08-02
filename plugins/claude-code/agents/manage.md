@@ -30,7 +30,7 @@ The conventions are split across an entry file plus three topical references. Re
 
 **Before any status transition, completion, or propagation pass:**
 
-- `skills/piyaz/references/lifecycle.md`. Status lifecycle (§1), Completion Protocol with PR-opening (§2), propagation Iron Law (§3). Workflow F (propagate) implements §3.
+- `skills/piyaz/references/lifecycle.md`. Status lifecycle (§1), Completion Protocol with PR-opening (§2), propagation Iron Law (§3).
 
 **At session start and after any compaction signal:**
 
@@ -80,65 +80,9 @@ Ready tasks are inherently parallelizable. No blocking deps between them.
 6. Review their executionRecords after parallel work returns. Run § F on each completed task.
 7. If fewer ready than agents: assign remaining to **§ C: Plan a draft task** in parallel.
 
-### C. Plan a draft task
+### C–F. Shared workflows
 
-1. `piyaz_get lens='planning'`. Spec, prerequisites, related work.
-2. Write the implementation plan.
-   - If plan mode produced a plan file (path will be in the conversation), read it and use the full content.
-   - Otherwise, do the work yourself: search the codebase for what already exists, read up-to-date docs for any new dependency, clarify open questions with the user, reason through edge cases, then write the plan. **No speculation.** File paths, line numbers, specific changes, edge cases, verification steps.
-3. `piyaz_edit task='<ref>' operations=[{op:'set', field:'implementationPlan', text:'<full markdown>'}, {op:'set', field:'status', value:'planned'}]`. Save the **complete unabridged plan**. Do not summarize.
-4. The task appears in `ready` once dependencies clear.
-
-### D. Record completion
-
-When a coding agent or the user reports a task finished:
-
-1. If not already `in_progress`, set it via `piyaz_edit` (preserves lifecycle history).
-2. **Confirm before the terminal write.** Completion Protocol (lifecycle §2): if you were dispatched (parent agent visible in transcript), mark `in_review` directly; otherwise ask. Only an explicit user order flips a task to `done`.
-3. Collect details:
-   - User described what they did: extract executionRecord, decisions, files from conversation.
-   - User said "done" with no detail: ask what shipped, what was decided, what files were touched.
-   - Coding agent reported back: summarize the agent's work into a clean executionRecord (do not paste their narrative wholesale).
-4. Evaluate each AC: `checked: true` if clearly satisfied, `false` otherwise. **Do not auto-check everything.**
-5. One `piyaz_edit` call: `set executionRecord`, `add` each decision, `set files`, `check`/`uncheck` each AC by id, `set status='done'`. Read response `_hints` and re-call with missing ops.
-6. **Avoid destructive ops** (`remove`, wholesale `set` on text fields) unless the user has explicitly asked for a replacement. Accretive ops (`add`, by-id `update`, `str_replace`, `append`) are safe; destruction has no undo. Confirm before rewriting.
-7. **Open a PR if the work changed code.** Per lifecycle §2 step 3: detect a PR template (`.github/PULL_REQUEST_TEMPLATE.md` and variants), fill it concisely from the executionRecord and ACs, use `[MYMR-N]` bracket form for the primary task ref so Piyaz tracks PR status. Skip the PR for research / decision-only / Piyaz-only tasks.
-8. **Run § F immediately.**
-
-### E. Resume / continue / "guide me forward"
-
-Covers explicit "continue" or "resume" requests AND open-ended "what should I focus on", "I'm stuck, where to next", "give me a path forward".
-
-1. `piyaz_workspace action='projects'` if not already run this session.
-2. **Lead with `piyaz_map view='critical_path'`.** This tells the user the actual shape of remaining work. The longest dependency chain is the bottleneck; nothing else matters as much.
-3. `piyaz_map view='ready'`. What can start now.
-4. `piyaz_map view='blocked'`. What is stuck (and why).
-5. If still nothing actionable: `piyaz_map view='plannable'`. Drafts ready to plan.
-6. Summarize progress percentage, the critical path's current head, and a concrete top-1 recommendation. Be specific. Name the task. Do not dump the full task list.
-
-### F. Propagate Changes (Iron Law per lifecycle §3; run after every status change or significant refinement)
-
-This is what makes Piyaz intelligent. Skipping it makes Piyaz useless.
-
-1. `piyaz_map view='neighbors'` on the changed task. Current relationships.
-2. `piyaz_map view='downstream'`. Who depends on this task.
-3. For each downstream / related task, evaluate:
-   - Do edge notes need updating to reflect new decisions?
-   - Are there NEW relationships revealed by this change?
-   - Are there STALE relationships that no longer hold?
-   - Do downstream descriptions need updating based on the decisions made?
-4. Create / update / remove edges as needed. Meaningful notes (artifacts §3).
-5. If decisions affect downstream tasks, update their descriptions or ACs.
-
-**Concurrent-write guidance.** When parallel workers (multiple agents, sister manage / lifecycle workers, dispatched coding agents) operate on the same project, edge creates can race. The server's `Duplicate edge: an identical edge already exists.` rejection is itself the hint: treat it as success, then `piyaz_map view='neighbors'` to verify the existing note is acceptable. Do not re-attempt the create. If the existing note is weaker than yours, `piyaz_link action='update'` to improve it.
-
-**Cancellation note** (lifecycle §3): edges to a cancelled task remain in place. Cancellation is transitive-aware. Ask: is there a replacement? If yes, rewire dependents. If the scope is genuinely abandoned, dependents may need to be cancelled too or re-scoped.
-
-**Example:** Task "Set up auth" completes with decision "Using JWT with Redis refresh tokens":
-
-- Update edge notes on downstream "Build user API" to include the auth approach.
-- Check if "Set up Redis" task exists. If not, create it and add a `depends_on` edge.
-- Update any downstream descriptions that assumed a different auth approach.
+Plan a draft task (C), record completion (D), and resume / guide-me-forward (E) are shared workflows owned by the piyaz skill's SKILL.md workflow index; change propagation (F) is lifecycle.md §3.
 
 ### G. Strategic review (the case you were specifically dispatched for)
 

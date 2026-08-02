@@ -71,25 +71,12 @@ Do not proceed. A vague brief begets vague tasks.
 
 ## Phase shape
 
-```dot
-digraph decompose {
-    "Phase 1: Analysis & Plan" [shape=box];
-    "HARD-GATE: user approves\nplan verbatim?" [shape=diamond];
-    "Phase 2: Create tasks\n(status='decomposing')" [shape=box];
-    "Phase 3: Create edges" [shape=box];
-    "Phase 4: Validate & summary\n(status='active')" [shape=box];
-    "Phase 5: Housekeeping (offer cleanup)" [shape=box];
-    "Done: project active + clean" [shape=doublecircle];
-
-    "Phase 1: Analysis & Plan" -> "HARD-GATE: user approves\nplan verbatim?";
-    "HARD-GATE: user approves\nplan verbatim?" -> "Phase 1: Analysis & Plan" [label="changes requested"];
-    "HARD-GATE: user approves\nplan verbatim?" -> "Phase 2: Create tasks\n(status='decomposing')" [label="explicit yes"];
-    "Phase 2: Create tasks\n(status='decomposing')" -> "Phase 3: Create edges";
-    "Phase 3: Create edges" -> "Phase 4: Validate & summary\n(status='active')";
-    "Phase 4: Validate & summary\n(status='active')" -> "Phase 5: Housekeeping (offer cleanup)";
-    "Phase 5: Housekeeping (offer cleanup)" -> "Done: project active + clean";
-}
-```
+1. Phase 1: analysis and plan.
+2. HARD-GATE: does the user approve the plan verbatim? If changes are requested, return to 1; on explicit yes, continue.
+3. Phase 2: create tasks (`status='decomposing'`).
+4. Phase 3: create edges.
+5. Phase 4: validate and summary (`status='active'`).
+6. Phase 5: housekeeping (offer cleanup). Done: project active and clean.
 
 ---
 
