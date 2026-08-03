@@ -58,7 +58,7 @@ Runs before transitioning a task to `in_review`, `done`, or `cancelled`. Copy th
 ```
 Completion Protocol:
 - [ ] Mode detected: dispatched (mark in_review directly) or direct (ask first) (§2.1)
-- [ ] executionRecord: 3-5 sentences, grounded, HOW it was built (§2.2)
+- [ ] executionRecord: grounded, HOW it was built (what, mechanism, verification) (§2.2)
 - [ ] decisions: CHOICE + WHY one-liners from the conversation (§2.2)
 - [ ] files: every repo path touched; files=[] explicitly when none (§2.2)
 - [ ] acceptanceCriteria: each item evaluated true/false against the work (§2.2)

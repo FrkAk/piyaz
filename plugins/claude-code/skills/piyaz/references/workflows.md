@@ -135,7 +135,7 @@ A coding subagent and the review subagent behave as described above: the impleme
 1. `piyaz_workspace action='teams'`. Run it even when `projects` already showed projects: empty teams do not appear there, and the user may want the project in one.
 2. Multi-team account with an ambiguous target: ask, do not default. The server rejects ambiguous creates with the team list inline.
 3. Pick 4 to 8 categories from [artifacts.md](artifacts.md) §4, matched to the project's actual shape.
-4. `piyaz_workspace action='create' title='<verb+noun>' description='<3-5 sentences>' categories=[...] organizationId='<team-uuid>'`.
+4. `piyaz_workspace action='create' title='<verb+noun>' description='<purpose, stack, key constraints>' categories=[...] organizationId='<team-uuid>'`.
 5. Then create tasks, run the decompose playbook, or dispatch `piyaz:decompose`.
 
 ## Create tasks

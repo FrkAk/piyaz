@@ -158,7 +158,7 @@ export const DESCRIPTIONS = {
     "fields=[...]: raw single-field read (lens ignored); the cheapest way to fetch one field's exact text before a piyaz_edit str_replace, or collection ids before by-id ops; response includes updatedAt for ifUpdatedAt preconditions. " +
     "Project: view='meta' (categories, tag vocabulary, progress — check before setting category or coining tags) or view='overview' (every task + edge; HEAVY, at most once per session; truncated groups name the piyaz_search filter to narrow with).",
   piyaz_create:
-    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('HWM' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description (2-4 sentences; single-sentence flagged). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
+    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('HWM' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description covering what it is, who it serves, and where it fits (single-sentence flagged; length follows content). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
     "Idempotent: exact-title matches against existing tasks are skipped and returned as 'deduped' (reusable as edge endpoints), so a restarted decompose run never duplicates a task set; onDuplicate='error' rejects the whole batch instead. Edges that already exist are silently skipped. " +
     "Include acceptanceCriteria (2-4 binary), tags (three dimensions), category (from piyaz_get project view='meta'), priority, estimate up front — hints flag what's missing. Fails while the project is archived (reopen via piyaz_workspace status='active'). " +
     "Next: verify wiring with piyaz_map view='neighbors' task='<ref>'.",
@@ -229,7 +229,7 @@ export const workspaceInputSchema = z.object({
     .max(LIMITS.description)
     .optional()
     .describe(
-      "3-5 sentence brief: problem, user, features, tech direction, constraints.",
+      "A brief covering the problem, the user, core features, tech direction, and constraints; short plain paragraphs, length follows content.",
     ),
   status: z
     .enum(["brainstorming", "decomposing", "active", "archived"])
@@ -395,7 +395,7 @@ const createTaskItemSchema = z.object({
     .min(1)
     .max(LIMITS.description)
     .describe(
-      "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence flagged): what + who it serves + where it fits.",
+      "What the task is, who it serves, and where it fits; plain markdown, length follows content (single-sentence descriptions are flagged as too thin).",
     ),
   status: z
     .enum(TASK_STATUSES)
@@ -469,7 +469,7 @@ const createTaskItemSchema = z.object({
     .max(LIMITS.executionRecord)
     .optional()
     .describe(
-      "3-5 sentences on HOW it was built (file paths, function names). Only for tasks created already shipped or cancelled (rationale).",
+      "HOW it was built, citing real file paths and function names; short technical paragraphs, length follows content. Only for tasks created already shipped or cancelled (rationale).",
     ),
   prUrl: z
     .url()

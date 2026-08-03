@@ -45,7 +45,7 @@ Cover, depending on task type:
 
 Include a solution sketch when you have one: "Use Drizzle, mirror the patterns in `lib/data/task.ts`" beats "Define the database tables". Do not pad with implementation guesses when the approach is uncertain; the implementation plan is for that.
 
-Length runs 2 to 4 sentences for most tasks, up to 6 to 8 for genuinely complex ones. Single-sentence descriptions are never acceptable; the server flags them in `_hints` and they get rewritten before moving on.
+Length follows content: cover the points above for the task's type in plain markdown, paths and symbols as code spans, and cut filler rather than clarity. Single-sentence descriptions are never acceptable; the server flags them in `_hints` and they get rewritten before moving on.
 
 **For onboarding**, writing descriptions for tasks that already shipped: write as if the task were being created before the work, knowing what you now know about the codebase. The reader must be able to re-derive the work from the description. Not "added the auth middleware" but "Build the JWT auth middleware in `lib/auth/middleware.ts`. Validate Bearer tokens against the user table, set `req.user`, reject on expiry. Required by every protected route."
 
@@ -70,7 +70,7 @@ BAD: "Build the dashboard."
 
 ### `acceptanceCriteria`
 
-2 to 4 items, each binary: a reviewer answers yes or no without ambiguity.
+Each criterion is one binary check: a reviewer answers yes or no without asking anything. Compound checks split into separate criteria; most tasks need only a handful.
 
 ```
 GOOD (web):

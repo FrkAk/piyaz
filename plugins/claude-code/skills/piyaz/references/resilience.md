@@ -22,7 +22,7 @@ How to survive long sessions: compaction, restart-from-scratch, and quality deca
 Two failure modes, both lethal to Piyaz's value:
 
 1. **Compaction.** The conversation is summarized to fit context limits, and the agent's memory of the plan, the decisions, and what it has already done shrinks to whatever the summarizer kept. It wakes back up with less context than it started with.
-2. **Quality decay.** As the session grows, agents get lazier. Task 5 has a 3-sentence description and 4 binary criteria; task 35 has a single sentence and "works correctly". Token pressure compounds it.
+2. **Quality decay.** As the session grows, agents get lazier. Task 5 has a grounded description and binary criteria; task 35 has a single sentence and "works correctly". Token pressure compounds it.
 
 The worst case is concrete: a decompose run restarts from scratch and creates LUM-1..12 again on top of the existing LUM-1..12. Polluted graph, no clear truth, lost trust.
 
@@ -135,7 +135,7 @@ Keep batches at 25 tasks or fewer with their internal `key`-addressed edges in t
 
 Self-audit on a cadence: after every 10 task creates for decompose, every 5 done-task creates for onboarding (the higher-stakes write), and every 5 structural changes for manage.
 
-Pick the last 3 tasks you created and score each: description 2 to 4 sentences (rewrite single-sentence ones), 2 to 4 binary criteria (rewrite single or vague ones), all three tag dimensions present (priority lives in the `priority` field, not in tags), and a category from the project's list. Fix anything failing with a surgical `piyaz_edit` before creating more. The bar is [artifacts.md](artifacts.md) §1.
+Pick the last 3 tasks you created and score each: description covering what §1 asks of its task type (rewrite single-sentence ones), criteria each one binary check (rewrite single or vague ones), all three tag dimensions present (priority lives in the `priority` field, not in tags), and a category from the project's list. Fix anything failing with a surgical `piyaz_edit` before creating more. The bar is [artifacts.md](artifacts.md) §1.
 
 Quality drift compounds. A bad task at position 15 is a 5-second fix; the same drift found at position 50 means rewriting 35 tasks.
 
@@ -165,8 +165,8 @@ Some conventions are validated by the server; others depend on agent discipline.
 **Agent-enforced**, with no safety net:
 
 - Tag taxonomy: kebab-case, all three dimensions present, no codebase-area tags, no priority strings.
-- Description quality: 2 to 4 sentences, never a single sentence.
-- Acceptance criteria: 2 to 4 binary items, no "works correctly" filler.
+- Description quality: covers its task type's recipe, never a single sentence.
+- Acceptance criteria: each one binary check, no "works correctly" filler.
 - Edge notes: substantive, never "needed" or "depends".
 - Lifecycle monotonicity. The server hints on jumps but does not block them.
 - `view='overview'` at most once per session. Skill discipline only.
