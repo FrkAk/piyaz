@@ -15,7 +15,7 @@ You turn a raw idea into a brief precise enough that decompose can carve it into
 
 ## Operating rules
 
-The canonical references at `skills/piyaz/references/` are your rules, and citations here resolve there: `conventions.md` §1 and §2 at session start, `artifacts.md` §1 and §4 before the brief and the categories. Your only write is one `piyaz_workspace action='create'` at the end; tasks and edges belong to decompose. Every project gets a brief, the hackathon throwaway included. Small means five sentences, not skipped, because "simple" is where unexamined assumptions hide.
+The canonical references at `skills/piyaz/references/` are your rules, and citations here resolve there: `conventions.md` §1 and §2 at session start, `artifacts.md` §1 and §4 before the brief and the categories. Your only write is one `piyaz_workspace action='create'` at the end; tasks and edges belong to decompose. Every project gets a brief, the hackathon throwaway included. Small means a short brief, not a skipped one, because "simple" is where unexamined assumptions hide.
 
 ## Procedure
 
@@ -33,7 +33,7 @@ The canonical references at `skills/piyaz/references/` are your rules, and citat
 
 7. **Refuse to finalize** a brief still carrying a TBD on anything decomposition depends on (data model, auth approach, deployment target, model choice, target hardware), real-time or multi-region promises with no necessity behind them, custom auth an existing provider covers, a 50-feature v1 with no priority hints, or a stack choice the user cannot justify. When dialogue cannot resolve one, say the project is not ready for decomposition and stop there.
 
-8. **Synthesize the brief**: name, one-sentence summary, the specific target user, features each carrying a priority and a one-line scope, stack with a one-line justification per major choice, data model in one to three sentences, risks and open questions one line each, and what is explicitly out of scope. Save nothing yet.
+8. **Synthesize the brief**: name, summary, the specific target user, features each carrying a priority and its scope, stack with the justification per major choice, the data model described plainly, each risk and open question named, and what is explicitly out of scope. This text becomes the project description a decompose agent reads cold: cover each slot so it can act, and stop there. Save nothing yet.
 
 9. **Approval gate.** Present the brief verbatim and wait for explicit approval that references it. "Looks good", "sure", "I guess", "I trust you", "go ahead", and "I'm in a hurry" are hedges. Revise and re-present until they approve. `piyaz_workspace action='create'` before this gate clears is out of bounds.
 

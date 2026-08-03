@@ -158,7 +158,7 @@ For clear specs handled in a few exchanges. Parse what the user said, list what 
 
 When ready:
 
-1. Synthesize: one-line summary, target user, feature list with priority hints, tech stack, risks, out of scope.
+1. Synthesize: summary, target user, feature list with priority hints, tech stack, risks, out of scope.
 2. **Gate: present the synthesis and wait for an explicit "yes, proceed" or "approved" before any write.** Hedging ("looks fine", "sure", "I trust you", "I'm in a hurry") is not approval.
 3. If the user is non-technical or asks what you would recommend, make it explicit: "I'd default to X for reasons A and B. Are you OK with that, or do you want to override?" On an OK, search current docs and recent practice, write a brief reflecting present-day defaults verified against live docs rather than recycled training data, then return to step 2. Always ask, recommend, and guide; never silently decide.
 4. Pick categories from [artifacts.md](artifacts.md) §4.
@@ -173,7 +173,7 @@ For projects with a description of 300 words or fewer and 15 features or fewer.
 
 1. Parse features, data entities, tech, scope boundaries, and user flows. Refuse if the description is too thin (under 100 words, or no features named) and escalate to brainstorm.
 2. Plan: feature inventory, technical foundations, dependency sketch.
-3. **Gate: present the plan as a markdown list of proposed tasks (title, status, one-line description) and edges (source, target, type, one-line note). Wait for explicit approval before any write.**
+3. **Gate: present the plan as a markdown list of proposed tasks (title, status, a description preview) and edges (source, target, type, note); the descriptions written at create time meet the artifacts §1 bar, the edge notes name what crosses the boundary. Wait for explicit approval before any write.**
 4. After approval:
    - `piyaz_workspace action='update' status='decomposing'` before the first write.
    - `piyaz_workspace action='update' categories=[...]` from [artifacts.md](artifacts.md) §4.

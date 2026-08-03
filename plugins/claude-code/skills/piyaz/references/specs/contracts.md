@@ -11,7 +11,7 @@ Every Piyaz artifact has two readers: an engineer opening the task cold six week
 The shape that serves both:
 
 - **Headed sections in a fixed order**, so a reader scanning for one thing knows where it is and an agent can find it by heading. Each recipe below gives its order.
-- **Short technical paragraphs**, two to four sentences per section, each carrying a fact rather than a transition.
+- **Short technical paragraphs**, each sentence carrying a fact rather than a transition. A section says what its reader needs and stops; length follows content.
 - **File, symbol, endpoint, and command references as code spans:** `lib/auth/middleware.ts`, `Queue::front`, `POST /api/habits/:id/complete`, `bun run db:push`. PRs and issues as `#412` or the full URL. This is what lets a reader jump straight to the thing.
 - **Bullet lists for three or more parallel items.** Two read better as a sentence.
 - **Tables only for enumerable facts:** statuses, endpoints, a mapping. Anything with reasoning in it belongs in prose.
@@ -25,7 +25,7 @@ The unabridged plan a coding agent executes without re-deriving your reasoning. 
 
 Sections, in order:
 
-1. **Approach.** Two to four sentences: what you are building and the shape of the solution. Name the pattern being followed and the existing code it mirrors.
+1. **Approach.** What you are building and the shape of the solution. Name the pattern being followed and the existing code it mirrors; the detail lives in Changes and Edge cases, not here.
 2. **Changes.** One bullet per file, as `path` plus what changes there. Include line numbers or symbol names where you have them.
 3. **Edge cases.** The conditions the naive implementation gets wrong, each with the intended behavior.
 4. **Verification.** The exact commands that prove it works, and what green looks like.
