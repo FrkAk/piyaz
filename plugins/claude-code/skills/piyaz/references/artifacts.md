@@ -213,9 +213,9 @@ Defaults matching the actual architecture of common shapes, not a canonical menu
 
 ## 5. Granularity
 
-**1 to 4 hours per task.** A coding agent should finish one in a single session.
+**One task, one reviewable PR.** Size a task so a coding agent can understand the bundle, research the unknowns, clarify what is ambiguous, and deliver the result as one PR a reviewer evaluates in one sitting: one concern, its tests, nothing half-delivered. That usually lands at 1 to 4 focused hours of work; the PR is the test, the hours are the symptom.
 
-Starting counts are seed values for decompose and onboarding, not a cap. Real projects accumulate tasks as work materializes. When a parent agent or a test rig caps the count below this table, honor the cap and record the deviation in your transcript or local working file.
+Starting counts calibrate decompose and onboarding; they are not targets in either direction. Real projects accumulate tasks as work materializes. When a parent agent or a test rig caps the count below this table, honor the cap and record the deviation in your transcript or local working file.
 
 | Project size | Starting task count |
 |---|---|
@@ -225,7 +225,7 @@ Starting counts are seed values for decompose and onboarding, not a cap. Real pr
 | Complex (15+ features, multiple subsystems) | 40 to 80 |
 | Enterprise / multi-team | 60 to 120 foundation tasks, growing into the hundreds as teams add work |
 
-Under 30 minutes and the overhead exceeds the work. Over a day and you have hidden subtasks, unclear scope, and something hard to track. When in doubt, split: tasks get more useful and more parallelizable as they shrink toward the 1-hour mark.
+Under 30 minutes of work, fold it into the PR it belongs to; two thin PRs cost more review than one coherent change. Over a day and you have hidden subtasks, unclear scope, and something hard to track: split at the seams a reviewer can evaluate independently, which is also where parallel agents stop colliding.
 
 ---
 
