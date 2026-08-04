@@ -37,6 +37,26 @@ async function provisionRoles(sql: ReturnType<typeof postgres>): Promise<void> {
 }
 
 /**
+ * Apply `docker/extensions.sql` so the testcontainer carries the same
+ * extensions the owner apply (`db:rls:owner`) and self-host chain
+ * (`db:rls`) install. CREATE EXTENSION needs no preload and no tables, so
+ * it runs right after role provisioning; the test compose deliberately
+ * skips `shared_preload_libraries` because no test queries
+ * `pg_stat_statements`. Idempotent.
+ *
+ * @param sql - Active postgres client (must be the container superuser).
+ */
+async function applyExtensions(
+  sql: ReturnType<typeof postgres>,
+): Promise<void> {
+  const content = readFileSync(
+    join(process.cwd(), "docker", "extensions.sql"),
+    "utf8",
+  );
+  await sql.unsafe(content);
+}
+
+/**
  * Apply `docker/grants.sql` (public) and `docker/grants-auth.sql` (piyaz_auth)
  * after `drizzle-kit push` so the `GRANT … ON ALL TABLES` statements land on
  * the just-created tables. Running grants before push is a no-op for those
@@ -171,6 +191,7 @@ export async function applyMigrations(url: string): Promise<void> {
     // reset it so subsequent statements land in the `public` schema.
     await sql.unsafe("SET search_path TO public, piyaz_auth");
     await provisionRoles(sql);
+    await applyExtensions(sql);
   } finally {
     await sql.end({ timeout: 5 });
   }

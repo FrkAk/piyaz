@@ -1,10 +1,11 @@
 /**
- * Apply the owner-managed RLS SQL: the piyaz_auth grants
- * (docker/grants-auth.sql), the request-path role settings
- * (docker/role-settings.sql) and the SECURITY DEFINER helpers + triggers
- * (docker/rls-functions.sql). These read or own piyaz_auth, or need ADMIN
- * OPTION on a role, so they must run as the database owner, never the
- * least-privilege migration role. Idempotent (CREATE OR REPLACE / GRANT /
+ * Apply the owner-managed RLS SQL: the extensions (docker/extensions.sql),
+ * the piyaz_auth grants (docker/grants-auth.sql), the request-path role
+ * settings (docker/role-settings.sql) and the SECURITY DEFINER helpers +
+ * triggers (docker/rls-functions.sql). These create extensions, read or own
+ * piyaz_auth, or need ADMIN OPTION on a role, so they must run as the
+ * database owner, never the least-privilege migration role. Idempotent
+ * (CREATE EXTENSION IF NOT EXISTS / CREATE OR REPLACE / GRANT /
  * ALTER ROLE ... SET).
  *
  * Reads DATABASE_OWNER_URL. Set this only in a trusted local shell, never as a
@@ -16,6 +17,7 @@ import { join } from "node:path";
 import postgres from "postgres";
 
 const OWNER_RLS_FILES = [
+  "extensions.sql",
   "grants-auth.sql",
   "role-settings.sql",
   "rls-functions.sql",

@@ -1317,3 +1317,121 @@ CREATE TRIGGER task_edges_touch_project_delete
   REFERENCING OLD TABLE AS changed_edges
   FOR EACH STATEMENT
   EXECUTE FUNCTION public.touch_projects_for_changed_task_edges();
+
+-- ---------------------------------------------------------------------------
+-- Nightly housekeeping sweep: bounded, idempotent deletion of expired auth
+-- artifacts and stale invite codes. Called by the Cloudflare cron in
+-- worker-cf.ts through service_role (JS caller:
+-- lib/db/raw/purge-expired-rows.ts). SECURITY DEFINER because service_role
+-- lacks DELETE on piyaz_auth."session" and all rights on
+-- piyaz_auth."verification", and auth_role's 15s statement_timeout is unfit
+-- for bulk deletes.
+--
+-- The CONSTANT declarations are the retention matrix's single source of
+-- truth. Dry runs and live runs share the same victim selection (the
+-- data-modifying CTE always executes; NOT p_dry_run turns it into a no-op),
+-- and the per-table LIMIT bounds one run — leftovers roll to the next.
+-- Retained by policy: legal_acceptances, activity_events, note_revisions,
+-- oauthConsent, jwks, piyaz_auth.invitation, account.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.purge_expired_rows(p_dry_run boolean, p_batch_limit integer)
+RETURNS TABLE (table_name text, row_count integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  c_oauth_grace        CONSTANT interval := interval '24 hours';
+  c_session_grace      CONSTANT interval := interval '7 days';
+  c_verification_grace CONSTANT interval := interval '7 days';
+  c_invite_grace       CONSTANT interval := interval '30 days';
+BEGIN
+  IF p_batch_limit IS NULL OR p_batch_limit < 1 OR p_batch_limit > 50000 THEN
+    RAISE EXCEPTION 'p_batch_limit out of range: %', p_batch_limit;
+  END IF;
+
+  WITH victims AS (
+    SELECT ctid FROM piyaz_auth."oauthAccessToken"
+    WHERE "expiresAt" < now() - c_oauth_grace
+    LIMIT p_batch_limit
+  ), deleted AS (
+    DELETE FROM piyaz_auth."oauthAccessToken" t
+    USING victims v
+    WHERE t.ctid = v.ctid AND NOT p_dry_run
+    RETURNING 1
+  )
+  SELECT CASE WHEN p_dry_run THEN (SELECT count(*) FROM victims)
+              ELSE (SELECT count(*) FROM deleted) END::integer
+  INTO row_count;
+  table_name := 'oauthAccessToken';
+  RETURN NEXT;
+
+  WITH victims AS (
+    SELECT ctid FROM piyaz_auth."oauthRefreshToken"
+    WHERE revoked < now() - c_oauth_grace
+       OR "expiresAt" < now() - c_oauth_grace
+    LIMIT p_batch_limit
+  ), deleted AS (
+    DELETE FROM piyaz_auth."oauthRefreshToken" t
+    USING victims v
+    WHERE t.ctid = v.ctid AND NOT p_dry_run
+    RETURNING 1
+  )
+  SELECT CASE WHEN p_dry_run THEN (SELECT count(*) FROM victims)
+              ELSE (SELECT count(*) FROM deleted) END::integer
+  INTO row_count;
+  table_name := 'oauthRefreshToken';
+  RETURN NEXT;
+
+  WITH victims AS (
+    SELECT ctid FROM piyaz_auth."session"
+    WHERE "expiresAt" < now() - c_session_grace
+    LIMIT p_batch_limit
+  ), deleted AS (
+    DELETE FROM piyaz_auth."session" t
+    USING victims v
+    WHERE t.ctid = v.ctid AND NOT p_dry_run
+    RETURNING 1
+  )
+  SELECT CASE WHEN p_dry_run THEN (SELECT count(*) FROM victims)
+              ELSE (SELECT count(*) FROM deleted) END::integer
+  INTO row_count;
+  table_name := 'session';
+  RETURN NEXT;
+
+  WITH victims AS (
+    SELECT ctid FROM piyaz_auth."verification"
+    WHERE "expiresAt" < now() - c_verification_grace
+    LIMIT p_batch_limit
+  ), deleted AS (
+    DELETE FROM piyaz_auth."verification" t
+    USING victims v
+    WHERE t.ctid = v.ctid AND NOT p_dry_run
+    RETURNING 1
+  )
+  SELECT CASE WHEN p_dry_run THEN (SELECT count(*) FROM victims)
+              ELSE (SELECT count(*) FROM deleted) END::integer
+  INTO row_count;
+  table_name := 'verification';
+  RETURN NEXT;
+
+  WITH victims AS (
+    SELECT ctid FROM public.team_invite_code
+    WHERE revoked_at < now() - c_invite_grace
+       OR expires_at < now() - c_invite_grace
+    LIMIT p_batch_limit
+  ), deleted AS (
+    DELETE FROM public.team_invite_code t
+    USING victims v
+    WHERE t.ctid = v.ctid AND NOT p_dry_run
+    RETURNING 1
+  )
+  SELECT CASE WHEN p_dry_run THEN (SELECT count(*) FROM victims)
+              ELSE (SELECT count(*) FROM deleted) END::integer
+  INTO row_count;
+  table_name := 'team_invite_code';
+  RETURN NEXT;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.purge_expired_rows(boolean, integer) FROM public;
+GRANT EXECUTE ON FUNCTION public.purge_expired_rows(boolean, integer) TO service_role;

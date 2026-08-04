@@ -1,7 +1,7 @@
 /**
  * Verify the live database satisfies the public RLS contract: policies,
- * FORCE RLS, the owner-managed functions AND triggers, lz4 compression, and
- * the append-only REVOKE narrowing. Read-only: runs as the migration role
+ * FORCE RLS, the owner-managed extensions, functions AND triggers, lz4
+ * compression, and the append-only REVOKE narrowing. Read-only: runs as the migration role
  * (system catalogs are world-readable). Exits non-zero with an actionable
  * message so a forgotten owner apply, grant drift, or policy drift blocks the
  * deploy instead of shipping broken RLS.
@@ -16,6 +16,7 @@ interface ExpectedContract {
   forcedTables: string[];
   functions: string[];
   triggers: Array<{ table: string; trigger: string }>;
+  extensions: string[];
 }
 
 /**
@@ -53,14 +54,16 @@ function readDockerSql(file: string): string {
 }
 
 /**
- * Extract the expected policies, FORCE-RLS tables, and SECURITY DEFINER
- * function names from the hand-written docker SQL (the single source of truth).
+ * Extract the expected policies, FORCE-RLS tables, SECURITY DEFINER
+ * function names, and extensions from the hand-written docker SQL (the
+ * single source of truth).
  *
  * @returns The contract the live database must satisfy.
  */
 function expectedContract(): ExpectedContract {
   const policiesSql = readDockerSql("rls-policies.sql");
   const functionsSql = readDockerSql("rls-functions.sql");
+  const extensionsSql = readDockerSql("extensions.sql");
 
   const policies = [
     ...policiesSql.matchAll(/CREATE\s+POLICY\s+"([^"]+)"\s+ON\s+"([^"]+)"/gi),
@@ -88,11 +91,18 @@ function expectedContract(): ExpectedContract {
     ),
   ].map((m) => ({ trigger: m[1], table: m[2] }));
 
+  const extensions = [
+    ...extensionsSql.matchAll(
+      /CREATE\s+EXTENSION\s+IF\s+NOT\s+EXISTS\s+(\w+)/gi,
+    ),
+  ].map((m) => m[1]);
+
   return {
     policies,
     forcedTables: [...new Set(forcedTables)],
     functions: [...new Set(functions)],
     triggers,
+    extensions: [...new Set(extensions)],
   };
 }
 
@@ -163,6 +173,16 @@ async function findMissing(
   for (const { table, trigger } of expected.triggers) {
     if (!liveTriggerSet.has(`${table}.${trigger}`)) {
       missing.push(`trigger "${trigger}" on ${table}`);
+    }
+  }
+
+  const liveExtensions = await sql<{ extname: string }[]>`
+    SELECT extname FROM pg_extension
+  `;
+  const liveExtensionSet = new Set(liveExtensions.map((r) => r.extname));
+  for (const ext of expected.extensions) {
+    if (!liveExtensionSet.has(ext)) {
+      missing.push(`extension ${ext}`);
     }
   }
 
@@ -246,8 +266,8 @@ async function verifyRls(url: string): Promise<void> {
     throw new Error(
       `RLS contract not satisfied on the target database:\n${list}\n` +
         "Apply the owner-managed SQL as the database owner (db:rls:owner) " +
-        "for missing functions/triggers, re-run the public apply (db:rls:ci) " +
-        "for grants/policies/compression, then re-run the deploy.",
+        "for missing extensions/functions/triggers, re-run the public apply " +
+        "(db:rls:ci) for grants/policies/compression, then re-run the deploy.",
     );
   }
 }

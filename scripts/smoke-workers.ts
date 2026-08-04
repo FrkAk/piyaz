@@ -138,6 +138,7 @@ function startWorker(): {
       "--env",
       "dev",
       "--local",
+      "--test-scheduled",
       "--ip",
       "127.0.0.1",
       "--port",
@@ -225,6 +226,51 @@ async function runProbes(): Promise<string[]> {
   return failures;
 }
 
+/** Cron expression wired to the housekeeping scheduled handler in worker-cf.ts. */
+const HOUSEKEEPING_CRON = "0 3 * * *";
+
+/**
+ * Trigger the scheduled handler through wrangler's `--test-scheduled`
+ * endpoint and wait for the housekeeping event in the worker log. The DB
+ * URLs are unreachable by design, so the expected outcome is the handler's
+ * own structured `ok:false` failure log — which still proves cron dispatch,
+ * the request DB frame, and the raw-builder wiring survive the wrangler
+ * bundle without touching a database.
+ *
+ * @param output - Reader over everything the worker printed so far.
+ * @returns Human-readable failure lines, empty when the probe passed.
+ */
+async function probeScheduled(output: () => string): Promise<string[]> {
+  const path = `/cdn-cgi/handler/scheduled?cron=${encodeURIComponent(HOUSEKEEPING_CRON)}`;
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (response.status !== 200) {
+      return [
+        `GET ${path} returned ${response.status}, expected 200 (the scheduled handler is not wired into the bundle)`,
+      ];
+    }
+  } catch (error) {
+    return [`GET ${path} failed: ${String(error)}`];
+  }
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const logged = output();
+    if (
+      logged.includes('"event":"db_housekeeping"') &&
+      logged.includes('"ok":false')
+    ) {
+      console.log(`  ok  GET ${path} -> db_housekeeping event logged`);
+      return [];
+    }
+    await Bun.sleep(200);
+  }
+  return [
+    "the scheduled probe never logged a db_housekeeping event (cron dispatch or DB-frame wiring is broken)",
+  ];
+}
+
 /**
  * Build the bundle's verdict: boot it, probe it, and read its log.
  *
@@ -239,6 +285,7 @@ async function main(): Promise<void> {
   try {
     await waitForReady();
     failures = await runProbes();
+    failures.push(...(await probeScheduled(output)));
   } catch (error) {
     failures.push(String(error));
   } finally {
@@ -248,8 +295,12 @@ async function main(): Promise<void> {
 
   // A probe can pass while the worker logs a runtime error on another path,
   // so the log itself is an assertion. This is what generalizes past the one
-  // bug that prompted the script.
-  const logged = output();
+  // bug that prompted the script. The scheduled probe's own db_housekeeping
+  // failure event is expected (unreachable DB by design) and exempt.
+  const logged = output()
+    .split("\n")
+    .filter((entry) => !entry.includes('"event":"db_housekeeping"'))
+    .join("\n");
   for (const marker of ["✘ [ERROR]", "TypeError"]) {
     if (!logged.includes(marker)) continue;
     const line = logged.split("\n").find((entry) => entry.includes(marker));
