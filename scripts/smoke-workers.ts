@@ -138,6 +138,7 @@ function startWorker(): {
       "--env",
       "dev",
       "--local",
+      "--test-scheduled",
       "--ip",
       "127.0.0.1",
       "--port",
@@ -226,6 +227,85 @@ async function runProbes(): Promise<string[]> {
 }
 
 /**
+ * Reason signature of the scheduled probe's expected failure. The smoke DB
+ * URLs are unreachable by design, so the sweep dies inside query execution
+ * and drizzle wraps it as a "Failed query" error naming the purge SELECT.
+ * Anything else (TypeError, ReferenceError, a dynamic-require bundling
+ * failure, a missing-frame throw) is unexpected: it fails the probe and
+ * stays visible to the error grep.
+ */
+const EXPECTED_HOUSEKEEPING_REASON =
+  "Failed query: SELECT table_name, row_count FROM public.purge_expired_rows";
+
+/**
+ * Whether a log line is the scheduled probe's expected failure event: an
+ * `ok:false` `db_housekeeping` entry whose reason matches the unreachable-DB
+ * query-failure signature. Only lines matching this whitelist are exempt
+ * from the error grep.
+ *
+ * @param line - One worker log line.
+ * @returns True when the line is the expected unreachable-DB event.
+ */
+function isExpectedHousekeepingFailure(line: string): boolean {
+  return (
+    line.includes('"event":"db_housekeeping"') &&
+    line.includes('"ok":false') &&
+    line.includes(EXPECTED_HOUSEKEEPING_REASON)
+  );
+}
+
+/**
+ * Trigger the scheduled handler through wrangler's scheduled test endpoint
+ * and wait for the housekeeping event in the worker log. The DB URLs are
+ * unreachable by design, so the expected outcome is the handler's own
+ * structured `ok:false` connection-failure log — which proves the handler,
+ * the request DB frame, and the raw-builder wiring survive the wrangler
+ * bundle without touching a database. A `db_housekeeping` failure carrying
+ * a TypeError fails the probe instead of passing it.
+ *
+ * @param output - Reader over everything the worker printed so far.
+ * @returns Human-readable failure lines, empty when the probe passed.
+ */
+async function probeScheduled(output: () => string): Promise<string[]> {
+  const path = "/cdn-cgi/handler/scheduled";
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (response.status !== 200) {
+      return [
+        `GET ${path} returned ${response.status}, expected 200 (the scheduled handler is not wired into the bundle)`,
+      ];
+    }
+  } catch (error) {
+    return [`GET ${path} failed: ${String(error)}`];
+  }
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const line = output()
+      .split("\n")
+      .find(
+        (entry) =>
+          entry.includes('"event":"db_housekeeping"') &&
+          entry.includes('"ok":false'),
+      );
+    if (line) {
+      if (!isExpectedHousekeepingFailure(line)) {
+        return [
+          `the scheduled handler logged an unexpected failure reason under the wrangler bundle: ${line.trim().slice(0, 300)}`,
+        ];
+      }
+      console.log(`  ok  GET ${path} -> db_housekeeping event logged`);
+      return [];
+    }
+    await Bun.sleep(200);
+  }
+  return [
+    "the scheduled probe never logged a db_housekeeping event (scheduled handler or DB-frame wiring is broken)",
+  ];
+}
+
+/**
  * Build the bundle's verdict: boot it, probe it, and read its log.
  *
  * @throws Error when the bundle is stale or missing.
@@ -239,6 +319,7 @@ async function main(): Promise<void> {
   try {
     await waitForReady();
     failures = await runProbes();
+    failures.push(...(await probeScheduled(output)));
   } catch (error) {
     failures.push(String(error));
   } finally {
@@ -248,12 +329,17 @@ async function main(): Promise<void> {
 
   // A probe can pass while the worker logs a runtime error on another path,
   // so the log itself is an assertion. This is what generalizes past the one
-  // bug that prompted the script.
-  const logged = output();
+  // bug that prompted the script. Only the scheduled probe's expected
+  // unreachable-DB db_housekeeping event is exempt (whitelisted by reason
+  // signature); any other handler failure stays visible to both the probe
+  // and this grep.
+  const lines = output()
+    .split("\n")
+    .filter((entry) => !isExpectedHousekeepingFailure(entry));
   for (const marker of ["✘ [ERROR]", "TypeError"]) {
-    if (!logged.includes(marker)) continue;
-    const line = logged.split("\n").find((entry) => entry.includes(marker));
-    failures.push(`worker logged ${marker}: ${line?.trim().slice(0, 300)}`);
+    const line = lines.find((entry) => entry.includes(marker));
+    if (!line) continue;
+    failures.push(`worker logged ${marker}: ${line.trim().slice(0, 300)}`);
   }
 
   if (failures.length > 0) {

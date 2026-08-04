@@ -19,9 +19,14 @@ import {
   type CloudflareRateLimitBinding,
 } from "./lib/api/rate-limit-cf";
 import {
+  HOUSEKEEPING_BATCH_LIMIT,
+  purgeExpiredRows,
+} from "./lib/db/raw/purge-expired-rows";
+import {
   scheduleRequestDbTeardown,
   withRequestDb,
 } from "./lib/db/request-scope.workers";
+import { requestDbStore } from "./lib/db/request-store";
 import {
   broker,
   type DurableObjectNamespace,
@@ -51,6 +56,7 @@ interface WorkerEnv {
   DATABASE_URL?: string;
   DATABASE_AUTH_URL?: string;
   DATABASE_SERVICE_ROLE_URL?: string;
+  HOUSEKEEPING_DRY_RUN?: string;
   RATE_LIMIT_API?: CloudflareRateLimitBinding;
   RATE_LIMIT_AUTH?: CloudflareRateLimitBinding;
   RATE_LIMIT_MCP?: CloudflareRateLimitBinding;
@@ -66,6 +72,16 @@ interface WorkerEnv {
 interface WorkerCtx {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
+}
+
+/**
+ * Minimal `ScheduledController` shape passed by workerd to `scheduled`.
+ * Same file-local-stub rationale as `WorkerEnv` above.
+ */
+interface ScheduledController {
+  cron: string;
+  scheduledTime: number;
+  noRetry(): void;
 }
 
 /**
@@ -287,6 +303,70 @@ const handler = {
     return scheduleRequestDbTeardown(result, teardown, (promise) =>
       ctx.waitUntil(promise),
     );
+  },
+
+  /**
+   * Run the nightly housekeeping sweep. `wrangler.jsonc` owns the schedule
+   * (`triggers.crons`, one entry per env); the handler sweeps on whatever
+   * cron fired and logs it, so editing the schedule there cannot silently
+   * strand the job. Dispatch on `controller.cron` only when a second
+   * schedule actually lands.
+   *
+   * The sweep calls `public.purge_expired_rows` (SECURITY DEFINER) through
+   * the request frame's service-role handle, read via `requestDbStore`
+   * instead of `lib/db/connection.ts` — importing the latter would drag the
+   * Node postgres-js driver into this esbuild bundle (see
+   * `lib/db/request-store.ts`). Dry-run is fail-safe: anything but the
+   * literal `"false"` binding stays dry. Failures are logged as a
+   * structured `db_housekeeping` event with `ok:false` and not rethrown —
+   * cron invocations have no retry semantics, and the persisted Workers
+   * Logs are the alerting surface. Teardown is awaited directly: there is
+   * no response body to outlive.
+   *
+   * @param controller - Scheduled-event controller; `cron` is logged as fired.
+   * @param env - Worker bindings.
+   * @param _ctx - Execution context (unused; nothing outlives the handler).
+   */
+  async scheduled(
+    controller: ScheduledController,
+    env: WorkerEnv,
+    _ctx: WorkerCtx,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    const dryRun = env.HOUSEKEEPING_DRY_RUN !== "false";
+    try {
+      const { result, teardown } = await withRequestDb(() => {
+        const frame = requestDbStore.getStore();
+        if (!frame) throw new Error("db_housekeeping: no request DB frame");
+        return purgeExpiredRows(
+          frame.serviceRoleDb,
+          dryRun,
+          HOUSEKEEPING_BATCH_LIMIT,
+        );
+      }, dbBindings(env));
+      await teardown();
+      console.log(
+        JSON.stringify({
+          event: "db_housekeeping",
+          cron: controller.cron,
+          dryRun,
+          ...Object.fromEntries(result.map((r) => [r.table_name, r.row_count])),
+          ms: Date.now() - startedAt,
+          ok: true,
+        }),
+      );
+    } catch (err) {
+      console.error(
+        JSON.stringify({
+          event: "db_housekeeping",
+          cron: controller.cron,
+          dryRun,
+          ms: Date.now() - startedAt,
+          ok: false,
+          reason: String(err),
+        }),
+      );
+    }
   },
 };
 

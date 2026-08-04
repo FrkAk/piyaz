@@ -3,6 +3,10 @@ services:
   db:
     image: postgres:18
     restart: unless-stopped
+    # pg_stat_statements collects nothing unless preloaded; CREATE EXTENSION
+    # alone (docker/extensions.sql) only creates the SQL objects. Applies on
+    # the next `docker compose up -d`.
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     environment:
       POSTGRES_USER: piyaz
       # Superuser: exempt from FORCE ROW LEVEL SECURITY, so this credential

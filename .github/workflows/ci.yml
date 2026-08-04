@@ -51,19 +51,11 @@ jobs:
         # next declares sharp ^0.34.5 (optional) and miniflare pins sharp
         # 0.34.5 exactly, so the fix is only reachable by forcing a major
         # override against both parents. Drop the ignore once either admits
-        # sharp >= 0.35.0. Tracked in PYZ-345. (fast-uri + postcss are fixed
-        # via package.json overrides; see the //overrides note there.)
-        #
-        # GHSA-mh99-v99m-4gvg: brace-expansion DoS, vulnerable range <= 5.0.7,
-        # spanning every major. Reached only through dev dependencies, via
-        # minimatch under eslint, eslint-plugin-import, typescript-eslint, and
-        # @opennextjs/cloudflare > glob. No runtime path: `bun audit --prod`
-        # does not report it. An override was rejected because 5.0.8 is
-        # the only patched release, so a single range drags the consumers
-        # pinned to 1.1.16 and 2.1.2 across two majors. Drop the ignore once
-        # upstream publishes patched 1.x and 2.x lines, or once the tree
-        # consolidates on brace-expansion >= 5.0.8. Tracked in PYZ-345.
-        run: bun audit --audit-level=high --ignore=GHSA-f88m-g3jw-g9cj --ignore=GHSA-mh99-v99m-4gvg
+        # sharp >= 0.35.0. Tracked in PYZ-345. (fast-uri, ip-address, postcss,
+        # and undici are fixed via package.json overrides; brace-expansion is
+        # fixed per-major in bun.lock, patched lines now exist for every
+        # major. See the //overrides note in package.json.)
+        run: bun audit --audit-level=high --ignore=GHSA-f88m-g3jw-g9cj
       - name: Validate PR title
         if: github.event_name == 'pull_request'
         env:

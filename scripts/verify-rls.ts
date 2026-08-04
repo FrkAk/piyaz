@@ -1,7 +1,7 @@
 /**
  * Verify the live database satisfies the public RLS contract: policies,
- * FORCE RLS, the owner-managed functions AND triggers, lz4 compression, and
- * the append-only REVOKE narrowing. Read-only: runs as the migration role
+ * FORCE RLS, the owner-managed extensions, functions AND triggers, lz4
+ * compression, and the append-only REVOKE narrowing. Read-only: runs as the migration role
  * (system catalogs are world-readable). Exits non-zero with an actionable
  * message so a forgotten owner apply, grant drift, or policy drift blocks the
  * deploy instead of shipping broken RLS.
@@ -16,6 +16,7 @@ interface ExpectedContract {
   forcedTables: string[];
   functions: string[];
   triggers: Array<{ table: string; trigger: string }>;
+  extensions: Array<{ name: string; schema: string | null }>;
 }
 
 /**
@@ -53,14 +54,16 @@ function readDockerSql(file: string): string {
 }
 
 /**
- * Extract the expected policies, FORCE-RLS tables, and SECURITY DEFINER
- * function names from the hand-written docker SQL (the single source of truth).
+ * Extract the expected policies, FORCE-RLS tables, SECURITY DEFINER
+ * function names, and extensions from the hand-written docker SQL (the
+ * single source of truth).
  *
  * @returns The contract the live database must satisfy.
  */
 function expectedContract(): ExpectedContract {
   const policiesSql = readDockerSql("rls-policies.sql");
   const functionsSql = readDockerSql("rls-functions.sql");
+  const extensionsSql = readDockerSql("extensions.sql");
 
   const policies = [
     ...policiesSql.matchAll(/CREATE\s+POLICY\s+"([^"]+)"\s+ON\s+"([^"]+)"/gi),
@@ -88,11 +91,23 @@ function expectedContract(): ExpectedContract {
     ),
   ].map((m) => ({ trigger: m[1], table: m[2] }));
 
+  // Both halves are load-bearing: CREATE EXTENSION IF NOT EXISTS does NOT
+  // relocate an extension that already exists in another schema (it no-ops
+  // with a notice), and scripts/db-stats.ts addresses the views through the
+  // declared schema. A name-only check would pass on a database carrying a
+  // pre-existing public-schema install while the read path 42P01s.
+  const extensions = [
+    ...extensionsSql.matchAll(
+      /CREATE\s+EXTENSION\s+IF\s+NOT\s+EXISTS\s+(\w+)(?:\s+WITH\s+SCHEMA\s+(\w+))?/gi,
+    ),
+  ].map((m) => ({ name: m[1], schema: m[2] ?? null }));
+
   return {
     policies,
     forcedTables: [...new Set(forcedTables)],
     functions: [...new Set(functions)],
     triggers,
+    extensions,
   };
 }
 
@@ -144,6 +159,16 @@ async function findMissing(
     liveTriggers.map((r) => `${r.relname}.${r.tgname}`),
   );
 
+  const liveExtensions = await sql<{ extname: string; nspname: string }[]>`
+    SELECT e.extname, n.nspname
+    FROM pg_extension e
+    JOIN pg_namespace n ON n.oid = e.extnamespace
+  `;
+  const liveExtensionSet = new Set(
+    liveExtensions.map((r) => `${r.extname}.${r.nspname}`),
+  );
+  const liveExtensionNames = new Set(liveExtensions.map((r) => r.extname));
+
   const missing: string[] = [];
   for (const { table, policy } of expected.policies) {
     if (!livePolicySet.has(policyKey(table, policy))) {
@@ -163,6 +188,16 @@ async function findMissing(
   for (const { table, trigger } of expected.triggers) {
     if (!liveTriggerSet.has(`${table}.${trigger}`)) {
       missing.push(`trigger "${trigger}" on ${table}`);
+    }
+  }
+  for (const { name, schema } of expected.extensions) {
+    const present = schema
+      ? liveExtensionSet.has(`${name}.${schema}`)
+      : liveExtensionNames.has(name);
+    if (!present) {
+      missing.push(
+        schema ? `extension ${name} in schema ${schema}` : `extension ${name}`,
+      );
     }
   }
 
@@ -246,8 +281,11 @@ async function verifyRls(url: string): Promise<void> {
     throw new Error(
       `RLS contract not satisfied on the target database:\n${list}\n` +
         "Apply the owner-managed SQL as the database owner (db:rls:owner) " +
-        "for missing functions/triggers, re-run the public apply (db:rls:ci) " +
-        "for grants/policies/compression, then re-run the deploy.",
+        "for missing extensions/functions/triggers, re-run the public apply " +
+        "(db:rls:ci) for grants/policies/compression, then re-run the deploy. " +
+        "An extension already installed in a different schema needs an " +
+        "owner-run ALTER EXTENSION ... SET SCHEMA instead: CREATE EXTENSION " +
+        "IF NOT EXISTS cannot relocate it.",
     );
   }
 }

@@ -92,6 +92,7 @@
         }
       ],
       "routes": [{ "pattern": "app.piyaz.ai", "custom_domain": true }],
+      "triggers": { "crons": ["0 3 * * *"] },
       "workers_dev": false,
       "preview_urls": false,
       "limits": { "cpu_ms": 10000 },
@@ -128,6 +129,7 @@
         "EMAIL_FROM_INFO": "noreply@piyaz.ai",
         "EMAIL_REPLY_TO": "hello@piyaz.ai",
         "REQUIRE_EMAIL_VERIFICATION": "true",
+        "HOUSEKEEPING_DRY_RUN": "true",
         "APP_NAME": "Piyaz",
         "BRAND_LOGO_URL": "https://app.piyaz.ai/piyaz-mark.png",
         "BRAND_COLOR": "#976b68",
@@ -209,6 +211,7 @@
         }
       ],
       "routes": [{ "pattern": "dev.app.piyaz.ai", "custom_domain": true }],
+      "triggers": { "crons": ["0 3 * * *"] },
       "workers_dev": false,
       "preview_urls": false,
       "limits": { "cpu_ms": 10000 },
@@ -245,6 +248,7 @@
         "EMAIL_FROM_INFO": "noreply@piyaz.ai",
         "EMAIL_REPLY_TO": "hello@piyaz.ai",
         "REQUIRE_EMAIL_VERIFICATION": "true",
+        "HOUSEKEEPING_DRY_RUN": "true",
         "APP_NAME": "Piyaz (dev)",
         "BRAND_LOGO_URL": "https://app.piyaz.ai/piyaz-mark.png",
         "BRAND_COLOR": "#976b68",
