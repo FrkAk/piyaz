@@ -85,22 +85,11 @@ trail.
 
 ## Phase shape
 
-```dot
-digraph decompose_task {
-    "Phase 1: Read + plan split" [shape=box];
-    "HARD-GATE: user approves\nchildren + rewiring + parent fate?" [shape=diamond];
-    "Phase 2: Create child tasks" [shape=box];
-    "Phase 3: Rewire edges" [shape=box];
-    "Phase 4: Cancel parent + Validate" [shape=box];
-    "Done: parent cancelled, children draft" [shape=doublecircle];
-
-    "Phase 1: Read + plan split" -> "HARD-GATE: user approves\nchildren + rewiring + parent fate?";
-    "HARD-GATE: user approves\nchildren + rewiring + parent fate?" -> "Phase 1: Read + plan split" [label="changes requested"];
-    "HARD-GATE: user approves\nchildren + rewiring + parent fate?" -> "Phase 2: Create child tasks" [label="explicit yes"];
-    "Phase 2: Create child tasks" -> "Phase 3: Rewire edges";
-    "Phase 3: Rewire edges" -> "Phase 4: Cancel parent + Validate";
-}
-```
+1. Phase 1: read the parent and plan the split.
+2. HARD-GATE: does the user approve the children, the rewiring, and the parent's fate? If changes are requested, return to 1; on explicit yes, continue.
+3. Phase 2: create child tasks.
+4. Phase 3: rewire edges.
+5. Phase 4: cancel the parent and validate. Done: parent cancelled, children draft.
 
 ---
 
@@ -253,7 +242,7 @@ Edges rewired: <N> outbound, <M> inbound.
 Parent cancelled with rationale; cancelled-as-transparent propagation handles dependents.
 ```
 
-When dispatched by composer, the orchestrator's next pick may include one of the children once their dependencies clear. When invoked directly by the user, the user may want to refine an individual child via the piyaz skill before the planner runs on it.
+When dispatched by composer, the orchestrator's next pick may include one of the children once their dependencies clear. When invoked directly by the user, the user may want to refine an individual child via the piyaz skill before the plan phase runs on it.
 
 ---
 

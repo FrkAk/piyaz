@@ -86,45 +86,12 @@ Then start iterating. There is nothing to install and nothing to confirm beyond 
 
 At the start of each iteration, materialize these todos and mark them off (the todo list is your compaction anchor): pick, launch workflow, handle result, surface verdict, merge gate, propagate.
 
-```dot
-digraph composer_iteration {
-    "Pick next task" [shape=box];
-    "Ready or plannable task?" [shape=diamond];
-    "STOP: backlog drained" [shape=doublecircle];
-    "Launch compose-task workflow" [shape=box];
-    "Result status?" [shape=diamond];
-    "Resolve gate with user" [shape=box];
-    "Continue this task?" [shape=diamond];
-    "STOP: iteration ends (single-task)" [shape=doublecircle];
-    "Failure handling" [shape=box];
-    "outcome = planned?" [shape=diamond];
-    "Surface verdict" [shape=box];
-    "Merge gate (per policy)" [shape=box];
-    "Propagate" [shape=box];
-    "Single-task mode?" [shape=diamond];
-    "STOP: iteration complete" [shape=doublecircle];
-
-    "Pick next task" -> "Ready or plannable task?";
-    "Ready or plannable task?" -> "STOP: backlog drained" [label="no"];
-    "Ready or plannable task?" -> "Launch compose-task workflow" [label="yes"];
-    "Launch compose-task workflow" -> "Result status?";
-    "Result status?" -> "outcome = planned?" [label="DONE"];
-    "Result status?" -> "Resolve gate with user" [label="NEEDS_DECISION"];
-    "Result status?" -> "Failure handling" [label="BLOCKED / null"];
-    "Resolve gate with user" -> "Continue this task?";
-    "Continue this task?" -> "Launch compose-task workflow" [label="yes: relaunch with answers"];
-    "Continue this task?" -> "Pick next task" [label="no (backlog)"];
-    "Continue this task?" -> "STOP: iteration ends (single-task)" [label="no (single-task)"];
-    "outcome = planned?" -> "Single-task mode?" [label="yes (plannable-only)"];
-    "outcome = planned?" -> "Surface verdict" [label="no"];
-    "Surface verdict" -> "Merge gate (per policy)";
-    "Merge gate (per policy)" -> "Propagate";
-    "Propagate" -> "Single-task mode?";
-    "Single-task mode?" -> "STOP: iteration complete" [label="yes"];
-    "Single-task mode?" -> "Pick next task" [label="no"];
-    "Failure handling" -> "Single-task mode?";
-}
-```
+1. Pick the next task. If no ready or plannable task exists: STOP, backlog drained; otherwise continue to 2.
+2. Launch the compose-task workflow and branch on the result status: DONE goes to 3; NEEDS_DECISION goes to 4; BLOCKED or null goes to 5.
+3. If outcome = planned (plannable-only pick): skip to 6. Otherwise surface the verdict, run the merge gate (per policy), propagate, then continue to 6.
+4. Resolve the gate with the user, then decide whether to continue this task. Yes: relaunch the workflow with the answers (back to 2). No in backlog mode: back to 1. No in single-task mode: STOP, iteration ends.
+5. Failure handling, then continue to 6.
+6. If single-task mode: STOP, iteration complete. Otherwise back to 1.
 
 ### Step details
 
@@ -252,7 +219,7 @@ The workflow builds every phase dispatch from the `args` you pass; the agents in
 
 - A phase that reports BLOCKED because the task is already `done` or `cancelled` is not a failure — HOTL resolved it underneath the run. Run *Surface + merge + propagate* if it has not run, consume no budget, move on.
 - `BLOCKED — environmental: <error>` (gh auth, rate limits, network) is an environment problem; surface it verbatim, consume no budget, resume the same workflow (via `resumeFrom`) once the user confirms the fix.
-- `BLOCKED` from the plan phase prefixed `foundation-unsound` means the planner judged the research foundation wrong; relaunch the workflow **fresh** once to re-research, then treat a second failure normally.
+- `BLOCKED` from the plan phase prefixed `foundation-unsound` means the plan half judged the research foundation wrong; relaunch the workflow **fresh** once to re-research, then treat a second failure normally.
 
 For every other BLOCKED:
 
@@ -305,7 +272,7 @@ Append a `RESUME` line, then continue. Rebuild the backlog skip set from this ru
 
 | Temptation | Reality |
 | --- | --- |
-| Write `status` "so no other agent grabs the task" | Every transition belongs to a phase agent: planner `draft→planned`; implementer `planned→in_progress→in_review` plus fix rotations. The orchestrator writes only propagation edges — and `done`, but **only** when the merge gate merged the PR under an authorizing merge policy. |
+| Write `status` "so no other agent grabs the task" | Every transition belongs to a phase agent: researcher under its merged-mandate grant `draft→planned`; implementer `planned→in_progress→in_review` plus fix rotations. The orchestrator writes only propagation edges — and `done`, but **only** when the merge gate merged the PR under an authorizing merge policy. |
 | Merge without the policy authorizing it, or merge a non-approve / non-green PR | The merge gate fires only on `approve` + green CI, only under `ask-each` (with a yes) or `auto-on-approve`. `never` means HOTL merges. |
 | Dispatch a phase agent yourself instead of launching the workflow | The orchestrator never dispatches phase agents directly (rework intake is the one exception). The workflow owns research → review; the orchestrator owns the seams. |
 | Skip research or planning to "get the claim in faster" | The phase order is fixed inside the workflow; the orchestrator cannot reorder it. |
@@ -322,6 +289,5 @@ Not a decomposer (oversize routes out). Not a hand-refiner (that is the piyaz sk
 
 - `skills/composer/workflows/compose-task.js`: the per-task pipeline the orchestrator launches.
 - `skills/piyaz/SKILL.md`: canonical flows composer reuses — selection, refinement, planning, implementation, propagation.
-- `agents/composer-researcher.md`, `agents/composer-planner.md`, `agents/composer-implementer.md`, `agents/review.md`: the phase contracts and their structured returns. The workflow's merged research+plan phase runs on the researcher; the planner stays for direct dispatch.
-- `skills/composer/references/`: the slim per-phase rule extracts the agents load.
+- `agents/composer-researcher.md`, `agents/composer-implementer.md`, `agents/review.md`: the phase contracts and their structured returns. The workflow's merged research+plan phase runs on the researcher, which also serves direct planning dispatch.
 - `agents/decompose-task.md`: the oversize-delegation target.

@@ -53,31 +53,14 @@ If the user cannot resolve any of these in dialogue, the project is not ready fo
 
 ## Session shape
 
-```dot
-digraph brainstorm {
-    "Parse what user said" [shape=box];
-    "Coverage check" [shape=diamond];
-    "Ask ONE focused question" [shape=box];
-    "Push back / challenge" [shape=box];
-    "Weak choice detected?" [shape=diamond];
-    "Synthesize brief" [shape=box];
-    "HARD-GATE: user approves\nbrief verbatim?" [shape=diamond];
-    "Create project (Piyaz)" [shape=box];
-    "Hand off to decompose" [shape=doublecircle];
-
-    "Parse what user said" -> "Coverage check";
-    "Coverage check" -> "Ask ONE focused question" [label="gaps remain"];
-    "Coverage check" -> "Synthesize brief" [label="all 6 topics solid"];
-    "Ask ONE focused question" -> "Weak choice detected?";
-    "Weak choice detected?" -> "Push back / challenge" [label="yes"];
-    "Weak choice detected?" -> "Coverage check" [label="no"];
-    "Push back / challenge" -> "Coverage check";
-    "Synthesize brief" -> "HARD-GATE: user approves\nbrief verbatim?";
-    "HARD-GATE: user approves\nbrief verbatim?" -> "Synthesize brief" [label="changes requested"];
-    "HARD-GATE: user approves\nbrief verbatim?" -> "Create project (Piyaz)" [label="explicit yes"];
-    "Create project (Piyaz)" -> "Hand off to decompose";
-}
-```
+1. Parse what the user said.
+2. Coverage check: if all 6 topics are solid, skip to 5; if gaps remain, continue to 3.
+3. Ask ONE focused question.
+4. If a weak choice is detected: push back / challenge. Either way, return to 2.
+5. Synthesize the brief.
+6. HARD-GATE: does the user approve the brief verbatim? If changes are requested, return to 5; on explicit yes, continue.
+7. Create the project in Piyaz.
+8. Hand off to decompose.
 
 ## Session setup
 

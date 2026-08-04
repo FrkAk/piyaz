@@ -1,8 +1,0 @@
-{
-  "_comment": "Canonical-source hash pins for the composer phase extracts in this directory. The extracts hand-mirror sections of these files; scripts/check-plugins.ts fails CI when a pinned file changes, until the extracts are reviewed and the pin refreshed via `bun run sync:plugins`.",
-  "pins": {
-    "plugins/claude-code/skills/piyaz/references/conventions.md": "e659bf9905575298afe348cf6c5b96b8f1205478b0576147893d2adb30d09c1e",
-    "plugins/claude-code/skills/piyaz/references/artifacts.md": "66bc3d561d3dd42a2410f44e3f2afd73b9b53506811c1dcccafff3d05ed13eb6",
-    "plugins/claude-code/skills/piyaz/references/lifecycle.md": "5bbff2c430568ca4614d19b7c17bed8a81394114a17285c723e18ab120495339"
-  }
-}

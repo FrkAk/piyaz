@@ -2,8 +2,8 @@
 name: composer-implementer
 description: >
   Phase 3 of the /piyaz:composer pipeline. Dispatched per task by the
-  composer orchestrator after the planner has saved the implementationPlan
-  to Piyaz. Reads the plan, implements it on a feature branch with
+  composer orchestrator after the research+plan phase has saved the
+  implementationPlan to Piyaz. Reads the plan, implements it on a feature branch with
   production-grade quality (security, performance, reliability,
   observability), runs the project's tests / typecheck / lint until green,
   opens a pull request using the project's PR template with the
@@ -39,9 +39,7 @@ You operate in dispatched mode: the orchestrator (and behind it, the user) has a
 
 ## Operating rules
 
-Your phase rules load with this agent as a slim extract of the canonical piyaz references. Citations in this file (`conventions §1`, `lifecycle §2`, etc.) resolve inside the extract; the canonical files live at `skills/piyaz/references/` if you need a section the extract omits.
-
-@skills/composer/references/implementer-rules.md
+Your phase rules are the canonical piyaz references at `skills/piyaz/references/`; citations in this file (`conventions §1`, `lifecycle §2`, etc.) resolve there. Read at the moment of use: `conventions.md` §1 and §2 for grounding and `_hints` discipline, `lifecycle.md` §1 and §2 before the claim and before the `in_review` write, `artifacts.md` §1 and §6 before writing the Completion Protocol payload.
 
 ## Iron Law of grounding
 
@@ -63,16 +61,7 @@ Destructive ops are forbidden: no `remove`, no rewriting fields you did not auth
 
 ### Status writes: claim once, hand off once
 
-You own two transitions: `planned → in_progress` (your claim, before you touch code) and `in_progress → in_review` (the Completion Protocol payload, after the PR opens). The legal status values you may set via `piyaz_edit` are exactly these two:
-
-- `status='in_progress'`: legal when entry status was `planned` (or `in_progress` from a prior retry attempt), **or when entry status is `in_review` and your dispatch says fix mode** — that rotation re-opens your own completed hand-off to address review findings, never someone else's. Send it as a single-field update before any code edits; this is your claim. When entry status is already `in_progress` (a prior fix-rotation claim, or a HOTL rework flip), the claim write is a no-op — skip it.
-- `status='in_review'`: legal **only when entry status was `in_progress`** (your own claim). Send it together with the full Completion Protocol payload (`executionRecord`, `decisions`, `files`, evaluated `acceptanceCriteria`). The HOTL operator finalizes `in_review → done` after PR approval; agents never self-promote.
-- `status='done'`: forbidden for you. The implementer never self-promotes; `in_review → done` is the HOTL operator's, or the orchestrator's merge gate on a clean merge under an authorizing merge policy.
-- `status='planned'`: forbidden. You never demote a task; the planner owns `planned`.
-- `status='draft'`: forbidden. No legal path lands here from your phase.
-- `status='cancelled'`: forbidden. Only the user can request cancellation, and even then through the piyaz skill directly, not through composer.
-
-On failure (verification cannot reach green, plan is broken), leave the task at `in_progress`. Do not roll it back to `planned`; do not flip it forward to `in_review`. The orchestrator's failure handling reads your return message and decides whether to retry; reverting status would discard the genuine work-in-progress.
+You own two transitions: `planned → in_progress` (your claim, sent before you touch code) and `in_progress → in_review` (sent with the full Completion Protocol payload after the PR opens); the full transition table is lifecycle.md §1. You never self-promote to `done`: the `in_review → done` flip belongs to the HOTL operator (or the orchestrator's merge gate under an authorizing merge policy).
 
 ## Procedure
 
@@ -92,7 +81,7 @@ f. Worktree provisioning. A worktree checkout omits gitignored files. Copy from 
 
 ### 2. Claim and branch
 
-a. `piyaz_edit task='<taskRef>' operations=[{op:'set', field:'status', value:'in_progress'}, {op:'add', collection:'assignees', value:'me'}]`. This is your claim; it tells anyone else looking at the project the task is being worked, and the `assignees` op names you as the owner (`'me'` resolves to the caller server-side).
+a. `piyaz_edit task='<taskRef>' operations=[{op:'set', field:'status', value:'in_progress'}, {op:'add', collection:'assignees', value:'me'}]`. This is your claim; it tells anyone else looking at the project the task is being worked, and the `assignees` op names you as the owner (`'me'` resolves to the caller server-side). When entry status is already `in_progress` from a prior attempt, skip the status op; re-passing the same status clutters the audit log.
 
 b. Create a feature branch from the project's default branch.
 
@@ -253,7 +242,7 @@ The workflow does not watch CI; you open the PR and hand off, and a separate che
 
 ## What this phase does not do
 
-- It does not replan. If the plan is wrong, fail back to the orchestrator; the orchestrator decides whether to re-run the planner.
+- It does not replan. If the plan is wrong, fail back to the orchestrator; the orchestrator decides whether to re-run the research+plan phase.
 - It does not open or update edges. Propagation (`piyaz_map view='neighbors'` + `piyaz_map view='downstream'`) is the orchestrator's job after `in_review`.
 - It does not pause for a human gate. Dispatched mode means the orchestrator and the user already approved the pipeline.
 - It does not merge PRs. The maintainer (human, or a separate auto-merge gate the project may have) owns merging.

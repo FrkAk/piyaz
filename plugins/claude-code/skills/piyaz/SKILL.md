@@ -4,9 +4,12 @@ description: >
   Use when the user wants to plan, decompose, track, or resume a multi-task
   project: scoping a new idea, importing or onboarding an existing repo or
   workspace, asking what to work on / what's next / what's blocked / where
-  they left off, reporting task completion, dispatching work in parallel, or
-  planning a draft task. Also when the user mentions Piyaz by name (e.g.
-  "piyaz, do X") or references a task by its ref (e.g. VLT-9, KRN-153,
+  they left off, reporting or recording task completion, marking work done,
+  implementing or shipping tracked work (claim, branch, PR, record),
+  dispatching work in parallel, or planning a draft task. Recording completion and
+  moving a task to review or done follow this skill's completion protocol;
+  read it before those writes. Also when the user mentions Piyaz by name
+  (e.g. "piyaz, do X") or references a task by its ref (e.g. VLT-9, KRN-153,
   PXD-31). Works for any project domain (code or data). Do not invoke for:
   one-off coding questions, single-file edits, debugging a specific error,
   generic todos, or scheduling.
@@ -33,7 +36,7 @@ Four reference files sit in `references/` next to this SKILL.md (paths below are
 
 These hold in every workflow; each protects shared state someone else depends on.
 
-- **Done needs the human and evaluated criteria.** Flip `in_review` to `done` only on the user's explicit say-so, and evaluate the acceptance criteria first: check what the record and repository actually evidence, and name what stays unverified before the write, not after. This applies even when the user says not to ask questions; naming unverified criteria in your reply is reporting, not asking.
+- **`done` is the human's call, and only from `in_review`.** When the user reports work complete, write the record and set `in_review`. Flip to `done` only on the user's explicit say-so with the acceptance criteria evaluated first: check what the record and repository actually evidence; a criterion that stays unverified or fails holds the task at `in_review` and goes in your reply before the write, not after. This applies even when the user says not to ask questions; naming unverified criteria in your reply is reporting, not asking.
 - **Write only what you can cite** (conventions.md §1). Records and decisions naming unverified files or results mislead every later reader. Uncertain means write less.
 - **Resume, never re-create.** Before any batch create, check whether the graph already exists (resilience.md §4).
 
@@ -161,28 +164,10 @@ Notes live in the same folder tree humans see in the web UI and are ref-first (e
 
 ## Detection (run once at session start, before any other action)
 
-```dot
-digraph detection {
-    "piyaz_workspace action='projects'" [shape=box];
-    "Derive repo identity\n(git remote, package name, pwd)" [shape=box];
-    "Match any project\ntitle/description?" [shape=diamond];
-    "Repo has commits\nor source files?" [shape=diamond];
-    "Confirm with user\nbefore dispatching" [shape=diamond];
-    "Use project identifier\n+ workflows below" [shape=box];
-    "Dispatch piyaz:onboarding" [shape=box];
-    "Net-new conversation\n+ Brainstorm rules" [shape=box];
-    "Wait for confirmation" [shape=box];
-
-    "piyaz_workspace action='projects'" -> "Derive repo identity\n(git remote, package name, pwd)";
-    "Derive repo identity\n(git remote, package name, pwd)" -> "Match any project\ntitle/description?";
-    "Match any project\ntitle/description?" -> "Use project identifier\n+ workflows below" [label="yes"];
-    "Match any project\ntitle/description?" -> "Repo has commits\nor source files?" [label="no"];
-    "Repo has commits\nor source files?" -> "Confirm with user\nbefore dispatching" [label="yes"];
-    "Repo has commits\nor source files?" -> "Net-new conversation\n+ Brainstorm rules" [label="no"];
-    "Confirm with user\nbefore dispatching" -> "Dispatch piyaz:onboarding" [label="user agrees"];
-    "Confirm with user\nbefore dispatching" -> "Wait for confirmation" [label="user defers"];
-}
-```
+1. `piyaz_workspace action='projects'`.
+2. Derive the repo identity (git remote, package name, pwd).
+3. If any project's title or description matches: use that project identifier with the workflows below. Otherwise continue to 4.
+4. If the repo has commits or source files: confirm with the user before dispatching; if the user agrees, dispatch `piyaz:onboarding`; if the user defers, wait for confirmation. Otherwise treat it as a net-new conversation and apply the Brainstorm rules.
 
 Notes on detection:
 
