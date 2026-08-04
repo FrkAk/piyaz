@@ -227,11 +227,21 @@ async function runProbes(): Promise<string[]> {
 }
 
 /**
- * Whether a log line is the scheduled probe's expected failure event. The
- * smoke DB is unreachable by design, so the handler's own `ok:false`
- * `db_housekeeping` log is the probe's success signal — but only the
- * connection-failure shape. A TypeError inside the handler is the bundle
- * incompatibility this script exists to catch and is never expected.
+ * Reason signature of the scheduled probe's expected failure. The smoke DB
+ * URLs are unreachable by design, so the sweep dies inside query execution
+ * and drizzle wraps it as a "Failed query" error naming the purge SELECT.
+ * Anything else (TypeError, ReferenceError, a dynamic-require bundling
+ * failure, a missing-frame throw) is unexpected: it fails the probe and
+ * stays visible to the error grep.
+ */
+const EXPECTED_HOUSEKEEPING_REASON =
+  "Failed query: SELECT table_name, row_count FROM public.purge_expired_rows";
+
+/**
+ * Whether a log line is the scheduled probe's expected failure event: an
+ * `ok:false` `db_housekeeping` entry whose reason matches the unreachable-DB
+ * query-failure signature. Only lines matching this whitelist are exempt
+ * from the error grep.
  *
  * @param line - One worker log line.
  * @returns True when the line is the expected unreachable-DB event.
@@ -240,7 +250,7 @@ function isExpectedHousekeepingFailure(line: string): boolean {
   return (
     line.includes('"event":"db_housekeeping"') &&
     line.includes('"ok":false') &&
-    !line.includes("TypeError")
+    line.includes(EXPECTED_HOUSEKEEPING_REASON)
   );
 }
 
@@ -282,7 +292,7 @@ async function probeScheduled(output: () => string): Promise<string[]> {
     if (line) {
       if (!isExpectedHousekeepingFailure(line)) {
         return [
-          `the scheduled handler failed with a TypeError under the wrangler bundle: ${line.trim().slice(0, 300)}`,
+          `the scheduled handler logged an unexpected failure reason under the wrangler bundle: ${line.trim().slice(0, 300)}`,
         ];
       }
       console.log(`  ok  GET ${path} -> db_housekeeping event logged`);
@@ -320,8 +330,9 @@ async function main(): Promise<void> {
   // A probe can pass while the worker logs a runtime error on another path,
   // so the log itself is an assertion. This is what generalizes past the one
   // bug that prompted the script. Only the scheduled probe's expected
-  // unreachable-DB db_housekeeping event is exempt; a TypeError inside the
-  // handler stays visible to both the probe and this grep.
+  // unreachable-DB db_housekeeping event is exempt (whitelisted by reason
+  // signature); any other handler failure stays visible to both the probe
+  // and this grep.
   const lines = output()
     .split("\n")
     .filter((entry) => !isExpectedHousekeepingFailure(entry));

@@ -364,7 +364,7 @@ describe("purge_expired_rows modes", () => {
 });
 
 describe("purge_expired_rows exclusions", () => {
-  test("retains legal acceptances and activity history regardless of age", async () => {
+  test("retains legal, activity, consent, and invitation rows regardless of age", async () => {
     const sql = superuserPool();
     const f = await seedUserOrgProject("hk-retained", { legalCurrent: false });
     const [acceptance] = await sql<{ id: string }[]>`
@@ -377,14 +377,30 @@ describe("purge_expired_rows exclusions", () => {
       VALUES (${f.projectId}, 'task_created', 'web', 'hk seed', now() - interval '400 days')
       RETURNING id
     `;
+    const [consent] = await sql<{ id: string }[]>`
+      INSERT INTO piyaz_auth."oauthConsent" ("clientId", "userId", "referenceId", "scopes", "createdAt")
+      VALUES ('hk-client', ${f.userId}, ${f.organizationId}, '{}', now() - interval '400 days')
+      RETURNING id
+    `;
+    const [invite] = await sql<{ id: string }[]>`
+      INSERT INTO piyaz_auth."invitation" ("organizationId", "email", "status", "expiresAt", "inviterId")
+      VALUES (${f.organizationId}, 'hk-retained@test.local', 'pending', now() - interval '400 days', ${f.userId})
+      RETURNING id
+    `;
 
     await purgeExpiredRows(serviceRoleDb, false, 1000);
     const legal =
       await sql`SELECT id FROM public.legal_acceptances WHERE id = ${acceptance.id}`;
     const activity =
       await sql`SELECT id FROM public.activity_events WHERE id = ${event.id}`;
+    const consents =
+      await sql`SELECT id FROM piyaz_auth."oauthConsent" WHERE id = ${consent.id}`;
+    const invites =
+      await sql`SELECT id FROM piyaz_auth."invitation" WHERE id = ${invite.id}`;
     expect(legal.length).toBe(1);
     expect(activity.length).toBe(1);
+    expect(consents.length).toBe(1);
+    expect(invites.length).toBe(1);
   });
 
   test("app_user cannot execute the sweep", async () => {

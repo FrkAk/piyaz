@@ -282,7 +282,10 @@ async function verifyRls(url: string): Promise<void> {
       `RLS contract not satisfied on the target database:\n${list}\n` +
         "Apply the owner-managed SQL as the database owner (db:rls:owner) " +
         "for missing extensions/functions/triggers, re-run the public apply " +
-        "(db:rls:ci) for grants/policies/compression, then re-run the deploy.",
+        "(db:rls:ci) for grants/policies/compression, then re-run the deploy. " +
+        "An extension already installed in a different schema needs an " +
+        "owner-run ALTER EXTENSION ... SET SCHEMA instead: CREATE EXTENSION " +
+        "IF NOT EXISTS cannot relocate it.",
     );
   }
 }

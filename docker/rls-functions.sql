@@ -1434,4 +1434,5 @@ BEGIN
 END;
 $$;
 REVOKE EXECUTE ON FUNCTION public.purge_expired_rows(boolean, integer) FROM public;
+REVOKE EXECUTE ON FUNCTION public.purge_expired_rows(boolean, integer) FROM app_user;
 GRANT EXECUTE ON FUNCTION public.purge_expired_rows(boolean, integer) TO service_role;

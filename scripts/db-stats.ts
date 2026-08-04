@@ -290,7 +290,7 @@ async function fetchReport(
             sum(calls)::text AS calls,
             sum(total_exec_time) AS total_exec_time
      FROM extensions.pg_stat_statements
-     WHERE ${DBID_FILTER}
+     WHERE ${DBID_FILTER} AND toplevel
      GROUP BY 1
      ORDER BY sum(total_exec_time) DESC`,
   )) as unknown as ClassSummaryRow[];
