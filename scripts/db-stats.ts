@@ -16,6 +16,7 @@
  * Usage: `bun run db:stats [--top <n>]`.
  */
 import postgres from "postgres";
+import { ownerUrl } from "./apply-owner-rls";
 
 /** Statements shown per section when `--top` is not given. */
 const DEFAULT_TOP_N = 20;
@@ -222,22 +223,6 @@ export function formatDbStatsReport(report: DbStatsReport): string {
     `top writes by calls\n${renderStatementsTable(report.writesByCalls)}`,
   ];
   return sections.join("\n\n");
-}
-
-/**
- * Read the owner connection string from the environment.
- *
- * @returns The database-owner DIRECT connection string.
- * @throws Error when DATABASE_OWNER_URL is unset.
- */
-function ownerUrl(): string {
-  const url = process.env.DATABASE_OWNER_URL;
-  if (!url) {
-    throw new Error(
-      "DATABASE_OWNER_URL is required for the stats report (database owner role, trusted local shell only).",
-    );
-  }
-  return url;
 }
 
 /**

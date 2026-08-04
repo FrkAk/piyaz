@@ -226,22 +226,38 @@ async function runProbes(): Promise<string[]> {
   return failures;
 }
 
-/** Cron expression wired to the housekeeping scheduled handler in worker-cf.ts. */
-const HOUSEKEEPING_CRON = "0 3 * * *";
+/**
+ * Whether a log line is the scheduled probe's expected failure event. The
+ * smoke DB is unreachable by design, so the handler's own `ok:false`
+ * `db_housekeeping` log is the probe's success signal — but only the
+ * connection-failure shape. A TypeError inside the handler is the bundle
+ * incompatibility this script exists to catch and is never expected.
+ *
+ * @param line - One worker log line.
+ * @returns True when the line is the expected unreachable-DB event.
+ */
+function isExpectedHousekeepingFailure(line: string): boolean {
+  return (
+    line.includes('"event":"db_housekeeping"') &&
+    line.includes('"ok":false') &&
+    !line.includes("TypeError")
+  );
+}
 
 /**
- * Trigger the scheduled handler through wrangler's `--test-scheduled`
- * endpoint and wait for the housekeeping event in the worker log. The DB
- * URLs are unreachable by design, so the expected outcome is the handler's
- * own structured `ok:false` failure log — which still proves cron dispatch,
+ * Trigger the scheduled handler through wrangler's scheduled test endpoint
+ * and wait for the housekeeping event in the worker log. The DB URLs are
+ * unreachable by design, so the expected outcome is the handler's own
+ * structured `ok:false` connection-failure log — which proves the handler,
  * the request DB frame, and the raw-builder wiring survive the wrangler
- * bundle without touching a database.
+ * bundle without touching a database. A `db_housekeeping` failure carrying
+ * a TypeError fails the probe instead of passing it.
  *
  * @param output - Reader over everything the worker printed so far.
  * @returns Human-readable failure lines, empty when the probe passed.
  */
 async function probeScheduled(output: () => string): Promise<string[]> {
-  const path = `/cdn-cgi/handler/scheduled?cron=${encodeURIComponent(HOUSEKEEPING_CRON)}`;
+  const path = "/cdn-cgi/handler/scheduled";
   try {
     const response = await fetch(`${BASE_URL}${path}`, {
       signal: AbortSignal.timeout(20_000),
@@ -256,18 +272,26 @@ async function probeScheduled(output: () => string): Promise<string[]> {
   }
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    const logged = output();
-    if (
-      logged.includes('"event":"db_housekeeping"') &&
-      logged.includes('"ok":false')
-    ) {
+    const line = output()
+      .split("\n")
+      .find(
+        (entry) =>
+          entry.includes('"event":"db_housekeeping"') &&
+          entry.includes('"ok":false'),
+      );
+    if (line) {
+      if (!isExpectedHousekeepingFailure(line)) {
+        return [
+          `the scheduled handler failed with a TypeError under the wrangler bundle: ${line.trim().slice(0, 300)}`,
+        ];
+      }
       console.log(`  ok  GET ${path} -> db_housekeeping event logged`);
       return [];
     }
     await Bun.sleep(200);
   }
   return [
-    "the scheduled probe never logged a db_housekeeping event (cron dispatch or DB-frame wiring is broken)",
+    "the scheduled probe never logged a db_housekeeping event (scheduled handler or DB-frame wiring is broken)",
   ];
 }
 
@@ -295,16 +319,16 @@ async function main(): Promise<void> {
 
   // A probe can pass while the worker logs a runtime error on another path,
   // so the log itself is an assertion. This is what generalizes past the one
-  // bug that prompted the script. The scheduled probe's own db_housekeeping
-  // failure event is expected (unreachable DB by design) and exempt.
-  const logged = output()
+  // bug that prompted the script. Only the scheduled probe's expected
+  // unreachable-DB db_housekeeping event is exempt; a TypeError inside the
+  // handler stays visible to both the probe and this grep.
+  const lines = output()
     .split("\n")
-    .filter((entry) => !entry.includes('"event":"db_housekeeping"'))
-    .join("\n");
+    .filter((entry) => !isExpectedHousekeepingFailure(entry));
   for (const marker of ["✘ [ERROR]", "TypeError"]) {
-    if (!logged.includes(marker)) continue;
-    const line = logged.split("\n").find((entry) => entry.includes(marker));
-    failures.push(`worker logged ${marker}: ${line?.trim().slice(0, 300)}`);
+    const line = lines.find((entry) => entry.includes(marker));
+    if (!line) continue;
+    failures.push(`worker logged ${marker}: ${line.trim().slice(0, 300)}`);
   }
 
   if (failures.length > 0) {

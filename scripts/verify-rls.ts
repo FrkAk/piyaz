@@ -16,7 +16,7 @@ interface ExpectedContract {
   forcedTables: string[];
   functions: string[];
   triggers: Array<{ table: string; trigger: string }>;
-  extensions: string[];
+  extensions: Array<{ name: string; schema: string | null }>;
 }
 
 /**
@@ -91,18 +91,23 @@ function expectedContract(): ExpectedContract {
     ),
   ].map((m) => ({ trigger: m[1], table: m[2] }));
 
+  // Both halves are load-bearing: CREATE EXTENSION IF NOT EXISTS does NOT
+  // relocate an extension that already exists in another schema (it no-ops
+  // with a notice), and scripts/db-stats.ts addresses the views through the
+  // declared schema. A name-only check would pass on a database carrying a
+  // pre-existing public-schema install while the read path 42P01s.
   const extensions = [
     ...extensionsSql.matchAll(
-      /CREATE\s+EXTENSION\s+IF\s+NOT\s+EXISTS\s+(\w+)/gi,
+      /CREATE\s+EXTENSION\s+IF\s+NOT\s+EXISTS\s+(\w+)(?:\s+WITH\s+SCHEMA\s+(\w+))?/gi,
     ),
-  ].map((m) => m[1]);
+  ].map((m) => ({ name: m[1], schema: m[2] ?? null }));
 
   return {
     policies,
     forcedTables: [...new Set(forcedTables)],
     functions: [...new Set(functions)],
     triggers,
-    extensions: [...new Set(extensions)],
+    extensions,
   };
 }
 
@@ -154,6 +159,16 @@ async function findMissing(
     liveTriggers.map((r) => `${r.relname}.${r.tgname}`),
   );
 
+  const liveExtensions = await sql<{ extname: string; nspname: string }[]>`
+    SELECT e.extname, n.nspname
+    FROM pg_extension e
+    JOIN pg_namespace n ON n.oid = e.extnamespace
+  `;
+  const liveExtensionSet = new Set(
+    liveExtensions.map((r) => `${r.extname}.${r.nspname}`),
+  );
+  const liveExtensionNames = new Set(liveExtensions.map((r) => r.extname));
+
   const missing: string[] = [];
   for (const { table, policy } of expected.policies) {
     if (!livePolicySet.has(policyKey(table, policy))) {
@@ -175,14 +190,14 @@ async function findMissing(
       missing.push(`trigger "${trigger}" on ${table}`);
     }
   }
-
-  const liveExtensions = await sql<{ extname: string }[]>`
-    SELECT extname FROM pg_extension
-  `;
-  const liveExtensionSet = new Set(liveExtensions.map((r) => r.extname));
-  for (const ext of expected.extensions) {
-    if (!liveExtensionSet.has(ext)) {
-      missing.push(`extension ${ext}`);
+  for (const { name, schema } of expected.extensions) {
+    const present = schema
+      ? liveExtensionSet.has(`${name}.${schema}`)
+      : liveExtensionNames.has(name);
+    if (!present) {
+      missing.push(
+        schema ? `extension ${name} in schema ${schema}` : `extension ${name}`,
+      );
     }
   }
 

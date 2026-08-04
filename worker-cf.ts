@@ -166,13 +166,6 @@ function initRateLimitBindings(env: WorkerEnv): void {
 const REALTIME_PATH = "/api/events";
 
 /**
- * Cron expression (UTC) registered in `wrangler.jsonc` for the nightly DB
- * housekeeping sweep. `scheduled` dispatches on `controller.cron`, so a new
- * job is a new constant, a new `triggers.crons` entry, and a new branch.
- */
-const HOUSEKEEPING_CRON = "0 3 * * *";
-
-/**
  * Extract the DB binding URLs `withRequestDb` needs from the Worker env.
  *
  * @param env - Worker bindings.
@@ -313,8 +306,11 @@ const handler = {
   },
 
   /**
-   * Run the cron job matching `controller.cron` — currently only the
-   * nightly housekeeping sweep ({@link HOUSEKEEPING_CRON}).
+   * Run the nightly housekeeping sweep. `wrangler.jsonc` owns the schedule
+   * (`triggers.crons`, one entry per env); the handler sweeps on whatever
+   * cron fired and logs it, so editing the schedule there cannot silently
+   * strand the job. Dispatch on `controller.cron` only when a second
+   * schedule actually lands.
    *
    * The sweep calls `public.purge_expired_rows` (SECURITY DEFINER) through
    * the request frame's service-role handle, read via `requestDbStore`
@@ -327,7 +323,7 @@ const handler = {
    * Logs are the alerting surface. Teardown is awaited directly: there is
    * no response body to outlive.
    *
-   * @param controller - Scheduled-event controller; `cron` selects the job.
+   * @param controller - Scheduled-event controller; `cron` is logged as fired.
    * @param env - Worker bindings.
    * @param _ctx - Execution context (unused; nothing outlives the handler).
    */
@@ -336,15 +332,6 @@ const handler = {
     env: WorkerEnv,
     _ctx: WorkerCtx,
   ): Promise<void> {
-    if (controller.cron !== HOUSEKEEPING_CRON) {
-      console.error(
-        JSON.stringify({
-          event: "scheduled_unknown_cron",
-          cron: controller.cron,
-        }),
-      );
-      return;
-    }
     const startedAt = Date.now();
     const dryRun = env.HOUSEKEEPING_DRY_RUN !== "false";
     try {

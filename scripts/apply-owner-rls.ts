@@ -24,16 +24,18 @@ const OWNER_RLS_FILES = [
 ] as const;
 
 /**
- * Read the owner connection string from the environment.
+ * Read the owner connection string from the environment. Shared by every
+ * owner-run script (`db:rls:owner`, `db:stats`) so the env-var name and the
+ * trusted-shell contract live in one place.
  *
  * @returns The database-owner DIRECT connection string.
  * @throws Error when DATABASE_OWNER_URL is unset.
  */
-function ownerUrl(): string {
+export function ownerUrl(): string {
   const url = process.env.DATABASE_OWNER_URL;
   if (!url) {
     throw new Error(
-      "DATABASE_OWNER_URL is required to apply owner-managed RLS (database owner role).",
+      "DATABASE_OWNER_URL is required (database owner role; set it only in a trusted local shell).",
     );
   }
   return url;
@@ -66,9 +68,11 @@ async function applyOwnerRls(url: string): Promise<void> {
   }
 }
 
-try {
-  await applyOwnerRls(ownerUrl());
-} catch (err) {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
+if (import.meta.main) {
+  try {
+    await applyOwnerRls(ownerUrl());
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  }
 }
