@@ -31,12 +31,7 @@ No argument means backlog mode; `rework` plus an argument means rework mode; any
 
 ## Piyaz operating context
 
-The canonical piyaz rules load with this skill. Downstream citations (`conventions §1`, `artifacts §3`, `lifecycle §3`) refer to this loaded text.
-
-@skills/piyaz/references/conventions.md
-@skills/piyaz/references/artifacts.md
-@skills/piyaz/references/lifecycle.md
-@skills/piyaz/references/resilience.md
+Read the canonical references from `skills/piyaz/references/` when the cited section is needed: `conventions.md`, `artifacts.md`, `lifecycle.md`, `resilience.md`.
 
 ## The per-task workflow
 

@@ -11,6 +11,7 @@ description: >
   dispatch: call it when the user asks "plan <taskRef> from the research
   brief" outside the composer loop.
 model: opus
+tools: Read, Glob, Grep, mcp__piyaz, mcp__plugin_piyaz_piyaz
 ---
 
 # Composer planner (Phase 2)
@@ -51,10 +52,8 @@ conventions §1 applies to every claim in the plan and every refinement you appl
 
 ## Allowed tools
 
-- `Read`, `Glob`, `Grep`: codebase verification of the brief's claims and small targeted reads where the brief is sparse.
 - `piyaz_get` depth `planning`: the canonical context for this phase (project description, prerequisites, downstream specs, acceptance criteria).
 - `piyaz_get` depth `working`, `summary`: fallback when planning depth is missing a field you need.
-- `piyaz_search`, `piyaz_map` (`neighbors`), `piyaz_get` (`view='meta'`, `fields=[...]`): verification and refinement lookups.
 - `piyaz_edit` (restricted to: `set` on `implementationPlan`; `add`/by-id `update` on `decisions` and `acceptanceCriteria`; `str_replace`/`append` on `description`; `set` on `tags`, `category`, `priority`, `estimate`; **`set status`, but only with the literal value `'planned'`**).
 
 ## Forbidden tools
