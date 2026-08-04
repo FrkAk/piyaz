@@ -104,6 +104,51 @@ const shared: SharedGroup[] = [
     ],
   },
   {
+    name: "skills/piyaz/references/role.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/role.md",
+    copies: [
+      "plugins/codex/skills/piyaz/references/role.md",
+      "plugins/cursor/skills/piyaz/references/role.md",
+      "plugins/antigravity/skills/piyaz/references/role.md",
+    ],
+  },
+  {
+    name: "skills/piyaz/references/tools.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/tools.md",
+    copies: [
+      "plugins/codex/skills/piyaz/references/tools.md",
+      "plugins/cursor/skills/piyaz/references/tools.md",
+      "plugins/antigravity/skills/piyaz/references/tools.md",
+    ],
+  },
+  {
+    name: "skills/piyaz/references/workflows.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/workflows.md",
+    copies: [
+      "plugins/codex/skills/piyaz/references/workflows.md",
+      "plugins/cursor/skills/piyaz/references/workflows.md",
+      "plugins/antigravity/skills/piyaz/references/workflows.md",
+    ],
+  },
+  {
+    name: "skills/piyaz/references/specs/contracts.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/specs/contracts.md",
+    copies: [
+      "plugins/codex/skills/piyaz/references/specs/contracts.md",
+      "plugins/cursor/skills/piyaz/references/specs/contracts.md",
+      "plugins/antigravity/skills/piyaz/references/specs/contracts.md",
+    ],
+  },
+  {
+    name: "skills/piyaz/references/specs/review.md",
+    canonical: "plugins/claude-code/skills/piyaz/references/specs/review.md",
+    copies: [
+      "plugins/codex/skills/piyaz/references/specs/review.md",
+      "plugins/cursor/skills/piyaz/references/specs/review.md",
+      "plugins/antigravity/skills/piyaz/references/specs/review.md",
+    ],
+  },
+  {
     name: "brainstorm (agent + skill)",
     canonical: "plugins/claude-code/agents/brainstorm.md",
     copies: [

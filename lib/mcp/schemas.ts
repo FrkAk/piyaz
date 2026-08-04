@@ -158,7 +158,7 @@ export const DESCRIPTIONS = {
     "fields=[...]: raw single-field read (lens ignored); the cheapest way to fetch one field's exact text before a piyaz_edit str_replace, or collection ids before by-id ops; response includes updatedAt for ifUpdatedAt preconditions. " +
     "Project: view='meta' (categories, tag vocabulary, progress — check before setting category or coining tags) or view='overview' (every task + edge; HEAVY, at most once per session; truncated groups name the piyaz_search filter to narrow with).",
   piyaz_create:
-    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('HWM' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description (2-4 sentences; single-sentence flagged). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
+    "Create 1-25 tasks in one project, optionally with edges between them, in one atomic call. Requires project ('HWM' or UUID) and tasks[]; each task needs title (verb+noun, imperative) and description covering what it is, who it serves, and where it fits (single-sentence flagged; length follows content). Give each task a key to reference it in edges; edge source/target accept keys, taskRefs, or UUIDs. " +
     "Idempotent: exact-title matches against existing tasks are skipped and returned as 'deduped' (reusable as edge endpoints), so a restarted decompose run never duplicates a task set; onDuplicate='error' rejects the whole batch instead. Edges that already exist are silently skipped. " +
     "Include acceptanceCriteria (2-4 binary), tags (three dimensions), category (from piyaz_get project view='meta'), priority, estimate up front — hints flag what's missing. Fails while the project is archived (reopen via piyaz_workspace status='active'). " +
     "Next: verify wiring with piyaz_map view='neighbors' task='<ref>'.",
@@ -188,14 +188,9 @@ export const DESCRIPTIONS = {
     "note scope is per-note history (edits, moves, links, restores) and requires the note to be agent-exposed: team visibility AND feed enabled. A private note or one with feed_mode='none' reads as not found; project/task scopes silently exclude non-exposed notes' events. " +
     "Events carry actor, type, summary, and target ref. Follow up on a specific task with piyaz_get, or on a note with piyaz_note read.",
   piyaz_note:
-    "Project notes: the team's shared knowledge base, in the same folder tree humans see in the web UI. Note params accept a noteRef ('DLK-N12'), a note UUID, or a slug together with project; responses emit refs. Types: guidance=constraints auto-injected into matching task bundles; reference=specs and docs, read on demand by heading; knowledge=agent-maintained wiki and memory. Write back what you learn — durable constraints, gotchas, and decisions belong in notes so the next agent starts smarter. " +
-    "create=1-10 notes (title required; body, folder, type, summary, tags, category, feed params). Agent-created notes land visibility=team, feed_mode=none: teammates' agents can search them immediately, nothing auto-injects until feedMode is deliberately set (all/categories/tags/tasks; feedTaskIds accept taskRefs). Idempotent by exact (folder, title): dupes return as deduped. " +
-    "read=meta header by default; fields=[...] for exact values plus updatedAt (the ifUpdatedAt token); heading='...' for one section; fields=['revisions'] for the snapshot list; revision=N for one snapshot. The full body only via fields=['body'] — prefer heading reads. " +
-    "edit=1-20 ordered ops, atomic: str_replace/append/set on body (oldStr must match exactly once; the error names the count), set for title/summary/folder/type/category/tags/feedMode/feedCategories/feedTags/feedTaskIds. visibility, locked, and agent_writable are not editable here — request_share is the agent's only path toward team visibility for a private note, and notes with agent_writable=false reject every agent write (reads and search still work). " +
-    "list=the project's folder tree (refs, titles, folders, types, feed modes). move=one note into a folder, or folder+destParent (+newLeaf) to re-parent or rename a whole folder subtree — keep the tree organized for humans. " +
-    "delete=preview by default, re-call preview=false; restore recovers a trashed note (use the UUID from the delete response). An overwritten body is recoverable: fields=['revisions'], then revision=N, then set body. " +
-    "link/unlink=deliberate note-task relations (kind reference|spec_of); mention rows derive from [[refs]] in the body — write the ref into the body instead. " +
-    "search=a full noteRef ('DLK-N12', case-insensitive) resolves that note, else fuzzy within one project: title/summary/tag substring first, then ranked full text over title and body. Team notes plus your own private notes, any feed mode. A ref that resolves nothing falls back to the fuzzy tiers. Next: read heading='...' for the matching section instead of the full body.",
+    "Project notes: the team's shared knowledge base, in the same folder tree humans see in the web UI. Note params accept a noteRef ('DLK-N12'), a note UUID, or a slug with project; responses emit refs. Types: guidance=constraints auto-injected into matching task bundles; reference=specs and docs read on demand by heading; knowledge=agent-maintained wiki and memory. Write back what you learn: durable constraints, gotchas, and decisions belong in notes so the next agent starts smarter. " +
+    "Actions: search=a full noteRef resolves that note, else fuzzy within one project (title/summary/tag substring, then ranked full text); follow up with read heading='...' for the matching section instead of the full body. read=meta header by default; fields=[...] for exact values plus updatedAt (the ifUpdatedAt token); prefer heading reads over fields=['body']. create=1-10 notes, idempotent by exact (folder, title); agent-created notes land visibility=team, feed_mode=none, searchable by teammates' agents immediately, and nothing auto-injects until feedMode is deliberately set. edit=1-20 ordered ops, atomic (str_replace/append/set on body; set on scalar fields). list=the project's folder tree. move=one note into a folder, or a folder subtree re-parent/rename; keep the tree organized for humans. link/unlink=deliberate note-task relations (reference|spec_of); mention rows derive from [[refs]] written in the body. delete=preview by default, re-call preview=false; restore recovers a trashed note. " +
+    "Gotchas: visibility, locked, and agent_writable are not editable via MCP. request_share is the agent's only path toward team visibility for a private note, and notes with agent_writable=false reject every agent write (reads and search still work). An overwritten body is recoverable: fields=['revisions'], then revision=N, then set body.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -234,7 +229,7 @@ export const workspaceInputSchema = z.object({
     .max(LIMITS.description)
     .optional()
     .describe(
-      "3-5 sentence brief: problem, user, features, tech direction, constraints.",
+      "A brief covering the problem, the user, core features, tech direction, and constraints; short plain paragraphs, length follows content.",
     ),
   status: z
     .enum(["brainstorming", "decomposing", "active", "archived"])
@@ -400,7 +395,7 @@ const createTaskItemSchema = z.object({
     .min(1)
     .max(LIMITS.description)
     .describe(
-      "2-4 sentences (up to 6-8 for genuinely complex tasks; single-sentence flagged): what + who it serves + where it fits.",
+      "What the task is, who it serves, and where it fits; plain markdown, length follows content (single-sentence descriptions are flagged as too thin).",
     ),
   status: z
     .enum(TASK_STATUSES)
@@ -474,7 +469,7 @@ const createTaskItemSchema = z.object({
     .max(LIMITS.executionRecord)
     .optional()
     .describe(
-      "3-5 sentences on HOW it was built (file paths, function names). Only for tasks created already shipped or cancelled (rationale).",
+      "HOW it was built, citing real file paths and function names; short technical paragraphs, length follows content. Only for tasks created already shipped or cancelled (rationale).",
     ),
   prUrl: z
     .url()
