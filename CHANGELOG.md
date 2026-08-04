@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.13](https://github.com/FrkAk/piyaz/compare/v0.4.12...v0.4.13) (2026-08-04)
+
+
+### Bug Fixes
+
+* add database housekeeping and operational analytics ([#283](https://github.com/FrkAk/piyaz/issues/283)) ([ad14455](https://github.com/FrkAk/piyaz/commit/ad144557067605a536dc22ba326ed997bb228103))
+
 ## [0.4.12](https://github.com/FrkAk/piyaz/compare/v0.4.11...v0.4.12) (2026-07-30)
 
 
