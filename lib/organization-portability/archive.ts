@@ -14,13 +14,13 @@ import {
   TEAM_NAME_MAX,
 } from "@/lib/team/slug-rules";
 import { PROJECT_STATUS_ORDER, TASK_STATUSES } from "@/lib/types";
+import { MAX_ORGANIZATION_ARCHIVE_BYTES } from "@/lib/organization-portability/client";
 
-/** MIME type used for organization workspace archives. */
-export const ORGANIZATION_ARCHIVE_MEDIA_TYPE =
-  "application/vnd.piyaz.organization+json";
-
-/** Maximum encoded size accepted for one organization archive. */
-export const MAX_ORGANIZATION_ARCHIVE_BYTES = 100 * 1024 * 1024;
+export {
+  MAX_ORGANIZATION_ARCHIVE_BYTES,
+  ORGANIZATION_ARCHIVE_MEDIA_TYPE,
+  organizationArchiveFilename,
+} from "@/lib/organization-portability/client";
 
 /** Maximum total number of workspace rows accepted in one archive. */
 export const MAX_ORGANIZATION_ARCHIVE_ROWS = 500_000;
@@ -648,20 +648,4 @@ export function serializeOrganizationArchive(
     );
   }
   return serialized;
-}
-
-/**
- * Build a safe deterministic download filename from an organization slug.
- *
- * @param slug - Organization slug or display label.
- * @returns Portable JSON download filename.
- */
-export function organizationArchiveFilename(slug: string): string {
-  const safeSlug = slug
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return `piyaz-${safeSlug || "workspace"}-workspace.json`;
 }
