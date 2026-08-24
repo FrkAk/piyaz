@@ -4,7 +4,8 @@ import "server-only";
 import { asc, eq, sql } from "drizzle-orm";
 import { parseMemberRoles } from "@/lib/auth/permissions";
 import { toDate } from "@/lib/db/raw";
-import { withUserContextRead } from "@/lib/db/rls";
+import { restoreArchiveClocks } from "@/lib/db/raw/restore-archive-clocks";
+import { withUserContext, withUserContextRead } from "@/lib/db/rls";
 import {
   activityEvents,
   noteFeedTasks,
@@ -29,6 +30,34 @@ import {
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const INSERT_BATCH_SIZE = 500;
+
+type SourceRow = { sourceId: string };
+
+type ArchiveIdMaps = {
+  projects: ReadonlyMap<string, string>;
+  tasks: ReadonlyMap<string, string>;
+  taskEdges: ReadonlyMap<string, string>;
+  criteria: ReadonlyMap<string, string>;
+  decisions: ReadonlyMap<string, string>;
+  taskLinks: ReadonlyMap<string, string>;
+  activityEvents: ReadonlyMap<string, string>;
+  notes: ReadonlyMap<string, string>;
+  noteFolders: ReadonlyMap<string, string>;
+  noteTaskLinks: ReadonlyMap<string, string>;
+  noteFeedTasks: ReadonlyMap<string, string>;
+  noteLinks: ReadonlyMap<string, string>;
+  noteRevisions: ReadonlyMap<string, string>;
+};
+
+/** Counts returned after a workspace archive is restored. */
+export type OrganizationImportSummary = {
+  projectCount: number;
+  taskCount: number;
+  noteCount: number;
+  activityEventCount: number;
+};
 
 /** Error returned for every unauthorized or unresolved organization export. */
 export class OrganizationExportForbiddenError extends Error {
@@ -88,6 +117,154 @@ function recordMetadata(value: unknown): Record<string, unknown> | null {
   throw new OrganizationArchiveError(
     "Workspace metadata does not match archive version 1",
   );
+}
+
+/**
+ * Convert an archive timestamp into a database timestamp.
+ *
+ * @param value - Validated ISO timestamp.
+ * @returns Date suitable for a Drizzle timestamp column.
+ */
+function archiveDate(value: string): Date {
+  return new Date(value);
+}
+
+/**
+ * Convert a nullable archive timestamp into a database timestamp.
+ *
+ * @param value - Nullable validated ISO timestamp.
+ * @returns Date or null for a Drizzle timestamp column.
+ */
+function nullableArchiveDate(value: string | null): Date | null {
+  return value === null ? null : archiveDate(value);
+}
+
+/**
+ * Allocate fresh destination ids for source archive rows.
+ *
+ * @param rows - Archive rows carrying source ids.
+ * @returns Source-to-destination UUID map.
+ */
+function createIdMap(rows: readonly SourceRow[]): ReadonlyMap<string, string> {
+  return new Map(rows.map((row) => [row.sourceId, crypto.randomUUID()]));
+}
+
+/**
+ * Allocate every source-id map before any database write begins.
+ *
+ * @param archive - Validated workspace archive.
+ * @returns Fresh id maps for every source-id collection.
+ */
+function createArchiveIdMaps(archive: OrganizationArchive): ArchiveIdMaps {
+  return {
+    projects: createIdMap(archive.projects),
+    tasks: createIdMap(archive.tasks),
+    taskEdges: createIdMap(archive.taskEdges),
+    criteria: createIdMap(archive.taskAcceptanceCriteria),
+    decisions: createIdMap(archive.taskDecisions),
+    taskLinks: createIdMap(archive.taskLinks),
+    activityEvents: createIdMap(archive.activityEvents),
+    notes: createIdMap(archive.notes),
+    noteFolders: createIdMap(archive.noteFolders),
+    noteTaskLinks: createIdMap(archive.noteTaskLinks),
+    noteFeedTasks: createIdMap(archive.noteFeedTasks),
+    noteLinks: createIdMap(archive.noteLinks),
+    noteRevisions: createIdMap(archive.noteRevisions),
+  };
+}
+
+/**
+ * Resolve a previously allocated destination id.
+ *
+ * @param ids - Source-to-destination UUID map.
+ * @param sourceId - Archive-local source id.
+ * @param collection - Collection name used in invariant failures.
+ * @returns Fresh destination UUID.
+ * @throws {OrganizationArchiveError} When the validated graph is inconsistent.
+ */
+function mappedId(
+  ids: ReadonlyMap<string, string>,
+  sourceId: string,
+  collection: string,
+): string {
+  const id = ids.get(sourceId);
+  if (!id) {
+    throw new OrganizationArchiveError(
+      `${collection} reference was not allocated for import`,
+    );
+  }
+  return id;
+}
+
+/**
+ * Insert rows in bounded batches to stay below PostgreSQL bind limits.
+ *
+ * @param rows - Destination insert values.
+ * @param insert - Batch insertion callback.
+ * @returns Promise that resolves after every batch is inserted.
+ */
+async function insertBatches<T>(
+  rows: readonly T[],
+  insert: (batch: T[]) => Promise<unknown>,
+): Promise<void> {
+  for (let index = 0; index < rows.length; index += INSERT_BATCH_SIZE) {
+    await insert(rows.slice(index, index + INSERT_BATCH_SIZE));
+  }
+}
+
+/**
+ * Restore clock rows in bounded batches.
+ *
+ * @param rows - Fresh ids paired with archived clock values.
+ * @param restore - Clock restoration callback.
+ * @returns Promise that resolves after every batch is restored.
+ */
+async function restoreClockBatches<T>(
+  rows: readonly T[],
+  restore: (batch: T[]) => Promise<void>,
+): Promise<void> {
+  for (let index = 0; index < rows.length; index += INSERT_BATCH_SIZE) {
+    await restore(rows.slice(index, index + INSERT_BATCH_SIZE));
+  }
+}
+
+/**
+ * Map archive attribution into the importing user.
+ *
+ * @param actor - Archive-local attribution marker.
+ * @param userId - Importing user id.
+ * @returns Importer id for exporter attribution and null otherwise.
+ */
+function importedAttribution(
+  actor: "exporter" | null,
+  userId: string,
+): string | null {
+  return actor === "exporter" ? userId : null;
+}
+
+/**
+ * Remap an activity event target into destination-local identifiers.
+ *
+ * @param event - Activity event being restored.
+ * @param maps - Complete archive id maps.
+ * @returns Remapped target reference or null.
+ */
+function remapActivityTarget(
+  event: OrganizationArchive["activityEvents"][number],
+  maps: ArchiveIdMaps,
+): string | null {
+  if (event.targetRef === null) return null;
+  if (event.type.startsWith("criterion_")) {
+    return maps.criteria.get(event.targetRef) ?? null;
+  }
+  if (event.type.startsWith("decision_")) {
+    return maps.decisions.get(event.targetRef) ?? null;
+  }
+  if (event.type.startsWith("edge_")) {
+    return maps.tasks.get(event.targetRef) ?? null;
+  }
+  if (event.type.startsWith("assignee_")) return null;
+  return event.targetRef;
 }
 
 /**
@@ -495,5 +672,315 @@ export async function exportOrganizationWorkspace(
       createdBy: attribution(row.createdBy, userId),
       createdAt: isoTimestamp(row.createdAt),
     })),
+  });
+}
+
+/**
+ * Restore a validated workspace archive into an existing empty organization.
+ *
+ * @param userId - Importing organization owner's user id.
+ * @param organizationId - Fresh destination organization id.
+ * @param archive - Validated version-1 organization archive.
+ * @returns Counts of the primary restored workspace rows.
+ * @throws {OrganizationArchiveError} When the archive has become invalid.
+ * @throws Error when any database write fails; the transaction rolls back.
+ */
+export async function importOrganizationWorkspace(
+  userId: string,
+  organizationId: string,
+  archive: OrganizationArchive,
+): Promise<OrganizationImportSummary> {
+  const validated = parseOrganizationArchive(archive);
+  const maps = createArchiveIdMaps(validated);
+
+  return withUserContext(userId, async (tx) => {
+    const projectValues = validated.projects.map((row) => ({
+      id: mappedId(maps.projects, row.sourceId, "projects"),
+      organizationId,
+      title: row.title,
+      identifier: row.identifier,
+      description: row.description,
+      status: row.status,
+      categories: row.categories,
+      createdAt: archiveDate(row.createdAt),
+      updatedAt: archiveDate(row.updatedAt),
+      metaUpdatedAt: archiveDate(row.metaUpdatedAt),
+    }));
+    await insertBatches(projectValues, (batch) =>
+      tx.insert(projects).values(batch),
+    );
+
+    const taskValues = validated.tasks.map((row) => ({
+      id: mappedId(maps.tasks, row.sourceId, "tasks"),
+      projectId: mappedId(maps.projects, row.projectSourceId, "projects"),
+      title: row.title,
+      sequenceNumber: row.sequenceNumber,
+      description: row.description,
+      status: row.status,
+      order: row.order,
+      category: row.category,
+      implementationPlan: row.implementationPlan,
+      executionRecord: row.executionRecord,
+      tags: row.tags,
+      priority: row.priority,
+      estimate: row.estimate,
+      files: row.files,
+      createdAt: archiveDate(row.createdAt),
+      updatedAt: archiveDate(row.updatedAt),
+      metaUpdatedAt: archiveDate(row.metaUpdatedAt),
+    }));
+    await insertBatches(taskValues, (batch) => tx.insert(tasks).values(batch));
+
+    const taskEdgeValues = validated.taskEdges.map((row) => ({
+      id: mappedId(maps.taskEdges, row.sourceId, "taskEdges"),
+      sourceTaskId: mappedId(maps.tasks, row.sourceTaskSourceId, "tasks"),
+      targetTaskId: mappedId(maps.tasks, row.targetTaskSourceId, "tasks"),
+      edgeType: row.edgeType,
+      note: row.note,
+      createdAt: archiveDate(row.createdAt),
+      updatedAt: archiveDate(row.updatedAt),
+      metaUpdatedAt: archiveDate(row.metaUpdatedAt),
+    }));
+    await insertBatches(taskEdgeValues, (batch) =>
+      tx.insert(taskEdges).values(batch),
+    );
+
+    const assignmentValues = validated.taskAssignments.map((row) => ({
+      taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
+      userId,
+      createdAt: archiveDate(row.createdAt),
+    }));
+    await insertBatches(assignmentValues, (batch) =>
+      tx.insert(taskAssignees).values(batch),
+    );
+
+    const criterionValues = validated.taskAcceptanceCriteria.map((row) => ({
+      id: mappedId(maps.criteria, row.sourceId, "taskAcceptanceCriteria"),
+      taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
+      text: row.text,
+      checked: row.checked,
+      position: row.position,
+      createdAt: archiveDate(row.createdAt),
+      updatedAt: archiveDate(row.updatedAt),
+    }));
+    await insertBatches(criterionValues, (batch) =>
+      tx.insert(taskAcceptanceCriteria).values(batch),
+    );
+
+    const decisionValues = validated.taskDecisions.map((row) => ({
+      id: mappedId(maps.decisions, row.sourceId, "taskDecisions"),
+      taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
+      text: row.text,
+      source: row.source,
+      decisionDate: row.decisionDate,
+      position: row.position,
+      createdAt: archiveDate(row.createdAt),
+      updatedAt: archiveDate(row.updatedAt),
+    }));
+    await insertBatches(decisionValues, (batch) =>
+      tx.insert(taskDecisions).values(batch),
+    );
+
+    const taskLinkValues = validated.taskLinks.map((row) => ({
+      id: mappedId(maps.taskLinks, row.sourceId, "taskLinks"),
+      taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
+      kind: row.kind,
+      url: row.url,
+      label: row.label,
+      createdAt: archiveDate(row.createdAt),
+      createdBy: importedAttribution(row.createdBy, userId),
+      metadata: row.metadata,
+    }));
+    await insertBatches(taskLinkValues, (batch) =>
+      tx.insert(taskLinks).values(batch),
+    );
+
+    const noteValues = validated.notes.map((row) => ({
+      id: mappedId(maps.notes, row.sourceId, "notes"),
+      projectId: mappedId(maps.projects, row.projectSourceId, "projects"),
+      sequenceNumber: row.sequenceNumber,
+      type: row.type,
+      folder: row.folder,
+      title: row.title,
+      slug: row.slug,
+      summary: row.summary,
+      body: row.body,
+      visibility: row.visibility,
+      sharedSince: nullableArchiveDate(row.sharedSince),
+      agentWritable: row.agentWritable,
+      locked: row.locked,
+      feedMode: row.feedMode,
+      feedCategories: row.feedCategories,
+      feedTags: row.feedTags,
+      tags: row.tags,
+      category: row.category,
+      version: row.version,
+      embeddingStatus: row.embeddingStatus,
+      shareRequestedBy: importedAttribution(row.shareRequestedBy, userId),
+      createdBy: userId,
+      updatedBy: importedAttribution(row.updatedBy, userId),
+      createdAt: archiveDate(row.createdAt),
+      updatedAt: archiveDate(row.updatedAt),
+      metaUpdatedAt: archiveDate(row.metaUpdatedAt),
+      deletedAt: nullableArchiveDate(row.deletedAt),
+    }));
+    await insertBatches(noteValues, (batch) => tx.insert(notes).values(batch));
+
+    const folderValues = validated.noteFolders.map((row) => ({
+      id: mappedId(maps.noteFolders, row.sourceId, "noteFolders"),
+      projectId: mappedId(maps.projects, row.projectSourceId, "projects"),
+      path: row.path,
+      createdBy: userId,
+      createdAt: archiveDate(row.createdAt),
+    }));
+    await insertBatches(folderValues, (batch) =>
+      tx.insert(noteFolders).values(batch),
+    );
+
+    const noteTaskLinkValues = validated.noteTaskLinks.map((row) => ({
+      id: mappedId(maps.noteTaskLinks, row.sourceId, "noteTaskLinks"),
+      noteId: mappedId(maps.notes, row.noteSourceId, "notes"),
+      taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
+      kind: row.kind,
+      createdAt: archiveDate(row.createdAt),
+    }));
+    await insertBatches(noteTaskLinkValues, (batch) =>
+      tx.insert(noteTaskLinks).values(batch),
+    );
+
+    const noteFeedTaskValues = validated.noteFeedTasks.map((row) => ({
+      id: mappedId(maps.noteFeedTasks, row.sourceId, "noteFeedTasks"),
+      noteId: mappedId(maps.notes, row.noteSourceId, "notes"),
+      taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
+      createdAt: archiveDate(row.createdAt),
+    }));
+    await insertBatches(noteFeedTaskValues, (batch) =>
+      tx.insert(noteFeedTasks).values(batch),
+    );
+
+    const noteLinkValues = validated.noteLinks.map((row) => ({
+      id: mappedId(maps.noteLinks, row.sourceId, "noteLinks"),
+      sourceNoteId: mappedId(maps.notes, row.sourceNoteSourceId, "notes"),
+      targetNoteId: mappedId(maps.notes, row.targetNoteSourceId, "notes"),
+      createdAt: archiveDate(row.createdAt),
+    }));
+    await insertBatches(noteLinkValues, (batch) =>
+      tx.insert(noteLinks).values(batch),
+    );
+
+    const revisionValues = validated.noteRevisions.map((row) => ({
+      id: mappedId(maps.noteRevisions, row.sourceId, "noteRevisions"),
+      noteId: mappedId(maps.notes, row.noteSourceId, "notes"),
+      version: row.version,
+      title: row.title,
+      body: row.body,
+      createdBy: importedAttribution(row.createdBy, userId),
+      createdAt: archiveDate(row.createdAt),
+    }));
+    await insertBatches(revisionValues, (batch) =>
+      tx.insert(noteRevisions).values(batch),
+    );
+
+    const activityValues = validated.activityEvents.map((row) => ({
+      id: mappedId(maps.activityEvents, row.sourceId, "activityEvents"),
+      projectId: mappedId(maps.projects, row.projectSourceId, "projects"),
+      taskId:
+        row.taskSourceId === null
+          ? null
+          : mappedId(maps.tasks, row.taskSourceId, "tasks"),
+      noteId:
+        row.noteSourceId === null
+          ? null
+          : mappedId(maps.notes, row.noteSourceId, "notes"),
+      type: row.type,
+      createdAt: archiveDate(row.createdAt),
+      actorUserId: importedAttribution(row.actor, userId),
+      source: row.source,
+      actorClientId: null,
+      summary: row.summary,
+      targetRef: remapActivityTarget(row, maps),
+      metadata: row.metadata,
+    }));
+    await insertBatches(activityValues, (batch) =>
+      tx.insert(activityEvents).values(batch),
+    );
+
+    await restoreClockBatches(taskEdgeValues, (batch) =>
+      restoreArchiveClocks(
+        tx,
+        "taskEdges",
+        batch.map((row) => ({
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+          metaUpdatedAt: row.metaUpdatedAt.toISOString(),
+        })),
+      ),
+    );
+    await restoreClockBatches(criterionValues, (batch) =>
+      restoreArchiveClocks(
+        tx,
+        "taskAcceptanceCriteria",
+        batch.map((row) => ({
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+        })),
+      ),
+    );
+    await restoreClockBatches(decisionValues, (batch) =>
+      restoreArchiveClocks(
+        tx,
+        "taskDecisions",
+        batch.map((row) => ({
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+        })),
+      ),
+    );
+    await restoreClockBatches(noteValues, (batch) =>
+      restoreArchiveClocks(
+        tx,
+        "notes",
+        batch.map((row) => ({
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+          metaUpdatedAt: row.metaUpdatedAt.toISOString(),
+        })),
+      ),
+    );
+    await restoreClockBatches(taskValues, (batch) =>
+      restoreArchiveClocks(
+        tx,
+        "tasks",
+        batch.map((row) => ({
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+          metaUpdatedAt: row.metaUpdatedAt.toISOString(),
+        })),
+      ),
+    );
+    await restoreClockBatches(projectValues, (batch) =>
+      restoreArchiveClocks(
+        tx,
+        "projects",
+        batch.map((row) => ({
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+          metaUpdatedAt: row.metaUpdatedAt.toISOString(),
+        })),
+      ),
+    );
+
+    return {
+      projectCount: validated.projects.length,
+      taskCount: validated.tasks.length,
+      noteCount: validated.notes.length,
+      activityEventCount: validated.activityEvents.length,
+    };
   });
 }

@@ -3,8 +3,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   exportOrganizationWorkspace,
+  importOrganizationWorkspace,
   OrganizationExportForbiddenError,
 } from "@/lib/data/organization-portability";
+import type { OrganizationArchive } from "@/lib/organization-portability/archive";
 import { superuserPool } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedSecondMember, seedUserOrgProject } from "@/tests/setup/seed";
@@ -27,6 +29,242 @@ type PortableWorkspaceFixture = {
   ownerPrivateNoteId: string;
   teamNoteId: string;
 };
+
+type EmptyOrganizationFixture = {
+  userId: string;
+  organizationId: string;
+};
+
+/**
+ * Seed an organization with one owner and no workspace rows.
+ *
+ * @param suffix - Unique fixture suffix.
+ * @returns Destination owner and organization ids.
+ */
+async function seedEmptyOwnedOrganization(
+  suffix: string,
+): Promise<EmptyOrganizationFixture> {
+  const sql = superuserPool();
+  const [user] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."user" ("name", "email", "emailVerified", "updatedAt")
+    VALUES (${`Importer ${suffix}`}, ${`importer-${suffix}@test.local`}, true, now())
+    RETURNING id
+  `;
+  const [organization] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."organization" ("name", "slug", "createdAt")
+    VALUES (${`Imported ${suffix}`}, ${`imported-${suffix}`}, now())
+    RETURNING id
+  `;
+  await sql`
+    INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+    VALUES (${organization.id}, ${user.id}, 'owner', now())
+  `;
+  return { userId: user.id, organizationId: organization.id };
+}
+
+/**
+ * Sort canonical rows without depending on remapped UUID order.
+ *
+ * @param rows - Canonical row values.
+ * @returns Copy sorted by stable JSON form.
+ */
+function sortCanonical<T>(rows: T[]): T[] {
+  return rows.toSorted((left, right) =>
+    JSON.stringify(left).localeCompare(JSON.stringify(right)),
+  );
+}
+
+/**
+ * Remove archive-local ids while retaining every portable field and relation.
+ *
+ * @param archive - Source or restored organization archive.
+ * @param imported - Whether note authors should reflect import normalization.
+ * @returns Canonical workspace value suitable for round-trip comparison.
+ */
+function canonicalWorkspace(
+  archive: OrganizationArchive,
+  imported: boolean,
+): Record<string, unknown> {
+  const projectRefs = new Map(
+    archive.projects.map((project) => [project.sourceId, project.identifier]),
+  );
+  const taskRefs = new Map(
+    archive.tasks.map((task) => [
+      task.sourceId,
+      `${projectRefs.get(task.projectSourceId)}#${task.sequenceNumber}`,
+    ]),
+  );
+  const noteRefs = new Map(
+    archive.notes.map((note) => [
+      note.sourceId,
+      `${projectRefs.get(note.projectSourceId)}#note-${note.sequenceNumber}`,
+    ]),
+  );
+  const criterionRefs = new Map(
+    archive.taskAcceptanceCriteria.map((criterion) => [
+      criterion.sourceId,
+      `${taskRefs.get(criterion.taskSourceId)}#criterion-${criterion.position}`,
+    ]),
+  );
+  const decisionRefs = new Map(
+    archive.taskDecisions.map((decision) => [
+      decision.sourceId,
+      `${taskRefs.get(decision.taskSourceId)}#decision-${decision.position}`,
+    ]),
+  );
+  const eventTarget = (
+    event: OrganizationArchive["activityEvents"][number],
+  ): string | null => {
+    if (event.targetRef === null) return null;
+    if (event.type.startsWith("criterion_")) {
+      return criterionRefs.get(event.targetRef) ?? null;
+    }
+    if (event.type.startsWith("decision_")) {
+      return decisionRefs.get(event.targetRef) ?? null;
+    }
+    if (event.type.startsWith("edge_")) {
+      return taskRefs.get(event.targetRef) ?? null;
+    }
+    return event.targetRef;
+  };
+
+  return {
+    projects: sortCanonical(
+      archive.projects.map(({ sourceId: _sourceId, ...project }) => project),
+    ),
+    tasks: sortCanonical(
+      archive.tasks.map(
+        ({ sourceId: _sourceId, projectSourceId, ...task }) => ({
+          ...task,
+          projectRef: projectRefs.get(projectSourceId),
+        }),
+      ),
+    ),
+    taskEdges: sortCanonical(
+      archive.taskEdges.map(
+        ({
+          sourceId: _sourceId,
+          sourceTaskSourceId,
+          targetTaskSourceId,
+          ...edge
+        }) => ({
+          ...edge,
+          sourceTaskRef: taskRefs.get(sourceTaskSourceId),
+          targetTaskRef: taskRefs.get(targetTaskSourceId),
+        }),
+      ),
+    ),
+    taskAssignments: sortCanonical(
+      archive.taskAssignments.map(({ taskSourceId, ...assignment }) => ({
+        ...assignment,
+        taskRef: taskRefs.get(taskSourceId),
+      })),
+    ),
+    taskAcceptanceCriteria: sortCanonical(
+      archive.taskAcceptanceCriteria.map(
+        ({ sourceId: _sourceId, taskSourceId, ...criterion }) => ({
+          ...criterion,
+          taskRef: taskRefs.get(taskSourceId),
+        }),
+      ),
+    ),
+    taskDecisions: sortCanonical(
+      archive.taskDecisions.map(
+        ({ sourceId: _sourceId, taskSourceId, ...decision }) => ({
+          ...decision,
+          taskRef: taskRefs.get(taskSourceId),
+        }),
+      ),
+    ),
+    taskLinks: sortCanonical(
+      archive.taskLinks.map(
+        ({ sourceId: _sourceId, taskSourceId, ...link }) => ({
+          ...link,
+          taskRef: taskRefs.get(taskSourceId),
+        }),
+      ),
+    ),
+    activityEvents: sortCanonical(
+      archive.activityEvents.map(
+        ({
+          sourceId: _sourceId,
+          projectSourceId,
+          taskSourceId,
+          noteSourceId,
+          targetRef: _targetRef,
+          ...event
+        }) => ({
+          ...event,
+          projectRef: projectRefs.get(projectSourceId),
+          taskRef: taskSourceId ? taskRefs.get(taskSourceId) : null,
+          noteRef: noteSourceId ? noteRefs.get(noteSourceId) : null,
+          targetRef: eventTarget(
+            archive.activityEvents.find(
+              (candidate) => candidate.sourceId === _sourceId,
+            )!,
+          ),
+        }),
+      ),
+    ),
+    notes: sortCanonical(
+      archive.notes.map(
+        ({ sourceId: _sourceId, projectSourceId, ...note }) => ({
+          ...note,
+          createdBy: imported ? "exporter" : note.createdBy,
+          projectRef: projectRefs.get(projectSourceId),
+        }),
+      ),
+    ),
+    noteFolders: sortCanonical(
+      archive.noteFolders.map(
+        ({ sourceId: _sourceId, projectSourceId, ...folder }) => ({
+          ...folder,
+          projectRef: projectRefs.get(projectSourceId),
+        }),
+      ),
+    ),
+    noteTaskLinks: sortCanonical(
+      archive.noteTaskLinks.map(
+        ({ sourceId: _sourceId, noteSourceId, taskSourceId, ...link }) => ({
+          ...link,
+          noteRef: noteRefs.get(noteSourceId),
+          taskRef: taskRefs.get(taskSourceId),
+        }),
+      ),
+    ),
+    noteFeedTasks: sortCanonical(
+      archive.noteFeedTasks.map(
+        ({ sourceId: _sourceId, noteSourceId, taskSourceId, ...link }) => ({
+          ...link,
+          noteRef: noteRefs.get(noteSourceId),
+          taskRef: taskRefs.get(taskSourceId),
+        }),
+      ),
+    ),
+    noteLinks: sortCanonical(
+      archive.noteLinks.map(
+        ({
+          sourceId: _sourceId,
+          sourceNoteSourceId,
+          targetNoteSourceId,
+          ...link
+        }) => ({
+          ...link,
+          sourceNoteRef: noteRefs.get(sourceNoteSourceId),
+          targetNoteRef: noteRefs.get(targetNoteSourceId),
+        }),
+      ),
+    ),
+    noteRevisions: sortCanonical(
+      archive.noteRevisions.map(
+        ({ sourceId: _sourceId, noteSourceId, ...revision }) => ({
+          ...revision,
+          noteRef: noteRefs.get(noteSourceId),
+        }),
+      ),
+    ),
+  };
+}
 
 /**
  * Seed one organization with every workspace table and privacy boundary.
@@ -388,5 +626,148 @@ describe("exportOrganizationWorkspace", () => {
     await expect(
       exportOrganizationWorkspace(owner.userId, "not-a-uuid"),
     ).rejects.toBeInstanceOf(OrganizationExportForbiddenError);
+  });
+});
+
+describe("importOrganizationWorkspace", () => {
+  test("round trips workspace content with fresh ids and preserved history", async () => {
+    const source = await seedPortableWorkspace("roundtrip-source");
+    const archive = await exportOrganizationWorkspace(
+      source.ownerUserId,
+      source.organizationId,
+    );
+    const destination = await seedEmptyOwnedOrganization(
+      "roundtrip-destination",
+    );
+
+    const summary = await importOrganizationWorkspace(
+      destination.userId,
+      destination.organizationId,
+      archive,
+    );
+    const restored = await exportOrganizationWorkspace(
+      destination.userId,
+      destination.organizationId,
+    );
+
+    expect(summary).toEqual({
+      projectCount: archive.projects.length,
+      taskCount: archive.tasks.length,
+      noteCount: archive.notes.length,
+      activityEventCount: archive.activityEvents.length,
+    });
+    expect(canonicalWorkspace(restored, false)).toEqual(
+      canonicalWorkspace(archive, true),
+    );
+    const sourceIds = new Set([
+      ...archive.projects.map((row) => row.sourceId),
+      ...archive.tasks.map((row) => row.sourceId),
+      ...archive.notes.map((row) => row.sourceId),
+      ...archive.activityEvents.map((row) => row.sourceId),
+    ]);
+    expect(
+      [
+        ...restored.projects,
+        ...restored.tasks,
+        ...restored.notes,
+        ...restored.activityEvents,
+      ].every((row) => !sourceIds.has(row.sourceId)),
+    ).toBe(true);
+    expect(restored.taskAssignments).toHaveLength(1);
+    expect(restored.notes.every((note) => note.createdBy === "exporter")).toBe(
+      true,
+    );
+    expect(
+      restored.activityEvents.find(
+        (event) => event.summary === "added criterion",
+      )?.targetRef,
+    ).toBe(restored.taskAcceptanceCriteria[0]?.sourceId);
+    expect(
+      restored.activityEvents.find(
+        (event) => event.summary === "added dependency",
+      )?.targetRef,
+    ).toBe(
+      restored.tasks.find((task) => task.title === "Import workspace")
+        ?.sourceId,
+    );
+    expect(
+      restored.notes.find((note) => note.title === "Shared guide")?.deletedAt,
+    ).toBe(T4);
+  });
+
+  test("imports the same archive repeatedly with disjoint ids", async () => {
+    const source = await seedPortableWorkspace("repeat-source");
+    const archive = await exportOrganizationWorkspace(
+      source.ownerUserId,
+      source.organizationId,
+    );
+    const firstDestination = await seedEmptyOwnedOrganization("repeat-first");
+    const secondDestination = await seedEmptyOwnedOrganization("repeat-second");
+
+    await importOrganizationWorkspace(
+      firstDestination.userId,
+      firstDestination.organizationId,
+      archive,
+    );
+    await importOrganizationWorkspace(
+      secondDestination.userId,
+      secondDestination.organizationId,
+      archive,
+    );
+    const first = await exportOrganizationWorkspace(
+      firstDestination.userId,
+      firstDestination.organizationId,
+    );
+    const second = await exportOrganizationWorkspace(
+      secondDestination.userId,
+      secondDestination.organizationId,
+    );
+
+    expect(canonicalWorkspace(first, false)).toEqual(
+      canonicalWorkspace(second, false),
+    );
+    const firstIds = new Set([
+      ...first.projects.map((row) => row.sourceId),
+      ...first.tasks.map((row) => row.sourceId),
+      ...first.notes.map((row) => row.sourceId),
+      ...first.activityEvents.map((row) => row.sourceId),
+    ]);
+    expect(
+      [
+        ...second.projects,
+        ...second.tasks,
+        ...second.notes,
+        ...second.activityEvents,
+      ].every((row) => !firstIds.has(row.sourceId)),
+    ).toBe(true);
+  });
+
+  test("rolls back every workspace row after a database constraint failure", async () => {
+    const source = await seedPortableWorkspace("rollback-source");
+    const archive = await exportOrganizationWorkspace(
+      source.ownerUserId,
+      source.organizationId,
+    );
+    archive.projects.push({
+      ...archive.projects[0],
+      sourceId: crypto.randomUUID(),
+    });
+    const destination = await seedEmptyOwnedOrganization("rollback-target");
+
+    await expect(
+      importOrganizationWorkspace(
+        destination.userId,
+        destination.organizationId,
+        archive,
+      ),
+    ).rejects.toThrow();
+
+    const sql = superuserPool();
+    const [row] = await sql<{ project_count: number }[]>`
+      SELECT count(*)::int AS project_count
+      FROM projects
+      WHERE organization_id = ${destination.organizationId}
+    `;
+    expect(row.project_count).toBe(0);
   });
 });
