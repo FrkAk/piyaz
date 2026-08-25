@@ -42,11 +42,15 @@ process.env.TRUSTED_PROXY_HEADER ??= "cf-connecting-ip";
  *
  * Uses `Object.defineProperty` (matching `tests/api/error.test.ts:9`)
  * so the assignment is type-safe under `@types/node` ≥ 20 where
- * `NODE_ENV` is declared `readonly`.
+ * `NODE_ENV` is declared `readonly`. Bun ≥ 1.4 rejects `process.env`
+ * descriptors that are not configurable, enumerable, AND writable,
+ * so all three flags are required.
  */
 Object.defineProperty(process.env, "NODE_ENV", {
   value: "production",
   configurable: true,
+  enumerable: true,
+  writable: true,
 });
 
 // Load-bearing invariant guard. If a future contributor flips
