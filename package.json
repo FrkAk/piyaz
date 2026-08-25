@@ -4,12 +4,14 @@
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "//overrides": "TEMP security pins for transitive CVEs. REMOVE each entry once its parent ships the fix and `bun audit --audit-level=high` passes without it. fast-uri >=3.1.5 <4 (GHSA-v2hh-gcrm-f6hx, GHSA-7p8r-x3mc-p8w7, via ajv under @modelcontextprotocol/sdk and eslint; ajv declares ^3.0.1, so the parent range already allows the fix). ip-address >=10.3.1 <11 (GHSA-mwp4-54f8-5fhr, via express-rate-limit under @modelcontextprotocol/sdk; the parent declares ^10.2.0, so this only raises the floor). postcss >=8.5.18 <9 (GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849, via next, which pins postcss 8.4.31 EXACTLY: this entry contradicts its parent's declared range rather than nudging a loose one, so re-check it on every next bump and drop it as soon as next unpins). undici >=7.29.0 <8 (GHSA-4cwx-7wf7-3272, via miniflare under wrangler, which pins undici 7.28.0 EXACTLY: same caveat as postcss, re-check on every wrangler bump and drop once miniflare moves past 7.29.0). sharp is handled separately via a CI --ignore (no takeable fix). Tracked in PYZ-345.",
+  "//overrides": "TEMP security pins for transitive CVEs. REMOVE each entry once its parent ships the fix and `bun audit --audit-level=high` passes without it. fast-uri >=3.1.5 <4 (GHSA-v2hh-gcrm-f6hx, GHSA-7p8r-x3mc-p8w7, via ajv under @modelcontextprotocol/sdk and eslint; ajv declares ^3.0.1, so the parent range already allows the fix). ip-address >=10.3.1 <11 (GHSA-mwp4-54f8-5fhr, via express-rate-limit under @modelcontextprotocol/sdk; the parent declares ^10.2.0, so this only raises the floor). postcss >=8.5.18 <9 (GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849, via next, which pins postcss 8.4.31 EXACTLY: this entry contradicts its parent's declared range rather than nudging a loose one, so re-check it on every next bump and drop it as soon as next unpins). undici >=7.29.0 <8 (GHSA-4cwx-7wf7-3272, via miniflare under wrangler, which pins undici 7.28.0 EXACTLY: same caveat as postcss, re-check on every wrangler bump and drop once miniflare moves past 7.29.0). js-yaml >=4.3.1 <5 (GHSA-5p4m-2wfm-xmqj, via @eslint/eslintrc under eslint; the parent declares ^4.3.0, so this only raises the floor). nanoid >=3.3.18 <4 (GHSA-2v37-7h3g-55p8, via postcss under next and @tailwindcss/postcss; the parent declares ^3.3.6, so this only raises the floor). sharp is handled separately via a CI --ignore (no takeable fix). Tracked in PYZ-345.",
   "overrides": {
     "fast-uri": ">=3.1.5 <4",
     "ip-address": ">=10.3.1 <11",
     "postcss": ">=8.5.18 <9",
-    "undici": ">=7.29.0 <8"
+    "undici": ">=7.29.0 <8",
+    "js-yaml": ">=4.3.1 <5",
+    "nanoid": ">=3.3.18 <4"
   },
   "scripts": {
     "dev": "next dev --webpack",
