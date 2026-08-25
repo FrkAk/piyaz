@@ -391,6 +391,8 @@ describe("connection proxies on the Workers target", () => {
     Object.defineProperty(process.env, "NODE_ENV", {
       value: "development",
       configurable: true,
+      enumerable: true,
+      writable: true,
     });
     try {
       expect(typeof (appDb as unknown as { select: unknown }).select).toBe(
@@ -400,6 +402,8 @@ describe("connection proxies on the Workers target", () => {
       Object.defineProperty(process.env, "NODE_ENV", {
         value: savedNodeEnv,
         configurable: true,
+        enumerable: true,
+        writable: true,
       });
     }
   });
