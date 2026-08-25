@@ -14,6 +14,8 @@ function setNodeEnv(value: string | undefined): void {
   Object.defineProperty(process.env, "NODE_ENV", {
     value,
     configurable: true,
+    enumerable: true,
+    writable: true,
   });
 }
 
