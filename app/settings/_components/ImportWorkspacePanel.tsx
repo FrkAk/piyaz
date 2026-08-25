@@ -45,6 +45,7 @@ export function ImportWorkspacePanel({
   const inputId = useId();
   const importingRef = useRef(false);
   const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [dpaAccepted, setDpaAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startImport] = useTransition();
@@ -53,29 +54,52 @@ export function ImportWorkspacePanel({
   /**
    * Validate and retain one selected archive file.
    *
-   * @param event - File input change event.
-   * @returns Nothing.
+   * @param selected - File chosen via the picker or dropped on the panel.
+   * @returns True when the file was accepted.
    */
-  const handleFile = (event: React.ChangeEvent<HTMLInputElement>): void => {
-    const selected = event.target.files?.[0] ?? null;
+  const selectFile = (selected: File | null): boolean => {
     setError(null);
     if (selected === null) {
       setFile(null);
-      return;
+      return false;
     }
     if (!selected.name.toLowerCase().endsWith(".json")) {
       setFile(null);
       setError("Choose a JSON workspace archive.");
-      event.target.value = "";
-      return;
+      return false;
     }
     if (selected.size > MAX_ORGANIZATION_ARCHIVE_BYTES) {
       setFile(null);
       setError("The workspace archive must be 100 MiB or smaller.");
-      event.target.value = "";
-      return;
+      return false;
     }
     setFile(selected);
+    return true;
+  };
+
+  /**
+   * Validate one file picked through the input element.
+   *
+   * @param event - File input change event.
+   * @returns Nothing.
+   */
+  const handleFile = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    if (!selectFile(event.target.files?.[0] ?? null)) {
+      event.target.value = "";
+    }
+  };
+
+  /**
+   * Accept one archive dropped onto the picker area.
+   *
+   * @param event - Drop event carrying the dragged files.
+   * @returns Nothing.
+   */
+  const handleDrop = (event: React.DragEvent): void => {
+    event.preventDefault();
+    setDragging(false);
+    if (pending) return;
+    selectFile(event.dataTransfer.files[0] ?? null);
   };
 
   /**
@@ -139,7 +163,15 @@ export function ImportWorkspacePanel({
 
       <label
         htmlFor={inputId}
-        className="mt-4 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-border-strong bg-base/50 px-4 py-3 transition-colors hover:border-accent/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent"
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!pending) setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        className={`mt-4 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed bg-base/50 px-4 py-3 transition-colors hover:border-accent/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent ${
+          dragging ? "border-accent bg-accent/10" : "border-border-strong"
+        }`}
       >
         <input
           id={inputId}
@@ -154,7 +186,7 @@ export function ImportWorkspacePanel({
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[12px] font-semibold text-text-primary">
-            {file?.name ?? "Choose a workspace archive"}
+            {file?.name ?? "Drop a workspace archive here, or browse"}
           </span>
           <span className="mt-0.5 block font-mono text-[10px] text-text-muted">
             {file ? formatFileSize(file.size) : "JSON · up to 100 MiB"}
@@ -175,6 +207,13 @@ export function ImportWorkspacePanel({
           className="mt-3 rounded-md border border-cancelled/25 bg-cancelled/10 px-3 py-2 text-xs text-cancelled"
         >
           {error}
+        </p>
+      ) : null}
+
+      {pending ? (
+        <p role="status" className="mt-3 text-xs text-text-muted">
+          Uploading and restoring the workspace. Large archives can take a
+          minute.
         </p>
       ) : null}
 

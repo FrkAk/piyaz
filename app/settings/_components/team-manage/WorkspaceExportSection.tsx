@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { Button } from "@/components/shared/Button";
-import { IconDoc } from "@/components/shared/icons";
+import { IconCheck, IconDoc } from "@/components/shared/icons";
 import {
   organizationArchiveFilename,
   readPortabilityError,
@@ -30,6 +30,7 @@ export function WorkspaceExportSection({
 }: WorkspaceExportSectionProps) {
   const exportingRef = useRef(false);
   const [exporting, startExport] = useTransition();
+  const [downloaded, setDownloaded] = useState(false);
 
   /**
    * Start one archive download and ignore duplicate clicks.
@@ -39,6 +40,7 @@ export function WorkspaceExportSection({
   const handleExport = (): void => {
     if (exportingRef.current) return;
     exportingRef.current = true;
+    setDownloaded(false);
     onError(null);
     startExport(async () => {
       try {
@@ -55,6 +57,7 @@ export function WorkspaceExportSection({
         anchor.download = organizationArchiveFilename(teamSlug);
         document.body.append(anchor);
         anchor.click();
+        setDownloaded(true);
         // The download navigation is queued, not synchronous (Firefox,
         // Safari): revoking in the same task kills the blob URL before the
         // browser resolves it and the download silently produces nothing.
@@ -93,8 +96,21 @@ export function WorkspaceExportSection({
               activity history as one JSON archive. Member accounts and their
               private notes are not included.
             </p>
-            <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em] text-text-muted">
-              JSON · projects · tasks · notes · history
+            <p
+              role="status"
+              className={`mt-3 inline-flex max-w-full items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-[11px] transition-colors ${
+                downloaded
+                  ? "border-done/25 bg-done/10 text-done"
+                  : "border-border bg-base text-text-secondary"
+              }`}
+            >
+              {downloaded ? <IconCheck size={11} /> : <IconDoc size={11} />}
+              <span className="truncate">
+                {organizationArchiveFilename(teamSlug)}
+              </span>
+              {downloaded ? (
+                <span className="shrink-0">· saved to downloads</span>
+              ) : null}
             </p>
           </div>
           <Button
@@ -104,7 +120,7 @@ export function WorkspaceExportSection({
             disabled={exporting}
             isLoading={exporting}
           >
-            Export workspace
+            Download archive
           </Button>
         </div>
       </div>

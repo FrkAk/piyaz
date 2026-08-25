@@ -266,7 +266,7 @@ export function TeamsTab({
             </svg>
           }
           title="You're not in any teams yet"
-          body="Create a team to start a fresh workspace, or join an existing one with an invite code from an admin."
+          body="Create a team to start a fresh workspace, join an existing one with an invite code, or import a workspace archive."
           action={
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button variant="primary" size="sm" onClick={startCreating}>
@@ -274,6 +274,9 @@ export function TeamsTab({
               </Button>
               <Button variant="secondary" size="sm" onClick={startJoining}>
                 Join with code
+              </Button>
+              <Button variant="ghost" size="sm" onClick={startImporting}>
+                Import workspace
               </Button>
             </div>
           }
