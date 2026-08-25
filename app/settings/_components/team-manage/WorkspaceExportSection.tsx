@@ -55,8 +55,13 @@ export function WorkspaceExportSection({
         anchor.download = organizationArchiveFilename(teamSlug);
         document.body.append(anchor);
         anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
+        // The download navigation is queued, not synchronous (Firefox,
+        // Safari): revoking in the same task kills the blob URL before the
+        // browser resolves it and the download silently produces nothing.
+        window.setTimeout(() => {
+          anchor.remove();
+          URL.revokeObjectURL(url);
+        }, 1000);
       } catch {
         onError(
           "We couldn't download this workspace. Check your connection and try again.",

@@ -6,7 +6,16 @@
  * kinds stay consistent across surfaces.
  */
 
-export type LinkKind = "pull_request" | "issue" | "commit" | "doc" | "link";
+/** Every kind {@link classifyLink} can assign; `task_links.kind` holds only these. */
+export const LINK_KINDS = [
+  "pull_request",
+  "issue",
+  "commit",
+  "doc",
+  "link",
+] as const;
+
+export type LinkKind = (typeof LINK_KINDS)[number];
 
 export interface ClassifiedLink {
   kind: LinkKind;

@@ -6,6 +6,7 @@ import {
   NOTE_FOLDER_MAX_CHARS,
   NOTE_TITLE_MAX_BYTES,
 } from "@/lib/db/schema";
+import { LINK_KINDS } from "@/lib/links/classify";
 import {
   RESERVED_SLUGS,
   SLUG_MAX,
@@ -64,6 +65,12 @@ function utf8ByteLength(value: string): number {
 const indexedTextSchema = z
   .string()
   .refine((value) => utf8ByteLength(value) <= NOTE_TITLE_MAX_BYTES);
+
+// Mirrors the `IS NFC NORMALIZED` CHECKs on notes.folder and note_folders.path.
+const nfcFolderPathSchema = z
+  .string()
+  .max(NOTE_FOLDER_MAX_CHARS)
+  .refine((value) => value === value.normalize("NFC"));
 
 const projectSchema = z.strictObject({
   sourceId: sourceIdSchema,
@@ -146,70 +153,87 @@ const taskDecisionSchema = z.strictObject({
 const taskLinkSchema = z.strictObject({
   sourceId: sourceIdSchema,
   taskSourceId: sourceIdSchema,
-  kind: z.string(),
-  url: z.string(),
+  kind: z.enum(LINK_KINDS),
+  // Every other writer of task_links.url funnels through classifyLink, whose
+  // http/https protocol gate is the chokepoint preventing click-to-exec XSS
+  // (lib/links/classify.ts). Imported archives must clear the same gate: the
+  // UI renders these urls as raw hrefs.
+  url: z.string().refine((value) => {
+    try {
+      const { protocol } = new URL(value);
+      return protocol === "http:" || protocol === "https:";
+    } catch {
+      return false;
+    }
+  }),
   label: z.string().nullable(),
   createdAt: timestampSchema,
   createdBy: actorSchema,
   metadata: metadataSchema,
 });
 
-const activityEventSchema = z.strictObject({
-  sourceId: sourceIdSchema,
-  projectSourceId: sourceIdSchema,
-  taskSourceId: sourceIdSchema.nullable(),
-  noteSourceId: sourceIdSchema.nullable(),
-  type: z.enum([
-    "task_created",
-    "title_changed",
-    "description_changed",
-    "status_changed",
-    "priority_changed",
-    "estimate_changed",
-    "category_changed",
-    "moved",
-    "tag_added",
-    "tag_removed",
-    "plan_set",
-    "record_set",
-    "files_changed",
-    "assignee_added",
-    "assignee_removed",
-    "criterion_added",
-    "criterion_removed",
-    "criterion_edited",
-    "criterion_checked",
-    "criterion_unchecked",
-    "decision_added",
-    "decision_removed",
-    "decision_edited",
-    "link_added",
-    "link_removed",
-    "link_updated",
-    "edge_added",
-    "edge_removed",
-    "edge_updated",
-    "project_created",
-    "note_created",
-    "note_updated",
-    "note_moved",
-    "note_deleted",
-    "note_restored",
-  ]),
-  createdAt: timestampSchema,
-  actor: actorSchema,
-  source: z.enum(["web", "mcp", "system"]),
-  summary: z.string(),
-  targetRef: z.string().nullable(),
-  metadata: metadataSchema,
-});
+const activityEventSchema = z
+  .strictObject({
+    sourceId: sourceIdSchema,
+    projectSourceId: sourceIdSchema,
+    taskSourceId: sourceIdSchema.nullable(),
+    noteSourceId: sourceIdSchema.nullable(),
+    type: z.enum([
+      "task_created",
+      "title_changed",
+      "description_changed",
+      "status_changed",
+      "priority_changed",
+      "estimate_changed",
+      "category_changed",
+      "moved",
+      "tag_added",
+      "tag_removed",
+      "plan_set",
+      "record_set",
+      "files_changed",
+      "assignee_added",
+      "assignee_removed",
+      "criterion_added",
+      "criterion_removed",
+      "criterion_edited",
+      "criterion_checked",
+      "criterion_unchecked",
+      "decision_added",
+      "decision_removed",
+      "decision_edited",
+      "link_added",
+      "link_removed",
+      "link_updated",
+      "edge_added",
+      "edge_removed",
+      "edge_updated",
+      "project_created",
+      "note_created",
+      "note_updated",
+      "note_moved",
+      "note_deleted",
+      "note_restored",
+    ]),
+    createdAt: timestampSchema,
+    actor: actorSchema,
+    source: z.enum(["web", "mcp", "system"]),
+    summary: z.string(),
+    targetRef: z.string().nullable(),
+    metadata: metadataSchema,
+    // Mirrors the activity_events_note_ref_check CHECK: note_* events must
+    // name their note.
+  })
+  .refine(
+    (event) => !event.type.startsWith("note_") || event.noteSourceId !== null,
+  );
 
 const noteSchema = z.strictObject({
   sourceId: sourceIdSchema,
   projectSourceId: sourceIdSchema,
   sequenceNumber: positiveIntegerSchema,
   type: z.enum(["reference", "guidance", "knowledge"]),
-  folder: z.string().max(NOTE_FOLDER_MAX_CHARS),
+  folder: nfcFolderPathSchema,
   title: indexedTextSchema,
   slug: indexedTextSchema,
   summary: z.string().max(1000),
@@ -237,7 +261,7 @@ const noteSchema = z.strictObject({
 const noteFolderSchema = z.strictObject({
   sourceId: sourceIdSchema,
   projectSourceId: sourceIdSchema,
-  path: z.string().max(NOTE_FOLDER_MAX_CHARS),
+  path: nfcFolderPathSchema,
   createdAt: timestampSchema,
 });
 
@@ -311,8 +335,14 @@ export class OrganizationArchiveError extends Error {
    * Create a client-safe archive validation error.
    *
    * @param message - Safe failure description.
+   * @param code - Route-level failure category.
    */
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly code:
+      | "invalid_archive"
+      | "archive_too_large" = "invalid_archive",
+  ) {
     super(message);
     this.name = "OrganizationArchiveError";
   }
@@ -344,15 +374,125 @@ function assertUniqueSourceIds(
   collectionName: string,
   rows: readonly { sourceId: string }[],
 ): void {
-  const ids = new Set<string>();
+  assertUniqueRows(collectionName, rows, "sourceId", (row) => [row.sourceId]);
+}
+
+/**
+ * Reject rows that collide on a destination-unique key.
+ *
+ * @param collectionName - Archive collection label used in errors.
+ * @param rows - Rows of one archive collection.
+ * @param constraint - Key description used in errors.
+ * @param keyOf - Destination-unique key parts, or null to skip the row.
+ * @throws {OrganizationArchiveError} When two rows share a key.
+ */
+function assertUniqueRows<T>(
+  collectionName: string,
+  rows: readonly T[],
+  constraint: string,
+  keyOf: (row: T) => readonly (string | number)[] | null,
+): void {
+  const keys = new Set<string>();
   for (const row of rows) {
-    if (ids.has(row.sourceId)) {
+    const parts = keyOf(row);
+    if (parts === null) continue;
+    const key = parts.join(" ");
+    if (keys.has(key)) {
       throw new OrganizationArchiveError(
-        `${collectionName} contains duplicate sourceId`,
+        `${collectionName} contains duplicate ${constraint}`,
       );
     }
-    ids.add(row.sourceId);
+    keys.add(key);
   }
+}
+
+/**
+ * Reject archives that would violate destination-table unique constraints.
+ *
+ * Import rewrites every source id, so `assertUniqueSourceIds` alone cannot
+ * catch these: each check below mirrors one unique constraint or index in
+ * lib/db/schema.ts that the insert would otherwise hit as a 500 after the
+ * destination organization was already created.
+ *
+ * @param archive - Structurally valid archive.
+ * @throws {OrganizationArchiveError} When a collision is present.
+ */
+function validateDestinationUniqueness(archive: OrganizationArchive): void {
+  assertUniqueRows("projects", archive.projects, "identifier", (row) => [
+    row.identifier,
+  ]);
+  assertUniqueRows("tasks", archive.tasks, "project sequenceNumber", (row) => [
+    row.projectSourceId,
+    row.sequenceNumber,
+  ]);
+  assertUniqueRows(
+    "taskEdges",
+    archive.taskEdges,
+    "source, target, and edgeType",
+    (row) => [row.sourceTaskSourceId, row.targetTaskSourceId, row.edgeType],
+  );
+  // task_assignees' primary key is (taskId, userId) and every imported
+  // assignment lands on the importing user.
+  assertUniqueRows(
+    "taskAssignments",
+    archive.taskAssignments,
+    "taskSourceId",
+    (row) => [row.taskSourceId],
+  );
+  assertUniqueRows(
+    "taskAcceptanceCriteria",
+    archive.taskAcceptanceCriteria,
+    "task text",
+    (row) => [row.taskSourceId, row.text],
+  );
+  assertUniqueRows(
+    "taskDecisions",
+    archive.taskDecisions,
+    "task text",
+    (row) => [row.taskSourceId, row.text],
+  );
+  assertUniqueRows("taskLinks", archive.taskLinks, "task url", (row) => [
+    row.taskSourceId,
+    row.url,
+  ]);
+  assertUniqueRows("notes", archive.notes, "project sequenceNumber", (row) => [
+    row.projectSourceId,
+    row.sequenceNumber,
+  ]);
+  // notes_project_slug_unique only covers live notes (deleted_at IS NULL).
+  assertUniqueRows("notes", archive.notes, "project slug", (row) =>
+    row.deletedAt === null ? [row.projectSourceId, row.slug] : null,
+  );
+  assertUniqueRows(
+    "noteFolders",
+    archive.noteFolders,
+    "project path",
+    (row) => [row.projectSourceId, row.path],
+  );
+  assertUniqueRows(
+    "noteTaskLinks",
+    archive.noteTaskLinks,
+    "note, task, and kind",
+    (row) => [row.noteSourceId, row.taskSourceId, row.kind],
+  );
+  assertUniqueRows(
+    "noteFeedTasks",
+    archive.noteFeedTasks,
+    "note and task",
+    (row) => [row.noteSourceId, row.taskSourceId],
+  );
+  assertUniqueRows(
+    "noteLinks",
+    archive.noteLinks,
+    "source and target",
+    (row) => [row.sourceNoteSourceId, row.targetNoteSourceId],
+  );
+  assertUniqueRows(
+    "noteRevisions",
+    archive.noteRevisions,
+    "note version",
+    (row) => [row.noteSourceId, row.version],
+  );
 }
 
 /**
@@ -585,11 +725,17 @@ export function parseOrganizationArchive(value: unknown): OrganizationArchive {
   if (archiveRowCount(value) > MAX_ORGANIZATION_ARCHIVE_ROWS) {
     throw new OrganizationArchiveError(
       `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_ROWS} rows`,
+      "archive_too_large",
     );
   }
   const parsed = organizationArchiveSchema.safeParse(value);
   if (!parsed.success) {
-    throw new OrganizationArchiveError("Archive does not match version 1");
+    const path = parsed.error.issues[0]?.path.join(".");
+    throw new OrganizationArchiveError(
+      path
+        ? `Archive does not match version 1 at ${path}`
+        : "Archive does not match version 1",
+    );
   }
 
   assertUniqueSourceIds("projects", parsed.data.projects);
@@ -608,6 +754,7 @@ export function parseOrganizationArchive(value: unknown): OrganizationArchive {
   assertUniqueSourceIds("noteFeedTasks", parsed.data.noteFeedTasks);
   assertUniqueSourceIds("noteLinks", parsed.data.noteLinks);
   assertUniqueSourceIds("noteRevisions", parsed.data.noteRevisions);
+  validateDestinationUniqueness(parsed.data);
   validateArchiveReferences(parsed.data);
   return parsed.data;
 }
@@ -632,19 +779,24 @@ export function decodeOrganizationArchive(
 }
 
 /**
- * Validate and serialize an organization archive.
+ * Serialize an already-validated organization archive.
  *
- * @param archive - Archive to validate and encode as JSON text.
+ * Validation is the producer's job (`exportOrganizationWorkspace` returns a
+ * parsed archive); re-parsing here would deep-clone up to 100 MiB inside a
+ * memory-bounded isolate for no new guarantee.
+ *
+ * @param archive - Validated archive to encode as JSON text.
  * @returns Compact JSON serialization.
- * @throws {OrganizationArchiveError} When validation fails or output is too large.
+ * @throws {OrganizationArchiveError} When the output is too large.
  */
 export function serializeOrganizationArchive(
   archive: OrganizationArchive,
 ): string {
-  const serialized = JSON.stringify(parseOrganizationArchive(archive));
+  const serialized = JSON.stringify(archive);
   if (utf8ByteLength(serialized) > MAX_ORGANIZATION_ARCHIVE_BYTES) {
     throw new OrganizationArchiveError(
       `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_BYTES} bytes`,
+      "archive_too_large",
     );
   }
   return serialized;

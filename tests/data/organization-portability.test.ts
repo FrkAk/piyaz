@@ -352,7 +352,7 @@ async function seedPortableWorkspace(
     INSERT INTO task_links (
       task_id, kind, url, label, created_at, created_by, metadata
     ) VALUES
-      (${task.id}, 'documentation', 'https://example.test/owner', 'Owner docs',
+      (${task.id}, 'doc', 'https://example.test/owner', 'Owner docs',
        ${T2}, ${base.userId}, '{"owner":true}'::jsonb),
       (${task.id}, 'issue', 'https://example.test/member', 'Member issue',
        ${T3}, ${otherUserId}, '{"owner":false}'::jsonb)

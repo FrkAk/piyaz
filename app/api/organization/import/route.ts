@@ -100,7 +100,13 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  if (request.headers.get("content-type") !== ORGANIZATION_ARCHIVE_MEDIA_TYPE) {
+  // Compare only the media type: a legal parameterized form like
+  // `...+json; charset=utf-8` (added by proxies or clients) must pass.
+  const mediaType = (request.headers.get("content-type") ?? "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (mediaType !== ORGANIZATION_ARCHIVE_MEDIA_TYPE) {
     return jsonError(
       "unsupported_media_type",
       `Content-Type must be ${ORGANIZATION_ARCHIVE_MEDIA_TYPE}.`,
@@ -141,7 +147,14 @@ export async function POST(request: Request): Promise<Response> {
     archive = decodeOrganizationArchive(bytes);
   } catch (error) {
     if (error instanceof OrganizationArchiveError) {
-      return jsonError("invalid_archive", "Invalid workspace archive.", 400);
+      if (error.code === "archive_too_large") {
+        return jsonError("archive_too_large", error.message, 413);
+      }
+      return jsonError(
+        "invalid_archive",
+        `Invalid workspace archive: ${error.message}.`,
+        400,
+      );
     }
     console.error("[organization-import] archive decode failed", {
       errorName: error instanceof Error ? error.name : "unknown",

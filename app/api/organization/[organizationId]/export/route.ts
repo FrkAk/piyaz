@@ -107,7 +107,7 @@ export async function GET(
     }
     if (
       error instanceof OrganizationArchiveError &&
-      error.message.startsWith("Archive exceeds ")
+      error.code === "archive_too_large"
     ) {
       return jsonError(
         "archive_too_large",
@@ -115,9 +115,14 @@ export async function GET(
         413,
       );
     }
+    // Archive errors here mean STORED data failed the archive contract (e.g.
+    // a slug that later became reserved): permanent for this workspace, so
+    // the log must name the failing field.
     console.error("[organization-export] failed", {
       organizationId,
       errorName: error instanceof Error ? error.name : "unknown",
+      errorMessage:
+        error instanceof OrganizationArchiveError ? error.message : undefined,
     });
     return jsonError("internal_error", "Internal error", 500);
   }

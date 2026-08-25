@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  MAX_ORGANIZATION_ARCHIVE_BYTES,
   MAX_ORGANIZATION_ARCHIVE_ROWS,
   OrganizationArchiveError,
   decodeOrganizationArchive,
@@ -130,7 +131,7 @@ function validArchive(): OrganizationArchive {
       {
         sourceId: L1,
         taskSourceId: T1,
-        kind: "documentation",
+        kind: "doc",
         url: "https://example.test/docs",
         label: "Docs",
         createdAt: NOW,
@@ -360,9 +361,76 @@ test("serializes valid archives and rejects oversized output", () => {
   const archive = validArchive();
   expect(JSON.parse(serializeOrganizationArchive(archive))).toEqual(archive);
 
-  archive.notes[0].body = "x".repeat(200_001);
+  archive.notes[0].body = "x".repeat(MAX_ORGANIZATION_ARCHIVE_BYTES);
   expect(() => serializeOrganizationArchive(archive)).toThrow(
-    OrganizationArchiveError,
+    `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_BYTES} bytes`,
+  );
+});
+
+test("rejects task link urls outside the http/https protocol gate", () => {
+  const archive = validArchive();
+  archive.taskLinks[0].url = "javascript:alert(document.cookie)";
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "Archive does not match version 1 at taskLinks.0.url",
+  );
+});
+
+test("rejects task link kinds classifyLink cannot assign", () => {
+  const archive = validArchive();
+  (archive.taskLinks[0] as { kind: string }).kind = "documentation";
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "Archive does not match version 1 at taskLinks.0.kind",
+  );
+});
+
+test("rejects assignments that collide on the destination primary key", () => {
+  const archive = validArchive();
+  archive.taskAssignments.push({ ...archive.taskAssignments[0] });
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "taskAssignments contains duplicate taskSourceId",
+  );
+});
+
+test("rejects notes that collide on a destination unique constraint", () => {
+  const duplicateSequence = validArchive();
+  duplicateSequence.notes[1].sequenceNumber =
+    duplicateSequence.notes[0].sequenceNumber;
+  expect(() => parseOrganizationArchive(duplicateSequence)).toThrow(
+    "notes contains duplicate project sequenceNumber",
+  );
+
+  const duplicateLiveSlug = validArchive();
+  duplicateLiveSlug.notes[1].slug = duplicateLiveSlug.notes[0].slug;
+  duplicateLiveSlug.notes[1].deletedAt = null;
+  expect(() => parseOrganizationArchive(duplicateLiveSlug)).toThrow(
+    "notes contains duplicate project slug",
+  );
+
+  // notes_project_slug_unique only covers live notes.
+  const duplicateDeletedSlug = validArchive();
+  duplicateDeletedSlug.notes[1].slug = duplicateDeletedSlug.notes[0].slug;
+  expect(() => parseOrganizationArchive(duplicateDeletedSlug)).not.toThrow();
+});
+
+test("rejects folders that are not NFC normalized", () => {
+  const archive = validArchive();
+  archive.notes[0].folder = "Cafe\u0301";
+  archive.noteFolders[0].path = "Cafe\u0301";
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "Archive does not match version 1 at notes.0.folder",
+  );
+});
+
+test("rejects note events without a note reference", () => {
+  const archive = validArchive();
+  archive.activityEvents[0] = {
+    ...archive.activityEvents[0],
+    type: "note_created",
+    noteSourceId: null,
+    targetRef: "migration-guide",
+  };
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "Archive does not match version 1 at activityEvents.0",
   );
 });
 

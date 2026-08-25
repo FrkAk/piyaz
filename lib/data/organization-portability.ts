@@ -242,6 +242,57 @@ function importedAttribution(
   return actor === "exporter" ? userId : null;
 }
 
+type ArchiveActivityEventType =
+  OrganizationArchive["activityEvents"][number]["type"];
+
+/**
+ * What each event type's `targetRef` holds: an {@link ArchiveIdMaps} key to
+ * remap a workspace-row UUID through, `verbatim` for portable values (tags,
+ * link urls, note slugs, or always-null), or `dropped` for foreign user ids
+ * the export already nulls. Typed over the archive enum so a new event type
+ * fails compilation here until its targetRef is routed.
+ */
+const ACTIVITY_TARGET_REMAP = {
+  task_created: "verbatim",
+  title_changed: "verbatim",
+  description_changed: "verbatim",
+  status_changed: "verbatim",
+  priority_changed: "verbatim",
+  estimate_changed: "verbatim",
+  category_changed: "verbatim",
+  moved: "verbatim",
+  tag_added: "verbatim",
+  tag_removed: "verbatim",
+  plan_set: "verbatim",
+  record_set: "verbatim",
+  files_changed: "verbatim",
+  assignee_added: "dropped",
+  assignee_removed: "dropped",
+  criterion_added: "criteria",
+  criterion_removed: "criteria",
+  criterion_edited: "criteria",
+  criterion_checked: "criteria",
+  criterion_unchecked: "criteria",
+  decision_added: "decisions",
+  decision_removed: "decisions",
+  decision_edited: "decisions",
+  link_added: "verbatim",
+  link_removed: "verbatim",
+  link_updated: "verbatim",
+  edge_added: "tasks",
+  edge_removed: "tasks",
+  edge_updated: "tasks",
+  project_created: "verbatim",
+  note_created: "verbatim",
+  note_updated: "verbatim",
+  note_moved: "verbatim",
+  note_deleted: "verbatim",
+  note_restored: "verbatim",
+} as const satisfies Record<
+  ArchiveActivityEventType,
+  "criteria" | "decisions" | "tasks" | "verbatim" | "dropped"
+>;
+
 /**
  * Remap an activity event target into destination-local identifiers.
  *
@@ -254,17 +305,13 @@ function remapActivityTarget(
   maps: ArchiveIdMaps,
 ): string | null {
   if (event.targetRef === null) return null;
-  if (event.type.startsWith("criterion_")) {
-    return maps.criteria.get(event.targetRef) ?? null;
-  }
-  if (event.type.startsWith("decision_")) {
-    return maps.decisions.get(event.targetRef) ?? null;
-  }
-  if (event.type.startsWith("edge_")) {
-    return maps.tasks.get(event.targetRef) ?? null;
-  }
-  if (event.type.startsWith("assignee_")) return null;
-  return event.targetRef;
+  const remap = ACTIVITY_TARGET_REMAP[event.type];
+  if (remap === "dropped") return null;
+  if (remap === "verbatim") return event.targetRef;
+  // A target deleted before export has no archive row to remap through;
+  // keep the dangling source ref — the source workspace dangles identically,
+  // and nulling it would erase which target the event acted on.
+  return maps[remap].get(event.targetRef) ?? event.targetRef;
 }
 
 /**
@@ -285,8 +332,30 @@ export async function exportOrganizationWorkspace(
     throw new OrganizationExportForbiddenError();
   }
 
+  // Gate on ownership before the workspace reads: the full-workspace batch
+  // below materializes every RLS-visible row, which a non-owner member must
+  // not be able to force just to receive a 403.
+  const [organizationRows] = await withUserContextRead(userId, (read) => [
+    read
+      .select({
+        orgId: sql<string>`org_id`,
+        name: sql<string>`name`,
+        slug: sql<string>`slug`,
+        memberRole: sql<string>`member_role`,
+      })
+      .from(sql`public.current_user_orgs()`)
+      .where(sql`org_id = ${organizationId}::uuid`)
+      .limit(1),
+  ]);
+  const [organization] = organizationRows;
+  if (
+    !organization ||
+    !parseMemberRoles(organization.memberRole).includes("owner")
+  ) {
+    throw new OrganizationExportForbiddenError();
+  }
+
   const [
-    organizationRows,
     projectRows,
     taskRows,
     taskEdgeRows,
@@ -302,16 +371,6 @@ export async function exportOrganizationWorkspace(
     noteLinkRows,
     revisionRows,
   ] = await withUserContextRead(userId, (read) => [
-    read
-      .select({
-        orgId: sql<string>`org_id`,
-        name: sql<string>`name`,
-        slug: sql<string>`slug`,
-        memberRole: sql<string>`member_role`,
-      })
-      .from(sql`public.current_user_orgs()`)
-      .where(sql`org_id = ${organizationId}::uuid`)
-      .limit(1),
     read
       .select({
         sourceId: projects.id,
@@ -547,14 +606,6 @@ export async function exportOrganizationWorkspace(
       .orderBy(asc(noteRevisions.createdAt), asc(noteRevisions.id)),
   ]);
 
-  const [organization] = organizationRows;
-  if (
-    !organization ||
-    !parseMemberRoles(organization.memberRole).includes("owner")
-  ) {
-    throw new OrganizationExportForbiddenError();
-  }
-
   return parseOrganizationArchive({
     format: "piyaz-organization",
     version: 1,
@@ -678,11 +729,15 @@ export async function exportOrganizationWorkspace(
 /**
  * Restore a validated workspace archive into an existing empty organization.
  *
+ * The archive must already have passed `parseOrganizationArchive` (the import
+ * route decodes with `decodeOrganizationArchive`); re-validating here would
+ * deep-clone up to 100 MiB inside a memory-bounded isolate.
+ *
  * @param userId - Importing organization owner's user id.
  * @param organizationId - Fresh destination organization id.
  * @param archive - Validated version-1 organization archive.
  * @returns Counts of the primary restored workspace rows.
- * @throws {OrganizationArchiveError} When the archive has become invalid.
+ * @throws {OrganizationArchiveError} When the validated graph is inconsistent.
  * @throws Error when any database write fails; the transaction rolls back.
  */
 export async function importOrganizationWorkspace(
@@ -690,11 +745,10 @@ export async function importOrganizationWorkspace(
   organizationId: string,
   archive: OrganizationArchive,
 ): Promise<OrganizationImportSummary> {
-  const validated = parseOrganizationArchive(archive);
-  const maps = createArchiveIdMaps(validated);
+  const maps = createArchiveIdMaps(archive);
 
   return withUserContext(userId, async (tx) => {
-    const projectValues = validated.projects.map((row) => ({
+    const projectValues = archive.projects.map((row) => ({
       id: mappedId(maps.projects, row.sourceId, "projects"),
       organizationId,
       title: row.title,
@@ -710,7 +764,7 @@ export async function importOrganizationWorkspace(
       tx.insert(projects).values(batch),
     );
 
-    const taskValues = validated.tasks.map((row) => ({
+    const taskValues = archive.tasks.map((row) => ({
       id: mappedId(maps.tasks, row.sourceId, "tasks"),
       projectId: mappedId(maps.projects, row.projectSourceId, "projects"),
       title: row.title,
@@ -731,7 +785,7 @@ export async function importOrganizationWorkspace(
     }));
     await insertBatches(taskValues, (batch) => tx.insert(tasks).values(batch));
 
-    const taskEdgeValues = validated.taskEdges.map((row) => ({
+    const taskEdgeValues = archive.taskEdges.map((row) => ({
       id: mappedId(maps.taskEdges, row.sourceId, "taskEdges"),
       sourceTaskId: mappedId(maps.tasks, row.sourceTaskSourceId, "tasks"),
       targetTaskId: mappedId(maps.tasks, row.targetTaskSourceId, "tasks"),
@@ -745,7 +799,7 @@ export async function importOrganizationWorkspace(
       tx.insert(taskEdges).values(batch),
     );
 
-    const assignmentValues = validated.taskAssignments.map((row) => ({
+    const assignmentValues = archive.taskAssignments.map((row) => ({
       taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
       userId,
       createdAt: archiveDate(row.createdAt),
@@ -754,7 +808,7 @@ export async function importOrganizationWorkspace(
       tx.insert(taskAssignees).values(batch),
     );
 
-    const criterionValues = validated.taskAcceptanceCriteria.map((row) => ({
+    const criterionValues = archive.taskAcceptanceCriteria.map((row) => ({
       id: mappedId(maps.criteria, row.sourceId, "taskAcceptanceCriteria"),
       taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
       text: row.text,
@@ -767,7 +821,7 @@ export async function importOrganizationWorkspace(
       tx.insert(taskAcceptanceCriteria).values(batch),
     );
 
-    const decisionValues = validated.taskDecisions.map((row) => ({
+    const decisionValues = archive.taskDecisions.map((row) => ({
       id: mappedId(maps.decisions, row.sourceId, "taskDecisions"),
       taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
       text: row.text,
@@ -781,7 +835,7 @@ export async function importOrganizationWorkspace(
       tx.insert(taskDecisions).values(batch),
     );
 
-    const taskLinkValues = validated.taskLinks.map((row) => ({
+    const taskLinkValues = archive.taskLinks.map((row) => ({
       id: mappedId(maps.taskLinks, row.sourceId, "taskLinks"),
       taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
       kind: row.kind,
@@ -795,7 +849,7 @@ export async function importOrganizationWorkspace(
       tx.insert(taskLinks).values(batch),
     );
 
-    const noteValues = validated.notes.map((row) => ({
+    const noteValues = archive.notes.map((row) => ({
       id: mappedId(maps.notes, row.sourceId, "notes"),
       projectId: mappedId(maps.projects, row.projectSourceId, "projects"),
       sequenceNumber: row.sequenceNumber,
@@ -826,7 +880,7 @@ export async function importOrganizationWorkspace(
     }));
     await insertBatches(noteValues, (batch) => tx.insert(notes).values(batch));
 
-    const folderValues = validated.noteFolders.map((row) => ({
+    const folderValues = archive.noteFolders.map((row) => ({
       id: mappedId(maps.noteFolders, row.sourceId, "noteFolders"),
       projectId: mappedId(maps.projects, row.projectSourceId, "projects"),
       path: row.path,
@@ -837,7 +891,7 @@ export async function importOrganizationWorkspace(
       tx.insert(noteFolders).values(batch),
     );
 
-    const noteTaskLinkValues = validated.noteTaskLinks.map((row) => ({
+    const noteTaskLinkValues = archive.noteTaskLinks.map((row) => ({
       id: mappedId(maps.noteTaskLinks, row.sourceId, "noteTaskLinks"),
       noteId: mappedId(maps.notes, row.noteSourceId, "notes"),
       taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
@@ -848,7 +902,7 @@ export async function importOrganizationWorkspace(
       tx.insert(noteTaskLinks).values(batch),
     );
 
-    const noteFeedTaskValues = validated.noteFeedTasks.map((row) => ({
+    const noteFeedTaskValues = archive.noteFeedTasks.map((row) => ({
       id: mappedId(maps.noteFeedTasks, row.sourceId, "noteFeedTasks"),
       noteId: mappedId(maps.notes, row.noteSourceId, "notes"),
       taskId: mappedId(maps.tasks, row.taskSourceId, "tasks"),
@@ -858,7 +912,7 @@ export async function importOrganizationWorkspace(
       tx.insert(noteFeedTasks).values(batch),
     );
 
-    const noteLinkValues = validated.noteLinks.map((row) => ({
+    const noteLinkValues = archive.noteLinks.map((row) => ({
       id: mappedId(maps.noteLinks, row.sourceId, "noteLinks"),
       sourceNoteId: mappedId(maps.notes, row.sourceNoteSourceId, "notes"),
       targetNoteId: mappedId(maps.notes, row.targetNoteSourceId, "notes"),
@@ -868,7 +922,7 @@ export async function importOrganizationWorkspace(
       tx.insert(noteLinks).values(batch),
     );
 
-    const revisionValues = validated.noteRevisions.map((row) => ({
+    const revisionValues = archive.noteRevisions.map((row) => ({
       id: mappedId(maps.noteRevisions, row.sourceId, "noteRevisions"),
       noteId: mappedId(maps.notes, row.noteSourceId, "notes"),
       version: row.version,
@@ -881,7 +935,7 @@ export async function importOrganizationWorkspace(
       tx.insert(noteRevisions).values(batch),
     );
 
-    const activityValues = validated.activityEvents.map((row) => ({
+    const activityValues = archive.activityEvents.map((row) => ({
       id: mappedId(maps.activityEvents, row.sourceId, "activityEvents"),
       projectId: mappedId(maps.projects, row.projectSourceId, "projects"),
       taskId:
@@ -914,28 +968,6 @@ export async function importOrganizationWorkspace(
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),
           metaUpdatedAt: row.metaUpdatedAt.toISOString(),
-        })),
-      ),
-    );
-    await restoreClockBatches(criterionValues, (batch) =>
-      restoreArchiveClocks(
-        tx,
-        "taskAcceptanceCriteria",
-        batch.map((row) => ({
-          id: row.id,
-          createdAt: row.createdAt.toISOString(),
-          updatedAt: row.updatedAt.toISOString(),
-        })),
-      ),
-    );
-    await restoreClockBatches(decisionValues, (batch) =>
-      restoreArchiveClocks(
-        tx,
-        "taskDecisions",
-        batch.map((row) => ({
-          id: row.id,
-          createdAt: row.createdAt.toISOString(),
-          updatedAt: row.updatedAt.toISOString(),
         })),
       ),
     );
@@ -977,10 +1009,10 @@ export async function importOrganizationWorkspace(
     );
 
     return {
-      projectCount: validated.projects.length,
-      taskCount: validated.tasks.length,
-      noteCount: validated.notes.length,
-      activityEventCount: validated.activityEvents.length,
+      projectCount: archive.projects.length,
+      taskCount: archive.tasks.length,
+      noteCount: archive.notes.length,
+      activityEventCount: archive.activityEvents.length,
     };
   });
 }

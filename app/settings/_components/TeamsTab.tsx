@@ -133,6 +133,11 @@ export function TeamsTab({
   const handleAdded = useCallback(
     async (organizationId: string): Promise<boolean> => {
       setError(null);
+      // Close the panels before anything can fail: the team already exists,
+      // and a still-open form invites a resubmit that would duplicate it.
+      setCreating(false);
+      setJoining(false);
+      setImporting(false);
       const refreshed = await refresh();
       if (!refreshed) {
         setError(
@@ -140,9 +145,6 @@ export function TeamsTab({
         );
         return false;
       }
-      setCreating(false);
-      setJoining(false);
-      setImporting(false);
       router.refresh();
       setGlowId(organizationId);
       window.setTimeout(() => setGlowId(null), 900);

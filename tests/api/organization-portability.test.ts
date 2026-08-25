@@ -58,10 +58,10 @@ function emptyArchive(): OrganizationArchive {
 }
 
 /**
- * Build an archive that passes contract validation but violates destination
- * project-identifier uniqueness.
+ * Build an archive whose duplicate project identifiers collide on
+ * projects_org_identifier_unique.
  *
- * @returns Archive whose workspace transaction must fail.
+ * @returns Archive that contract validation must reject before any write.
  */
 function constraintFailingArchive(): OrganizationArchive {
   const archive = emptyArchive();
@@ -305,6 +305,7 @@ describe("GET /api/organization/[organizationId]/export", () => {
     spyOn(organizationData, "exportOrganizationWorkspace").mockRejectedValue(
       new OrganizationArchiveError(
         `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_BYTES} bytes`,
+        "archive_too_large",
       ),
     );
     const response = await exportGET(
@@ -423,15 +424,33 @@ describe("POST /api/organization/import", () => {
     });
   });
 
+  test("rejects constraint-violating archives before creating an organization", async () => {
+    const fixture = await seedUserOrgProject("import-precheck");
+    setSession({ user: { id: fixture.userId } });
+    const createSpy = stubOrganizationCreation(fixture.userId);
+
+    const response = await importPOST(
+      importRequest(constraintFailingArchive()),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      code: "invalid_archive",
+      error:
+        "Invalid workspace archive: projects contains duplicate identifier.",
+    });
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
   test("deletes the new organization when workspace restoration fails", async () => {
     const fixture = await seedUserOrgProject("import-cleanup");
     setSession({ user: { id: fixture.userId } });
     stubOrganizationCreation(fixture.userId);
     const deleteSpy = stubOrganizationDeletion();
-
-    const response = await importPOST(
-      importRequest(constraintFailingArchive()),
+    spyOn(organizationData, "importOrganizationWorkspace").mockRejectedValue(
+      new Error("insert failed"),
     );
+
+    const response = await importPOST(importRequest(emptyArchive()));
     expect(response.status).toBe(500);
     expect(deleteSpy).toHaveBeenCalledTimes(1);
     const [row] = await superuserPool()<{ count: number }[]>`
