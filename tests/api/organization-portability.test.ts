@@ -238,6 +238,46 @@ describe("GET /api/organization/[organizationId]/export", () => {
     expect(archive.projects).toHaveLength(1);
   });
 
+  test("enforces one workspace export per user every 30 days", async () => {
+    const fixture = await seedUserOrgProject("route-monthly-limit");
+    const [otherOrganization] = await superuserPool()<{ id: string }[]>`
+      INSERT INTO piyaz_auth."organization" ("name", "slug", "createdAt")
+      VALUES ('Other workspace', 'other-monthly-workspace', now())
+      RETURNING id
+    `;
+    await superuserPool()`
+      INSERT INTO piyaz_auth."member" ("organizationId", "userId", "role", "createdAt")
+      VALUES (${otherOrganization.id}, ${fixture.userId}, 'owner', now())
+    `;
+    setSession({ user: { id: fixture.userId } });
+    const request = (organizationId: string) =>
+      exportGET(
+        new Request(`http://test/api/organization/${organizationId}/export`),
+        {
+          params: Promise.resolve({ organizationId }),
+        },
+      );
+
+    expect((await request(fixture.organizationId)).status).toBe(200);
+
+    const limited = await request(otherOrganization.id);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({
+      code: "export_limit_reached",
+      error: "You can generate one workspace archive every 30 days.",
+    });
+    const retryAfter = Number(limited.headers.get("retry-after"));
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(retryAfter).toBeLessThanOrEqual(30 * 24 * 60 * 60);
+
+    await superuserPool()`
+      UPDATE organization_export_limits
+      SET last_started_at = clock_timestamp() - interval '31 days'
+      WHERE user_id = ${fixture.userId}
+    `;
+    expect((await request(otherOrganization.id)).status).toBe(200);
+  });
+
   test.each(["admin", "member"])("returns 403 for a %s", async (role) => {
     const fixture = await seedUserOrgProject(`route-${role}`);
     await superuserPool()`

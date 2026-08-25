@@ -6,9 +6,11 @@ import { getAuthContext } from "@/lib/auth/context";
 import {
   exportOrganizationWorkspace,
   OrganizationExportForbiddenError,
+  OrganizationExportLimitError,
 } from "@/lib/data/organization-portability";
 import {
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
+  ORGANIZATION_EXPORT_COOLDOWN_DAYS,
   OrganizationArchiveError,
   organizationArchiveFilename,
   serializeOrganizationArchive,
@@ -98,6 +100,14 @@ export async function GET(
       },
     });
   } catch (error) {
+    if (error instanceof OrganizationExportLimitError) {
+      return jsonError(
+        "export_limit_reached",
+        `You can generate one workspace archive every ${ORGANIZATION_EXPORT_COOLDOWN_DAYS} days.`,
+        429,
+        { "retry-after": String(error.retryAfterSeconds) },
+      );
+    }
     if (error instanceof OrganizationExportForbiddenError) {
       return jsonError(
         "forbidden",

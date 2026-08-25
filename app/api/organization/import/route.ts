@@ -9,6 +9,7 @@ import { importOrganizationWorkspace } from "@/lib/data/organization-portability
 import {
   decodeOrganizationArchive,
   MAX_ORGANIZATION_ARCHIVE_BYTES,
+  MAX_ORGANIZATION_ARCHIVE_MIB,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   OrganizationArchiveError,
 } from "@/lib/organization-portability/archive";
@@ -129,7 +130,7 @@ export async function POST(request: Request): Promise<Response> {
   ) {
     return jsonError(
       "archive_too_large",
-      "The workspace archive exceeds the 100 MiB limit.",
+      `The workspace archive exceeds the ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB limit.`,
       413,
     );
   }
@@ -137,7 +138,7 @@ export async function POST(request: Request): Promise<Response> {
   if (bytes === null) {
     return jsonError(
       "archive_too_large",
-      "The workspace archive exceeds the 100 MiB limit.",
+      `The workspace archive exceeds the ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB limit.`,
       413,
     );
   }

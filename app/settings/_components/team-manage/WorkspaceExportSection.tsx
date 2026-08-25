@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { Button } from "@/components/shared/Button";
 import { IconCheck, IconDoc } from "@/components/shared/icons";
 import {
+  ORGANIZATION_EXPORT_COOLDOWN_DAYS,
   organizationArchiveFilename,
   readPortabilityError,
 } from "@/lib/organization-portability/client";
@@ -94,7 +95,8 @@ export function WorkspaceExportSection({
             <p className="mt-2 text-xs leading-relaxed text-text-muted">
               Download projects, tasks, dependencies, notes, and visible
               activity history as one JSON archive. Member accounts and their
-              private notes are not included.
+              private notes are not included. You can generate one archive every{" "}
+              {ORGANIZATION_EXPORT_COOLDOWN_DAYS} days.
             </p>
             <p
               role="status"

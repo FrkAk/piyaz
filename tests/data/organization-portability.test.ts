@@ -5,8 +5,12 @@ import {
   exportOrganizationWorkspace,
   importOrganizationWorkspace,
   OrganizationExportForbiddenError,
+  OrganizationExportLimitError,
 } from "@/lib/data/organization-portability";
-import type { OrganizationArchive } from "@/lib/organization-portability/archive";
+import {
+  OrganizationArchiveError,
+  type OrganizationArchive,
+} from "@/lib/organization-portability/archive";
 import { superuserPool } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedSecondMember, seedUserOrgProject } from "@/tests/setup/seed";
@@ -626,6 +630,53 @@ describe("exportOrganizationWorkspace", () => {
     await expect(
       exportOrganizationWorkspace(owner.userId, "not-a-uuid"),
     ).rejects.toBeInstanceOf(OrganizationExportForbiddenError);
+  });
+
+  test("admits only one concurrent export for a user", async () => {
+    const fixture = await seedPortableWorkspace("export-concurrent");
+
+    const results = await Promise.allSettled([
+      exportOrganizationWorkspace(fixture.ownerUserId, fixture.organizationId),
+      exportOrganizationWorkspace(fixture.ownerUserId, fixture.organizationId),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const [rejected] = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(rejected?.reason).toBeInstanceOf(OrganizationExportLimitError);
+  });
+
+  test("rejects an oversized workspace before loading its complete archive", async () => {
+    const fixture = await seedUserOrgProject("export-preflight-size");
+    const [note] = await superuserPool()<{ id: string }[]>`
+      INSERT INTO notes (project_id, title, slug, body, visibility, created_by)
+      VALUES (
+        ${fixture.projectId},
+        'Large history',
+        'large-history',
+        '',
+        'private',
+        ${fixture.userId}
+      )
+      RETURNING id
+    `;
+    await superuserPool()`
+      INSERT INTO note_revisions (note_id, version, title, body, created_by)
+      SELECT
+        ${note.id},
+        version,
+        'Large history',
+        repeat('x', 200000),
+        ${fixture.userId}
+      FROM generate_series(1, 30) AS version
+    `;
+
+    await expect(
+      exportOrganizationWorkspace(fixture.userId, fixture.organizationId),
+    ).rejects.toBeInstanceOf(OrganizationArchiveError);
   });
 });
 

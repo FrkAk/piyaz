@@ -19,12 +19,14 @@ import { MAX_ORGANIZATION_ARCHIVE_BYTES } from "@/lib/organization-portability/c
 
 export {
   MAX_ORGANIZATION_ARCHIVE_BYTES,
+  MAX_ORGANIZATION_ARCHIVE_MIB,
+  ORGANIZATION_EXPORT_COOLDOWN_DAYS,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   organizationArchiveFilename,
 } from "@/lib/organization-portability/client";
 
 /** Maximum total number of workspace rows accepted in one archive. */
-export const MAX_ORGANIZATION_ARCHIVE_ROWS = 500_000;
+export const MAX_ORGANIZATION_ARCHIVE_ROWS = 50_000;
 
 const archiveCollectionNames = [
   "projects",

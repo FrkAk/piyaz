@@ -3,7 +3,11 @@
 import "server-only";
 import { asc, eq, sql } from "drizzle-orm";
 import { parseMemberRoles } from "@/lib/auth/permissions";
-import { toDate } from "@/lib/db/raw";
+import { normalizeExecuteResult, toDate } from "@/lib/db/raw";
+import {
+  organizationExportEstimateStmt,
+  type OrganizationExportEstimateRow,
+} from "@/lib/db/raw/estimate-organization-export";
 import { restoreArchiveClocks } from "@/lib/db/raw/restore-archive-clocks";
 import { withUserContext, withUserContextRead } from "@/lib/db/rls";
 import {
@@ -14,6 +18,7 @@ import {
   noteRevisions,
   notes,
   noteTaskLinks,
+  organizationExportLimits,
   projects,
   taskAcceptanceCriteria,
   taskAssignees,
@@ -23,6 +28,9 @@ import {
   tasks,
 } from "@/lib/db/schema";
 import {
+  MAX_ORGANIZATION_ARCHIVE_BYTES,
+  MAX_ORGANIZATION_ARCHIVE_ROWS,
+  ORGANIZATION_EXPORT_COOLDOWN_DAYS,
   OrganizationArchiveError,
   parseOrganizationArchive,
   type OrganizationArchive,
@@ -65,6 +73,123 @@ export class OrganizationExportForbiddenError extends Error {
   constructor() {
     super("Organization workspace export is forbidden");
     this.name = "OrganizationExportForbiddenError";
+  }
+}
+
+/** Error returned when a user has already started an export in the cooldown. */
+export class OrganizationExportLimitError extends Error {
+  /**
+   * Create a durable export-limit error.
+   *
+   * @param retryAfterSeconds - Whole seconds until another export may start.
+   */
+  constructor(public readonly retryAfterSeconds: number) {
+    super("Organization workspace export limit reached");
+    this.name = "OrganizationExportLimitError";
+  }
+}
+
+type ExportOrganization = {
+  name: string;
+  slug: string;
+};
+
+/**
+ * Verify ownership and atomically reserve the caller's rolling export slot.
+ *
+ * @param userId - Authenticated exporting user id.
+ * @param organizationId - Organization whose workspace should be exported.
+ * @returns Organization identity used in the archive header.
+ * @throws {OrganizationExportForbiddenError} When the caller is not an owner.
+ * @throws {OrganizationExportLimitError} When the rolling limit is active.
+ */
+async function reserveOrganizationExport(
+  userId: string,
+  organizationId: string,
+): Promise<ExportOrganization> {
+  return withUserContext(userId, async (tx) => {
+    const [organization] = await tx
+      .select({
+        name: sql<string>`name`,
+        slug: sql<string>`slug`,
+        memberRole: sql<string>`member_role`,
+      })
+      .from(sql`public.current_user_orgs()`)
+      .where(sql`org_id = ${organizationId}::uuid`)
+      .limit(1);
+    if (
+      !organization ||
+      !parseMemberRoles(organization.memberRole).includes("owner")
+    ) {
+      throw new OrganizationExportForbiddenError();
+    }
+
+    const reservations = await tx
+      .insert(organizationExportLimits)
+      .values({ userId, lastStartedAt: sql`clock_timestamp()` })
+      .onConflictDoUpdate({
+        target: organizationExportLimits.userId,
+        set: { lastStartedAt: sql`clock_timestamp()` },
+        setWhere: sql`${organizationExportLimits.lastStartedAt} <= clock_timestamp() - interval '${sql.raw(
+          String(ORGANIZATION_EXPORT_COOLDOWN_DAYS),
+        )} days'`,
+      })
+      .returning({ startedAt: organizationExportLimits.lastStartedAt });
+    if (reservations.length === 0) {
+      const [limit] = await tx
+        .select({
+          retryAfterSeconds: sql<number>`GREATEST(1, CEIL(EXTRACT(EPOCH FROM (${organizationExportLimits.lastStartedAt} + interval '${sql.raw(
+            String(ORGANIZATION_EXPORT_COOLDOWN_DAYS),
+          )} days' - clock_timestamp()))))::integer`,
+        })
+        .from(organizationExportLimits)
+        .where(eq(organizationExportLimits.userId, userId));
+      if (!limit) {
+        throw new Error("Organization export reservation disappeared");
+      }
+      throw new OrganizationExportLimitError(limit.retryAfterSeconds);
+    }
+
+    return { name: organization.name, slug: organization.slug };
+  });
+}
+
+/**
+ * Reject a workspace before its complete row set crosses the Neon boundary.
+ *
+ * PostgreSQL serializes only portable columns for the estimate. The fixed
+ * per-row allowance covers archive key renames and collection punctuation;
+ * exact serialization remains the final backstop against estimate drift.
+ *
+ * @param userId - Authenticated exporting user id.
+ * @param organizationId - Organization whose rows should be measured.
+ * @returns Nothing when the workspace fits the portable bounds.
+ * @throws {OrganizationArchiveError} When row or encoded-size bounds fail.
+ */
+async function assertOrganizationExportWithinBounds(
+  userId: string,
+  organizationId: string,
+): Promise<void> {
+  const [raw] = await withUserContextRead(userId, (read) => [
+    organizationExportEstimateStmt(read, userId, organizationId),
+  ]);
+  const [estimate] = normalizeExecuteResult<OrganizationExportEstimateRow>(raw);
+  if (!estimate) {
+    throw new Error("Organization export estimate returned no row");
+  }
+
+  const rowCount = Number(estimate.row_count);
+  if (rowCount > MAX_ORGANIZATION_ARCHIVE_ROWS) {
+    throw new OrganizationArchiveError(
+      `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_ROWS} rows`,
+      "archive_too_large",
+    );
+  }
+  if (Number(estimate.estimated_bytes) > MAX_ORGANIZATION_ARCHIVE_BYTES) {
+    throw new OrganizationArchiveError(
+      `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_BYTES} bytes`,
+      "archive_too_large",
+    );
   }
 }
 
@@ -332,28 +457,8 @@ export async function exportOrganizationWorkspace(
     throw new OrganizationExportForbiddenError();
   }
 
-  // Gate on ownership before the workspace reads: the full-workspace batch
-  // below materializes every RLS-visible row, which a non-owner member must
-  // not be able to force just to receive a 403.
-  const [organizationRows] = await withUserContextRead(userId, (read) => [
-    read
-      .select({
-        orgId: sql<string>`org_id`,
-        name: sql<string>`name`,
-        slug: sql<string>`slug`,
-        memberRole: sql<string>`member_role`,
-      })
-      .from(sql`public.current_user_orgs()`)
-      .where(sql`org_id = ${organizationId}::uuid`)
-      .limit(1),
-  ]);
-  const [organization] = organizationRows;
-  if (
-    !organization ||
-    !parseMemberRoles(organization.memberRole).includes("owner")
-  ) {
-    throw new OrganizationExportForbiddenError();
-  }
+  const organization = await reserveOrganizationExport(userId, organizationId);
+  await assertOrganizationExportWithinBounds(userId, organizationId);
 
   const [
     projectRows,
@@ -731,7 +836,7 @@ export async function exportOrganizationWorkspace(
  *
  * The archive must already have passed `parseOrganizationArchive` (the import
  * route decodes with `decodeOrganizationArchive`); re-validating here would
- * deep-clone up to 100 MiB inside a memory-bounded isolate.
+ * deep-clone the complete archive inside a memory-bounded isolate.
  *
  * @param userId - Importing organization owner's user id.
  * @param organizationId - Fresh destination organization id.

@@ -5,7 +5,12 @@ export const ORGANIZATION_ARCHIVE_MEDIA_TYPE =
   "application/vnd.piyaz.organization+json";
 
 /** Maximum encoded size accepted for one organization archive. */
-export const MAX_ORGANIZATION_ARCHIVE_BYTES = 100 * 1024 * 1024;
+export const MAX_ORGANIZATION_ARCHIVE_MIB = 5;
+export const MAX_ORGANIZATION_ARCHIVE_BYTES =
+  MAX_ORGANIZATION_ARCHIVE_MIB * 1024 * 1024;
+
+/** Rolling cooldown between admitted workspace archive generations. */
+export const ORGANIZATION_EXPORT_COOLDOWN_DAYS = 30;
 
 /**
  * Build a safe deterministic download filename from an organization slug.

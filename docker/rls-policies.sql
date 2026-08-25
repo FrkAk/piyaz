@@ -439,6 +439,15 @@ CREATE POLICY "legal_acceptances_self_access" ON "legal_acceptances"
   USING (user_id = (SELECT public.current_app_user_id()))
   WITH CHECK (user_id = (SELECT public.current_app_user_id()));
 
+-- One row per user records the latest admitted workspace-export generation.
+-- The primary key and self-only policy make the rolling limit global across
+-- organizations and atomic across Worker instances.
+DROP POLICY IF EXISTS "organization_export_limits_self_access" ON "organization_export_limits";
+CREATE POLICY "organization_export_limits_self_access" ON "organization_export_limits"
+  AS PERMISSIVE FOR ALL TO app_user
+  USING (user_id = (SELECT public.current_app_user_id()))
+  WITH CHECK (user_id = (SELECT public.current_app_user_id()));
+
 
 -- ENABLE explicitly: testcontainer/self-host get this from `drizzle-kit
 -- push` reading `.enableRLS()`, but `drizzle-kit migrate` does not emit
@@ -459,6 +468,7 @@ ALTER TABLE "note_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_folders" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "legal_acceptances" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "organization_export_limits" ENABLE ROW LEVEL SECURITY;
 
 -- FORCE subjects the table owner to RLS. BYPASSRLS roles and real
 -- superusers still sidestep.
@@ -478,3 +488,4 @@ ALTER TABLE "note_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_folders" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "legal_acceptances" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "organization_export_limits" FORCE ROW LEVEL SECURITY;

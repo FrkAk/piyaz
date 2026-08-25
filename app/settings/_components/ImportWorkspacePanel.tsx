@@ -7,6 +7,7 @@ import { IconDoc } from "@/components/shared/icons";
 import {
   canImportWorkspace,
   MAX_ORGANIZATION_ARCHIVE_BYTES,
+  MAX_ORGANIZATION_ARCHIVE_MIB,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   readPortabilityError,
 } from "@/lib/organization-portability/client";
@@ -70,7 +71,9 @@ export function ImportWorkspacePanel({
     }
     if (selected.size > MAX_ORGANIZATION_ARCHIVE_BYTES) {
       setFile(null);
-      setError("The workspace archive must be 100 MiB or smaller.");
+      setError(
+        `The workspace archive must be ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB or smaller.`,
+      );
       return false;
     }
     setFile(selected);
@@ -189,7 +192,9 @@ export function ImportWorkspacePanel({
             {file?.name ?? "Drop a workspace archive here, or browse"}
           </span>
           <span className="mt-0.5 block font-mono text-[10px] text-text-muted">
-            {file ? formatFileSize(file.size) : "JSON · up to 100 MiB"}
+            {file
+              ? formatFileSize(file.size)
+              : `JSON · up to ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB`}
           </span>
         </span>
         <span className="text-[11px] font-medium text-text-secondary">
