@@ -7,6 +7,7 @@ import {
   organizationArchiveFilename,
   parseOrganizationArchive,
   serializeOrganizationArchive,
+  serializeOrganizationArchiveRow,
   type OrganizationArchive,
 } from "@/lib/organization-portability/archive";
 
@@ -262,6 +263,18 @@ test("accepts a complete version-1 archive", () => {
   expect(parseOrganizationArchive(validArchive())).toEqual(validArchive());
 });
 
+test("preserves legacy source organization identity", () => {
+  const archive = validArchive();
+  archive.organization = {
+    name: `  ${"Legacy".repeat(20)}  `,
+    slug: "admin",
+  };
+
+  expect(parseOrganizationArchive(archive).organization).toEqual(
+    archive.organization,
+  );
+});
+
 test("rejects unknown top-level fields", () => {
   const archive = { ...validArchive(), members: [] };
   expect(() => parseOrganizationArchive(archive)).toThrow(
@@ -320,6 +333,29 @@ test("rejects cross-project task edges", () => {
   );
 });
 
+test("rejects task self-edges", () => {
+  const archive = validArchive();
+  archive.taskEdges[0].targetTaskSourceId = T1;
+
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "taskEdges[0] links a task to itself",
+  );
+});
+
+test("rejects dependency cycles", () => {
+  const archive = validArchive();
+  archive.taskEdges.push({
+    ...archive.taskEdges[0],
+    sourceId: "00000000-0000-4000-8000-000000000016",
+    sourceTaskSourceId: T2,
+    targetTaskSourceId: T1,
+  });
+
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "taskEdges contains a depends_on cycle",
+  );
+});
+
 test("rejects cross-project note-task links", () => {
   const archive = validArchive();
   const secondProjectId = "00000000-0000-4000-8000-000000000098";
@@ -340,6 +376,15 @@ test("rejects invalid timestamps", () => {
   archive.projects[0].createdAt = "yesterday";
   expect(() => parseOrganizationArchive(archive)).toThrow(
     "Archive does not match version 1",
+  );
+});
+
+test("rejects project identifiers outside the task-ref contract", () => {
+  const archive = validArchive();
+  archive.projects[0].identifier = "lower-case";
+
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "Archive does not match version 1 at projects.0.identifier",
   );
 });
 
@@ -463,4 +508,17 @@ test("builds a safe deterministic download filename", () => {
   expect(organizationArchiveFilename("My Team/../prod")).toBe(
     "piyaz-my-team-prod-workspace.json",
   );
+});
+
+test("validates one streamed archive row independently", () => {
+  const project = validArchive().projects[0];
+  expect(
+    JSON.parse(serializeOrganizationArchiveRow("projects", project)),
+  ).toEqual(project);
+  expect(() =>
+    serializeOrganizationArchiveRow("projects", {
+      ...project,
+      identifier: "lower-case",
+    }),
+  ).toThrow("Archive does not match version 1 at projects.identifier");
 });

@@ -6,20 +6,16 @@ import {
   NOTE_FOLDER_MAX_CHARS,
   NOTE_TITLE_MAX_BYTES,
 } from "@/lib/db/schema";
+import { identifierSchema } from "@/lib/graph/identifier";
 import { LINK_KINDS } from "@/lib/links/classify";
-import {
-  RESERVED_SLUGS,
-  SLUG_MAX,
-  SLUG_MIN,
-  SLUG_PATTERN,
-  TEAM_NAME_MAX,
-} from "@/lib/team/slug-rules";
 import { PROJECT_STATUS_ORDER, TASK_STATUSES } from "@/lib/types";
 import { MAX_ORGANIZATION_ARCHIVE_BYTES } from "@/lib/organization-portability/client";
 
 export {
   MAX_ORGANIZATION_ARCHIVE_BYTES,
   MAX_ORGANIZATION_ARCHIVE_MIB,
+  MAX_ORGANIZATION_IMPORT_BYTES,
+  MAX_ORGANIZATION_IMPORT_MIB,
   ORGANIZATION_EXPORT_COOLDOWN_DAYS,
   ORGANIZATION_EXPORT_INTENT_HEADER,
   ORGANIZATION_EXPORT_INTENT_VALUE,
@@ -50,6 +46,10 @@ const archiveCollectionNames = [
   "noteLinks",
   "noteRevisions",
 ] as const;
+
+/** Array-valued collection names in a version-1 organization archive. */
+export type OrganizationArchiveCollectionName =
+  (typeof archiveCollectionNames)[number];
 
 const timestampSchema = z.iso.datetime({ offset: true });
 const nullableTimestampSchema = timestampSchema.nullable();
@@ -96,7 +96,7 @@ const nfcFolderPathSchema = z
 const projectSchema = z.strictObject({
   sourceId: sourceIdSchema,
   title: z.string(),
-  identifier: z.string(),
+  identifier: identifierSchema,
   description: z.string(),
   status: z.enum(PROJECT_STATUS_ORDER),
   categories: stringArraySchema,
@@ -321,13 +321,8 @@ const organizationArchiveSchema = z.strictObject({
   version: z.literal(1),
   exportedAt: timestampSchema,
   organization: z.strictObject({
-    name: z.string().trim().min(1).max(TEAM_NAME_MAX),
-    slug: z
-      .string()
-      .min(SLUG_MIN)
-      .max(SLUG_MAX)
-      .regex(SLUG_PATTERN)
-      .refine((slug) => !RESERVED_SLUGS.has(slug)),
+    name: z.string(),
+    slug: z.string(),
   }),
   projects: z.array(projectSchema),
   tasks: z.array(taskSchema),
@@ -345,8 +340,30 @@ const organizationArchiveSchema = z.strictObject({
   noteRevisions: z.array(noteRevisionSchema),
 });
 
+const organizationArchiveRowSchemas = {
+  projects: projectSchema,
+  tasks: taskSchema,
+  taskEdges: taskEdgeSchema,
+  taskAssignments: taskAssignmentSchema,
+  taskAcceptanceCriteria: taskAcceptanceCriterionSchema,
+  taskDecisions: taskDecisionSchema,
+  taskLinks: taskLinkSchema,
+  activityEvents: activityEventSchema,
+  notes: noteSchema,
+  noteFolders: noteFolderSchema,
+  noteTaskLinks: noteTaskLinkSchema,
+  noteFeedTasks: noteFeedTaskSchema,
+  noteLinks: noteLinkSchema,
+  noteRevisions: noteRevisionSchema,
+} as const;
+
 /** Validated version-1 organization workspace archive. */
 export type OrganizationArchive = z.infer<typeof organizationArchiveSchema>;
+
+/** One row from a named organization archive collection. */
+export type OrganizationArchiveRow<
+  TName extends OrganizationArchiveCollectionName,
+> = OrganizationArchive[TName][number];
 
 /** Error raised when an organization archive is malformed or too large. */
 export class OrganizationArchiveError extends Error {
@@ -415,7 +432,7 @@ function assertUniqueRows<T>(
   for (const row of rows) {
     const parts = keyOf(row);
     if (parts === null) continue;
-    const key = parts.join(" ");
+    const key = parts.join("\u0000");
     if (keys.has(key)) {
       throw new OrganizationArchiveError(
         `${collectionName} contains duplicate ${constraint}`,
@@ -561,6 +578,41 @@ function requireNote(
 }
 
 /**
+ * Reject cycles in the imported dependency subgraph.
+ *
+ * @param archive - Structurally valid archive with resolved edge endpoints.
+ * @throws {OrganizationArchiveError} When `depends_on` edges form a cycle.
+ */
+function validateDependencyAcyclicity(archive: OrganizationArchive): void {
+  const outgoing = new Map(
+    archive.tasks.map((task) => [task.sourceId, [] as string[]]),
+  );
+  const indegree = new Map(archive.tasks.map((task) => [task.sourceId, 0]));
+  for (const edge of archive.taskEdges) {
+    if (edge.edgeType !== "depends_on") continue;
+    outgoing.get(edge.sourceTaskSourceId)?.push(edge.targetTaskSourceId);
+    indegree.set(
+      edge.targetTaskSourceId,
+      (indegree.get(edge.targetTaskSourceId) ?? 0) + 1,
+    );
+  }
+  const queue = [...indegree].filter(([, count]) => count === 0);
+  let visited = 0;
+  for (let index = 0; index < queue.length; index += 1) {
+    const [taskId] = queue[index];
+    visited += 1;
+    for (const targetId of outgoing.get(taskId) ?? []) {
+      const count = (indegree.get(targetId) ?? 0) - 1;
+      indegree.set(targetId, count);
+      if (count === 0) queue.push([targetId, count]);
+    }
+  }
+  if (visited !== archive.tasks.length) {
+    throw new OrganizationArchiveError("taskEdges contains a depends_on cycle");
+  }
+}
+
+/**
  * Validate archive-local references and project boundaries.
  *
  * @param archive - Structurally valid archive.
@@ -589,12 +641,18 @@ function validateArchiveReferences(archive: OrganizationArchive): void {
       row.targetTaskSourceId,
       `taskEdges[${index}].targetTaskSourceId`,
     );
+    if (source.sourceId === target.sourceId) {
+      throw new OrganizationArchiveError(
+        `taskEdges[${index}] links a task to itself`,
+      );
+    }
     if (source.projectSourceId !== target.projectSourceId) {
       throw new OrganizationArchiveError(
         `taskEdges[${index}] crosses project boundaries`,
       );
     }
   });
+  validateDependencyAcyclicity(archive);
   archive.taskAssignments.forEach((row, index) => {
     requireTask(
       tasksById,
@@ -795,6 +853,29 @@ export function decodeOrganizationArchive(
     if (error instanceof OrganizationArchiveError) throw error;
     throw new OrganizationArchiveError("Archive is not valid UTF-8 JSON");
   }
+}
+
+/**
+ * Validate and serialize one archive row without cloning the full archive.
+ *
+ * @param collection - Archive collection receiving the row.
+ * @param row - Typed row produced from one database result.
+ * @returns Compact JSON for the validated row.
+ * @throws {OrganizationArchiveError} When the row violates version 1.
+ */
+export function serializeOrganizationArchiveRow<
+  TName extends OrganizationArchiveCollectionName,
+>(collection: TName, row: OrganizationArchiveRow<TName>): string {
+  const parsed = organizationArchiveRowSchemas[collection].safeParse(row);
+  if (!parsed.success) {
+    const path = parsed.error.issues[0]?.path.join(".");
+    throw new OrganizationArchiveError(
+      path
+        ? `Archive does not match version 1 at ${collection}.${path}`
+        : `Archive does not match version 1 at ${collection}`,
+    );
+  }
+  return JSON.stringify(parsed.data);
 }
 
 /**

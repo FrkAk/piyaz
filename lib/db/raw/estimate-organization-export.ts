@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
-import type { ReadConn } from "@/lib/db/raw";
+import type { RawReadRows, ReadConn } from "@/lib/db/raw";
+import type { ReadStatement } from "@/lib/db/read-guard";
 
 /** Database-side workspace export estimate. */
 export type OrganizationExportEstimateRow = {
@@ -19,7 +20,7 @@ export function organizationExportEstimateStmt(
   read: ReadConn,
   userId: string,
   organizationId: string,
-) {
+): ReadStatement<RawReadRows> {
   return read.execute(sql`
     WITH export_rows AS (
       SELECT to_jsonb(p) - 'organization_id' AS payload

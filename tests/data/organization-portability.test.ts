@@ -624,6 +624,35 @@ describe("exportOrganizationWorkspace", () => {
     expect(archive.taskAssignments).toHaveLength(1);
   });
 
+  test("streams rows across keyset page boundaries", async () => {
+    const fixture = await seedUserOrgProject("export-pages");
+    await superuserPool()`
+      INSERT INTO tasks (project_id, title, sequence_number)
+      SELECT ${fixture.projectId}, 'Paged task ' || value, value
+      FROM generate_series(1, 11) AS value
+    `;
+
+    const archive = await exportOrganizationWorkspace(
+      fixture.userId,
+      fixture.organizationId,
+    );
+
+    expect(archive.tasks).toHaveLength(11);
+    expect(new Set(archive.tasks.map((task) => task.title)).size).toBe(11);
+  });
+
+  test("aborts a streamed archive when stored dependencies are cyclic", async () => {
+    const fixture = await seedPortableWorkspace("export-cycle");
+    await superuserPool()`
+      INSERT INTO task_edges (source_task_id, target_task_id, edge_type)
+      VALUES (${fixture.targetTaskId}, ${fixture.taskId}, 'depends_on')
+    `;
+
+    await expect(
+      exportOrganizationWorkspace(fixture.ownerUserId, fixture.organizationId),
+    ).rejects.toThrow("taskEdges contains a depends_on cycle");
+  });
+
   test.each(["admin", "member"])(
     "rejects a caller with the %s role",
     async (role) => {
@@ -705,7 +734,7 @@ describe("exportOrganizationWorkspace", () => {
     ).rejects.toBeInstanceOf(OrganizationExportLimitError);
   });
 
-  test("rejects an oversized workspace before loading its complete archive", async () => {
+  test("rejects an oversized workspace without consuming its export slot", async () => {
     const fixture = await seedUserOrgProject("export-preflight-size");
     const [note] = await superuserPool()<{ id: string }[]>`
       INSERT INTO notes (project_id, title, slug, body, visibility, created_by)
@@ -727,12 +756,19 @@ describe("exportOrganizationWorkspace", () => {
         'Large history',
         repeat('x', 200000),
         ${fixture.userId}
-      FROM generate_series(1, 30) AS version
+      FROM generate_series(1, 132) AS version
     `;
 
     await expect(
       exportOrganizationWorkspace(fixture.userId, fixture.organizationId),
     ).rejects.toBeInstanceOf(OrganizationArchiveError);
+
+    await superuserPool()`
+      DELETE FROM note_revisions WHERE note_id = ${note.id}
+    `;
+    await expect(
+      exportOrganizationWorkspace(fixture.userId, fixture.organizationId),
+    ).resolves.toMatchObject({ format: "piyaz-organization", version: 1 });
   });
 });
 

@@ -4,9 +4,9 @@ import { checkActionRateLimit } from "@/lib/actions/rate-limit-action";
 import { consentGateResponse } from "@/lib/auth/consent";
 import { getAuthContext } from "@/lib/auth/context";
 import {
-  exportOrganizationWorkspace,
   OrganizationExportForbiddenError,
   OrganizationExportLimitError,
+  streamOrganizationWorkspace,
 } from "@/lib/data/organization-portability";
 import {
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
@@ -15,7 +15,6 @@ import {
   ORGANIZATION_EXPORT_INTENT_VALUE,
   OrganizationArchiveError,
   organizationArchiveFilename,
-  serializeOrganizationArchive,
 } from "@/lib/organization-portability/archive";
 
 const UUID_RE =
@@ -113,9 +112,8 @@ export async function POST(
   }
 
   try {
-    const archive = await exportOrganizationWorkspace(userId, organizationId);
-    const serialized = serializeOrganizationArchive(archive);
-    return new Response(serialized, {
+    const archive = await streamOrganizationWorkspace(userId, organizationId);
+    return new Response(archive.body, {
       status: 200,
       headers: {
         "content-type": ORGANIZATION_ARCHIVE_MEDIA_TYPE,

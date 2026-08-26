@@ -8,8 +8,8 @@ import { getAuthContext } from "@/lib/auth/context";
 import { importOrganizationWorkspace } from "@/lib/data/organization-portability";
 import {
   decodeOrganizationArchive,
-  MAX_ORGANIZATION_ARCHIVE_BYTES,
-  MAX_ORGANIZATION_ARCHIVE_MIB,
+  MAX_ORGANIZATION_IMPORT_BYTES,
+  MAX_ORGANIZATION_IMPORT_MIB,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   OrganizationArchiveError,
 } from "@/lib/organization-portability/archive";
@@ -126,19 +126,19 @@ export async function POST(request: Request): Promise<Response> {
   if (
     declaredLength !== null &&
     Number.isFinite(Number(declaredLength)) &&
-    Number(declaredLength) > MAX_ORGANIZATION_ARCHIVE_BYTES
+    Number(declaredLength) > MAX_ORGANIZATION_IMPORT_BYTES
   ) {
     return jsonError(
       "archive_too_large",
-      `The workspace archive exceeds the ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB limit.`,
+      `The workspace archive exceeds the ${MAX_ORGANIZATION_IMPORT_MIB} MiB limit.`,
       413,
     );
   }
-  const bytes = await readBodyBounded(request, MAX_ORGANIZATION_ARCHIVE_BYTES);
+  const bytes = await readBodyBounded(request, MAX_ORGANIZATION_IMPORT_BYTES);
   if (bytes === null) {
     return jsonError(
       "archive_too_large",
-      `The workspace archive exceeds the ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB limit.`,
+      `The workspace archive exceeds the ${MAX_ORGANIZATION_IMPORT_MIB} MiB limit.`,
       413,
     );
   }

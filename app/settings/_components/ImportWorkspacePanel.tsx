@@ -6,8 +6,8 @@ import { DpaConsentCheckbox } from "@/components/shared/DpaConsentCheckbox";
 import { IconDoc } from "@/components/shared/icons";
 import {
   canImportWorkspace,
-  MAX_ORGANIZATION_ARCHIVE_BYTES,
-  MAX_ORGANIZATION_ARCHIVE_MIB,
+  MAX_ORGANIZATION_IMPORT_BYTES,
+  MAX_ORGANIZATION_IMPORT_MIB,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   readPortabilityError,
 } from "@/lib/organization-portability/client";
@@ -69,10 +69,10 @@ export function ImportWorkspacePanel({
       setError("Choose a JSON workspace archive.");
       return false;
     }
-    if (selected.size > MAX_ORGANIZATION_ARCHIVE_BYTES) {
+    if (selected.size > MAX_ORGANIZATION_IMPORT_BYTES) {
       setFile(null);
       setError(
-        `The workspace archive must be ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB or smaller.`,
+        `The workspace archive must be ${MAX_ORGANIZATION_IMPORT_MIB} MiB or smaller.`,
       );
       return false;
     }
@@ -194,7 +194,7 @@ export function ImportWorkspacePanel({
           <span className="mt-0.5 block font-mono text-[10px] text-text-muted">
             {file
               ? formatFileSize(file.size)
-              : `JSON · up to ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB`}
+              : `JSON · up to ${MAX_ORGANIZATION_IMPORT_MIB} MiB`}
           </span>
         </span>
         <span className="text-[11px] font-medium text-text-secondary">

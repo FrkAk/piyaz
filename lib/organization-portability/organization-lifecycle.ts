@@ -5,7 +5,9 @@ import { mapBetterAuthError } from "@/lib/actions/team-errors";
 import type { TeamActionFailureCode } from "@/lib/actions/team-errors";
 import { auth } from "@/lib/auth";
 import { deriveTeamSlug } from "@/lib/team/derive-slug";
-import { SLUG_MAX } from "@/lib/team/slug-rules";
+import { SLUG_MAX, TEAM_NAME_MAX } from "@/lib/team/slug-rules";
+
+const IMPORTED_ORGANIZATION_FALLBACK_NAME = "Imported workspace";
 
 /** Organization created as the destination for one imported workspace. */
 export type ImportedOrganization = {
@@ -42,6 +44,20 @@ function suffixedSlug(baseSlug: string): string {
 }
 
 /**
+ * Convert source identity into a valid destination display name.
+ *
+ * @param name - Organization name preserved in the source archive.
+ * @returns Trimmed, non-empty name within the current team limit.
+ */
+function importedOrganizationName(name: string): string {
+  const candidate = name.trim() || IMPORTED_ORGANIZATION_FALLBACK_NAME;
+  const truncated = candidate.slice(0, TEAM_NAME_MAX);
+  return /[\uD800-\uDBFF]$/.test(truncated)
+    ? truncated.slice(0, -1)
+    : truncated;
+}
+
+/**
  * Create a new organization for a validated workspace archive.
  *
  * @param input - Archived identity, accepted DPA marker, and request headers.
@@ -56,11 +72,12 @@ export async function createImportedOrganization(input: {
   headers: Headers;
 }): Promise<ImportedOrganization> {
   const baseSlug = deriveTeamSlug(input.slug);
+  const name = importedOrganizationName(input.name);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const slug = attempt === 0 ? baseSlug : suffixedSlug(baseSlug);
     try {
       const body = {
-        name: input.name,
+        name,
         slug,
         dpaAccepted: input.dpaAccepted,
       };

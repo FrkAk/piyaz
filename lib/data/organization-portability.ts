@@ -1,15 +1,20 @@
 /** RLS-scoped organization workspace export and restore operations. */
 
 import "server-only";
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { parseMemberRoles } from "@/lib/auth/permissions";
-import { normalizeExecuteResult, toDate } from "@/lib/db/raw";
+import { normalizeExecuteResult, toDate, type RawReadRows } from "@/lib/db/raw";
 import {
   organizationExportEstimateStmt,
   type OrganizationExportEstimateRow,
 } from "@/lib/db/raw/estimate-organization-export";
 import { restoreArchiveClocks } from "@/lib/db/raw/restore-archive-clocks";
-import { withUserContext, withUserContextRead } from "@/lib/db/rls";
+import {
+  withUserContext,
+  withUserContextRead,
+  withUserContextReadTransaction,
+  type SnapshotRead,
+} from "@/lib/db/rls";
 import {
   activityEvents,
   noteFeedTasks,
@@ -27,19 +32,25 @@ import {
   taskLinks,
   tasks,
 } from "@/lib/db/schema";
+import { deriveIdentifier } from "@/lib/graph/identifier";
 import {
   MAX_ORGANIZATION_ARCHIVE_BYTES,
   MAX_ORGANIZATION_ARCHIVE_ROWS,
   ORGANIZATION_EXPORT_COOLDOWN_DAYS,
   OrganizationArchiveError,
-  parseOrganizationArchive,
+  decodeOrganizationArchive,
+  serializeOrganizationArchiveRow,
   type OrganizationArchive,
+  type OrganizationArchiveCollectionName,
+  type OrganizationArchiveRow,
 } from "@/lib/organization-portability/archive";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const INSERT_BATCH_SIZE = 500;
+const EXPORT_PAGE_SIZE = 250;
+const WIDE_EXPORT_PAGE_SIZE = 10;
 const IMPORTED_ACTIVITY_SUMMARY_PREFIX = "[imported] ";
 const MAX_PORTABLE_ACTIVITY_FIELDS = 5_000;
 const PORTABLE_ACTIVITY_SCALAR_KEYS = ["from", "to"] as const;
@@ -108,19 +119,19 @@ type ExportOrganization = {
 };
 
 /**
- * Verify ownership and atomically reserve the caller's rolling export slot.
+ * Atomically reserve the caller's rolling export slot after preflight.
  *
  * @param userId - Authenticated exporting user id.
  * @param organizationId - Organization whose workspace should be exported.
- * @returns Organization identity used in the archive header.
+ * @returns Nothing after the slot is reserved.
  * @throws {OrganizationExportForbiddenError} When the caller is not an owner.
  * @throws {OrganizationExportLimitError} When the rolling limit is active.
  */
 async function reserveOrganizationExport(
   userId: string,
   organizationId: string,
-): Promise<ExportOrganization> {
-  return withUserContext(userId, async (tx) => {
+): Promise<void> {
+  await withUserContext(userId, async (tx) => {
     const [organization] = await tx
       .select({
         name: sql<string>`name`,
@@ -162,8 +173,6 @@ async function reserveOrganizationExport(
       }
       throw new OrganizationExportLimitError(limit.retryAfterSeconds);
     }
-
-    return { name: organization.name, slug: organization.slug };
   });
 }
 
@@ -174,18 +183,11 @@ async function reserveOrganizationExport(
  * per-row allowance covers archive key renames and collection punctuation;
  * exact serialization remains the final backstop against estimate drift.
  *
- * @param userId - Authenticated exporting user id.
- * @param organizationId - Organization whose rows should be measured.
+ * @param raw - Database-side organization export estimate.
  * @returns Nothing when the workspace fits the portable bounds.
  * @throws {OrganizationArchiveError} When row or encoded-size bounds fail.
  */
-async function assertOrganizationExportWithinBounds(
-  userId: string,
-  organizationId: string,
-): Promise<void> {
-  const [raw] = await withUserContextRead(userId, (read) => [
-    organizationExportEstimateStmt(read, userId, organizationId),
-  ]);
+function assertOrganizationExportWithinBounds(raw: RawReadRows): void {
   const [estimate] = normalizeExecuteResult<OrganizationExportEstimateRow>(raw);
   if (!estimate) {
     throw new Error("Organization export estimate returned no row");
@@ -204,6 +206,45 @@ async function assertOrganizationExportWithinBounds(
       "archive_too_large",
     );
   }
+}
+
+/**
+ * Verify ownership and size before the monthly export slot is consumed.
+ *
+ * @param userId - Authenticated exporting user id.
+ * @param organizationId - Organization whose rows should be measured.
+ * @returns Organization identity from the preflight transaction.
+ * @throws {OrganizationExportForbiddenError} When the caller is not an owner.
+ * @throws {OrganizationArchiveError} When the portable bounds fail.
+ */
+async function preflightOrganizationExport(
+  userId: string,
+  organizationId: string,
+): Promise<ExportOrganization> {
+  const [organizations, estimate] = await withUserContextRead(
+    userId,
+    (read) => [
+      read
+        .select({
+          name: sql<string>`name`,
+          slug: sql<string>`slug`,
+          memberRole: sql<string>`member_role`,
+        })
+        .from(sql`public.current_user_orgs()`)
+        .where(sql`org_id = ${organizationId}::uuid`)
+        .limit(1),
+      organizationExportEstimateStmt(read, userId, organizationId),
+    ],
+  );
+  const [organization] = organizations;
+  if (
+    !organization ||
+    !parseMemberRoles(organization.memberRole).includes("owner")
+  ) {
+    throw new OrganizationExportForbiddenError();
+  }
+  assertOrganizationExportWithinBounds(estimate);
+  return { name: organization.name, slug: organization.slug };
 }
 
 /**
@@ -504,323 +545,577 @@ function remapActivityTarget(
   return maps[remap].get(event.targetRef) ?? event.targetRef;
 }
 
+type TimestampCursor = {
+  sourceId: string;
+  cursorCreatedAt: string;
+};
+
+type ArchiveStreamState = {
+  writer: WritableStreamDefaultWriter<Uint8Array>;
+  encoder: TextEncoder;
+  byteCount: number;
+  rowCount: number;
+};
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+};
+
+type ExportSnapshot = ExportOrganization & {
+  exportedAt: string;
+};
+
+/** Server-streamed organization archive plus its safe download identity. */
+export type OrganizationWorkspaceExportStream = {
+  body: ReadableStream<Uint8Array>;
+  organization: ExportOrganization;
+};
+
 /**
- * Export every organization-visible workspace row under the owner's RLS scope.
+ * Create externally resolvable promise state for stream initialization.
  *
- * @param userId - Authenticated exporting user id.
- * @param organizationId - Organization whose workspace should be exported.
- * @returns Strict version-1 organization archive.
- * @throws {OrganizationExportForbiddenError} When the id is malformed, the
- *   organization is missing, or the caller is not an owner.
- * @throws {OrganizationArchiveError} When stored data cannot fit the archive.
+ * @returns Promise and its resolve/reject callbacks.
  */
-export async function exportOrganizationWorkspace(
-  userId: string,
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+/**
+ * Build a stable keyset boundary for timestamp-ordered UUID rows.
+ *
+ * @param createdAt - Timestamp column used by the collection ordering.
+ * @param id - UUID column breaking timestamp ties.
+ * @param cursor - Last emitted source row, or null for the first page.
+ * @returns Parameterized boundary predicate, or undefined for page one.
+ */
+function afterTimestampCursor(
+  createdAt: SQLWrapper,
+  id: SQLWrapper,
+  cursor: TimestampCursor | null,
+): SQL | undefined {
+  if (cursor === null) return undefined;
+  return sql`(${createdAt} > ${cursor.cursorCreatedAt} OR (${createdAt} = ${cursor.cursorCreatedAt} AND ${id} > ${cursor.sourceId}::uuid))`;
+}
+
+/**
+ * Remove the exact database cursor field before strict row validation.
+ *
+ * @param row - Mapped archive row that may retain the query-only cursor.
+ * @returns Archive row without query-only metadata.
+ */
+function withoutExportCursor<TName extends OrganizationArchiveCollectionName>(
+  row: OrganizationArchiveRow<TName>,
+): OrganizationArchiveRow<TName> {
+  const { cursorCreatedAt: _cursor, ...archiveRow } =
+    row as OrganizationArchiveRow<TName> & {
+      cursorCreatedAt?: string;
+    };
+  return archiveRow as OrganizationArchiveRow<TName>;
+}
+
+/**
+ * Reject a dependency cycle without retaining complete task rows.
+ *
+ * @param dependencies - Exported task ids mapped to outgoing dependencies.
+ * @throws {OrganizationArchiveError} When the dependency graph is cyclic.
+ */
+function assertExportDependenciesAcyclic(
+  dependencies: ReadonlyMap<string, readonly string[]>,
+): void {
+  const indegree = new Map([...dependencies.keys()].map((id) => [id, 0]));
+  for (const targets of dependencies.values()) {
+    for (const targetId of targets) {
+      indegree.set(targetId, (indegree.get(targetId) ?? 0) + 1);
+    }
+  }
+  const queue = [...indegree].filter(([, count]) => count === 0);
+  let visited = 0;
+  for (let index = 0; index < queue.length; index += 1) {
+    const [taskId] = queue[index];
+    visited += 1;
+    for (const targetId of dependencies.get(taskId) ?? []) {
+      const count = (indegree.get(targetId) ?? 0) - 1;
+      indegree.set(targetId, count);
+      if (count === 0) queue.push([targetId, count]);
+    }
+  }
+  if (visited !== dependencies.size) {
+    throw new OrganizationArchiveError("taskEdges contains a depends_on cycle");
+  }
+}
+
+/**
+ * Encode and write one bounded archive fragment.
+ *
+ * @param state - Mutable byte/row counters and output writer.
+ * @param value - JSON fragment to encode.
+ * @returns Promise resolving after backpressure accepts the fragment.
+ * @throws {OrganizationArchiveError} When the exact byte ceiling is crossed.
+ */
+async function writeArchiveChunk(
+  state: ArchiveStreamState,
+  value: string,
+): Promise<void> {
+  const bytes = state.encoder.encode(value);
+  if (state.byteCount + bytes.byteLength > MAX_ORGANIZATION_ARCHIVE_BYTES) {
+    throw new OrganizationArchiveError(
+      `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_BYTES} bytes`,
+      "archive_too_large",
+    );
+  }
+  state.byteCount += bytes.byteLength;
+  await state.writer.write(bytes);
+}
+
+/**
+ * Page, validate, and emit one archive collection.
+ *
+ * @param state - Mutable stream counters and output writer.
+ * @param collection - Version-1 collection name.
+ * @param loadPage - Keyset page loader under the active snapshot.
+ * @param mapRow - Database-to-archive row mapper.
+ * @returns Promise resolving after the collection closes.
+ * @throws {OrganizationArchiveError} When row or byte bounds fail.
+ */
+async function writeArchiveCollection<
+  TName extends OrganizationArchiveCollectionName,
+  TSource extends TimestampCursor,
+>(
+  state: ArchiveStreamState,
+  collection: TName,
+  loadPage: (cursor: TimestampCursor | null) => Promise<TSource[]>,
+  mapRow: (row: TSource) => OrganizationArchiveRow<TName>,
+): Promise<void> {
+  await writeArchiveChunk(state, `,"${collection}":[`);
+  let cursor: TSource | null = null;
+  let first = true;
+  while (true) {
+    const rows = await loadPage(cursor);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      state.rowCount += 1;
+      if (state.rowCount > MAX_ORGANIZATION_ARCHIVE_ROWS) {
+        throw new OrganizationArchiveError(
+          `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_ROWS} rows`,
+          "archive_too_large",
+        );
+      }
+      const serialized = serializeOrganizationArchiveRow(
+        collection,
+        withoutExportCursor(mapRow(row)),
+      );
+      await writeArchiveChunk(state, `${first ? "" : ","}${serialized}`);
+      first = false;
+    }
+    cursor = rows.at(-1) ?? null;
+  }
+  await writeArchiveChunk(state, "]");
+}
+
+/**
+ * Resolve the exporting owner inside the archive's database snapshot.
+ *
+ * @param snapshot - RLS-scoped repeatable-read transaction.
+ * @param organizationId - Organization being exported.
+ * @returns Organization identity and snapshot timestamp.
+ * @throws {OrganizationExportForbiddenError} When the caller is not an owner.
+ */
+async function readExportSnapshot(
+  snapshot: SnapshotRead,
   organizationId: string,
-): Promise<OrganizationArchive> {
-  if (!UUID_RE.test(organizationId)) {
+): Promise<ExportSnapshot> {
+  const [organization] = await snapshot.run(
+    snapshot.read
+      .select({
+        name: sql<string>`name`,
+        slug: sql<string>`slug`,
+        memberRole: sql<string>`member_role`,
+        exportedAt: sql<Date | string>`transaction_timestamp()`,
+      })
+      .from(sql`public.current_user_orgs()`)
+      .where(sql`org_id = ${organizationId}::uuid`)
+      .limit(1),
+  );
+  if (
+    !organization ||
+    !parseMemberRoles(organization.memberRole).includes("owner")
+  ) {
     throw new OrganizationExportForbiddenError();
   }
+  return {
+    name: organization.name,
+    slug: organization.slug,
+    exportedAt: isoTimestamp(organization.exportedAt),
+  };
+}
 
-  const organization = await reserveOrganizationExport(userId, organizationId);
-  await assertOrganizationExportWithinBounds(userId, organizationId);
-
-  const [
-    projectRows,
-    taskRows,
-    taskEdgeRows,
-    assignmentRows,
-    criterionRows,
-    decisionRows,
-    taskLinkRows,
-    activityRows,
-    noteRows,
-    folderRows,
-    noteTaskLinkRows,
-    noteFeedTaskRows,
-    noteLinkRows,
-    revisionRows,
-  ] = await withUserContextRead(userId, (read) => [
-    read
-      .select({
-        sourceId: projects.id,
-        title: projects.title,
-        identifier: projects.identifier,
-        description: projects.description,
-        status: projects.status,
-        categories: projects.categories,
-        createdAt: projects.createdAt,
-        updatedAt: projects.updatedAt,
-        metaUpdatedAt: projects.metaUpdatedAt,
-      })
-      .from(projects)
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(projects.createdAt), asc(projects.id)),
-    read
-      .select({
-        sourceId: tasks.id,
-        projectSourceId: tasks.projectId,
-        title: tasks.title,
-        sequenceNumber: tasks.sequenceNumber,
-        description: tasks.description,
-        status: tasks.status,
-        order: tasks.order,
-        category: tasks.category,
-        implementationPlan: tasks.implementationPlan,
-        executionRecord: tasks.executionRecord,
-        tags: tasks.tags,
-        priority: tasks.priority,
-        estimate: tasks.estimate,
-        files: tasks.files,
-        createdAt: tasks.createdAt,
-        updatedAt: tasks.updatedAt,
-        metaUpdatedAt: tasks.metaUpdatedAt,
-      })
-      .from(tasks)
-      .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(tasks.createdAt), asc(tasks.id)),
-    read
-      .select({
-        sourceId: taskEdges.id,
-        sourceTaskSourceId: taskEdges.sourceTaskId,
-        targetTaskSourceId: taskEdges.targetTaskId,
-        edgeType: taskEdges.edgeType,
-        note: taskEdges.note,
-        createdAt: taskEdges.createdAt,
-        updatedAt: taskEdges.updatedAt,
-        metaUpdatedAt: taskEdges.metaUpdatedAt,
-      })
-      .from(taskEdges)
-      .innerJoin(tasks, eq(tasks.id, taskEdges.sourceTaskId))
-      .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(taskEdges.createdAt), asc(taskEdges.id)),
-    read
-      .select({
-        taskSourceId: taskAssignees.taskId,
-        createdAt: taskAssignees.createdAt,
-      })
-      .from(taskAssignees)
-      .innerJoin(tasks, eq(tasks.id, taskAssignees.taskId))
-      .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(
-        sql`${projects.organizationId} = ${organizationId}::uuid
-            AND ${taskAssignees.userId} = ${userId}::uuid`,
-      )
-      .orderBy(asc(taskAssignees.taskId)),
-    read
-      .select({
-        sourceId: taskAcceptanceCriteria.id,
-        taskSourceId: taskAcceptanceCriteria.taskId,
-        text: taskAcceptanceCriteria.text,
-        checked: taskAcceptanceCriteria.checked,
-        position: taskAcceptanceCriteria.position,
-        createdAt: taskAcceptanceCriteria.createdAt,
-        updatedAt: taskAcceptanceCriteria.updatedAt,
-      })
-      .from(taskAcceptanceCriteria)
-      .innerJoin(tasks, eq(tasks.id, taskAcceptanceCriteria.taskId))
-      .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(
-        asc(taskAcceptanceCriteria.createdAt),
-        asc(taskAcceptanceCriteria.id),
-      ),
-    read
-      .select({
-        sourceId: taskDecisions.id,
-        taskSourceId: taskDecisions.taskId,
-        text: taskDecisions.text,
-        source: taskDecisions.source,
-        decisionDate: taskDecisions.decisionDate,
-        position: taskDecisions.position,
-        createdAt: taskDecisions.createdAt,
-        updatedAt: taskDecisions.updatedAt,
-      })
-      .from(taskDecisions)
-      .innerJoin(tasks, eq(tasks.id, taskDecisions.taskId))
-      .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(taskDecisions.createdAt), asc(taskDecisions.id)),
-    read
-      .select({
-        sourceId: taskLinks.id,
-        taskSourceId: taskLinks.taskId,
-        kind: taskLinks.kind,
-        url: taskLinks.url,
-        label: taskLinks.label,
-        createdAt: taskLinks.createdAt,
-        createdBy: taskLinks.createdBy,
-      })
-      .from(taskLinks)
-      .innerJoin(tasks, eq(tasks.id, taskLinks.taskId))
-      .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(taskLinks.createdAt), asc(taskLinks.id)),
-    read
-      .select({
-        sourceId: activityEvents.id,
-        projectSourceId: activityEvents.projectId,
-        taskSourceId: activityEvents.taskId,
-        noteSourceId: activityEvents.noteId,
-        type: activityEvents.type,
-        createdAt: activityEvents.createdAt,
-        actorUserId: activityEvents.actorUserId,
-        source: activityEvents.source,
-        summary: activityEvents.summary,
-        targetRef: activityEvents.targetRef,
-        metadata: activityEvents.metadata,
-      })
-      .from(activityEvents)
-      .innerJoin(projects, eq(projects.id, activityEvents.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(activityEvents.createdAt), asc(activityEvents.id)),
-    read
-      .select({
-        sourceId: notes.id,
-        projectSourceId: notes.projectId,
-        sequenceNumber: notes.sequenceNumber,
-        type: notes.type,
-        folder: notes.folder,
-        title: notes.title,
-        slug: notes.slug,
-        summary: notes.summary,
-        body: notes.body,
-        visibility: notes.visibility,
-        sharedSince: notes.sharedSince,
-        agentWritable: notes.agentWritable,
-        locked: notes.locked,
-        feedMode: notes.feedMode,
-        feedCategories: notes.feedCategories,
-        feedTags: notes.feedTags,
-        tags: notes.tags,
-        category: notes.category,
-        version: notes.version,
-        shareRequestedBy: notes.shareRequestedBy,
-        createdBy: notes.createdBy,
-        updatedBy: notes.updatedBy,
-        createdAt: notes.createdAt,
-        updatedAt: notes.updatedAt,
-        metaUpdatedAt: notes.metaUpdatedAt,
-        deletedAt: notes.deletedAt,
-      })
-      .from(notes)
-      .innerJoin(projects, eq(projects.id, notes.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(notes.createdAt), asc(notes.id)),
-    read
-      .select({
-        sourceId: noteFolders.id,
-        projectSourceId: noteFolders.projectId,
-        path: noteFolders.path,
-        createdAt: noteFolders.createdAt,
-      })
-      .from(noteFolders)
-      .innerJoin(projects, eq(projects.id, noteFolders.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(noteFolders.createdAt), asc(noteFolders.id)),
-    read
-      .select({
-        sourceId: noteTaskLinks.id,
-        noteSourceId: noteTaskLinks.noteId,
-        taskSourceId: noteTaskLinks.taskId,
-        kind: noteTaskLinks.kind,
-        createdAt: noteTaskLinks.createdAt,
-      })
-      .from(noteTaskLinks)
-      .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
-      .innerJoin(projects, eq(projects.id, notes.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(noteTaskLinks.createdAt), asc(noteTaskLinks.id)),
-    read
-      .select({
-        sourceId: noteFeedTasks.id,
-        noteSourceId: noteFeedTasks.noteId,
-        taskSourceId: noteFeedTasks.taskId,
-        createdAt: noteFeedTasks.createdAt,
-      })
-      .from(noteFeedTasks)
-      .innerJoin(notes, eq(notes.id, noteFeedTasks.noteId))
-      .innerJoin(projects, eq(projects.id, notes.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(noteFeedTasks.createdAt), asc(noteFeedTasks.id)),
-    read
-      .select({
-        sourceId: noteLinks.id,
-        sourceNoteSourceId: noteLinks.sourceNoteId,
-        targetNoteSourceId: noteLinks.targetNoteId,
-        createdAt: noteLinks.createdAt,
-      })
-      .from(noteLinks)
-      .innerJoin(notes, eq(notes.id, noteLinks.sourceNoteId))
-      .innerJoin(projects, eq(projects.id, notes.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(noteLinks.createdAt), asc(noteLinks.id)),
-    read
-      .select({
-        sourceId: noteRevisions.id,
-        noteSourceId: noteRevisions.noteId,
-        version: noteRevisions.version,
-        title: noteRevisions.title,
-        body: noteRevisions.body,
-        createdBy: noteRevisions.createdBy,
-        createdAt: noteRevisions.createdAt,
-      })
-      .from(noteRevisions)
-      .innerJoin(notes, eq(notes.id, noteRevisions.noteId))
-      .innerJoin(projects, eq(projects.id, notes.projectId))
-      .where(eq(projects.organizationId, organizationId))
-      .orderBy(asc(noteRevisions.createdAt), asc(noteRevisions.id)),
-  ]);
-
-  return parseOrganizationArchive({
+/**
+ * Emit every portable collection from one repeatable-read snapshot.
+ *
+ * @param snapshot - RLS-scoped snapshot reader.
+ * @param userId - Exporting owner whose private attribution is retained.
+ * @param organizationId - Organization being exported.
+ * @param exportSnapshot - Header values read from the same snapshot.
+ * @param state - Mutable stream counters and writer.
+ * @returns Promise resolving after the closing JSON object is written.
+ */
+async function writeOrganizationArchive(
+  snapshot: SnapshotRead,
+  userId: string,
+  organizationId: string,
+  exportSnapshot: ExportSnapshot,
+  state: ArchiveStreamState,
+): Promise<void> {
+  const { read, run: execute } = snapshot;
+  const dependencies = new Map<string, string[]>();
+  const header = JSON.stringify({
     format: "piyaz-organization",
     version: 1,
-    exportedAt: new Date().toISOString(),
-    organization: { name: organization.name, slug: organization.slug },
-    projects: projectRows.map((row) => ({
+    exportedAt: exportSnapshot.exportedAt,
+    organization: {
+      name: exportSnapshot.name,
+      slug: exportSnapshot.slug,
+    },
+  });
+  await writeArchiveChunk(state, header.slice(0, -1));
+
+  await writeArchiveCollection(
+    state,
+    "projects",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: projects.id,
+            cursorCreatedAt: sql<string>`${projects.createdAt}::text`,
+            title: projects.title,
+            identifier: projects.identifier,
+            description: projects.description,
+            status: projects.status,
+            categories: projects.categories,
+            createdAt: projects.createdAt,
+            updatedAt: projects.updatedAt,
+            metaUpdatedAt: projects.metaUpdatedAt,
+          })
+          .from(projects)
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(projects.createdAt, projects.id, cursor),
+            ),
+          )
+          .orderBy(asc(projects.createdAt), asc(projects.id))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({
       ...row,
+      identifier: deriveIdentifier(row.identifier),
       createdAt: isoTimestamp(row.createdAt),
       updatedAt: isoTimestamp(row.updatedAt),
       metaUpdatedAt: isoTimestamp(row.metaUpdatedAt),
-    })),
-    tasks: taskRows.map((row) => ({
-      ...row,
-      createdAt: isoTimestamp(row.createdAt),
-      updatedAt: isoTimestamp(row.updatedAt),
-      metaUpdatedAt: isoTimestamp(row.metaUpdatedAt),
-    })),
-    taskEdges: taskEdgeRows.map((row) => ({
-      ...row,
-      createdAt: isoTimestamp(row.createdAt),
-      updatedAt: isoTimestamp(row.updatedAt),
-      metaUpdatedAt: isoTimestamp(row.metaUpdatedAt),
-    })),
-    taskAssignments: assignmentRows.map((row) => ({
+    }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "tasks",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: tasks.id,
+            cursorCreatedAt: sql<string>`${tasks.createdAt}::text`,
+            projectSourceId: tasks.projectId,
+            title: tasks.title,
+            sequenceNumber: tasks.sequenceNumber,
+            description: tasks.description,
+            status: tasks.status,
+            order: tasks.order,
+            category: tasks.category,
+            implementationPlan: tasks.implementationPlan,
+            executionRecord: tasks.executionRecord,
+            tags: tasks.tags,
+            priority: tasks.priority,
+            estimate: tasks.estimate,
+            files: tasks.files,
+            createdAt: tasks.createdAt,
+            updatedAt: tasks.updatedAt,
+            metaUpdatedAt: tasks.metaUpdatedAt,
+          })
+          .from(tasks)
+          .innerJoin(projects, eq(projects.id, tasks.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(tasks.createdAt, tasks.id, cursor),
+            ),
+          )
+          .orderBy(asc(tasks.createdAt), asc(tasks.id))
+          .limit(WIDE_EXPORT_PAGE_SIZE),
+      ),
+    (row) => {
+      dependencies.set(row.sourceId, []);
+      return {
+        ...row,
+        createdAt: isoTimestamp(row.createdAt),
+        updatedAt: isoTimestamp(row.updatedAt),
+        metaUpdatedAt: isoTimestamp(row.metaUpdatedAt),
+      };
+    },
+  );
+
+  await writeArchiveCollection(
+    state,
+    "taskEdges",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: taskEdges.id,
+            cursorCreatedAt: sql<string>`${taskEdges.createdAt}::text`,
+            sourceTaskSourceId: taskEdges.sourceTaskId,
+            targetTaskSourceId: taskEdges.targetTaskId,
+            edgeType: taskEdges.edgeType,
+            note: taskEdges.note,
+            createdAt: taskEdges.createdAt,
+            updatedAt: taskEdges.updatedAt,
+            metaUpdatedAt: taskEdges.metaUpdatedAt,
+          })
+          .from(taskEdges)
+          .innerJoin(tasks, eq(tasks.id, taskEdges.sourceTaskId))
+          .innerJoin(projects, eq(projects.id, tasks.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(taskEdges.createdAt, taskEdges.id, cursor),
+            ),
+          )
+          .orderBy(asc(taskEdges.createdAt), asc(taskEdges.id))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => {
+      if (
+        !dependencies.has(row.sourceTaskSourceId) ||
+        !dependencies.has(row.targetTaskSourceId) ||
+        row.sourceTaskSourceId === row.targetTaskSourceId
+      ) {
+        throw new OrganizationArchiveError(
+          "taskEdges does not reference two distinct exported tasks",
+        );
+      }
+      if (row.edgeType === "depends_on") {
+        dependencies.get(row.sourceTaskSourceId)?.push(row.targetTaskSourceId);
+      }
+      return {
+        ...row,
+        createdAt: isoTimestamp(row.createdAt),
+        updatedAt: isoTimestamp(row.updatedAt),
+        metaUpdatedAt: isoTimestamp(row.metaUpdatedAt),
+      };
+    },
+  );
+  assertExportDependenciesAcyclic(dependencies);
+
+  await writeArchiveCollection(
+    state,
+    "taskAssignments",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: taskAssignees.taskId,
+            cursorCreatedAt: sql<string>`${taskAssignees.createdAt}::text`,
+            taskSourceId: taskAssignees.taskId,
+            createdAt: taskAssignees.createdAt,
+          })
+          .from(taskAssignees)
+          .innerJoin(tasks, eq(tasks.id, taskAssignees.taskId))
+          .innerJoin(projects, eq(projects.id, tasks.projectId))
+          .where(
+            and(
+              sql`${projects.organizationId} = ${organizationId}::uuid`,
+              eq(taskAssignees.userId, userId),
+              afterTimestampCursor(
+                taskAssignees.createdAt,
+                taskAssignees.taskId,
+                cursor,
+              ),
+            ),
+          )
+          .orderBy(asc(taskAssignees.createdAt), asc(taskAssignees.taskId))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({
       taskSourceId: row.taskSourceId,
       createdAt: isoTimestamp(row.createdAt),
-    })),
-    taskAcceptanceCriteria: criterionRows.map((row) => ({
+    }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "taskAcceptanceCriteria",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: taskAcceptanceCriteria.id,
+            cursorCreatedAt: sql<string>`${taskAcceptanceCriteria.createdAt}::text`,
+            taskSourceId: taskAcceptanceCriteria.taskId,
+            text: taskAcceptanceCriteria.text,
+            checked: taskAcceptanceCriteria.checked,
+            position: taskAcceptanceCriteria.position,
+            createdAt: taskAcceptanceCriteria.createdAt,
+            updatedAt: taskAcceptanceCriteria.updatedAt,
+          })
+          .from(taskAcceptanceCriteria)
+          .innerJoin(tasks, eq(tasks.id, taskAcceptanceCriteria.taskId))
+          .innerJoin(projects, eq(projects.id, tasks.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(
+                taskAcceptanceCriteria.createdAt,
+                taskAcceptanceCriteria.id,
+                cursor,
+              ),
+            ),
+          )
+          .orderBy(
+            asc(taskAcceptanceCriteria.createdAt),
+            asc(taskAcceptanceCriteria.id),
+          )
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({
       ...row,
       createdAt: isoTimestamp(row.createdAt),
       updatedAt: isoTimestamp(row.updatedAt),
-    })),
-    taskDecisions: decisionRows.map((row) => ({
+    }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "taskDecisions",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: taskDecisions.id,
+            cursorCreatedAt: sql<string>`${taskDecisions.createdAt}::text`,
+            taskSourceId: taskDecisions.taskId,
+            text: taskDecisions.text,
+            source: taskDecisions.source,
+            decisionDate: taskDecisions.decisionDate,
+            position: taskDecisions.position,
+            createdAt: taskDecisions.createdAt,
+            updatedAt: taskDecisions.updatedAt,
+          })
+          .from(taskDecisions)
+          .innerJoin(tasks, eq(tasks.id, taskDecisions.taskId))
+          .innerJoin(projects, eq(projects.id, tasks.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(
+                taskDecisions.createdAt,
+                taskDecisions.id,
+                cursor,
+              ),
+            ),
+          )
+          .orderBy(asc(taskDecisions.createdAt), asc(taskDecisions.id))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({
       ...row,
       createdAt: isoTimestamp(row.createdAt),
       updatedAt: isoTimestamp(row.updatedAt),
-    })),
-    taskLinks: taskLinkRows.map((row) => ({
+    }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "taskLinks",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: taskLinks.id,
+            cursorCreatedAt: sql<string>`${taskLinks.createdAt}::text`,
+            taskSourceId: taskLinks.taskId,
+            kind: taskLinks.kind,
+            url: taskLinks.url,
+            label: taskLinks.label,
+            createdAt: taskLinks.createdAt,
+            createdBy: taskLinks.createdBy,
+          })
+          .from(taskLinks)
+          .innerJoin(tasks, eq(tasks.id, taskLinks.taskId))
+          .innerJoin(projects, eq(projects.id, tasks.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(taskLinks.createdAt, taskLinks.id, cursor),
+            ),
+          )
+          .orderBy(asc(taskLinks.createdAt), asc(taskLinks.id))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({
       sourceId: row.sourceId,
       taskSourceId: row.taskSourceId,
-      kind: row.kind,
+      kind: row.kind as OrganizationArchive["taskLinks"][number]["kind"],
       url: row.url,
       label: row.label,
       createdAt: isoTimestamp(row.createdAt),
       createdBy: attribution(row.createdBy, userId),
-    })),
-    activityEvents: activityRows.map((row) => ({
+    }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "activityEvents",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: activityEvents.id,
+            cursorCreatedAt: sql<string>`${activityEvents.createdAt}::text`,
+            projectSourceId: activityEvents.projectId,
+            taskSourceId: activityEvents.taskId,
+            noteSourceId: activityEvents.noteId,
+            type: activityEvents.type,
+            createdAt: activityEvents.createdAt,
+            actorUserId: activityEvents.actorUserId,
+            source: activityEvents.source,
+            summary: activityEvents.summary,
+            targetRef: activityEvents.targetRef,
+            metadata: activityEvents.metadata,
+          })
+          .from(activityEvents)
+          .innerJoin(projects, eq(projects.id, activityEvents.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(
+                activityEvents.createdAt,
+                activityEvents.id,
+                cursor,
+              ),
+            ),
+          )
+          .orderBy(asc(activityEvents.createdAt), asc(activityEvents.id))
+          .limit(WIDE_EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({
       sourceId: row.sourceId,
       projectSourceId: row.projectSourceId,
       taskSourceId: row.taskSourceId,
@@ -835,8 +1130,56 @@ export async function exportOrganizationWorkspace(
           ? null
           : row.targetRef,
       metadata: portableActivityMetadata(row.metadata),
-    })),
-    notes: noteRows.map((row) => ({
+    }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "notes",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: notes.id,
+            cursorCreatedAt: sql<string>`${notes.createdAt}::text`,
+            projectSourceId: notes.projectId,
+            sequenceNumber: notes.sequenceNumber,
+            type: notes.type,
+            folder: notes.folder,
+            title: notes.title,
+            slug: notes.slug,
+            summary: notes.summary,
+            body: notes.body,
+            visibility: notes.visibility,
+            sharedSince: notes.sharedSince,
+            agentWritable: notes.agentWritable,
+            locked: notes.locked,
+            feedMode: notes.feedMode,
+            feedCategories: notes.feedCategories,
+            feedTags: notes.feedTags,
+            tags: notes.tags,
+            category: notes.category,
+            version: notes.version,
+            shareRequestedBy: notes.shareRequestedBy,
+            createdBy: notes.createdBy,
+            updatedBy: notes.updatedBy,
+            createdAt: notes.createdAt,
+            updatedAt: notes.updatedAt,
+            metaUpdatedAt: notes.metaUpdatedAt,
+            deletedAt: notes.deletedAt,
+          })
+          .from(notes)
+          .innerJoin(projects, eq(projects.id, notes.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(notes.createdAt, notes.id, cursor),
+            ),
+          )
+          .orderBy(asc(notes.createdAt), asc(notes.id))
+          .limit(WIDE_EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({
       sourceId: row.sourceId,
       projectSourceId: row.projectSourceId,
       sequenceNumber: row.sequenceNumber,
@@ -863,24 +1206,166 @@ export async function exportOrganizationWorkspace(
       updatedAt: isoTimestamp(row.updatedAt),
       metaUpdatedAt: isoTimestamp(row.metaUpdatedAt),
       deletedAt: nullableIsoTimestamp(row.deletedAt),
-    })),
-    noteFolders: folderRows.map((row) => ({
-      ...row,
-      createdAt: isoTimestamp(row.createdAt),
-    })),
-    noteTaskLinks: noteTaskLinkRows.map((row) => ({
-      ...row,
-      createdAt: isoTimestamp(row.createdAt),
-    })),
-    noteFeedTasks: noteFeedTaskRows.map((row) => ({
-      ...row,
-      createdAt: isoTimestamp(row.createdAt),
-    })),
-    noteLinks: noteLinkRows.map((row) => ({
-      ...row,
-      createdAt: isoTimestamp(row.createdAt),
-    })),
-    noteRevisions: revisionRows.map((row) => ({
+    }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "noteFolders",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: noteFolders.id,
+            cursorCreatedAt: sql<string>`${noteFolders.createdAt}::text`,
+            projectSourceId: noteFolders.projectId,
+            path: noteFolders.path,
+            createdAt: noteFolders.createdAt,
+          })
+          .from(noteFolders)
+          .innerJoin(projects, eq(projects.id, noteFolders.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(
+                noteFolders.createdAt,
+                noteFolders.id,
+                cursor,
+              ),
+            ),
+          )
+          .orderBy(asc(noteFolders.createdAt), asc(noteFolders.id))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({ ...row, createdAt: isoTimestamp(row.createdAt) }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "noteTaskLinks",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: noteTaskLinks.id,
+            cursorCreatedAt: sql<string>`${noteTaskLinks.createdAt}::text`,
+            noteSourceId: noteTaskLinks.noteId,
+            taskSourceId: noteTaskLinks.taskId,
+            kind: noteTaskLinks.kind,
+            createdAt: noteTaskLinks.createdAt,
+          })
+          .from(noteTaskLinks)
+          .innerJoin(notes, eq(notes.id, noteTaskLinks.noteId))
+          .innerJoin(projects, eq(projects.id, notes.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(
+                noteTaskLinks.createdAt,
+                noteTaskLinks.id,
+                cursor,
+              ),
+            ),
+          )
+          .orderBy(asc(noteTaskLinks.createdAt), asc(noteTaskLinks.id))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({ ...row, createdAt: isoTimestamp(row.createdAt) }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "noteFeedTasks",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: noteFeedTasks.id,
+            cursorCreatedAt: sql<string>`${noteFeedTasks.createdAt}::text`,
+            noteSourceId: noteFeedTasks.noteId,
+            taskSourceId: noteFeedTasks.taskId,
+            createdAt: noteFeedTasks.createdAt,
+          })
+          .from(noteFeedTasks)
+          .innerJoin(notes, eq(notes.id, noteFeedTasks.noteId))
+          .innerJoin(projects, eq(projects.id, notes.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(
+                noteFeedTasks.createdAt,
+                noteFeedTasks.id,
+                cursor,
+              ),
+            ),
+          )
+          .orderBy(asc(noteFeedTasks.createdAt), asc(noteFeedTasks.id))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({ ...row, createdAt: isoTimestamp(row.createdAt) }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "noteLinks",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: noteLinks.id,
+            cursorCreatedAt: sql<string>`${noteLinks.createdAt}::text`,
+            sourceNoteSourceId: noteLinks.sourceNoteId,
+            targetNoteSourceId: noteLinks.targetNoteId,
+            createdAt: noteLinks.createdAt,
+          })
+          .from(noteLinks)
+          .innerJoin(notes, eq(notes.id, noteLinks.sourceNoteId))
+          .innerJoin(projects, eq(projects.id, notes.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(noteLinks.createdAt, noteLinks.id, cursor),
+            ),
+          )
+          .orderBy(asc(noteLinks.createdAt), asc(noteLinks.id))
+          .limit(EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({ ...row, createdAt: isoTimestamp(row.createdAt) }),
+  );
+
+  await writeArchiveCollection(
+    state,
+    "noteRevisions",
+    async (cursor) =>
+      execute(
+        read
+          .select({
+            sourceId: noteRevisions.id,
+            cursorCreatedAt: sql<string>`${noteRevisions.createdAt}::text`,
+            noteSourceId: noteRevisions.noteId,
+            version: noteRevisions.version,
+            title: noteRevisions.title,
+            body: noteRevisions.body,
+            createdBy: noteRevisions.createdBy,
+            createdAt: noteRevisions.createdAt,
+          })
+          .from(noteRevisions)
+          .innerJoin(notes, eq(notes.id, noteRevisions.noteId))
+          .innerJoin(projects, eq(projects.id, notes.projectId))
+          .where(
+            and(
+              eq(projects.organizationId, organizationId),
+              afterTimestampCursor(
+                noteRevisions.createdAt,
+                noteRevisions.id,
+                cursor,
+              ),
+            ),
+          )
+          .orderBy(asc(noteRevisions.createdAt), asc(noteRevisions.id))
+          .limit(WIDE_EXPORT_PAGE_SIZE),
+      ),
+    (row) => ({
       sourceId: row.sourceId,
       noteSourceId: row.noteSourceId,
       version: row.version,
@@ -888,8 +1373,112 @@ export async function exportOrganizationWorkspace(
       body: row.body,
       createdBy: attribution(row.createdBy, userId),
       createdAt: isoTimestamp(row.createdAt),
-    })),
-  });
+    }),
+  );
+
+  await writeArchiveChunk(state, "}");
+}
+
+/**
+ * Pump one archive transaction into a backpressure-aware output stream.
+ *
+ * @param userId - Authenticated exporting user id.
+ * @param organizationId - Organization whose workspace is exported.
+ * @param state - Mutable stream counters and writer.
+ * @param initialized - Resolver for response headers and filename.
+ * @returns Promise resolving after the stream closes or aborts.
+ */
+async function pumpOrganizationArchive(
+  userId: string,
+  organizationId: string,
+  state: ArchiveStreamState,
+  initialized: Deferred<ExportSnapshot>,
+): Promise<void> {
+  let responseInitialized = false;
+  try {
+    await withUserContextReadTransaction(userId, async (snapshot) => {
+      const exportSnapshot = await readExportSnapshot(snapshot, organizationId);
+      responseInitialized = true;
+      initialized.resolve(exportSnapshot);
+      await writeOrganizationArchive(
+        snapshot,
+        userId,
+        organizationId,
+        exportSnapshot,
+        state,
+      );
+    });
+    await state.writer.close();
+  } catch (error) {
+    if (!responseInitialized) initialized.reject(error);
+    if (responseInitialized) {
+      console.error("[organization-export] stream failed", {
+        errorName: error instanceof Error ? error.name : "unknown",
+        errorCode:
+          error instanceof OrganizationArchiveError ? error.code : undefined,
+      });
+    }
+    await state.writer.abort(error).catch(() => undefined);
+  }
+}
+
+/**
+ * Stream every organization-visible workspace row under the owner's RLS scope.
+ *
+ * @param userId - Authenticated exporting user id.
+ * @param organizationId - Organization whose workspace should be exported.
+ * @returns Backpressure-aware version-1 archive body and organization identity.
+ * @throws {OrganizationExportForbiddenError} When the id is malformed, the
+ *   organization is missing, or the caller is not an owner.
+ * @throws {OrganizationExportLimitError} When the rolling limit is active.
+ * @throws {OrganizationArchiveError} When stored data cannot fit the archive.
+ */
+export async function streamOrganizationWorkspace(
+  userId: string,
+  organizationId: string,
+): Promise<OrganizationWorkspaceExportStream> {
+  if (!UUID_RE.test(organizationId)) {
+    throw new OrganizationExportForbiddenError();
+  }
+
+  await preflightOrganizationExport(userId, organizationId);
+  await reserveOrganizationExport(userId, organizationId);
+  const initialized = createDeferred<ExportSnapshot>();
+  const stream = new TransformStream<Uint8Array, Uint8Array>();
+  const state: ArchiveStreamState = {
+    writer: stream.writable.getWriter(),
+    encoder: new TextEncoder(),
+    byteCount: 0,
+    rowCount: 0,
+  };
+  void pumpOrganizationArchive(userId, organizationId, state, initialized);
+  const organization = await initialized.promise;
+  return {
+    body: stream.readable,
+    organization: { name: organization.name, slug: organization.slug },
+  };
+}
+
+/**
+ * Collect a streamed export for internal callers and round-trip tests.
+ *
+ * Production routes should use {@link streamOrganizationWorkspace} directly
+ * so the Worker never materializes the complete archive.
+ *
+ * @param userId - Authenticated exporting user id.
+ * @param organizationId - Organization whose workspace should be exported.
+ * @returns Strict version-1 organization archive.
+ * @throws {OrganizationExportForbiddenError} When the caller is not an owner.
+ * @throws {OrganizationExportLimitError} When the rolling limit is active.
+ * @throws {OrganizationArchiveError} When stored data cannot fit the archive.
+ */
+export async function exportOrganizationWorkspace(
+  userId: string,
+  organizationId: string,
+): Promise<OrganizationArchive> {
+  const streamed = await streamOrganizationWorkspace(userId, organizationId);
+  const bytes = new Uint8Array(await new Response(streamed.body).arrayBuffer());
+  return decodeOrganizationArchive(bytes);
 }
 
 /**

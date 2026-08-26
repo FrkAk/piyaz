@@ -263,6 +263,7 @@ describe("POST /api/organization/[organizationId]/export", () => {
       params: Promise.resolve({ organizationId: fixture.organizationId }),
     });
     expect(admitted.status).toBe(200);
+    await admitted.arrayBuffer();
   });
 
   test("returns a downloadable owner archive", async () => {
@@ -310,7 +311,9 @@ describe("POST /api/organization/[organizationId]/export", () => {
         params: Promise.resolve({ organizationId }),
       });
 
-    expect((await request(fixture.organizationId)).status).toBe(200);
+    const first = await request(fixture.organizationId);
+    expect(first.status).toBe(200);
+    await first.arrayBuffer();
 
     const limited = await request(otherOrganization.id);
     expect(limited.status).toBe(429);
@@ -327,7 +330,9 @@ describe("POST /api/organization/[organizationId]/export", () => {
       SET last_started_at = clock_timestamp() - interval '31 days'
       WHERE user_id = ${fixture.userId}
     `;
-    expect((await request(otherOrganization.id)).status).toBe(200);
+    const retried = await request(otherOrganization.id);
+    expect(retried.status).toBe(200);
+    await retried.arrayBuffer();
   });
 
   test.each(["admin", "member"])("returns 403 for a %s", async (role) => {
@@ -390,7 +395,7 @@ describe("POST /api/organization/[organizationId]/export", () => {
   test("returns 413 when the workspace exceeds archive bounds", async () => {
     const fixture = await seedUserOrgProject("route-too-large");
     setSession({ user: { id: fixture.userId } });
-    spyOn(organizationData, "exportOrganizationWorkspace").mockRejectedValue(
+    spyOn(organizationData, "streamOrganizationWorkspace").mockRejectedValue(
       new OrganizationArchiveError(
         `Archive exceeds ${MAX_ORGANIZATION_ARCHIVE_BYTES} bytes`,
         "archive_too_large",
@@ -509,6 +514,29 @@ describe("POST /api/organization/import", () => {
       name: "Imported Team",
       slug: "imported-team",
     });
+  });
+
+  test("normalizes legacy source identity for the destination", async () => {
+    const fixture = await seedUserOrgProject("import-legacy-identity");
+    setSession({ user: { id: fixture.userId } });
+    stubOrganizationCreation(fixture.userId);
+    const archive = emptyArchive();
+    archive.organization = {
+      name: `  ${"Legacy".repeat(20)}  `,
+      slug: "admin",
+    };
+
+    const response = await importPOST(importRequest(archive));
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { organizationId: string };
+    const [organization] = await superuserPool()<
+      { name: string; slug: string }[]
+    >`
+      SELECT name, slug FROM piyaz_auth."organization" WHERE id = ${body.organizationId}
+    `;
+    expect(organization.name).toHaveLength(64);
+    expect(organization.name.startsWith("Legacy")).toBe(true);
+    expect(organization.slug).toMatch(/^team-/);
   });
 
   test("rejects constraint-violating archives before creating an organization", async () => {

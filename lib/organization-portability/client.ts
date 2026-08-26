@@ -5,9 +5,17 @@ export const ORGANIZATION_ARCHIVE_MEDIA_TYPE =
   "application/vnd.piyaz.organization+json";
 
 /** Maximum encoded size accepted for one organization archive. */
-export const MAX_ORGANIZATION_ARCHIVE_MIB = 5;
+export const MAX_ORGANIZATION_ARCHIVE_MIB = 25;
 export const MAX_ORGANIZATION_ARCHIVE_BYTES =
   MAX_ORGANIZATION_ARCHIVE_MIB * 1024 * 1024;
+
+/** Maximum import size for the active runtime target. */
+export const MAX_ORGANIZATION_IMPORT_MIB =
+  process.env.NEXT_PUBLIC_DEPLOY_TARGET === "cloudflare"
+    ? 5
+    : MAX_ORGANIZATION_ARCHIVE_MIB;
+export const MAX_ORGANIZATION_IMPORT_BYTES =
+  MAX_ORGANIZATION_IMPORT_MIB * 1024 * 1024;
 
 /** Rolling cooldown between admitted workspace archive generations. */
 export const ORGANIZATION_EXPORT_COOLDOWN_DAYS = 30;
@@ -50,7 +58,7 @@ export function canImportWorkspace(
   return (
     file !== null &&
     file.name.toLowerCase().endsWith(".json") &&
-    file.size <= MAX_ORGANIZATION_ARCHIVE_BYTES &&
+    file.size <= MAX_ORGANIZATION_IMPORT_BYTES &&
     dpaAccepted &&
     !pending
   );
