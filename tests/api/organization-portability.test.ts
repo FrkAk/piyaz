@@ -12,13 +12,15 @@ import * as organizationData from "@/lib/data/organization-portability";
 import {
   MAX_ORGANIZATION_ARCHIVE_BYTES,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
+  ORGANIZATION_EXPORT_INTENT_HEADER,
+  ORGANIZATION_EXPORT_INTENT_VALUE,
   OrganizationArchiveError,
   type OrganizationArchive,
 } from "@/lib/organization-portability/archive";
 import { superuserPool } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedUserOrgProject } from "@/tests/setup/seed";
-import { GET as exportGET } from "@/app/api/organization/[organizationId]/export/route";
+import { POST as exportPOST } from "@/app/api/organization/[organizationId]/export/route";
 import { POST as importPOST } from "@/app/api/organization/import/route";
 
 const setSession = (
@@ -120,6 +122,21 @@ function importRequest(
 }
 
 /**
+ * Build an explicit workspace export request.
+ *
+ * @param organizationId - Organization UUID placed in the route URL.
+ * @returns Same-origin-style POST carrying the required intent header.
+ */
+function exportRequest(organizationId: string): Request {
+  return new Request(`http://test/api/organization/${organizationId}/export`, {
+    method: "POST",
+    headers: {
+      [ORGANIZATION_EXPORT_INTENT_HEADER]: ORGANIZATION_EXPORT_INTENT_VALUE,
+    },
+  });
+}
+
+/**
  * Create a body stream that crosses the archive limit without allocating the
  * complete body at once.
  *
@@ -200,30 +217,63 @@ afterEach(async () => {
   await truncateAll();
 });
 
-describe("GET /api/organization/[organizationId]/export", () => {
+describe("POST /api/organization/[organizationId]/export", () => {
   test("returns 401 when unauthenticated", async () => {
     setSession(null);
-    const response = await exportGET(
-      new Request("http://test/api/organization/missing/export"),
-      { params: Promise.resolve({ organizationId: crypto.randomUUID() }) },
-    );
+    const response = await exportPOST(exportRequest("missing"), {
+      params: Promise.resolve({ organizationId: crypto.randomUUID() }),
+    });
     expect(response.status).toBe(401);
+  });
+
+  test("rejects a request without explicit export intent before consuming quota", async () => {
+    const fixture = await seedUserOrgProject("route-export-csrf");
+    setSession({ user: { id: fixture.userId } });
+
+    const rejected = await exportPOST(
+      new Request(
+        `http://test/api/organization/${fixture.organizationId}/export`,
+        { method: "POST" },
+      ),
+      { params: Promise.resolve({ organizationId: fixture.organizationId }) },
+    );
+    expect(rejected.status).toBe(403);
+    expect(await rejected.json()).toEqual({
+      code: "forbidden",
+      error: "The workspace export request could not be verified.",
+    });
+
+    const crossSite = await exportPOST(
+      new Request(
+        `http://test/api/organization/${fixture.organizationId}/export`,
+        {
+          method: "POST",
+          headers: {
+            [ORGANIZATION_EXPORT_INTENT_HEADER]:
+              ORGANIZATION_EXPORT_INTENT_VALUE,
+            "sec-fetch-site": "cross-site",
+          },
+        },
+      ),
+      { params: Promise.resolve({ organizationId: fixture.organizationId }) },
+    );
+    expect(crossSite.status).toBe(403);
+
+    const admitted = await exportPOST(exportRequest(fixture.organizationId), {
+      params: Promise.resolve({ organizationId: fixture.organizationId }),
+    });
+    expect(admitted.status).toBe(200);
   });
 
   test("returns a downloadable owner archive", async () => {
     const fixture = await seedUserOrgProject("route-export");
     setSession({ user: { id: fixture.userId } });
 
-    const response = await exportGET(
-      new Request(
-        `http://test/api/organization/${fixture.organizationId}/export`,
-      ),
-      {
-        params: Promise.resolve({
-          organizationId: fixture.organizationId,
-        }),
-      },
-    );
+    const response = await exportPOST(exportRequest(fixture.organizationId), {
+      params: Promise.resolve({
+        organizationId: fixture.organizationId,
+      }),
+    });
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe(
@@ -233,6 +283,11 @@ describe("GET /api/organization/[organizationId]/export", () => {
       "piyaz-team-route-export-workspace.json",
     );
     expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("content-security-policy")).toBe("sandbox");
+    expect(response.headers.get("cross-origin-resource-policy")).toBe(
+      "same-origin",
+    );
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     const archive = (await response.json()) as OrganizationArchive;
     expect(archive.projects).toHaveLength(1);
@@ -251,12 +306,9 @@ describe("GET /api/organization/[organizationId]/export", () => {
     `;
     setSession({ user: { id: fixture.userId } });
     const request = (organizationId: string) =>
-      exportGET(
-        new Request(`http://test/api/organization/${organizationId}/export`),
-        {
-          params: Promise.resolve({ organizationId }),
-        },
-      );
+      exportPOST(exportRequest(organizationId), {
+        params: Promise.resolve({ organizationId }),
+      });
 
     expect((await request(fixture.organizationId)).status).toBe(200);
 
@@ -287,10 +339,9 @@ describe("GET /api/organization/[organizationId]/export", () => {
     `;
     setSession({ user: { id: fixture.userId } });
 
-    const response = await exportGET(
-      new Request("http://test/api/organization/id/export"),
-      { params: Promise.resolve({ organizationId: fixture.organizationId }) },
-    );
+    const response = await exportPOST(exportRequest(fixture.organizationId), {
+      params: Promise.resolve({ organizationId: fixture.organizationId }),
+    });
     expect(response.status).toBe(403);
   });
 
@@ -299,10 +350,9 @@ describe("GET /api/organization/[organizationId]/export", () => {
     const target = await seedUserOrgProject("route-outsider-target");
     setSession({ user: { id: owner.userId } });
 
-    const response = await exportGET(
-      new Request("http://test/api/organization/id/export"),
-      { params: Promise.resolve({ organizationId: target.organizationId }) },
-    );
+    const response = await exportPOST(exportRequest(target.organizationId), {
+      params: Promise.resolve({ organizationId: target.organizationId }),
+    });
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       code: "forbidden",
@@ -313,10 +363,9 @@ describe("GET /api/organization/[organizationId]/export", () => {
   test("returns 400 for a malformed organization id", async () => {
     const fixture = await seedUserOrgProject("route-malformed");
     setSession({ user: { id: fixture.userId } });
-    const response = await exportGET(
-      new Request("http://test/api/organization/not-a-uuid/export"),
-      { params: Promise.resolve({ organizationId: "not-a-uuid" }) },
-    );
+    const response = await exportPOST(exportRequest("not-a-uuid"), {
+      params: Promise.resolve({ organizationId: "not-a-uuid" }),
+    });
     expect(response.status).toBe(400);
   });
 
@@ -331,10 +380,9 @@ describe("GET /api/organization/[organizationId]/export", () => {
         resetIn: 31,
       }),
     });
-    const response = await exportGET(
-      new Request("http://test/api/organization/id/export"),
-      { params: Promise.resolve({ organizationId: fixture.organizationId }) },
-    );
+    const response = await exportPOST(exportRequest(fixture.organizationId), {
+      params: Promise.resolve({ organizationId: fixture.organizationId }),
+    });
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("31");
   });
@@ -348,10 +396,9 @@ describe("GET /api/organization/[organizationId]/export", () => {
         "archive_too_large",
       ),
     );
-    const response = await exportGET(
-      new Request("http://test/api/organization/id/export"),
-      { params: Promise.resolve({ organizationId: fixture.organizationId }) },
-    );
+    const response = await exportPOST(exportRequest(fixture.organizationId), {
+      params: Promise.resolve({ organizationId: fixture.organizationId }),
+    });
     expect(response.status).toBe(413);
   });
 });

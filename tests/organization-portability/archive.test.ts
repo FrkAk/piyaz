@@ -136,7 +136,6 @@ function validArchive(): OrganizationArchive {
         label: "Docs",
         createdAt: NOW,
         createdBy: "exporter",
-        metadata: { portable: true },
       },
     ],
     activityEvents: [
@@ -175,7 +174,6 @@ function validArchive(): OrganizationArchive {
         tags: ["portable"],
         category: "Backend",
         version: 2,
-        embeddingStatus: "ready",
         shareRequestedBy: null,
         createdBy: "exporter",
         updatedBy: "exporter",
@@ -204,7 +202,6 @@ function validArchive(): OrganizationArchive {
         tags: [],
         category: null,
         version: 1,
-        embeddingStatus: "none",
         shareRequestedBy: null,
         createdBy: "exporter",
         updatedBy: null,
@@ -272,6 +269,20 @@ test("rejects unknown top-level fields", () => {
   );
 });
 
+test("rejects derived embedding state inside portable notes", () => {
+  const archive = validArchive() as OrganizationArchive & {
+    notes: Array<
+      OrganizationArchive["notes"][number] & {
+        embeddingStatus?: string;
+      }
+    >;
+  };
+  archive.notes[0].embeddingStatus = "ready";
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "Archive does not match version 1",
+  );
+});
+
 test("rejects unsupported archive versions", () => {
   const archive = { ...validArchive(), version: 2 };
   expect(() => parseOrganizationArchive(archive)).toThrow(
@@ -328,6 +339,20 @@ test("rejects invalid timestamps", () => {
   const archive = validArchive();
   archive.projects[0].createdAt = "yesterday";
   expect(() => parseOrganizationArchive(archive)).toThrow(
+    "Archive does not match version 1",
+  );
+});
+
+test("rejects oversized nested arrays and PostgreSQL integer overflows", () => {
+  const oversizedArray = validArchive();
+  oversizedArray.tasks[0].tags = new Array(5_001).fill("tag");
+  expect(() => parseOrganizationArchive(oversizedArray)).toThrow(
+    "Archive does not match version 1",
+  );
+
+  const overflowingInteger = validArchive();
+  overflowingInteger.tasks[0].sequenceNumber = 2_147_483_648;
+  expect(() => parseOrganizationArchive(overflowingInteger)).toThrow(
     "Archive does not match version 1",
   );
 });

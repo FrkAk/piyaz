@@ -40,6 +40,19 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const INSERT_BATCH_SIZE = 500;
+const IMPORTED_ACTIVITY_SUMMARY_PREFIX = "[imported] ";
+const MAX_PORTABLE_ACTIVITY_FIELDS = 5_000;
+const PORTABLE_ACTIVITY_SCALAR_KEYS = ["from", "to"] as const;
+const PORTABLE_ACTIVITY_STRING_KEYS = [
+  "direction",
+  "relation",
+  "previousSlug",
+  "kind",
+] as const;
+const PORTABLE_ACTIVITY_INTEGER_KEYS = [
+  "version",
+  "restoredFromVersion",
+] as const;
 
 type SourceRow = { sourceId: string };
 
@@ -228,20 +241,72 @@ function attribution(
 }
 
 /**
- * Require JSON metadata to be a record when present.
+ * Check whether a value is safe portable activity metadata.
  *
- * @param value - JSONB value returned by the database.
- * @returns Record metadata or null.
- * @throws {OrganizationArchiveError} When legacy data has another JSON shape.
+ * @param value - Candidate scalar value.
+ * @returns True for JSON scalars used by activity field changes.
  */
-function recordMetadata(value: unknown): Record<string, unknown> | null {
-  if (value === null) return null;
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  throw new OrganizationArchiveError(
-    "Workspace metadata does not match archive version 1",
+function isPortableActivityScalar(value: unknown): boolean {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
   );
+}
+
+/**
+ * Reduce activity metadata to the fields produced by Piyaz event writers.
+ *
+ * @param value - JSONB metadata from the database or an imported archive.
+ * @returns Allowlisted portable metadata, or null when no fields are portable.
+ */
+function portableActivityMetadata(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const input = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of PORTABLE_ACTIVITY_SCALAR_KEYS) {
+    if (isPortableActivityScalar(input[key])) result[key] = input[key];
+  }
+  for (const key of PORTABLE_ACTIVITY_STRING_KEYS) {
+    if (typeof input[key] === "string") result[key] = input[key];
+  }
+  for (const key of PORTABLE_ACTIVITY_INTEGER_KEYS) {
+    if (Number.isInteger(input[key])) result[key] = input[key];
+  }
+  if (
+    Array.isArray(input.fields) &&
+    input.fields.length <= MAX_PORTABLE_ACTIVITY_FIELDS &&
+    input.fields.every((field) => typeof field === "string")
+  ) {
+    result.fields = input.fields;
+  }
+
+  const provenance = input.portabilityImport;
+  if (
+    provenance !== null &&
+    typeof provenance === "object" &&
+    !Array.isArray(provenance)
+  ) {
+    const original = provenance as Record<string, unknown>;
+    const originalActor = original.originalActor;
+    const originalSource = original.originalSource;
+    if (
+      (originalActor === null || originalActor === "exporter") &&
+      (originalSource === "web" ||
+        originalSource === "mcp" ||
+        originalSource === "system")
+    ) {
+      result.portabilityImport = { originalActor, originalSource };
+    }
+  }
+
+  return Object.keys(result).length === 0 ? null : result;
 }
 
 /**
@@ -587,7 +652,6 @@ export async function exportOrganizationWorkspace(
         label: taskLinks.label,
         createdAt: taskLinks.createdAt,
         createdBy: taskLinks.createdBy,
-        metadata: taskLinks.metadata,
       })
       .from(taskLinks)
       .innerJoin(tasks, eq(tasks.id, taskLinks.taskId))
@@ -633,7 +697,6 @@ export async function exportOrganizationWorkspace(
         tags: notes.tags,
         category: notes.category,
         version: notes.version,
-        embeddingStatus: notes.embeddingStatus,
         shareRequestedBy: notes.shareRequestedBy,
         createdBy: notes.createdBy,
         updatedBy: notes.updatedBy,
@@ -756,7 +819,6 @@ export async function exportOrganizationWorkspace(
       label: row.label,
       createdAt: isoTimestamp(row.createdAt),
       createdBy: attribution(row.createdBy, userId),
-      metadata: recordMetadata(row.metadata),
     })),
     activityEvents: activityRows.map((row) => ({
       sourceId: row.sourceId,
@@ -772,7 +834,7 @@ export async function exportOrganizationWorkspace(
         row.type === "assignee_added" || row.type === "assignee_removed"
           ? null
           : row.targetRef,
-      metadata: row.metadata,
+      metadata: portableActivityMetadata(row.metadata),
     })),
     notes: noteRows.map((row) => ({
       sourceId: row.sourceId,
@@ -794,7 +856,6 @@ export async function exportOrganizationWorkspace(
       tags: row.tags,
       category: row.category,
       version: row.version,
-      embeddingStatus: row.embeddingStatus,
       shareRequestedBy: attribution(row.shareRequestedBy, userId),
       createdBy: attribution(row.createdBy, userId),
       updatedBy: attribution(row.updatedBy, userId),
@@ -837,6 +898,9 @@ export async function exportOrganizationWorkspace(
  * The archive must already have passed `parseOrganizationArchive` (the import
  * route decodes with `decodeOrganizationArchive`); re-validating here would
  * deep-clone the complete archive inside a memory-bounded isolate.
+ * Because archives are editable, restored activity is visibly prefixed as
+ * imported and attributed to the importer; original source metadata remains
+ * available without granting an archive trusted system or MCP provenance.
  *
  * @param userId - Importing organization owner's user id.
  * @param organizationId - Fresh destination organization id.
@@ -948,7 +1012,6 @@ export async function importOrganizationWorkspace(
       label: row.label,
       createdAt: archiveDate(row.createdAt),
       createdBy: importedAttribution(row.createdBy, userId),
-      metadata: row.metadata,
     }));
     await insertBatches(taskLinkValues, (batch) =>
       tx.insert(taskLinks).values(batch),
@@ -974,7 +1037,6 @@ export async function importOrganizationWorkspace(
       tags: row.tags,
       category: row.category,
       version: row.version,
-      embeddingStatus: row.embeddingStatus,
       shareRequestedBy: importedAttribution(row.shareRequestedBy, userId),
       createdBy: userId,
       updatedBy: importedAttribution(row.updatedBy, userId),
@@ -1053,12 +1115,18 @@ export async function importOrganizationWorkspace(
           : mappedId(maps.notes, row.noteSourceId, "notes"),
       type: row.type,
       createdAt: archiveDate(row.createdAt),
-      actorUserId: importedAttribution(row.actor, userId),
-      source: row.source,
+      actorUserId: userId,
+      source: "web" as const,
       actorClientId: null,
-      summary: row.summary,
+      summary: `${IMPORTED_ACTIVITY_SUMMARY_PREFIX}${row.summary}`,
       targetRef: remapActivityTarget(row, maps),
-      metadata: row.metadata,
+      metadata: {
+        ...(portableActivityMetadata(row.metadata) ?? {}),
+        portabilityImport: {
+          originalActor: row.actor,
+          originalSource: row.source,
+        },
+      },
     }));
     await insertBatches(activityValues, (batch) =>
       tx.insert(activityEvents).values(batch),

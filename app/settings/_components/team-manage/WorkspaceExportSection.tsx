@@ -5,6 +5,8 @@ import { Button } from "@/components/shared/Button";
 import { IconCheck, IconDoc } from "@/components/shared/icons";
 import {
   ORGANIZATION_EXPORT_COOLDOWN_DAYS,
+  ORGANIZATION_EXPORT_INTENT_HEADER,
+  ORGANIZATION_EXPORT_INTENT_VALUE,
   organizationArchiveFilename,
   readPortabilityError,
 } from "@/lib/organization-portability/client";
@@ -47,6 +49,15 @@ export function WorkspaceExportSection({
       try {
         const response = await fetch(
           `/api/organization/${encodeURIComponent(teamId)}/export`,
+          {
+            method: "POST",
+            headers: {
+              [ORGANIZATION_EXPORT_INTENT_HEADER]:
+                ORGANIZATION_EXPORT_INTENT_VALUE,
+            },
+            credentials: "same-origin",
+            cache: "no-store",
+          },
         );
         if (!response.ok) {
           onError(await readPortabilityError(response));
@@ -94,9 +105,14 @@ export function WorkspaceExportSection({
             </div>
             <p className="mt-2 text-xs leading-relaxed text-text-muted">
               Download projects, tasks, dependencies, notes, and visible
-              activity history as one JSON archive. Member accounts and their
-              private notes are not included. You can generate one archive every{" "}
+              activity history as one JSON archive. Member accounts and other
+              members&apos; private notes are not included. Your own private
+              notes are included. You can generate one archive every{" "}
               {ORGANIZATION_EXPORT_COOLDOWN_DAYS} days.
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-text-muted">
+              The archive can include confidential content, deleted notes, and
+              revision history. Store and share it securely.
             </p>
             <p
               role="status"

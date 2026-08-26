@@ -11,6 +11,8 @@ import {
 import {
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   ORGANIZATION_EXPORT_COOLDOWN_DAYS,
+  ORGANIZATION_EXPORT_INTENT_HEADER,
+  ORGANIZATION_EXPORT_INTENT_VALUE,
   OrganizationArchiveError,
   organizationArchiveFilename,
   serializeOrganizationArchive,
@@ -52,16 +54,39 @@ function jsonError(
 }
 
 /**
- * Download an organization workspace archive when the caller is its owner.
+ * Verify browser intent before a request can consume the monthly export slot.
  *
- * @param _request - Incoming request.
+ * @param request - Candidate workspace export request.
+ * @returns True for the application's non-simple same-origin POST.
+ */
+function hasValidExportIntent(request: Request): boolean {
+  const fetchSite = request.headers.get("sec-fetch-site");
+  return (
+    request.headers.get(ORGANIZATION_EXPORT_INTENT_HEADER) ===
+      ORGANIZATION_EXPORT_INTENT_VALUE &&
+    (fetchSite === null || fetchSite === "same-origin")
+  );
+}
+
+/**
+ * Generate an organization workspace archive when the caller is its owner.
+ *
+ * @param request - Explicit browser export request.
  * @param context - Dynamic organization route parameters.
  * @returns Archive attachment or a client-safe JSON error.
  */
-export async function GET(
-  _request: Request,
+export async function POST(
+  request: Request,
   context: RouteContext,
 ): Promise<Response> {
+  if (!hasValidExportIntent(request)) {
+    return jsonError(
+      "forbidden",
+      "The workspace export request could not be verified.",
+      403,
+    );
+  }
+
   let userId: string;
   try {
     userId = (await getAuthContext()).userId;
@@ -96,6 +121,9 @@ export async function GET(
         "content-type": ORGANIZATION_ARCHIVE_MEDIA_TYPE,
         "content-disposition": `attachment; filename="${organizationArchiveFilename(archive.organization.slug)}"`,
         "cache-control": "private, no-store",
+        "content-security-policy": "sandbox",
+        "cross-origin-resource-policy": "same-origin",
+        "referrer-policy": "no-referrer",
         "x-content-type-options": "nosniff",
       },
     });

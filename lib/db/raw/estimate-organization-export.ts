@@ -56,7 +56,7 @@ export function organizationExportEstimateStmt(
       INNER JOIN public.projects p ON p.id = t.project_id
       WHERE p.organization_id = ${organizationId}::uuid
       UNION ALL
-      SELECT to_jsonb(tl) AS payload
+      SELECT to_jsonb(tl) - 'metadata' AS payload
       FROM public.task_links tl
       INNER JOIN public.tasks t ON t.id = tl.task_id
       INNER JOIN public.projects p ON p.id = t.project_id
@@ -87,7 +87,6 @@ export function organizationExportEstimateStmt(
         n.tags,
         n.category,
         n.version,
-        n.embedding_status,
         n.share_requested_by,
         n.created_by,
         n.updated_by,

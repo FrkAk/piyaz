@@ -1,6 +1,7 @@
 /** Integration coverage for organization workspace export and import data paths. */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import {
   exportOrganizationWorkspace,
   importOrganizationWorkspace,
@@ -11,6 +12,9 @@ import {
   OrganizationArchiveError,
   type OrganizationArchive,
 } from "@/lib/organization-portability/archive";
+import { withUserContext } from "@/lib/db/rls";
+import { unwrapDriverError } from "@/lib/db/errors";
+import { organizationExportLimits } from "@/lib/db/schema";
 import { superuserPool } from "@/tests/setup/global";
 import { truncateAll } from "@/tests/setup/schema";
 import { seedSecondMember, seedUserOrgProject } from "@/tests/setup/seed";
@@ -82,7 +86,7 @@ function sortCanonical<T>(rows: T[]): T[] {
  * Remove archive-local ids while retaining every portable field and relation.
  *
  * @param archive - Source or restored organization archive.
- * @param imported - Whether note authors should reflect import normalization.
+ * @param imported - Whether rows should reflect import normalization.
  * @returns Canonical workspace value suitable for round-trip comparison.
  */
 function canonicalWorkspace(
@@ -199,6 +203,18 @@ function canonicalWorkspace(
           ...event
         }) => ({
           ...event,
+          actor: imported ? "exporter" : event.actor,
+          source: imported ? "web" : event.source,
+          summary: imported ? `[imported] ${event.summary}` : event.summary,
+          metadata: imported
+            ? {
+                ...(event.metadata ?? {}),
+                portabilityImport: {
+                  originalActor: event.actor,
+                  originalSource: event.source,
+                },
+              }
+            : event.metadata,
           projectRef: projectRefs.get(projectSourceId),
           taskRef: taskSourceId ? taskRefs.get(taskSourceId) : null,
           noteRef: noteSourceId ? noteRefs.get(noteSourceId) : null,
@@ -357,9 +373,9 @@ async function seedPortableWorkspace(
       task_id, kind, url, label, created_at, created_by, metadata
     ) VALUES
       (${task.id}, 'doc', 'https://example.test/owner', 'Owner docs',
-       ${T2}, ${base.userId}, '{"owner":true}'::jsonb),
+       ${T2}, ${base.userId}, '{"accessToken":"task-link-secret"}'::jsonb),
       (${task.id}, 'issue', 'https://example.test/member', 'Member issue',
-       ${T3}, ${otherUserId}, '{"owner":false}'::jsonb)
+       ${T3}, ${otherUserId}, '{"accessToken":"member-link-secret"}'::jsonb)
   `;
   const [ownerPrivateNote] = await sql<{ id: string }[]>`
     INSERT INTO notes (
@@ -442,7 +458,13 @@ async function seedPortableWorkspace(
        'web', NULL, 'created the project', NULL, NULL),
       (${base.projectId}, ${task.id}, NULL, 'status_changed', ${T2},
        ${otherUserId}, 'mcp', 'private-client', 'changed status to active', NULL,
-       '{"from":"draft","to":"active"}'::jsonb),
+       jsonb_build_object(
+         'from', 'draft',
+         'to', 'active',
+         'actorUserId', ${otherUserId}::text,
+         'email', ${otherEmail}::text,
+         'accessToken', 'activity-secret'
+       )),
       (${base.projectId}, ${task.id}, NULL, 'criterion_added',
        ${"2026-08-24T11:10:00.000Z"}, ${base.userId}, 'web', NULL,
        'added criterion', ${criterionId}, NULL),
@@ -594,6 +616,11 @@ describe("exportOrganizationWorkspace", () => {
     expect(serialized).not.toContain("private shared-note edit");
     expect(serialized).not.toContain("updated other private note");
     expect(serialized).not.toContain("private-client");
+    expect(serialized).not.toContain("task-link-secret");
+    expect(serialized).not.toContain("member-link-secret");
+    expect(serialized).not.toContain("activity-secret");
+    expect(serialized).not.toContain("accessToken");
+    expect(serialized).not.toContain("embeddingStatus");
     expect(archive.taskAssignments).toHaveLength(1);
   });
 
@@ -649,6 +676,35 @@ describe("exportOrganizationWorkspace", () => {
     expect(rejected?.reason).toBeInstanceOf(OrganizationExportLimitError);
   });
 
+  test("does not let the app role delete or backdate its export allowance", async () => {
+    const fixture = await seedUserOrgProject("export-limit-rls");
+    await exportOrganizationWorkspace(fixture.userId, fixture.organizationId);
+
+    const deleted = await withUserContext(fixture.userId, (tx) =>
+      tx
+        .delete(organizationExportLimits)
+        .where(eq(organizationExportLimits.userId, fixture.userId))
+        .returning({ userId: organizationExportLimits.userId }),
+    );
+    expect(deleted).toEqual([]);
+
+    let backdateError: unknown;
+    try {
+      await withUserContext(fixture.userId, (tx) =>
+        tx
+          .update(organizationExportLimits)
+          .set({ lastStartedAt: new Date("2020-01-01T00:00:00.000Z") })
+          .where(eq(organizationExportLimits.userId, fixture.userId)),
+      );
+    } catch (error) {
+      backdateError = error;
+    }
+    expect(unwrapDriverError(backdateError)?.code).toBe("42501");
+    await expect(
+      exportOrganizationWorkspace(fixture.userId, fixture.organizationId),
+    ).rejects.toBeInstanceOf(OrganizationExportLimitError);
+  });
+
   test("rejects an oversized workspace before loading its complete archive", async () => {
     const fixture = await seedUserOrgProject("export-preflight-size");
     const [note] = await superuserPool()<{ id: string }[]>`
@@ -687,6 +743,15 @@ describe("importOrganizationWorkspace", () => {
       source.ownerUserId,
       source.organizationId,
     );
+    const expectedArchive = structuredClone(archive);
+    const editableStatusEvent = archive.activityEvents.find(
+      (event) => event.type === "status_changed",
+    );
+    if (!editableStatusEvent) throw new Error("Missing status fixture event");
+    editableStatusEvent.metadata = {
+      ...(editableStatusEvent.metadata ?? {}),
+      accessToken: "forged-import-secret",
+    };
     const destination = await seedEmptyOwnedOrganization(
       "roundtrip-destination",
     );
@@ -707,8 +772,9 @@ describe("importOrganizationWorkspace", () => {
       noteCount: archive.notes.length,
       activityEventCount: archive.activityEvents.length,
     });
+    expect(JSON.stringify(restored)).not.toContain("forged-import-secret");
     expect(canonicalWorkspace(restored, false)).toEqual(
-      canonicalWorkspace(archive, true),
+      canonicalWorkspace(expectedArchive, true),
     );
     const sourceIds = new Set([
       ...archive.projects.map((row) => row.sourceId),
@@ -730,17 +796,37 @@ describe("importOrganizationWorkspace", () => {
     );
     expect(
       restored.activityEvents.find(
-        (event) => event.summary === "added criterion",
+        (event) => event.summary === "[imported] added criterion",
       )?.targetRef,
     ).toBe(restored.taskAcceptanceCriteria[0]?.sourceId);
     expect(
       restored.activityEvents.find(
-        (event) => event.summary === "added dependency",
+        (event) => event.summary === "[imported] added dependency",
       )?.targetRef,
     ).toBe(
       restored.tasks.find((task) => task.title === "Import workspace")
         ?.sourceId,
     );
+    expect(
+      restored.activityEvents.every(
+        (event) =>
+          event.actor === "exporter" &&
+          event.source === "web" &&
+          event.summary.startsWith("[imported] "),
+      ),
+    ).toBe(true);
+    expect(
+      restored.activityEvents.find((event) =>
+        event.summary.endsWith("changed status to active"),
+      )?.metadata,
+    ).toEqual({
+      from: "draft",
+      to: "active",
+      portabilityImport: {
+        originalActor: null,
+        originalSource: "mcp",
+      },
+    });
     expect(
       restored.notes.find((note) => note.title === "Shared guide")?.deletedAt,
     ).toBe(T4);

@@ -12,6 +12,12 @@ export const MAX_ORGANIZATION_ARCHIVE_BYTES =
 /** Rolling cooldown between admitted workspace archive generations. */
 export const ORGANIZATION_EXPORT_COOLDOWN_DAYS = 30;
 
+/** Header required on the state-changing workspace export request. */
+export const ORGANIZATION_EXPORT_INTENT_HEADER = "x-piyaz-export";
+
+/** Value required to distinguish the application's non-simple POST request. */
+export const ORGANIZATION_EXPORT_INTENT_VALUE = "true";
+
 /**
  * Build a safe deterministic download filename from an organization slug.
  *

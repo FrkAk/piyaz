@@ -21,12 +21,18 @@ export {
   MAX_ORGANIZATION_ARCHIVE_BYTES,
   MAX_ORGANIZATION_ARCHIVE_MIB,
   ORGANIZATION_EXPORT_COOLDOWN_DAYS,
+  ORGANIZATION_EXPORT_INTENT_HEADER,
+  ORGANIZATION_EXPORT_INTENT_VALUE,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   organizationArchiveFilename,
 } from "@/lib/organization-portability/client";
 
 /** Maximum total number of workspace rows accepted in one archive. */
 export const MAX_ORGANIZATION_ARCHIVE_ROWS = 50_000;
+
+const MAX_ARCHIVE_STRING_ARRAY_ITEMS = 5_000;
+const MAX_ARCHIVE_METADATA_KEYS = 1_000;
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
 
 const archiveCollectionNames = [
   "projects",
@@ -49,10 +55,23 @@ const timestampSchema = z.iso.datetime({ offset: true });
 const nullableTimestampSchema = timestampSchema.nullable();
 const sourceIdSchema = z.uuid();
 const actorSchema = z.enum(["exporter"]).nullable();
-const stringArraySchema = z.array(z.string());
-const metadataSchema = z.record(z.string(), z.unknown()).nullable();
-const nonnegativeIntegerSchema = z.number().int().nonnegative();
-const positiveIntegerSchema = z.number().int().positive();
+const stringArraySchema = z
+  .array(z.string())
+  .max(MAX_ARCHIVE_STRING_ARRAY_ITEMS);
+const metadataSchema = z
+  .record(z.string(), z.unknown())
+  .nullable()
+  .refine(
+    (value) =>
+      value === null || Object.keys(value).length <= MAX_ARCHIVE_METADATA_KEYS,
+  );
+const postgresIntegerSchema = z
+  .number()
+  .int()
+  .min(-POSTGRES_INTEGER_MAX - 1)
+  .max(POSTGRES_INTEGER_MAX);
+const nonnegativeIntegerSchema = postgresIntegerSchema.nonnegative();
+const positiveIntegerSchema = postgresIntegerSchema.positive();
 
 /**
  * Measure a string's UTF-8 byte length.
@@ -93,7 +112,7 @@ const taskSchema = z.strictObject({
   sequenceNumber: positiveIntegerSchema,
   description: z.string(),
   status: z.enum(TASK_STATUSES),
-  order: z.number().int(),
+  order: postgresIntegerSchema,
   category: z.string().nullable(),
   implementationPlan: z.string().nullable(),
   executionRecord: z.string().nullable(),
@@ -171,7 +190,6 @@ const taskLinkSchema = z.strictObject({
   label: z.string().nullable(),
   createdAt: timestampSchema,
   createdBy: actorSchema,
-  metadata: metadataSchema,
 });
 
 const activityEventSchema = z
@@ -250,7 +268,6 @@ const noteSchema = z.strictObject({
   tags: stringArraySchema,
   category: z.string().nullable(),
   version: positiveIntegerSchema,
-  embeddingStatus: z.enum(["none", "pending", "ready", "failed", "stale"]),
   shareRequestedBy: actorSchema,
   createdBy: actorSchema,
   updatedBy: actorSchema,
@@ -784,8 +801,8 @@ export function decodeOrganizationArchive(
  * Serialize an already-validated organization archive.
  *
  * Validation is the producer's job (`exportOrganizationWorkspace` returns a
- * parsed archive); re-parsing here would deep-clone up to 100 MiB inside a
- * memory-bounded isolate for no new guarantee.
+ * parsed archive); re-parsing here would deep-clone the complete bounded
+ * payload inside a memory-constrained isolate for no new guarantee.
  *
  * @param archive - Validated archive to encode as JSON text.
  * @returns Compact JSON serialization.
