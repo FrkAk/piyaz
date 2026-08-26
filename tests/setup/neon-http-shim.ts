@@ -25,6 +25,14 @@ export type NeonHttpShim = {
   uninstall: () => Promise<void>;
 };
 
+/** Handle for a local HTTP server implementing the Neon SQL wire contract. */
+export type NeonHttpProxy = {
+  /** Loopback endpoint that a Neon client can use as `fetchEndpoint`. */
+  endpoint: string;
+  /** Stop the server and close every backing Postgres connection. */
+  close: () => Promise<void>;
+};
+
 /** Wire shape of one query inside the neon-http request body. */
 type WireQuery = { query: string; params: unknown[] };
 
@@ -43,8 +51,31 @@ type WireResult = {
   rowAsArray: boolean;
 };
 
+/** HTTP status and JSON payload returned by the shared wire executor. */
+type WireResponse = {
+  /** HTTP status code. */
+  status: number;
+  /** Neon-compatible JSON response body. */
+  payload: unknown;
+};
+
 /** Process-wide postgres-js clients keyed by connection string. */
 const shimClients = new Map<string, ReturnType<typeof postgres>>();
+
+/**
+ * Read a header from either the Neon's plain-object fetch headers or a real
+ * HTTP request, whose `Headers` implementation lowercases names.
+ *
+ * @param headers - Request headers keyed by original or lowercase name.
+ * @param name - Canonical Neon header name.
+ * @returns The header value, if present.
+ */
+function wireHeader(
+  headers: Record<string, string>,
+  name: string,
+): string | undefined {
+  return headers[name] ?? headers[name.toLowerCase()];
+}
 
 /**
  * Resolve (and cache) a postgres-js client for the connection string the
@@ -76,13 +107,13 @@ function clientFor(connectionString: string): ReturnType<typeof postgres> {
  */
 function beginOptions(headers: Record<string, string>): string {
   const parts: string[] = [];
-  const isolation = headers["Neon-Batch-Isolation-Level"];
+  const isolation = wireHeader(headers, "Neon-Batch-Isolation-Level");
   if (isolation) {
     parts.push(
       `isolation level ${isolation.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()}`,
     );
   }
-  const readOnly = headers["Neon-Batch-Read-Only"];
+  const readOnly = wireHeader(headers, "Neon-Batch-Read-Only");
   if (readOnly === "true") parts.push("read only");
   return parts.join(" ");
 }
@@ -149,6 +180,110 @@ function shimResponse(status: number, payload: unknown) {
 }
 
 /**
+ * Execute one Neon HTTP request against the role-bearing Postgres URL from
+ * its connection header.
+ *
+ * @param headers - Neon request headers.
+ * @param body - Parsed single-query or batch request body.
+ * @returns Neon-compatible status and JSON payload.
+ */
+async function executeWireRequest(
+  headers: Record<string, string>,
+  body: { queries: WireQuery[] } | WireQuery,
+): Promise<WireResponse> {
+  const isBatch = "queries" in body;
+  const queries = isBatch ? body.queries : [body];
+  const connectionString = wireHeader(headers, "Neon-Connection-String");
+  if (!connectionString) {
+    return { status: 400, payload: { message: "Missing connection string" } };
+  }
+  const client = clientFor(connectionString);
+  try {
+    if (isBatch) {
+      const options = beginOptions(headers);
+      const run = async (tx: unknown) => {
+        const handle = tx as WireHandle;
+        const results: WireResult[] = [];
+        for (const wire of queries) {
+          results.push(await runWireQuery(handle, wire));
+        }
+        return results;
+      };
+      const results = await (options
+        ? client.begin(options, run)
+        : client.begin(run));
+      return { status: 200, payload: { results } };
+    }
+    return {
+      status: 200,
+      payload: await runWireQuery(client as unknown as WireHandle, queries[0]),
+    };
+  } catch (error) {
+    const err = error as {
+      message: string;
+      code?: string;
+      severity?: string;
+    };
+    return {
+      status: 400,
+      payload: {
+        message: err.message,
+        code: err.code,
+        severity: err.severity,
+      },
+    };
+  }
+}
+
+/**
+ * Close every Postgres client opened by the in-process or HTTP shim.
+ *
+ * @returns Promise settled after all clients have closed or failed to close.
+ */
+async function closeShimClients(): Promise<void> {
+  const clients = [...shimClients.values()];
+  shimClients.clear();
+  await Promise.allSettled(clients.map((client) => client.end({ timeout: 5 })));
+}
+
+/**
+ * Serve a real loopback HTTP endpoint implementing the Neon SQL API over the
+ * local Postgres test database.
+ *
+ * @returns Running proxy handle.
+ */
+export function startNeonHttpProxy(): NeonHttpProxy {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request): Promise<Response> {
+      const headers = Object.fromEntries(request.headers.entries());
+      const body = (await request.json()) as
+        | { queries: WireQuery[] }
+        | WireQuery;
+      const result = await executeWireRequest(headers, body);
+      if (result.status >= 400) {
+        const connectionString = wireHeader(headers, "Neon-Connection-String");
+        const redacted = connectionString
+          ? connectionString.replace(/:[^@]+@/, ":***@")
+          : "missing";
+        console.error(
+          `Local Neon proxy rejected ${redacted}: ${JSON.stringify(result.payload)}`,
+        );
+      }
+      return Response.json(result.payload, { status: result.status });
+    },
+  });
+  return {
+    endpoint: `http://${server.hostname}:${server.port}/sql`,
+    close: async () => {
+      await server.stop(true);
+      await closeShimClients();
+    },
+  };
+}
+
+/**
  * Point `neonConfig.fetchFunction` at an in-process implementation of the
  * Neon HTTP SQL API backed by the local test Postgres. Batches run inside
  * one real transaction honoring the `Neon-Batch-Isolation-Level` and
@@ -174,45 +309,15 @@ export function installNeonHttpShim(): NeonHttpShim {
     const queries = isBatch ? body.queries : [body];
     requests.push({ url, headers, queries });
 
-    const connectionString = headers["Neon-Connection-String"];
-    const client = clientFor(connectionString);
-    try {
-      if (isBatch) {
-        const options = beginOptions(headers);
-        const run = async (tx: unknown) => {
-          const handle = tx as WireHandle;
-          const results: WireResult[] = [];
-          for (const wire of queries) {
-            results.push(await runWireQuery(handle, wire));
-          }
-          return results;
-        };
-        const results = await (options
-          ? client.begin(options, run)
-          : client.begin(run));
-        return shimResponse(200, { results });
-      }
-      return shimResponse(
-        200,
-        await runWireQuery(client as unknown as WireHandle, queries[0]),
-      );
-    } catch (e) {
-      const err = e as { message: string; code?: string; severity?: string };
-      return shimResponse(400, {
-        message: err.message,
-        code: err.code,
-        severity: err.severity,
-      });
-    }
+    const result = await executeWireRequest(headers, body);
+    return shimResponse(result.status, result.payload);
   };
 
   return {
     requests,
     uninstall: async () => {
       neonConfig.fetchFunction = undefined;
-      const clients = [...shimClients.values()];
-      shimClients.clear();
-      await Promise.allSettled(clients.map((c) => c.end({ timeout: 5 })));
+      await closeShimClients();
     },
   };
 }

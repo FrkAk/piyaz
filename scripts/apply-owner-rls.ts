@@ -1,23 +1,22 @@
 /**
- * Apply the owner-managed RLS SQL: the extensions (docker/extensions.sql),
- * the piyaz_auth grants (docker/grants-auth.sql), the request-path role
- * settings (docker/role-settings.sql) and the SECURITY DEFINER helpers +
- * triggers (docker/rls-functions.sql). These create extensions, read or own
- * piyaz_auth, or need ADMIN OPTION on a role, so they must run as the
- * database owner, never the least-privilege migration role. Idempotent
- * (CREATE EXTENSION IF NOT EXISTS / CREATE OR REPLACE / GRANT /
- * ALTER ROLE ... SET).
+ * Apply the owner-managed database SQL: extensions, the piyaz_auth schema,
+ * grants, request-path role settings, and SECURITY DEFINER helpers/triggers.
+ * These create extensions, alter or read piyaz_auth, or need ADMIN OPTION on
+ * a role, so they must run as the database owner, never the least-privilege
+ * migration role. Every file is idempotent.
  *
- * Reads DATABASE_OWNER_URL. Set this only in a trusted local shell, never as a
- * CI secret. Nothing here lands on a deploy: run it once per environment, and
- * against hosted dev before hosted prod.
+ * Reads DATABASE_OWNER_URL and BETTER_AUTH_URL. Set the owner URL only in a
+ * trusted local shell, never as a CI secret. Nothing here lands on a deploy:
+ * run it once per environment, and against hosted dev before hosted prod.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
+import { getOAuthResourceIdentifiers } from "@/lib/auth/oauth-resource";
 
-const OWNER_RLS_FILES = [
+const OWNER_MANAGED_FILES = [
   "extensions.sql",
+  "init-auth.sql",
   "grants-auth.sql",
   "role-settings.sql",
   "rls-functions.sql",
@@ -52,17 +51,54 @@ function readDockerSql(file: string): string {
 }
 
 /**
+ * Resolve the environment-specific OAuth resources before database writes.
+ *
+ * @throws Error when BETTER_AUTH_URL is unset.
+ * @returns The configured origin and canonical MCP resource identifiers.
+ */
+function resolveOAuthResources(): string[] {
+  if (!process.env.BETTER_AUTH_URL) {
+    throw new Error(
+      "BETTER_AUTH_URL is required so db:rls:owner can seed OAuth resources before Better Auth 1.7 boots.",
+    );
+  }
+  return getOAuthResourceIdentifiers();
+}
+
+/**
+ * Seed the environment-specific OAuth resources before the 1.7 runtime boots.
+ *
+ * @param sql - Active database-owner client.
+ * @param identifiers - Validated OAuth resource identifiers.
+ * @returns A promise that resolves after all resources are present.
+ */
+async function seedOAuthResources(
+  sql: ReturnType<typeof postgres>,
+  identifiers: readonly string[],
+): Promise<void> {
+  for (const identifier of identifiers) {
+    await sql`
+      INSERT INTO piyaz_auth."oauthResource" ("identifier", "name")
+      VALUES (${identifier}, ${identifier})
+      ON CONFLICT ("identifier") DO NOTHING
+    `;
+  }
+}
+
+/**
  * Apply the owner-managed grants and functions.
  *
  * @param url - Database-owner connection string.
  * @throws Error when a file fails to apply.
  */
 async function applyOwnerRls(url: string): Promise<void> {
+  const oauthResources = resolveOAuthResources();
   const sql = postgres(url, { max: 1, onnotice: () => undefined });
   try {
-    for (const file of OWNER_RLS_FILES) {
+    for (const file of OWNER_MANAGED_FILES) {
       await sql.unsafe(readDockerSql(file));
     }
+    await seedOAuthResources(sql, oauthResources);
   } finally {
     await sql.end({ timeout: 5 });
   }

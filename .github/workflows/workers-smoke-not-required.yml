@@ -21,6 +21,7 @@ on:
       - 'open-next.config.ts'
       - 'wrangler.jsonc'
       - 'scripts/smoke-workers.ts'
+      - 'patches/**'
       - 'package.json'
       - 'bun.lock'
 

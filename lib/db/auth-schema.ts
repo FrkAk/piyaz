@@ -4,6 +4,8 @@ import {
   text,
   boolean,
   timestamp,
+  integer,
+  jsonb,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -69,6 +71,7 @@ export const account = piyazAuth.table(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     accountId: text("accountId").notNull(),
+    issuer: text("issuer").notNull(),
     providerId: text("providerId").notNull(),
     userId: uuid("userId")
       .notNull()
@@ -89,7 +92,13 @@ export const account = piyazAuth.table(
       .defaultNow(),
     updatedAt: timestamp("updatedAt", { withTimezone: true }).notNull(),
   },
-  (table) => [index("account_userId_idx").on(table.userId)],
+  (table) => [
+    index("account_userId_idx").on(table.userId),
+    uniqueIndex("account_issuer_accountId_uidx").on(
+      table.issuer,
+      table.accountId,
+    ),
+  ],
 );
 
 export const verification = piyazAuth.table(
@@ -171,6 +180,8 @@ export const jwks = piyazAuth.table("jwks", {
   privateKey: text("privateKey").notNull(),
   createdAt: timestamp("createdAt", { withTimezone: true }).notNull(),
   expiresAt: timestamp("expiresAt", { withTimezone: true }),
+  alg: text("alg"),
+  crv: text("crv"),
 });
 
 /**
@@ -185,6 +196,7 @@ export const oauthClient = piyazAuth.table(
     id: uuid("id").primaryKey().defaultRandom(),
     clientId: text("clientId").notNull().unique(),
     clientSecret: text("clientSecret"),
+    clientDiscoveryId: text("clientDiscoveryId"),
     name: text("name"),
     icon: text("icon"),
     metadata: text("metadata"),
@@ -194,8 +206,9 @@ export const oauthClient = piyazAuth.table(
     grantTypes: text("grantTypes").array(),
     responseTypes: text("responseTypes").array(),
     scopes: text("scopes").array(),
-    type: text("type"),
-    public: boolean("public"),
+    clientCredentialsScopes: text("clientCredentialsScopes")
+      .array()
+      .default([]),
     disabled: boolean("disabled").default(false),
     skipConsent: boolean("skipConsent"),
     enableEndSession: boolean("enableEndSession"),
@@ -208,6 +221,14 @@ export const oauthClient = piyazAuth.table(
     softwareId: text("softwareId"),
     softwareVersion: text("softwareVersion"),
     softwareStatement: text("softwareStatement"),
+    backchannelLogoutUri: text("backchannelLogoutUri"),
+    backchannelLogoutSessionRequired: boolean(
+      "backchannelLogoutSessionRequired",
+    ),
+    applicationType: text("applicationType"),
+    jwks: text("jwks"),
+    jwksUri: text("jwksUri"),
+    dpopBoundAccessTokens: boolean("dpopBoundAccessTokens").default(false),
     referenceId: text("referenceId"),
     userId: uuid("userId").references(() => user.id, { onDelete: "cascade" }),
     createdAt: timestamp("createdAt", { withTimezone: true })
@@ -223,25 +244,90 @@ export const oauthClient = piyazAuth.table(
   ],
 );
 
+export const oauthResource = piyazAuth.table(
+  "oauthResource",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    identifier: text("identifier").notNull().unique(),
+    name: text("name").notNull(),
+    accessTokenTtl: integer("accessTokenTtl"),
+    refreshTokenTtl: integer("refreshTokenTtl"),
+    signingAlgorithm: text("signingAlgorithm"),
+    signingKeyId: text("signingKeyId"),
+    allowedScopes: text("allowedScopes").array(),
+    customClaims: jsonb("customClaims"),
+    dpopBoundAccessTokensRequired: boolean(
+      "dpopBoundAccessTokensRequired",
+    ).default(false),
+    disabled: boolean("disabled").default(false),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow(),
+    policyVersion: integer("policyVersion").default(1),
+    metadata: jsonb("metadata"),
+  },
+  (table) => [
+    uniqueIndex("oauthResource_identifier_uidx").on(table.identifier),
+  ],
+);
+
+export const oauthClientResource = piyazAuth.table(
+  "oauthClientResource",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: text("clientId")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    resourceId: text("resourceId")
+      .notNull()
+      .references(() => oauthResource.identifier, { onDelete: "cascade" }),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("oauthClientResource_clientId_idx").on(table.clientId),
+    index("oauthClientResource_resourceId_idx").on(table.resourceId),
+    uniqueIndex("oauthClientResource_clientId_resourceId_uidx").on(
+      table.clientId,
+      table.resourceId,
+    ),
+  ],
+);
+
 export const oauthAccessToken = piyazAuth.table(
   "oauthAccessToken",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    token: text("token").notNull(),
-    clientId: text("clientId").notNull(),
-    sessionId: uuid("sessionId"),
-    refreshId: uuid("refreshId"),
+    token: text("token").notNull().unique(),
+    clientId: text("clientId")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    sessionId: uuid("sessionId").references(() => session.id, {
+      onDelete: "set null",
+    }),
+    refreshId: uuid("refreshId").references(() => oauthRefreshToken.id, {
+      onDelete: "cascade",
+    }),
     userId: uuid("userId").references(() => user.id, { onDelete: "cascade" }),
     referenceId: text("referenceId"),
+    authorizationCodeId: text("authorizationCodeId"),
+    resources: text("resources").array(),
+    requestedUserInfoClaims: text("requestedUserInfoClaims").array(),
     scopes: text("scopes").array().notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
     expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+    revoked: timestamp("revoked", { withTimezone: true }),
+    confirmation: jsonb("confirmation"),
   },
   (table) => [
     index("oauthAccessToken_clientId_idx").on(table.clientId),
+    index("oauthAccessToken_sessionId_idx").on(table.sessionId),
     index("oauthAccessToken_userId_idx").on(table.userId),
+    index("oauthAccessToken_authorizationCodeId_idx").on(
+      table.authorizationCodeId,
+    ),
+    index("oauthAccessToken_refreshId_idx").on(table.refreshId),
   ],
 );
 
@@ -249,16 +335,29 @@ export const oauthRefreshToken = piyazAuth.table(
   "oauthRefreshToken",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    token: text("token").notNull(),
-    clientId: text("clientId").notNull(),
-    sessionId: uuid("sessionId"),
+    token: text("token").notNull().unique(),
+    clientId: text("clientId")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
+    sessionId: uuid("sessionId").references(() => session.id, {
+      onDelete: "set null",
+    }),
     userId: uuid("userId")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     referenceId: text("referenceId"),
+    authorizationCodeId: text("authorizationCodeId"),
+    resources: text("resources").array(),
+    requestedUserInfoClaims: text("requestedUserInfoClaims").array(),
     scopes: text("scopes").array().notNull(),
     revoked: timestamp("revoked", { withTimezone: true }),
+    rotatedAt: timestamp("rotatedAt", { withTimezone: true }),
+    rotationReplayResponse: text("rotationReplayResponse"),
+    rotationReplayExpiresAt: timestamp("rotationReplayExpiresAt", {
+      withTimezone: true,
+    }),
     authTime: timestamp("authTime", { withTimezone: true }),
+    confirmation: jsonb("confirmation"),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -266,7 +365,11 @@ export const oauthRefreshToken = piyazAuth.table(
   },
   (table) => [
     index("oauthRefreshToken_clientId_idx").on(table.clientId),
+    index("oauthRefreshToken_sessionId_idx").on(table.sessionId),
     index("oauthRefreshToken_userId_idx").on(table.userId),
+    index("oauthRefreshToken_authorizationCodeId_idx").on(
+      table.authorizationCodeId,
+    ),
   ],
 );
 
@@ -274,9 +377,13 @@ export const oauthConsent = piyazAuth.table(
   "oauthConsent",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    clientId: text("clientId").notNull(),
+    clientId: text("clientId")
+      .notNull()
+      .references(() => oauthClient.clientId, { onDelete: "cascade" }),
     userId: uuid("userId").references(() => user.id, { onDelete: "cascade" }),
     referenceId: text("referenceId"),
+    resources: text("resources").array(),
+    requestedUserInfoClaims: text("requestedUserInfoClaims").array(),
     scopes: text("scopes").array().notNull(),
     createdAt: timestamp("createdAt", { withTimezone: true })
       .notNull()
@@ -290,3 +397,8 @@ export const oauthConsent = piyazAuth.table(
     index("oauthConsent_userId_idx").on(table.userId),
   ],
 );
+
+export const oauthClientAssertion = piyazAuth.table("oauthClientAssertion", {
+  id: text("id").primaryKey(),
+  expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+});

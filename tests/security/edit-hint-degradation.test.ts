@@ -19,6 +19,7 @@ import { translateError } from "@/lib/graph/tools/shared";
  */
 
 let failTagRead = false;
+const getProjectTags = realProject.getProjectTags;
 
 /**
  * Build an error shaped like the driver's statement-timeout abort.
@@ -39,7 +40,7 @@ mock.module("@/lib/data/project", () => ({
     ...args: Parameters<typeof realProject.getProjectTags>
   ) => {
     if (failTagRead) throw statementTimeout();
-    return realProject.getProjectTags(...args);
+    return getProjectTags(...args);
   }) as typeof realProject.getProjectTags,
 }));
 

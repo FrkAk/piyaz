@@ -1,0 +1,12 @@
+diff --git a/dist/authorize-BP2_wo6r.mjs b/dist/authorize-BP2_wo6r.mjs
+index 7d7e839643dd9ea3b4f869c9c56331bd2a25ea49..b82a16252450195d7a3441cf2f3a53475c197984 100644
+--- a/dist/authorize-BP2_wo6r.mjs
++++ b/dist/authorize-BP2_wo6r.mjs
+@@ -4398,7 +4398,6 @@ const oauthProvider = (options) => {
+ 		onRequest: handleIssuerMetadataRequest,
+ 		init: async (ctx) => {
+ 			if (ctx.options.secondaryStorage && ctx.options.session?.storeSessionInDatabase !== true) throw new BetterAuthError("OAuth Provider requires `session.storeSessionInDatabase: true` when using secondaryStorage");
+-			await seedResources(ctx, opts);
+ 			logEnforcePerClientResourcesResolution(opts);
+ 			if (!opts.disableJwtPlugin) {
+ 				const jwtPluginOptions = getJwtPlugin(ctx)?.options;

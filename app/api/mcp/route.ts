@@ -2,6 +2,11 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { JSONWebKeySet } from "jose";
 import { verifyJwsAccessToken } from "better-auth/oauth2";
 import { auth, GRANTABLE_OAUTH_SCOPES } from "@/lib/auth";
+import {
+  getAuthBaseUrl,
+  getAuthOrigin,
+  getOAuthResourceIdentifiers,
+} from "@/lib/auth/oauth-resource";
 import { createMcpServer, mcpCallerKey } from "@/lib/mcp/create-server";
 import {
   MAX_JSON_RPC_BATCH,
@@ -19,10 +24,10 @@ import {
   mcpRateLimitMessage,
 } from "@/lib/api/rate-limit";
 
-const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
-const origin = new URL(baseUrl).origin;
+const baseUrl = getAuthBaseUrl();
+const origin = getAuthOrigin();
 const resourceMetadataUrl = `${origin}/.well-known/oauth-protected-resource`;
-const audiences: [string, string] = [origin, `${origin}/api/mcp`];
+const audiences = getOAuthResourceIdentifiers();
 const issuer = `${baseUrl}/api/auth`;
 
 /**

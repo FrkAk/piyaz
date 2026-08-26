@@ -3,10 +3,9 @@ import { logTokenGrant } from "@/lib/auth/log-token-grant";
 import { readBodyBounded } from "@/lib/api/read-body-bounded";
 import { ensureNoStore } from "@/lib/security/headers";
 import { stampClientIpHeader } from "@/lib/security/client-ip";
+import { getMcpResource } from "@/lib/auth/oauth-resource";
 
-const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
-const origin = new URL(baseUrl).origin;
-const mcpResource = `${origin}/api/mcp`;
+const mcpResource = getMcpResource();
 const grantsNeedingResource = new Set(["authorization_code", "refresh_token"]);
 
 /**

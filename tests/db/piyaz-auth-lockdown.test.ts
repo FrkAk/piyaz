@@ -21,6 +21,9 @@ describe("app_user piyaz_auth lockdown", () => {
     "oauthAccessToken",
     "oauthRefreshToken",
     "oauthConsent",
+    "oauthClientAssertion",
+    "oauthClientResource",
+    "oauthResource",
     "oauthClient",
     "jwks",
   ];

@@ -17,6 +17,9 @@ interface ExpectedContract {
   functions: string[];
   triggers: Array<{ table: string; trigger: string }>;
   extensions: Array<{ name: string; schema: string | null }>;
+  authColumns: Array<{ table: string; column: string }>;
+  authIndexes: string[];
+  authRoleTables: string[];
 }
 
 /**
@@ -102,12 +105,61 @@ function expectedContract(): ExpectedContract {
     ),
   ].map((m) => ({ name: m[1], schema: m[2] ?? null }));
 
+  const authColumns = [
+    { table: "account", column: "issuer" },
+    { table: "jwks", column: "alg" },
+    { table: "jwks", column: "crv" },
+    { table: "oauthClient", column: "clientDiscoveryId" },
+    { table: "oauthClient", column: "clientCredentialsScopes" },
+    { table: "oauthClient", column: "applicationType" },
+    { table: "oauthClient", column: "backchannelLogoutUri" },
+    { table: "oauthClient", column: "backchannelLogoutSessionRequired" },
+    { table: "oauthClient", column: "jwks" },
+    { table: "oauthClient", column: "jwksUri" },
+    { table: "oauthClient", column: "dpopBoundAccessTokens" },
+    { table: "oauthResource", column: "identifier" },
+    { table: "oauthClientResource", column: "resourceId" },
+    { table: "oauthClientAssertion", column: "expiresAt" },
+    { table: "oauthAccessToken", column: "authorizationCodeId" },
+    { table: "oauthAccessToken", column: "resources" },
+    { table: "oauthAccessToken", column: "requestedUserInfoClaims" },
+    { table: "oauthAccessToken", column: "revoked" },
+    { table: "oauthAccessToken", column: "confirmation" },
+    { table: "oauthRefreshToken", column: "authorizationCodeId" },
+    { table: "oauthRefreshToken", column: "resources" },
+    { table: "oauthRefreshToken", column: "requestedUserInfoClaims" },
+    { table: "oauthRefreshToken", column: "rotatedAt" },
+    { table: "oauthRefreshToken", column: "rotationReplayResponse" },
+    { table: "oauthRefreshToken", column: "rotationReplayExpiresAt" },
+    { table: "oauthRefreshToken", column: "confirmation" },
+    { table: "oauthConsent", column: "resources" },
+    { table: "oauthConsent", column: "requestedUserInfoClaims" },
+  ];
+
+  const authIndexes = [
+    "account_issuer_accountId_uidx",
+    "oauthResource_identifier_uidx",
+    "oauthClientResource_clientId_resourceId_uidx",
+    "oauthAccessToken_sessionId_idx",
+    "oauthAccessToken_authorizationCodeId_idx",
+    "oauthAccessToken_refreshId_idx",
+    "oauthRefreshToken_sessionId_idx",
+    "oauthRefreshToken_authorizationCodeId_idx",
+  ];
+
   return {
     policies,
     forcedTables: [...new Set(forcedTables)],
     functions: [...new Set(functions)],
     triggers,
     extensions,
+    authColumns,
+    authIndexes,
+    authRoleTables: [
+      "oauthResource",
+      "oauthClientResource",
+      "oauthClientAssertion",
+    ],
   };
 }
 
@@ -169,6 +221,24 @@ async function findMissing(
   );
   const liveExtensionNames = new Set(liveExtensions.map((r) => r.extname));
 
+  const liveAuthColumns = await sql<
+    { table_name: string; column_name: string }[]
+  >`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'piyaz_auth'
+  `;
+  const liveAuthColumnSet = new Set(
+    liveAuthColumns.map((r) => `${r.table_name}.${r.column_name}`),
+  );
+
+  const liveAuthIndexes = await sql<{ indexname: string }[]>`
+    SELECT indexname
+    FROM pg_indexes
+    WHERE schemaname = 'piyaz_auth'
+  `;
+  const liveAuthIndexSet = new Set(liveAuthIndexes.map((r) => r.indexname));
+
   const missing: string[] = [];
   for (const { table, policy } of expected.policies) {
     if (!livePolicySet.has(policyKey(table, policy))) {
@@ -198,6 +268,32 @@ async function findMissing(
       missing.push(
         schema ? `extension ${name} in schema ${schema}` : `extension ${name}`,
       );
+    }
+  }
+  for (const { table, column } of expected.authColumns) {
+    if (!liveAuthColumnSet.has(`${table}.${column}`)) {
+      missing.push(`column piyaz_auth.${table}.${column}`);
+    }
+  }
+  for (const index of expected.authIndexes) {
+    if (!liveAuthIndexSet.has(index)) {
+      missing.push(`index piyaz_auth.${index}`);
+    }
+  }
+  for (const table of expected.authRoleTables) {
+    const qualified = `piyaz_auth."${table}"`;
+    const [row] = await sql<{ granted: boolean }[]>`
+      SELECT CASE
+        WHEN to_regclass(${qualified}) IS NULL THEN false
+        ELSE has_table_privilege(
+          'auth_role',
+          ${qualified},
+          'SELECT,INSERT,UPDATE,DELETE'
+        )
+      END AS granted
+    `;
+    if (!row?.granted) {
+      missing.push(`auth_role CRUD on ${qualified}`);
     }
   }
 

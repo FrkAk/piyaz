@@ -30,6 +30,17 @@ export type AppHttpDb = NeonHttpDatabase<typeof appSchema>;
  */
 neonConfig.poolQueryViaFetch = true;
 
+const localNeonFetchEndpoint = process.env.NEON_LOCAL_FETCH_ENDPOINT;
+if (localNeonFetchEndpoint) {
+  const endpoint = new URL(localNeonFetchEndpoint);
+  if (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "localhost") {
+    throw new Error(
+      "NEON_LOCAL_FETCH_ENDPOINT must target localhost; it is only for the local Workers smoke proxy.",
+    );
+  }
+  neonConfig.fetchEndpoint = endpoint.toString();
+}
+
 /**
  * Disable the connect-time pipelined startup that batches the TLS handshake
  * with the Postgres startup packet. The pipelined path produced observed

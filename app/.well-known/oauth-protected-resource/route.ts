@@ -1,7 +1,9 @@
 import { serverClient } from "@/lib/auth/server-client";
 
-const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
-const origin = new URL(baseUrl).origin;
+import { getAuthBaseUrl, getMcpResource } from "@/lib/auth/oauth-resource";
+
+const baseUrl = getAuthBaseUrl();
+const mcpResource = getMcpResource();
 
 /**
  * RFC 9728 Protected Resource Metadata.
@@ -12,7 +14,7 @@ const origin = new URL(baseUrl).origin;
  */
 export async function GET() {
   const metadata = await serverClient.getProtectedResourceMetadata({
-    resource: `${origin}/api/mcp`,
+    resource: mcpResource,
     authorization_servers: [`${baseUrl}/api/auth`],
   });
   return new Response(JSON.stringify(metadata), {
