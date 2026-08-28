@@ -50,13 +50,33 @@ CREATE TABLE IF NOT EXISTS "account" (
 );
 
 CREATE TABLE IF NOT EXISTS "verification" (
-    "id"           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    "id"           text PRIMARY KEY DEFAULT gen_random_uuid()::text,
     "identifier"   text NOT NULL,
     "value"        text NOT NULL,
     "expiresAt"    timestamptz NOT NULL,
     "createdAt"    timestamptz NOT NULL DEFAULT now(),
     "updatedAt"    timestamptz NOT NULL DEFAULT now()
 );
+
+-- Better Auth 1.7 replay reservations derive a deterministic, non-UUID
+-- primary key from each proof identifier. Existing UUID values convert
+-- losslessly to text; the random default remains for ordinary verification
+-- records created without an explicit id.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'piyaz_auth'
+      AND table_name = 'verification'
+      AND column_name = 'id'
+      AND data_type = 'uuid'
+  ) THEN
+    ALTER TABLE "verification" ALTER COLUMN "id" DROP DEFAULT;
+    ALTER TABLE "verification" ALTER COLUMN "id" TYPE text USING "id"::text;
+    ALTER TABLE "verification" ALTER COLUMN "id" SET DEFAULT gen_random_uuid()::text;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS "organization" (
     "id"          uuid PRIMARY KEY DEFAULT gen_random_uuid(),

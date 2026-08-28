@@ -9,6 +9,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Drizzle table definitions for the piyaz_auth schema.
@@ -104,7 +105,7 @@ export const account = piyazAuth.table(
 export const verification = piyazAuth.table(
   "verification",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     identifier: text("identifier").notNull(),
     value: text("value").notNull(),
     expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),

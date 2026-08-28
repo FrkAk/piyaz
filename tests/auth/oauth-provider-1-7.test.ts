@@ -9,6 +9,8 @@ import { truncateAll } from "@/tests/setup/schema";
 
 const AUTH_BASE = "https://example.test/api/auth";
 const REDIRECT_URI = "https://client.example/callback";
+const CURSOR_REDIRECT_URI = "cursor://anysphere.cursor-mcp/oauth/callback";
+let registrationAddressSuffix = 10;
 
 interface RegistrationResponse {
   client_id: string;
@@ -16,32 +18,41 @@ interface RegistrationResponse {
   token_endpoint_auth_method?: string;
 }
 
+interface RegistrationOptions {
+  applicationType?: "native" | "web";
+  redirectUri?: string;
+  tokenEndpointAuthMethod?: string;
+}
+
 /**
  * Register an OAuth authorization-code client through the public DCR route.
  *
- * @param tokenEndpointAuthMethod - Explicit method, or undefined to test the
- *   Better Auth 1.7 confidential-client default.
+ * @param options - Optional registration metadata overrides.
  * @returns The route response and parsed registration body.
  */
-async function registerClient(tokenEndpointAuthMethod?: string): Promise<{
+async function registerClient(options: RegistrationOptions = {}): Promise<{
   response: Response;
   body: RegistrationResponse;
 }> {
   const registration: Record<string, unknown> = {
     client_name: "Better Auth 1.7 test client",
-    redirect_uris: [REDIRECT_URI],
+    redirect_uris: [options.redirectUri ?? REDIRECT_URI],
     grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
   };
-  if (tokenEndpointAuthMethod) {
-    registration.token_endpoint_auth_method = tokenEndpointAuthMethod;
+  if (options.tokenEndpointAuthMethod) {
+    registration.token_endpoint_auth_method = options.tokenEndpointAuthMethod;
   }
+  if (options.applicationType) {
+    registration.application_type = options.applicationType;
+  }
+  const clientAddress = `127.0.8.${registrationAddressSuffix++}`;
   const response = await authPost(
     new Request(`${AUTH_BASE}/oauth2/register`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "cf-connecting-ip": "127.0.8.10",
+        "cf-connecting-ip": clientAddress,
       },
       body: JSON.stringify(registration),
     }),
@@ -58,7 +69,9 @@ afterEach(async () => {
 
 describe("OAuth Provider 1.7 protocol compatibility", () => {
   test("public DCR returns 201 and links the default MCP resource", async () => {
-    const { response, body } = await registerClient("none");
+    const { response, body } = await registerClient({
+      tokenEndpointAuthMethod: "none",
+    });
     expect(response.status).toBe(201);
     expect(body.token_endpoint_auth_method).toBe("none");
     expect(body.client_secret).toBeUndefined();
@@ -80,7 +93,7 @@ describe("OAuth Provider 1.7 protocol compatibility", () => {
   });
 
   test("authorize defaults the MCP resource before Better Auth records the grant", async () => {
-    const { body } = await registerClient("none");
+    const { body } = await registerClient({ tokenEndpointAuthMethod: "none" });
     const url = new URL(`${AUTH_BASE}/oauth2/authorize`);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", body.client_id);
@@ -99,5 +112,37 @@ describe("OAuth Provider 1.7 protocol compatibility", () => {
     expect(
       decodeURIComponent(response.headers.get("location") ?? ""),
     ).toContain(`resource=${getMcpResource()}`);
+  });
+
+  test("DCR accepts an omitted-type HTTP loopback callback", async () => {
+    const { response } = await registerClient({
+      redirectUri: "http://127.0.0.1:4567/oauth/callback",
+      tokenEndpointAuthMethod: "none",
+    });
+    expect(response.status).toBe(201);
+  });
+
+  test("DCR accepts Cursor's exact callback despite its web type", async () => {
+    const { response } = await registerClient({
+      applicationType: "web",
+      redirectUri: CURSOR_REDIRECT_URI,
+      tokenEndpointAuthMethod: "none",
+    });
+    expect(response.status).toBe(201);
+  });
+
+  test("DCR rejects non-HTTP loopback and arbitrary Cursor callbacks", async () => {
+    const nonHttpLoopback = await registerClient({
+      redirectUri: "ftp://localhost/oauth/callback",
+      tokenEndpointAuthMethod: "none",
+    });
+    expect(nonHttpLoopback.response.status).toBe(400);
+
+    const arbitraryCursor = await registerClient({
+      applicationType: "web",
+      redirectUri: "cursor://attacker.example/oauth/callback",
+      tokenEndpointAuthMethod: "none",
+    });
+    expect(arbitraryCursor.response.status).toBe(400);
   });
 });

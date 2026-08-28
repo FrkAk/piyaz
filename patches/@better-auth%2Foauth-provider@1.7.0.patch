@@ -1,8 +1,19 @@
 diff --git a/dist/authorize-BP2_wo6r.mjs b/dist/authorize-BP2_wo6r.mjs
-index 7d7e839643dd9ea3b4f869c9c56331bd2a25ea49..b82a16252450195d7a3441cf2f3a53475c197984 100644
+index 822f08f9af95267d9ef085448741d11370e77fc2..02953d2855a11aa7098fa3867e23d90a61b8d796 100644
 --- a/dist/authorize-BP2_wo6r.mjs
 +++ b/dist/authorize-BP2_wo6r.mjs
-@@ -4398,7 +4398,6 @@ const oauthProvider = (options) => {
+@@ -1696,7 +1696,9 @@ function validateClientRedirectUri(redirectUri, applicationType) {
+ 	const rawHttpHostname = getRawHttpHostname(redirectUri);
+ 	const isAllowedNativeHttpLoopback = rawHttpHostname === "localhost" || rawHttpHostname === "127.0.0.1" || rawHttpHostname === "[::1]";
+ 	if (applicationType === "web") {
+-		if (!isHttps || isRedirectLoopback) invalidRedirectUri(`web clients require https redirect URIs on non-loopback hosts: ${redirectUri}`);
++		const isAllowedWebHttpLoopback = isHttp && isRedirectLoopback;
++		const isCursorMcpCallback = url.protocol === "cursor:" && url.hostname === "anysphere.cursor-mcp" && url.pathname === "/oauth/callback" && !url.search;
++		if (!isHttps && !isAllowedWebHttpLoopback && !isCursorMcpCallback) invalidRedirectUri(`web clients require https, an HTTP loopback, or the Cursor MCP callback: ${redirectUri}`);
+ 		return;
+ 	}
+ 	if (isHttps) {
+@@ -4398,7 +4400,6 @@ const oauthProvider = (options) => {
  		onRequest: handleIssuerMetadataRequest,
  		init: async (ctx) => {
  			if (ctx.options.secondaryStorage && ctx.options.session?.storeSessionInDatabase !== true) throw new BetterAuthError("OAuth Provider requires `session.storeSessionInDatabase: true` when using secondaryStorage");

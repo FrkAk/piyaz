@@ -69,6 +69,15 @@ test("piyaz_auth matches the Better Auth 1.7 schema contract", async () => {
       expect(columnSet.has(expected), `missing column ${expected}`).toBe(true);
     }
 
+    const [verificationId] = await sql<{ data_type: string }[]>`
+      SELECT data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'piyaz_auth'
+        AND table_name = 'verification'
+        AND column_name = 'id'
+    `;
+    expect(verificationId?.data_type).toBe("text");
+
     const indexes = await sql<{ indexname: string }[]>`
       SELECT indexname FROM pg_indexes WHERE schemaname = 'piyaz_auth'
     `;

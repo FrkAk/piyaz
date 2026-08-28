@@ -1,6 +1,12 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { JSONWebKeySet } from "jose";
-import { verifyJwsAccessToken } from "better-auth/oauth2";
+import {
+  createDpopReplayStore,
+  enforceDpopBinding,
+  getDpopJktFromPayload,
+  parseAccessTokenAuthorization,
+  verifyJwsAccessToken,
+} from "better-auth/oauth2";
 import { auth, GRANTABLE_OAUTH_SCOPES } from "@/lib/auth";
 import {
   getAuthBaseUrl,
@@ -124,10 +130,12 @@ async function fetchJwksInProcess(): Promise<JSONWebKeySet> {
 }
 
 /**
- * Verify a JWT Bearer token from the Authorization header. Uses
- * `verifyJwsAccessToken` (local-only verify) so `jwksFetch` can take a
- * function — `verifyAccessToken` types its `jwksUrl` as `string` and would
- * reject the in-process callback. No introspection (`remoteVerify`).
+ * Verify a JWT Bearer or DPoP token from the Authorization header. Uses
+ * `verifyJwsAccessToken` for the local, in-process JWKS path, then applies
+ * Better Auth's request-aware DPoP binding with its database-backed replay
+ * store. The combined `verifyAccessTokenRequest` helper accepts only a JWKS
+ * URL in 1.7.0, which would restore the Cloudflare self-fetch failure this
+ * route deliberately avoids. No introspection (`remoteVerify`).
  *
  * Returns `null` for token-class failures (signature, expiry, audience,
  * issuer, malformed JWT) so the caller maps to 401. Re-throws everything
@@ -141,11 +149,11 @@ async function fetchJwksInProcess(): Promise<JSONWebKeySet> {
  *   downstream errors); not caught here so the route returns 5xx.
  */
 async function verifyMcpAuth(request: Request) {
-  const authorization = request.headers.get("authorization");
-  const token = authorization?.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
-  if (!token) return null;
+  const authorization = parseAccessTokenAuthorization(
+    request.headers.get("authorization"),
+  );
+  if (!authorization?.token || authorization.scheme === "Unknown") return null;
+  const token = authorization.token;
 
   // Short-circuit malformed / kid-less tokens here so better-auth's
   // string-matched "Missing jwt kid" path is never reached.
@@ -160,11 +168,23 @@ async function verifyMcpAuth(request: Request) {
   }
 
   try {
-    return await verifyJwsAccessToken(token, {
+    const payload = await verifyJwsAccessToken(token, {
       jwksFetch: fetchJwksInProcess,
       jwksCacheKey: JWKS_CACHE_KEY,
       verifyOptions: { audience: audiences, issuer, algorithms: ["EdDSA"] },
     });
+    const replayStore = getDpopJktFromPayload(payload)
+      ? createDpopReplayStore((await auth.$context).internalAdapter)
+      : undefined;
+    await enforceDpopBinding({
+      payload,
+      authorization,
+      proofJwt: request.headers.get("dpop"),
+      method: request.method,
+      url: request.url,
+      replayStore,
+    });
+    return payload;
   } catch (err) {
     const classification = classifyVerifyError(err);
     const code =
