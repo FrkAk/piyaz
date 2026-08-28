@@ -491,6 +491,19 @@ test("rejects folders that are not NFC normalized", () => {
   );
 });
 
+test("counts folder limits by Unicode code points", () => {
+  const archive = validArchive();
+  const validPath = "😀".repeat(512);
+  archive.notes[0].folder = validPath;
+  archive.noteFolders[0].path = validPath;
+  expect(() => parseOrganizationArchive(archive)).not.toThrow();
+
+  archive.noteFolders[0].path += "😀";
+  expect(() => parseOrganizationArchive(archive)).toThrow(
+    "Archive does not match version 1 at noteFolders.0.path",
+  );
+});
+
 test("rejects note events without a note reference", () => {
   const archive = validArchive();
   archive.activityEvents[0] = {

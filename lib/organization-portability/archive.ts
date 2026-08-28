@@ -90,7 +90,7 @@ const indexedTextSchema = z
 // Mirrors the `IS NFC NORMALIZED` CHECKs on notes.folder and note_folders.path.
 const nfcFolderPathSchema = z
   .string()
-  .max(NOTE_FOLDER_MAX_CHARS)
+  .refine((value) => [...value].length <= NOTE_FOLDER_MAX_CHARS)
   .refine((value) => value === value.normalize("NFC"));
 
 const projectSchema = z.strictObject({
