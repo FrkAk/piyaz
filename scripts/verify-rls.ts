@@ -240,9 +240,20 @@ async function findMissing(
       column_default: string | null;
     }[]
   >`
-    SELECT table_name, column_name, data_type, column_default
-    FROM information_schema.columns
-    WHERE table_schema = 'piyaz_auth'
+    SELECT
+      c.relname AS table_name,
+      a.attname AS column_name,
+      pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+      pg_catalog.pg_get_expr(d.adbin, d.adrelid) AS column_default
+    FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_catalog.pg_attrdef d
+      ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE n.nspname = 'piyaz_auth'
+      AND c.relkind IN ('r', 'p')
+      AND a.attnum > 0
+      AND NOT a.attisdropped
   `;
   const liveAuthColumnMap = new Map(
     liveAuthColumns.map((row) => [`${row.table_name}.${row.column_name}`, row]),
