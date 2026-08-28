@@ -3,7 +3,7 @@
   "name": "ai.piyaz/piyaz",
   "title": "Piyaz",
   "description": "Agentic workspace for project management, where people and coding agents work on the same graph.",
-  "version": "0.4.13",
+  "version": "0.4.14",
   "websiteUrl": "https://piyaz.ai",
   "repository": {
     "url": "https://github.com/FrkAk/piyaz",

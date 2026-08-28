@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.14](https://github.com/FrkAk/piyaz/compare/v0.4.13...v0.4.14) (2026-08-28)
+
+
+### Bug Fixes
+
+* add organization workspace export and import ([#287](https://github.com/FrkAk/piyaz/issues/287)) ([c16f3a4](https://github.com/FrkAk/piyaz/commit/c16f3a4fb68e4b2cad852e6a040ba278cf9560cb))
+* bump the all-npm group across 1 directory with 8 updates ([#286](https://github.com/FrkAk/piyaz/issues/286)) ([df91857](https://github.com/FrkAk/piyaz/commit/df918578cadcfab8397070dfe35f60876479b6ea))
+* complete better auth 1.7 migration ([#290](https://github.com/FrkAk/piyaz/issues/290)) ([ac9e900](https://github.com/FrkAk/piyaz/commit/ac9e900cddfcf1f4273bda1996b7d014600a06c5))
+* restore audit pins and bun 1.4 test preload ([#288](https://github.com/FrkAk/piyaz/issues/288)) ([34bb8f4](https://github.com/FrkAk/piyaz/commit/34bb8f434c674110e988857994ed6571d6765cce))
+* verify auth schema through pg catalogs ([#291](https://github.com/FrkAk/piyaz/issues/291)) ([23fa880](https://github.com/FrkAk/piyaz/commit/23fa880ce9d385141b9003a7606f3d7d877066df))
+
 ## [0.4.13](https://github.com/FrkAk/piyaz/compare/v0.4.12...v0.4.13) (2026-08-04)
 
 
