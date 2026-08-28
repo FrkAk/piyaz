@@ -1,7 +1,7 @@
-diff --git a/dist/authorize-BP2_wo6r.mjs b/dist/authorize-BP2_wo6r.mjs
-index 822f08f9af95267d9ef085448741d11370e77fc2..02953d2855a11aa7098fa3867e23d90a61b8d796 100644
---- a/dist/authorize-BP2_wo6r.mjs
-+++ b/dist/authorize-BP2_wo6r.mjs
+diff --git a/dist/authorize-Crqw4_bR.mjs b/dist/authorize-Crqw4_bR.mjs
+index fdd19eb6333102dd77130d5ed142ad73f853b243..a7f21956220af2eaca92b8925e0d4e13f0701f5c 100644
+--- a/dist/authorize-Crqw4_bR.mjs
++++ b/dist/authorize-Crqw4_bR.mjs
 @@ -1696,7 +1696,9 @@ function validateClientRedirectUri(redirectUri, applicationType) {
  	const rawHttpHostname = getRawHttpHostname(redirectUri);
  	const isAllowedNativeHttpLoopback = rawHttpHostname === "localhost" || rawHttpHostname === "127.0.0.1" || rawHttpHostname === "[::1]";

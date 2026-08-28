@@ -96,7 +96,7 @@
     "wrangler": "^4.114.0"
   },
   "patchedDependencies": {
-    "@better-auth/core@1.7.0": "patches/@better-auth%2Fcore@1.7.0.patch",
-    "@better-auth/oauth-provider@1.7.0": "patches/@better-auth%2Foauth-provider@1.7.0.patch"
+    "@better-auth/core@1.7.1": "patches/@better-auth%2Fcore@1.7.1.patch",
+    "@better-auth/oauth-provider@1.7.1": "patches/@better-auth%2Foauth-provider@1.7.1.patch"
   }
 }

@@ -52,6 +52,10 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@better-auth/oauth-provider@1.7.1": "patches/@better-auth%2Foauth-provider@1.7.1.patch",
+    "@better-auth/core@1.7.1": "patches/@better-auth%2Fcore@1.7.1.patch",
+  },
   "overrides": {
     "fast-uri": ">=3.1.5 <4",
     "ip-address": ">=10.3.1 <11",
