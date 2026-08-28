@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
-import { getConnectionString, superuserPool } from "@/tests/setup/global";
+import {
+  getConnectionString,
+  serviceRolePool,
+  superuserPool,
+} from "@/tests/setup/global";
 
 const EXPECTED_COLUMNS = [
   "account.issuer",
@@ -114,6 +118,56 @@ test("piyaz_auth matches the Better Auth 1.7 schema contract", async () => {
   } finally {
     await sql.end({ timeout: 5 });
   }
+});
+
+test("a restricted role verifies auth metadata without auth row access", async () => {
+  const sql = serviceRolePool();
+  const [privilege] = await sql<{ can_select: boolean }[]>`
+    SELECT has_table_privilege(
+      current_user,
+      'piyaz_auth."verification"',
+      'SELECT'
+    ) AS can_select
+  `;
+  expect(privilege?.can_select).toBe(false);
+
+  const [informationSchema] = await sql<{ column_count: number }[]>`
+    SELECT count(*)::int AS column_count
+    FROM information_schema.columns
+    WHERE table_schema = 'piyaz_auth'
+      AND table_name = 'verification'
+      AND column_name = 'id'
+  `;
+  expect(informationSchema?.column_count).toBe(0);
+
+  const [catalog] = await sql<
+    { data_type: string; column_default: string | null }[]
+  >`
+    SELECT
+      pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+      pg_catalog.pg_get_expr(d.adbin, d.adrelid) AS column_default
+    FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_catalog.pg_attrdef d
+      ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE n.nspname = 'piyaz_auth'
+      AND c.relname = 'verification'
+      AND c.relkind IN ('r', 'p')
+      AND a.attname = 'id'
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+  `;
+  expect(catalog?.data_type).toBe("text");
+  expect(catalog?.column_default).toBe("(gen_random_uuid())::text");
+
+  let readError: unknown;
+  try {
+    await sql`SELECT "id" FROM piyaz_auth."verification" LIMIT 1`;
+  } catch (error) {
+    readError = error;
+  }
+  expect(readError).toMatchObject({ code: "42501" });
 });
 
 test("init-auth upgrades populated verification UUID ids idempotently", async () => {
