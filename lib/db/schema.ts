@@ -729,6 +729,24 @@ export type NoteRevision = typeof noteRevisions.$inferSelect;
 export type NewNoteRevision = typeof noteRevisions.$inferInsert;
 
 // ---------------------------------------------------------------------------
+// Organization export limits
+// ---------------------------------------------------------------------------
+
+export const organizationExportLimits = pgTable("organization_export_limits", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  lastStartedAt: timestamp("last_started_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}).enableRLS();
+
+export type OrganizationExportLimit =
+  typeof organizationExportLimits.$inferSelect;
+export type NewOrganizationExportLimit =
+  typeof organizationExportLimits.$inferInsert;
+
+// ---------------------------------------------------------------------------
 // Legal Acceptances
 // ---------------------------------------------------------------------------
 

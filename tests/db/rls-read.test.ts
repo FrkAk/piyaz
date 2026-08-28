@@ -1,7 +1,11 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { projects } from "@/lib/db/schema";
-import { ReadOnlyViolationError, withUserContextRead } from "@/lib/db/rls";
+import {
+  ReadOnlyViolationError,
+  withUserContextRead,
+  withUserContextReadSnapshot,
+} from "@/lib/db/rls";
 import { unwrapDriverError } from "@/lib/db/errors";
 import { normalizeExecuteResult } from "@/lib/db/raw";
 import { truncateAll } from "@/tests/setup/schema";
@@ -86,6 +90,56 @@ describe("withUserContextRead RLS scope", () => {
     const [guc] = normalizeExecuteResult<{ uid: string }>(gucRows);
     expect(guc.uid).toBe(fx.userId);
     expect(titleRows).toEqual([{ title: "Project read-align" }]);
+  });
+});
+
+describe("withUserContextReadSnapshot", () => {
+  afterEach(async () => {
+    await truncateAll();
+  });
+
+  test("keeps sequential reads on one read-only repeatable snapshot", async () => {
+    const fx = await seedUserOrgProject("snapshot");
+    let before: Array<{ id: string }> = [];
+    const [settingsRaw, after] = await withUserContextReadSnapshot(
+      fx.userId,
+      (read) =>
+        read
+          .select({ id: projects.id })
+          .from(projects)
+          .where(eq(projects.organizationId, fx.organizationId)),
+      async (rows) => {
+        before = rows;
+        await superuserPool()`
+          INSERT INTO projects (organization_id, title, identifier)
+          VALUES (${fx.organizationId}, 'Later project', 'LATER')
+        `;
+      },
+      (read) => [
+        read.execute(sql`
+          SELECT
+            current_setting('transaction_isolation') AS isolation,
+            current_setting('transaction_read_only') AS read_only
+        `),
+        read
+          .select({ id: projects.id })
+          .from(projects)
+          .where(eq(projects.organizationId, fx.organizationId)),
+      ],
+    );
+
+    const [settings] = normalizeExecuteResult<{
+      isolation: string;
+      read_only: string;
+    }>(settingsRaw);
+    expect(settings).toEqual({ isolation: "repeatable read", read_only: "on" });
+    expect(before).toEqual(after);
+    const visibleAfterCommit = await superuserPool()<{ count: number }[]>`
+      SELECT count(*)::int AS count
+      FROM projects
+      WHERE organization_id = ${fx.organizationId}
+    `;
+    expect(visibleAfterCommit[0].count).toBe(2);
   });
 });
 

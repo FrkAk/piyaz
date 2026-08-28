@@ -439,6 +439,38 @@ CREATE POLICY "legal_acceptances_self_access" ON "legal_acceptances"
   USING (user_id = (SELECT public.current_app_user_id()))
   WITH CHECK (user_id = (SELECT public.current_app_user_id()));
 
+-- One row per user records the latest admitted workspace-export generation.
+-- The primary key makes the rolling limit global across organizations and
+-- atomic across Worker instances. app_user can read its own row and perform
+-- only the fresh INSERT/UPDATE used by the conditional upsert. No DELETE
+-- policy exists, so a caller cannot reset its allowance through this role;
+-- the user foreign-key cascade still removes the row with the account.
+DROP POLICY IF EXISTS "organization_export_limits_self_access" ON "organization_export_limits";
+DROP POLICY IF EXISTS "organization_export_limits_self_read" ON "organization_export_limits";
+DROP POLICY IF EXISTS "organization_export_limits_self_insert" ON "organization_export_limits";
+DROP POLICY IF EXISTS "organization_export_limits_self_update" ON "organization_export_limits";
+
+CREATE POLICY "organization_export_limits_self_read" ON "organization_export_limits"
+  AS PERMISSIVE FOR SELECT TO app_user
+  USING (user_id = (SELECT public.current_app_user_id()));
+
+CREATE POLICY "organization_export_limits_self_insert" ON "organization_export_limits"
+  AS PERMISSIVE FOR INSERT TO app_user
+  WITH CHECK (
+    user_id = (SELECT public.current_app_user_id())
+    AND last_started_at BETWEEN clock_timestamp() - interval '1 minute'
+                            AND clock_timestamp() + interval '1 minute'
+  );
+
+CREATE POLICY "organization_export_limits_self_update" ON "organization_export_limits"
+  AS PERMISSIVE FOR UPDATE TO app_user
+  USING (user_id = (SELECT public.current_app_user_id()))
+  WITH CHECK (
+    user_id = (SELECT public.current_app_user_id())
+    AND last_started_at BETWEEN clock_timestamp() - interval '1 minute'
+                            AND clock_timestamp() + interval '1 minute'
+  );
+
 
 -- ENABLE explicitly: testcontainer/self-host get this from `drizzle-kit
 -- push` reading `.enableRLS()`, but `drizzle-kit migrate` does not emit
@@ -459,6 +491,7 @@ ALTER TABLE "note_links" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "note_folders" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "legal_acceptances" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "organization_export_limits" ENABLE ROW LEVEL SECURITY;
 
 -- FORCE subjects the table owner to RLS. BYPASSRLS roles and real
 -- superusers still sidestep.
@@ -478,3 +511,4 @@ ALTER TABLE "note_links" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_revisions" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "note_folders" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "legal_acceptances" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "organization_export_limits" FORCE ROW LEVEL SECURITY;

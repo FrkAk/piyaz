@@ -9,12 +9,13 @@ import {
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/shared/Button";
-import { IconLink, IconPlus } from "@/components/shared/icons";
+import { IconDoc, IconLink, IconPlus } from "@/components/shared/icons";
 import { listUserTeamsAction, type TeamView } from "@/lib/actions/team-list";
 import { invalidateTeamManageCache } from "./team-manage-cache";
 import { CreateTeamPanel } from "./CreateTeamPanel";
 import { EmptyState } from "./EmptyState";
 import { JoinTeamPanel } from "./JoinTeamPanel";
+import { ImportWorkspacePanel } from "./ImportWorkspacePanel";
 import { TeamCard } from "./TeamCard";
 
 interface TeamsTabProps {
@@ -62,17 +63,41 @@ export function TeamsTab({
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [glowId, setGlowId] = useState<string | null>(null);
 
-  const startCreating = useCallback(() => {
+  /**
+   * Open only the create-team panel.
+   *
+   * @returns Nothing.
+   */
+  const startCreating = useCallback((): void => {
     setJoining(false);
+    setImporting(false);
     setCreating(true);
   }, []);
 
-  const startJoining = useCallback(() => {
+  /**
+   * Open only the join-team panel.
+   *
+   * @returns Nothing.
+   */
+  const startJoining = useCallback((): void => {
     setCreating(false);
+    setImporting(false);
     setJoining(true);
+  }, []);
+
+  /**
+   * Open only the workspace-import panel.
+   *
+   * @returns Nothing.
+   */
+  const startImporting = useCallback((): void => {
+    setCreating(false);
+    setJoining(false);
+    setImporting(true);
   }, []);
 
   /**
@@ -99,21 +124,31 @@ export function TeamsTab({
     [router, setTeams],
   );
 
+  /**
+   * Refresh and highlight a newly joined, created, or imported team.
+   *
+   * @param organizationId - New organization identifier.
+   * @returns True when the refreshed list includes the new organization.
+   */
   const handleAdded = useCallback(
-    async (organizationId: string) => {
+    async (organizationId: string): Promise<boolean> => {
+      setError(null);
+      // Close the panels before anything can fail: the team already exists,
+      // and a still-open form invites a resubmit that would duplicate it.
       setCreating(false);
       setJoining(false);
-      setError(null);
+      setImporting(false);
       const refreshed = await refresh();
       if (!refreshed) {
         setError(
           "You've been added to the team, but we couldn't refresh the list. Reload the page to see it.",
         );
-        return;
+        return false;
       }
       router.refresh();
       setGlowId(organizationId);
       window.setTimeout(() => setGlowId(null), 900);
+      return true;
     },
     [refresh, router],
   );
@@ -148,6 +183,15 @@ export function TeamsTab({
           disabled={joining}
         >
           Join with code
+        </Button>
+        <Button
+          variant="ghost"
+          size="md"
+          icon={<IconDoc size={12} />}
+          onClick={startImporting}
+          disabled={importing}
+        >
+          Import workspace
         </Button>
       </div>
 
@@ -192,9 +236,24 @@ export function TeamsTab({
             />
           </motion.div>
         ) : null}
+        {importing ? (
+          <motion.div
+            key="import-panel"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
+            style={{ overflow: "hidden" }}
+          >
+            <ImportWorkspacePanel
+              onCancel={() => setImporting(false)}
+              onImported={handleAdded}
+            />
+          </motion.div>
+        ) : null}
       </AnimatePresence>
 
-      {teams.length === 0 && !creating && !joining ? (
+      {teams.length === 0 && !creating && !joining && !importing ? (
         <EmptyState
           icon={
             <svg
@@ -207,7 +266,7 @@ export function TeamsTab({
             </svg>
           }
           title="You're not in any teams yet"
-          body="Create a team to start a fresh workspace, or join an existing one with an invite code from an admin."
+          body="Create a team to start a fresh workspace, join an existing one with an invite code, or import a workspace archive."
           action={
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button variant="primary" size="sm" onClick={startCreating}>
@@ -215,6 +274,9 @@ export function TeamsTab({
               </Button>
               <Button variant="secondary" size="sm" onClick={startJoining}>
                 Join with code
+              </Button>
+              <Button variant="ghost" size="sm" onClick={startImporting}>
+                Import workspace
               </Button>
             </div>
           }
