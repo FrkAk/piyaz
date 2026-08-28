@@ -1,13 +1,18 @@
-import { test, expect, describe, beforeEach, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 
 /**
  * Coverage for `joinWaitlistAction` and its `putWaitlistEntry` KV writer.
- * Both live in one file because bun's `mock.module` is process-global and
- * unrestoreable, so co-locating the mocks avoids cross-file pollution.
- *
  * `@opennextjs/cloudflare` is faked so the real `putWaitlistEntry` runs
- * against an in-memory KV; the rate limiter is faked so the
- * limit-before-parse ordering is observable without a request context.
+ * against an in-memory KV. The rate limiter uses a reversible function spy so
+ * the limit-before-parse ordering is observable without polluting later files.
  */
 
 const _putCalls: Array<{ key: string; value: string }> = [];
@@ -31,15 +36,7 @@ mock.module("@opennextjs/cloudflare", () => ({
 type RateLimitOutcome = { ok: true } | { ok: false; retryAfter: number };
 let _rateLimitOutcome: RateLimitOutcome = { ok: true };
 
-// Spread the real module and override only checkActionRateLimit. mock.module
-// is process-global, so a whole-replace would strip the other rate-limit
-// exports from the registry for every later test file in the suite.
 const _actualRateLimit = await import("@/lib/actions/rate-limit-action");
-
-mock.module("@/lib/actions/rate-limit-action", () => ({
-  ..._actualRateLimit,
-  checkActionRateLimit: async () => _rateLimitOutcome,
-}));
 
 const { putWaitlistEntry, __resetMissingBindingWarnedForTest } = await import(
   "@/lib/db/_waitlist-kv.workers"
@@ -47,11 +44,18 @@ const { putWaitlistEntry, __resetMissingBindingWarnedForTest } = await import(
 const { joinWaitlistAction } = await import("@/lib/actions/waitlist");
 
 beforeEach(() => {
+  spyOn(_actualRateLimit, "checkActionRateLimit").mockImplementation(
+    async () => _rateLimitOutcome,
+  );
   _putCalls.length = 0;
   _throwOnPut = false;
   _envHasKv = true;
   _rateLimitOutcome = { ok: true };
   __resetMissingBindingWarnedForTest();
+});
+
+afterEach(() => {
+  mock.restore();
 });
 
 describe("putWaitlistEntry", () => {

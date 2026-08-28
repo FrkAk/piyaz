@@ -4,7 +4,12 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { executeRawDiscard, type ReadConn, type RlsTx } from "@/lib/db/raw";
 import { runUserContextRead } from "@/lib/db/rls-read";
-import type { ReadResults, ReadStatements } from "@/lib/db/read-guard";
+import {
+  assertReadOnlyStatements,
+  type ReadResults,
+  type ReadStatement,
+  type ReadStatements,
+} from "@/lib/db/read-guard";
 
 export { ReadOnlyViolationError } from "@/lib/db/read-guard";
 export type { ReadConn } from "@/lib/db/raw";
@@ -81,6 +86,101 @@ export async function withUserContext<T>(
       sql`SELECT set_config('app.user_id', ${userId}, true)`,
     );
     return fn(tx);
+  });
+}
+
+/** Sequential statement executor bound to one read-only snapshot. */
+export type SnapshotRead = {
+  /** Lazy Drizzle read builder pinned to the snapshot transaction. */
+  read: ReadConn;
+  /**
+   * Validate and execute one lazy read statement.
+   *
+   * @param statement - Lazy Drizzle select or raw read statement.
+   * @returns Driver result for the statement.
+   * @throws {ReadOnlyViolationError} When the statement is not a plain read.
+   */
+  run<TStatement extends ReadStatement<unknown>>(
+    statement: TStatement,
+  ): Promise<TStatement["_"]["result"]>;
+};
+
+/**
+ * Run sequential reads under one stable RLS-scoped database snapshot.
+ *
+ * @param userId - Authenticated user id. Must be a valid UUID string.
+ * @param fn - Callback that executes bounded reads in sequence.
+ * @returns Whatever the callback returns.
+ * @throws {InvalidUserIdError} When `userId` is not a valid UUID string.
+ * @throws {ReadOnlyViolationError} When a statement is not a plain read.
+ */
+export async function withUserContextReadTransaction<T>(
+  userId: string,
+  fn: (snapshot: SnapshotRead) => Promise<T>,
+): Promise<T> {
+  assertValidUserId(
+    userId,
+    "withUserContextReadTransaction: userId must be a valid UUID string",
+  );
+  return db.transaction(
+    async (rawTx) => {
+      const tx = rawTx as Tx;
+      await executeRawDiscard(
+        tx,
+        sql`SELECT set_config('app.user_id', ${userId}, true)`,
+      );
+      const read = tx as unknown as ReadConn;
+      return fn({
+        read,
+        run: async <TStatement extends ReadStatement<unknown>>(
+          statement: TStatement,
+        ): Promise<TStatement["_"]["result"]> => {
+          assertReadOnlyStatements([statement]);
+          return (await (statement as unknown as Promise<
+            TStatement["_"]["result"]
+          >)) as TStatement["_"]["result"];
+        },
+      });
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );
+}
+
+/**
+ * Run sequential reads under one stable RLS-scoped database snapshot.
+ *
+ * This path uses an interactive transaction on both targets so callers can
+ * await a cheap gate before loading bulk rows. The database enforces
+ * `READ ONLY`, while `REPEATABLE READ` keeps every later query on the same
+ * snapshot. Prefer {@link withUserContextRead} when all reads can be issued as
+ * one static batch.
+ *
+ * @param userId - Authenticated user id. Must be a valid UUID string.
+ * @param preflight - Lazy read that must clear before bulk reads are built.
+ * @param validate - Callback that accepts or rejects the preflight result.
+ * @param build - Lazy bulk-read statement builder.
+ * @returns Results positionally aligned with the bulk statements.
+ * @throws {InvalidUserIdError} When `userId` is not a valid UUID string.
+ * @throws {ReadOnlyViolationError} When any statement is not a plain read.
+ */
+export async function withUserContextReadSnapshot<
+  TPreflightResult,
+  TStatements extends ReadStatements,
+>(
+  userId: string,
+  preflight: (read: ReadConn) => ReadStatement<TPreflightResult>,
+  validate: (result: TPreflightResult) => void | Promise<void>,
+  build: (read: ReadConn) => TStatements,
+): Promise<ReadResults<TStatements>> {
+  return withUserContextReadTransaction(userId, async (snapshot) => {
+    const preflightResult = await snapshot.run(preflight(snapshot.read));
+    await validate(preflightResult);
+    const statements = build(snapshot.read);
+    assertReadOnlyStatements(statements);
+    const results = await Promise.all(
+      statements.map((statement) => snapshot.run(statement)),
+    );
+    return results as unknown as ReadResults<TStatements>;
   });
 }
 

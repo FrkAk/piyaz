@@ -11,8 +11,8 @@ import type { LegalDocumentType } from "@/lib/types";
  * touches call sites.
  */
 export const LEGAL_VERSIONS: Record<LegalDocumentType, string> = {
-  terms: "beta-2026-07-12",
-  privacy: "beta-2026-07-15",
+  terms: "beta-2026-08-25",
+  privacy: "beta-2026-08-25",
   dpa: "beta-2026-07-12",
 };
 

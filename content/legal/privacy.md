@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: July 15, 2026
+Last updated: August 25, 2026
 
 This Privacy Policy governs the **hosted Piyaz service at `app.piyaz.ai`**, operated
 by the Piyaz team. **If you self-host Piyaz, this document does not apply to your
@@ -34,7 +34,7 @@ We collect the following categories of personal data:
 - **Account data**: your name and email address.
 - **Credentials**: a salted, hashed password (we never store your password in plain text). If you sign in with a third-party provider in the future, we receive your basic profile from that provider instead.
 - **Profile data**: an optional avatar image URL.
-- **Technical and session data**: your IP address, browser user-agent, session identifiers, and timestamps.
+- **Technical and session data**: your IP address, browser user-agent, session identifiers, timestamps, and the time of your latest workspace-export attempt.
 - **Workspace data**: team/organization names, membership roles, and the email addresses of people you invite.
 - **Integration data**: metadata about coding-agent clients you connect over MCP/OAuth (client name, identifiers, and the access you grant them).
 - **Content you create**: projects, tasks, decisions, execution records, and related notes. This content may contain personal data if you choose to put it there.
@@ -143,6 +143,7 @@ grows.
 
 - **Account and workspace data**: for as long as your account is active. After you delete your account, data is removed within **30 days**, and residual copies in backups are purged within **90 days**.
 - **Session records**: expire automatically **7 days** after your last activity.
+- **Workspace-export limit records**: kept while your account is active and deleted with your account.
 - **Acceptance records**: anonymized when your account is deleted (the link to you, your IP address, and your user-agent are removed) and retained in that anonymized form as evidence that the agreement existed.
 - **Operational logs and traces**: retained for up to **90 days** and then deleted or anonymized.
 - **Transactional email records**: our email provider (Cloudflare) retains per-message delivery metadata (sender, recipient, subject, and delivery status) for **31 days** in its delivery analytics. Addresses that bounce or report our mail as spam are kept on an account-level suppression list to prevent repeat sends.
@@ -155,7 +156,7 @@ Under the GDPR you have the right to:
 - **Rectification**: have inaccurate or incomplete data corrected.
 - **Erasure**: ask us to delete your personal data ("right to be forgotten").
 - **Restriction**: ask us to limit how we process your data.
-- **Data portability**: receive the personal data you provided to us in a structured, machine-readable format. Our self-serve export covers your account data (profile, team memberships, and your acceptance records); shared workspace content remains accessible through the service itself.
+- **Data portability**: receive the personal data you provided to us in a structured, machine-readable format. Our self-serve exports cover your account data (profile, team memberships, and your acceptance records) and let organization owners generate one portable workspace archive every 30 days.
 - **Object**: object to processing based on our legitimate interests.
 - **Withdraw consent**: where we rely on consent, withdraw it at any time (this does not affect prior processing).
 

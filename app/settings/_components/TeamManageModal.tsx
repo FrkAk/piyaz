@@ -28,6 +28,7 @@ import { InviteSection } from "./team-manage/InviteSection";
 import { IdentitySection } from "./team-manage/IdentitySection";
 import { DangerZone } from "./team-manage/DangerZone";
 import { DpaSection } from "./team-manage/DpaSection";
+import { WorkspaceExportSection } from "./team-manage/WorkspaceExportSection";
 
 import {
   invalidateTeamManageCache,
@@ -592,6 +593,14 @@ function ModalBody({
           organizationId={team.id}
           acceptance={dpaAcceptance}
           onAccepted={onDpaAccepted}
+          onError={setError}
+        />
+      ) : null}
+
+      {isOwner ? (
+        <WorkspaceExportSection
+          teamId={team.id}
+          teamSlug={teamSlug}
           onError={setError}
         />
       ) : null}

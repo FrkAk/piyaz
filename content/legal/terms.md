@@ -1,6 +1,6 @@
 # Beta Terms of Service
 
-Last updated: July 12, 2026
+Last updated: August 25, 2026
 
 These Beta Terms govern the **hosted Piyaz service at `app.piyaz.ai`**, operated by
 the Piyaz team, for the duration of the beta. **If you self-host Piyaz, these terms do
@@ -124,9 +124,8 @@ This does not apply where the claim results from our intent or gross negligence.
 ## 14. Data export and switching
 
 You can export your account data in a machine-readable format (see the
-[Privacy Policy](/privacy)), and your project content remains accessible to you
-through the Service so you can take it with you at any time. We do not impose
-switching barriers or charge export fees during the beta.
+[Privacy Policy](/privacy)). Organization owners can generate one portable
+workspace archive every 30 days. We do not charge export fees during the beta.
 
 ## 15. Governing law and jurisdiction
 
