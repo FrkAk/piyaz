@@ -23,6 +23,8 @@ const TRUNCATE_TABLES = [
   '"piyaz_auth"."oauthAccessToken"',
   '"piyaz_auth"."oauthRefreshToken"',
   '"piyaz_auth"."oauthConsent"',
+  '"piyaz_auth"."oauthClientAssertion"',
+  '"piyaz_auth"."oauthClientResource"',
   '"piyaz_auth"."oauthClient"',
   '"piyaz_auth"."invitation"',
   '"piyaz_auth"."member"',

@@ -12,6 +12,7 @@ import {
 /** Fixed table order `public.purge_expired_rows` reports in. */
 const TABLE_ORDER = [
   "oauthAccessToken",
+  "oauthClientAssertion",
   "oauthRefreshToken",
   "session",
   "verification",
@@ -67,22 +68,63 @@ async function insertOrg(
 }
 
 /**
+ * Ensure the housekeeping OAuth client exists for token and consent fixtures.
+ *
+ * @param sql - Superuser client.
+ */
+async function ensureOAuthClient(
+  sql: ReturnType<typeof superuserPool>,
+): Promise<void> {
+  await sql`
+    INSERT INTO piyaz_auth."oauthClient" ("clientId", "redirectUris")
+    VALUES ('hk-client', '{}')
+    ON CONFLICT ("clientId") DO NOTHING
+  `;
+}
+
+/**
  * Insert an oauth access token expiring at `now() + offset`.
  *
  * @param sql - Superuser client.
  * @param expiresOffset - Signed interval, e.g. `-25 hours`.
+ * @param revokedOffset - Signed interval for `revoked`, or null.
  * @returns The new row id.
  */
 async function insertAccessToken(
   sql: ReturnType<typeof superuserPool>,
   expiresOffset: string,
+  revokedOffset: string | null = null,
 ): Promise<string> {
+  await ensureOAuthClient(sql);
   const [t] = await sql<{ id: string }[]>`
-    INSERT INTO piyaz_auth."oauthAccessToken" ("token", "clientId", "scopes", "expiresAt")
-    VALUES ('at-' || gen_random_uuid()::text, 'hk-client', '{}', now() + ${expiresOffset}::interval)
+    INSERT INTO piyaz_auth."oauthAccessToken"
+      ("token", "clientId", "scopes", "expiresAt", "revoked")
+    VALUES ('at-' || gen_random_uuid()::text, 'hk-client', '{}',
+            now() + ${expiresOffset}::interval,
+            now() + ${revokedOffset}::interval)
     RETURNING id
   `;
   return t.id;
+}
+
+/**
+ * Insert an OAuth client assertion expiring at `now() + offset`.
+ *
+ * @param sql - Superuser client.
+ * @param expiresOffset - Signed interval for `expiresAt`.
+ * @returns The new assertion id.
+ */
+async function insertClientAssertion(
+  sql: ReturnType<typeof superuserPool>,
+  expiresOffset: string,
+): Promise<string> {
+  const [assertion] = await sql<{ id: string }[]>`
+    INSERT INTO piyaz_auth."oauthClientAssertion" ("id", "expiresAt")
+    VALUES ('assertion-' || gen_random_uuid()::text,
+            now() + ${expiresOffset}::interval)
+    RETURNING id
+  `;
+  return assertion.id;
 }
 
 /**
@@ -100,6 +142,7 @@ async function insertRefreshToken(
   expiresOffset: string,
   revokedOffset: string | null = null,
 ): Promise<string> {
+  await ensureOAuthClient(sql);
   const [t] = await sql<{ id: string }[]>`
     INSERT INTO piyaz_auth."oauthRefreshToken"
       ("token", "clientId", "scopes", "userId", "expiresAt", "revoked")
@@ -196,17 +239,32 @@ afterEach(async () => {
 });
 
 describe("purge_expired_rows boundaries", () => {
-  test("oauthAccessToken: deletes past the 24h grace, keeps within it", async () => {
+  test("oauthAccessToken: deletes revoked or expired rows past the 24h grace", async () => {
     const sql = superuserPool();
     await insertAccessToken(sql, "-25 hours");
     const keep = await insertAccessToken(sql, "-23 hours");
     const live = await insertAccessToken(sql, "30 days");
+    await insertAccessToken(sql, "30 days", "-25 hours");
+    const keepRevoked = await insertAccessToken(sql, "30 days", "-23 hours");
 
     const res = await purgeExpiredRows(serviceRoleDb, false, 100);
-    expect(counts(res).oauthAccessToken).toBe(1);
+    expect(counts(res).oauthAccessToken).toBe(2);
     expect(await remainingIds(sql, 'piyaz_auth."oauthAccessToken"')).toEqual(
-      new Set([keep, live]),
+      new Set([keep, live, keepRevoked]),
     );
+  });
+
+  test("oauthClientAssertion: deletes past the 24h grace", async () => {
+    const sql = superuserPool();
+    await insertClientAssertion(sql, "-25 hours");
+    const keep = await insertClientAssertion(sql, "-23 hours");
+    const live = await insertClientAssertion(sql, "1 hour");
+
+    const res = await purgeExpiredRows(serviceRoleDb, false, 100);
+    expect(counts(res).oauthClientAssertion).toBe(1);
+    expect(
+      await remainingIds(sql, 'piyaz_auth."oauthClientAssertion"'),
+    ).toEqual(new Set([keep, live]));
   });
 
   test("oauthRefreshToken: revoked OR expired past the 24h grace", async () => {
@@ -285,6 +343,7 @@ describe("purge_expired_rows modes", () => {
   test("dry run reports would-delete counts and mutates nothing", async () => {
     const sql = superuserPool();
     const at = await insertAccessToken(sql, "-25 hours");
+    const assertion = await insertClientAssertion(sql, "-25 hours");
     const userId = await insertUser(sql, "dry");
     const rt = await insertRefreshToken(sql, userId, "-25 hours");
     const s = await insertSession(sql, userId, "-8 days");
@@ -299,6 +358,7 @@ describe("purge_expired_rows modes", () => {
     const res = await purgeExpiredRows(serviceRoleDb, true, 100);
     expect(counts(res)).toEqual({
       oauthAccessToken: 1,
+      oauthClientAssertion: 1,
       oauthRefreshToken: 1,
       session: 1,
       verification: 1,
@@ -307,6 +367,9 @@ describe("purge_expired_rows modes", () => {
     expect(await remainingIds(sql, 'piyaz_auth."oauthAccessToken"')).toEqual(
       new Set([at]),
     );
+    expect(
+      await remainingIds(sql, 'piyaz_auth."oauthClientAssertion"'),
+    ).toEqual(new Set([assertion]));
     expect(await remainingIds(sql, 'piyaz_auth."oauthRefreshToken"')).toEqual(
       new Set([rt]),
     );
@@ -367,6 +430,7 @@ describe("purge_expired_rows exclusions", () => {
   test("retains legal, activity, consent, and invitation rows regardless of age", async () => {
     const sql = superuserPool();
     const f = await seedUserOrgProject("hk-retained", { legalCurrent: false });
+    await ensureOAuthClient(sql);
     const [acceptance] = await sql<{ id: string }[]>`
       INSERT INTO public.legal_acceptances ("user_id", "document_type", "document_version", "accepted_at")
       VALUES (${f.userId}, 'terms', '2020-01-01', now() - interval '400 days')

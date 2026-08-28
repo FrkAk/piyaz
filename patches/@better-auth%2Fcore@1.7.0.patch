@@ -1,0 +1,12 @@
+diff --git a/dist/async_hooks/index.mjs b/dist/async_hooks/index.mjs
+index c74f6a88c8fee3581e243fe4045c2b1d848109da..2dd010d10b27bfe29847a3d131b7d60b659fd105 100644
+--- a/dist/async_hooks/index.mjs
++++ b/dist/async_hooks/index.mjs
+@@ -1,5 +1,6 @@
+ //#region src/async_hooks/index.ts
+-const AsyncLocalStoragePromise = import(
++const globalAsyncLocalStorage = globalThis.AsyncLocalStorage;
++const AsyncLocalStoragePromise = globalAsyncLocalStorage ? Promise.resolve(globalAsyncLocalStorage) : import(
+ 	/* @vite-ignore */
+ 	/* webpackIgnore: true */
+ 	"node:async_hooks"

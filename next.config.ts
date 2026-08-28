@@ -15,6 +15,7 @@ const TARGET_FILES = [
   ["lib/email/_sender", `lib/email/_sender.${DRIVER_TARGET}`],
   ["lib/email/_defer", `lib/email/_defer.${DRIVER_TARGET}`],
   ["lib/email/_budget", `lib/email/_budget.${DRIVER_TARGET}`],
+  ["lib/auth/_background", `lib/auth/_background.${DRIVER_TARGET}`],
 ] as const;
 
 /**
@@ -30,9 +31,9 @@ const REPLACEMENT_REGEX = new RegExp(
 
 /**
  * Rewrite a driver / broker indirection import to its per-target sibling.
- * Anchored on the `lib/db/`, `lib/realtime/`, and `lib/email/` parents so test
- * fixtures or transitive deps sharing a basename are never touched. Runs at
- * module-resolution time so the unused target never enters the bundle.
+ * Anchored on the configured project-relative parents so test fixtures or
+ * transitive deps sharing a basename are never touched. Runs at module-
+ * resolution time so the unused target never enters the bundle.
  *
  * @param resource - Module-resolution data mutated in place by webpack.
  */
@@ -50,8 +51,8 @@ function rewriteDriverImport(resource: { request: string; context?: string }) {
  * without top-level await in the config module — Next loads the compiled
  * config via `require()`, which rejects async modules.
  *
- * @returns Next config with `output: "standalone"` gated on
- *   `DEPLOY_TARGET=cloudflare` and webpack aliases pointed at the
+ * @returns Next config rooted at this checkout, with `output: "standalone"`
+ *   gated on `DEPLOY_TARGET=cloudflare` and webpack aliases pointed at the
  *   per-target driver / broker indirection files.
  */
 async function buildNextConfig(): Promise<NextConfig> {
@@ -63,9 +64,8 @@ async function buildNextConfig(): Promise<NextConfig> {
   }
 
   return {
-    ...(isCloudflare
-      ? {}
-      : { output: "standalone", outputFileTracingRoot: PROJECT_ROOT }),
+    outputFileTracingRoot: PROJECT_ROOT,
+    ...(isCloudflare ? {} : { output: "standalone" }),
     poweredByHeader: false,
     /**
      * Surface deploy-time flags to the bundle. `NEXT_PUBLIC_*` is inlined by

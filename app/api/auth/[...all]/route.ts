@@ -6,6 +6,7 @@ import {
 } from "@/lib/auth/public-cache-paths";
 import { ensureCacheControl, ensureNoStore } from "@/lib/security/headers";
 import { stampClientIpHeader } from "@/lib/security/client-ip";
+import { getMcpResource } from "@/lib/auth/oauth-resource";
 
 /**
  * Allowlist of Better Auth HTTP paths (post-`/api/auth` basePath form,
@@ -129,6 +130,51 @@ function normalizeAuthPath(pathname: string): string | null {
 }
 
 /**
+ * Rebuild an allowlisted auth request and default the MCP resource on OAuth
+ * authorization requests that omit it.
+ *
+ * @param request - Incoming auth request.
+ * @param path - Normalized Better Auth path.
+ * @param headers - Sanitized and client-address-stamped request headers.
+ * @returns A bounded request suitable for Better Auth's handler.
+ */
+async function buildForwardedRequest(
+  request: Request,
+  path: string,
+  headers: Headers,
+): Promise<Request> {
+  const url = new URL(request.url);
+  let body: BodyInit | null =
+    request.body === null ? null : await request.arrayBuffer();
+
+  if (path === "/oauth2/authorize") {
+    if (request.method === "GET" && !url.searchParams.has("resource")) {
+      url.searchParams.set("resource", getMcpResource());
+    } else if (
+      request.method === "POST" &&
+      headers
+        .get("content-type")
+        ?.toLowerCase()
+        ?.includes("application/x-www-form-urlencoded") &&
+      body instanceof ArrayBuffer
+    ) {
+      const params = new URLSearchParams(new TextDecoder().decode(body));
+      if (!params.has("resource")) {
+        params.set("resource", getMcpResource());
+        body = params.toString();
+      }
+    }
+  }
+
+  return new Request(url.href, {
+    method: request.method,
+    headers,
+    body,
+    signal: request.signal,
+  });
+}
+
+/**
  * Route allowlisted Better Auth requests through `auth.handler` and harden
  * response caching: public discovery surfaces (`/jwks`, well-known metadata)
  * stay cacheable while every session-bearing surface is pinned to `no-store`.
@@ -162,12 +208,7 @@ async function handler(request: Request): Promise<Response> {
   headers.delete("content-length");
   stampClientIpHeader(headers);
   const handled = await auth.handler(
-    new Request(request.url, {
-      method: request.method,
-      headers,
-      body: request.body === null ? null : await request.arrayBuffer(),
-      signal: request.signal,
-    }),
+    await buildForwardedRequest(request, path, headers),
   );
   const response = PUBLIC_CACHEABLE_PATHS.has(path)
     ? ensureCacheControl(handled, JWKS_CACHE_CONTROL)

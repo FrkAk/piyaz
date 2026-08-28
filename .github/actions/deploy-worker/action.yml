@@ -72,8 +72,8 @@ runs:
       run: bun run db:migrate
 
     # Re-apply the public-schema RLS (grants + policies) as the migration role,
-    # which owns `public`. piyaz_auth grants + SECURITY DEFINER helpers need the
-    # owner role and are applied out-of-band, never in CI.
+    # which owns `public`. piyaz_auth schema/grants + SECURITY DEFINER helpers
+    # need the owner role and are applied out-of-band, never in CI.
     - name: Apply public RLS
       shell: bash
       env:

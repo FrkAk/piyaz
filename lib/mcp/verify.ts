@@ -19,13 +19,15 @@ const JWT_ERROR_CODES = new Set([
   "ERR_JWS_INVALID",
   "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
   "ERR_JWKS_NO_MATCHING_KEY",
+  "invalid_dpop_proof",
+  "invalid_token",
 ]);
 
 /** Classification of a thrown verify error. */
 export type VerifyErrorClass = "token" | "infrastructure";
 
 /**
- * Classify a thrown `verifyJwsAccessToken` error as a token-class failure
+ * Classify a thrown JWT or DPoP verification error as a token-class failure
  * (caller responds 401) or an infrastructure failure (caller responds 5xx).
  *
  * @param err - Caught error.

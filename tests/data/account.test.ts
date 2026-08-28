@@ -101,8 +101,8 @@ describe("getPasswordUpdatedAt", () => {
     const sqlc = superuserPool();
     await sqlc`
       INSERT INTO piyaz_auth."account"
-        ("accountId", "providerId", "userId", "password", "updatedAt")
-      VALUES (${f.userId}, 'credential', ${f.userId},
+        ("accountId", "issuer", "providerId", "userId", "password", "updatedAt")
+      VALUES (${f.userId}, 'local:credential', 'credential', ${f.userId},
               'scrypt-hash-placeholder', '2026-03-01T12:00:00Z')
     `;
 
@@ -127,6 +127,10 @@ describe("clearOrgMembershipArtifacts", () => {
       await sqlc`
         INSERT INTO piyaz_auth."session" ("expiresAt", "token", "updatedAt", "userId", "activeOrganizationId")
         VALUES (now() + interval '7 days', 'tok-' || gen_random_uuid()::text, now(), ${f.userId}, ${f.organizationId}::text)
+      `;
+      await sqlc`
+        INSERT INTO piyaz_auth."oauthClient" ("clientId", "redirectUris")
+        VALUES ('client-1', '{}')
       `;
       await sqlc`
         INSERT INTO piyaz_auth."oauthAccessToken" ("token", "clientId", "userId", "referenceId", "scopes", "expiresAt")
@@ -172,6 +176,10 @@ describe("clearOrgMembershipArtifacts", () => {
 
     const sqlc = superuserPool();
     try {
+      await sqlc`
+        INSERT INTO piyaz_auth."oauthClient" ("clientId", "redirectUris")
+        VALUES ('client-1', '{}')
+      `;
       await sqlc`
         INSERT INTO piyaz_auth."oauthAccessToken" ("token", "clientId", "userId", "referenceId", "scopes", "expiresAt")
         VALUES

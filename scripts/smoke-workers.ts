@@ -6,21 +6,29 @@
  * rejects, and neither `typecheck` nor the suite ever loads the bundle. This
  * script closes that gap: it runs the artifact that actually ships, catches
  * runtime errors the type system cannot see, and needs no Cloudflare
- * credentials because `wrangler dev` is local by default.
+ * credentials because `wrangler dev` and the Neon protocol proxy are local.
  *
- * Usage: `bun run build:cf && bun run smoke:cf`.
+ * Usage: `bun run db:test:up && bun run build:cf && bun run smoke:cf`.
  */
+
+import { applyMigrations } from "../tests/setup/migrate";
+import { startNeonHttpProxy } from "../tests/setup/neon-http-shim";
 
 const PORT = Number(process.env.SMOKE_PORT ?? 8788);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const BOOT_TIMEOUT_MS = 45_000;
+const AUTH_ABORT_TIMEOUT_MS = 20;
+const AUTH_ABORT_BURST_SIZE = 12;
 const WORKER_ENTRY = ".open-next/worker.js";
+const DEFAULT_TEST_DATABASE_URL =
+  "postgres://piyaz:piyaz@localhost:5433/piyaz_test";
 
 /** Sources whose changes invalidate a previous `build:cf` output. */
 const SOURCE_GLOBS = [
   "app/**/*.{ts,tsx}",
   "lib/**/*.{ts,tsx}",
   "components/**/*.{ts,tsx}",
+  "patches/**",
 ] as const;
 
 /** Single-file sources outside the globbed trees. */
@@ -30,6 +38,8 @@ const SOURCE_FILES = [
   "next.config.ts",
   "open-next.config.ts",
   "wrangler.jsonc",
+  "package.json",
+  "bun.lock",
 ] as const;
 
 /** One probe against the running worker. */
@@ -120,12 +130,18 @@ async function assertFreshBundle(): Promise<void> {
 }
 
 /**
- * Start `wrangler dev` against the built bundle with unreachable database
- * URLs, so the probes exercise the runtime rather than the data layer.
+ * Start `wrangler dev` against the built bundle. Only Better Auth reaches the
+ * local Neon protocol proxy; the other role URLs stay unreachable so their
+ * failure-path probes remain deterministic.
  *
+ * @param authDatabaseUrl - Disposable local Postgres URL for Better Auth.
+ * @param neonFetchEndpoint - Loopback Neon protocol proxy endpoint.
  * @returns The wrangler process and a reader for everything it printed.
  */
-function startWorker(): {
+function startWorker(
+  authDatabaseUrl: string,
+  neonFetchEndpoint: string,
+): {
   proc: Bun.Subprocess;
   output: () => string;
 } {
@@ -149,7 +165,9 @@ function startWorker(): {
       "--var",
       `DATABASE_SERVICE_ROLE_URL:${unreachable}`,
       "--var",
-      `DATABASE_AUTH_URL:${unreachable}`,
+      `DATABASE_AUTH_URL:${authDatabaseUrl}`,
+      "--var",
+      `NEON_LOCAL_FETCH_ENDPOINT:${neonFetchEndpoint}`,
       "--var",
       `BETTER_AUTH_SECRET:${process.env.BETTER_AUTH_SECRET ?? "smoke-not-a-real-secret"}`,
       "--var",
@@ -176,10 +194,11 @@ function startWorker(): {
  * @throws Error when the worker never becomes ready.
  */
 async function waitForReady(): Promise<void> {
+  const readyUrl = `${BASE_URL}/.well-known/oauth-protected-resource`;
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${BASE_URL}/sign-in`, {
+      const response = await fetch(readyUrl, {
         signal: AbortSignal.timeout(5_000),
       });
       if (response.ok) return;
@@ -188,7 +207,48 @@ async function waitForReady(): Promise<void> {
     }
     await Bun.sleep(400);
   }
-  throw new Error(`worker did not serve ${BASE_URL}/sign-in within 45s`);
+  throw new Error(`worker did not serve ${readyUrl} within 45s`);
+}
+
+/**
+ * Abort a burst of first-touch auth requests, then prove the same isolate can
+ * still initialize Better Auth and serve bounded follow-up requests.
+ *
+ * @returns Human-readable failure lines, empty when recovery passed.
+ */
+async function probeAuthAbortRecovery(): Promise<string[]> {
+  const url = `${BASE_URL}/api/auth/get-session`;
+  const burst = await Promise.allSettled(
+    Array.from({ length: AUTH_ABORT_BURST_SIZE }, () =>
+      fetch(url, { signal: AbortSignal.timeout(AUTH_ABORT_TIMEOUT_MS) }),
+    ),
+  );
+  const aborted = burst.filter((result) => result.status === "rejected").length;
+  if (aborted === 0) {
+    return [
+      `the auth cold-start burst completed before any request was aborted; the abort-recovery path was not exercised`,
+    ];
+  }
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (response.status !== 200) {
+        return [
+          `GET /api/auth/get-session returned ${response.status} after the aborted cold-start burst`,
+        ];
+      }
+    } catch (error) {
+      return [
+        `GET /api/auth/get-session attempt ${attempt} failed after the aborted cold-start burst: ${String(error)}`,
+      ];
+    }
+  }
+  console.log(
+    `  ok  auth cold-start recovered after ${aborted}/${AUTH_ABORT_BURST_SIZE} aborted requests`,
+  );
+  return [];
 }
 
 /**
@@ -312,19 +372,25 @@ async function probeScheduled(output: () => string): Promise<string[]> {
  */
 async function main(): Promise<void> {
   await assertFreshBundle();
+  const testDatabaseUrl =
+    process.env.TEST_DATABASE_URL ?? DEFAULT_TEST_DATABASE_URL;
+  await applyMigrations(testDatabaseUrl);
+  const neonProxy = startNeonHttpProxy();
   console.log(`Serving ${WORKER_ENTRY} on ${BASE_URL}`);
-  const { proc, output } = startWorker();
+  const { proc, output } = startWorker(testDatabaseUrl, neonProxy.endpoint);
 
   let failures: string[] = [];
   try {
     await waitForReady();
-    failures = await runProbes();
+    failures = await probeAuthAbortRecovery();
+    failures.push(...(await runProbes()));
     failures.push(...(await probeScheduled(output)));
   } catch (error) {
     failures.push(String(error));
   } finally {
     proc.kill();
     await proc.exited;
+    await neonProxy.close();
   }
 
   // A probe can pass while the worker logs a runtime error on another path,
@@ -345,6 +411,8 @@ async function main(): Promise<void> {
   if (failures.length > 0) {
     console.error("\nWorkers smoke failed:");
     for (const failure of failures) console.error(`  - ${failure}`);
+    const logTail = output().slice(-4_000).trim();
+    if (logTail) console.error(`\nWorker log tail:\n${logTail}`);
     process.exit(1);
   }
   console.log("\nWorkers smoke passed.");

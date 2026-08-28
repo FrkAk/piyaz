@@ -30,6 +30,11 @@ import {
 } from "@/lib/data/membership";
 import { grantOrgAccess, revokeOrgAccess } from "@/lib/realtime/access";
 import { getKvSecondaryStorage } from "@/lib/db/_auth-kv-storage";
+import { enrollAuthBackgroundTask } from "@/lib/auth/_background";
+import {
+  getMcpResource,
+  getOAuthResourceIdentifiers,
+} from "@/lib/auth/oauth-resource";
 import { logAuthApiError } from "@/lib/auth/api-error-log";
 import {
   emailVerificationRequired,
@@ -158,23 +163,9 @@ export const GRANTABLE_OAUTH_SCOPES = [
  * Every path here either mails an attacker-chosen address or re-mails a
  * victim's, which is the abuse surface a bot signup exercises. Named
  * explicitly rather than relying on the plugin's defaults, because those omit
- * `/send-verification-email` (a direct mail trigger) and because Better Auth
- * 1.6.23 matches these by substring, not exact path, so an implicit list is a
- * silent over-match waiting to happen.
- *
- * Substring matching is why `/sign-in` alone is unsafe to list. Of the four
- * below, three collide with a longer path: `/sign-in/email` with
- * `/sign-in/email-otp`, and `/request-password-reset` with both
- * `/email-otp/request-password-reset` and
- * `/phone-number/request-password-reset`. Better Auth exempts only the first
- * of those internally, and this deployment enables neither the `emailOTP` nor
- * the `phoneNumber` plugin, so none of the three is reachable. Adding
- * either plugin would gate its paths as a side effect.
- *
- * Better Auth 1.7 switches to exact-and-wildcard matching and drops the
- * built-in email-otp exemption. Because this list is four exact paths with no
- * wildcard, that upgrade is a no-op here: every entry keeps matching exactly
- * what it matches today, and nothing new becomes gated.
+ * `/send-verification-email`, a direct mail trigger. Better Auth 1.7 matches
+ * exact paths and explicit wildcards, so these entries deliberately contain
+ * no wildcard.
  *
  * Exported so the test iterates the real list instead of a copy, which is what
  * makes a newly added endpoint fail loudly rather than silently go uncovered.
@@ -326,6 +317,9 @@ async function hasMatchingOtherSession(
  * @returns A configured Better Auth instance.
  */
 export function createAuth() {
+  const oauthResources = getOAuthResourceIdentifiers();
+  const mcpResource = getMcpResource();
+
   return betterAuth({
     database: drizzleAdapter(authDb, {
       provider: "pg",
@@ -361,10 +355,10 @@ export function createAuth() {
     // Route OAuth authorization-code (and other single-use verification)
     // consume through the DB-atomic `runWithTransaction` + `consumeOne` path
     // (better-auth/db/internal-adapter.mjs:671-697) instead of the cache-only
-    // get-then-delete branch (line 642-664). KV `secondaryStorage` here has
-    // no `getAndDelete` and BA's fallback lock is per-isolate Map-based, so
-    // without this flag two concurrent requests for the same auth code on
-    // different Workers isolates could each mint an access token
+    // get-then-delete branch (line 642-664). KV cannot provide an atomic
+    // `getAndDelete`, so its required adapter method fails closed. Without
+    // this flag two concurrent requests for the same auth code on different
+    // Workers isolates could each mint an access token
     // (RFC 6749 §4.1.2 violation). KV continues to serve as a read cache for
     // non-consume verification lookups.
     verification: {
@@ -405,8 +399,9 @@ export function createAuth() {
       window: 10,
       max: 100,
       // Deliberate override: Better Auth would pick "secondary-storage"
-      // because one is configured, but the KV adapter has no atomic increment
-      // and KV allows one write per second per key. Memory bounds per
+      // because one is configured, but the KV adapter's required increment
+      // method fails closed because KV cannot implement it atomically and
+      // allows one write per second per key. Memory bounds per
       // process; the Cloudflare bindings in `lib/api/rate-limit.ts` enforce
       // across isolates.
       storage: "memory",
@@ -416,6 +411,9 @@ export function createAuth() {
       ? [process.env.BETTER_AUTH_URL]
       : [],
     advanced: {
+      backgroundTasks: {
+        handler: enrollAuthBackgroundTask,
+      },
       useSecureCookies: process.env.NODE_ENV === "production" || IS_CLOUDFLARE,
       defaultCookieAttributes: {
         httpOnly: true,
@@ -439,7 +437,7 @@ export function createAuth() {
       // taken from `advanced.ipAddress`. That resolver masks IPv6 to a /64, so
       // an IPv6 visitor's `remoteip` is their network, not their address.
       // Cloudflare documents `remoteip` as optional with no mismatch handling,
-      // so this costs signal quality rather than correctness, and 1.6.23
+      // so this costs signal quality rather than correctness. The plugin
       // offers no per-call opt-out short of disabling IP tracking globally,
       // which would also widen every rate-limit bucket.
       ...(turnstileConfigured()
@@ -543,12 +541,10 @@ export function createAuth() {
         advertisedMetadata: {
           scopes_supported: [...GRANTABLE_OAUTH_SCOPES],
         },
-        validAudiences: process.env.BETTER_AUTH_URL
-          ? [
-              process.env.BETTER_AUTH_URL,
-              `${process.env.BETTER_AUTH_URL}/api/mcp`,
-            ]
-          : ["http://localhost:3000", "http://localhost:3000/api/mcp"],
+        resources: oauthResources,
+        clientRegistrationDefaultResources: [mcpResource],
+        clientRegistrationAllowedResources: oauthResources,
+        enforcePerClientResources: false,
         // MCP tokens are intentionally org-agnostic. Team scope is resolved
         // per request: read paths span every team the caller belongs to,
         // writes either name an explicit `organizationId` (membership-checked)
@@ -562,7 +558,6 @@ export function createAuth() {
           consentReferenceId: () => undefined,
           shouldRedirect: () => false,
         },
-        silenceWarnings: { oauthAuthServerConfig: true },
       }),
       // MUST stay last (BA Next.js integration requirement): forwards BA's
       // Set-Cookie into Next's cookie store for server actions. Without it,

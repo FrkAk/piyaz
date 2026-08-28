@@ -100,6 +100,18 @@ test("delete removes the key", async () => {
   expect(await s.get("k")).toBeNull();
 });
 
+test("getAndDelete fails closed because Cloudflare KV is not atomic", async () => {
+  await expect(getKvSecondaryStorage().getAndDelete("k")).rejects.toThrow(
+    /verification must remain database-backed/,
+  );
+});
+
+test("increment fails closed because Cloudflare KV is not atomic", async () => {
+  await expect(getKvSecondaryStorage().increment("k", 60)).rejects.toThrow(
+    /rate limiting must not use secondary storage/,
+  );
+});
+
 test("missing AUTH_KV: get returns null, set/delete no-op", async () => {
   _envHasKv = false;
   const s = getKvSecondaryStorage();

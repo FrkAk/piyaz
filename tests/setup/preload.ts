@@ -111,7 +111,7 @@ mock.module("@/lib/auth/session", () => ({
 }));
 
 import { setup } from "./global";
-import { beforeAll, afterEach } from "bun:test";
+import { afterEach, beforeAll } from "bun:test";
 
 // Keep the sign-up deliverability gate off the network. Sign-up runs on nearly
 // every auth test, and the live DoH probe would make each one slow, network

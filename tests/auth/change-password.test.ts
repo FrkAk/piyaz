@@ -237,6 +237,10 @@ test("password change wipes the user's OAuth agent tokens (account.update.after 
     SELECT id FROM piyaz_auth."user" WHERE email = ${email}
   `;
   await sql`
+    INSERT INTO piyaz_auth."oauthClient" ("clientId", "redirectUris")
+    VALUES ('test-client', '{}')
+  `;
+  await sql`
     INSERT INTO piyaz_auth."oauthAccessToken"
       ("token", "clientId", "userId", "scopes", "expiresAt")
     VALUES ('test-access-token', 'test-client', ${userId}::uuid,

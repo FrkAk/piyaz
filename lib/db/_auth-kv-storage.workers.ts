@@ -90,14 +90,15 @@ function getAuthKv(): KvNamespace | null {
  * (better-auth#4203). Cookie cache + `secondaryStorage` forces re-login on
  * cookie expiry.
  *
- * `getAndDelete` is deliberately not implemented: KV has no atomic
- * primitive for it. To keep single-use verification consume
+ * `getAndDelete` and `increment` fail closed because KV has no atomic
+ * primitives for them. To keep single-use verification consume
  * (OAuth authorization codes, magic links, etc.) safe across isolates,
  * `lib/auth.ts` sets `verification: { storeInDatabase: true }` so BA's
  * `consumeVerificationValue` routes through the DB-atomic
  * `runWithTransaction` + `consumeOne` path
  * (`better-auth/db/internal-adapter.mjs:671-697`) instead of the
- * per-isolate `withVerificationConsumeLock` fallback at line 651.
+ * per-isolate `withVerificationConsumeLock` fallback at line 651. Better Auth
+ * rate limiting stays on memory so it never calls the unsupported increment.
  *
  * KV operation failures are swallowed and logged (see `warnKvError`):
  * Drizzle is the source of truth and BA falls through to the DB on a
@@ -108,6 +109,16 @@ function getAuthKv(): KvNamespace | null {
  */
 export function getKvSecondaryStorage(): SecondaryStorage {
   return {
+    async getAndDelete() {
+      throw new Error(
+        "AUTH_KV does not support atomic getAndDelete; verification must remain database-backed.",
+      );
+    },
+    async increment() {
+      throw new Error(
+        "AUTH_KV does not support atomic increment; Better Auth rate limiting must not use secondary storage.",
+      );
+    },
     async get(key) {
       const kv = getAuthKv();
       if (!kv) return null;

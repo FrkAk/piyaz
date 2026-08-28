@@ -63,6 +63,23 @@ test("classifyVerifyError: JWKSNoMatchingKey is token-class", () => {
   expect(classifyVerifyError(new JWKSNoMatchingKey())).toBe("token");
 });
 
+test("classifyVerifyError: DPoP binding failures are token-class", () => {
+  expect(
+    classifyVerifyError(
+      Object.assign(new Error("bound token requires proof"), {
+        code: "invalid_token",
+      }),
+    ),
+  ).toBe("token");
+  expect(
+    classifyVerifyError(
+      Object.assign(new Error("proof replayed"), {
+        code: "invalid_dpop_proof",
+      }),
+    ),
+  ).toBe("token");
+});
+
 test("classifyVerifyError: plain Error without code is infrastructure", () => {
   expect(
     classifyVerifyError(

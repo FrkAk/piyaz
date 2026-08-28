@@ -32,7 +32,7 @@ GRANT SELECT ON piyaz_auth."oauthClient" TO service_role;
 
 -- auth_role: full DML on piyaz_auth, zero grants on public. No
 -- ALTER DEFAULT PRIVILEGES — same RLS-race rationale as the public block.
--- New piyaz_auth tables need explicit grants in their migration.
+-- The owner apply creates/upgrades auth tables before this schema-wide grant.
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA piyaz_auth TO auth_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA piyaz_auth TO auth_role;
 

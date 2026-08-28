@@ -1352,7 +1352,8 @@ BEGIN
 
   WITH victims AS (
     SELECT ctid FROM piyaz_auth."oauthAccessToken"
-    WHERE "expiresAt" < now() - c_oauth_grace
+    WHERE revoked < now() - c_oauth_grace
+       OR "expiresAt" < now() - c_oauth_grace
     LIMIT p_batch_limit
   ), deleted AS (
     DELETE FROM piyaz_auth."oauthAccessToken" t
@@ -1364,6 +1365,22 @@ BEGIN
               ELSE (SELECT count(*) FROM deleted) END::integer
   INTO row_count;
   table_name := 'oauthAccessToken';
+  RETURN NEXT;
+
+  WITH victims AS (
+    SELECT ctid FROM piyaz_auth."oauthClientAssertion"
+    WHERE "expiresAt" < now() - c_oauth_grace
+    LIMIT p_batch_limit
+  ), deleted AS (
+    DELETE FROM piyaz_auth."oauthClientAssertion" t
+    USING victims v
+    WHERE t.ctid = v.ctid AND NOT p_dry_run
+    RETURNING 1
+  )
+  SELECT CASE WHEN p_dry_run THEN (SELECT count(*) FROM victims)
+              ELSE (SELECT count(*) FROM deleted) END::integer
+  INTO row_count;
+  table_name := 'oauthClientAssertion';
   RETURN NEXT;
 
   WITH victims AS (

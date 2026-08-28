@@ -43,6 +43,14 @@ A running instance holds real data, so schema changes ship as versioned migratio
 - `bun run db:generate` writes a migration from `lib/db/schema.ts` changes.
 - `bun run db:migrate` applies pending migrations to your database.
 
+Those commands cover `public` only. Changes to the owner-managed
+`piyaz_auth` schema belong in the idempotent `docker/init-auth.sql`. Apply them
+to hosted dev, then hosted prod, with `bun run db:rls:owner` before deploying
+code that needs the new shape. The deploy-time `db:rls:verify` catalog check
+blocks a release when the expected auth columns, indexes, tables, or grants are
+missing. Set that environment's `BETTER_AUTH_URL` during the owner apply so it
+can pre-seed the OAuth resources without a multi-isolate first-boot race.
+
 `db:push` is only for throwaway databases (the CI test container). It force-syncs and can drop columns, so it never runs against a database with real data. CI fails a PR when `db:generate` produces an uncommitted migration, so a `schema.ts` change cannot land without its migration.
 
 ### Adding a table
@@ -56,7 +64,7 @@ A running instance holds real data, so schema changes ship as versioned migratio
 
 ### Changing RLS helper functions
 
-The `SECURITY DEFINER` functions in `docker/rls-functions.sql` (such as `current_user_org_ids`) are applied by `bun run db:rls`, not by `db:migrate` — several read `piyaz_auth` and are owned by the database owner. To change one: edit `docker/rls-functions.sql`, then run `bun run db:rls` (idempotent via `CREATE OR REPLACE`); never hand-edit a live database. Table, column, and index changes flow through `db:migrate`; grants and policies are applied by `db:rls`.
+The `SECURITY DEFINER` functions in `docker/rls-functions.sql` (such as `current_user_org_ids`) are applied by `bun run db:rls`, not by `db:migrate` — several read `piyaz_auth` and are owned by the database owner. To change one: edit `docker/rls-functions.sql`, then run `bun run db:rls` (idempotent via `CREATE OR REPLACE`); never hand-edit a live database. Public table, column, and index changes flow through `db:migrate`; `piyaz_auth` changes flow through `docker/init-auth.sql` and the owner apply. Grants and policies are applied by `db:rls`.
 
 Migrations are roll-forward only (Drizzle has no down-migrations), so follow expand/contract: additive changes ship with the code that needs them; destructive cleanups (drop column/table) ship in a separate later change, keeping every upgrade roll-forward-safe.
 

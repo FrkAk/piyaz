@@ -1,8 +1,7 @@
 /**
  * RFC 9207 discovery field advertising that authorization responses carry an
- * `iss` parameter. Better Auth hardcodes it to `true`
- * (`@better-auth/oauth-provider@1.6.23`, `dist/index.mjs:4066`) with no option
- * to disable it.
+ * `iss` parameter. Better Auth hardcodes it to `true` with no option to
+ * disable it.
  */
 const ISS_ADVERTISEMENT_FIELD =
   "authorization_response_iss_parameter_supported";
