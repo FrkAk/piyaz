@@ -50,12 +50,12 @@
     "db:test:down": "docker compose -f docker-compose.test.yml down -v"
   },
   "dependencies": {
-    "@better-auth/core": "1.7.0",
-    "@better-auth/oauth-provider": "1.7.0",
+    "@better-auth/core": "1.7.1",
+    "@better-auth/oauth-provider": "1.7.1",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@fontsource-variable/inter": "^5.3.0",
-    "@marsidev/react-turnstile": "1.5.3",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@marsidev/react-turnstile": "1.6.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@neondatabase/serverless": "1.1.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@tanstack/react-query": "^5.101.4",
@@ -65,11 +65,11 @@
     "@types/d3-quadtree": "^3.0.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "better-auth": "1.7.0",
+    "better-auth": "1.7.1",
     "d3-force": "^3.0.0",
     "d3-quadtree": "^3.0.1",
     "drizzle-orm": "0.45.2",
-    "motion": "^12.42.2",
+    "motion": "^13.1.1",
     "next": "^16.2.11",
     "postgres": "^3.4.9",
     "react": "^19.2.8",
@@ -84,8 +84,8 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.4",
-    "@cloudflare/workers-types": "^4.20260702.1",
+    "@biomejs/biome": "2.5.10",
+    "@cloudflare/workers-types": "^5.20260825.1",
     "@opennextjs/cloudflare": "^1.20.2",
     "@types/node": "^24.13.3",
     "bun-types": "^1.3.14",
@@ -96,7 +96,7 @@
     "wrangler": "^4.114.0"
   },
   "patchedDependencies": {
-    "@better-auth/core@1.7.0": "patches/@better-auth%2Fcore@1.7.0.patch",
-    "@better-auth/oauth-provider@1.7.0": "patches/@better-auth%2Foauth-provider@1.7.0.patch"
+    "@better-auth/core@1.7.1": "patches/@better-auth%2Fcore@1.7.1.patch",
+    "@better-auth/oauth-provider@1.7.1": "patches/@better-auth%2Foauth-provider@1.7.1.patch"
   }
 }
