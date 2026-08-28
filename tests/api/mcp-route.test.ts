@@ -119,6 +119,25 @@ test("POST accepts one valid DPoP proof and rejects its replay", async () => {
   expect(replay.status).toBe(401);
 });
 
+test("POST atomically rejects a concurrent DPoP proof replay", async () => {
+  const { token, proof } = await dpopAuthorization();
+  const headers = {
+    accept: "application/json, text/event-stream",
+    authorization: `DPoP ${token}`,
+    dpop: proof,
+  };
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+
+  const responses = await Promise.all([
+    route.POST(mcpRequest(headers, body)),
+    route.POST(mcpRequest(headers, body)),
+  ]);
+
+  expect(responses.map((response) => response.status).sort()).toEqual([
+    200, 401,
+  ]);
+});
+
 test("POST over the body cap returns the MCP-shaped 413", async () => {
   const res = await route.POST(
     mcpRequest({

@@ -17,7 +17,12 @@ interface ExpectedContract {
   functions: string[];
   triggers: Array<{ table: string; trigger: string }>;
   extensions: Array<{ name: string; schema: string | null }>;
-  authColumns: Array<{ table: string; column: string }>;
+  authColumns: Array<{
+    table: string;
+    column: string;
+    dataType?: string;
+    columnDefault?: string;
+  }>;
   authIndexes: string[];
   authRoleTables: string[];
 }
@@ -106,6 +111,12 @@ function expectedContract(): ExpectedContract {
   ].map((m) => ({ name: m[1], schema: m[2] ?? null }));
 
   const authColumns = [
+    {
+      table: "verification",
+      column: "id",
+      dataType: "text",
+      columnDefault: "(gen_random_uuid())::text",
+    },
     { table: "account", column: "issuer" },
     { table: "jwks", column: "alg" },
     { table: "jwks", column: "crv" },
@@ -222,14 +233,19 @@ async function findMissing(
   const liveExtensionNames = new Set(liveExtensions.map((r) => r.extname));
 
   const liveAuthColumns = await sql<
-    { table_name: string; column_name: string }[]
+    {
+      table_name: string;
+      column_name: string;
+      data_type: string;
+      column_default: string | null;
+    }[]
   >`
-    SELECT table_name, column_name
+    SELECT table_name, column_name, data_type, column_default
     FROM information_schema.columns
     WHERE table_schema = 'piyaz_auth'
   `;
-  const liveAuthColumnSet = new Set(
-    liveAuthColumns.map((r) => `${r.table_name}.${r.column_name}`),
+  const liveAuthColumnMap = new Map(
+    liveAuthColumns.map((row) => [`${row.table_name}.${row.column_name}`, row]),
   );
 
   const liveAuthIndexes = await sql<{ indexname: string }[]>`
@@ -270,9 +286,28 @@ async function findMissing(
       );
     }
   }
-  for (const { table, column } of expected.authColumns) {
-    if (!liveAuthColumnSet.has(`${table}.${column}`)) {
+  for (const {
+    table,
+    column,
+    dataType,
+    columnDefault,
+  } of expected.authColumns) {
+    const liveColumn = liveAuthColumnMap.get(`${table}.${column}`);
+    if (!liveColumn) {
       missing.push(`column piyaz_auth.${table}.${column}`);
+      continue;
+    }
+    if (dataType && liveColumn.data_type !== dataType) {
+      missing.push(
+        `column piyaz_auth.${table}.${column} type ${dataType} ` +
+          `(found ${liveColumn.data_type})`,
+      );
+    }
+    if (columnDefault && liveColumn.column_default !== columnDefault) {
+      missing.push(
+        `column piyaz_auth.${table}.${column} default ${columnDefault} ` +
+          `(found ${liveColumn.column_default ?? "none"})`,
+      );
     }
   }
   for (const index of expected.authIndexes) {
