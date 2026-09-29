@@ -25,15 +25,9 @@ Full setup, guides, and reference can be found at **[docs.piyaz.ai](https://docs
 
 ---
 
-## Hosted (beta)
-
-Piyaz is open for signup at **[app.piyaz.ai/sign-up](https://app.piyaz.ai/sign-up)**. Create an account and verify your email to get in.
-
-Then install the plugin for your agent (Claude Code, Codex, Cursor, or Antigravity) and sign in once. Piyaz is then available in every project you open. Per-harness setup instructions can be found at **[docs](https://docs.piyaz.ai)**.
-
 ## Self-host
 
-Self-hosting is free under AGPL-3.0. You can run the Piyaz server yourself and register an MCP server in your editor that points at it. You need [Bun](https://bun.sh) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Full setup and upgrade steps are in the [self-host guide](https://docs.piyaz.ai/docs/self-hosting/run-locally).
+Piyaz is free under AGPL-3.0. You run the Piyaz server yourself and register an MCP server in your editor that points at it. You need [Bun](https://bun.sh) and [Docker](https://docs.docker.com/get-docker/) for PostgreSQL. Full setup and upgrade steps are in the [self-host guide](https://docs.piyaz.ai/docs/self-hosting/run-locally), and per-harness setup is in the [docs](https://docs.piyaz.ai).
 
 ---
 
@@ -95,7 +89,7 @@ For more details, see the docs:
 
 ## The MCP server
 
-Piyaz is a remote MCP server at `https://app.piyaz.ai/api/mcp` (Streamable HTTP, OAuth 2.1, no API keys); the plugin wires it up for you, so the endpoint only matters when connecting a client by hand or pointing at your own instance. Nine ref-first tools cover the loop from planning to review: the full reference lives at [docs.piyaz.ai/docs/reference/mcp-overview](https://docs.piyaz.ai/docs/reference/mcp-overview/) and registry metadata in [`server.json`](server.json).
+Piyaz is a remote MCP server at `<your-instance>/api/mcp` (Streamable HTTP, OAuth 2.1, no API keys). Nine ref-first tools cover the loop from planning to review: the full reference lives at [docs.piyaz.ai/docs/reference/mcp-overview](https://docs.piyaz.ai/docs/reference/mcp-overview/) and registry metadata in [`server.json`](server.json).
 
 ---
 
