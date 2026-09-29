@@ -79,19 +79,29 @@ test("signup disabled on a misconfigured hosted build (opt-in not 'true')", () =
 });
 
 /**
- * Hosted scripts that must ship open signup. `signupsDisabled()` fails closed,
- * so one of these losing `SIGNUPS_ENABLED=true` serves the invite-only waitlist
- * instead of the sign-up form, with no build or deploy error to catch it.
+ * Hosted scripts and whether each ships open signup. `signupsDisabled()` fails
+ * closed, so a script losing `SIGNUPS_ENABLED=true` serves the invite-only
+ * waitlist instead of the sign-up form, with no build or deploy error to catch
+ * it. Production is closed to new signups.
  */
-const OPEN_SIGNUP_SCRIPTS = ["deploy:cf", "deploy:cf:dev", "preview:cf"];
+const SIGNUP_SCRIPTS = {
+  "deploy:cf": false,
+  "preview:cf": false,
+  "deploy:cf:dev": true,
+};
 
-for (const name of OPEN_SIGNUP_SCRIPTS) {
-  test(`${name} carries the signup opt-in into next build`, () => {
+for (const [name, open] of Object.entries(SIGNUP_SCRIPTS)) {
+  test(`${name} ${open ? "carries" : "omits"} the signup opt-in`, () => {
     // The flag is inlined as NEXT_PUBLIC_*, so only the build step decides the
     // baked value; setting it on the deploy step alone would be a no-op.
-    expect(pkg.scripts[name as keyof typeof pkg.scripts]).toContain(
-      "SIGNUPS_ENABLED=true DEPLOY_TARGET=cloudflare next build",
-    );
+    const script = pkg.scripts[name as keyof typeof pkg.scripts];
+    if (open) {
+      expect(script).toContain(
+        "SIGNUPS_ENABLED=true DEPLOY_TARGET=cloudflare next build",
+      );
+    } else {
+      expect(script).not.toContain("SIGNUPS_ENABLED");
+    }
   });
 }
 
