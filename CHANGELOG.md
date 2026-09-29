@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.16](https://github.com/FrkAk/piyaz/compare/v0.4.15...v0.4.16) (2026-09-29)
+
+
+### Bug Fixes
+
+* close hosted signups and point the readme at self-hosting ([#295](https://github.com/FrkAk/piyaz/issues/295)) ([5be05af](https://github.com/FrkAk/piyaz/commit/5be05af843b8f2fdfb56738e5882241cfe6fdcc3))
+* turn off housekeeping dry run so the nightly sweep deletes ([#297](https://github.com/FrkAk/piyaz/issues/297)) ([651bf10](https://github.com/FrkAk/piyaz/commit/651bf101cb38cf2ae9790e276ff0501109164ec8))
+
 ## [0.4.15](https://github.com/FrkAk/piyaz/compare/v0.4.14...v0.4.15) (2026-09-09)
 
 
