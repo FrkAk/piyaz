@@ -5,7 +5,7 @@ export const ORGANIZATION_ARCHIVE_MEDIA_TYPE =
   "application/vnd.piyaz.organization+json";
 
 /** Maximum encoded size accepted for one organization archive. */
-export const MAX_ORGANIZATION_ARCHIVE_MIB = 25;
+export const MAX_ORGANIZATION_ARCHIVE_MIB = 64;
 export const MAX_ORGANIZATION_ARCHIVE_BYTES =
   MAX_ORGANIZATION_ARCHIVE_MIB * 1024 * 1024;
 
