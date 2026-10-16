@@ -11,6 +11,7 @@ import { MemoryRateLimitBackend } from "@/lib/api/rate-limit-memory";
 import * as organizationData from "@/lib/data/organization-portability";
 import {
   MAX_ORGANIZATION_ARCHIVE_BYTES,
+  MAX_ORGANIZATION_ARCHIVE_MIB,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   ORGANIZATION_EXPORT_INTENT_HEADER,
   ORGANIZATION_EXPORT_INTENT_VALUE,
@@ -405,6 +406,10 @@ describe("POST /api/organization/[organizationId]/export", () => {
       params: Promise.resolve({ organizationId: fixture.organizationId }),
     });
     expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      code: "archive_too_large",
+      error: `This workspace is larger than the ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB archive limit, so it can't be exported.`,
+    });
   });
 });
 

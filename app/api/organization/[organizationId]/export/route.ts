@@ -9,6 +9,7 @@ import {
   streamOrganizationWorkspace,
 } from "@/lib/data/organization-portability";
 import {
+  MAX_ORGANIZATION_ARCHIVE_MIB,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
   ORGANIZATION_EXPORT_COOLDOWN_DAYS,
   ORGANIZATION_EXPORT_INTENT_HEADER,
@@ -147,7 +148,7 @@ export async function POST(
     ) {
       return jsonError(
         "archive_too_large",
-        "This workspace exceeds the portable archive limit.",
+        `This workspace is larger than the ${MAX_ORGANIZATION_ARCHIVE_MIB} MiB archive limit, so it can't be exported.`,
         413,
       );
     }

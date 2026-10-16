@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { MAX_ORGANIZATION_ARCHIVE_BYTES } from "./lib/organization-portability/client";
 import { headerRules } from "./lib/security/headers";
 
 const isCloudflare = process.env.DEPLOY_TARGET === "cloudflare";
@@ -88,6 +89,9 @@ async function buildNextConfig(): Promise<NextConfig> {
       serverActions: {
         bodySizeLimit: "2mb",
       },
+      // Middleware matches /api/organization/import and Next truncates the
+      // cloned body past this size (default 10 MiB), breaking archive imports.
+      proxyClientMaxBodySize: MAX_ORGANIZATION_ARCHIVE_BYTES,
     },
     webpack(
       config: { plugins?: unknown[]; module: { rules: unknown[] } },
