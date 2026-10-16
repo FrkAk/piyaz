@@ -48,7 +48,10 @@ jobs:
         if: github.actor == 'dependabot[bot]'
       - name: Audit dependencies
         # Security floors and their removal conditions live in package.json.
-        run: bun audit --audit-level=high
+        # GHSA-vfj7-8cjw-p6xm: braces DoS, no fixed release (<=3.0.3).
+        # Dev-only (eslint-config-next > fast-glob > micromatch), absent from
+        # `bun audit --prod`. Drop the ignore once braces ships a fix.
+        run: bun audit --audit-level=high --ignore=GHSA-vfj7-8cjw-p6xm
       - name: Validate PR title
         if: github.event_name == 'pull_request'
         env:
