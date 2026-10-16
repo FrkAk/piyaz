@@ -36,7 +36,7 @@ import { deriveIdentifier } from "@/lib/graph/identifier";
 import {
   MAX_ORGANIZATION_ARCHIVE_BYTES,
   MAX_ORGANIZATION_ARCHIVE_ROWS,
-  ORGANIZATION_EXPORT_COOLDOWN_DAYS,
+  ORGANIZATION_EXPORT_COOLDOWN_HOURS,
   OrganizationArchiveError,
   decodeOrganizationArchive,
   serializeOrganizationArchiveRow,
@@ -155,16 +155,16 @@ async function reserveOrganizationExport(
         target: organizationExportLimits.userId,
         set: { lastStartedAt: sql`clock_timestamp()` },
         setWhere: sql`${organizationExportLimits.lastStartedAt} <= clock_timestamp() - interval '${sql.raw(
-          String(ORGANIZATION_EXPORT_COOLDOWN_DAYS),
-        )} days'`,
+          String(ORGANIZATION_EXPORT_COOLDOWN_HOURS),
+        )} hours'`,
       })
       .returning({ startedAt: organizationExportLimits.lastStartedAt });
     if (reservations.length === 0) {
       const [limit] = await tx
         .select({
           retryAfterSeconds: sql<number>`GREATEST(1, CEIL(EXTRACT(EPOCH FROM (${organizationExportLimits.lastStartedAt} + interval '${sql.raw(
-            String(ORGANIZATION_EXPORT_COOLDOWN_DAYS),
-          )} days' - clock_timestamp()))))::integer`,
+            String(ORGANIZATION_EXPORT_COOLDOWN_HOURS),
+          )} hours' - clock_timestamp()))))::integer`,
         })
         .from(organizationExportLimits)
         .where(eq(organizationExportLimits.userId, userId));
@@ -209,7 +209,7 @@ function assertOrganizationExportWithinBounds(raw: RawReadRows): void {
 }
 
 /**
- * Verify ownership and size before the monthly export slot is consumed.
+ * Verify ownership and size before the export slot is consumed.
  *
  * @param userId - Authenticated exporting user id.
  * @param organizationId - Organization whose rows should be measured.

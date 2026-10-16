@@ -18,7 +18,7 @@ export const MAX_ORGANIZATION_IMPORT_BYTES =
   MAX_ORGANIZATION_IMPORT_MIB * 1024 * 1024;
 
 /** Rolling cooldown between admitted workspace archive generations. */
-export const ORGANIZATION_EXPORT_COOLDOWN_DAYS = 30;
+export const ORGANIZATION_EXPORT_COOLDOWN_HOURS = 24;
 
 /** Header required on the state-changing workspace export request. */
 export const ORGANIZATION_EXPORT_INTENT_HEADER = "x-piyaz-export";

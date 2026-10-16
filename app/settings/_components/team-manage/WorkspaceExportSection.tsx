@@ -4,7 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { Button } from "@/components/shared/Button";
 import { IconCheck, IconDoc } from "@/components/shared/icons";
 import {
-  ORGANIZATION_EXPORT_COOLDOWN_DAYS,
+  ORGANIZATION_EXPORT_COOLDOWN_HOURS,
   ORGANIZATION_EXPORT_INTENT_HEADER,
   ORGANIZATION_EXPORT_INTENT_VALUE,
   organizationArchiveFilename,
@@ -108,7 +108,7 @@ export function WorkspaceExportSection({
               activity history as one JSON archive. Member accounts and other
               members&apos; private notes are not included. Your own private
               notes are included. You can generate one archive every{" "}
-              {ORGANIZATION_EXPORT_COOLDOWN_DAYS} days.
+              {ORGANIZATION_EXPORT_COOLDOWN_HOURS} hours.
             </p>
             <p className="mt-2 text-xs leading-relaxed text-text-muted">
               The archive can include confidential content, deleted notes, and
