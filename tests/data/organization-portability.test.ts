@@ -9,6 +9,7 @@ import {
   OrganizationExportLimitError,
 } from "@/lib/data/organization-portability";
 import {
+  MAX_ORGANIZATION_ARCHIVE_BYTES,
   OrganizationArchiveError,
   type OrganizationArchive,
 } from "@/lib/organization-portability/archive";
@@ -756,7 +757,10 @@ describe("exportOrganizationWorkspace", () => {
         'Large history',
         repeat('x', 200000),
         ${fixture.userId}
-      FROM generate_series(1, 132) AS version
+      FROM generate_series(
+        1,
+        ${Math.ceil(MAX_ORGANIZATION_ARCHIVE_BYTES / 200_000) + 1}
+      ) AS version
     `;
 
     await expect(
