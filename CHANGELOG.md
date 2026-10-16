@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.17](https://github.com/FrkAk/piyaz/compare/v0.4.16...v0.4.17) (2026-10-16)
+
+
+### Bug Fixes
+
+* allow one workspace export every 24 hours ([#300](https://github.com/FrkAk/piyaz/issues/300)) ([f2304ca](https://github.com/FrkAk/piyaz/commit/f2304ca9d3b3ec149c741b4eefaba86701a97dc6))
+* raise the workspace archive size cap to 64 MiB ([#299](https://github.com/FrkAk/piyaz/issues/299)) ([0c70757](https://github.com/FrkAk/piyaz/commit/0c7075751b31b2eb09282c04600940785190046e))
+* update dependencies for new high and critical advisories ([#301](https://github.com/FrkAk/piyaz/issues/301)) ([993dfa3](https://github.com/FrkAk/piyaz/commit/993dfa30920751118ed88940208bda5cefa26f78))
+
 ## [0.4.16](https://github.com/FrkAk/piyaz/compare/v0.4.15...v0.4.16) (2026-09-29)
 
 
