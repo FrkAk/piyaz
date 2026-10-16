@@ -11,7 +11,7 @@ import {
 import {
   MAX_ORGANIZATION_ARCHIVE_MIB,
   ORGANIZATION_ARCHIVE_MEDIA_TYPE,
-  ORGANIZATION_EXPORT_COOLDOWN_DAYS,
+  ORGANIZATION_EXPORT_COOLDOWN_HOURS,
   ORGANIZATION_EXPORT_INTENT_HEADER,
   ORGANIZATION_EXPORT_INTENT_VALUE,
   OrganizationArchiveError,
@@ -54,7 +54,7 @@ function jsonError(
 }
 
 /**
- * Verify browser intent before a request can consume the monthly export slot.
+ * Verify browser intent before a request can consume the export slot.
  *
  * @param request - Candidate workspace export request.
  * @returns True for the application's non-simple same-origin POST.
@@ -128,9 +128,10 @@ export async function POST(
     });
   } catch (error) {
     if (error instanceof OrganizationExportLimitError) {
+      const hoursLeft = Math.ceil(error.retryAfterSeconds / 3600);
       return jsonError(
         "export_limit_reached",
-        `You can generate one workspace archive every ${ORGANIZATION_EXPORT_COOLDOWN_DAYS} days.`,
+        `You can generate one workspace archive every ${ORGANIZATION_EXPORT_COOLDOWN_HOURS} hours. Try again in ${hoursLeft === 1 ? "1 hour" : `${hoursLeft} hours`}.`,
         429,
         { "retry-after": String(error.retryAfterSeconds) },
       );
