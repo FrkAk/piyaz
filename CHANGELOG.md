@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.18](https://github.com/FrkAk/piyaz/compare/v0.4.17...v0.4.18) (2026-10-23)
+
+
+### Bug Fixes
+
+* patch next.js rce advisories and audited dependencies ([#303](https://github.com/FrkAk/piyaz/issues/303)) ([ccddd8b](https://github.com/FrkAk/piyaz/commit/ccddd8b343255c474fb942ab89b450b7cf2039f9))
+
 ## [0.4.17](https://github.com/FrkAk/piyaz/compare/v0.4.16...v0.4.17) (2026-10-16)
 
 
